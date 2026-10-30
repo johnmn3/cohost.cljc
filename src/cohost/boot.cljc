@@ -158,7 +158,7 @@
                          (into (shim/install-casts!
                                 (for [c (distinct (vals rw/checked-hints))] [(rw/cast-name c) c])))))]
   (rw/make-ctx {:shim-names shim-names
-                :host-aliases (host-aliases shim-names)
+                :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
                 :inline-fn (inline-fn)
                 :catch-all (host/catch-all-sym)
                 :core-ns (name core-ns)

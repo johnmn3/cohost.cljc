@@ -301,6 +301,10 @@
    :def-meta {:redef true}
    ;; :inline fns are honored at compile time; core.clj's build forms of raw JVM interop
    :inline-meta :strip
+   ;; basilisp inlines (basilisp.core/inc x) as (+ x 1) read in the caller's
+   ;; namespace: inside cohost.core that + is not basilisp's, so the codemod
+   ;; names the shim's statics, not basilisp.core's fns
+   :host-aliases? false
    :var-bound? (fn [v] (boolean (.-is-bound v)))
    :dynamic-var? (fn [v] (boolean (or (.-dynamic v) (:dynamic (meta v)))))
    :empty-queue (fn [] (when-let [q (resolve 'basilisp.core/queue)] (q)))
