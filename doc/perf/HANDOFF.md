@@ -13,7 +13,19 @@ what is left. A new session should read it first, then the files it names.
 > provide that. If the cohost provides no impl, it falls back to your cljc/clj impl."
 
 - **Pass 1:** remove the needless costs. Mostly done; the remaining items are listed below.
-- **Pass 2:** the opt-in "natives" layer. Not started; a design is below.
+- **Pass 2:** the opt-in "natives" layer. **Landed** (2:15 PM ET).
+  - Adapter `:natives` maps a qualified name to a fn, or to `:host` for the host core's
+    var of that name.
+  - Boot (`boot.cljc` `native-of`, `intern-native!`) and library loads intern the native
+    instead of evaluating the stock def. A name without an entry boots the stock
+    definition.
+  - The boot and library reports count natives.
+  - Opted in on jolt and the JVM (`hosts/java.clj` `natives`) and on ClojureScript:
+    frequencies, group-by, partition, re-seq, sort, sort-by, `clojure.string/join`.
+  - basilisp opts into none, so it shows the fallback.
+  - Batteries green (2:13 PM ET): jolt and JVM 133/133 and 61/61, with 6 core natives
+    plus join. ClojureScript is 131/133, the two host limits.
+  - Not yet benched or corpus-checked.
 - **Then:** measure before against after on every host, write `doc/PERF.md`, and run an
   adversarial review.
 
@@ -214,7 +226,7 @@ measured; measure each one when it lands.
     `dev/perf-workflows/`. Re-run what is still useful; each script's prompts name the
     already-landed fixes, so update them first.
 
-## Pass 2: the natives layer (design, not started)
+## Pass 2: the natives layer (landed as designed below; more opt-ins to come)
 
 - **Capability:** an adapter capability `:natives`, a map of `{qualified-sym impl}`:
   - `'clojure.core/frequencies host-fn`: use this fn;

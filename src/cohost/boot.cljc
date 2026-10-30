@@ -369,6 +369,32 @@
 
 (def verbose? (atom false))
 
+(def ^:private native-heads
+  "The def forms a native can stand in for: fns (a macro has no native)."
+  '#{def defn defn- defonce definline})
+
+(defn- native-of
+  "The adapter's native (adapter :natives) for the def form `form` of library
+   lib (a string: \"clojure.core\", \"clojure.string\"): [value host-var-or-nil],
+   or nil when there is none."
+  [lib form]
+  (let [nm (policy/form-name form)]
+    (when (and (symbol? nm) (contains? native-heads (policy/form-head form)))
+      (when-let [impl (get (host/natives) (symbol lib (name nm)))]
+        (if (= :host impl)
+          (when-let [hv (and (= lib "clojure.core") (host/resolve-core nm))]
+            (when-not (host/macro-var? hv) [(host/var-root hv) hv]))
+          [impl nil])))))
+
+(defn- intern-native!
+  "Intern a native as ns-sym/nm, marked :cohost/native (with the host var's
+   doc and arglists when it came from one)."
+  [ns-sym nm [v hv]]
+  (let [h (host/intern! ns-sym nm v)]
+    (host/alter-var-meta! h merge (when hv (select-keys (host/var-meta hv) [:doc :arglists]))
+                          {:cohost/native true :cohost/wrapped true})
+    h))
+
 (def ^:private policy-lists
   "This boot's policy lists (policy/lists of the host), computed once per boot."
   (atom nil))
@@ -382,7 +408,9 @@
   (let [{:keys [action reason replacement] nm :name}
         (policy/decide form (host/host-name) (or @policy-lists (policy/lists (host/host-name))))
         _ (when @verbose? (println (str "  [" (name action) "] " nm)))
-        evaluated (case action
+        native (when (contains? #{:eval :replace} action) (native-of "clojure.core" (if (= :replace action) replacement form)))
+        evaluated (case (if native :native action)
+                    :native (do (intern-native! core-ns nm native) (record! report :native {:name nm}) nil)
                     :skip (do (record! report :skipped {:name nm :reason reason}) nil)
                     :host (when-not (take-from-host! report nm)
                             (if (contains? policy/host-only-names nm)
@@ -454,7 +482,7 @@
    (reset! verbose? (boolean verbose))
    (host/ensure-bare-ns! core-ns)
    (let [ctx (make-ctx)
-         report (atom {:ok 0 :replaced 0 :host 0 :skipped 0 :error 0 :entries []})]
+         report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
      (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks))))
      (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
             :libs {'clojure.core {:ns core-ns :status :loaded}})
@@ -732,8 +760,9 @@
                       {:keys [action replacement] nm :name} (policy/decide-lib form lib)]
                   (when @verbose? (println (str "  [" (name action) "] " lib " " nm)))
                   (try
-                    (case action
+                    (case (if (and (= :eval action) (native-of (str lib) form)) :native action)
                       :skip (note! :skipped {:name nm})
+                      :native (do (intern-native! cur nm (native-of (str lib) form)) (note! :native {:name nm}))
                       (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form) true)]
                         (when (not= ns' cur) (host/set-current-ns! ns'))
                         (note! :ok {:name nm})))
@@ -777,9 +806,10 @@
   (dissoc (:libs @state) 'clojure.core))
 
 (defn print-lib-report [lib]
-  (let [{:keys [ns status ok error skipped entries]} (get (:libs @state) (symbol (str lib)))]
+  (let [{:keys [ns status ok error skipped native entries]} (get (:libs @state) (symbol (str lib)))]
     (println (str "  " lib " -> " ns " (" (name (or status :absent)) "): "
-                  (or ok 0) " forms evaluated, " (or skipped 0) " skipped, " (or error 0) " errors"))
+                  (or ok 0) " forms evaluated, " (when native (str native " natives, "))
+                  (or skipped 0) " skipped, " (or error 0) " errors"))
     (doseq [e entries :when (= :error (:status e))]
       (println (str "     - " (:name e) ": " (:error e))))))
 
@@ -818,9 +848,11 @@
 
 (defn print-report [{:keys [host-name ok replaced skipped error entries rewrite-misses] :as r}]
   (let [from-host (:host r)
-        total (+ ok replaced from-host skipped error)]
+        natives (or (:native r) 0)
+        total (+ ok replaced from-host natives skipped error)]
     (println (str "cohost.boot on " (name host-name) ": " total " top-level forms"))
     (println (str "  booted as stock: " (+ ok replaced) "   from host: " from-host
+                  (when (pos? natives) (str "   natives: " natives))
                   "   skipped: " skipped "   errors: " error))
     (when (pos? error)
       (println "  errors:")

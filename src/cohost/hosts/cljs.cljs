@@ -21,6 +21,7 @@
             [cljs.tools.reader.edn :as edn]
             [cljs.tools.reader.reader-types :as rt]
             [cljs.reader]
+            [clojure.string :as string]
             [goog.object :as gobj]
             [goog.string :as gstring]
             [goog.string.StringBuffer])
@@ -650,6 +651,12 @@
 (def adapter
   {:name :cljs
    :core-ns 'cljs.core
+   ;; cljs.core's own fns standing in for the stock ones (adapter :natives),
+   ;; one opt-in each, gated by the battery and the bench's JVM check
+   :natives {'clojure.core/frequencies frequencies 'clojure.core/group-by group-by
+             'clojure.core/partition partition 'clojure.core/re-seq re-seq
+             'clojure.core/sort sort 'clojure.core/sort-by sort-by
+             'clojure.string/join string/join}
    :catch-all :default
    :slurp slurp*
    :read-forms read-forms

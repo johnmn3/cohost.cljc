@@ -1501,7 +1501,11 @@
 (def -pattern (fn [x] (if (matcher? x) (:re x) (host/re-source x))))
 (def -find (fn ([mt] (m-find mt)) ([mt from] (m-find mt from))))
 (def -group (fn ([mt] (m-group mt)) ([mt i] (m-group mt i))))
-(def -groupCount (fn [mt] (host/re-group-count (:re mt))))
+;; the pattern of a Matcher never changes: its group count is asked once
+;; (re-groups asks at every match of re-seq)
+(def -groupCount (fn [mt] (let [st (:state mt)]
+                            (or (:gc @st)
+                                (let [n (host/re-group-count (:re mt))] (swap! st assoc :gc n) n)))))
 ;; Matcher.start(g) / end(g): the host's group spans (-1 for a group that
 ;; did not participate)
 (defn- m-span [mt g k]

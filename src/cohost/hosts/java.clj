@@ -2,7 +2,8 @@
   "Capabilities the JVM and jolt adapters share: both hosts name java.lang,
    java.util.regex and clojure.edn natively, so these are one-line calls into
    the host. Merged into hosts/jvm.clj's and hosts/jolt.clj's adapter maps."
-  (:require [clojure.edn :as edn]))
+  (:require [clojure.edn :as edn]
+            [clojure.string :as string]))
 
 (defn- groups [^java.util.regex.Matcher m]
   (mapv (fn [i] (.group m (int i))) (range (inc (.groupCount m)))))
@@ -68,8 +69,18 @@
             (instance? Error e) 'Error
             :else 'RuntimeException))))
 
+(def natives
+  "The host's own fns that stand in for the stock ones (adapter :natives), one
+   opt-in each: they have the host's semantics, so the battery, the corpus and
+   the bench's check against JVM Clojure's answers gate every entry."
+  {'clojure.core/frequencies frequencies 'clojure.core/group-by group-by
+   'clojure.core/partition partition 'clojure.core/re-seq re-seq
+   'clojure.core/sort sort 'clojure.core/sort-by sort-by
+   'clojure.string/join string/join})
+
 (def capabilities
-  {;; the JVM and jolt name clojure.lang and java.* classes themselves
+  {:natives natives
+   ;; the JVM and jolt name clojure.lang and java.* classes themselves
    :host-class (fn [token] (let [c (try (resolve token) (catch Throwable _ nil))] (when (class? c) c)))
    ;; interop the shim lacks is the host's own
    :interop-passthrough? true

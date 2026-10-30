@@ -464,24 +464,32 @@
         exprs (rw-all ctx (remove #(or (catch? %) (finally? %)) body))
         catches (filter catch? body)
         finallys (map (fn [[_ & fb]] (apply list 'finally (rw-all ctx fb))) (filter finally? body))
+        ;; this codemod's own output, walked again inside a macro's expansion:
+        ;; its one catch-all clause is kept, not wrapped in another layer
+        own? (and (= 1 (count catches))
+                  (let [[_ c b] (first catches)]
+                    (and (= c (:catch-all ctx)) (symbol? b) (starts-with? (name b) "e__stock"))))
         catch-clause
-        (when (seq catches)
-          (let [e (gensym "e__stock")
-                ;; one host catch; dispatch on the JVM class inside it, in order.
-                clauses (map (fn [[_ c b & cb]]
-                               (let [c (declass c)]
-                                 [(cond (contains? catch-all-classes c) true
-                                        ;; a JVM class: the shim's class test
-                                        (class-sym? c) (list (shim-fn "catches?") (list 'quote c) e)
-                                        ;; a host class (js/Error, a record): the host's instance?
-                                        :else (list 'instance? c e))
-                                  (apply list 'let* [b e] (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb))))]))
-                             catches)
-                chain (reduce (fn [else [test then]]
-                                (if (true? test) then (list 'if test then else)))
-                              (list 'throw e)
-                              (reverse clauses))]
-            [(list 'catch (:catch-all ctx) e chain)]))]
+        (if own?
+          (let [[_ c b & cb] (first catches)]
+            [(apply list 'catch c b (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb))))])
+          (when (seq catches)
+            (let [e (gensym "e__stock")
+                  ;; one host catch; dispatch on the JVM class inside it, in order.
+                  clauses (map (fn [[_ c b & cb]]
+                                 (let [c (declass c)]
+                                   [(cond (contains? catch-all-classes c) true
+                                          ;; a JVM class: the shim's class test
+                                          (class-sym? c) (list (shim-fn "catches?") (list 'quote c) e)
+                                          ;; a host class (js/Error, a record): the host's instance?
+                                          :else (list 'instance? c e))
+                                    (apply list 'let* [b e] (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb))))]))
+                               catches)
+                  chain (reduce (fn [else [test then]]
+                                  (if (true? test) then (list 'if test then else)))
+                                (list 'throw e)
+                                (reverse clauses))]
+              [(list 'catch (:catch-all ctx) e chain)])))]
     (apply list 'try (concat exprs catch-clause finallys))))
 
 (defn- rw-params [params]

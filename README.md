@@ -175,6 +175,33 @@ shortest complete example; `hosts/cljs.cljs` the most involved (no macro
 vars, no run-time namespace reflection, no run-time `extend`: the adapter
 supplies all three from the analyzer state).
 
+### Natives: the host's own fns, one at a time
+
+The stock definitions are the reference. A host can still opt into its own
+implementation of a stock fn, one name at a time, through `:natives`, a map
+from qualified name to implementation:
+
+```clojure
+:natives {'clojure.core/frequencies frequencies   ; the host's own fn
+          'clojure.core/group-by :host            ; the host core's var of that name
+          'clojure.string/join clojure.string/join}
+```
+
+- **What happens:** `cohost.core`, or the stock library's namespace, gets the native
+  instead of evaluating core.clj's definition. A name without an entry boots the stock
+  one, so a host starts with `{}` and adds entries as they prove out.
+- **What it costs:** a native has the host's semantics, not core.clj's. So every entry is
+  gated by the battery, the jolt corpus where it applies, and the bench, which checks
+  each stock answer against JVM Clojure's.
+- **What you see:** the boot report counts natives, and their vars carry
+  `:cohost/native`.
+- **Chunked seqs:** `:chunks` is the same idea for these. A host that gives its chunk
+  fns has the stock chunked branches (map, filter, concat, doseq, for) build and walk
+  its own 32-element chunks.
+
+`doc/perf/HANDOFF.md` says which natives each host has today and where the
+remaining time goes.
+
 ## License and provenance
 
 cohost's own work is given away freely; the code it loads keeps its original
