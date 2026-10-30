@@ -43,6 +43,24 @@
                       (shell {:dir "target/corpus-cwd"} "java" "-cp" cp "clojure.main" (abs "dev/corpus_jvm.clj")
                              (abs "src/cohost/corpus_report.cljc") (abs "target/corpus-stock.edn")
                              (abs "target/corpus-host.edn") (abs "target/corpus-gap-jvm.edn")))}
+  bench:jolt {:doc "cohost.bench on jolt: each case through jolt's own core and through the stock core, in one process (target/bench-jolt.edn)"
+              :task (do (babashka.fs/create-dirs "target")
+                        (apply shell "jolt" "-Scp" "src" "-m" "cohost.run" "--bench" *command-line-args*))}
+  bench:jvm {:doc "cohost.bench on JVM Clojure, whose own core is the baseline (target/bench-clj.edn)"
+             :task (do (babashka.fs/create-dirs "target")
+                       (apply shell "clojure" "-M" "-m" "cohost.run" "--bench" *command-line-args*))}
+  bench:lpy {:doc "cohost.bench on basilisp (target/bench-lpy.edn)"
+             :task (do (babashka.fs/create-dirs "target")
+                       (shell "basilisp" "run" "-p" "src" "-c"
+                              (str "(require 'cohost.run) (apply cohost.run/-main \"--bench\" " (pr-str (vec *command-line-args*)) ")")))}
+  bench:cljs {:doc "cohost.bench on self-hosted ClojureScript in Node (target/bench-cljs.edn)"
+              :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c")
+                        (apply shell "node" "target/cljs-node/main.js" "--bench" *command-line-args*))}
+  bench:browser {:doc "cohost.bench on self-hosted ClojureScript in Chromium (target/bench-chromium.edn)"
+                 :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-browser.edn" "-c")
+                           (shell "python3" "-I" "dev/browser_boot.py" "bench"))}
+  bench:report {:doc "the tables from target/bench-*.edn: every host against JVM Clojure, and each host's own core against the stock core"
+                :task (load-file "dev/bench_report.clj")}
   boot:all  {:doc "every host that is on PATH"
              :task (doseq [[t exe] [["boot:jolt" "jolt"] ["boot:lpy" "basilisp"] ["boot:jvm" "clojure"]]]
                      (if (babashka.fs/which exe)
