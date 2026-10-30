@@ -38,7 +38,7 @@
                                (when-let [f (first (filter #(= "--scale=" (subs % 0 (min 8 (count %)))) flags))]
                                  {:scale (host/read-string* (subs f 8))})
                                ;; --quick: one untimed warm call and one timed call per side
-                               (when (contains? flags "--quick") {:warm-ms 0 :budget-ms 0 :min-runs 1})))
+                               (when (contains? flags "--quick") {:warm-ms 0 :budget-ms 0 :min-runs 1 :settle-ms 0})))
       :else
       (do (battery/run-battery! boot/eval-str)
           (when-not (contains? flags "--no-libs")

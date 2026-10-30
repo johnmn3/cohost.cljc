@@ -149,7 +149,23 @@
     (eval-stock (str "(require " (apply str (interpose " " (map #(str "'" %) libs))) ")"))
     (- (now-ms) t0)))
 
-(def default-opts {:warm-ms 500 :budget-ms 1000 :min-runs 3 :max-runs 2000})
+(def default-opts {:warm-ms 500 :budget-ms 1000 :min-runs 3 :max-runs 2000 :settle-ms 250})
+
+(declare subst-n)
+
+(defn- settle!
+  "Run every case on both sides, untimed, for settle-ms each, before any case
+   is timed: a host with a JIT (the JVM, V8) is still compiling the boot's code
+   for seconds after it, and the first cases timed would pay for that."
+  [cases scale {:keys [settle-ms]}]
+  (when (pos? settle-ms)
+    (doseq [[_ _ n0 setup body] cases
+            ev [eval-host eval-stock]]
+      (let [n (max 1 (long (* n0 scale)))]
+        (try (when setup (ev (subst-n setup n)))
+             (let [f (ev (str "(fn [] " (subst-n body n) ")")) t0 (now-ms)]
+               (loop [] (f) (when (< (- (now-ms) t0) settle-ms) (recur))))
+             (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))))))
 
 (defn- subst-n
   "s with each %N replaced by n."
@@ -171,6 +187,7 @@
         label (or label (name (host/host-name)))]
     (ensure-host-ns!)
     (eval-stock (str "(require " (apply str (interpose " " (map #(str "'" (pr-str %)) requires))) ")"))
+    (settle! cases scale opts)
     (println (str "bench on " label (when (not= 1 scale) (str " at scale " scale))
                   ": median ms per call, the host's own core vs the stock core"))
     (let [results
