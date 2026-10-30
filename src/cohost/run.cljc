@@ -9,11 +9,12 @@
             [cohost.bench :as bench]))
 
 (defn -main
-  "args: [root] [--verbose] [--no-libs] [--bench [--quick]] [--eval src ...]: with
-   --eval, every following argument is read and evaluated in the stock user
-   namespace (printed as `src => value`) instead of running the battery; with
-   --bench, the twelve libraries are loaded and cohost.bench's cases timed
-   instead (--quick: one call per side, to check the cases run)."
+  "args: [root] [--verbose] [--no-libs] [--bench [--scale=x] [--quick]] [--eval src ...]:
+   with --eval, every following argument is read and evaluated in the stock
+   user namespace (printed as `src => value`) instead of running the battery;
+   with --bench, the twelve libraries are loaded and cohost.bench's cases
+   timed instead (--scale=x: each case at x times its size; --quick: one call
+   per side, to check the cases run)."
   [& args]
   (let [[args evals] (split-with #(not= "--eval" %) args)
         evals (rest evals)
@@ -33,6 +34,9 @@
                              (str "ERR " (host/error-message e)))))))
       (contains? flags "--bench")
       (bench/run-bench! (merge {:boot-ms boot-ms :libs-ms (bench/load-libs!)}
+                               ;; --scale=x: every case at x times its size
+                               (when-let [f (first (filter #(= "--scale=" (subs % 0 (min 8 (count %)))) flags))]
+                                 {:scale (host/read-string* (subs f 8))})
                                ;; --quick: one untimed warm call and one timed call per side
                                (when (contains? flags "--quick") {:warm-ms 0 :budget-ms 0 :min-runs 1})))
       :else
