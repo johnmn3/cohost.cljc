@@ -1,8 +1,12 @@
 # Perf pass: state and handoff
 
-Written 2026-10-30, 2:05 PM ET, on branch `claude/eager-euler-ci8ev7`.
-This file says where the perf work stands, what each change did when measured, and
-what is left. A new session should read it first, then the files it names.
+Written 2026-10-30, 2:05 PM ET, on branch `claude/eager-euler-ci8ev7`; brought up to date
+4:30 PM ET. This file says where the perf work stands, what each change did, and what is
+left. A new session should read it first, then the files it names.
+
+**State:** every planned item is implemented, tested on all four hosts and the jolt corpus,
+and on `main` at `3e59a25`. That commit is measured on every host in `doc/PERF.md`; its
+results are in `doc/perf/after/`.
 
 ## The request
 
@@ -12,8 +16,9 @@ what is left. A new session should read it first, then the files it names.
 > level fns that are faster, that shortcut the cljc indirection, we can let those cohosts
 > provide that. If the cohost provides no impl, it falls back to your cljc/clj impl."
 
-- **Pass 1:** remove the needless costs. Mostly done; the remaining items are listed below.
-- **Pass 2:** the opt-in "natives" layer. **Landed** (2:15 PM ET).
+- **Pass 1:** remove the needless costs. Done, with the planned items below.
+- **Pass 2:** the opt-in "natives" layer. **Landed** (2:15 PM ET); natives on every host
+  since `3e59a25`.
   - Adapter `:natives` maps a qualified name to a fn, or to `:host` for the host core's
     var of that name.
   - Boot (`boot.cljc` `native-of`, `intern-native!`) and library loads intern the native
@@ -25,9 +30,9 @@ what is left. A new session should read it first, then the files it names.
   - basilisp opts into none, so it shows the fallback.
   - Batteries green (2:13 PM ET): jolt and JVM 133/133 and 61/61, with 6 core natives
     plus join. ClojureScript is 131/133, the two host limits.
-  - Not yet benched or corpus-checked.
-- **Then:** measure before against after on every host, write `doc/PERF.md`, and run an
-  adversarial review.
+  - (Those counts are from 2:13 PM ET; today's are under "The planned items" below.)
+- **Then:** measured before against after on every host (`doc/PERF.md`), with an
+  adversarial review whose fixes are below.
 
 ## Resume
 
@@ -39,9 +44,9 @@ cd cohost.cljc && git checkout claude/eager-euler-ci8ev7
 bb boot:jolt
 ```
 
-Also run `bb boot:jvm` and `bb boot:cljs`. Each boots core.clj and runs the battery: 133
-behaviors plus 61 library cases. basilisp's `bb boot:lpy` takes about 5 minutes; it has
-not been run on this pass's changes.
+Also run `bb boot:jvm`, `bb boot:cljs` and `bb boot:lpy`. Each boots core.clj and runs the
+battery: 139 behaviors plus 61 library cases. basilisp's is the slowest; its boot alone is
+66 s.
 
 ```bash
 jolt -Scp src -m cohost.run --bench --quick
@@ -55,18 +60,20 @@ Quick bench on one host, a few minutes. A full measurement uses `bb bench:jolt`,
 bb bench:report target
 ```
 
-`bb bench:report --compare doc/perf/before-4ce56eb target` prints the before/after table.
+`bb bench:report --compare doc/perf/before target` prints the before/after table.
 
-- **"Before":** commit `4ce56eb`. Its results are in `doc/perf/before-4ce56eb/`. They are
-  scale 1 for clj, jolt, cljs and chromium. They were measured while other agents shared
-  the 4-CPU box, so they are noisy. For clean before-numbers, re-run the benches at
-  `4ce56eb` in a worktree, back to back with the after-run.
-- **Batteries on this tree** (2:03 PM ET): jolt 133/133 and 61/61; JVM 133/133 and 61/61.
-  ClojureScript is 131/133 and 61/61. Its two failures are the same as at `4ce56eb`:
-  `(= 1 1.0)` is true because JS has one number type, and a macro's `&env` is the
-  analyzer env. Both are known host limits, not regressions.
-- **jolt corpus** (`bb corpus:jolt <jolt's test/chez/corpus.edn>`): not run on this pass.
-  Run it before calling pass 1 done.
+- **"Before":** commit `4ce56eb`, in `doc/perf/before/`. `doc/PERF.md` says how it was run.
+- **"After":** commit `3e59a25`, in `doc/perf/after/`. jolt with `JOLT_TRACE=0` is in
+  `doc/perf/after-jolt-trace0/`.
+- **Batteries on `3e59a25`:**
+  - jolt 139/139 and 61/61; JVM 139/139 and 61/61.
+  - ClojureScript 137/139 and 61/61. Its two failures are known host limits:
+    `(= 1 1.0)` is true because JS has one number type, and a macro's `&env` is the
+    analyzer env.
+  - basilisp 138/139 and 61/61. Its one failure is `(= 1 1.0)`.
+- **jolt corpus** (`bb corpus:jolt <jolt's test/chez/corpus.edn>`): 4,297 of 4,942 rows on
+  `3e59a25`; the baseline passed 4,186 of 4,833. Of the rows in both runs, none regressed
+  and 25 more pass.
 
 ## After `19dbd1a`: the review fixes (validated)
 
@@ -98,49 +105,9 @@ These commits fix what the correctness review of the perf diff found
 - **Battery:** five new rows ("perf passes"). jolt and the JVM pass 138/138 and 61/61;
   ClojureScript 136/138 and 61/61, its two host facts as before. basilisp and the jolt
   corpus: see the commit that records them.
-- **Tried and backed out: walking each form once.** That meant leaving a rewritten macro's
-  arguments raw and rewriting them only in the expansion. It loses the type hints of
-  locals inside expansions (the checkcast the battery's "hinted argument" row tests), and
-  jolt's `&env` does not carry hints (its values are nil). Doing it needs another way to
-  carry hints, for example in a cohost meta key that the host keeps on its locals. The
-  double walk is the largest boot cost left.
-- **Not benchmarked yet:** these commits. `doc/perf/after` is `19dbd1a`.
-
-## Measured so far: jolt, quick runs, stock core median ms
-
-The settled before/after numbers, on every host, are in `doc/PERF.md`. This table is the
-quick runs this pass used along the way.
-
-The same box, `--quick`, so ±15%. The "own" column is jolt's own core on the same run.
-
-| case | before (`4ce56eb`) | now | × jolt's own, before → now |
-|---|---:|---:|---:|
-| fn-call | 10.9 | 1.34 | ×6.4 → ×0.83 |
-| loop-arith | 28.5 | 0.51 | ×55 → ×1.0 |
-| reduce-range | 9.8 | 4.95 | ×2.1 → ×1.1 |
-| lazy-pipeline | 1203 | 75 | ×196 → ×12 |
-| transduce | 379 | 31 | ×50 → ×3.5 |
-| into-vector | 613 | 33 | ×56 → ×3.2 |
-| transient-vector | 611 | 24 | ×141 → ×1.2–6 |
-| map-lookup | 41 | 21 | ×3.9 → ×1.3 |
-| keyword-lookup | 377 | 9.6 | ×74 → ×1.7 |
-| destructure | 620 | 30 | ×87 → ×4.2 |
-| frequencies | 1366 | 111 | ×56 → ×3.5 |
-| group-by | 918 | 82 | ×44 → ×3.8 |
-| sort | 278 | 112 | ×9.7 → ×3.7 |
-| sort-by | 4581 | 89 | ×168 → ×3.4 |
-| set-build | 662 | 51 | ×35 → ×4.1 |
-| distinct | 700 | 102 | ×14 → ×1.7 |
-| partition | 228 | 72 | ×24 → ×7.4 |
-| atom-swap | 197 | 13 | ×41 → ×2.8 |
-| multimethod | 83 | 19 | ×8.1 → ×1.9 |
-| str-build | 80 | 11 | ×21 → ×3.1 |
-| string-join | 1154 | 96 | ×346 → ×25 |
-| regex | 59 | 40 | ×30 → ×18 |
-| format | 25 | 6.8 | ×4.3 → ×0.85 |
-
-The JVM, ClojureScript and Chromium have not been re-benched since `4ce56eb`; their
-batteries pass. basilisp has been neither re-benched nor re-run.
+- **Walking each form once** was backed out here: it lost the type hints of locals inside
+  expansions, and jolt's `&env` does not carry hints. `3e59a25` does it with marker
+  locals instead (item 2 under "The planned items").
 
 ## What pass 1 changed (all in this commit)
 
@@ -191,7 +158,7 @@ batteries pass. basilisp has been neither re-benched nor re-run.
   - `ns-arg-wrap` has fixed arities.
   - When the host has chunks, cohost.core takes the eight chunk fns from it.
 
-## The planned items: all implemented (the commit after `5506876`)
+## The planned items: all implemented (`3e59a25`)
 
 Each item below was on this list and is now in the code, tested on all four hosts and the
 jolt corpus in one round.
@@ -230,8 +197,9 @@ jolt corpus in one round.
      `^CharSequence` is not theirs.
    - A native keeps the stock docstring and arglists (`def-form-meta`). On ClojureScript
      they also go into the analyzer, which `(var x)` reads.
-8. **Bench provenance:** every result records `:git` (HEAD, `-dirty`), and jolt's records
-   `JOLT_TRACE`. jolt is benched both ways.
+8. **Bench provenance:** every result records `:git` (HEAD, `-dirty`), except Chromium's,
+   whose page takes no flags. jolt's records `JOLT_TRACE`; it is benched both ways, with
+   no measurable difference.
 9. **StringBuilder:** a local known to hold one, by hint or by its init, and what `.append`
    on one returns, call the shim's method with no user-type dispatch.
 
@@ -245,10 +213,17 @@ jolt corpus in one round.
   `&env` first). Its `&env` battery row now passes.
 
 **Still open:**
+- **The largest gaps left,** measured on `3e59a25` (stock core against the host's own):
+  - transient vectors on ClojureScript, ×16.9 on Node;
+  - multimethod calls, ×3.7 to ×5.0 on every host;
+  - `transduce`, ×3.0 to ×4.0 on jolt and ClojureScript;
+  - jolt's lazy `count`/`filter`/`map`, ×3.9;
+  - basilisp's `re-seq`, `format` and `sort-by`, which are not natives there.
+  `doc/PERF.md` has them all.
 - **The perf finders that hit the usage limit** (adapters, shim-core, shim-rest) were not
   re-run: they are discovery, not planned work.
 - **The correctness review's later rounds** (its boot/policy finder and its "find more"
-  pass) were still running when this was written.
+  pass) never reported.
 
 ## Pass 2: the natives layer (landed as designed below; more opt-ins to come)
 
@@ -265,9 +240,6 @@ jolt corpus in one round.
 - **Opting in:** a host opts in one fn at a time. A native must pass the battery and the
   jolt corpus, and print JVM Clojure's answer in the bench (the report already checks
   stock answers against the JVM).
-- **First candidates,** from the remaining ratios: the lazy seq fns (map, filter,
-  partition, take), frequencies, group-by, into, `clojure.string/join`, and re-seq. Each
-  host's own implementation is ×3–25 faster on jolt today.
 - **Chunks first:** the `:chunks` capability (pass 1) is the first such opt-in. Taking
   `policy/chunk-names` from the host when the adapter has chunks is the pattern to
   generalize.
@@ -279,5 +251,7 @@ jolt corpus in one round.
   - `trace-transients-dispatch.json`
   - `find-boot-loader.json`: 13 findings, most landed.
   - `find-codemod-output.json`: 12 findings; items 4–8 above.
-- `doc/perf/before-4ce56eb/`: the before-numbers.
+- `doc/perf/before/`: the before-numbers (`4ce56eb`).
+- `doc/perf/after/`: the after-numbers (`3e59a25`); `doc/perf/after-jolt-trace0/`: jolt with
+  `JOLT_TRACE=0`.
 - `dev/perf-workflows/`: the finder and trace workflow scripts.
