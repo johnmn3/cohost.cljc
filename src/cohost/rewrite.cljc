@@ -36,13 +36,19 @@
           (= "." (str (nth s i))) i
           :else (recur (dec i)))))
 
+(def ^:private simple-class-names (atom {}))
 (defn simple-class-name
-  "`clojure.lang.Compiler$HostExpr` -> \"Compiler_HostExpr\"; `String` -> \"String\"."
+  "`clojure.lang.Compiler$HostExpr` -> \"Compiler_HostExpr\"; `String` -> \"String\".
+   Memoized (a per-character walk, asked at every static, constructor and
+   method site)."
   [sym]
-  (let [s (name sym)
-        i (last-dot s)
-        s (if (neg? i) s (subs s (inc i)))]
-    (apply str (map (fn [c] (if (= "$" (str c)) "_" (str c))) s))))
+  (or (get @simple-class-names sym)
+      (let [s (name sym)
+            i (last-dot s)
+            s (if (neg? i) s (subs s (inc i)))
+            r (apply str (map (fn [c] (if (= "$" (str c)) "_" (str c))) s))]
+        (swap! simple-class-names assoc sym r)
+        r)))
 
 ;; ---------------------------------------------------------------------------
 ;; class-symbol recognition
@@ -146,15 +152,122 @@
                       (if-let [c (and (symbol? t) (get checked-hints t))] (assoc m s c) (dissoc m s))))
           tags syms))
 
+(def ^:private checked-tokens (set (vals checked-hints)))
+
+(def ^:dynamic *local-classes*
+  "{local java.lang.StringBuilder} of the enclosing locals known to hold a
+   StringBuilder (hinted so, or bound to a new one): a method called on one is
+   the shim's, with no user-type dispatch (no user type is a StringBuilder)."
+  {})
+
+(def ^:private sb-hints '#{StringBuilder java.lang.StringBuilder})
+
+(defn- sb-ctor?
+  "Does form x build a StringBuilder?"
+  [x]
+  (and (seq? x)
+       (let [h (first x)]
+         (or (contains? '#{StringBuilder. java.lang.StringBuilder.} h)
+             (and (= 'new h) (contains? sb-hints (second x)))))))
+
+(defn- class-tags
+  "*local-classes* once [sym init] pairs are bound (init nil for a parameter)."
+  [classes pairs]
+  (reduce (fn [m [s init]] (if (or (contains? sb-hints (:tag (meta s))) (sb-ctor? init))
+                             (assoc m s 'java.lang.StringBuilder)
+                             (dissoc m s)))
+          classes pairs))
+
+(def ^:private marked-classes
+  "What a marker local can say of a local: one of these class tokens; the
+   index past the last says the local is untyped (a rebinding without a hint)."
+  (vec (distinct (concat (vals checked-hints) ['java.lang.StringBuilder]))))
+
+(def ^:private marker-prefix "cohost__hint_")
+
+(def ^:dynamic *marker-depth*
+  "{local depth} of the markers in scope: a nested binding's marker is one
+   deeper, and the deepest says what the local is."
+  {})
+
+(defn- marker
+  "The marker local saying local holds a token instance (token nil: no class),
+   at depth d. A macro's expansion is rewritten knowing only the locals its
+   &env names, and jolt's carries no hints."
+  [local token d]
+  (let [i (or (loop [i 0] (cond (= i (count marked-classes)) nil (= token (nth marked-classes i)) i :else (recur (inc i))))
+              (count marked-classes))]
+    (symbol (str marker-prefix i "_" d "__" (name local)))))
+
+(defn- parse-nat [s]
+  (when (seq s)
+    (loop [k 0 acc 0]
+      (if (>= k (count s)) acc
+          (let [v (get {"0" 0 "1" 1 "2" 2 "3" 3 "4" 4 "5" 5 "6" 6 "7" 7 "8" 8 "9" 9} (subs s k (inc k)))]
+            (when v (recur (inc k) (+ (* 10 acc) v))))))))
+
+(defn- marker-info
+  "[local token-or-nil depth] of a marker symbol, else nil."
+  [sym]
+  (let [n (name sym) p (count marker-prefix)]
+    (when (and (> (count n) p) (= marker-prefix (subs n 0 p)))
+      (let [r (subs n p)
+            us (loop [j 0 acc []] (if (>= j (count r)) acc (recur (inc j) (if (= "_" (subs r j (inc j))) (conj acc j) acc))))]
+        ;; r is i_d__local
+        (when (and (>= (count us) 3) (= (nth us 2) (inc (nth us 1))))
+          (let [i (parse-nat (subs r 0 (nth us 0)))
+                d (parse-nat (subs r (inc (nth us 0)) (nth us 1)))
+                local (subs r (+ 2 (nth us 1)))]
+            (when (and i d (<= i (count marked-classes)) (seq local))
+              [(symbol local) (when (< i (count marked-classes)) (nth marked-classes i)) d])))))))
+
+(defn- env-types
+  "{:tags :classes :depth} from the markers among a macro's &env locals: for
+   each local, its deepest marker."
+  [locals]
+  (let [deepest (reduce (fn [m [l t d]] (if (> d (get-in m [l 1] 0)) (assoc m l [t d]) m))
+                        {} (keep marker-info locals))]
+    {:tags (into {} (keep (fn [[l [t]]] (when (contains? checked-tokens t) [l t]))) deepest)
+     :classes (into {} (keep (fn [[l [t]]] (when (= 'java.lang.StringBuilder t) [l t]))) deepest)
+     :depth (into {} (map (fn [[l [_ d]]] [l d])) deepest)}))
+
+(defn- markers-for
+  "The marker bindings for syms, bound with the given tags and classes: a
+   typed local, or one that rebinds a name a marker typed. -> [bindings depths]"
+  [syms tags classes]
+  (reduce (fn [[bs ds] s]
+            (let [t (or (get tags s) (get classes s))]
+              (if (or t (contains? *marker-depth* s))
+                (let [d (inc (get *marker-depth* s 0))]
+                  [(conj bs (marker s t d) nil) (assoc ds s d)])
+                [bs ds])))
+          [[] *marker-depth*] (remove #{'&} syms)))
+
+(defn- with-markers
+  "body under a let* of the marker bindings (when there are any)."
+  [bs body]
+  (if (seq bs) [(apply list 'let* bs body)] body))
+
+(def ^:private class-prefixed (atom {}))
+(defn- class-prefixed?
+  "Does the name start with a JVM package prefix? Memoized per name (the
+   rewriter asks it of every bare symbol it walks)."
+  [s]
+  (let [c @class-prefixed]
+    (if (contains? c s)
+      (get c s)
+      (let [r (boolean (some #(starts-with? s %) class-prefixes))]
+        (if (> (count c) 50000) (reset! class-prefixed {s r}) (swap! class-prefixed assoc s r))
+        r))))
+
 (defn class-sym?
   "A bare symbol naming a JVM class (or clojure.core.protocols, whose fns the
    rewriter treats like statics: `clojure.core.protocols/coll-reduce`)."
   [x]
   (and (symbol? x) (nil? (namespace x))
-       (let [s (name x)]
-         (or (contains? java-lang-names x)
-             (contains? *imports* x)
-             (boolean (some #(starts-with? s %) class-prefixes))))))
+       (or (contains? java-lang-names x)
+           (contains? *imports* x)
+           (class-prefixed? (name x)))))
 
 (def static-fields
   "Members of `(. Class member)` / `Class/member` that are fields (values), not
@@ -249,7 +362,8 @@
    call that throws (and is reported) when reached."
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
-           record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?]
+           record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
+           instance-fn missing-dot]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:shim-names shim-names
    ;; {shim static name -> the host core's symbol} where the shim's static is
@@ -262,6 +376,12 @@
    ;; codemod rewrites (its arguments then stay as written); inline-fn:
    ;; (fn [var arity]) -> the :inline fn of a core fn, where the host's compiler
    ;; ignores :inline and the codemod applies it (nil elsewhere)
+   ;; instance-fn: (fn [class-token]) -> the name of the shim's prebuilt
+   ;; instance test for it; missing-dot: (fn [method]) -> the name of the
+   ;; dispatcher over a method the shim lacks (both built on first use)
+   :instance-fn instance-fn
+   :missing-dot missing-dot
+   :kw-unrenames-cache (atom nil)
    :resolve-head resolve-head
    :stock-name (or stock-name (constantly nil))
    :rewritten-macro? (or rewritten-macro? (constantly false))
@@ -330,6 +450,17 @@
    would compile the quoted JVM interop the stock inline fns build."
   false)
 
+(declare strip-meta)
+
+(defn- strip-arglists
+  "An :arglists value with its type hints gone, as the params' are: the JVM
+   compiler reads a ^long there as a primitive interface the fn lacks."
+  [x]
+  (cond (symbol? x) (if (meta x) (with-meta x (strip-meta (meta x))) x)
+        (vector? x) (with-meta (mapv strip-arglists x) (strip-meta (meta x)))
+        (seq? x) (let [y (apply list (map strip-arglists x))] (if (meta x) (with-meta y (meta x)) y))
+        :else x))
+
 (defn- strip-meta
   "Type hints are JVM-compiler directives and name JVM classes (a symbol or a
    string); any other :tag is data and stays."
@@ -337,7 +468,8 @@
   (when m
     (let [m (if (let [t (:tag m)] (or (symbol? t) (string? t))) (dissoc m :tag) m)
           m (dissoc m :rettag)
-          m (if *strip-inline?* (dissoc m :inline :inline-arities) m)]
+          m (if *strip-inline?* (dissoc m :inline :inline-arities) m)
+          m (if (contains? m :arglists) (update m :arglists strip-arglists) m)]
       (when (seq m) m))))
 
 (defn- meta-capable? [x]
@@ -387,6 +519,18 @@
           :else (do (miss! ctx :static c m)
                     (apply list (list (shim-fn "missing-static") (list 'quote c) (list 'quote m)) args')))))
 
+(defn- sb-typed?
+  "Is form x certainly a StringBuilder (a local known to hold one, a new one,
+   or what append, insert or reverse of one returns)?"
+  [x]
+  (cond (symbol? x) (= 'java.lang.StringBuilder (get *local-classes* x))
+        (sb-ctor? x) true
+        (seq? x) (let [h (first x)]
+                   (and (symbol? h) (nil? (namespace h))
+                        (contains? '#{.append .insert .reverse} h)
+                        (sb-typed? (second x))))
+        :else false))
+
 (defn- rw-method
   "(.m target args) -> (cohost.shim/dot$m target args), the shim's prebuilt
    dispatcher for m (or ((cohost.shim/dot \"m\" f) target args) where there
@@ -418,10 +562,20 @@
                           (list (shim-fn "missing-method") (list 'quote m))))]
     (if f
       (let [d (str "dot$" (name m))]
-        (if (known? ctx d)
+        (cond
+          ;; (.reduce (chunk-first s) f val): IChunk.reduce, a reduced result
+          ;; unopened (a host's chunk may be a vector, whose reduce opens it)
+          (and (= "reduce" (name m)) (= 3 (count xs)) (known? ctx "chunk-reduce")
+               (let [t (first xs)] (and (seq? t) (symbol? (first t)) (= "chunk-first" (name (first t))))))
+          (apply list (shim-fn "chunk-reduce") xs')
+          ;; a StringBuilder: the shim's method, no user-type dispatch
+          (and (known? ctx nm) (sb-typed? (first xs)))
+          (apply list (method-sym m) xs')
           ;; the prebuilt dispatcher (cohost.shim/install-dots!)
-          (apply list (shim-fn d) xs')
-          (apply list (list (shim-fn "dot") (name m) f) xs')))
+          (known? ctx d) (apply list (shim-fn d) xs')
+          ;; a method the shim lacks: its thrower's dispatcher, built once
+          (and (not (known? ctx nm)) (:missing-dot ctx)) (apply list (shim-fn ((:missing-dot ctx) m)) xs')
+          :else (apply list (list (shim-fn "dot") (name m) f) xs')))
       ;; the host's own interop, spelled as the source spelled it (a record
       ;; field read by (.f r) is a field there, not a zero-argument method)
       (host-form xs'))))
@@ -525,10 +679,15 @@
         arities (if single? [more] more)
         names (into (if nm #{nm} #{})
                     (mapcat (fn [[params]] (filter #(and (symbol? %) (not= '& %)) params)) arities))
-        arities' (binding [*locals* (into *locals* names)
-                           *local-tags* (hint-tags *local-tags* (mapcat (fn [[params]] (filter symbol? params)) arities))]
+        arities' (binding [*locals* (into *locals* names)]
                    (doall (map (fn [[params & body]]
-                                 (let [body' (rw-all ctx body)
+                                 (let [ps (filter symbol? params)
+                                       tags (hint-tags *local-tags* ps)
+                                       classes (class-tags *local-classes* (map (fn [p] [p nil]) ps))
+                                       [bs depths] (markers-for ps tags classes)
+                                       body' (binding [*local-tags* tags *local-classes* classes *marker-depth* depths]
+                                               (doall (rw-all ctx body)))
+                                       body' (with-markers bs body')
                                        body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')]
                                    (apply list (rw-params params) body')))
                                arities)))]
@@ -540,9 +699,22 @@
               bvec))
 
 (defn- rw-let* [ctx [h bvec & body]]
-  (binding [*locals* (into *locals* (filter symbol? (take-nth 2 bvec)))
-            *local-tags* (hint-tags *local-tags* (filter symbol? (take-nth 2 bvec)))]
-    (apply list h (rw-bindings ctx bvec) (doall (rw-all ctx body)))))
+  (let [syms (filter symbol? (take-nth 2 bvec))
+        tags (hint-tags *local-tags* syms)
+        classes (class-tags *local-classes* (filter (comp symbol? first) (partition 2 bvec)))
+        [bs depths] (markers-for syms tags classes)]
+    (binding [*locals* (into *locals* syms)
+              *local-tags* tags *local-classes* classes *marker-depth* depths]
+      (let [bvec' (rw-bindings ctx bvec)
+            body' (doall (rw-all ctx body))]
+        (if (and (= h 'let*) (seq bs))
+          ;; each marker right after its local, so the inits after it see it
+          ;; too (a loop*'s bindings are recur's arity: its body gets them)
+          (let [ms (into {} (map (fn [[m _]] [(first (marker-info m)) m]) (partition 2 bs)))
+                bvec'' (vec (mapcat (fn [[b v]] (if-let [m (and (symbol? b) (get ms b))] [b v m nil] [b v]))
+                                    (partition 2 bvec')))]
+            (apply list h (carry-meta bvec'' bvec') body'))
+          (apply list h bvec' (with-markers bs body')))))))
 
 ;; Binding forms before they expand: the names they bind are locals in the
 ;; whole form, so `(let [String "x"] String)` keeps its local.
@@ -604,8 +776,16 @@
     (apply list h (rw ctx e)
            (doall (map-indexed (fn [i x] (if (and (even? i) (< i (dec n))) (unrename-data x) (rw ctx x))) clauses)))))
 
+(def ^:private code-meta-keys
+  "Keys of a def name's metadata whose value is code the host evaluates:
+   deftest's :test fn, core.clj's :inline fns."
+  [:test :inline :inline-arities])
+
 (defn- rw-def [ctx [_ nm & more]]
   (let [nm (carry-meta nm nm)
+        nm (if (some #(contains? (meta nm) %) code-meta-keys)
+             (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
+             nm)
         nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)]
     (apply list 'def nm (rw-all ctx more))))
 
@@ -976,6 +1156,7 @@
     (let [h (declass (canon-head (first form)))
           args (rest form)
           hn (when (and (symbol? h) (nil? (namespace h))) (name h))
+          inst-c (delay (rw ctx (second form)))
           out
           (cond
             (= h 'var) (if (symbol? (second form)) (list 'var (restock ctx (second form))) form)
@@ -1013,8 +1194,13 @@
                  ;; macro's arguments (clojure.test's is reads instance? there)
                  *inline?*
                  (or (nil? (:resolve-head ctx)) (= 'instance? (stock-name ctx h)))
-                 (let [c (rw ctx (second form))] (and (seq? c) (= 'quote (first c)) (symbol? (second c)))))
-            (list (shim-fn "instance-of?") (rw ctx (second form)) (rw ctx (nth form 2)))
+                 (let [c @inst-c] (and (seq? c) (= 'quote (first c)) (symbol? (second c)))))
+            (let [c @inst-c
+                  nm (when-let [f (:instance-fn ctx)] (f (second c)))]
+              (if nm
+                ;; the class's prebuilt test (cohost.shim/install-is!)
+                (list (shim-fn nm) (rw ctx (nth form 2)))
+                (list (shim-fn "instance-of?") c (rw ctx (nth form 2)))))
             ;; (set! (. Class field) v) / (set! Class/field v) on a settable static
             (and (= h 'set!) (let [t (second form)]
                                (or (and (seq? t) (= '. (first t)) (class-sym? (declass (second t))))
@@ -1045,6 +1231,14 @@
               (if (and (empty? args) (contains? static-fields m))
                 (or (emit-static-value ctx c m) (apply list h args))
                 (rw-static ctx c m args)))
+            ;; a macro whose expansion the codemod rewrites (a stock or user
+            ;; macro, not the host's): its arguments stay as written, and are
+            ;; rewritten once, in the expansion, as the JVM compiler sees them
+            ;; after macroexpansion: inlining at the arity they end at
+            ;; ((-> 10 (- 1 2))), assert and is reading the forms, and the
+            ;; locals of &env (typed ones through their markers)
+            (rewritten-macro? ctx h)
+            (apply list (rw ctx h) args)
             ;; a binding form before it expands: what it binds are locals
             (and hn (contains? binding-heads hn))
             (let [names (bound-names hn args)]
@@ -1077,14 +1271,31 @@
     (:var-form ctx) (or ((:var-form ctx) form) form)
     :else form))
 
+(defn- kw-unrenames
+  "*kw-unrenames* for the renames map as it is: computed again only when a
+   library load changed it."
+  [ctx]
+  (let [rn @(:renames ctx)
+        c (:kw-unrenames-cache ctx)
+        [k v] (when c @c)]
+    (if (and c (identical? k rn))
+      v
+      (let [v (into {(:core-ns ctx) "clojure.core"} (keep (fn [[o m]] (when (not= o m) [m o]))) rn)]
+        (when c (reset! c [rn v]))
+        v))))
+
 (defn rewrite
   "The codemod: form -> form the host can compile against cohost.shim.
    opts :locals — the local names in scope (a macro expansion's, from its
    &env)."
   ([ctx form] (rewrite ctx form nil))
   ([ctx form {:keys [locals]}]
-   (let [cur (when-let [f (:current-ns ctx)] (str (f)))]
+   (let [cur (when-let [f (:current-ns ctx)] (str (f)))
+         types (env-types locals)]
      (binding [*locals* (into #{} locals)
+               *local-tags* (:tags types)
+               *local-classes* (:classes types)
+               *marker-depth* (:depth types)
                *inline?* true
                *heads* (volatile! {})
                *strip-inline?* (boolean (:strip-inline? ctx))
@@ -1093,8 +1304,7 @@
                *ns-renames* @(:renames ctx)
                *loader-nses* @(:loader-nses ctx)
                *per-arity-impls* (:per-arity-impls? ctx)
-               *kw-unrenames* (into {(:core-ns ctx) "clojure.core"}
-                                    (keep (fn [[o m]] (when (not= o m) [m o]))) @(:renames ctx))
+               *kw-unrenames* (kw-unrenames ctx)
                *host-type* (:host-type ctx)]
        (if-let [ref (:shim-ref ctx)]
          (binding [*shim-ref* ref] (rw ctx form))

@@ -36,9 +36,10 @@
    :var-bound? (fn [v] (bound? v))
    :var-thread-bound? (fn [v] (thread-bound? v))
    ;; what jolt's own lazy-seq expands to, not (clojure.lang.LazySeq. f): no
-   ;; host-new lookup and apply per lazy seq, and a body that throws runs again
-   ;; on the next force, as the JVM's LazySeq does
-   :lazy-seq (fn [f] (make-lazy-seq (^{:once true} fn* [] (coll->cells (f)))))
+   ;; host-new lookup and apply per lazy seq. The wrapper is no ^:once fn: a
+   ;; force after a failure calls the stock thunk again (itself ^:once, so it
+   ;; sees its own cleared captures, as on the JVM)
+   :lazy-seq (fn [f] (make-lazy-seq (fn* [] (coll->cells (f)))))
    :delay (fn [f] (clojure.lang.Delay. f))
    :exception? (fn [x] (instance? Throwable x))
    :nano-time (fn [] (System/nanoTime))

@@ -3,7 +3,13 @@
 ;; core.clj, prints the boot report, and runs the behavior battery
 ;; (src/cohost/battery.cljc) in a namespace that sees only the booted core.
 {:tasks
- {boot:jolt {:doc "jolt (Chez Scheme): the `jolt` binary on PATH"
+ {;; the source a bench ran: git HEAD, -dirty when the tree had changes
+  :init (defn git-rev []
+          (try (let [h (clojure.string/trim (:out (babashka.process/shell {:out :string} "git" "rev-parse" "--short" "HEAD")))
+                     dirty (seq (clojure.string/trim (:out (babashka.process/shell {:out :string} "git" "status" "--porcelain" "--" "src" "bb.edn"))))]
+                 (str "--git=" h (when dirty "-dirty")))
+               (catch Exception _ "--git=unknown")))
+  boot:jolt {:doc "jolt (Chez Scheme): the `jolt` binary on PATH"
              :task (shell "jolt" "-Scp" "src" "-m" "cohost.run")}
   boot:lpy  {:doc "basilisp (Python): the uv/pip-installed `basilisp` on PATH"
              :task (shell "basilisp" "run" "-p" "src" "-c" "(require 'cohost.run) (cohost.run/-main)")}
@@ -45,17 +51,21 @@
                              (abs "target/corpus-host.edn") (abs "target/corpus-gap-jvm.edn")))}
   bench:jolt {:doc "cohost.bench on jolt: each case through jolt's own core and through the stock core, in one process (target/bench-jolt.edn)"
               :task (do (babashka.fs/create-dirs "target")
-                        (apply shell "jolt" "-Scp" "src" "-m" "cohost.run" "--bench" *command-line-args*))}
+                        ;; jolt wraps calls in runtime-compiled code (cohost's) in
+                        ;; trace bookkeeping unless JOLT_TRACE=0; its own core is
+                        ;; compiled ahead of time: the setting rides with the results
+                        (apply shell "jolt" "-Scp" "src" "-m" "cohost.run" "--bench" (git-rev)
+                               (str "--note=JOLT_TRACE=" (or (System/getenv "JOLT_TRACE") "unset")) *command-line-args*))}
   bench:jvm {:doc "cohost.bench on JVM Clojure, whose own core is the baseline (target/bench-clj.edn)"
              :task (do (babashka.fs/create-dirs "target")
-                       (apply shell "clojure" "-M" "-m" "cohost.run" "--bench" *command-line-args*))}
+                       (apply shell "clojure" "-M" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
   bench:lpy {:doc "cohost.bench on basilisp (target/bench-lpy.edn)"
              :task (do (babashka.fs/create-dirs "target")
                        (shell "basilisp" "run" "-p" "src" "-c"
-                              (str "(require 'cohost.run) (apply cohost.run/-main \"--bench\" " (pr-str (vec *command-line-args*)) ")")))}
+                              (str "(require 'cohost.run) (apply cohost.run/-main \"--bench\" " (pr-str (vec (cons (git-rev) *command-line-args*))) ")")))}
   bench:cljs {:doc "cohost.bench on self-hosted ClojureScript in Node (target/bench-cljs.edn)"
               :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c")
-                        (apply shell "node" "target/cljs-node/main.js" "--bench" *command-line-args*))}
+                        (apply shell "node" "target/cljs-node/main.js" "--bench" (git-rev) *command-line-args*))}
   bench:browser {:doc "cohost.bench on self-hosted ClojureScript in Chromium (target/bench-chromium.edn)"
                  :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-browser.edn" "-c")
                            (shell "python3" "-I" "dev/browser_boot.py" "bench"))}

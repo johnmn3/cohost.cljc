@@ -138,6 +138,7 @@
    ["an inline fn applies after macroexpansion" "[(-> 10 (- 1 2)) (-> 100 (/ 2 5)) (-> 1 (max 3 5)) (->> 2 (- 10)) ((fn [inc x] (inc x)) #(* 10 %) 5) (let [compare (fn [a b] :mine)] (compare 1 2)) (let [inc dec] (when true (inc 5)))]" [7 10 5 8 50 :mine 4]]
    ["assert sees the source form" "(try (assert (= 3 (count [1 2]))) (catch Throwable e (ex-message e)))" "Assert failed: (= 3 (count [1 2]))"]
    ["a record field named like a core fn" "(do (defprotocol BtStep (bt-run [s x])) (defrecord BtScale [inc] BtStep (bt-run [_ x] (inc x))) (bt-run (->BtScale #(* 10 %)) 5))" 50]
+   ["reduced through a host's chunks" "[(reduce (fn [_ x] (when (> x 10) (reduced x))) nil (filter odd? (vec (range 100)))) (transduce (take 3) conj [] (map inc (vec (range 100)))) (reduce + (filter even? (range 10)))]" [11 [1 2 3] 20]]
    ["multimethod: a miss is not cached" "(do (derive ::bt-dog ::bt-animal) (defmulti bt-speak identity) (defmethod bt-speak [::bt-animal] [_] :generic) [(try (bt-speak (list ::bt-dog)) (catch IllegalArgumentException e :none)) (bt-speak [::bt-dog])])" [:none :generic]]
    ["macroexpand-1 is the macro's own expansion" "(do (defmacro bt-mx [x] `(.toString ~x)) (macroexpand-1 '(bt-mx 5)))" '(.toString 5)]
    ["namespace-munge and uri?" "[(namespace-munge 'a-b.c-d) (uri? \"http://x\")]" ["a_b.c_d" false]]

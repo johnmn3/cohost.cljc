@@ -209,6 +209,8 @@
                                 (for [c (distinct (vals rw/checked-hints))] [(rw/cast-name c) c])))))]
   (rw/make-ctx {:shim-names shim-names
                 :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
+                :instance-fn shim/install-is!
+                :missing-dot shim/install-missing-dot!
                 :resolve-head (head-resolver)
                 :stock-name (stock-name)
                 :rewritten-macro? rewritten-macro?
@@ -462,7 +464,9 @@
    :cohost/native, with the stock definition's documentation (else the host
    var's, for a :host native)."
   [ns-sym nm [v hv] form]
-  (let [h (host/intern! ns-sym nm v)]
+  ;; the name without the form's reader metadata (unevaluated: an :arglists
+  ;; of (quote ...) the JVM compiler would read as the arglists)
+  (let [h (host/intern! ns-sym (symbol (name nm)) v)]
     (host/alter-var-meta! h merge (when hv (select-keys (host/var-meta hv) [:doc :arglists]))
                           (def-form-meta form)
                           {:cohost/native true :cohost/wrapped true})
@@ -589,6 +593,13 @@
                    (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil))
                    (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
          (scan-macros! ctx)))
+     ;; reduce with core's + or * hands the host its own (shim/host-reducers)
+     (shim/set-host-reducers!
+      (into {} (for [nm '[+ *]
+                     :let [sv (some-> (host/interned-var core-ns nm) host/var-root)
+                           hv (some-> (host/resolve-core nm) host/var-root)]
+                     :when (and (fn? sv) (fn? hv) (not (identical? sv hv)))]
+                 [sv hv])))
      (reset! (:booted? ctx) true)
      (let [r (assoc @report
                     :rewrite-misses (rw/misses ctx)

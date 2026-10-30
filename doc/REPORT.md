@@ -405,9 +405,9 @@ open is listed under "Deliberately not done here". What changed:
 
 - `(= 1 1.0)` is `true` on ClojureScript (one number type) and on basilisp
   (Python `1 == 1.0`).
-- `&env` inside a user macro is the host's environment: ClojureScript's
-  analyzer env, basilisp's compiler context. The JVM's locals map is not
-  reconstructible.
+- `&env` inside a user macro is ClojureScript's analyzer env, not the JVM's
+  locals map. basilisp passes a locals map, but `&env` first: cohost hands a
+  stock or user macro `&form` and `&env` in core.clj's order.
 
 ## The design that fell out
 

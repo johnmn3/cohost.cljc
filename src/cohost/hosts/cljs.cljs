@@ -669,8 +669,27 @@
    ;; a macro's &env is the analyzer env
    :env-locals (fn [env] (keys (:locals env)))
    :natives {'clojure.core/frequencies frequencies 'clojure.core/group-by group-by
-             'clojure.core/partition partition 'clojure.core/re-seq re-seq
-             'clojure.core/sort sort 'clojure.core/sort-by sort-by
+             'clojure.core/partition partition 'clojure.core/partition-all partition-all
+             'clojure.core/re-seq re-seq 'clojure.core/sort sort 'clojure.core/sort-by sort-by
+             'clojure.core/map map 'clojure.core/filter filter 'clojure.core/remove remove
+             'clojure.core/keep keep 'clojure.core/mapcat mapcat 'clojure.core/concat concat
+             'clojure.core/take take 'clojure.core/take-while take-while
+             'clojure.core/drop drop 'clojure.core/drop-while drop-while
+             'clojure.core/interpose interpose 'clojure.core/distinct distinct
+             'clojure.core/mapv mapv 'clojure.core/filterv filterv
+             'clojure.core/reduce reduce 'clojure.core/reduce-kv reduce-kv
+             'clojure.core/into into 'clojure.core/vec vec 'clojure.core/set set
+             'clojure.core/merge merge 'clojure.core/merge-with merge-with
+             'clojure.core/select-keys select-keys 'clojure.core/zipmap zipmap
+             'clojure.core/assoc-in assoc-in 'clojure.core/update-in update-in 'clojure.core/get-in get-in
+             'clojure.core/update update
+             'clojure.core/every? every? 'clojure.core/some some
+             'clojure.core/comp comp 'clojure.core/partial partial 'clojure.core/juxt juxt
+             'clojure.core/complement complement
+             'clojure.core/swap! swap! 'clojure.core/reset! reset! 'clojure.core/compare-and-set! compare-and-set!
+             'clojure.core/swap-vals! swap-vals! 'clojure.core/reset-vals! reset-vals!
+             ;; (the other clojure.string fns: the JVM's checkcast of a
+             ;; ^CharSequence argument is not ClojureScript's)
              'clojure.string/join string/join}
    :catch-all :default
    :slurp slurp*
@@ -695,7 +714,21 @@
    :var-get (fn [h] (let [[ns nm] (slot h)] (js-path ns nm)))
    :var-raw-root raw-root
    :var-meta var-meta
-   :alter-var-meta! (fn [h f & args] (swap! meta-store update (slot h) #(apply f (or % {}) args)) h)
+   :alter-var-meta! (fn [h f & args]
+                      (let [k (slot h)
+                            m (get (swap! meta-store update k #(apply f (or % {}) args)) k)
+                            [ns nm] k]
+                        ;; (var x) compiled by the analyzer reads the def's :meta:
+                        ;; the documentation goes there too (a native's, doc's)
+                        (when (get-in @st [::ana/namespaces ns :defs nm])
+                          (let [docs (cond-> (select-keys m [:doc :added])
+                                       (:arglists m) (assoc :arglists (list 'quote (:arglists m))))]
+                            ;; the entry's own :doc and :arglists are what (var x)
+                            ;; reads; the rest it takes from :meta
+                            (swap! st update-in [::ana/namespaces ns :defs nm]
+                                   (fn [e] (-> (merge e (select-keys docs [:doc :arglists]))
+                                               (update :meta merge docs))))))
+                        h))
    ;; a var bound in this thread keeps its root in the oldest frame that holds it:
    ;; alter-var-root (with-redefs) changes that root, not the binding's value
    :alter-var-root! (fn [h f]

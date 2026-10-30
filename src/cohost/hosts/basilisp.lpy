@@ -305,6 +305,23 @@
    ;; namespace: inside cohost.core that + is not basilisp's, so the codemod
    ;; names the shim's statics, not basilisp.core's fns
    :host-aliases? false
+   ;; basilisp.core's own fns standing in for the stock ones (adapter
+   ;; :natives), one opt-in each, gated by the battery
+   :natives {'clojure.core/map map 'clojure.core/filter filter 'clojure.core/remove remove
+             'clojure.core/keep keep 'clojure.core/mapcat mapcat 'clojure.core/concat concat
+             'clojure.core/take take 'clojure.core/take-while take-while
+             'clojure.core/drop drop 'clojure.core/drop-while drop-while
+             'clojure.core/mapv mapv 'clojure.core/filterv filterv
+             'clojure.core/reduce reduce 'clojure.core/into into 'clojure.core/vec vec 'clojure.core/set set
+             'clojure.core/merge merge 'clojure.core/assoc-in assoc-in 'clojure.core/update-in update-in
+             'clojure.core/get-in get-in 'clojure.core/update update
+             'clojure.core/every? every? 'clojure.core/some some
+             'clojure.core/comp comp 'clojure.core/partial partial 'clojure.core/juxt juxt
+             'clojure.core/complement complement
+             'clojure.core/swap! swap! 'clojure.core/reset! reset!
+             'clojure.core/frequencies frequencies 'clojure.core/group-by group-by
+             'clojure.core/partition partition 'clojure.core/partition-all partition-all
+             'clojure.core/distinct distinct 'clojure.core/interpose interpose}
    ;; core.clj's :inline expansions at rewrite time, as the JVM compiler applies
    ;; them (basilisp's def meta has them stripped: boot captures them)
    :rewrite-inline? true

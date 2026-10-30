@@ -446,6 +446,51 @@
         x
         (throw (host/ex* 'java.lang.ClassCastException (cast-message c x)))))))
 
+(defn- intern-shim!
+  "A shim var name holding v (on ClojureScript, a property of the shim's
+   namespace object)."
+  [d v]
+  #?(:cljs (gobj/set js/cohost.shim (munge d) v)
+     :default (host/intern! 'cohost.shim (symbol d) v)))
+
+(defn- token-name [prefix c]
+  (str prefix (apply str (map (fn [ch] (let [ch (str ch)] (if (= "." ch) "_" ch))) (str c)))))
+
+(defn- instance-fn
+  "instance-of? for the one class token c, its predicate looked up once."
+  [c]
+  (let [p (get interface-preds c)
+        c' (if p c (canon c))
+        p (or p (get interface-preds c'))]
+    (fn [x]
+      (boolean (and (some? x)
+                    (or (if p (p x) (token-isa? (class-of x) c'))
+                        (and (not (builtin? x)) (not (h-exception? x)) (host/host-instance? c' x))))))))
+
+(def ^:private installed-is (atom {}))
+(defn install-is!
+  "The name of a shim var holding instance-of? for class token c, built on its
+   first use: the codemod's (instance? C x) calls it."
+  [c]
+  (or (get @installed-is c)
+      (let [d (token-name "is$" c)]
+        (intern-shim! d (instance-fn c))
+        (swap! installed-is assoc c d)
+        d)))
+
+(declare dot)
+(def ^:private installed-missing (atom {}))
+(defn install-missing-dot!
+  "The name of a shim var holding the dispatcher for a method m the shim
+   lacks (a user type's own member, else the thrower), built on its first use
+   rather than at every call."
+  [m]
+  (or (get @installed-missing m)
+      (let [d (str "dot$" (name m))]
+        (intern-shim! d (dot (name m) (missing-method (symbol (name m)))))
+        (swap! installed-missing assoc m d)
+        d)))
+
 (defn install-casts!
   "For each [name token]: a shim var name holding check-cast for that class
    token, built once (on ClojureScript, a property of the shim's namespace
@@ -658,7 +703,15 @@
 ;; ---------------------------------------------------------------------------
 ;; Util
 
-(def protocols-coll-reduce (fn ([coll f] (reduce f coll)) ([coll f init] (reduce f init coll))))
+(def ^:private host-reducers
+  "{stock fn -> the host's own}: core's + and * (cohost.boot sets it after the
+   boot). reduce calls its f with 0 or 2 arguments, where the stock fn is the
+   host's, and a host reduce over its own + open-codes the step."
+  (atom {}))
+(defn set-host-reducers! [m] (reset! host-reducers m))
+(defn- host-reducer [f] (get @host-reducers f f))
+
+(def protocols-coll-reduce (fn ([coll f] (reduce (host-reducer f) coll)) ([coll f init] (reduce (host-reducer f) init coll))))
 (declare -kvreduce)
 (def protocols-kv-reduce (fn [coll f init] (-kvreduce coll f init)))
 (def protocols-iterator-reduce! (fn [it f init] (reduce f init (RT-chunkIteratorSeq it))))
@@ -1377,7 +1430,7 @@
 
 (defn- m-group
   ([mt] (m-group mt 0))
-  ([mt g] (let [i (group-index mt g) gs (nth (m-match mt) 2)]
+  ([mt g] (let [i (group-index mt g) gs (force (nth (m-match mt) 2))]
             (if (< -1 i (count gs))
               (nth gs i)
               (throw (host/ex* 'java.lang.IndexOutOfBoundsException (str "No group " i)))))))
@@ -1427,6 +1480,7 @@
 
 (defn- m-append-replacement [mt sb repl]
   (let [[b e gs] (m-match mt)
+        gs (force gs)
         {:keys [s append]} @(:state mt)]
     (h-sb-append! sb (subs s append b))
     (h-sb-append! sb (expand-replacement repl gs (group-names (:re mt))))
@@ -1511,10 +1565,10 @@
 ;; Matcher.start(g) / end(g): the host's group spans (-1 for a group that
 ;; did not participate)
 (defn- m-span [mt g k]
-  (let [i (group-index mt g) r (m-match mt) gs (nth r 2)]
+  (let [i (group-index mt g) r (m-match mt) gs (force (nth r 2))]
     (cond (not (< -1 i (count gs))) (throw (host/ex* 'java.lang.IndexOutOfBoundsException (str "No group " i)))
           (zero? i) (nth r k)
-          :else (if-let [sps (nth r 3 nil)]
+          :else (if-let [sps (force (nth r 3 nil))]
                   (if-let [sp (nth sps i)] (nth sp (dec k)) -1)
                   ((unsupported "Matcher.start(group)"))))))
 (def -start (fn ([mt] (nth (m-match mt) 0)) ([mt i] (m-span mt i 1))))
@@ -1624,9 +1678,21 @@
 (def -reduce (if-let [chunk? (:chunk? hc)]
               ;; reduce1's (.reduce (chunk-first s) f val) over a host chunk
               (let [chunk-reduce (:chunk-reduce hc)]
-                (fn ([coll f] (reduce f coll))
-                  ([coll f init] (if (chunk? coll) (chunk-reduce coll f init) (reduce f init coll)))))
-              (fn ([coll f] (reduce f coll)) ([coll f init] (reduce f init coll)))))
+                (fn ([coll f] (reduce (host-reducer f) coll))
+                  ([coll f init] (if (chunk? coll) (chunk-reduce coll f init) (reduce (host-reducer f) init coll)))))
+              (fn ([coll f] (reduce (host-reducer f) coll)) ([coll f init] (reduce (host-reducer f) init coll)))))
+(defn chunk-reduce
+  "IChunk.reduce: the chunk's elements by index, a reduced result returned
+   unopened (the stock caller tests reduced? itself). The codemod sends
+   (.reduce (chunk-first s) f val) here: a host's chunk may be one of its
+   vectors, whose own reduce opens it."
+  [c f init]
+  (let [n (count c)]
+    (loop [i 0 acc init]
+      (if (< i n)
+        (let [acc (f acc (nth c i))] (if (reduced? acc) acc (recur (inc i) acc)))
+        acc))))
+
 (def -kvreduce (let [rk (host-fn 'reduce-kv (fn [f init coll] (reduce (fn [acc [k v]] (f acc k v)) init coll)))] (fn [coll f init] (rk f init coll))))
 (def -equiv =)
 (def -equals =)

@@ -72,11 +72,46 @@
 (def natives
   "The host's own fns that stand in for the stock ones (adapter :natives), one
    opt-in each: they have the host's semantics, so the battery, the corpus and
-   the bench's check against JVM Clojure's answers gate every entry."
+   the bench's check against JVM Clojure's answers gate every entry. The JVM
+   and jolt share these; the JVM adds what jolt's own core answers otherwise
+   (hosts/jvm.clj)."
   {'clojure.core/frequencies frequencies 'clojure.core/group-by group-by
-   'clojure.core/partition partition 'clojure.core/re-seq re-seq
+   'clojure.core/partition partition 'clojure.core/partition-all partition-all
+   'clojure.core/partition-by partition-by 'clojure.core/re-seq re-seq
    'clojure.core/sort sort 'clojure.core/sort-by sort-by
-   'clojure.string/join string/join})
+   'clojure.core/map map 'clojure.core/filter filter 'clojure.core/remove remove
+   'clojure.core/keep keep 'clojure.core/keep-indexed keep-indexed 'clojure.core/map-indexed map-indexed
+   'clojure.core/mapcat mapcat 'clojure.core/concat concat
+   'clojure.core/take take 'clojure.core/take-while take-while 'clojure.core/take-nth take-nth
+   'clojure.core/drop drop 'clojure.core/drop-while drop-while
+   'clojure.core/interpose interpose 'clojure.core/interleave interleave
+   'clojure.core/distinct distinct 'clojure.core/dedupe dedupe
+   'clojure.core/split-at split-at 'clojure.core/split-with split-with
+   'clojure.core/mapv mapv 'clojure.core/filterv filterv
+   'clojure.core/reduce reduce 'clojure.core/reduce-kv reduce-kv
+   'clojure.core/vec vec 'clojure.core/set set
+   'clojure.core/merge merge 'clojure.core/merge-with merge-with
+   'clojure.core/select-keys select-keys 'clojure.core/zipmap zipmap
+   'clojure.core/assoc-in assoc-in 'clojure.core/update-in update-in 'clojure.core/get-in get-in
+   'clojure.core/update update
+   'clojure.core/every? every? 'clojure.core/some some 'clojure.core/not-every? not-every?
+   'clojure.core/not-any? not-any?
+   'clojure.core/comp comp 'clojure.core/partial partial 'clojure.core/juxt juxt
+   'clojure.core/complement complement 'clojure.core/fnil fnil
+   'clojure.core/every-pred every-pred 'clojure.core/some-fn some-fn
+   'clojure.core/swap! swap! 'clojure.core/reset! reset! 'clojure.core/compare-and-set! compare-and-set!
+   'clojure.core/swap-vals! swap-vals! 'clojure.core/reset-vals! reset-vals!
+   'clojure.core/last last 'clojure.core/butlast butlast
+   'clojure.core/max-key max-key 'clojure.core/min-key min-key
+   'clojure.core/repeatedly repeatedly
+   'clojure.string/join string/join
+   'clojure.string/upper-case string/upper-case 'clojure.string/lower-case string/lower-case
+   'clojure.string/capitalize string/capitalize
+   'clojure.string/trim string/trim 'clojure.string/triml string/triml 'clojure.string/trimr string/trimr
+   'clojure.string/blank? string/blank? 'clojure.string/includes? string/includes?
+   'clojure.string/starts-with? string/starts-with? 'clojure.string/ends-with? string/ends-with?
+   'clojure.string/index-of string/index-of 'clojure.string/last-index-of string/last-index-of
+   'clojure.string/split-lines string/split-lines})
 
 (def capabilities
   {:natives natives
@@ -112,12 +147,14 @@
    :iterator? (fn [x] (instance? java.util.Iterator x))
    :iterator-has-next? (fn [it] (.hasNext ^java.util.Iterator it))
    :iterator-next! (fn [it] (.next ^java.util.Iterator it))
+   ;; a match's groups and spans when asked (re-seq of a group-free pattern
+   ;; asks only for group 0): the matcher is this call's own
    :re-find-at (fn [re s from]
                  (let [m (re-matcher re s)]
-                   (when (.find m (int from)) [(.start m) (.end m) (groups m) (spans m)])))
+                   (when (.find m (int from)) [(.start m) (.end m) (delay (groups m)) (delay (spans m))])))
    :re-match-full (fn [re s]
                     (let [m (re-matcher re s)]
-                      (when (.matches m) [0 (count s) (groups m) (spans m)])))
+                      (when (.matches m) [0 (count s) (delay (groups m)) (delay (spans m))])))
    ;; java.lang.Character, the JVM's own (by code point)
    :java-statics {'Character/isWhitespace #(Character/isWhitespace (int (ch %)))
                   'Character/isDigit #(Character/isDigit (int (ch %)))

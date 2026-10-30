@@ -42,6 +42,12 @@
    :namespace? (fn [x] (instance? clojure.lang.Namespace x))
    :var-bound? (fn [v] (bound? v))
    :var-thread-bound? (fn [v] (thread-bound? v))
+   ;; the JVM's natives are JVM Clojure's own fns, the stock ones compiled:
+   ;; the shared set and what jolt answers otherwise
+   :natives (merge java/natives
+                   {'clojure.core/into into 'clojure.core/reverse reverse 'clojure.core/replace replace
+                    'clojure.string/replace clojure.string/replace 'clojure.string/reverse clojure.string/reverse
+                    'clojure.string/split clojure.string/split})
    :lazy-seq (fn [f] (clojure.lang.LazySeq. f))
    ;; an ArrayChunk is no coll reduce walks: IChunk.reduce does
    :chunks (fn [] {:chunked-seq? chunked-seq? :chunk-first chunk-first :chunk-rest chunk-rest :chunk-next chunk-next

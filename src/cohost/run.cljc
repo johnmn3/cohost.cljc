@@ -38,7 +38,12 @@
                                (when-let [f (first (filter #(= "--scale=" (subs % 0 (min 8 (count %)))) flags))]
                                  {:scale (host/read-string* (subs f 8))})
                                ;; --quick: one untimed warm call and one timed call per side
-                               (when (contains? flags "--quick") {:warm-ms 0 :budget-ms 0 :min-runs 1 :settle-ms 0})))
+                               (when (contains? flags "--quick") {:warm-ms 0 :budget-ms 0 :min-runs 1 :settle-ms 0})
+                               ;; --git=rev, --note=text: recorded with the results
+                               (when-let [f (first (filter #(= "--git=" (subs % 0 (min 6 (count %)))) flags))]
+                                 {:git (subs f 6)})
+                               (when-let [f (first (filter #(= "--note=" (subs % 0 (min 7 (count %)))) flags))]
+                                 {:note (subs f 7)})))
       :else
       (do (battery/run-battery! boot/eval-str)
           (when-not (contains? flags "--no-libs")

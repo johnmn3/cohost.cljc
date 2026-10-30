@@ -191,81 +191,64 @@ batteries pass. basilisp has been neither re-benched nor re-run.
   - `ns-arg-wrap` has fixed arities.
   - When the host has chunks, cohost.core takes the eight chunk fns from it.
 
-## Remaining pass-1 work, highest value first
+## The planned items: all implemented (the commit after `5506876`)
 
-Each finding has its full text, with file:line, the fix and its risk, in
-`doc/perf/findings/*.json`. The projections below are reasoned from those traces. None is
-measured; measure each one when it lands.
+Each item below was on this list and is now in the code, tested on all four hosts and the
+jolt corpus in one round.
 
-1. **regex: jolt ×18, JVM ×129 at the baseline.**
-   - `:re-find-at` (`hosts/java.clj`) builds every group's text and span on every find,
-     and the shim's Matcher `swap!`s an atom on every find.
-   - The fix: return only `[start end]` with the host matcher, and compute groups and
-     spans lazily when `.group` or `.start(g)` asks.
-   - The JVM's reflection here is already fixed by the hints, but the JVM has not been
-     re-benched.
-   - Projection: most of the JVM's ×129. On jolt, re-seq asks for groups, so the gain
-     there is smaller.
-2. **string-join: jolt ×25, JVM ×580 at the baseline.**
-   - The JVM's ×580 was the reflective `.append` in `java.clj` (warn-on-reflection showed
-     it). It is now hinted but not re-measured; projection: most of the ×580.
-   - On jolt, each `.append` pays `host-object?`: `(class x)` costs about 0.48 µs for a
-     StringBuilder. A cheap jolt StringBuilder test in `:host-data?` (find one that costs
-     about 0.01 µs, as `transient?` does) or a cheaper cache key would remove that.
-3. **LazySeq construction on jolt** (`trace-lazy-seqs.json`, Fix D).
-   - `:lazy-seq` goes through `host-new`.
-   - The fix: use jolt's own `make-lazy-seq`/`coll->cells`, which jolt's own `lazy-seq`
-     macro expands to.
-   - Probe first: `(seq (lazy-seq nil))` timed against jolt's own.
-4. **The rewrite walks every macro's arguments again** (`find-codemod-output.json`
-   `rewalk-of-macro-arguments`).
-   - A form under k stock macros is rewritten k+1 times. The fix is a stop set of the
-     macro's argument forms (identical? check).
-   - The finder judged this the largest boot and eval-time cost. Projection: a large boot
-     win; unmeasured.
-   - Do `try-rewalk-layers` first. It is also a **correctness bug on basilisp**: every
-     re-walk adds a `catches? 'Exception` layer, which rethrows `AssertionError` before a
-     user's `(catch Throwable ...)`.
-5. **Smaller rewrite-time memos** (same file):
-   - the inline lookup, per rewrite call;
-   - `class-sym?`, per name;
-   - `*kw-unrenames*`, cached by the renames map;
-   - `simple-class-name`;
-   - skip `*local-tags*` rebinding when no names are bound;
-   - compute `instance?`'s class argument once.
-6. **Correctness:** `(catch IOException e)` with `java.io` imported canonicalizes to
-   `java.lang.IOException` (`catches-token-per-clause`). Emit the imported name.
-7. **Prebuilt `is$<token>` predicates** for concrete classes (Keyword, Symbol, Long ...),
-   as was done for `cast$`. Guard them to keep `class-of`'s order.
-8. **On ClojureScript and basilisp, a missing method builds a dispatcher on every call**
-   (`missing-method-closures-per-eval`). Build it once at rewrite time.
-9. **basilisp inlining:**
-   - Set `:rewrite-inline? true`. basilisp strips `:inline`, so boot's
-     `capture-inline!` path applies there too.
-   - basilisp's `:redef` meta exists so that `with-redefs` reaches compiled calls.
-     Inlining is the JVM's semantics, where `with-redefs` of `+` does not reach inlined
-     calls, so confirm that before turning it on.
-10. **Measurement fairness on jolt** (`trace-arith-fncall.json`):
-    - All of cohost's code (cohost.core, the shim, the adapter) is compiled at run time.
-      In that code jolt wraps every non-tail call in a virtual-register save and restore,
-      unless `JOLT_TRACE=0`. jolt's own core is compiled ahead of time and does not pay
-      it.
-    - Run the jolt benches with `JOLT_TRACE=0` on both sides, or record the setting.
-    - Also have bench record the git HEAD (and a hash of a dirty tree) in its EDN.
-      `--quick` takes one timed call per side, so never use it for the before/after
-      tables.
-11. **reduce over stock `+`** (`trace-reduce-lookup.json`):
-    - `-reduce` and `protocols-coll-reduce` can pass the host's `+` or `*` when `f` is
-      identical to the stock one. jolt's `vec-reduce` then open-codes the step. It is
-      equivalent: reduce calls `f` only with 0 or 2 arguments.
-    - reduce-range is ×1.1 now.
-12. **Atoms** (`trace-arith-fncall.json`): `swap!` and friends are good pass-2
-    candidates. A replacement can test `h-atom?` and call the host's `swap!`; on jolt
-    atom-swap is ×2.8.
-13. **Unfinished finders:** the jolt `arith-fncall` and `reduce-lookup` traces, and the
-    `adapters`, `shim-core` and `shim-rest` sweeps. Their workflow scripts are in
-    `dev/perf-workflows/`. Re-run what is still useful; each script's prompts name the
-    already-landed fixes, so update them first.
+1. **regex:** `:re-find-at` and `:re-match-full` (JVM and jolt) return a match's groups and
+   spans as delays, forced only when `.group` or `.start(g)` asks. The Matcher asks the
+   group count once.
+2. **One walk per form:**
+   - A macro whose expansion cohost rewrites keeps its arguments as written. They are
+     rewritten once, in the expansion, as the JVM compiler sees them after macroexpansion.
+     The expansion's rewrite reads the macro's `&env` for locals.
+   - A local hinted with a checked class or StringBuilder reaches that rewrite through a
+     *marker* local (`cohost__hint_<class>_<depth>__<name>`), since jolt's `&env` carries
+     names only. A rebinding without a hint leaves a deeper, untyped marker, and the
+     deepest one wins.
+   - `:arglists` lose their type hints, as the params do: the JVM read `^long` there as a
+     primitive interface.
+   - A def name's code-valued meta (`:test`, `:inline`) is rewritten.
+3. **Rewrite memos:** `simple-class-name`, `class-sym?`'s prefix test, `*kw-unrenames*`
+   (by the renames map's identity), head resolution per rewrite, and `instance?`'s class
+   rewritten once.
+4. **Prebuilt `is$<token>` predicates** (`shim/install-is!`), built on the first use of a
+   class.
+5. **A method the shim lacks** gets its dispatcher built once (`shim/install-missing-dot!`).
+6. **`reduce` with core's `+` or `*`** hands the host its own (`shim/host-reducers`).
+7. **Natives:**
+   - **JVM:** the shared set plus `into`, `reverse`, `replace` and five `clojure.string`
+     fns, 66 in core.
+   - **jolt:** the shared set (`hosts/java.clj` `natives`): the lazy seq fns, reduce,
+     collections, atoms, comp and partial, and `clojure.string` predicates and case, 63
+     in core.
+   - **ClojureScript:** 46.
+   - **basilisp:** 36.
+   - **Left to the stock definition:** `clojure.string/split` on jolt and ClojureScript,
+     and the string fns on ClojureScript, because the JVM's checkcast of a
+     `^CharSequence` is not theirs.
+   - A native keeps the stock docstring and arglists (`def-form-meta`). On ClojureScript
+     they also go into the analyzer, which `(var x)` reads.
+8. **Bench provenance:** every result records `:git` (HEAD, `-dirty`), and jolt's records
+   `JOLT_TRACE`. jolt is benched both ways.
+9. **StringBuilder:** a local known to hold one, by hint or by its init, and what `.append`
+   on one returns, call the shim's method with no user-type dispatch.
+
+**Also fixed in this round:**
+- **Correctness review, adapters area:**
+  - the chunk-reduce contract: `(.reduce (chunk-first s) ...)` goes to
+    `shim/chunk-reduce`, which returns a `reduced` unopened; jolt's chunks are vectors,
+    whose own reduce opened it;
+  - jolt's lazy-seq wrapper is no longer `^:once`, so a rerun after a failure works.
+- **basilisp:** wrapped macros get `&form` and `&env` in core.clj's order (basilisp passes
+  `&env` first). Its `&env` battery row now passes.
+
+**Still open:**
+- **The perf finders that hit the usage limit** (adapters, shim-core, shim-rest) were not
+  re-run: they are discovery, not planned work.
+- **The correctness review's later rounds** (its boot/policy finder and its "find more"
+  pass) were still running when this was written.
 
 ## Pass 2: the natives layer (landed as designed below; more opt-ins to come)
 

@@ -52,19 +52,25 @@ ecosystem, nREPL and shadow-cljs.
 
 ## Status (measured 2026-10-30)
 
-| host | core.clj (791 top-level forms): stock / from host / skipped / errors | core battery (133) | libraries (12, 61 cases) |
+| host | core.clj (791 top-level forms): stock / from host / natives / skipped / errors | core battery (139) | libraries (12, 61 cases) |
 |---|---|---:|---:|
-| jolt v0.8.23 | 537 / 191 / 63 / **0** | **133/133** | **61/61** |
-| JVM Clojure 1.12.0 (reference adapter) | 539 / 194 / 58 / **0** | **133/133** | **61/61** |
-| ClojureScript 1.12.42 self-hosted, Node 24 and Chromium | 572 / 79 / 140 / **0** | **131/133** | **61/61** |
-| basilisp 0.5.1 | 565 / 130 / 96 / **0** | **131/133** | **61/61** |
+| jolt v0.8.23 | 466 / 199 / 63 / 63 / **0** | **139/139** | **61/61** |
+| JVM Clojure 1.12.0 (reference adapter) | 465 / 202 / 66 / 58 / **0** | **139/139** | **61/61** |
+| ClojureScript 1.12.42 self-hosted, Node 24 and Chromium | 518 / 87 / 46 / 140 / **0** | **137/139** | **61/61** |
+| basilisp 0.5.1 | 529 / 130 / 36 / 96 / **0** | **138/139** | **61/61** |
 
-The core battery's misses are host facts: `(= 1 1.0)` is true in JavaScript
-and Python, and `&env` is the host's own environment. The twelve libraries
-are clojure.walk, set, string, zip, data, edn, template, test, math,
-stacktrace, repl and clojure.spec.alpha, and every host loads all twelve;
-on the jolt-conformance corpus the stock core passes 4,186 rows to jolt's
-own 4,368.
+The core battery's misses are host facts:
+- `(= 1 1.0)` is true in JavaScript and Python.
+- On ClojureScript, a macro's `&env` is the analyzer's environment.
+
+"Natives" are the host's own fns standing in for stock ones (see below).
+
+The twelve libraries are clojure.walk, set, string, zip, data, edn, template, test, math,
+stacktrace, repl and clojure.spec.alpha, and every host loads all twelve. On the
+jolt-conformance corpus (4,942 rows) the stock core passes 4,297 rows to jolt's own 4,468.
+
+Performance against JVM Clojure and against each host's own core, before and after the
+perf passes, is in `doc/PERF.md`.
 
 `doc/REPORT.md` has the measurements, what each host lacked and how the shim
 or the adapter answers it, the conformance-corpus scoreboard, and what is
