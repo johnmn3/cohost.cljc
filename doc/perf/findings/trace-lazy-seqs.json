@@ -1,0 +1,267 @@
+{
+ "area": "lazy-seqs (lazy-pipeline, partition, distinct, str-build, lazy-iterate, sort) \u2014 stock core.clj on jolt v0.8.23. Sources: cohost tree at /home/user/cohost.cljc. jolt sources were read with `git show v0.8.23:` in /root/.cache/vs-hosts/jolt; /root/.local/bin/jolt is byte-identical (cmp) to the v0.8.23 release binary in /root/.cache/vs-hosts/jolt-dl. Nothing was run. Per-element numbers below are arithmetic on the quick run in the brief and on target/bench-jolt.edn and target/bench-clj.edn. They are not measurements of individual components; the probes measure those.",
+ "findings": [
+  {
+   "cases": [
+    "lazy-pipeline",
+    "str-build",
+    "distinct",
+    "partition",
+    "sort",
+    "(cross-area: transduce, keyword-lookup, destructure)"
+   ],
+   "claim": "The biggest per-element cost is the class test behind stock `instance?`. Every call to `chunked-seq?` (the map and filter steps) and to `integer?` (inside `odd?`) runs it. core.clj:146's `(. c (isInstance x))` is rewritten into a `dot` dispatch, so each `instance?` call does four things: (1) `dot` builds a fresh dispatcher closure; because that closure has a `& more` arity, jolt registers it under a mutex in a weak hashtable. (2) The dispatcher's own? check calls jolt's `:user-type?`, which builds `(str (class x))` and makes two string-method calls, here on the class-token symbol `c`. (3) `canon` runs `has-dot?`, a loop over the class name from the end that allocates a one-character string per step. (4) Only then is the `interface-preds` predicate tested. lazy-pipeline runs three of these per input element; jolt's own map/filter run none.",
+   "evidence": [
+    "resources/cohost/clojure-1.12.0/clojure/core.clj:146 ` instance? (fn instance? [^Class c x] (. c (isInstance x))))` \u2014 the only isInstance call in core.clj; 94 `(instance? ` call sites use it",
+    "core.clj:717-718 `(defn ^:static chunked-seq? [s] (instance? clojure.lang.IChunkedSeq s))`; core.clj:2765 (map) and 2828 (filter) `(if (chunked-seq? s)` run once per realized element",
+    "core.clj:1408-1412 odd? `(not (even? n))`; 1400-1406 even? `(if (integer? n) (zero? (bit-and (clojure.lang.RT/uncheckedLongCast n) 1)) ...)`; 1388-1398 integer? `(or (instance? Integer n) ...)`",
+    "src/cohost/rewrite.cljc:388 rw-method emits `(apply list (list (shim-fn \"dot\") (name m) f) xs')` => `((cohost.shim/dot \"isInstance\" cohost.shim/-isInstance) c x)`, evaluated on every call; rewrite.cljc:610 a class symbol becomes `(list 'quote (class-token s))`",
+    "src/cohost/shim.cljc:1773 `(def ^:private record-members #{\"empty\"})`; 1775-1791 `(defn dot [m f] (let [own? (if (contains? record-members m) non-record-object? host-object?)] (fn ([x] ...) ([x a] ...) ([x a b] ...) ([x a b c] ...) ([x a b c & more] ...))))`",
+    "jolt backend_scheme.clj:2934-2953,2969,3017-3023 emits `(jolt-register-variadic! N closure)` for a closure with a variadic arity; host/chez/seq.ss:601-611 ';; Written on every variadic closure creation ...' `(jolt-with-mutex variadic-tbl-mu (hashtable-set! variadic-fixed-arity-tbl proc v))` on a `(make-weak-eq-hashtable)`",
+    "shim.cljc:1769 `(defn host-object? [x] (and (some? x) (host/user-type? x) (not (contains? shim-types (type x)))))`; src/cohost/adapter.cljc:405 `(defn user-type? [x] ((cap :user-type?) x))`; adapter.cljc:385-391 cap = `@installed`, nil?, `(contains? m k)`, `(get m k)`",
+    "src/cohost/hosts/java.clj:84-85 (merged into jolt's adapter, jolt.clj:104) `:user-type? (fn [x] (and (let [n (str (class x))] (not (and (.startsWith n \"class clojure.\") (not (.contains n \"$reify\"))))) ...`; jolt host-class.ss:263-281 jolt-class-name (class-arm walk) + jolt-class-for interning; host-static.ss:798-812 an unhinted method call on a non-jhost receiver goes to `(record-method-dispatch obj name (jolt-vector a))` (not verified whether jolt proves `n` a string here)",
+    "shim.cljc:1629 `(def -isInstance (fn [c x] (instance-of? c x)))`; 347-366 instance-of? `(let [c (canon c)] (boolean (and (some? x) (or (if-let [p (get interface-preds c)] (p x) (token-isa? (class-of x) c)) (when-not (or (builtin? x) (host/exception? x)) (host/host-instance? c x))))))`",
+    "shim.cljc:173-180 canon: `(contains? short-name c)`, `(contains? short-name-extra c)`, `(has-dot? c) c`; shim.cljc:171 `(defn- has-dot? [sym] (not (neg? (loop [i (dec (count (name sym)))] (cond (neg? i) -1 (= \".\" (str (nth (name sym) i))) i :else (recur (dec i)))))))` \u2014 12 steps for clojure.lang.IChunkedSeq, 8 for java.lang.Integer, 5 for clojure.lang.ISeq; jolt converters.ss:20-23,93-103 `(str ch)` = toString-hook call + type cond + `(string v)` allocation",
+    "shim.cljc:272 `'clojure.lang.IChunkedSeq #(chunked-cons? %)`; 313 `'java.lang.Integer integer?`; 922 `(defn chunked-cons? [x] (and (seq? x) (contains? (meta x) ::chunk)))`; 339-345 builtin? (`nil?`, `coll?` ...) when the pred is false"
+   ],
+   "per_iteration_work": "Stock, one `instance?` call: a stock var call \u2192 `dot` (hashes \"isInstance\" for a one-string set; allocates a five-arity closure, and jolt runs jolt-register-variadic!, a mutex plus a weak eq-hashtable insert) \u2192 the dispatcher (nil test; host-object? \u2192 some? \u2192 user-type? \u2192 cap: atom deref plus 2 map ops \u2192 jolt `:user-type?`: class-name lookup and interning, `str` \u2192 \"class clojure.lang.Symbol\", `.startsWith`, `.contains`; identical?) \u2192 -isInstance \u2192 instance-of? (symbol?; canon: 2 map lookups plus has-dot?, 12 or 8 steps each doing a `name` call, a `nth`, a one-character `str` allocation and a string `=`; some?; interface-preds get; the pred: chunked-cons? \u2192 seq?, meta, contains?; builtin? \u2192 nil?, coll?; boolean). Counted from the source: about 20 fn calls, 2 interop method dispatches, a 12-step string loop and about 15 small allocations. lazy-pipeline has 3 of these per input element. Host: jolt's map-seq and filter-seq call `na-chunked-seq?` (a fixnum compare, seq.ss:302-303,1645-1646) once per 32-element chunk and never test classes per element.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "lazy-pipeline",
+    "str-build",
+    "distinct",
+    "sort",
+    "partition"
+   ],
+   "claim": "The stock chunked branches never run on jolt, so every stage walks one element at a time. jolt's range and vector seqs are chunked natively, and jolt's own `chunked-seq?` answers true for them. The shim's `IChunkedSeq` predicate, though, only recognises cohost's own metadata-marked ChunkedCons, so stock `chunked-seq?` answers false for every host seq. Stock map, filter and concat then take the per-element `(cons (f (first s)) (map f (rest s)))` path: one LazySeq per element per stage. jolt's native map and filter instead fill a 32-element chunk in a Scheme loop under one lazy node. Recognising host chunks alone would not help: `-chunkedFirst` of a host seq returns a 1-element chunk `[(first s)]`, `ChunkBuffer` is an atom-backed record with a `swap!` per append, and `ChunkedCons` is `concat` plus `with-meta`.",
+   "evidence": [
+    "shim.cljc:272 `'clojure.lang.IChunkedSeq #(chunked-cons? %)`; 922 `(defn chunked-cons? [x] (and (seq? x) (contains? (meta x) ::chunk)))` \u2014 a jolt range cell has no ::chunk meta",
+    "shim.cljc:1540 `(def -chunkedFirst (fn [s] (if (chunked-cons? s) (::chunk (meta s)) [(first s)])))`; 1541-1542 -chunkedMore / -chunkedNext fall back to rest / next",
+    "shim.cljc:916 `(def new-ChunkBuffer (fn [_capacity] (host/mutable-list)))`; adapter.cljc:183 `(defn mutable-list ... [] (->MList (atom [])))`; shim.cljc:1538 `(def -add (fn [l x] (swap! (:state l) conj x) true))`; 921 `(def new-ChunkedCons (fn [chunk more] (with-meta (concat (seq chunk) more) {::chunk chunk ::more more})))`",
+    "core.clj:2762-2772 map: `(lazy-seq (when-let [s (seq coll)] (if (chunked-seq? s) (let [c (chunk-first s) ...] (dotimes [i size] (chunk-append b (f (.nth c i)))) (chunk-cons (chunk b) (map f (chunk-rest s)))) (cons (f (first s)) (map f (rest s))))))`; 2825-2840 filter, same shape; 735-745 concat's `cat`",
+    "shim.cljc:750-751 `(def Range-create (fn ([end] (range end)) ...))` `(def LongRange-create Range-create)` \u2014 stock `(range n)` (core.clj:3052-3055) returns jolt's own range",
+    "jolt seq.ss:302-303 `(define (sk-chunked? k) (and (fx>=? k sk-chunked-seq) (fx<=? k sk-range)))`; 2072-2091 range-chunked builds `(cseq-chunked/k (make-pvec ...) 0 (jolt-make-lazy-src lz-range ...) kind)` (32-element blocks); post-prelude.ss:124 `(def-var! \"clojure.core\" \"chunked-seq?\" na-chunked-seq?)`",
+    "jolt seq.ss:1733-1745 map-seq `((na-chunked-seq? s) (cseq-chunked (na-chunk-map-first s g) 0 (jolt-make-lazy-src lz-map-chunk f s)))`; 1691-1704 na-chunk-map-first `(vector-set! out j (g (vector-ref node (fx+ off j))))`; 1770-1793 filter-seq + 1706-1724 na-chunk-filter-first; ns.ss:1061,1063,1067 bind clojure.core map/filter/range/odd? to these natives",
+    "jolt collections.ss:1793-1799 jolt-count adds a whole chunk at a cseqv cell `(fx+ n (fx- (pvec-count (cseqv-cvec s)) (cseqv-ci s)))`; the stock result is a chain of sk-cons cells counted one by one (1800 `(else (loop (jolt-seq (seq-more s)) (fx+ n 1)))`)",
+    "jolt natives-transduce.ss:119-145 a native chunk API is bound as clojure.core vars: `(d! \"chunk-buffer\" na-chunk-buffer) (d! \"chunk-append\" na-chunk-append) (d! \"chunk\" na-chunk) (d! \"chunk-cons\" na-chunk-cons) (d! \"chunk-first\" na-chunk-first) (d! \"chunk-rest\" na-chunk-rest) (d! \"chunk-next\" na-chunk-next)`"
+   ],
+   "per_iteration_work": "Stock, per element per stage: one LazySeq built and forced, seq, a chunked-seq? chain, first, rest, cons, plus f or pred. Host, per element: inside na-chunk-map-first one `(g x)` and one vector-set!; inside na-chunk-filter-first one `(tp x)` (pred + jolt-truthy?) and one vector-set!. Per 32 elements: one cseq-chunked cell and one lazy-src node. count adds a chunk at a time.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "reduce-range (contrast)",
+    "lazy-pipeline"
+   ],
+   "claim": "reduce-range is only x2 because stock `reduce` does one class test and one dispatch per call, then hands the whole loop to jolt's native reduce over jolt's own range. The only stock code left per element is the reducing fn `+`: a stock 4-arity fn whose 2-arity calls `cohost.shim/Numbers-add`, which is jolt's `+`. That adds one call and one var deref per element: (9.79\u22124.56) ms / 200,000 \u2248 26 ns (the full run gives the same, (9.05\u22123.81)/200,000). map and filter are themselves per-element core.clj code, so every element pays the cost of the stock code itself.",
+   "evidence": [
+    "core.clj:6958-6965 `([f coll] (if (instance? clojure.lang.IReduce coll) (.reduce ^clojure.lang.IReduce coll f) (clojure.core.protocols/coll-reduce coll f)))`",
+    "shim.cljc:1507 `(def -reduce (fn ([coll f] (reduce f coll)) ([coll f init] (reduce f init coll))))`; 574 `(def protocols-coll-reduce (fn ([coll f] (reduce f coll)) ([coll f init] (reduce f init coll))))` \u2014 `reduce` here is jolt's (the shim ns refers the host core)",
+    "shim.cljc:292 `'clojure.lang.IReduce #(or (vector? %) (list? %) (host/host-instance? 'clojure.lang.IReduce %))`; adapter.cljc:417-428 host-instance? via a cached host class \u2014 either branch ends in jolt's reduce",
+    "core.clj:986-996 `(defn + ... ([x y] (. clojure.lang.Numbers (add x y))) ([x y & more] (reduce1 + (+ x y) more)))`; shim.cljc:478 `(def Numbers-add +)`",
+    "shim.cljc:750-751 LongRange-create = Range-create = host range",
+    "target/bench-jolt.edn reduce-range host 3.81 / stock 9.05 ms (full run); brief quick run 4.56 / 9.79"
+   ],
+   "per_iteration_work": "Stock: jolt's reduce loop \u2192 stock `+` (case-lambda, 2-arity) \u2192 deref cohost.shim/Numbers-add \u2192 jolt-add. Host: jolt's reduce loop \u2192 jolt-add. Difference: 1 call + 1 var deref, about 26 ns, against about 23 ns of host work per element.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "lazy-pipeline",
+    "partition",
+    "distinct",
+    "str-build",
+    "sort",
+    "lazy-iterate"
+   ],
+   "claim": "Every other stock core call is a hop: a stock var call to a cohost.shim var to a jolt procedure. In host code, jolt's emitter compiles the same clojure.core names (+ inc < first rest next seq cons count map filter reduce range odd? zero? bit-and ...) inline as native ops, and jolt ignores `:inline` metadata, so stock `inc`, `zero?` and `bit-and` stay real calls. One hop costs about 26 ns (reduce-range). lazy-pipeline has about 19 hops per element, roughly 0.5 \u00b5s: small next to the class tests. Hops alone set lazy-iterate's +0.26 \u00b5s per element, the one case in this area with no stock LazySeq and no class test.",
+   "evidence": [
+    "jolt host-contract.ss:1135-1139 ';; ... The emitter lowers each of these inline, so the declared cell's unbound root is never deref'd.' followed by the list `\"+\" \"-\" ... \"inc\" ... \"first\" \"rest\" \"next\" \"seq\" \"cons\" ... \"map\" \"filter\" ... \"range\" ... \"odd?\" ... \"zero?\" ... \"bit-and\" ...` (1141-1155)",
+    "rewrite.cljc:307-311 `*strip-inline?*` doc: 'The JVM host inlines its own interop; jolt ignores the key'; jolt analyzer.clj has no var :inline handling (grep finds only the opt-in inliner's :inline-chain, passes/inline.clj:1-5 'run only when host/inline-enabled? (user code opted into direct-linking)')",
+    "shim.cljc:393-397 `(def RT-cons cons) (def RT-first first) (def RT-next next) (def RT-more rest) (def RT-seq seq)`; 493 `(def Numbers-inc inc)`; 502 `(def Numbers-isZero zero?)`; 514 `(def Numbers-and bit-and)`",
+    "core.clj:29 cons `(. clojure.lang.RT (cons x seq))`; 55 first; 73 rest `(. clojure.lang.RT (more x))`; 139 seq; 924-929 inc `[x] (. clojure.lang.Numbers (inc x))`",
+    "shim.cljc:438-440 `(def RT-uncheckedLongCast (fn [x] (cond (host/char?* x) (throw (char-cce)) (integer? x) x ...)))` \u2014 adapter.cljc:551 `(defn char?* [x] ((cap :char?) x))`, one cap lookup per even?",
+    "lazy-iterate: shim.cljc:754 `(def Iterate-create (fn [f x] (iterate f x)))`, 400 `(def RT-nth nth)` \u2014 the walk is jolt's own; per element only the stock fn runs: core.clj:4461 `(list `nth gvec n nil)` \u00d72, 986-996 +, 3592-3599 mod \u2192 1283-1289 rem \u2192 shim.cljc:508 `(fn [x y] (if (zero? y) (throw (divide-by-zero)) (rem x y)))`, zero?, = (785-794), pos? \u00d72 (1261-1266)"
+   ],
+   "per_iteration_work": "Stock, per core call: stock var call \u2192 shim var deref \u2192 jolt procedure (2 calls). Host: inline native op (a primitive or a direct procedure call). lazy-pipeline per element: map \u2248 7 hops (map, seq, first, inc, rest, cons, new-LazySeq); filter \u2248 12 (filter, seq, first, rest, odd?, not, even?, integer?, uncheckedLongCast + cap, bit-and, zero?, not, \u00bd cons).",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "lazy-pipeline",
+    "partition",
+    "distinct",
+    "str-build"
+   ],
+   "claim": "Each stock `(lazy-seq ...)` on jolt takes a longer path than jolt's own lazy nodes. It goes through `new-LazySeq` \u2192 `lazy-seq*` \u2192 a capability lookup \u2192 the adapter fn \u2192 jolt's generic `host-new` (rest list, weak-hashtable cache lookup, apply) \u2192 `lazyseq-ctor`, which allocates one more lambda around the stock thunk. That is paid once per element per stage: 2 per element in lazy-pipeline and 5 per partition. The cross-case fit puts it well below one class test.",
+   "evidence": [
+    "core.clj:692 `(list 'new 'clojure.lang.LazySeq (list* '^{:once true} fn* [] body))`; boot.cljc:35-36 wrap-macro rewrites the expansion; rewrite.cljc:406 `(known? ctx nm) (apply list (ctor-sym c) args')` => `(cohost.shim/new-LazySeq (fn* [] ...))`",
+    "shim.cljc:794 `(def new-LazySeq host/lazy-seq*)`; adapter.cljc:487 `(defn lazy-seq* [thunk] ((cap :lazy-seq) thunk))`; adapter.cljc:385-391 cap",
+    "src/cohost/hosts/jolt.clj:38 `:lazy-seq (fn [f] (clojure.lang.LazySeq. f))`",
+    "jolt host-static.ss:1544-1559 `(define (host-new class . args) (let ((ctor (host-new-ctor class))) (cond (ctor (apply ctor args)) ...)))` with `(hashtable-ref host-new-cache class #f)` + epoch check; concurrency.ss:1148-1151 `(define (lazyseq-ctor f) (jolt-make-lazy-seq (lambda () (jolt-coll->cells (jolt-invoke0 f)))))`",
+    "jolt lazy-bridge.ss:461-462 `(def-var! \"clojure.core\" \"make-lazy-seq\" jolt-make-lazy-seq/once)` `(def-var! \"clojure.core\" \"coll->cells\" jolt-coll->cells)`; 00-syntax.clj:983-987 jolt's own lazy-seq macro expands to these two directly"
+   ],
+   "per_iteration_work": "Stock, per LazySeq: allocate the ^:once thunk (jolt adds a once-env vector) \u2192 new-LazySeq var \u2192 lazy-seq* \u2192 cap (atom deref, contains?, get) \u2192 adapter fn \u2192 host-new (rest list, weak-eq lookup, epoch compare, apply) \u2192 lazyseq-ctor lambda + lazyseq record; on force: jolt-invoke0 + coll->cells. Host: native producers build one lazy-src record per 32 elements of a chunked source.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "lazy-pipeline",
+    "str-build",
+    "distinct",
+    "partition",
+    "transduce",
+    "keyword-lookup",
+    "destructure"
+   ],
+   "claim": "The per-element costs in the recorded runs fit one consistent model: one class test \u2248 3.1\u20133.7 \u00b5s on jolt, one stock LazySeq step \u2248 0\u20130.6 \u00b5s, one hop \u2248 26 ns. lazy-pipeline = 3 class tests + 2 LazySeqs + about 19 hops \u2248 10\u201312 \u00b5s per element, against 11.96 \u00b5s measured (10.77 in the full run), compared with 61 ns per element on the host: hence x196. On that fit, about 85\u201395% of lazy-pipeline's stock time is the three class tests. This is inference from whole-case timings, not a component measurement; probes 1\u20134 measure the pieces. The JVM shows the same shape at lower cost: lazy-pipeline is x45 there. JVM keyword-lookup is x0.95 because the JVM compiler applies stock `+`'s `:inline`, so `reduce1` and its class test never run.",
+   "evidence": [
+    "transduce: only class test per element is odd?'s integer? (core.clj:7012-7027 hands the loop to the host; no stock LazySeq) \u2014 quick (379.17\u22127.65)/100,000 = 3.72 \u00b5s; full (343.18\u22127.17)/100,000 = 3.36 \u00b5s",
+    "keyword-lookup: `(+ acc (:a m) (:b m))` \u2192 core.clj:995-996 `(reduce1 + (+ x y) more)` \u2192 core.clj:942 `(if (chunked-seq? s)` = 1 class test per element, no LazySeq \u2014 quick (376.89\u22125.09)/100,000 = 3.72 \u00b5s; full 3.97 \u00b5s",
+    "str-build: map stage only (1 class test + 1 LazySeq + about 7 hops) \u2014 quick (80.36\u22123.8)/20,000 = 3.83 \u00b5s; full 3.92 \u00b5s",
+    "destructure: core.clj:4472 `(if (seq? ~gmap) ...)` (seq? = core.clj:153 `(instance? clojure.lang.ISeq x)`, 5-step has-dot?) + reduce1's chunked-seq? (12 steps) \u2014 quick 6.13 \u00b5s, full 7.14 \u00b5s: two class tests, with the shorter-name one cheaper",
+    "lazy-pipeline quick (1202.54\u22126.14)/100,000 = 11.96 \u00b5s/elt vs host 6.14/100,000 = 61 ns; full run target/bench-jolt.edn host 5.29 / stock 1082.27 ms",
+    "target/bench-clj.edn (JVM): lazy-pipeline host 2.77 / stock 124.29 ms; keyword-lookup host 1.96 / stock 1.86; adapter.cljc:79,293 `:inline-meta :keep` ('when the host ignores a var's :inline fn or is the JVM')"
+   ],
+   "per_iteration_work": "Stock lazy-pipeline per input element (counted from source): 3 class tests (map chunked-seq?, filter chunked-seq?, odd?\u2192integer?), 2 LazySeq constructions and forces, 6 capability lookups (2 lazy-seq*, 3 user-type?, 1 char?*), about 19 stock\u2192shim\u2192host hops, about 45 small allocations. Host: about 2 procedure calls (inc, odd?) and 2 vector-set! per element, plus per-chunk overhead.",
+   "confidence": "medium"
+  },
+  {
+   "cases": [
+    "partition",
+    "distinct",
+    "str-build",
+    "sort",
+    "lazy-iterate"
+   ],
+   "claim": "Per case: partition pays 5 stock LazySeqs and 1 class test per partition (6.56 \u00b5s per partition). distinct pays about 1.5 class tests and about 3 LazySeqs per output element, because concat walks each `[i (inc i)]` element by element: jolt's vector seqs are chunked too but invisible to stock code. jolt's own distinct is also per-element lazy Clojure, so its ratio is lower. str-build's whole stock overhead is the map stage. In sort, the map stage (50k elements, with stock `mod` and `*` hops) is joined by per-comparison wrapper layers. lazy-iterate has no stock lazy step at all (iterate and nth are the host's), so it is hops only (x3.2).",
+   "evidence": [
+    "partition: core.clj:3212-3217 `(lazy-seq (when-let [s (seq coll)] (let [p (doall (take n s))] (when (= n (count p)) (cons p (partition n step (nthrest s step)))))))`; take core.clj:2899-2903 (1 LazySeq per element, 4 per partition of 3); nthrest core.clj:3193 `(if (instance? clojure.lang.IDrop coll)` (shim.cljc:273 `'clojure.lang.IDrop (constantly false)`); dorun 3141-3152 `(when-let [s (seq coll)] (recur (next s)))`; host partition is native: jolt natives-seq.ss:299 `(def-var! \"clojure.core\" \"partition\" jolt-partition)`; quick (228.29\u22129.54)/33,334 = 6.56 \u00b5s per partition",
+    "distinct: mapcat core.clj:2807-2808 `(apply concat (apply map f colls))`; concat `cat` core.clj:735-745 `(lazy-seq (let [xys (seq xys)] (if xys (if (chunked-seq? xys) ... (cons (first xys) (cat (rest xys) zs))) (when zs (cat (first zs) (next zs))))))`; distinct core.clj:5099-5106 (1 LazySeq per element + `(nth vec__ 0 nil)`, contains?, conj hops); jolt 40-lazy.clj:8-12 'Each fn ported from CLJS core.cljs, stripped of chunked-seq branches.' \u2014 the host distinct is per-element lazy too; quick (699.77\u221251.5)/100,000 = 6.48 \u00b5s per output element",
+    "str-build: apply core.clj:666-667 `(. f (applyTo (seq args)))` runs once (dot \u2192 -applyTo \u2192 host apply); the 20,000-element stock map stage is the rest; quick 3.83 \u00b5s/elt",
+    "sort: core.clj:3118-3124 `(sort compare coll)` \u2192 `(let [a (to-array coll)] (. java.util.Arrays (sort a comp)) ...)`; shim.cljc:1194 `(def Arrays-sort (fn ... ([a cmp] (host/sort-array! a (as-comparator cmp)))))`; 1181-1187 as-comparator `(fn [a b] (let [r (cmp a b)] (cond (number? r) r ...)))` around stock compare (core.clj:833) \u2192 shim.cljc:585 `(def Util-compare compare)`; host sort is native (natives-seq.ss:300); quick extra time 278.38\u221228.7 = 249.7 ms",
+    "lazy-iterate: core.clj:3036-3041 `(clojure.lang.Iterate/create f x)` \u2192 shim.cljc:754 host iterate; core.clj:891-900 nth \u2192 shim.cljc:400 host nth; quick (7.52\u22122.36)/20,000 = 0.26 \u00b5s/elt"
+   ],
+   "per_iteration_work": "partition, per partition: 5 LazySeqs, 1 class test (IDrop, 6-step has-dot?), about 40 hops (pos?, seq, first, dec, rest, cons \u00d74, next \u00d73, =, count). distinct, per output element: cat's LazySeq + class test + seq/first/rest/cons; per input element the map stage (LazySeq + class test) + cat's vector switch (LazySeq); distinct's LazySeq + nth/seq/contains?/rest/conj/cons. sort: 50k map-stage elements (class test + LazySeq + about 12 hops for * and mod) + per comparison as-comparator \u2192 stock compare \u2192 Util-compare \u2192 host compare. lazy-iterate: about 10 hops per element, no LazySeq, no class test.",
+   "confidence": "medium"
+  }
+ ],
+ "fixes": [
+  {
+   "change": "Fix A, the smallest change that removes the dominant per-element cost: make stock `instance?` call the shim's class test directly, and skip `canon` when the token is already a key of interface-preds. (1) In policy.cljc `replacements`, add an entry for `instance?`. It must be written with `def` + `fn*` because it is evaluated at core.clj:146, before `defn` exists:\n'instance?\n'(def ^{:arglists '([c x]) :added \"1.0\" :doc \"Evaluates x and tests if it is an instance of the class\\n    c. Returns true or false\"}\n   instance? (fn* instance? [c x]\n               (if c\n                 (cohost.shim/instance-of? c x)\n                 ((cohost.shim/dot \"isInstance\" cohost.shim/-isInstance) c x))))\n(2) In shim.cljc instance-of? (347-366), replace `(let [c (canon c)] ...)` with\n(let [p (get interface-preds c)            ; rewriter tokens are full names already\n      c (if p c (canon c))\n      p (or p (get interface-preds c))]\n  (boolean (and (some? x)\n                (or (if p (p x) (token-isa? (class-of x) c))\n                    (when-not (or (builtin? x) (host/exception? x)) (host/host-instance? c x))))))",
+   "files": [
+    "src/cohost/policy.cljc",
+    "src/cohost/shim.cljc"
+   ],
+   "removes": "Per class test: the `dot` call (string hash for record-members; a fresh 5-arity closure, plus jolt's mutex and weak-table variadic registration), the dispatcher, host-object? \u2192 cap \u2192 jolt `:user-type?` (`(str (class x))`, `.startsWith`, `.contains`), the -isInstance hop, and canon's two map lookups plus has-dot?'s 12/8/5-step loop with a one-character `str` per step. What remains is a stock var call, instance-of?, one map get, the pred and boolean. This covers all 94 `(instance? ...)` sites in core.clj, including the 10 `chunked-seq?` sites (concat \u00d72, reduce1, map, filter, doseq, for, map-indexed, keep, keep-indexed) and seq?, integer?, number?, string? and map?. On the cross-case fit that is about 85\u201395% of lazy-pipeline's stock time; probe 7 measures it.",
+   "risk": "Low. (1) The only behaviour dropped is dot's 'a user type answers its own .isInstance member' for a non-nil, non-false `c`. `c` is a class token (symbol) or a host class value, never such an object; nil and false still go down the old path, keeping the same NPE. (2) None: every interface-preds key is a full dotted name (shim.cljc:257-331), which canon returns unchanged (shim.cljc:173-180: not in short-name or short-name-extra, has a dot), so skipping canon on a hit cannot change the token. Run the corpus/battery on all four hosts as usual."
+  },
+  {
+   "change": "Fix A\u2032, a follow-on for tokens that are not interface-preds keys (clojure.lang.Keyword, clojure.lang.Symbol, java.lang.Long, java.lang.Double, the clojure.lang.Persistent* classes): memoize canon in shim.cljc:173-180, e.g. `(def ^:private canon-cache (atom {}))` with `(or (get @canon-cache c) (let [r (canon* c)] (swap! canon-cache assoc c r) r))`. Alternatively make has-dot? one index-of instead of a per-character `str` loop.",
+   "files": [
+    "src/cohost/shim.cljc"
+   ],
+   "removes": "The has-dot? loop (2\u20133 times per call) for `keyword?`, `symbol?`, `int?` (`(instance? Long x)`) and other class-of + token-isa? paths, which call canon on both child and parent (shim.cljc:248-252).",
+   "risk": "Low. The cache is keyed by symbol and bounded by the set of class tokens in the source. It is not on the hot path in this area (range calls `int?` once per call)."
+  },
+  {
+   "change": "Fix B, chunking (pass-2 level): let stock chunked branches use the host's own chunks where the host has the chunk API (jolt: natives-transduce.ss:142-145; also JVM clojure.core and cljs.core). In shim.cljc, resolve once with host-fn: chunked-seq?, chunk-first, chunk-rest, chunk-next, chunk-buffer, chunk-append, chunk, chunk-cons; enable only if all 8 resolve. Then: `'clojure.lang.IChunkedSeq #(or (chunked-cons? %) (host-chunked? %))`; -chunkedFirst/-chunkedMore/-chunkedNext call the host's chunk-first/rest/next for a host-chunked seq (else the current behaviour); new-ChunkBuffer \u2192 host chunk-buffer; -add \u2192 `(if (host/mlist? l) (swap! ...) (h-chunk-append l x))` (MList still serves ArrayList); -chunk \u2192 host chunk for a host buffer; new-ChunkedCons \u2192 host chunk-cons. Keep the stand-ins as the fallback.",
+   "files": [
+    "src/cohost/shim.cljc"
+   ],
+   "removes": "Per element per stage (map, filter, concat, reduce1, doseq, for, keep, map-indexed): the LazySeq, the chunked-seq? class test and seq/first/rest/cons now run once per 32 elements. Per element remain `(.nth c i)` (one dot dispatch, see Fix C), f/pred, chunk-append, and the stock `dotimes` step (`<` and `unchecked-inc` hops). count then adds a chunk at a time (collections.ss:1793-1799). Probe 8 measures it.",
+   "risk": "Medium. It changes the representation of stock chunked seqs to host ChunkedCons cells; realization becomes 32 at a time, which is the JVM's behaviour, unlike today's 1 at a time. `-add` is shared with the ArrayList stand-in, so it must stay type-dispatched. Any other shim code testing `::chunk` metadata needs the host-aware test. Needs the battery/corpus on jolt, JVM, cljs and basilisp (basilisp probably keeps the fallback)."
+  },
+  {
+   "change": "Fix C, dot dispatch (matters after Fix B, and for every `.method` call in core.clj). (a) hosts/java.clj:84-94 `:user-type?`: answer false before any string work: `(cond (or (nil? x) (symbol? x) (keyword? x) (string? x) (number? x) (boolean? x) (char? x)) false (and (coll? x) (not (instance? clojure.lang.IType x)) (not (instance? clojure.lang.IRecord x))) false :else <existing body>)`. (b) Stop allocating a variadic closure on every call: shim.cljc dot (1775-1791) drops its `[x a b c & more]` arity and a new `dot*` keeps it; rewrite.cljc rw-method (363-391) emits `dot*` only when more than 3 arguments follow the target.",
+   "files": [
+    "src/cohost/hosts/java.clj",
+    "src/cohost/shim.cljc",
+    "src/cohost/rewrite.cljc"
+   ],
+   "removes": "(a) For host scalars and plain collections (`.nth` on a chunk vector, `.add`, string methods): `(str (class x))` and the two string-method dispatches on every dot call. (b) jolt's jolt-register-variadic! (a mutex plus a weak eq-hashtable insert) on every `.method` call with \u22643 arguments.",
+   "risk": "(a) Low. It preserves the existing `(and A (or B C D E))` result: for those scalars B, C and D are false and E excludes them; for a collection that is neither IType nor IRecord, D and E require (not (coll? x)). (b) Low: a pure change to the codemod's output, with the same arity behaviour."
+  },
+  {
+   "change": "Fix D, LazySeq construction (secondary; confirm with probe 12 first): (1) shim.cljc:794 binds the capability once at load, `(def new-LazySeq (get (host/current) :lazy-seq))`. The adapter is already installed when the shim loads; shim.cljc:186 calls `(host/empty-queue)` through cap at load. (2) hosts/jolt.clj:38 becomes `:lazy-seq (fn [f] (make-lazy-seq (fn* [] (coll->cells (f)))))`, which uses jolt's clojure.core make-lazy-seq and coll->cells (lazy-bridge.ss:461-462, the expansion of jolt's own lazy-seq macro, lowered inline per host-contract.ss:1152) instead of `(clojure.lang.LazySeq. f)`.",
+   "files": [
+    "src/cohost/shim.cljc",
+    "src/cohost/hosts/jolt.clj"
+   ],
+   "removes": "Per stock LazySeq: cap's atom deref and 2 map operations, plus host-new's rest list, weak-hashtable cache lookup, epoch compare and apply.",
+   "risk": "Low\u2013medium. (1) A stale fn if an adapter is installed again after the shim loads. (2) It depends on jolt-internal clojure.core names (make-lazy-seq / coll->cells); jolt-make-lazy-seq/once keeps the thunk for a rerun after failure, where lazyseq-ctor uses jolt-make-lazy-seq. Check the lazy-seq error and rerun cases in the corpus."
+  }
+ ],
+ "probes": [
+  {
+   "form": "(do (time (dotimes [_ 100000] nil)) (let [s (seq (range 10))] (time (dotimes [_ 100000] (chunked-seq? s)))))",
+   "tests": "Per-call cost of one stock class test via chunked-seq? (second minus first, divided by 100,000). The recorded runs predict roughly 300\u2013400 ms above the baseline (transduce and keyword-lookup each pay about 3.1\u20133.7 \u00b5s per element for exactly one class test). The top claim is refuted, and the class test is not the dominant per-element term, if the difference is under about 100 ms."
+  },
+  {
+   "form": "(let [s (seq (range 10)) cn (cohost.adapter/var-root (get (ns-interns 'cohost.shim) 'canon)) hd (cohost.adapter/var-root (get (ns-interns 'cohost.shim) 'has-dot?))] (time (dotimes [_ 100000] (cohost.shim/dot \"isInstance\" cohost.shim/-isInstance))) (time (dotimes [_ 100000] (cohost.shim/host-object? 'clojure.lang.IChunkedSeq))) (time (dotimes [_ 100000] (cohost.shim/instance-of? 'clojure.lang.IChunkedSeq s))) (time (dotimes [_ 100000] (cn 'clojure.lang.IChunkedSeq))) (time (dotimes [_ 100000] (hd 'clojure.lang.IChunkedSeq))) (time (dotimes [_ 100000] (cohost.shim/chunked-cons? s))))",
+   "tests": "Splits the class test into its parts: building the dispatcher (dot), the own? check (jolt :user-type? via cap), instance-of? (canon + pred), canon alone, has-dot? alone, and the pred alone. dot + host-object? + instance-of? should add up to most of probe 1. Fix A removes dot, host-object? and canon; whichever of these dominates says which half of Fix A matters."
+  },
+  {
+   "form": "(do (time (dotimes [i 100000] (fn [x] i))) (time (dotimes [i 100000] (fn [x & more] i))))",
+   "tests": "What jolt adds per creation of a closure with a variadic arity (jolt-register-variadic!: mutex + weak eq-hashtable insert, seq.ss:601-611). dot (shim.cljc:1789) pays this on every call. If the two timings match, drop that part of the dot claim and Fix C(b)."
+  },
+  {
+   "form": "(do (time (count (take 100000 (repeat 1)))) (time (count (map inc (range 100000)))) (time (count (filter odd? (range 1 100001)))) (time (count (filter identity (range 1 100001)))) (time (count (filter odd? (map inc (range 100000))))))",
+   "tests": "Per-element decomposition. take/repeat = a stock LazySeq + about 6 hops with no class test (core.clj:2899-2903). map = that + 1 class test. filter odd? = + 2 class tests. filter identity = + 1 class test. The pipeline should be about map + filter odd?. Predicted: map \u2248 str-build's \u2248 3.8 \u00b5s/elt, i.e. about 380 ms. If take/repeat is close to map, the LazySeq path rather than the class test dominates and Fix A will not move these cases much."
+  },
+  {
+   "form": "(time (let [s (seq (range 100))] [(chunked-seq? s) ((cohost.adapter/var-root (cohost.adapter/resolve-core 'chunked-seq?)) s) (count (chunk-first s))]))",
+   "tests": "Expected [false true 1]: stock sees jolt's range as unchunked, jolt's own chunked-seq? says chunked, and the shim's chunk-first of a host seq is a 1-element chunk (shim.cljc:1540). The chunks-invisible claim is refuted if the first value is true or the third is 32."
+  },
+  {
+   "form": "(do (time (reduce + (range 200000))) (time (reduce cohost.shim/Numbers-add (range 200000))))",
+   "tests": "The x2 explanation. The second form passes jolt's own + (shim.cljc:478) into stock reduce. If it lands near the host time (quick run 4.56 ms), the whole x2 is the per-element stock `+` wrapper (core.clj:994), not reduce's dispatch. Refuted if it stays near 9.8 ms."
+  },
+  {
+   "form": "(do (with-redefs [instance? (fn [c x] (cohost.shim/instance-of? c x))] (time (count (filter odd? (map inc (range 100000)))))) (let [preds (cohost.adapter/var-root (get (ns-interns 'cohost.shim) 'interface-preds))] (with-redefs [instance? (fn [c x] (if-let [p (get preds c)] (if (p x) true false) (cohost.shim/instance-of? c x)))] (time (count (filter odd? (map inc (range 100000))))))))",
+   "tests": "A stand-in for Fix A without editing files. The first form is part 1 (no dot or user-type?); the second approximates parts 1 + 2 (no canon either). The stand-ins are compiled in the stock namespace (stock get and if-let), so they overstate the cost after the fix. If the class-test claim holds, lazy-pipeline loses most of its roughly 1,200 ms; if it drops only a little, LazySeqs and hops dominate instead."
+  },
+  {
+   "form": "(let [h (fn [s] (cohost.adapter/var-root (cohost.adapter/resolve-core s)))] (with-redefs [chunked-seq? (h 'chunked-seq?) chunk-first (h 'chunk-first) chunk-rest (h 'chunk-rest) chunk-next (h 'chunk-next) chunk-buffer (h 'chunk-buffer) chunk-append (h 'chunk-append) chunk (h 'chunk) chunk-cons (h 'chunk-cons)] (time (count (filter odd? (map inc (range 100000)))))))",
+   "tests": "A stand-in for Fix B: stock map and filter take their own chunked branches (core.clj:2765-2771, 2828-2836) over jolt's 32-element chunks using jolt's chunk natives. Per element only `.nth` (dot), f/pred (odd?'s class test included), chunk-append and the dotimes step remain. Compare with probe 7 to see how much chunking adds on top of Fix A."
+  },
+  {
+   "form": "(let [h (fn [s] (cohost.adapter/var-root (cohost.adapter/resolve-core s))) preds (cohost.adapter/var-root (get (ns-interns 'cohost.shim) 'interface-preds))] (with-redefs [instance? (fn [c x] (if-let [p (get preds c)] (if (p x) true false) (cohost.shim/instance-of? c x))) chunked-seq? (h 'chunked-seq?) chunk-first (h 'chunk-first) chunk-rest (h 'chunk-rest) chunk-next (h 'chunk-next) chunk-buffer (h 'chunk-buffer) chunk-append (h 'chunk-append) chunk (h 'chunk) chunk-cons (h 'chunk-cons)] (time (count (filter odd? (map inc (range 100000)))))))",
+   "tests": "Fix A + Fix B together: the remaining floor of stock lazy-pipeline before any dot (Fix C) or LazySeq (Fix D) work. The gap to the host's 6.14 ms is what Fixes C and D, and the hops, still account for."
+  },
+  {
+   "form": "(let [v (vec (range 32))] (time (dotimes [_ 100000] (nth v 3))) (time (dotimes [_ 100000] (.nth v 3))))",
+   "tests": "One dot dispatch on a host vector (rewrite.cljc:907-911 \u2192 shim.cljc:1775-1791 \u2192 jolt :user-type? with `(str (class x))`) against a plain stock nth hop. This is the per-element cost Fix B leaves in the chunked loop, and the cost Fix C targets."
+  },
+  {
+   "form": "(let [f (get (cohost.adapter/current) :char?)] (time (dotimes [_ 100000] (cohost.adapter/char?* 1))) (time (dotimes [_ 100000] (f 1))))",
+   "tests": "Cost of one capability lookup (adapter.cljc:385-391) per call: the difference between the two. lazy-pipeline pays about 6 per element (2 lazy-seq*, 3 user-type?, 1 char?*)."
+  },
+  {
+   "form": "(do (time (dotimes [_ 100000] nil)) (time (dotimes [_ 100000] (seq (lazy-seq nil)))))",
+   "tests": "One stock LazySeq built (new-LazySeq \u2192 cap \u2192 jolt.clj:38 \u2192 host-new \u2192 lazyseq-ctor) and forced, minus the loop baseline. Decides whether Fix D is worth doing. The cross-case fit says well under 1 \u00b5s."
+  },
+  {
+   "form": "(do (time (count (map (fn [i] (mod (* i 7919) 10007)) (range 50000)))) (let [v (vec (map (fn [i] (mod (* i 7919) 10007)) (range 50000)))] (time (first (sort v)))))",
+   "tests": "Splits sort's stock 278 ms into the stock map stage (class test + LazySeq + mod/* hops per element) and the sort itself, where each comparison goes through as-comparator (shim.cljc:1181-1187) \u2192 stock compare \u2192 Util-compare."
+  },
+  {
+   "form": "(do (time (count (mapcat (fn [i] [i (inc i)]) (range 50000)))) (let [v (vec (mapcat (fn [i] [i (inc i)]) (range 50000)))] (time (count (distinct v)))))",
+   "tests": "Splits distinct's stock 700 ms into mapcat/concat (cat's per-element LazySeq + class test, core.clj:735-745) and distinct's own step (LazySeq + hops, no class test, core.clj:5099-5106). The model predicts the larger share in mapcat."
+  },
+  {
+   "form": "(do (let [s (seq (range 10))] (time (dotimes [_ 33334] (nthrest s 3)))) (time (count (take 100002 (repeat 1)))))",
+   "tests": "partition's per-partition parts: nthrest with its IDrop class test (core.clj:3193), and take's per-element LazySeq cost (4 per partition of 3). Together with the stock count/doall hops these should approach partition's 228 ms."
+  },
+  {
+   "form": "(do (time (count (map str (range 20000)))) (time (count (apply str (map str (range 20000))))))",
+   "tests": "str-build's whole stock overhead should be the map stage. If the first form is close to the second (about 80 ms quick run), apply and str (host, called once) are not a factor."
+  },
+  {
+   "form": "(do (time (dotimes [_ 20000] nil)) (time (dotimes [_ 20000] (mod (+ 3 4) 1000007))) (time (dotimes [_ 20000] (nth [1 2] 1 nil))))",
+   "tests": "The hops-only control. lazy-iterate's +0.26 \u00b5s per element (no stock LazySeq, no class test; iterate and nth are jolt's, shim.cljc:754, 400) should be about the cost of the stock mod/rem/+/zero?/=/pos? chain plus 2 destructuring nths priced here."
+  }
+ ]
+}

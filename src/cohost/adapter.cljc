@@ -39,6 +39,7 @@
    :error-message   [['e] "a message for a host error, root cause included"]
    ;; namespaces and vars (handles are opaque)
    :ns-interns      [['ns-sym] "{sym handle} of the vars interned in ns-sym"]
+   :interned-var    [['ns-sym 'sym] "the handle of the var sym interned in ns-sym (not one referred), or nil: one lookup, where :ns-interns builds the whole map; default: a lookup in :ns-interns"]
    :ns-public-names [['ns-sym] "#{sym} of the public vars of ns-sym"]
    :intern!         [['ns-sym 'sym 'val] "intern a var"]
    :refer-all!      [['into-ns 'from-ns] "refer every public of from-ns into into-ns"]
@@ -77,6 +78,7 @@
    :variadic-recur-style [[] ":jvm when `recur` in a variadic arity binds the rest param to the trailing argument; :repack when the host packs the trailing arguments into a fresh rest seq (the codemod then loops such arities)"]
    :def-meta        [[] "nil, or metadata every `def` name gets so alter-var-root / with-redefs reach compiled references (basilisp: {:redef true})"]
    :inline-meta     [[] ":keep when the host ignores a var's :inline fn or is the JVM; :strip when it honors it (basilisp) — the stock inline fns build forms holding quoted JVM interop"]
+   :rewrite-inline? [[] "true when the host's compiler ignores a var's :inline fn: the codemod applies core.clj's own inline expansions at rewrite time, as the JVM compiler does (with :inline-meta :keep); default false"]
    :empty-queue     [[] "the host's empty persistent queue (clojure.lang.PersistentQueue/EMPTY), or nil"]
    :host-class      [['token] "the host's own class or interface a JVM class token names, or nil: instance? also asks it"]
    :host-instance?  [['token 'x] "is x, an object that is not the host's own data, an instance of the JVM class token on this host? (default: instance? of :host-class)"]
@@ -88,6 +90,8 @@
    :meta            [['x] "x's metadata map, or nil (the host's meta; basilisp's own meta hands back a reify object's meta method unbound, so its adapter calls it)"]
    :host-type       [['token] "the host type (form) an extend / extend-type / extend-protocol position names for a JVM class token, a vector of them, or nil to keep the class symbol"]
    :user-type?      [['x] "is x an instance of a type user code defined — deftype, defrecord, reify, proxy — rather than the host's own data? (.m x args) in source then reaches x's own member before the shim's method; default false"]
+   :chunks          [[] "the host's chunked seqs, or nil: {:chunked-seq? :chunk-first :chunk-rest :chunk-next :chunk-buffer :chunk-append :chunk :chunk-cons}, plus :chunk? and :chunk-reduce when the host's reduce cannot walk one of its chunks (the JVM's ArrayChunk). The stock chunked branches (map, filter, concat, doseq, for, reduce1) then run over the host's own chunks; with nil, no host seq is chunked to stock code. Default: the host core's fns of those names, when it has them all"]
+   :host-data?      [['x] "a cheap test, asked at every (.m x args) before the type is looked up: true only when x is certainly the host's own data, never a user type (jolt: its transients, atoms, fns, strings, numbers ...); default: never true"]
    :invoke-member   [['x 'name 'args 'absent] "x's member called name (a string, as written in the source): the field when args is empty and name is a field, else the method applied to args; absent when x has no such member"]
    :interop-passthrough? [[] "true when the host has a java.* surface of its own (the JVM, jolt): interop the shim lacks is left to the host instead of becoming a throwing cohost.shim/missing-* call"]
    :protocol-var?   [['ns-sym 'name-sym] "is the var ns-sym/name-sym a protocol on this host? (default: its root is a map with a protocol's keys)"]
@@ -222,6 +226,7 @@
     :eval #?(:cljs (unsupported :eval) :default (fn [form] (eval form)))
     :error-message generic-error-message
     :ns-interns #?(:cljs (unsupported :ns-interns) :default (fn [ns-sym] (ns-interns ns-sym)))
+    :interned-var (fn [ns-sym sym] (get ((cap :ns-interns) ns-sym) sym))
     :ns-public-names #?(:cljs (unsupported :ns-public-names) :default (fn [ns-sym] (set (keys (ns-publics ns-sym)))))
     :intern! #?(:cljs (unsupported :intern!) :default (fn [ns-sym sym val] (intern ns-sym sym val)))
     :refer-all! #?(:cljs (unsupported :refer-all!) :default (fn [into-ns from-ns] (binding [*ns* (the-ns into-ns)] (refer from-ns))))
@@ -258,6 +263,12 @@
     :core-extras {}
     :host-type nil
     :user-type? (fn [_] false)
+    :host-data? (fn [_] false)
+    :chunks (fn []
+              (let [fs (into {} (for [n '[chunked-seq? chunk-first chunk-rest chunk-next chunk-buffer chunk-append chunk chunk-cons]]
+                                  [(keyword (name n)) (try (some-> ((cap :resolve-core) n) ((cap :var-get)))
+                                                           (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]))]
+                (when (every? fn? (vals fs)) fs)))
     :invoke-member (fn [_ _ _ absent] absent)
     :interop-passthrough? false
     :protocol-var? (fn [ns-sym name-sym]
@@ -291,6 +302,7 @@
     :variadic-recur-style :jvm
     :def-meta nil
     :inline-meta :keep
+    :rewrite-inline? false
     :empty-queue (fn [] nil)
     :atom (fn ([x] (atom x)) ([x m] (atom x :meta m)))
     :ex-info (fn ([msg m] (apply ex-info [msg m]))
@@ -382,16 +394,22 @@
 
 (defn current [] @installed)
 
+;; every accessor below runs through cap, many of them per element: one lookup
 (defn- cap [k]
-  (let [m @installed]
-    (when (nil? m)
-      (throw (ex-info "cohost: no host adapter installed (require cohost.hosts.auto or a cohost.hosts.* namespace first)" {})))
-    (if (contains? m k)
-      (get m k)
-      (throw (ex-info (str "cohost: adapter provides no " k) {:capability k})))))
+  (let [v (get @installed k ::absent)]
+    (if (= ::absent v)
+      (if (nil? @installed)
+        (throw (ex-info "cohost: no host adapter installed (require cohost.hosts.auto or a cohost.hosts.* namespace first)" {}))
+        (throw (ex-info (str "cohost: adapter provides no " k) {:capability k})))
+      v)))
 
 ;; ---------------------------------------------------------------------------
 ;; accessors: the rest of the library calls these
+
+(defn capability
+  "The installed adapter's capability k itself, looked up once by a caller
+   that asks it per element (cohost.shim's predicates)."
+  [k] (cap k))
 
 (defn host-name [] (cap :name))
 (defn core-ns-sym [] (cap :core-ns))
@@ -444,6 +462,8 @@
 (defn edn-read-string [opts s] ((cap :edn-read-string) opts s))
 (defn def-meta [] (get @installed :def-meta))
 (defn strip-inline? [] (= :strip (cap :inline-meta)))
+(defn rewrite-inline? [] (boolean (cap :rewrite-inline?)))
+(defn chunks [] ((cap :chunks)))
 (defn empty-queue [] ((cap :empty-queue)))
 
 (defn slurp-file [path] ((cap :slurp) path))
@@ -457,6 +477,7 @@
 (defn after-eval [form ns-sym] ((cap :after-eval) form ns-sym))
 
 (defn ns-interns-map [ns-sym] ((cap :ns-interns) ns-sym))
+(defn interned-var [ns-sym sym] ((cap :interned-var) ns-sym sym))
 (defn ns-public-names [ns-sym] ((cap :ns-public-names) ns-sym))
 (defn intern! [ns-sym sym val] ((cap :intern!) ns-sym sym val))
 (defn refer-all! [into-ns from-ns] ((cap :refer-all!) into-ns from-ns))

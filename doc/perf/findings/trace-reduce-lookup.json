@@ -1,0 +1,228 @@
+{
+ "area": "reduce-lookup",
+ "findings": [
+  {
+   "cases": [
+    "keyword-lookup",
+    "destructure"
+   ],
+   "claim": "The x74 (keyword-lookup) and x87 (destructure) are not caused by repeat. They come from the 3-argument `+`. jolt's compiler ignores a var's :inline, and the committed codemod (HEAD 4ce56eb, /home/user/cohost-baseline, which the quick-run numbers match) did not apply it either. So `(+ acc (:a m) (:b m))` calls core.clj's variadic arity: a rest seq, then `reduce1`, then `chunked-seq?` once, which is a stock `instance?`. In the committed code each stock `instance?` builds and calls a fresh `.isInstance` dispatcher (finding 2). destructure pays that twice per element: once inside the `+` and once in the `(seq? map__N)` test that core.clj's map destructuring emits. map-lookup, reduce-range and equality pay it zero times per element. Inferred from the quick run (not measured part by part): destructure minus keyword-lookup = (619.7-376.89) ms / 100k = 2.43 \u00b5s per element. That is one extra `instance?` plus about 0.1 \u00b5s of frames (a stock seq? frame and two stock get to RT-get calls, at the 15-20 ns per frame seen on fn-call and map-lookup). So one committed-code `instance?` is about 2.3 \u00b5s, roughly 60% of keyword-lookup's 3.77 \u00b5s per element. The rest of the variadic `+` path is about 15 frames, roughly 0.3 \u00b5s. About 1.1 \u00b5s I cannot attribute by reading; GC and allocation are the candidates.",
+   "evidence": [
+    "core.clj (/home/user/cohost.cljc/resources/cohost/clojure-1.12.0/clojure/core.clj, same md5 in both trees):986-996 `(defn + ... {:inline (nary-inline 'add 'unchecked_add) :inline-arities >1? ...} ... ([x y] (. clojure.lang.Numbers (add x y))) ([x y & more] (reduce1 + (+ x y) more)))`",
+    "core.clj:932-947 reduce1 3-arity: `(let [s (seq coll)] (if s (if (chunked-seq? s) (recur f (.reduce (chunk-first s) f val) (chunk-next s)) (recur f (f val (first s)) (next s))) val))`",
+    "core.clj:717-718 `(defn ^:static chunked-seq? [s] (instance? clojure.lang.IChunkedSeq s))`; core.clj:146 `instance? (fn instance? [^Class c x] (. c (isInstance x)))`; core.clj:153 `seq? (fn ^:static seq? [x] (instance? clojure.lang.ISeq x))`",
+    "core.clj:4472 (destructure's map pattern) `(conj gmap) (conj `(if (seq? ~gmap) ...` and core.clj:4506-4507 `(list `get gmap bk)`",
+    "committed /home/user/cohost-baseline/src/cohost/rewrite.cljc:388 (rw-method) `(apply list (list (shim-fn \"dot\") (name m) f) xs')`: (. c (isInstance x)) becomes ((cohost.shim/dot \"isInstance\" cohost.shim/-isInstance) c x), with the dispatcher built per evaluation",
+    "jolt@v0.8.23 (/root/.cache/vs-hosts/jolt, `git show v0.8.23:`; /root/.local/bin/jolt is byte-identical to the v0.8.23 release binary) jolt-core/jolt/analyzer.clj has no :inline handling (grep for ':inline' finds nothing); working tree src/cohost/hosts/jolt.clj:56-58 `;; jolt's compiler ignores :inline; the codemod applies core.clj's :rewrite-inline? true`",
+    "jolt@v0.8.23 jolt-core/jolt/op_registry.clj:51 `\"+\" {:call \"jolt-n+\" :value \"jolt-add\" ...}`: the host side's (+ acc (:a m) (:b m)) is one open-coded add; backend_scheme.clj:3586-3602 `(jolt-kw-get-site ...)` for (:a m) on both sides",
+    "Quick-run table (from the task): keyword-lookup host 5.09 / stock 376.89 ms; destructure host 7.1 / stock 619.7 ms (n=100000)"
+   ],
+   "per_iteration_work": "Stock, per element, committed code. jolt's reduce-seq calls the stock closure, then: stock + (variadic: a Chez rest list plus a list->cseq cell); (+ x y) to cohost.shim/Numbers-add to jolt-add (a variadic lambda, rest list); reduce1; seq to RT-seq; chunked-seq? to stock instance? (the ~2.3 \u00b5s dispatcher round trip, finding 2); first to RT-first; + to Numbers-add to jolt-add; next to RT-next; seq to RT-seq. That is ~16 var-cell-deref + jolt-invokeN frames plus 1 instance?. destructure adds stock seq? (a second instance? round trip) and twice stock get to RT-get to jolt-get, minus the two native keyword lookups. Host, per element: reduce-seq calls the closure directly, and the body is one jolt-n+ over two jolt-kw-get-site lookups (51 ns measured for keyword-lookup).",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "keyword-lookup",
+    "destructure"
+   ],
+   "claim": "One committed-code stock `instance?` does five things, every call. (1) It calls `dot`. `dot` hashes the method-name string for its `record-members` test, then allocates a five-clause closure whose last clause is variadic. jolt registers every such closure, when it is created, in a weak eq-hashtable under a mutex. (2) Calling that closure runs `host-object?` on the class-token symbol, with no per-type cache. That goes through the adapter's `cap` (an atom deref and a map lookup) to jolt's `:user-type?`, which builds `(str (class x))` and makes two host string-method calls (.startsWith, .contains), each dispatched through jolt's chain of string=? tests. (3) `-isInstance` calls `instance-of?`. (4) `instance-of?` calls the unmemoized `canon`. Its `has-dot?` scans 'clojure.lang.IChunkedSeq' backwards one character at a time: 12 steps, each allocating a 1-char string via `(str (nth (name sym) i))`. (5) Then the interface-preds lookup, the predicate, and `builtin?`. How the inferred ~2.3 \u00b5s splits across these is an estimate from jolt's own per-op notes, not measured; probes P4-P6 measure each part.",
+   "evidence": [
+    "committed /home/user/cohost-baseline/src/cohost/shim.cljc:1775-1793 `(defn dot [m f] (let [own? (if (contains? record-members m) non-record-object? host-object?)] (fn ([x] ...) ([x a] ...) ([x a b] ...) ([x a b c] ...) ([x a b c & more] ...))))`",
+    "jolt@v0.8.23 jolt-core/jolt/backend_scheme.clj:2951-2955 `reg-here? (and variadic-fixed (not *variadic-reg-suppressed?*)) ;; a bare anonymous variadic fn still needs a binding to register through` and host/chez/seq.ss:600-611 `;; Written on every variadic closure creation ... Both sides take the mutex. (define variadic-fixed-arity-tbl (make-weak-eq-hashtable)) ... (define (jolt-register-variadic! v proc) (jolt-with-mutex variadic-tbl-mu (hashtable-set! variadic-fixed-arity-tbl proc v)) proc)`",
+    "committed shim.cljc:1769 `(defn host-object? [x] (and (some? x) (host/user-type? x) (not (contains? shim-types (type x)))))`; committed adapter.cljc:385-391 `(defn- cap [k] (let [m @installed] ... (if (contains? m k) (get m k) ...)))`; src/cohost/hosts/java.clj:84-85 (unchanged) `:user-type? (fn [x] (and (let [n (str (class x))] (not (and (.startsWith n \"class clojure.\") (not (.contains n \"$reify\"))))) ...`",
+    "jolt@v0.8.23 host/chez/java/natives-str.ss:1102-1119 `;; hot-first ... a miss at the bottom of the chain cost ~100ns per call ... ((string=? method \"length\") ...) ... ((string=? method \"startsWith\")`; \"contains\" is at :1161",
+    "committed shim.cljc:1629 `(def -isInstance (fn [c x] (instance-of? c x)))`; committed shim.cljc:347-367 `(defn instance-of? [c x] ... (let [c (canon c)] (boolean (and (some? x) (or (if-let [p (get interface-preds c)] (p x) ...) (when-not (or (builtin? x) (host/exception? x)) ...))))))`",
+    "committed shim.cljc:171 `(defn- has-dot? [sym] (not (neg? (loop [i (dec (count (name sym)))] (cond (neg? i) -1 (= \".\" (str (nth (name sym) i))) i :else (recur (dec i)))))))` and :173-180 canon (no cache) `(cond (not (symbol? c)) c (contains? short-name c) ... (has-dot? c) c ...)`",
+    "jolt@v0.8.23 backend_scheme.clj:3688-3690 `no var-cell-deref (7 ns), no jolt-invokeN (5 ns)`; values.ss:400 `java-string-hashcode (14.7 ns, not the 45.8 ns murmur)`; working tree hosts/jolt.clj:59-60 `;; its class walks the registered class arms (0.3 \u00b5s for a transient, an atom)`"
+   ],
+   "per_iteration_work": "Per stock instance? call, committed code: 1 closure allocation, plus jolt-register-variadic! (mutex plus weak-table insert; the table gains 100k entries per bench call and GC must sweep them); 1 string hash; a cap lookup; (class x), a str allocation and 2 jolt-host-call string methods; 3 more var frames (-isInstance, instance-of?, canon); 2 map lookups plus has-dot?'s ~12 iterations of (name, nth, str allocation, =); the interface-preds lookup; the predicate call; builtin? (jolt's coll? wrapper chain). Host: jolt's own seq?/chunked tests are single tag checks.",
+   "confidence": "medium"
+  },
+  {
+   "cases": [
+    "keyword-lookup",
+    "destructure",
+    "reduce-range"
+   ],
+   "claim": "repeat is not the cost. The per-element loop is jolt's own reduce on both sides. Stock repeat becomes cohost.shim/Repeat-create, which is jolt's own repeat, so both sides walk the same lazy sk-repeat cells. core/protocols.clj is never booted (policy skips its `load`), but stock reduce still reaches jolt's reduce. `(instance? clojure.lang.IReduceInit coll)` falls to the predicate's host fallback. jolt registers Repeat and LongRange as IReduce, which extends IReduceInit, so the test is true. `.reduce` then goes to `-reduce`, which is jolt's reduce. Had the test been false, `clojure.core.protocols/coll-reduce` is rewritten to cohost.shim/protocols-coll-reduce, also jolt's reduce. In jolt-reduce, iface-method is #f for any seq, and reduce-seq calls `(f acc x)` directly when f is a procedure. The stock side differs only once per reduce call.",
+   "evidence": [
+    "core.clj:3022-3027 `(defn repeat ... ([x] (clojure.lang.Repeat/create x)) ([n x] (clojure.lang.Repeat/create n x)))`; working tree src/cohost/shim.cljc:795 (committed :752) `(def Repeat-create (fn ([x] (repeat x)) ([n x] (repeat n x))))`",
+    "core.clj:6962-6966 `([f val coll] (if (instance? clojure.lang.IReduceInit coll) (.reduce ^clojure.lang.IReduceInit coll f val) (clojure.core.protocols/coll-reduce coll f val)))`; core.clj:6858 `(load \"core/protocols\")`, skipped by src/cohost/policy.cljc:193-195 `(def skip-heads '#{import load require ...})`",
+    "working tree shim.cljc:331 `'clojure.lang.IReduceInit #(or (vector? %) (list? %) (host/host-instance? 'clojure.lang.IReduceInit %))`; src/cohost/hosts/java.clj:73 `:host-class (fn [token] (let [c (try (resolve token) ...)] (when (class? c) c)))`",
+    "jolt@v0.8.23 host/chez/java/class-hierarchy.ss:587 `(jch-register-supers! \"clojure.lang.LongRange\" '(... \"clojure.lang.IReduce\" ...))`, :597 `(jch-register-supers! \"clojure.lang.Repeat\" '(\"clojure.lang.ASeq\" \"clojure.lang.IReduce\" \"clojure.lang.IDrop\"))`, :599 `(jch-register-supers! \"clojure.lang.IReduce\" '(\"clojure.lang.IReduceInit\"))`; host/chez/java/host-class.ss:117 `(vector-set! v sk-repeat \"clojure.lang.Repeat\")`",
+    "src/cohost/rewrite.cljc:65-66 `(def class-prefixes [... \"clojure.core.protocols\"])`; working tree shim.cljc:617 `(def protocols-coll-reduce (fn ([coll f] (reduce f coll)) ([coll f init] (reduce f init coll))))`; shim.cljc:1570 `(def -reduce (fn ([coll f] (reduce f coll)) ([coll f init] (reduce f init coll))))`",
+    "jolt@v0.8.23 host/chez/seq.ss:1857-1876 `(define (reduce-seq f acc s) (let ((direct? (procedure? f))) ... (rec (if direct? (f acc (seq-first s)) (jolt-invoke f acc (seq-first s))) (jolt-seq (seq-more s)))`; :1895-1906 `((f init coll) (cond ((iface-method coll \"reduce\" 3) => ...) (else (reduce-seq f init (jolt-seq coll)))))`; records-coll.ss:407-411 `(define (iface-method v method nargs) (cond ((jrec? v) ...) ((jreify? v) ...) (else #f)))`; seq.ss:233-241 jolt-repeat / repeat-cells"
+   ],
+   "per_iteration_work": "Both sides, per element: realize the next sk-repeat cell (repeat-cells: one cseq-lazy/k plus one lazy-src) and make one direct Scheme call (f acc x). Per reduce call, stock only: the stock reduce frame; instance-of? IReduceInit (vector?, list?, host-instance?: an atom deref plus jolt instance? with the resolved class); the .reduce dispatcher; -reduce.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "map-lookup"
+   ],
+   "claim": "map-lookup is only x3.9 because its body has no instance? and no variadic call. Every call is a 2-arity stock fn whose body is one shim static: + to Numbers-add, get to RT-get, and mod to rem (Numbers-remainder), zero? (Numbers-isZero), = (Util-equiv) and pos? twice (Numbers-isPos). That is about 15 extra frames per element; the host side runs jolt's natives. Measured: (40.98-10.45) ms / 100k = 305 ns per element, about 20 ns a frame. That matches the other cases in the same run: fn-call (10.9-1.71) ms / 100k over 6 frames \u2248 15 ns, and loop-arith (28.46-0.52) ms / 200k over 8 frames \u2248 17.5 ns. It also matches jolt's own note of ~12 ns for a var-cell-deref plus jolt-invokeN.",
+   "evidence": [
+    "src/cohost/bench.cljc:35-36 `[:map-lookup \"get from a 1,000-key map\" 100000 \"(def bench-m (zipmap (range 1000) (range 1000)))\" \"(reduce (fn [acc i] (+ acc (get bench-m (mod i 1000)))) 0 (range %N))\"]`",
+    "core.clj:3592-3600 `(defn mod ... [num div] (let [m (rem num div)] (if (or (zero? m) (= (pos? num) (pos? div))) m (+ m div))))`; core.clj:1508-1516 `(defn get ... ([map key] (. clojure.lang.RT (get map key))) ...)`; core.clj:785-797 `(defn = ... ([x y] (clojure.lang.Util/equiv x y)) ...)`",
+    "committed shim.cljc:401 `(def RT-get get)`, :478 `(def Numbers-add +)`; working tree shim.cljc:550 `(def Numbers-remainder (fn [x y] (if (zero? y) (throw (divide-by-zero)) (rem x y))))`, :626 `(def Util-equiv =)`",
+    "jolt@v0.8.23 backend_scheme.clj:3688-3690 `no var-cell-deref (7 ns), no jolt-invokeN (5 ns)`"
+   ],
+   "per_iteration_work": "Stock: + (2 frames), get (2), mod (1) to rem (1) to Numbers-remainder (1, with native zero?/rem), zero? (2), = (2), pos? (2\u00d72): about 15 var-cell-deref + jolt-invokeN frames, and no allocation beyond jolt-add's rest list. Host: jolt-n+, jolt-get and jolt's mod as native ops.",
+   "confidence": "medium"
+  },
+  {
+   "cases": [
+    "reduce-range"
+   ],
+   "claim": "reduce-range is x2.1 because the stock + is passed as a value. jolt's reduce open-codes the add only when f is jolt's own + procedure (`(eq? f jolt-add)` in vec-reduce). The stock + is a different closure, so every element is a call into it. In the committed code that call continues through cohost.shim/Numbers-add to jolt-add, a variadic lambda that builds a rest list per call; jolt's own comment prices that at 12 ns an element. Measured: (9.79-4.56) ms / 200k = 26 ns per element. Applying :inline in the codemod cannot help a value position; the 10:53:57 ET working-tree run still shows 4.58 / 9.74 ms.",
+   "evidence": [
+    "src/cohost/bench.cljc:21-22 `[:reduce-range \"reduce + over a range\" 200000 nil \"(reduce + (range %N))\"]`",
+    "jolt@v0.8.23 host/chez/seq.ss:1810-1814 `;; (reduce + init v) / (reduce * init v): f is the core var's own procedure, a variadic lambda, so every step built a rest list to add two numbers -- 12 ns an element.`; :1822-1827 `(define (vec-reduce f acc v start) ... (cond ((eq? f jolt-add) (vec-reduce-arith jolt-n+ acc v start n)) ((eq? f jolt-mul) ...) (else (vec-reduce-general f acc v start n)))))`",
+    "jolt@v0.8.23 host/chez/ns.ss:1045 `(cons \"+\" jolt-add)`: jolt's + var root is jolt-add; working tree shim.cljc:521 `(def Numbers-add +)`",
+    "core.clj:6957-6961 `([f coll] (if (instance? clojure.lang.IReduce coll) (.reduce ^clojure.lang.IReduce coll f) (clojure.core.protocols/coll-reduce coll f)))`",
+    "target/bench-jolt.edn (written 10:53:57 ET) reduce-range `:host {:first 4.6167 :median 4.5761}` `:stock {:first 10.3902 :median 9.7426}`"
+   ],
+   "per_iteration_work": "Stock, per element: vec-reduce-general's (f acc x) into the stock + closure (case-lambda, 2-arity), then in the committed code jolt-invoke2 of cohost.shim/Numbers-add to jolt-add (variadic: rest list plus fold). Host, per element: jolt-n+ open-coded inside vec-reduce-arith, with no call at all.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "equality"
+   ],
+   "claim": "equality is x1 because it is one call. Stock = (2-arity, to Util-equiv) runs jolt's own = over the same two 100k jolt vectors; stock vec makes them through LazilyPersistentVector-create, which is jolt's vec. The stock overhead is a few frames per call, against a 100k-element walk that is identical on both sides.",
+   "evidence": [
+    "src/cohost/bench.cljc:63-64 `[:equality \"= of two equal vectors\" 100000 \"(do (def bench-v1 (vec (range %N))) (def bench-v2 (vec (range %N))))\" \"(= bench-v1 bench-v2)\"]`",
+    "core.clj:795 `([x y] (clojure.lang.Util/equiv x y))`; working tree shim.cljc:626 `(def Util-equiv =)`, :780 `(def LazilyPersistentVector-create (fn [coll] (vec coll)))`"
+   ],
+   "per_iteration_work": "Per call: stock = frame plus Util-equiv frame, then jolt's =. Per element: identical native compare on both sides.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "destructure",
+    "keyword-lookup",
+    "map-lookup"
+   ],
+   "claim": "The working tree (edited 10:34-10:53 ET and still changing while I read it) already removes the mechanism behind the x74 and x87. It rewrites a literal-class instance? straight to cohost.shim/instance-of?, uses prebuilt dot$m dispatchers, memoizes canon, and caches host-object? per type with a :host-data? short-circuit. On jolt (:rewrite-inline? true) it also applies core.clj's :inline in the codemod and emits host aliases for shim statics that are host fns. So (+ acc (:a m) (:b m)) becomes (clojure.core/+ (clojure.core/+ acc (:a m)) (:b m)), and the destructure (get m :a) becomes jolt's own get. jolt evaluates def metadata, so the stock var's :inline is a real fn. target/bench-jolt.edn, written 10:53:57 ET with one timed call per side, shows: keyword-lookup 5.40 / 10.63 ms (x1.97); destructure 7.11 / 36.37 ms (x5.1); map-lookup 22.05 / 30.38 ms (but the host's first call took 10.47, so that pair is noisy); reduce-range 4.58 / 9.74 ms; equality 0.785 / 0.661 ms. I cannot tell which source state that run loaded: the last edit landed 40 s before the file was written. In destructure, the stock work left per element is the (seq? map__N) test, which has no :inline in core.clj. It costs a stock seq? frame, an instance-of? frame, the interface-preds lookup, the jolt seq? call, and builtin?, whose coll? on jolt is a chain of three wrapper closures. Per the EDN that is (36.37-7.11) / 100k \u2248 0.29 \u00b5s per element.",
+   "evidence": [
+    "`git -C /home/user/cohost.cljc status`: M adapter.cljc, boot.cljc, hosts/cljs.cljs, hosts/jolt.clj, rewrite.cljc, shim.cljc (uncommitted); /home/user/cohost-baseline is a worktree at 4ce56eb",
+    "working tree src/cohost/rewrite.cljc:917-923 `;; (instance? SomeClass x) naming a class: the shim's test directly ... (list (shim-fn \"instance-of?\") (rw ctx (second form)) (rw ctx (nth form 2)))`; :871-881 `(defn- inline-expansion ...)` used at :962 `:else (if-let [e (inline-expansion ctx h args)] (rw ctx e) ...)`; :363 `(apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args')`; :396 `(let [d (str \"dot$\" (name m))] (if (known? ctx d) ...`",
+    "working tree src/cohost/boot.cljc:92 `(defn- host-aliases ...)`, :121 `(defn- inline-fn ...)`; src/cohost/hosts/jolt.clj:58 `:rewrite-inline? true`, :61 `:host-data? (fn [x] (or (transient? x) (atom? x) (fn? x) (string? x) (number? x) ...`",
+    "working tree shim.cljc:204 `(def ^:private canon-cache (atom {}))`; :1836-1845 `(defn host-object? [x] (and (some? x) (not (h-host-data? x)) (let [t (class x) hit (get @host-object-types t absent)] ...`",
+    "jolt@v0.8.23 jolt-core/jolt/analyzer.clj:1199-1216 def-meta-expr: `:else (analyze ctx v env)`, so def metadata values such as :inline are evaluated",
+    "core.clj:148-153 `seq? (fn ^:static seq? [x] (instance? clojure.lang.ISeq x))` (no :inline); working tree shim.cljc:379-385 `(defn- builtin? [x] (or (nil? x) (coll? x) (seq? x) ...))`; jolt@v0.8.23 host/chez/post-prelude.ss:265-295 wraps coll? twice (`(lambda (x) (if (jolt-queue? x) #t (jolt-invoke1 prev x)))`, `(lambda (x) (if (jrec-iface-pred? x iface) #t (jolt-invoke1 prev x)))`) over host-table.ss:308 `(def-var! \"clojure.core\" \"coll?\" (lambda (x) (or (htable-sorted? x) (jrec-collection? x) (jolt-coll-pred? x))))`",
+    "target/bench-jolt.edn (mtime 10:53:57 ET; sources last modified 10:53:17 ET) keyword-lookup `:host {:median 5.3999}` `:stock {:median 10.6319}`; destructure `:host {:median 7.1090}` `:stock {:median 36.3675}`"
+   ],
+   "per_iteration_work": "destructure, working tree, stock per element: stock seq? frame, then instance-of? frame (symbol?, interface-preds HAMT lookup with a cached symbol hash, jolt seq? call, builtin? frame, coll? through 3 closures, boolean); get and + are now jolt natives. Host: jolt's own destructure with a native seq? test.",
+   "confidence": "medium"
+  },
+  {
+   "cases": [
+    "keyword-lookup"
+   ],
+   "claim": "In the working tree I cannot attribute keyword-lookup's remaining x1.97 (about 52 ns per element) by reading the code. Once inlined, the stock reducing fn's body should compile to the same jolt natives as the host's: jolt-n+ and jolt-kw-get-site, with a const pool on both sides because both thunks are top-level fn forms. The traversal is jolt's reduce-seq on both sides. Candidates: the 10:53:57 ET run loaded a pre-inline source state; or the inline did not fire for this site (for example, inline-fn's ns-resolve of + in cohost.user returning nil); or noise from a single timed call. Probes P2 and P10 tell these apart.",
+   "evidence": [
+    "jolt@v0.8.23 backend_scheme.clj:1030-1033 emit-top-cells `(top-form-has-fn? node) (emit-with-scope false emit-thunk)` (same for both sides' (fn [] ...) thunks); :3586-3602 keyword invoke `*const-pool* (let [site (hoist-const-per-site \"(jolt-kw-site)\")] ... (jolt-kw-get-site ...))`",
+    "src/cohost/bench.cljc:126 `(measure (eval-fn (str \"(fn [] \" body \")\")) opts)`; target/bench-jolt.edn `:opts {:warm-ms 0, :budget-ms 0, :min-runs 1, :max-runs 2000}`"
+   ],
+   "per_iteration_work": "Expected, working tree, both sides: one direct (f acc x) from reduce-seq, two jolt-kw-get-site lookups and two jolt-n+ adds; the measured residual is about +52 ns per element on the stock side, cause unknown.",
+   "confidence": "low"
+  }
+ ],
+ "fixes": [
+  {
+   "change": "Stop building a dispatcher on every call, and stop routing literal-class instance? tests through the stock instance?. Rewrite (instance? <class literal> x) to (cohost.shim/instance-of? 'C x). Build dot$m once per method and emit it. Memoize canon and test interface tokens first. Cache host-object? per type, with a :host-data? short-circuit. All of this is already in the working tree: rewrite.cljc:917-923 and 396-400, boot.cljc make-ctx install-dots!, shim.cljc:204-220 and 1836-1845, hosts/jolt.clj:61. Listed because it is the fix for the measured x74 and x87.",
+   "files": [
+    "src/cohost/rewrite.cljc",
+    "src/cohost/shim.cljc",
+    "src/cohost/boot.cljc",
+    "src/cohost/adapter.cljc",
+    "src/cohost/hosts/jolt.clj"
+   ],
+   "removes": "Per stock instance? call, which happens once per element in keyword-lookup and twice in destructure: the closure allocation and jolt's mutex-guarded weak-table registration; the record-members string hash; user-type?'s (str (class x)) and two host string calls; canon's 12-step character loop with 1-char string allocations; and three var frames (instance?, the dispatcher, -isInstance).",
+   "risk": "Low. Compiled call sites no longer see a with-redefs of instance?, which matches the JVM, where instance? is compiled as an intrinsic. The per-type host-object? cache assumes :user-type? depends only on the class; java.clj:84-94 reads only class-determined facts. The cache grows by one entry per class seen."
+  },
+  {
+   "change": "On jolt (:rewrite-inline? true), apply core.clj's :inline expansions in the codemod, and emit the host's own fn for a shim static whose value is that fn (Numbers-add becomes clojure.core/+, RT-get becomes clojure.core/get). Already in the working tree: rewrite.cljc inline-expansion (871-881, used at 962) and rw-static (363); boot.cljc host-aliases (92) and inline-fn (121).",
+   "files": [
+    "src/cohost/rewrite.cljc",
+    "src/cohost/boot.cljc",
+    "src/cohost/adapter.cljc",
+    "src/cohost/hosts/jolt.clj"
+   ],
+   "removes": "For (+ a b c): the variadic arity's rest seq, reduce1, and its seq/chunked-seq?/first/next frames, including the instance? inside them. For (get m k): two frames. The stock body becomes the same jolt natives the host compiles to (jolt-n+, jolt-get).",
+   "risk": "Low to medium. An inlined arity no longer follows a redefinition of the stock var (with-redefs of + or get), which matches JVM Clojure. The inline fns run at rewrite time and read *unchecked-math* then, also as on the JVM. inline-fn does one ns-resolve per rewritten list form, so boot and compile time go up by an amount I have not measured. inline-expansion swallows expansion errors and falls back to a plain call, which can hide a broken :inline."
+  },
+  {
+   "change": "Proposed, for destructure's remaining x5: specialize class tests at rewrite time. For a literal token, emit a prebuilt per-token predicate cohost.shim/is$<token>, installed once like dot$m and closing over that token's interface pred and its host-instance? fallback. Add a small cohost table of :inline forms for core.clj's one-line class predicates (seq? becomes (cohost.shim/is$clojure.lang.ISeq ~x); likewise chunked-seq? and similar), so destructure's (seq? map__N) compiles to one call. Inside is$T, when the pred answers false, use one cheap adapter test for 'the host's own collection' before falling back to builtin?, whose coll? on jolt is a chain of three closures.",
+   "files": [
+    "src/cohost/rewrite.cljc",
+    "src/cohost/shim.cljc",
+    "src/cohost/boot.cljc",
+    "src/cohost/policy.cljc",
+    "src/cohost/hosts/jolt.clj"
+   ],
+   "removes": "Per element in destructure: the stock seq? frame, the instance-of? frame, the interface-preds HAMT lookup, and most of builtin?'s coll? chain. My estimate is about half of the measured 0.29 \u00b5s per element; unmeasured, see P3 and P9.",
+   "risk": "Medium. is$T must keep the host-instance? fallback for deftypes and reifies that implement the interface; jolt answers coll?/seq? for jrecs implementing those interfaces (post-prelude.ss:281-295). The inline table means call sites no longer see a with-redefs of seq?. The extra adapter test must never classify a user type as host data."
+  },
+  {
+   "change": "Proposed, for reduce-range's x2.1: in cohost.shim/-reduce (shim.cljc:1570) and protocols-coll-reduce (shim.cljc:617), when f is identical? to the booted stock + (or *) root, pass the host's own fn (Numbers-add / Numbers-multiply, which are jolt-add / jolt-mul) to the host reduce, so jolt's open-coded (eq? f jolt-add) path in vec-reduce applies. This is equivalent: reduce calls f only with 0 or 2 arguments, and stock +'s 0-arity (0) and 2-arity (Numbers-add, now aliased to host +) are the host's.",
+   "files": [
+    "src/cohost/shim.cljc"
+   ],
+   "removes": "Per element: a call into the stock + closure plus jolt-add's rest list. The step becomes jolt-n+ open-coded inside vec-reduce-arith.",
+   "risk": "Low. One identical? check per reduce call, against a lazily resolved cohost.core/+ root. A with-redefs of + changes the root, so the check fails and the original f is used, which is correct. It helps only + and * passed to reduce, not other stock fns passed as values."
+  },
+  {
+   "change": "Have bench record the source state it ran (git HEAD plus a hash of the loaded src files, or of the dirty diff) in target/bench-<label>.edn, and take at least 3-5 timed calls per side for the before/after tables, not one.",
+   "files": [
+    "src/cohost/bench.cljc",
+    "src/cohost/run.cljc"
+   ],
+   "removes": "No runtime cost; it removes measurement ambiguity. I could not tell which source state produced the 10:53:57 ET EDN. A single timed call on the allocation-heavy stock side can absorb a GC pause the host side never pays.",
+   "risk": "None to runtime. Reading git from inside jolt needs a host capability, or a file the run script writes first."
+  }
+ ],
+ "probes": [
+  {
+   "form": "(let [v (vec (repeat 100000 {:a 1 :b 2}))] (time (reduce (fn [acc m] (+ acc (:a m) (:b m))) 0 v)) (time (reduce (fn [acc m] (+ acc (:a m) (:b m))) 0 (repeat 100000 {:a 1 :b 2}))))",
+   "tests": "That repeat is not the cost. Claim: the two times are within about 2x of each other on either tree; jolt reduces both natively (vec-reduce for the vector, reduce-seq for the repeat). Refuted if the repeat version is 5x or more slower than the vector version."
+  },
+  {
+   "form": "(let [p +] (time (reduce (fn [acc m] (p acc (:a m) (:b m))) 0 (repeat 100000 {:a 1 :b 2}))) (time (reduce (fn [acc m] (p (p acc (:a m)) (:b m))) 0 (repeat 100000 {:a 1 :b 2}))))",
+   "tests": "That the 3-argument stock + carries keyword-lookup's cost. Calling + through the local p prevents the working tree's inline expansion (inline-expansion skips locals). Claim: the 3-argument form is 5x or more the nested 2-argument form. On the committed tree, roughly 350 ms versus 10-20 ms. Refuted if the two are within 2x."
+  },
+  {
+   "form": "(do (time (reduce (fn [n m] (if (seq? m) n (inc n))) 0 (repeat 100000 {:a 1 :b 2}))) (time (reduce (fn [n m] (inc n)) 0 (repeat 100000 {:a 1 :b 2}))))",
+   "tests": "The cost of one stock seq?, that is one instance?, per element. Claim on the committed tree: about +230 ms per 100k (the ~2.3 \u00b5s inferred round trip). Claim on the working tree: about +25-30 ms (destructure's residual). Refuted if the committed-tree difference is under 50 ms (then instance? is not the dominant committed-code cost), or the working-tree difference is under 5 ms (then seq? is not destructure's residual)."
+  },
+  {
+   "form": "(do (time (dotimes [_ 100000] (cohost.shim/dot \"isInstance\" cohost.shim/-isInstance))) (time (dotimes [i 100000] (fn [x] i))) (time (dotimes [i 100000] (fn [x & r] i))))",
+   "tests": "The committed code's per-call cost of building a dispatcher, and how much of it is jolt's variadic-closure registration (mutex plus weak table). Valid on either tree, since dot still exists. Claim: the variadic closure costs at least 100 ns more per creation than the fixed-arity one, and the dot call costs at least as much as the variadic closure. Refuted if variadic and fixed-arity creation are within about 20 ns; then the round trip's cost sits in host-object? or canon (P5, P6)."
+  },
+  {
+   "form": "(time (dotimes [_ 100000] (cohost.shim/instance-of? 'clojure.lang.IChunkedSeq '(1))))",
+   "tests": "instance-of? alone, including canon. Run once on each tree. Claim: the committed tree, with its unmemoized canon and 12-step has-dot? loop, is at least 0.4 \u00b5s per call slower than the working tree's memoized, token-first version. Refuted if the two trees are within 0.1 \u00b5s per call."
+  },
+  {
+   "form": "(time (dotimes [_ 100000] (cohost.shim/host-object? 'clojure.lang.ISeq)))",
+   "tests": "host-object? on a class-token symbol. Run once on each tree. Claim: committed tree (uncached; adapter :user-type? builds (str (class x)) and makes .startsWith/.contains host calls) is 0.3 \u00b5s or more per call; working tree (:host-data? is true for a symbol) is under 0.05 \u00b5s. Refuted if the committed tree is under 0.1 \u00b5s per call."
+  },
+  {
+   "form": "(do (time (reduce + (range 200000))) (time (reduce cohost.shim/Numbers-add (range 200000))))",
+   "tests": "That reduce-range's x2.1 is the lost (eq? f jolt-add) fast path. Numbers-add is jolt's own + value (shim.cljc:521). Claim: the second form takes about the host time (about 4.6 ms) and the first about 9.7 ms. Refuted if both take about the same time."
+  },
+  {
+   "form": "[(instance? clojure.lang.IReduceInit (repeat 3 1)) (instance? clojure.lang.IReduceInit (range 10)) (instance? clojure.lang.IReduce (range 10))]",
+   "tests": "Which branch stock reduce takes on jolt. Not timed. Claim: [true true true], so the .reduce branch runs, then -reduce, then jolt's reduce. A false answer means the protocols-coll-reduce branch, which also ends in jolt's reduce, so no performance conclusion changes."
+  },
+  {
+   "form": "(do (time (reduce (fn [acc {:keys [a b]}] (+ acc a b)) 0 (repeat 100000 {:a 1 :b 2}))) (time (reduce (fn [acc m] (+ acc (get m :a) (get m :b))) 0 (repeat 100000 {:a 1 :b 2}))))",
+   "tests": "That destructure's working-tree residual is the seq? test and not the gets, which the working tree inlines to jolt-get. Claim: the destructuring form is about 25-30 ms slower per 100k. Refuted if the difference is under 5 ms."
+  },
+  {
+   "form": "(do (time (reduce (fn [acc m] acc) 0 (repeat 100000 {:a 1 :b 2}))) (time (reduce (fn [acc m] (+ acc (:a m) (:b m))) 0 (repeat 100000 {:a 1 :b 2}))))",
+   "tests": "Where keyword-lookup's working-tree residual (x1.97, about 52 ns per element) lives. If the empty-body floor is already about 10 ms, the residual is in reaching or running jolt's reduce over a stock closure, not in the body. If the body adds 4 ms or more over the floor, the body is not compiling to jolt's natives; cross-check with P2's nested form."
+  }
+ ]
+}

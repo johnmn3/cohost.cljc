@@ -91,6 +91,12 @@
      vector-of
      *clojure-version*})
 
+(def chunk-names
+  "core.clj's chunk fns: taken from the host when its adapter has :chunks, so
+   the stock chunked branches (map, filter, concat, doseq, for) build and walk
+   the host's own chunks with its own fns."
+  '#{chunked-seq? chunk-first chunk-rest chunk-next chunk-buffer chunk-append chunk chunk-cons})
+
 (def host-only-names
   "Of host-names, those whose stock definition cannot work without the JVM:
    when the host lacks one, it is skipped rather than reported as an error."
@@ -250,27 +256,38 @@
         (and (= h '.) (seq? nm) (= 'var (first nm)) (= '(setMacro) init)) nil
         :else form))))
 
+(defn lists
+  "{:host-names :skip-names} for `host` (the adapter's :name): the lists above
+   with its host-overrides applied, and chunk-names when chunks? (the adapter
+   has :chunks). A boot computes them once."
+  ([host] (lists host false))
+  ([host chunks?]
+   (let [ov (get host-overrides host)]
+     {:host-names (cond-> (apply disj (into host-names (:host ov)) (:stock ov))
+                    chunks? (into chunk-names))
+      :skip-names (into skip-names (:skip ov))})))
+
 (defn decide
   "-> {:action :eval|:skip|:host|:replace, :name sym, :reason kw, :replacement form}
-   `host` is the adapter's :name, for host-overrides."
-  [form host]
-  (let [head (form-head form)
-        nm (form-name form)
-        ov (get host-overrides host)
-        host-names (apply disj (into host-names (:host ov)) (:stock ov))
-        skip-names (into skip-names (:skip ov))]
-    (cond
-      (nil? form) {:action :skip :reason :empty}
-      (= head 'let) {:action :replace :name '*clojure-version* :replacement (get replacements 'version-let)}
-      (and nm (contains? replacements nm)) {:action :replace :name nm :replacement (get replacements nm)}
-      (and nm (contains? skip-names nm)) {:action :skip :name nm :reason :jvm-only}
-      (and nm (contains? host-names nm))
-      (if (= head 'alter-meta!)
-        {:action :skip :name nm :reason :host-var}
-        {:action :host :name nm})
-      (contains? skip-heads head) {:action :skip :name (or nm head) :reason :skip-head}
-      (and (= head 'alter-meta!) (nil? nm)) {:action :skip :name head :reason :jvm-only}
-      :else {:action :eval :name (or nm head)})))
+   `host` is the adapter's :name, for host-overrides; `ls` is (lists host)."
+  ([form host] (decide form host (lists host)))
+  ([form _host ls]
+   (let [head (form-head form)
+         nm (form-name form)
+         host-names (:host-names ls)
+         skip-names (:skip-names ls)]
+     (cond
+       (nil? form) {:action :skip :reason :empty}
+       (= head 'let) {:action :replace :name '*clojure-version* :replacement (get replacements 'version-let)}
+       (and nm (contains? replacements nm)) {:action :replace :name nm :replacement (get replacements nm)}
+       (and nm (contains? skip-names nm)) {:action :skip :name nm :reason :jvm-only}
+       (and nm (contains? host-names nm))
+       (if (= head 'alter-meta!)
+         {:action :skip :name nm :reason :host-var}
+         {:action :host :name nm})
+       (contains? skip-heads head) {:action :skip :name (or nm head) :reason :skip-head}
+       (and (= head 'alter-meta!) (nil? nm)) {:action :skip :name head :reason :jvm-only}
+       :else {:action :eval :name (or nm head)}))))
 
 ;; ---------------------------------------------------------------------------
 ;; libraries other than clojure.core

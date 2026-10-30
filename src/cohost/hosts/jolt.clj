@@ -51,7 +51,15 @@
    :sort-array! (fn [arr cmp] (java.util.Arrays/sort arr cmp) arr)
    :close! (fn [x] (.close x))
    :index-of (fn [s sub from] (.indexOf s sub (int from)))
-   :transient? (fn [x] (instance? clojure.lang.ITransientCollection x))
+   ;; jolt's own transient? is one record test; its instance? of the interface
+   ;; walks every registered class arm (a deftype implementing it still answers)
+   :transient? (fn [x] (or (transient? x) (instance? clojure.lang.ITransientCollection x)))
+   ;; jolt's compiler ignores :inline; the codemod applies core.clj's
+   :rewrite-inline? true
+   ;; jolt's own predicates are one record or tag test each; its class walks the
+   ;; registered class arms (0.3 µs for a transient, an atom)
+   :host-data? (fn [x] (or (transient? x) (atom? x) (fn? x) (string? x) (number? x)
+                          (keyword? x) (symbol? x) (boolean? x) (vector? x)))
    :lazy-seq? (fn [x] (instance? clojure.lang.LazySeq x))
    :atom? (fn [x] (instance? clojure.lang.Atom x))
    :volatile? (fn [x] (volatile? x))

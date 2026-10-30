@@ -274,6 +274,14 @@
   (merge (into {} (for [sym (keys (defs ns-sym))] [sym (handle ns-sym sym false)]))
          (into {} (for [sym (keys (macro-defs ns-sym))] [sym (handle (macros-ns ns-sym) sym true)]))))
 
+(defn- interned-var
+  "(get (ns-interns ns-sym) sym), without building the map: the macro wins."
+  [ns-sym sym]
+  (let [m (get (defs (macros-ns ns-sym)) sym)]
+    (if (and m (not (alias? m)))
+      (handle (macros-ns ns-sym) sym true)
+      (when (contains? (defs ns-sym) sym) (handle ns-sym sym false)))))
+
 (defn- var-meta [h]
   (let [h (as-handle h)]
     (merge (:meta (get-in @st [::ana/namespaces (:ns h) :defs (:name h)]))
@@ -458,7 +466,8 @@
 
 (defn- var-of [ns-sym nm]
   (let [d (get (defs ns-sym) nm)
-        m (get (macro-defs ns-sym) nm)]
+        ;; one entry of (macro-defs ns-sym), not the whole map
+        m (let [e (get (defs (macros-ns ns-sym)) nm)] (when-not (alias? e) e))]
     (when (or d m)
       (let [h (handle (if m (macros-ns ns-sym) ns-sym) nm (boolean m))]
         (Var. (fn [] (js-path (:ns h) nm)) (symbol (str ns-sym) (str nm))
@@ -652,6 +661,7 @@
    :ensure-bare-ns! ensure-bare-ns!
    :eval eval-form
    :ns-interns ns-interns
+   :interned-var interned-var
    :ns-public-names (fn [ns-sym]
                       (if (= ns-sym 'cohost.shim)
                         js/cohost.shim.public_names
@@ -737,6 +747,8 @@
    ;; deftype / defrecord instances and reify objects: their constructor
    ;; carries cljs$lang$type, with a ctorStr outside cljs.core
    ;; (a record carries no ctorStr: defrecord sets ctorPrSeq instead)
+   ;; the analyzer ignores a var's :inline fn; the codemod applies core.clj's
+   :rewrite-inline? true
    :user-type? (fn [x] (and (some? x)
                             (or (record? x)
                                 (let [c (.-constructor x)]

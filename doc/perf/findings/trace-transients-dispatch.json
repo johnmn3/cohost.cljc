@@ -1,0 +1,251 @@
+{
+ "area": "transients-dispatch: conj!/assoc!/instance? through cohost.shim/dot, check-cast and the jolt adapter. jolt internals were read at tag v0.8.23, the installed binary (/root/.jolt/aot-cache/v0.8.23-\u2026), with `git show v0.8.23:\u2026` in /root/.cache/vs-hosts/jolt. That checkout's HEAD (dc8fd57) is newer, and v0.8.23 has no class-name memo. The JVM bench file target/bench-clj.edn is used as a control.",
+ "findings": [
+  {
+   "cases": [
+    "transient-vector",
+    "into-vector",
+    "set-build",
+    "conj-vector (control)",
+    "assoc-map (control)"
+   ],
+   "claim": "The slowdown is not the transient, reduce or range. It is the instance-method interop path. core.clj's conj and assoc call RT statics, which the codemod turns into shim vars bound to the host's own fns. conj!/assoc! call .conj/.assoc on locals hinted ^ITransient*, which become ((cohost.shim/dot \"conj\" cohost.shim/-conj) (cohost.shim/check-cast 'clojure.lang.ITransientCollection coll) x). conj-vector and transient-vector use the same harness: stock reduce, then host reduce over the host range, with one stock fn call per element. Stock times are 9.77 vs 610.94 ms per 100k, so (610.94-9.77)/100k = 6.01 \u00b5s per element is spent in dot + check-cast + the dispatcher. bench-jolt.edn medians agree: 11.18 vs 613.19 ms, 6.02 \u00b5s. The host's own conj! is cheaper than its conj (4.34 vs 9.8 ms), so none of this cost is the transient itself. into-vector (6.13 \u00b5s/elem) and set-build (6.62) carry the same per-element cost; their ratios are lower (x56, x35) only because jolt's own into costs 110-190 ns/elem against 43 ns for its bare conj!. The JVM shows the same split where instance?/class/str are native: 3.03 vs 49.85 ms, about 0.47 \u00b5s per conj!, x27 vs its own 1.83 ms. So the shim's own work counts on every host, not only jolt's primitives.",
+   "evidence": [
+    "resources/cohost/clojure-1.12.0/clojure/core.clj:87 `([coll x] (clojure.lang.RT/conj coll x))`; :193 `([map key val] (clojure.lang.RT/assoc map key val))`",
+    "src/cohost/shim.cljc:398 `(def RT-conj conj)`; :402 `(def RT-assoc assoc)`",
+    "core.clj:3384-3392 `(defn conj! ... ([^clojure.lang.ITransientCollection coll x] (.conj coll x)))`; core.clj:3394-3396 `([^clojure.lang.ITransientAssociative coll key val] (.assoc coll key val))`",
+    "src/cohost/rewrite.cljc:118-129 checked-hints `clojure.lang.ITransientCollection clojure.lang.ITransientCollection ... clojure.lang.ITransientSet clojure.lang.ITransientSet`; :924-928 binding heads bind `*local-tags* (hint-tags *local-tags* names)`",
+    "rewrite.cljc:378-380 `(cons (list (shim-fn \"check-cast\") (list 'quote c) (first xs')) (rest xs'))`; :388 `(apply list (list (shim-fn \"dot\") (name m) f) xs')`",
+    "shim.cljc:1537 `(def -conj (host-fn 'conj! (unsupported \"conj!\")))`",
+    "target/bench-jolt.edn: conj-vector :stock :median 11.18, transient-vector :stock :median 613.19, :host 4.39; target/bench-clj.edn: conj-vector :stock 3.03, transient-vector :stock 49.85, :host 1.83",
+    "src/cohost/bench.cljc:29-32 `(count (reduce conj [] (range %N)))` / `(count (persistent! (reduce conj! (transient []) (range %N))))`"
+   ],
+   "per_iteration_work": "HOST: jolt reduce step, then jolt-conj! (transients.ss v0.8.23:281-285): one jrec-trans-method test, jolt-trans-check (a record test) and a buffer store. STOCK, one (conj! t x): (1) the stock conj! 2-arity is called. (2) (cohost.shim/dot \"conj\" cohost.shim/-conj) is called: one set lookup (record-members) and a new 5-arity closure. (3) check-cast calls instance-of?, which runs canon: 2 map lookups and the has-dot? loop of 21 iterations, each allocating a 1-char string. Then 1 interface-preds lookup, then host/transient?: cap (atom deref plus 2 lookups) and the jolt adapter's (instance? ITransientCollection x), which is an uncached arm walk (finding 3). (4) The closure's 2-arity runs nil?, then host-object?: some?, cap again (2 lookups), then java.clj user-type?: (class x) walks the class arms, (str cls) walks the str-render registry and allocates a ~50-char string, then 2 string scans, giving false. (5) identical? absent, then (-conj t x) = jolt conj!. Steps 2-4 are the 6.0 \u00b5s.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "transient-vector",
+    "into-vector",
+    "set-build",
+    "frequencies",
+    "group-by",
+    "transduce"
+   ],
+   "claim": "instance-of? canonicalizes its constant class token on every call, and canon's has-dot? scans the token's name from the end one char at a time, allocating a 1-char string at each step. Every interface-preds key already contains a dot and is already canonical. The rewriter already emits full names (class-token; checked-hints values). So this work changes nothing. Iterations per call: 21 for clojure.lang.ITransientCollection (conj! check-cast); 22 for ITransientAssociative (assoc!); 8 for java.lang.Integer (transduce's integer?); 12 for IChunkedSeq (the lazy map in frequencies).",
+   "evidence": [
+    "src/cohost/shim.cljc:171 `(defn- has-dot? [sym] (not (neg? (loop [i (dec (count (name sym)))] (cond (neg? i) -1 (= \".\" (str (nth (name sym) i))) i :else (recur (dec i)))))))`",
+    "shim.cljc:173-180 `(defn- canon ... (cond (not (symbol? c)) c (contains? short-name c) (get short-name c) (contains? short-name-extra c) (get short-name-extra c) (has-dot? c) c :else (symbol (str \"java.lang.\" (name c)))))`",
+    "shim.cljc:354-361 `(if-not (symbol? c) (boolean (instance? c x)) (let [c (canon c)] (boolean (and (some? x) (or (if-let [p (get interface-preds c)] (p x) (token-isa? (class-of x) c)) ...`",
+    "shim.cljc:371-375 `(defn check-cast [c x] (if (or (nil? x) (instance-of? c x)) x (throw ...)))`",
+    "shim.cljc:256-331 interface-preds: every key is a dotted full name, e.g. `'clojure.lang.ITransientCollection host/transient?` (:285), `'java.lang.Integer integer?` (:313); short-name (:154-160) and short-name-extra (:162-169) keys have no dot",
+    "rewrite.cljc:585-592 class-token `(neg? (last-dot (name s))) (symbol (str \"java.lang.\" (name s)))`"
+   ],
+   "per_iteration_work": "STOCK per conj!: (contains? short-name c), (contains? short-name-extra c), (count (name sym)), then for i=32..12: (name sym), (nth s i), (str ch) (a new string), (= \".\" s), neg?, dec. That is 21 allocations and about 84 generic jolt core calls on an argument that is the same on every call. assoc! does 22 iterations; instance? Integer does 8. HOST: none. The share of the 6.0 \u00b5s is not measured; probes P4/P13 measure it.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "transient-vector",
+    "into-vector",
+    "set-build",
+    "frequencies",
+    "group-by"
+   ],
+   "claim": "jolt answers (instance? ITransientCollection t) for its own transient with an uncached arm walk on every call. A jolt-transient has no instance kind key: class-fast-name lists no transient and ref-kind-key does not cover it. So the call-site cache and the verdict memo never apply, and instance-check-walk runs the registry newest-first until the ITransient arm. In v0.8.23 that is about 17 arms: post-prelude, natives-queue x2, proxy, zip-out, zip-in, io-streams, natives-array, inst-time, nio-file, io x2, byte-buffer, then Class, the class-name arm, map-entry, ITransient. The class-name arm calls jolt-class-name, which in v0.8.23 has no memo, so each call also walks the class arms to the transient's arm. Some arms (ITransient, io-streams, inst-time) cut substrings of the type name. host/transient? runs once per conj! (check-cast). It runs twice per assoc!, because -assoc asks again after check-cast has already proved it. That second walk is consistent with group-by costing 3.07 \u00b5s/elem more than transient-vector. Stock mod accounts for only ~0.49 \u00b5s (set-build - into-vector).",
+   "evidence": [
+    "src/cohost/hosts/jolt.clj:54 `:transient? (fn [x] (instance? clojure.lang.ITransientCollection x))`",
+    "src/cohost/adapter.cljc:543 `(defn transient? [x] ((cap :transient?) x))`; shim.cljc:285 `'clojure.lang.ITransientCollection host/transient?`",
+    "shim.cljc:1485 `(def -assoc (fn [x k v] (if (host/transient? x) (h-assoc! x k v) (assoc x k v))))`",
+    "jolt v0.8.23 host/chez/java/records-interop.ss:177-181 `(define (instance-kind-key val) (cond ((jrec? val) (jrec-desc val)) ((jreify? val) ...) ((class-fast-name val)) (else (ref-kind-key val))))`",
+    "jolt v0.8.23 host/chez/java/host-class.ss:56-63 class-fast-name `(or (jolt-nil? x) (boolean? x) (number? x) (string? x) (keyword? x) (symbol-t? x) (char? x) (pvec? x) (pmap? x) (pset? x) (cseq? x) (empty-list-t? x) (jolt-lazyseq? x))` (no jolt-transient?)",
+    "jolt v0.8.23 records-interop.ss:286-305 instance-site-miss `((or (not k) (not tname) (root-object-type? ts)) 'uncached)` ... `(if (instance-check ts val) #t #f)`; :309-315 instance-check-walk",
+    "jolt v0.8.23 host-class.ss:263-268 `(define (jolt-class-name x) (or (class-fast-name x) (let loop ((as jolt-class-arms)) ...)))` (no memo in this version)",
+    "jolt v0.8.23 host-static-classes.ss:3317-3324 class-name arm `(cn (jolt-class-name val))`; :3247-3262 ITransient arm `(substring tn (+ i 1) ...)` ... `((string=? short \"ITransientCollection\") (if (jolt-transient? val) #t 'pass))`",
+    "jolt's own comment (not measured here), records-interop.ss v0.8.23:150-152: 'A no from instance? walked every arm: ~23 host shims ... two of them (the class-name arm and the value-host-tags arm) costing ~170 ns apiece ... 500-700 ns'",
+    "jolt v0.8.23 transients.ss:423 `(def-var! \"clojure.core\" \"transient?\" jolt-transient?)` is a single record predicate"
+   ],
+   "per_iteration_work": "STOCK per conj!: 1 cap (deref + contains? + get), 1 site-cache miss (instance-kind-key computed: ~17 type tests), then instance-check (root-object-type? string compares, own-type-declares?, instance-kind-key again), ~17 arm calls, one full class-arm walk, and substring allocations. Per assoc! all of this happens twice. HOST: jolt-conj!/jolt-assoc! test (jolt-transient? t) once.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "transient-vector",
+    "into-vector",
+    "set-build",
+    "frequencies",
+    "group-by",
+    "transduce"
+   ],
+   "claim": "Every (.m x ...) goes through dot's closure, which asks host-object? and then host/user-type? before it calls the shim fn. On jolt and the JVM, user-type? first renders (str (class x)) and string-tests it, even for receivers that can never be user types. Here those receivers are the host's own transient (conj!/assoc!) and a class-token symbol (every stock instance?). For a jolt transient in v0.8.23, (class x) walks the class arms (no memo). For any receiver, (str cls) goes through jolt-str-one / jolt-str-render-one and the str-render registry, newest-first, to the jclass arm. jclass's arm comes from class-model.ss, loaded early, so the later-registered arms are tried first. The answer is false every time. jolt.clj's invoke-member and its member cache are only reached when user-type? is true, so they are not on any of these paths.",
+   "evidence": [
+    "src/cohost/shim.cljc:1769 `(defn host-object? [x] (and (some? x) (host/user-type? x) (not (contains? shim-types (type x)))))`",
+    "shim.cljc:1780-1782 `([x a] (let [_ (when (nil? x) (throw (npe-on m))) r (if (own? x) (host/invoke-member x m [a] absent) absent)] (if (identical? r absent) (f x a) r)))`",
+    "src/cohost/hosts/java.clj:84-85 `:user-type? (fn [x] (and (let [n (str (class x))] (not (and (.startsWith n \"class clojure.\") (not (.contains n \"$reify\"))))) ...`; :88-89 already excludes symbols, colls and fns",
+    "adapter.cljc:405 `(defn user-type? [x] ((cap :user-type?) x))`",
+    "jolt v0.8.23 host-static-classes.ss:3212-3216 transient class arm `((vec) \"clojure.lang.PersistentVector$TransientVector\")` (starts with \"class clojure.\", no $reify, so user-type? is false)",
+    "jolt v0.8.23 class-model.ss:262 `(register-str-render! jclass? jclass-tostring)`; converters.ss v0.8.23:20,55 jolt-str-render-one `(let loop ((rs str-render-registry)) ...)`",
+    "jolt v0.8.23 jolt-core/jolt/backend_scheme.clj:106,108 open-code .startsWith/.contains (so the two scans are cheap; the class name and str are not)",
+    "src/cohost/hosts/jolt.clj:86-102 invoke-member (eval-compiled `.` per [name arity], `@members`, apply, try): reached only via `(if (own? x) (host/invoke-member ...))`"
+   ],
+   "per_iteration_work": "STOCK per dispatch: cap (deref + 2 lookups), (class x): 13 fast tests, then for a transient a class-arm walk; jolt-class-for (string-keyed intern lookup); (str cls): toString hook, ~17 type tests and a str-render registry walk, plus a ~50-char allocation; startsWith (substring) and contains. HOST: none.",
+   "confidence": "medium"
+  },
+  {
+   "cases": [
+    "transient-vector",
+    "into-vector",
+    "set-build",
+    "frequencies",
+    "group-by",
+    "transduce"
+   ],
+   "claim": "Smaller repeated costs. (1) The rewriter puts (cohost.shim/dot \"conj\" cohost.shim/-conj) in head position, so every evaluation calls dot. dot does a set lookup and allocates a new 5-arity dispatcher closure. (2) Every adapter accessor goes through cap: an atom deref plus contains? plus get on the ~130-key adapter map. That is 2 caps per conj!, 3 per assoc! and 1-2 per instance? (RT-uncheckedLongCast's host/char?* in even? adds one more). Each is small; probe P8 decides whether either matters.",
+   "evidence": [
+    "rewrite.cljc:388 `(apply list (list (shim-fn \"dot\") (name m) f) xs')`",
+    "shim.cljc:1775-1777 `(defn dot [m f] (let [own? (if (contains? record-members m) non-record-object? host-object?)] (fn ([x] ...) ([x a] ...) ...`",
+    "adapter.cljc:385-391 `(defn- cap [k] (let [m @installed] (when (nil? m) (throw ...)) (if (contains? m k) (get m k) (throw ...))))`",
+    "shim.cljc:438 `(def RT-uncheckedLongCast (fn [x] (cond (host/char?* x) (throw (char-cce)) ...`"
+   ],
+   "per_iteration_work": "STOCK per conj!: 1 closure allocation, 1 set lookup, 2x(deref + 2 map lookups). Per assoc!: the same with 3 caps. HOST: none.",
+   "confidence": "medium"
+  },
+  {
+   "cases": [
+    "transduce"
+   ],
+   "claim": "transduce has no transients. Its x50 (3.79 \u00b5s/elem vs 77 ns) comes from the same machinery reached through core.clj's instance?, a .isInstance interop call, once per element: odd? calls even?, which calls integer?, which calls (instance? Integer n). Each call allocates dot's closure, runs user-type? on the class-token symbol (finding 4), then -isInstance, then instance-of?, then canon('java.lang.Integer) with 8 has-dot? iterations, then interface-preds, then jolt integer?. The rest of the element is about 10 stock transducer and arithmetic calls (map step, inc, filter step, not, bit-and, uncheckedLongCast, zero?, +). The fn-call and conj-vector cases show stock calls like these cost tens of ns each, not \u00b5s. policy.cljc already replaces cast with a direct instance-of? call; instance? is not replaced. The JVM shows the same: transduce stock 31.64 vs host 1.14 ms, x28.",
+   "evidence": [
+    "core.clj:146 `instance? (fn instance? [^Class c x] (. c (isInstance x)))`",
+    "core.clj:1388-1398 `(defn integer? ... (or (instance? Integer n) (instance? Long n) ...))`; core.clj:1400-1412 even?/odd?",
+    "rewrite.cljc:610 `(and (class-sym? s) (not (user-name? ctx s))) (list 'quote (class-token s))` (Integer becomes 'java.lang.Integer)",
+    "shim.cljc:1629 `(def -isInstance (fn [c x] (instance-of? c x)))`; shim.cljc:313 `'java.lang.Integer integer?`",
+    "src/cohost/policy.cljc:163-172 `'cast '(defn cast ... (if (cohost.shim/instance-of? c x) x (throw ...)))`",
+    "bench task table: transduce host 7.65 stock 379.17; fn-call stock 10.9 ms per 100k loop iterations (3 stock calls + 1 defn each); target/bench-clj.edn transduce stock 31.64 host 1.14"
+   ],
+   "per_iteration_work": "STOCK per element: 1 dot closure + set lookup; nil?/some?/cap/user-type? on a symbol ((class sym) fast path, jolt-class-for, (str cls) registry walk + alloc, 2 scans); -isInstance; instance-of?: canon (2 lookups + 8 str allocations / ~32 calls) + 1 lookup + integer?; plus ~10 stock calls with shim vars. HOST: jolt's reduce with native inc/odd?/+ (77 ns/elem).",
+   "confidence": "medium"
+  },
+  {
+   "cases": [
+    "frequencies",
+    "group-by"
+   ],
+   "claim": "assoc! costs more than conj!. It runs check-cast with 22 has-dot? iterations, the host/transient? walk twice (check-cast, then -assoc again), user-type? on the transient map, and a 3-arg dispatcher. The per-element body also adds stock mod (rem, zero?, =, pos? x2), get and conj. group-by measures 9.18 \u00b5s/elem against transient-vector's 6.11; set-build - into-vector puts stock mod at ~0.49 \u00b5s. frequencies (13.66 \u00b5s/elem) also reduces over a stock lazy (map f (range n)). jolt's range seq is not the shim's ChunkedCons, so stock map takes the unchunked branch. Every element then calls chunked-seq?, a stock instance? that dispatches again (finding 4, canon 12 iterations), and allocates a LazySeq and a cons. That accounts for frequencies - group-by = 4.48 \u00b5s/elem; the lazy part belongs to the lazy-pipeline area.",
+   "evidence": [
+    "core.clj:7294-7303 group-by `(assoc! ret k (conj (get ret k []) x))`; core.clj:7351-7359 frequencies `(assoc! counts x (inc (get counts x 0)))`",
+    "shim.cljc:1485 `(def -assoc (fn [x k v] (if (host/transient? x) (h-assoc! x k v) (assoc x k v))))`",
+    "core.clj:717-718 `(defn ^:static chunked-seq? [s] (instance? clojure.lang.IChunkedSeq s))`; core.clj:2762-2772 map's `(if (chunked-seq? s) ... (cons (f (first s)) (map f (rest s))))`",
+    "shim.cljc:272 `'clojure.lang.IChunkedSeq #(chunked-cons? %)`; shim.cljc:922 `(defn chunked-cons? [x] (and (seq? x) (contains? (meta x) ::chunk)))`",
+    "core.clj:3592-3600 mod `(let [m (rem num div)] (if (or (zero? m) (= (pos? num) (pos? div))) m (+ m div)))`",
+    "bench task table: group-by stock 917.92 host 20.7; frequencies stock 1366.41 host 24.45; set-build 662.27 vs into-vector 613.23"
+   ],
+   "per_iteration_work": "STOCK per group-by element: mod (~7 stock calls), get (RT-get), conj (RT-conj), assoc!: dot + check-cast (22-iteration canon + 1 walk) + user-type? (class walk + str) + -assoc (1 more walk) + jolt assoc!. frequencies adds a stock lazy-map step: seq, chunked-seq? (a full instance? dispatch), first, f, rest, LazySeq + cons. HOST: jolt reduce, jolt assoc! and jolt's own get/inc (207-245 ns/elem).",
+   "confidence": "medium"
+  }
+ ],
+ "fixes": [
+  {
+   "change": "src/cohost/shim.cljc instance-of? (:347-366): look the token up in interface-preds before canonicalizing it. `(let [p (get interface-preds c) c (if p c (canon c)) p (or p (get interface-preds c))] (boolean (and (some? x) (or (if p (p x) (token-isa? (class-of x) c)) (when-not (or (builtin? x) (host/exception? x)) (host/host-instance? c x))))))`",
+   "files": [
+    "src/cohost/shim.cljc"
+   ],
+   "removes": "canon's 2 map lookups and the has-dot? loop from every check-cast and instance? on an interface token. That is 21 string allocations and ~84 calls per conj!, 22 per assoc!, 8 per instance? Integer (transduce) and 12 per chunked-seq? (frequencies). It applies to every host (JVM transient-vector is x27 too).",
+   "risk": "None semantically. Every interface-preds key contains a dot and is not a key of short-name or short-name-extra, so canon is the identity on it (shim.cljc:154-180). Tokens that are not keys take the old path unchanged."
+  },
+  {
+   "change": "src/cohost/hosts/jolt.clj: test jolt's own transient first. In the adapter map: `:transient? (fn [x] (or (transient? x) (instance? clojure.lang.ITransientCollection x)))` and `:user-type? (let [u (:user-type? java/capabilities)] (fn [x] (and (not (transient? x)) (u x))))`. `transient?` is jolt's clojure.core var = jolt-transient?, a single record test.",
+   "files": [
+    "src/cohost/hosts/jolt.clj"
+   ],
+   "removes": "From each conj!: the uncached ~17-arm instance-check walk and its class-arm walk, plus user-type?'s second class-arm walk, (str cls) render and string scans. From each assoc!: both instance-check walks plus the user-type? walk. Covers transient-vector, into-vector, set-build, frequencies and group-by.",
+   "risk": "Low. The answers are unchanged. jolt's ITransient instance arm answers #t exactly when jolt-transient? holds (host-static-classes.ss v0.8.23:3261-3262). java.clj's user-type? already answers false for jolt's transient classes ('class clojure.lang.PersistentVector$TransientVector', no $reify). A deftype transient (flatland) is a jrec, not a jolt-transient, so it still takes the instance?/user-type? path. jolt.clj is loaded only on jolt (hosts/auto.cljc)."
+  },
+  {
+   "change": "src/cohost/shim.cljc host-object? (:1769): never ask user-type? about a symbol. `(defn host-object? [x] (and (some? x) (not (symbol? x)) (host/user-type? x) (not (contains? shim-types (type x)))))`",
+   "files": [
+    "src/cohost/shim.cljc"
+   ],
+   "removes": "cap + (class x) + (str cls) + 2 scans from every dispatch whose receiver is a class token, i.e. every stock instance? call: transduce's per-element integer? and frequencies' per-element chunked-seq?.",
+   "risk": "Low. Every adapter's user-type? is false for a symbol: java.clj:88-89 excludes symbols; cljs.cljs:740-745 needs a record or a deftype constructor; basilisp.lpy:239-243 needs a type outside basilisp.*. host-object? is only used by dot (grep)."
+  },
+  {
+   "change": "src/cohost/policy.cljc replacements: replace core.clj's instance? (core.clj:140-146) the way cast already is (policy.cljc:163-172). `'instance? '(def ^{:arglists '([c x]) :doc \"Evaluates x and tests if it is an instance of the class c. Returns true or false\" :added \"1.0\"} instance? (fn instance? [c x] (if (cohost.shim/Util-identical c nil) ((cohost.shim/dot \"isInstance\" cohost.shim/-isInstance) c x) (cohost.shim/instance-of? c x))))`",
+   "files": [
+    "src/cohost/policy.cljc"
+   ],
+   "removes": "The dot closure allocation, the dispatcher and user-type? (with its cap) from every stock instance?. That covers transduce's per-element unit, the lazy map's chunked-seq?, reduce/into/transduce's IReduceInit/IEditableCollection tests, and every core predicate written as instance?. Supersedes fix 3 for instance?.",
+   "risk": "Low-moderate. -isInstance is exactly (instance-of? c x) (shim.cljc:1629), so results are unchanged for class tokens and host class values. A nil class still goes through the dispatcher for the JVM's NPE. The only path dropped is a user-type object passed as the class. It runs very early in the boot, so it must use only cohost.shim vars, as cast's replacement does (Util-identical exists there)."
+  },
+  {
+   "change": "src/cohost/adapter.cljc cap (:385-391): one lookup instead of two. `(let [m @installed v (get m k ::none)] (if (identical? v ::none) (throw (ex-info (if (nil? m) \"cohost: no host adapter installed ...\" (str \"cohost: adapter provides no \" k)) {:capability k})) v))`",
+   "files": [
+    "src/cohost/adapter.cljc"
+   ],
+   "removes": "One hash lookup per accessor call: 2 per conj!, 3 per assoc!, 1-2 per instance?, on every host.",
+   "risk": "None. The same values and errors (get on a nil map returns the default)."
+  },
+  {
+   "change": "src/cohost/shim.cljc has-dot? (:171): `(defn- has-dot? [sym] (not (neg? (host/index-of (name sym) \".\" 0))))`. Alternatively memoize canon in an atom map keyed by token.",
+   "files": [
+    "src/cohost/shim.cljc"
+   ],
+   "removes": "The per-char str allocation loop for tokens that still go through canon after fix 1. These are concrete classes absent from interface-preds (java.lang.Long, clojure.lang.Keyword, ...), which token-isa? canonicalizes twice per call (e.g. int?, keyword?). Not on these six cases' per-element paths once fix 1 is in.",
+   "risk": "Low. index-of's contract is 'index of sub in s from from, or -1' (adapter.cljc:119); on jolt/JVM it is String.indexOf."
+  },
+  {
+   "change": "Alternative that removes the whole stock path on jolt, not just its overhead: policy.cljc host-overrides `:jolt {:host '#{conj! assoc! dissoc! disj! pop! persistent! transient}}`. jolt's own conj!/assoc! already route a deftype transient to its declared method and throw ClassCastException for a non-transient (transients.ss v0.8.23:281-285 `((jrec-trans-method t \"conj\") ...) (jolt-trans-check t \"conj!\")`).",
+   "files": [
+    "src/cohost/policy.cljc"
+   ],
+   "removes": "Everything: stock conj!/assoc! would be jolt's own (43 ns/elem host vs 6.1 \u00b5s).",
+   "risk": "Moderate. These names stop being core.clj's own definitions, which changes what the bench calls 'stock'. Error messages differ from the JVM's ('conj!: not a transient' vs 'class ... cannot be cast to class clojure.lang.ITransientCollection'), which is exactly what checked-hints exists to reproduce (rewrite.cljc:118-122), so battery/corpus rows on those messages may change. Prefer fixes 1-5, which keep the stock definitions."
+  }
+ ],
+ "probes": [
+  {
+   "form": "(time (reduce (fn [a x] a) nil (range 100000)))",
+   "tests": "P0, the harness floor: a stock fn called per element by host reduce over a host range. Subtract it from P3-P11. If it is not far below conj-vector's ~10 ms, the per-element harness is not negligible and the deltas below must be read against it."
+  },
+  {
+   "form": "(time (count (persistent! (reduce cohost.shim/-conj (transient []) (range 100000)))))",
+   "tests": "P2, the same as the case but calling the host's conj! through the shim var, with no dot and no check-cast. Confirms finding 1 if near jolt's own 4-10 ms against the case's ~611 ms. Refutes it (the cost is elsewhere: reduce, range, transient) if this is above ~100 ms."
+  },
+  {
+   "form": "(let [t (transient [])] (time (reduce (fn [a x] (cohost.shim/check-cast 'clojure.lang.ITransientCollection t)) nil (range 100000))))",
+   "tests": "P3, check-cast alone (canon + interface-preds + host/transient?). Its share of the ~600 ms is P3 - P0. The remainder of (P1 - P2) is dot + the dispatcher."
+  },
+  {
+   "form": "(let [canon (cohost.adapter/var-root (var cohost.shim/canon))] [(time (reduce (fn [a x] (canon 'clojure.lang.ITransientCollection)) nil (range 100000))) (time (reduce (fn [a x] (canon 'java.lang.Integer)) nil (range 100000)))])",
+   "tests": "P4/P13, canon at 21 vs 8 has-dot? iterations. The difference / 1.3M is the per-iteration cost. Confirms finding 2 (fix 1 is a large win) if the first timing is a large part of P3. Refutes it if both are small (under ~50 ms)."
+  },
+  {
+   "form": "(let [t (transient [])] (time (reduce (fn [a x] (cohost.adapter/transient? t)) nil (range 100000))))",
+   "tests": "P5, cap + jolt's uncached instance-check walk for a transient. A large value confirms finding 3. P3 - P5 is roughly canon's share, a cross-check on P4."
+  },
+  {
+   "form": "(let [tp (:transient? (cohost.adapter/current)) jt (cohost.adapter/var-root (cohost.adapter/resolve-core 'transient?)) t (transient [])] [(time (reduce (fn [a x] (tp t)) nil (range 100000))) (time (reduce (fn [a x] (jt t)) nil (range 100000)))])",
+   "tests": "P6, the adapter's (instance? ITransientCollection t) walk vs jolt's native transient? record test, without cap. The difference is fix 2's saving per call: 1 per conj!, 2 per assoc!. Refutes finding 3 if the two are close."
+  },
+  {
+   "form": "(let [t (transient [])] [(time (reduce (fn [a x] (cohost.shim/host-object? t)) nil (range 100000))) (time (reduce (fn [a x] (cohost.shim/host-object? 'java.lang.Integer)) nil (range 100000)))])",
+   "tests": "P7, user-type? + cap on a jolt transient (class-arm walk + str render) and on a class-token symbol (fast class path + str render). These are fixes 2 and 3's savings per dispatch. Refutes finding 4 if both are small next to P1 - P2."
+  },
+  {
+   "form": "[(time (reduce (fn [a x] (cohost.shim/dot \"conj\" cohost.shim/-conj)) nil (range 100000))) (time (reduce (fn [a x] (cohost.adapter/host-name)) nil (range 100000)))]",
+   "tests": "P8, dot's per-call closure allocation and set lookup, and one bare cap. If both are near P0, finding 5 is minor and fixing dot (hoisting) is not worth a rewriter change."
+  },
+  {
+   "form": "[(time (reduce (fn [a x] (instance? Integer x)) nil (range 100000))) (time (reduce (fn [a x] (cohost.shim/instance-of? 'java.lang.Integer x)) nil (range 100000)))]",
+   "tests": "P9, transduce's per-element unit. The first is the stock instance? (dot + dispatcher + instance-of?); the second the shim predicate directly. The difference is fix 4's saving. Confirms finding 6 if the first is most of transduce's 379 ms, i.e. 2-3+ s per 1M rescaled to 100k ~ hundreds of ms. Refutes it if well under 100 ms (then the arithmetic shims dominate transduce)."
+  },
+  {
+   "form": "(let [f (fn [m i] (assoc! m (rem i 31) i)) g (fn [m i] (cohost.shim/-assoc m (rem i 31) i))] [(time (count (persistent! (reduce f (transient {}) (range 100000))))) (time (count (persistent! (reduce g (transient {}) (range 100000)))))])",
+   "tests": "P10, the assoc! dispatch (frequencies/group-by) against -assoc alone, which still pays one host/transient?. The difference is check-cast(22) + dot + user-type?. Compare with P1 - P2 to test finding 7's claim that assoc! costs more than conj!."
+  },
+  {
+   "form": "(let [s (seq (range 10))] (time (reduce (fn [a x] (chunked-seq? s)) nil (range 100000))))",
+   "tests": "P11, the per-element dispatch the stock lazy map adds in frequencies (chunked-seq? is a stock instance? with canon 12). Confirms finding 7's frequencies - group-by attribution if close to ~300+ ms per 100k (about 3 \u00b5s each)."
+  }
+ ]
+}

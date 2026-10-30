@@ -1,0 +1,207 @@
+{
+ "area": "arith-fncall: loop-arith (x55), fn-call (x6), atom-swap (x41) on jolt. Sources: 'HEAD' means cohost commit 4ce56eb (= /home/user/cohost-baseline), the code the quoted quick run measured. 'Working tree' means /home/user/cohost.cljc, where perf pass 1 was being edited while I read it (snapshot of 14:49:51 in /tmp/claude-0/-home-user/2da07f7e-61e7-51d9-a452-3e0ccf16189f/scratchpad/snap/). 'jolt v0.8.23' means `git -C /root/.cache/vs-hosts/jolt show v0.8.23:<path>`; the installed /root/.local/bin/jolt is the v0.8.23 release (/root/.cache/vs-hosts/jolt-dl/ext/jolt-v0.8.23-x86_64-linux/jolt, same size). Bench data comes only from files: the quoted run, target/bench-jolt.edn at 14:43 (dispatcher cache, no inline) and at 14:53 (with inline), and target/bench-clj.edn. All runs are quick mode, one timed call per side. I ran nothing; for the compiled Scheme I read jolt's own AOT cache.",
+ "findings": [
+  {
+   "cases": [
+    "loop-arith",
+    "fn-call",
+    "atom-swap"
+   ],
+   "claim": "In the measured code nothing applies core.clj's :inline. The codemod only decides whether to strip it (jolt keeps it) and then emits the call unchanged. jolt's compiler never reads :inline, and it inlines a call only when the head resolves to a clojure.core var. So in a stock namespace, (< i n), (inc i), (* i 2) and (+ a b) are ordinary calls of the booted cohost.core vars. The JVM host is the control: there the JVM compiler applies the same booted vars' :inline, and loop-arith runs at the same speed on the stock and host sides.",
+   "evidence": [
+    "/home/user/cohost-baseline/src/cohost/rewrite.cljc:307-311 `(def ^:dynamic *strip-inline?* \"Whether a def's :inline / :inline-arities are dropped. The JVM host inlines its own interop; jolt ignores the key; ...\" false)`; :320 `m (if *strip-inline?* (dissoc m :inline :inline-arities) m)`; :931 (rw-list default) `:else (apply list (rw ctx h) (rw-all ctx args))`",
+    "/home/user/cohost-baseline/src/cohost/adapter.cljc:293 `:inline-meta :keep` (hosts/jolt.clj sets no :inline-meta)",
+    "jolt v0.8.23 jolt-core/jolt/analyzer.clj: grep for :inline finds nothing",
+    "jolt v0.8.23 jolt-core/jolt/backend_scheme.clj:3066-3068 `(defn- native-op [fnode nargs] (let [nm (case (:op fnode) :var (when (= \"clojure.core\" (:ns fnode)) (:name fnode))`; op_registry.clj:51 `{\"+\" {:call \"jolt-n+\" :value \"jolt-add\" ...`, :61 `\"<\" {:call \"jolt-n<\" :value \"jolt-lt\" :bool? true`",
+    "resources/cohost/clojure-1.12.0/clojure/core.clj:986-994 `(defn + ... {:inline (nary-inline 'add 'unchecked_add) :inline-arities >1? ...} ... ([x y] (. clojure.lang.Numbers (add x y)))`; :902-909 `(defn < ... {:inline (fn [x y] `(. clojure.lang.Numbers (lt ~x ~y))) :inline-arities #{2} ...} ... ([x y] (. clojure.lang.Numbers (lt x y)))`; :924-929 `(defn inc ... [x] (. clojure.lang.Numbers (inc x)))`",
+    "/home/user/cohost.cljc/target/bench-clj.edn (JVM): `:id :loop-arith ... :host {... :median 0.08796149998670444 ...} :stock {... :median 0.08791950007434934 ...}`",
+    "jolt v0.8.23 backend_scheme.clj:4075-4076 `(if (returns-scheme-bool? test) (emit test) (str \"(jolt-truthy? \" (emit test) \")\"))`"
+   ],
+   "per_iteration_work": "loop-arith, stock side, per iteration: 4 calls into runtime-compiled stock case-lambdas. Each is a cached var-cell-deref of a cohost.core var plus jolt-invoke2 or jolt-invoke1, and each clause then makes the shim call described in the next finding. The if-test is also wrapped in jolt-truthy?, because the callee is not a native op that returns a boolean. Host side: jolt-n<, jolt-n-inc, jolt-n* and jolt-n+ (or the :long jolt-l* forms) are open-coded in the Chez loop, with no call at all.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "loop-arith",
+    "fn-call",
+    "atom-swap"
+   ],
+   "claim": "Inside each stock fn, the arity body calls a shim var whose value is jolt's value-position proc. For +, *, < and = that proc is variadic. Every call conses a rest list (2 pairs for + and *, 1 for <), tests for a boxed lazy rest, and folds over the binary helper (fold-left for + and *, a loop for <). Numbers-inc (jolt-inc) and Numbers-unchecked_inc (jolt-uncinc) are fixed-arity. cohost adds no overflow check and no type dispatch: jolt-add2 is a number? test followed by Chez's generic +, so a long overflow widens to a bignum where the JVM's Numbers.add throws. jolt-lt2 is a number? test followed by <. Numbers-minus is the only one written as a fixed-arity fn, and jolt compiles it to a case-lambda with jolt-n- inline.",
+   "evidence": [
+    "/home/user/cohost-baseline/src/cohost/shim.cljc:478 `(def Numbers-add +)`; :480 `(def Numbers-minus (fn ([x] (- x)) ([x y] (- x y))))`; :482 `(def Numbers-multiply *)`; :493 `(def Numbers-inc inc)`; :497 `(def Numbers-lt <)`; :530 `(def Numbers-unchecked_inc (host-fn 'unchecked-inc inc))`; :583 `(def Util-equiv =)`",
+    "jolt's own compile of that shim, /root/.jolt/aot-cache/v0.8.23-A085D6-5A95CA86-tr/v1/cohost.shim-1D8EE-205A9E9E-2F40EA8A.scm (10:40, HEAD-era shim): `def-var-with-meta! \"cohost.shim\" \"Numbers-add\" jolt-add`; `\"cohost.shim\" \"Numbers-lt\" jolt-lt`; `\"cohost.shim\" \"Numbers-minus\" (case-lambda ((x) ... (jolt-n- x))) ((x y) ... (jolt-n- x y))))`",
+    "jolt v0.8.23 host/chez/seq.ss:1152-1163 `(define jolt-add (jolt-register-variadic! 0 (lambda xs (let ((bs (boxed-rest-seq xs))) ... (else (fold-left jolt-add2 (car xs) (cdr xs)))`; :1215-1230 `(define (jolt-cmp-chain op2) (jolt-register-variadic! 1 (lambda (x . xs) ...` and `(define jolt-lt (jolt-cmp-chain jolt-lt2))`; :995-998 `(define (jolt-add2 a b) (cond ((and (number? a) (number? b)) (+ a b)) ...`",
+    "jolt v0.8.23 host/chez/rt.ss:1322 `(define (jolt-inc x) (+ (jolt-need-num x) 1))`; values.ss:645 `(define (jolt= a . rest)`; ns.ss:1045 `(cons \"+\" jolt-add) (cons \"-\" jolt-sub) (cons \"*\" jolt-mul)`",
+    "jolt measured this exact pattern itself: /root/.cache/vs-hosts/jolt/jolt-core/jolt/op_registry.clj:99-103 (later source, dc8fd57) `every other call was var-deref + jolt-invoke + the variadic rest-list fold \u2014 29 ns against 3.6 for + on the same operands`. That is their figure, not a measurement made here."
+   ],
+   "per_iteration_work": "Stock side: each + or * is var-cell-deref, jolt-invoke2, a (lambda xs) rest list of 2 pairs, boxed-rest-seq, then fold-left into jolt-add2 or jolt-mul2 and Chez + or *. Each < is var-cell-deref, jolt-invoke2, a (lambda (x . xs)) rest list of 1 pair, then a loop into jolt-lt2. Each inc is var-cell-deref, jolt-invoke1 and jolt-inc. Host side: none of this.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "loop-arith",
+    "fn-call"
+   ],
+   "claim": "Those two call layers per arithmetic op account for both ratios. A stock defn adds no wrapper. core.clj's defn expands to (def name (fn ...)). The codemod's def rewrite only merges :def-meta, which is nil on jolt. The boot's macro wrapping rewrites expansions at compile time only. So bench-inc costs the same var call on both sides, and fn-call's extra time is the 3 stock ops (< and inc in the loop, + inside bench-inc).",
+   "evidence": [
+    "src/cohost/bench.cljc:17-20 `[:fn-call ... \"(defn bench-inc [x] (+ x 1))\" \"(loop [i 0 acc 0] (if (< i %N) (recur (inc i) (bench-inc acc)) acc))\"] [:loop-arith ... \"(loop [i 0 acc 0] (if (< i %N) (recur (inc i) (+ acc (* i 2))) acc))\"]`",
+    "core.clj:332-336 `(list 'def (with-meta name m) ;;todo - restore propagation of fn name ... (with-meta (cons `fn fdecl) {:rettag (:tag m)}))`",
+    "/home/user/cohost-baseline/src/cohost/rewrite.cljc:559-562 `(defn- rw-def [ctx [_ nm & more]] (let [nm (carry-meta nm nm) nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)] ...`; adapter.cljc:292 `:def-meta nil`; boot.cljc:35-36 `(defn wrap-macro [ctx f] (fn [& args] (let [out (apply f args)] (if host/*raw-macro-output* out (rw/rewrite ctx out)))))`",
+    "Quoted run: loop-arith host 0.52 ms, stock 28.46 ms; fn-call host 1.71 ms, stock 10.9 ms. target/bench-jolt.edn at 14:43 shows the same: fn-call host 1.5696 / stock 10.7327, loop-arith host 0.4954 / stock 27.4255."
+   ],
+   "per_iteration_work": "loop-arith: host 0.52 ms / 200k = 2.6 ns per iteration; stock 28.46 ms / 200k = 142 ns per iteration. That is about 35 ns per stock op (3 variadic, 1 fixed). fn-call: host 1.71 ms / 100k = 17 ns per iteration, which is one cached var call to bench-inc whose (+ x 1) is open-coded. Stock 10.9 ms / 100k = 109 ns per iteration: the same call plus 3 stock ops (< and + variadic, inc fixed), so about 92 ns extra, or about 31 ns per op. That is the same per-op cost as loop-arith.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "atom-swap"
+   ],
+   "claim": "At HEAD, the `(.swap atom f x)` in stock swap! became `((cohost.shim/dot \"swap\" cohost.shim/-swap) atom f x)`. So every swap! did three things. First, it built a new 5-arity dispatcher closure. jolt registers the closure's variadic arity under a mutex in a weak hashtable each time one is created. Second, it asked the adapter's uncached user-type?: a cap lookup, a string built by (str (class x)), then .startsWith and .contains. Third, it went through -swap to jolt's swap!, which calls the stock + (both layers plus the variadic fold). There is no check-cast, because clojure.lang.IAtom is not in checked-hints. dotimes adds a stock < and a stock unchecked-inc. Measured (quoted run): 1969 ns per iteration on the stock side against 48 on the host. Building the dispatcher once (dot$swap) and caching own? per class in the working tree cut this to 920 ns per iteration (target/bench-jolt.edn at 14:43). So about 1050 ns per iteration was the per-call construction plus the uncached user-type?.",
+   "evidence": [
+    "/home/user/cohost-baseline/src/cohost/rewrite.cljc:388 `(apply list (list (shim-fn \"dot\") (name m) f) xs')`; :118-129 checked-hints has Pattern, CharSequence and ITransient*, no IAtom",
+    "core.clj:2369-2370 `([^clojure.lang.IAtom atom f] (.swap atom f)) ([^clojure.lang.IAtom atom f x] (.swap atom f x))`; core.clj:3342-3346 dotimes `(let [n# (long ~n)] (loop [~i 0] (when (< ~i n#) ~@body (recur (unchecked-inc ~i)))))`",
+    "/home/user/cohost-baseline/src/cohost/shim.cljc:1769 `(defn host-object? [x] (and (some? x) (host/user-type? x) (not (contains? shim-types (type x)))))`; :1775-1776 `(defn dot [m f] (let [own? (if (contains? record-members m) non-record-object? host-object?)] (fn ([x] ...) ... ([x a b c & more] ...))))`; :1594 `(def -swap (fn ... ([a f x] (swap! a f x)) ...`",
+    "Compiled HEAD-era shim cohost.shim-1D8EE-205A9E9E-2F40EA8A.scm (dot): `... (jolt-register-variadic! 4 jfn$cohost.shim/dot$0))))) (if (not _mkc$10680) ...) (_mk$10681 f m own?)`. Compiled host-object?: `(jolt-invoke1 (var-cell-deref _kc$10525) x)` with `_kc$10525 (jolt-var \"cohost.adapter\" \"user-type?\")`",
+    "jolt v0.8.23 seq.ss:607-611 `(define variadic-fixed-arity-tbl (make-weak-eq-hashtable)) (define variadic-tbl-mu (make-mutex)) (define (jolt-register-variadic! v proc) (jolt-with-mutex variadic-tbl-mu (hashtable-set! variadic-fixed-arity-tbl proc v)) proc)`",
+    "src/cohost/hosts/java.clj:84-85 `:user-type? (fn [x] (and (let [n (str (class x))] (not (and (.startsWith n \"class clojure.\") (not (.contains n \"$reify\"))))) ...`; adapter.cljc:385-391 cap = `@installed`, `contains?`, `get`",
+    "jolt v0.8.23 atoms.ss:130-141: jolt-swap!, the host side's whole path. The (a f x) clause is `(jolt-need-atom a) ... (jolt-invoke2 f old x) ... (jolt-swap-commit! a old nv)`",
+    "target/bench-jolt.edn at 14:43 (compiled shim cohost.shim-1E55A-AEDDF356-9E38F87A.scm has install-dots! and host-object-types): `:id :atom-swap ... :host {... :median 4.657175000000279 ...} :stock {... :median 92.05389000000105 ...}`"
+   ],
+   "per_iteration_work": "Stock side at HEAD, per iteration: stock < and stock unchecked-inc (2 layers each, < with a rest list); one stock swap! call; one dot call (contains? on #{\"empty\"}, closure allocation, the image maker call, jolt-register-variadic! with mutex and weak-table insert); a call of the new closure; a nil check; own?, which goes through host-object?, then cap, then user-type? (jolt class, a str allocation and 2 string method calls); then -swap, a var call to jolt swap!, jolt-invoke2 of the stock +, Numbers-add, and the variadic jolt-add; then the CAS. Host side: dotimes open-coded; one var call to jolt swap!; jolt-invoke2 of jolt-add (variadic); the CAS.",
+   "confidence": "high"
+  },
+  {
+   "cases": [
+    "atom-swap"
+   ],
+   "claim": "With the dispatcher prebuilt (the 14:43 run), the remaining cost of own? was computing the cache key. On jolt v0.8.23, (class an-atom) has no fast path: class-fast-name has no atom arm, and jolt-class-name has no last-value memo, so it walks every registered class arm before jolt-class-base answers clojure.lang.Atom. Then jolt-class-for string-hashes the name, and jolt-get hashes the class token (hash-arm walk plus a murmur of the name) after a deref of the cache atom through a var call (deref is not a jolt native op). The working tree has since added an adapter :host-data? early-out (jolt: transient?, atom?, fn?, ...) ahead of the class lookup. With it, the 14:53 run shows 161 ns per iteration against 54.6 on the host (x3.0). What remains is the call chain: stock swap!, dot$swap, own?, h-host-data?, -swap, jolt swap!, stock +. The host side makes one call to jolt swap!.",
+   "evidence": [
+    "jolt v0.8.23 host/chez/java/host-class.ss:38-42 `The walk is ~50 predicates long and grows as libraries load, and (class x) is not the only thing that pays it ... a miss on a number cost two thirds of a microsecond.`; :56-62 class-fast-name tests nil/boolean/number/string/keyword/symbol/char/pvec/pmap/pset/cseq/empty-list/lazyseq, then jrec and jreify, `(else #f)`; :263-268 `(define (jolt-class-name x) (or (class-fast-name x) (let loop ((as jolt-class-arms)) ...)))`; :184 (jolt-class-base) `((jolt-atom? x) \"clojure.lang.Atom\")`",
+    "jolt v0.8.23 java/records-interop.ss:182 `Without a key every (instance? IRef an-atom) walked the arms and the taxonomy, 20-45x a record's check`; java/class-model.ss:141 jolt-class-for (string-keyed hashtable-ref); :218 `(register-hash-arm! jclass? (lambda (x) (jolt-hash (jclass-name x))))`; op_registry.clj:161 `deref is deliberately NOT here`",
+    "Compiled 14:43 shim cohost.shim-1E55A-AEDDF356-9E38F87A.scm, host-object?: `(jolt-invoke1 (var-cell-deref _kc$15874) x)` with `_kc$15874 (jolt-var \"clojure.core\" \"class\")`, then `(jolt-invoke1 (var-cell-deref _kc$15879) (var-cell-deref _kc$15878))` (deref of host-object-types), then `(jolt-get _a$15884 _a$15885 _a$15886)`",
+    "Working tree src/cohost/shim.cljc:1838-1841 `(def ^:private h-host-data? (host/capability :host-data?)) (defn host-object? [x] (and (some? x) (not (h-host-data? x)) ...`; src/cohost/hosts/jolt.clj:59-62 `;; its class walks the registered class arms (0.3 \u00b5s for a transient, an atom) :host-data? (fn [x] (or (transient? x) (atom? x) (fn? x) ...`",
+    "target/bench-jolt.edn at 14:53: `:id :atom-swap ... :host {... :median 5.463796000000002 ...} :stock {... :median 16.153188000000227 ...}`"
+   ],
+   "per_iteration_work": "Stock side in the working tree, per swap!: a stock swap! var call, a dot$swap var call, own? through a closure local, host-object?, the adapter's :host-data? fn (transient? then atom?), -swap, a var call to jolt swap!, and a jolt-invoke2 of the stock + (one call; its body is now aliased). That is about 6 more runtime-compiled calls than the host. Before :host-data?, each swap! also paid the class-arm walk, a string-hash, a deref var call and a hashed get.",
+   "confidence": "medium"
+  },
+  {
+   "cases": [
+    "loop-arith",
+    "fn-call",
+    "atom-swap"
+   ],
+   "claim": "Every cohost layer is compiled at runtime with jolt's call-site tracing on. It is on by default and nothing in cohost sets JOLT_TRACE. Tracing wraps each non-tail call in a virtual-register save and restore, and stores a site pair before a named fn's tail call. jolt's own core is precompiled and pays none of this. Stock paths have many more runtime-compiled call layers than host paths, so tracing inflates only the stock side. That confound matters most for atom-swap. Before pass 1 it also added 4 wrapped calls per iteration to the stock loop-arith thunk; the host thunk has none.",
+   "evidence": [
+    "jolt v0.8.23 host/chez/compile-eval.ss:318-330 `ON BY DEFAULT on this path ... Set JOLT_TRACE=0 to opt out. The cost is a per-entry ring push in code compiled at runtime; core is not affected (the seed prelude is already compiled) ... a fib microbenchmark pays ~7x`; build-jolt.ss:241 the standalone launcher calls `(jolt-trace-init-from-env!)` at run time",
+    "jolt v0.8.23 backend_scheme.clj:3265-3271 site-restore `(let ((_ss (virtual-register 2)) (_so (virtual-register 12))) (if (pair? _ss) (set-virtual-register! 12 _ss)) (set-virtual-register! 2 0) (let ((_sr <call>)) (set-virtual-register! 2 _ss) (set-virtual-register! 12 _so) _sr))`; :3288-3300 emit-call applies it to every non-tail call when trace-frames? is on",
+    "The wrappers are visible in jolt's compiled cohost.shim (cohost.shim-1D8EE-205A9E9E-2F40EA8A.scm, dot): `(let ((_ss$10597 (virtual-register 2)) (_so$10598 (virtual-register 12))) ... (jolt-contains? (var-cell-deref _kc$10596) m) ...)`. The AOT cache directory name ends in -tr.",
+    "bb.edn:46-48 `bench:jolt ... (apply shell \"jolt\" \"-Scp\" \"src\" \"-m\" \"cohost.run\" \"--bench\" *command-line-args*)` sets no env. A repo-wide grep for JOLT_TRACE finds nothing."
+   ],
+   "per_iteration_work": "Per non-tail call in runtime-compiled code: 2 virtual-register reads, a pair? test, 2 or 3 virtual-register writes, and a let around the call. Before pass 1, the stock loop-arith thunk had 4 such calls per iteration and the host thunk had 0. For atom-swap, every stock-only layer (stock swap!, dot$swap closure, host-object?, the adapter predicate, -swap, stock +) is traced code, while the host's jolt-swap! and jolt-add are not.",
+   "confidence": "medium"
+  },
+  {
+   "cases": [
+    "loop-arith",
+    "fn-call"
+   ],
+   "claim": "Pass 1 in the working tree applies :inline at rewrite time and emits host core symbols for shim statics that are host fns. It had not reached host speed in the 14:53 run: loop-arith went from 27.4 ms to 10.43 ms (x19), fn-call from 10.7 ms to 5.49 ms (x3.4). That run's alias table matched shim values to host var roots by identity, keeping the first var found. In jolt v0.8.23, +' and +, *' and *, and inc' and inc share one proc each, so Numbers-add could alias to clojure.core/+', which jolt does not inline. That would turn 3 of the 4 ops back into var calls, 2 of them into variadic procs, while < (no primed twin) is open-coded. This fits the measured 52 ns per iteration. The working tree's boot.cljc now prefers the shortest name, compiled at 15:05 after that run. One correctness gap is still open: inline-expansion trusts *locals*, which does not include deftype/defrecord fields or reify/deftype/extend method params, nor names bound by when-first, areduce, amap or bound-fn.",
+   "evidence": [
+    "target/bench-jolt.edn at 14:53 (rewrite compiled 14:49:46 in cohost.rewrite-BDC2-A94F470D-260DDC9D.scm, which has inline-expansion and host-aliases; boot compiled 14:53:33 in cohost.boot-897A-788D5640-9D3C796B.scm, which has no better?): `:id :loop-arith ... :host {... :median 0.5400640000007115 ...} :stock {... :median 10.43155300000035 ...}`; `:id :fn-call ... :host {... :median 1.6041569999997591 ...} :stock {... :median 5.492073999999775 ...}`",
+    "jolt v0.8.23 host/chez/seed/prelude.ss:339-343 `(define jv$clojure.core/+$P jolt-add) (def-var-linked! \"clojure.core\" \"+'\" ...)`, and likewise -' to jolt-sub, *' to jolt-mul, inc' to jolt-inc, dec' to jolt-dec",
+    "Snapshot boot.cljc:90 `(if (and (fn? v) (not (contains? m v))) (assoc m v sym) m)` (first found wins). Current src/cohost/boot.cljc host-aliases docstring: `Where several host names hold the one fn (jolt's + is its +'), the shortest name wins`. The better? fn first appears in the compiled cohost.boot-971D-CC0BB879-7EFB563F.scm (15:05:19).",
+    "Snapshot rewrite.cljc:363 `(cond (known? ctx nm) (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args')`; :202 `(not (:cohost/host (meta x)))` in restock; :871-882 inline-expansion `(when-let [f (and (symbol? h) (not (contains? *locals* h)) (:inline-fn ctx))] ...)`; jolt.clj `:rewrite-inline? true`",
+    "Snapshot rewrite.cljc:731-742 `(defn- rw-method-clause [ctx [m params & body]] (let [body (rw-all ctx body)] ...` rewrites method bodies without binding params into *locals*; :861-864 rw-spec-form passes deftype/defrecord fields `(second args)` through without binding them"
+   ],
+   "per_iteration_work": "In the 14:53 run (inline on, first-found alias): loop-arith 10.43 ms / 200k = 52 ns per iteration against 2.7 on the host; fn-call 5.49 ms / 100k = 55 ns per iteration against 16. If +, * and inc resolve to the plain names, the stock loop makes 0 calls per iteration, the same as the host.",
+   "confidence": "medium"
+  }
+ ],
+ "fixes": [
+  {
+   "change": "Finish the rewrite-time :inline pass with host aliases (already in the working tree: rewrite.cljc inline-expansion and rw-static's (:host-aliases ctx) lookup; boot.cljc inline-fn and host-aliases; jolt.clj :rewrite-inline? true). A stock (h args), where h resolves to a cohost.core var whose :inline covers the arity, becomes its expansion. A shim static whose value is a host core var's root is emitted as that host symbol, marked :cohost/host so restock leaves it alone. On jolt, (+ acc (* i 2)) becomes (clojure.core/+ acc (clojure.core/* i 2)), which jolt lowers to jolt-n+ and jolt-n*. Keep the deterministic alias choice (plain name over +', *', inc'), and confirm it with probe 1. Before relying on *locals* for inlining, add method params and deftype/defrecord fields to *locals* in rw-method-clause and rw-spec-form, and add when-first, areduce, amap and bound-fn to binding-heads.",
+   "files": [
+    "src/cohost/rewrite.cljc",
+    "src/cohost/boot.cljc",
+    "src/cohost/adapter.cljc",
+    "src/cohost/hosts/jolt.clj"
+   ],
+   "removes": "Per arithmetic op: both cached var calls (the stock case-lambda and the shim var), the variadic rest-list cons with fold-left or the cmp-chain loop (jolt-add, jolt-mul, jolt-lt), and the jolt-truthy? around comparisons. Stock call sites compile to the host's own open-coded jolt-n< / jolt-n-inc / jolt-n* / jolt-n+ (or jolt-l*), as the JVM compiler does with the same metadata (bench-clj loop-arith: stock 0.0879 ms, host 0.0880 ms). This also open-codes dotimes's < and unchecked-inc in atom-swap, and the 2-arity body of the stock + that swap! calls.",
+   "risk": "(a) A field or param named like an inlinable core fn (inc, max, min, count, nth, int, num ...) and called as a fn inside a deftype, defrecord, reify or extend body would be inlined as the core fn, until *locals* covers those binders. (b) with-redefs or alter-var-root of +, < or inc no longer reaches compiled call sites; the JVM behaves the same way. (c) *unchecked-math* is read at rewrite time, also as on the JVM. (d) Every :inline in core.clj now applies (count, nth, int, long, =, compare, bit ops, aget ...), so the battery and corpus must be re-run. (e) Boot-time cost: one ns-resolve per call head. (f) An alias is only as good as root identity, and a host that rebinds a var root later (as jolt's float.ss and bigdec.ss re-def inc) can break the match silently. Probe 1 shows what was emitted."
+  },
+  {
+   "change": "atom-swap: answer the host's own data before the class lookup in the interop dispatcher. Already in the working tree as adapter :host-data? (jolt.clj:61 `(or (transient? x) (atom? x) (fn? x) (string? x) (number? x) ...)`; shim.cljc:1841 `(not (h-host-data? x))`). Keep a concrete-type test for atoms early in that or. If a narrower patch is wanted: (not (h-atom? x)) at the top of host-object?, where h-atom? is the adapter's :atom? already looked up once (shim.cljc:35).",
+   "files": [
+    "src/cohost/shim.cljc",
+    "src/cohost/hosts/jolt.clj",
+    "src/cohost/adapter.cljc"
+   ],
+   "removes": "Per swap!: jolt v0.8.23's (class an-atom), which walks every registered class arm with no memo in that release, then jolt-class-for's string hash; also the deref of the cache atom through a var call, and the jolt-get keyed by a class token (hash-arm walk plus a murmur of the class name). All of it is replaced by (instance? clojure.lang.Atom x), which jolt answers from a per-site inline cache keyed by ref-kind.",
+   "risk": "Low. :host-data? must never answer true for a user type. A deftype implementing clojure.lang.IAtom is not an instance of the concrete clojure.lang.Atom, so it still reaches its own .swap. java.clj:84-85 already treats every 'class clojure.*' value as non-user. Each host's :atom? must stay a concrete-type test."
+  },
+  {
+   "change": "Pass 2: give swap!, reset!, compare-and-set!, swap-vals! and reset-vals! a host native with the stock path as fallback. A policy replacement whose arities read (if (h-atom? atom) (host-swap! atom f x) (.swap atom f x)), where host-swap! is the host core's swap! looked up once in the shim.",
+   "files": [
+    "src/cohost/policy.cljc",
+    "src/cohost/shim.cljc"
+   ],
+   "removes": "Per swap!, the stock-only chain: stock swap!, dot$swap, own?, the :host-data? predicate calls, and -swap. That is about 5 runtime-compiled (and traced) calls, leaving one stock call and jolt's swap!.",
+   "risk": "These names stop being core.clj's own text; they become policy replacements, as cast already is. Non-atoms keep the stock path, including user IAtom types and nil, which still gets the stock NPE. For real atoms, error text becomes the host's (jolt-need-atom). Re-run the battery's atoms, add-watch and doto rows, and the corpus iref/IAtom rows."
+  },
+  {
+   "change": "Run jolt benches with JOLT_TRACE=0 for both sides (bb.edn bench:jolt and run.cljc --bench), or record the env with the results and report both.",
+   "files": [
+    "bb.edn"
+   ],
+   "removes": "The virtual-register save and restore jolt wraps around every non-tail call, plus the tail-site store, in runtime-compiled code. That means all of cohost.core, cohost.shim and the adapter, none of which jolt's precompiled core ever pays.",
+   "risk": "No effect on values. An uncaught error in that run reports without tail-frame history."
+  },
+  {
+   "change": "Only on a host where fix 1's alias is not found: make the variadic-valued shim statics fixed-arity, with call-position bodies, the way Numbers-minus already is. For example (def Numbers-add (fn [x y] (+ x y))), (def Numbers-multiply (fn [x y] (* x y))), (def Numbers-lt (fn [x y] (< x y))), (def Util-equiv (fn [x y] (= x y))).",
+   "files": [
+    "src/cohost/shim.cljc"
+   ],
+   "removes": "The rest-list cons, the boxed-rest-seq test and the fold-left or cmp-chain loop of jolt's value-position procs, on each remaining shim call.",
+   "risk": "Do not do this on jolt while fix 1 is in place. host-aliases matches a shim value against host var roots by identity, so a wrapper fn would switch the alias off and bring a shim call back. Numbers.add and lt are binary on the JVM, and core.clj only calls them with 2 args."
+  }
+ ],
+ "probes": [
+  {
+   "form": "(time (prn (cohost.rewrite/rewrite (cohost.boot/ctx) '(< i (+ acc (* (inc i) 2)))) (fn? (:inline (meta #'+)))))",
+   "tests": "Diagnostic, not a timing; the printed form is the evidence. Expect (clojure.core/< i (clojure.core/+ acc (clojure.core/* (clojure.core/inc i) 2))) and true. If clojure.core/+', *' or inc' appear, the alias collision is still there. If (cohost.shim/Numbers-add ...) appears, the alias is missing. If (+ acc ...) is left unchanged, the call-site :inline is not applied, and the second value shows whether the :inline meta is a fn on jolt."
+  },
+  {
+   "form": "(time (loop [i 0 acc 0] (if (< i 200000) (recur (inc i) (+ acc (* i 2))) acc)))",
+   "tests": "Tests the claim that loop-arith's whole gap is the arithmetic call sites. HEAD code took 27.4 to 28.5 ms (bench stock). With inline plus plain-name aliases it should reach the bench host time (0.50 to 0.54 ms). The 14:53 run's 10.43 ms is the 'inline plus primed alias' state. A result still well above 1 ms after the alias fix refutes the claim; run probe 1 to see why."
+  },
+  {
+   "form": "(time (loop [i 0 acc 0] (if (cohost.shim/Numbers-lt i 200000) (recur (cohost.shim/Numbers-inc i) (cohost.shim/Numbers-add acc (cohost.shim/Numbers-multiply i 2))) acc)))",
+   "tests": "Times HEAD's inner layer alone: a cached var call into jolt's value-position procs, variadic for lt, add and multiply. Explicit cohost.shim/ symbols are not aliased by either tree, so it measures the same thing on both. If it is close to HEAD's 27 to 28 ms, the variadic procs dominate and the stock-fn layer is cheap. If it is about half, the two layers cost the same."
+  },
+  {
+   "form": "(let [v cohost.shim/Numbers-add f cohost.shim/Numbers-minus] (time (loop [i 0 acc 0] (if (< i 200000) (recur (inc i) (v acc i)) acc))) (time (loop [i 0 acc 0] (if (< i 200000) (recur (inc i) (f acc i)) acc))))",
+   "tests": "Isolates the rest-list and fold cost. Both loops make the same local call per iteration. The first callee is jolt-add (variadic, what Numbers-add is); the second is Numbers-minus, a fixed-arity case-lambda with jolt-n- inline. Equal times would refute the claim that the variadic machinery matters per op."
+  },
+  {
+   "form": "(let [f +] (time (loop [i 0 acc 0] (if (< i 200000) (recur (inc i) (f acc i)) acc))))",
+   "tests": "Times the stock + as a value, which is what (swap! a + i) and (reduce + ...) call. On HEAD it goes through the stock case-lambda, then Numbers-add, then variadic jolt-add, so it should be slower than probe 3's first line. With the plain-name alias, its 2-arity body is open-coded and it should match probe 3's second line. Staying near the first line means the stock fn body still reaches a variadic proc."
+  },
+  {
+   "form": "(do (defn probe-id [x] x) (time (loop [i 0 acc 0] (if (< i 100000) (recur (inc i) acc) acc))) (time (loop [i 0 acc 0] (if (< i 100000) (recur (inc i) (probe-id acc)) acc))))",
+   "tests": "Tests the claim that a stock defn adds no wrapper. The second time minus the first is the cost of one call to a stock-defn'd fn. That difference should be close to the bench's host fn-call per-iteration time (1.57 to 1.71 ms per 100k, mostly that one var call). A much larger difference refutes 'no wrapping'."
+  },
+  {
+   "form": "(let [a (atom 0)] (time (dotimes [i 100000] nil)) (time (dotimes [i 100000] (swap! a + i))) (time (dotimes [i 100000] (cohost.shim/dot$swap a + i))) (time (dotimes [i 100000] (cohost.shim/-swap a + i))) (time (dotimes [i 100000] (cohost.shim/host-object? a))) @a)",
+   "tests": "Decomposes atom-swap in the working tree (dot$swap does not exist at HEAD). Lines: (1) the loop alone; (2) the case; (3) skips the stock swap! layer; (4) skips the dispatcher and goes straight to jolt's swap! with the stock +; (5) the own? test alone. (2)-(3) is the stock swap! call, (3)-(4) is the dispatcher, and (5)-(1) is host-object? on an atom, which should be small now that :host-data? exists. If (2)-(4) is most of stock minus host (bench host about 4.7 to 5.5 ms), the call layers are what is left, and fix 3 is the one to make."
+  },
+  {
+   "form": "(let [a (atom 0)] (time (dotimes [i 100000] ((cohost.shim/dot \"swap\" cohost.shim/-swap) a + i))) (time (dotimes [i 100000] (cohost.adapter/user-type? a))) @a)",
+   "tests": "Reproduces HEAD's two atom-swap costs. Line 1 builds a new dispatcher per call (jolt registers its variadic arity under a mutex in a weak table); compare it with probe 7's line 3 (prebuilt dot$swap). Line 2 is HEAD's uncached own? test: jolt class of an atom (class-arm walk in v0.8.23), str, .startsWith and .contains. Together these should account for the drop from 196.87 ms (quoted) to 92.05 ms (14:43 run). Small values would refute that attribution."
+  },
+  {
+   "form": "(let [f (fn [x] x)] (time (dotimes [i 1000000] (f i))))",
+   "tests": "Tests the tracing confound. Run it in the default environment and again with JOLT_TRACE=0 set for the jolt process; that env var is the only switch. jolt v0.8.23 traces all runtime-compiled code (all of cohost) and none of its own core. Equal times refute the confound. A clear drop under JOLT_TRACE=0 means stock-only layers are inflated relative to host calls, and both bench sides should run with JOLT_TRACE=0."
+  }
+ ]
+}

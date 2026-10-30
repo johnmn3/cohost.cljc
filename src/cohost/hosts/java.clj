@@ -4,9 +4,9 @@
    the host. Merged into hosts/jvm.clj's and hosts/jolt.clj's adapter maps."
   (:require [clojure.edn :as edn]))
 
-(defn- groups [m]
+(defn- groups [^java.util.regex.Matcher m]
   (mapv (fn [i] (.group m (int i))) (range (inc (.groupCount m)))))
-(defn- spans [m]
+(defn- spans [^java.util.regex.Matcher m]
   ;; a group that did not participate has no text (jolt's start(g) is then
   ;; false, the JVM's -1)
   (mapv (fn [i] (when (some? (.group m (int i))) [(.start m (int i)) (.end m (int i))])) (range (inc (.groupCount m)))))
@@ -16,25 +16,25 @@
 ;; [() (String) (String Throwable)] constructors, nil where the JVM has none
 ;; (a cause the class cannot carry leaves the shim's stand-in).
 (def ^:private exception-ctors
-  {'java.lang.Throwable [#(Throwable.) #(Throwable. %) #(Throwable. %1 %2)]
-   'java.lang.Exception [#(Exception.) #(Exception. %) #(Exception. %1 %2)]
-   'java.lang.RuntimeException [#(RuntimeException.) #(RuntimeException. %) #(RuntimeException. %1 %2)]
-   'java.lang.Error [#(Error.) #(Error. %) #(Error. %1 %2)]
-   'java.lang.AssertionError [#(AssertionError.) #(AssertionError. %) #(AssertionError. %1 %2)]
-   'java.lang.IllegalArgumentException [#(IllegalArgumentException.) #(IllegalArgumentException. %) #(IllegalArgumentException. %1 %2)]
-   'java.lang.IllegalStateException [#(IllegalStateException.) #(IllegalStateException. %) #(IllegalStateException. %1 %2)]
-   'java.lang.UnsupportedOperationException [#(UnsupportedOperationException.) #(UnsupportedOperationException. %) #(UnsupportedOperationException. %1 %2)]
-   'java.lang.ArithmeticException [#(ArithmeticException.) #(ArithmeticException. %) nil]
-   'java.lang.NumberFormatException [#(NumberFormatException.) #(NumberFormatException. %) nil]
-   'java.lang.ClassCastException [#(ClassCastException.) #(ClassCastException. %) nil]
-   'java.lang.NullPointerException [#(NullPointerException.) #(NullPointerException. %) nil]
-   'java.lang.IndexOutOfBoundsException [#(IndexOutOfBoundsException.) #(IndexOutOfBoundsException. %) nil]
-   'java.lang.ArrayIndexOutOfBoundsException [#(ArrayIndexOutOfBoundsException.) #(ArrayIndexOutOfBoundsException. %) nil]
-   'java.lang.StringIndexOutOfBoundsException [#(StringIndexOutOfBoundsException.) #(StringIndexOutOfBoundsException. %) nil]
-   'java.lang.InterruptedException [#(InterruptedException.) #(InterruptedException. %) nil]
-   'java.util.NoSuchElementException [#(java.util.NoSuchElementException.) #(java.util.NoSuchElementException. %) nil]
-   'java.util.ConcurrentModificationException [#(java.util.ConcurrentModificationException.) #(java.util.ConcurrentModificationException. %) #(java.util.ConcurrentModificationException. %1 %2)]
-   'java.io.IOException [#(java.io.IOException.) #(java.io.IOException. %) #(java.io.IOException. %1 %2)]})
+  {'java.lang.Throwable [#(Throwable.) #(Throwable. ^String %) #(Throwable. %1 %2)]
+   'java.lang.Exception [#(Exception.) #(Exception. ^String %) #(Exception. %1 %2)]
+   'java.lang.RuntimeException [#(RuntimeException.) #(RuntimeException. ^String %) #(RuntimeException. %1 %2)]
+   'java.lang.Error [#(Error.) #(Error. ^String %) #(Error. %1 %2)]
+   'java.lang.AssertionError [#(AssertionError.) #(AssertionError. ^String %) #(AssertionError. %1 %2)]
+   'java.lang.IllegalArgumentException [#(IllegalArgumentException.) #(IllegalArgumentException. ^String %) #(IllegalArgumentException. %1 %2)]
+   'java.lang.IllegalStateException [#(IllegalStateException.) #(IllegalStateException. ^String %) #(IllegalStateException. %1 %2)]
+   'java.lang.UnsupportedOperationException [#(UnsupportedOperationException.) #(UnsupportedOperationException. ^String %) #(UnsupportedOperationException. %1 %2)]
+   'java.lang.ArithmeticException [#(ArithmeticException.) #(ArithmeticException. ^String %) nil]
+   'java.lang.NumberFormatException [#(NumberFormatException.) #(NumberFormatException. ^String %) nil]
+   'java.lang.ClassCastException [#(ClassCastException.) #(ClassCastException. ^String %) nil]
+   'java.lang.NullPointerException [#(NullPointerException.) #(NullPointerException. ^String %) nil]
+   'java.lang.IndexOutOfBoundsException [#(IndexOutOfBoundsException.) #(IndexOutOfBoundsException. ^String %) nil]
+   'java.lang.ArrayIndexOutOfBoundsException [#(ArrayIndexOutOfBoundsException.) #(ArrayIndexOutOfBoundsException. ^String %) nil]
+   'java.lang.StringIndexOutOfBoundsException [#(StringIndexOutOfBoundsException.) #(StringIndexOutOfBoundsException. ^String %) nil]
+   'java.lang.InterruptedException [#(InterruptedException.) #(InterruptedException. ^String %) nil]
+   'java.util.NoSuchElementException [#(java.util.NoSuchElementException.) #(java.util.NoSuchElementException. ^String %) nil]
+   'java.util.ConcurrentModificationException [#(java.util.ConcurrentModificationException.) #(java.util.ConcurrentModificationException. ^String %) #(java.util.ConcurrentModificationException. %1 %2)]
+   'java.io.IOException [#(java.io.IOException.) #(java.io.IOException. ^String %) #(java.io.IOException. %1 %2)]})
 
 (defn- new-exception [klass msg cause]
   (when-let [[c0 c1 c2] (get exception-ctors klass)]
@@ -127,7 +127,7 @@
    :upper-case (fn [s] (.toUpperCase (str s)))
    :lower-case (fn [s] (.toLowerCase (str s)))
    :string-builder (fn [] (StringBuilder.))
-   :sb-append! (fn [sb x] (.append sb (str x)) sb)
+   :sb-append! (fn [^StringBuilder sb x] (.append sb (str x)) sb)
    :sb-string (fn [sb] (str sb))
    :sb? (fn [x] (instance? StringBuilder x))
    :edn-read-string (fn [opts s] (edn/read-string opts s))

@@ -58,6 +58,20 @@
       (apply list 'defmacro nm (concat (when doc [doc]) (when attrs [attrs])
                                        (if (vector? (first more)) (first arities') arities'))))))
 
+(defn- may-make-macro?
+  "Can evaluating form create a macro or change one? A defmacro; a def of a
+   `^:macro` name or of one core.clj turns into a macro with setMacro; and
+   any form that is not a def at all (`(. (var x) (setMacro))`, alter-meta!,
+   a do, a macro call). Other defs (defn, defmulti, defprotocol ...) cannot,
+   so the scan after them would find nothing."
+  [form]
+  (or (not (seq? form))
+      (let [h (first form)]
+        (or (not (contains? policy/def-heads h))
+            (= 'defmacro h)
+            (let [nm (second form)]
+              (and (symbol? nm) (or (:macro (meta nm)) (contains? policy/setmacro-defined nm))))))))
+
 (defn- scan-macros!
   "Promote `^:macro` defs the host did not treat as macros, and wrap every
    not-yet-wrapped macro of ns-sym so its output goes through the codemod."
@@ -75,18 +89,77 @@
 ;; ---------------------------------------------------------------------------
 ;; eval
 
+(defn- host-aliases
+  "{shim name -> the host core's symbol} for the shim statics whose value is
+   the host core's own fn (RT-first is first, Numbers-add is +): the codemod
+   names the host's fn, which the host's compiler may inline, rather than the
+   shim var that holds it. Public, non-macro host vars only; the symbol is
+   marked so the codemod does not read it as the stock core's. Where several
+   host names hold the one fn (jolt's + is its +'), the shortest name wins:
+   the plain name is the one a host compiler inlines."
+  [shim-names]
+  (let [core (host/core-ns-sym)
+        better? (fn [a b] (let [na (name a) nb (name b)]
+                            (or (< (count na) (count nb))
+                                (and (= (count na) (count nb)) (neg? (compare na nb))))))
+        by-fn (reduce (fn [m [sym h]]
+                        (let [v (try (when-not (or (host/macro-var? h) (:private (host/var-meta h)))
+                                       (host/var-root h))
+                                     (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]
+                          (if (and (fn? v) (or (not (contains? m v)) (better? sym (get m v)))) (assoc m v sym) m)))
+                      {} (host/ns-interns-map core))
+        vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))]
+    (into {} (for [s shim-names
+                   :let [nm (str s)]
+                   ;; statics, not instance methods (-m) or their dispatchers (dot$m)
+                   :when (and (not= "-" (subs nm 0 1)) (not= "dot$" (subs nm 0 (min 4 (count nm)))))
+                   :let [v (shim/shim-value vars nm)
+                         hs (when (fn? v) (get by-fn v))]
+                   :when hs]
+               [nm (with-meta (symbol (str core) (str hs)) {:cohost/host true})]))))
+
+(defn- inline-fn
+  "On a host whose compiler ignores :inline: (fn [sym arity]) -> the :inline
+   fn of the core fn sym names in the namespace being compiled, when it
+   covers the arity; else nil."
+  []
+  (when (host/rewrite-inline?)
+    (let [resolve* (or (get (host/core-extras) 'ns-resolve)
+                       (some-> (host/resolve-core 'ns-resolve) host/var-root))
+          core (name core-ns)]
+      (when resolve*
+        (fn [sym n]
+          (let [v (try (resolve* (host/current-ns) sym)
+                       (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]
+            (when (and v (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (ns-name x) x)))))
+              (let [m (host/var-meta v)
+                    [f ar] (if (fn? (:inline m))
+                             [(:inline m) (:inline-arities m)]
+                             (get (:inlines @state) (symbol (name (host/var-sym v)))))]
+                (when (and (fn? f) (or (nil? ar) (ar n))) f)))))))))
+
 (defn make-ctx
   "The codemod's context for this host: which shim vars exist, the host's
    catch-all, its compile-style facts, and the per-namespace facts (current
    namespace, imports, renamed stock libraries, extend-position types)."
   []
-  (rw/make-ctx {:shim-names (let [names (host/ns-public-names 'cohost.shim)]
-                              ;; a stub that only throws is no shim where the
-                              ;; host has the real thing
-                              (if (host/interop-passthrough?)
-                                (let [vs (host/ns-interns-map 'cohost.shim)]
-                                  (into #{} (remove #(shim/stub? (some-> (get vs %) host/var-root))) names))
-                                names))
+  (let [shim-names (let [names (host/ns-public-names 'cohost.shim)
+                         ;; a stub that only throws is no shim where the
+                         ;; host has the real thing
+                         names (if (host/interop-passthrough?)
+                                 (let [vs (host/ns-interns-map 'cohost.shim)]
+                                   (into #{} (remove #(shim/stub? (some-> (get vs %) host/var-root))) names))
+                                 (set names))]
+                     ;; a prebuilt dispatcher per instance method: dot$m, and a
+                     ;; checkcast per checked class: cast$token
+                     (-> names
+                         (into (shim/install-dots!
+                                (filter #(let [s (str %)] (and (= "-" (subs s 0 1)) (> (count s) 1))) names)))
+                         (into (shim/install-casts!
+                                (for [c (distinct (vals rw/checked-hints))] [(rw/cast-name c) c])))))]
+  (rw/make-ctx {:shim-names shim-names
+                :host-aliases (host-aliases shim-names)
+                :inline-fn (inline-fn)
                 :catch-all (host/catch-all-sym)
                 :core-ns (name core-ns)
                 :shim-ref (host/shim-ref)
@@ -106,8 +179,8 @@
                 :record? shim/record?*
                 :protocol-var? host/protocol-var?
                 :interned? (fn [s] (let [n (host/current-ns)]
-                                     (boolean (and n (try (contains? (host/ns-interns-map (symbol (str n))) s)
-                                                          (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ false))))))}))
+                                     (boolean (and n (try (some? (host/interned-var n s))
+                                                          (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ false))))))})))
 
 (declare eval-top directive directive!)
 
@@ -123,15 +196,18 @@
     (first (eval-top c ns-sym form))))
 
 (defn- eval-in*
-  "-> [value namespace-after]"
-  [c ns-sym form]
+  "-> [value namespace-after]. lib? (a library's top-level form): scan for new
+   macros only after a form that can make one; the loader scans once more
+   when the library is done. Otherwise after every form."
+  [c ns-sym form lib?]
   (host/with-ns ns-sym
     (fn [] (if-let [d (directive form)]
              (directive! d)
-             (let [form (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
-                   v (host/eval-form (rw/rewrite c form))]
-               (host/after-eval form ns-sym)
-               (scan-macros! c ns-sym)
+             (let [form' (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
+                   v (host/eval-form (rw/rewrite c form'))]
+               (host/after-eval form' ns-sym)
+               (when (or (not lib?) (may-make-macro? form))
+                 (scan-macros! c ns-sym))
                [v (host/current-ns)])))))
 
 (def ^:private host-def-heads
@@ -150,18 +226,19 @@
 (defn- eval-top
   "-> [value namespace-after]; a `do` one form at a time, each in the
    namespace the one before it left."
-  [c ns-sym form]
-  (if (and (seq? form) (= 'do (first form)) (next form))
-    (loop [ns ns-sym fs (seq (rest form)) v nil]
-      (if fs
-        (let [[v ns'] (eval-top c ns (first fs))] (recur ns' (next fs) v))
-        [v ns]))
-    (let [before (when (and (host/def-meta) (seq? form) (symbol? (first form))
-                            (contains? host-def-heads (name (first form))))
-                   (set (keys (host/ns-interns-map ns-sym))))
-          r (eval-in* c ns-sym form)]
-      (when before (mark-host-defs! ns-sym before))
-      r)))
+  ([c ns-sym form] (eval-top c ns-sym form false))
+  ([c ns-sym form lib?]
+   (if (and (seq? form) (= 'do (first form)) (next form))
+     (loop [ns ns-sym fs (seq (rest form)) v nil]
+       (if fs
+         (let [[v ns'] (eval-top c ns (first fs) lib?)] (recur ns' (next fs) v))
+         [v ns]))
+     (let [before (when (and (host/def-meta) (seq? form) (symbol? (first form))
+                             (contains? host-def-heads (name (first form))))
+                    (set (keys (host/ns-interns-map ns-sym))))
+           r (eval-in* c ns-sym form lib?)]
+       (when before (mark-host-defs! ns-sym before))
+       r))))
 
 (defn eval-in-core [form] (eval-in core-ns form))
 
@@ -193,9 +270,22 @@
 
 (defn- ns-arg-wrap [nm f]
   (case (get ns-arg-fns nm)
-    :ns (fn [x & more] (apply f (stock-ns x) (map stock-sym more)))
-    :sym (fn [& args] (apply f (map stock-sym args)))
+    :ns (fn ([x] (f (stock-ns x)))
+          ([x y] (f (stock-ns x) (stock-sym y)))
+          ([x y & more] (apply f (stock-ns x) (stock-sym y) (map stock-sym more))))
+    :sym (fn ([] (f))
+           ([a] (f (stock-sym a)))
+           ([a b] (f (stock-sym a) (stock-sym b)))
+           ([a b & more] (apply f (stock-sym a) (stock-sym b) (map stock-sym more))))
     f))
+
+(defn- note-host-dynamic!
+  "A name cohost.core takes from the host: when the host's var of that name is
+   dynamic (hv, or looked up when nil), every namespace that refers the core
+   refers that var too (refer-core!)."
+  [nm hv]
+  (when (some-> (or hv (host/resolve-core nm)) host/dynamic-var?)
+    (swap! state update :host-dynamic (fn [v] (if (some #(= nm %) v) v (conj (or v []) nm))))))
 
 (defn- take-from-host!
   "Give cohost.core the host core's `nm`. Dynamic vars are referred (the
@@ -210,11 +300,13 @@
      ;; only at compile time (ClojureScript's resolve is a macro)
      (do (host/intern! core-ns nm (ns-arg-wrap nm v))
          (record! report :host {:name nm})
+         (note-host-dynamic! nm nil)
          true)
      (when-let [hv (host/resolve-core nm)]
        (try
          (if (host/dynamic-var? hv)
            (do (host/refer-from-core! core-ns nm)
+               (note-host-dynamic! nm hv)
                (when-let [c (ctx)] (swap! (:host-referred c) conj nm)))
            (let [v (host/intern! core-ns nm (ns-arg-wrap nm (host/var-root hv)))
                  hm (host/var-meta hv)]
@@ -239,39 +331,80 @@
       (wrap-defmacro-source form)
       form)))
 
+(defn- inline-forms
+  "[name inline-form arities-form] of a defn or def whose metadata carries
+   :inline (core.clj's + is `(defn + {:inline (nary-inline 'add ...)} ...)`)."
+  [form]
+  (when (and (seq? form) (contains? '#{defn defn- def} (first form)) (symbol? (second form)))
+    (let [nm (second form)
+          more (nnext form)
+          more (if (string? (first more)) (rest more) more)
+          attrs (merge (meta nm) (when (and (not= 'def (first form)) (map? (first more))) (first more)))]
+      (when (contains? attrs :inline)
+        [nm (:inline attrs) (:inline-arities attrs)]))))
+
+(defn- capture-inline!
+  "For the codemod's inlining (inline-fn): a host whose var metadata holds
+   :inline as the unevaluated form (ClojureScript's analyzer, basilisp's
+   stripped meta) gets core.clj's :inline fn for nm evaluated once here. The
+   first inline def tells which kind of host this is."
+  [ctx form]
+  (when-let [[nm inl ar] (and (host/rewrite-inline?) (not (false? (:capture-inline? @state))) (inline-forms form))]
+    (when (nil? (:capture-inline? @state))
+      (swap! state assoc :capture-inline?
+             (not (fn? (some-> (host/interned-var core-ns nm) host/var-meta :inline)))))
+    (when (:capture-inline? @state)
+      (try (let [[f a] (host/eval-form (rw/rewrite ctx (list 'vector inl ar)))]
+             (when (fn? f) (swap! state assoc-in [:inlines nm] [f a])))
+           (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil)))))
+
 (defn- eval-form! [ctx report form name status]
   (try
     (host/eval-form (rw/rewrite ctx (prepare form)))
     (host/after-eval form core-ns)
+    (capture-inline! ctx form)
     (record! report status {:name name})
     (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
       (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
 
 (def verbose? (atom false))
 
-(defn- process-form! [ctx report form]
-  (let [{:keys [action reason replacement] nm :name} (policy/decide form (host/host-name))]
-    (when @verbose? (println (str "  [" (name action) "] " nm)))
-    (case action
-      :skip (record! report :skipped {:name nm :reason reason})
-      :host (when-not (take-from-host! report nm)
-              (if (contains? policy/host-only-names nm)
-                (record! report :skipped {:name nm :reason :no-host-equivalent})
-                (eval-form! ctx report form nm :ok)))
-      :replace (eval-form! ctx report replacement nm :replaced)
-      (eval-form! ctx report form nm :ok))
-    (scan-macros! ctx)))
+(def ^:private policy-lists
+  "This boot's policy lists (policy/lists of the host), computed once per boot."
+  (atom nil))
+
+(defn- process-form!
+  "Decide, then evaluate or take from the host. New macros are wrapped right
+   after a form that can make one (may-make-macro?); a form taken from the
+   host or skipped evaluates nothing, and take-from-host! marks what it
+   interns itself."
+  [ctx report form]
+  (let [{:keys [action reason replacement] nm :name}
+        (policy/decide form (host/host-name) (or @policy-lists (policy/lists (host/host-name))))
+        _ (when @verbose? (println (str "  [" (name action) "] " nm)))
+        evaluated (case action
+                    :skip (do (record! report :skipped {:name nm :reason reason}) nil)
+                    :host (when-not (take-from-host! report nm)
+                            (if (contains? policy/host-only-names nm)
+                              (do (record! report :skipped {:name nm :reason :no-host-equivalent}) nil)
+                              (do (eval-form! ctx report form nm :ok) form)))
+                    :replace (do (eval-form! ctx report replacement nm :replaced) replacement)
+                    (do (eval-form! ctx report form nm :ok) form))]
+    (when (and (some? evaluated) (may-make-macro? evaluated))
+      (scan-macros! ctx))))
 
 (defn strip-string-tags
   "Delete `^\"...\"` type hints (JVM array class names) from source text,
    outside string, regex and character literals and comments: some host
    readers reject string metadata, and the rewriter drops :tag anyway."
   [src]
-  (let [n (count src)
+  (let [last-tag (host/last-index-of* src "^\"")
+        n (count src)
         at (fn [i] (when (< i n) (nth src i)))]
     (loop [i 0 start 0 out [] state :code]
-      (if (>= i n)
-        (apply str (conj out (subs src start n)))
+      ;; past the last ^" nothing more is cut (most sources have none)
+      (if (or (>= i n) (> i last-tag))
+        (if (empty? out) src (apply str (conj out (subs src start n))))
         (let [c (at i)]
           ;; (cond, not case: a host's case may expand into its own recur point)
           (cond
@@ -298,19 +431,20 @@
   [ctx report path]
   (let [src (strip-string-tags (host/slurp-file path))]
     (host/with-ns core-ns
-      (fn [] (host/read-forms src (fn [form] (process-form! ctx report form)))))))
+      (fn [] (host/read-forms src (fn [form] (process-form! ctx report form)))
+        (scan-macros! ctx)))))
 
-(defn- boot-companion!
-  "The stock definition of companion name nm, read from its file (the file's
-   other forms stay unread here)."
-  [ctx report path nm]
-  (let [found (atom nil)]
+(defn- companion-forms
+  "{name form}: the first top-level form defining each of names in the file
+   at path, read once (the file's other forms are not evaluated)."
+  [path names]
+  (let [found (atom {})]
     (try (host/read-forms (strip-string-tags (host/slurp-file path))
-                          (fn [form] (when (and (nil? @found) (= nm (policy/form-name form))) (reset! found form))))
+                          (fn [form] (let [nm (policy/form-name form)]
+                                       (when (and (contains? names nm) (not (contains? @found nm)))
+                                         (swap! found assoc nm form)))))
          (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))
-    (if-let [form @found]
-      (process-form! ctx report form)
-      (record! report :skipped {:name nm :reason :no-host-equivalent}))))
+    @found))
 
 (defn boot!
   "Boot core.clj. opts: :root — the directory holding clojure/core.clj
@@ -321,7 +455,8 @@
    (host/ensure-bare-ns! core-ns)
    (let [ctx (make-ctx)
          report (atom {:ok 0 :replaced 0 :host 0 :skipped 0 :error 0 :entries []})]
-     (swap! state assoc :ctx ctx :root root
+     (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks))))
+     (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
             :libs {'clojure.core {:ns core-ns :status :loaded}})
      ;; (eval form) evaluates in the namespace the caller runs in, as on the JVM
      (reset! shim/eval-hook (fn [form] (eval-in (host/current-ns) form)))
@@ -338,13 +473,20 @@
      ;; Clojure, else the host's, when it has them
      (host/with-ns core-ns
        (fn []
-         (doseq [nm (sort policy/companion-names)]
-           (if-let [file (get policy/companion-stock nm)]
-             (boot-companion! ctx report (str root "/" file) nm)
-             (when-not (take-from-host! report nm)
-               (if-let [v (get (host/core-extras) nm)]
-                 (do (host/intern! core-ns nm v) (record! report :host {:name nm}))
-                 (record! report :skipped {:name nm :reason :no-host-equivalent})))))))
+         (let [stock (into {} (for [[file nms] (group-by #(get policy/companion-stock %)
+                                                          (filter #(contains? policy/companion-stock %) policy/companion-names))
+                                    [nm form] (companion-forms (str root "/" file) (set nms))]
+                                [nm form]))]
+           (doseq [nm (sort policy/companion-names)]
+             (if (contains? policy/companion-stock nm)
+               (if-let [form (get stock nm)]
+                 (process-form! ctx report form)
+                 (record! report :skipped {:name nm :reason :no-host-equivalent}))
+               (when-not (take-from-host! report nm)
+                 (if-let [v (get (host/core-extras) nm)]
+                   (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil))
+                   (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
+         (scan-macros! ctx)))
      (reset! (:booted? ctx) true)
      (let [r (assoc @report
                     :rewrite-misses (rw/misses ctx)
@@ -364,13 +506,10 @@
     (host/refer! ns-sym core-ns opts)
     (host/refer-all! ns-sym core-ns))
   (let [skip (set exclude) keep (when only (set only))]
-    (doseq [e (:entries (:report @state))
-            :let [nm (:name e)]
-            :when (and (= :host (:status e)) (not (contains? skip nm)) (or (nil? keep) (contains? keep nm)))]
-      (when-let [hv (host/resolve-core nm)]
-        (when (host/dynamic-var? hv)
-          (try (host/refer-from-core! ns-sym nm)
-               (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))))))
+    (doseq [nm (:host-dynamic @state)
+            :when (and (not (contains? skip nm)) (or (nil? keep) (contains? keep nm)))]
+      (try (host/refer-from-core! ns-sym nm)
+           (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))))
   ns-sym)
 
 (def ^:private session-ns
@@ -544,9 +683,9 @@
                   t (if-let [m (get @(:renames (ctx)) (str t))] (symbol m) t)
                   found (try (shim/Namespace-find t) (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]
               ;; an existing namespace is entered as it is; a new one is bare
-              (when-not (or (some? found) (contains? (set (keys (:libs @state))) t)) (host/ensure-bare-ns! t))
+              (when-not (or (some? found) (contains? (:libs @state) t)) (host/ensure-bare-ns! t))
               (host/set-current-ns! t)
-              [(try (shim/Namespace-find t) (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil)) t])
+              [(or found (try (shim/Namespace-find t) (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))) t])
       require (do (require! cur args false) [nil cur])
       use (do (require! cur args true) [nil cur])
       import (do (import! cur args) [nil cur])
@@ -560,7 +699,7 @@
               [nil cur]))))
 
 (defn- core-var [sym]
-  (or (get (host/ns-interns-map core-ns) sym) (host/resolve-core sym)))
+  (or (host/interned-var core-ns sym) (host/resolve-core sym)))
 
 (defn- with-load-bindings
   "The JVM's load binds *warn-on-reflection* and *unchecked-math* (a library
@@ -595,11 +734,13 @@
                   (try
                     (case action
                       :skip (note! :skipped {:name nm})
-                      (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form))]
+                      (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form) true)]
                         (when (not= ns' cur) (host/set-current-ns! ns'))
                         (note! :ok {:name nm})))
                     (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-                      (note! :error {:name nm :error (error-message e) :form (short-form form)})))))))))))))
+                      (note! :error {:name nm :error (error-message e) :form (short-form form)}))))))
+             ;; a macro some form made by a side effect is wrapped now
+             (scan-macros! c (host/current-ns)))))))))
 
 (defn load-lib!
   "Load lib (a symbol) once: its source from a source root, booted into its own

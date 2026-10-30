@@ -231,7 +231,10 @@
                        (binding [*ns* (the-ns into-ns)]
                          (ns-unmap into-ns sym)
                          (refer 'basilisp.core :only [sym])))
-   :resolve-core (fn [sym] (get (ns-publics 'basilisp.core) sym))
+   ;; ns-interns is the namespace's live map: one lookup, where ns-publics
+   ;; builds a filtered copy per call
+   :resolve-core (fn [sym] (let [v (get (ns-interns 'basilisp.core) sym)]
+                             (when (and v (not (:private (meta v)))) v)))
    :alias! (fn [into-ns a target] (.add-alias (the-ns into-ns) (the-ns target) a))
    :host-type (fn [token] (get host-types token))
    ;; deftype / defrecord instances and reify objects (a ReifiedType_N class)

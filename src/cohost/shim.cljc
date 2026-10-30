@@ -17,12 +17,52 @@
    from what it has (iterators, chunk buffers, class tokens, JVM exception
    classes). A member missing here is reported, not papered over: the rewriter
    emits `missing-*`, which throws when reached."
-  (:require [cohost.adapter :as host])
+  (:require [cohost.adapter :as host]
+            #?(:cljs [goog.object :as gobj]))
   #?(:cljs (:require-macros [cohost.shim-names]))
   ;; the shim's -first, -seq ... are JVM method names, not cljs.core's protocol methods
   #?(:cljs (:refer-clojure :exclude [-assoc -comparator -compare -conj -count -deref -disjoin -drop -empty
                                      -equiv -find -first -flush -invoke -iterator -meta -name -next -nth -peek
                                      -pop -reduce -reset -rseq -seq])))
+
+;; ---------------------------------------------------------------------------
+;; the adapter's predicates, asked per element: looked up once, not through
+;; cohost.adapter's accessor (an atom deref and a map lookup) on every call
+
+(def ^:private h-char? (host/capability :char?))
+(def ^:private h-transient? (host/capability :transient?))
+(def ^:private h-namespace? (host/capability :namespace?))
+(def ^:private h-atom? (host/capability :atom?))
+(def ^:private h-sb? (host/capability :sb?))
+(def ^:private h-var? (host/capability :var?))
+(def ^:private h-sorted? (host/capability :sorted?))
+(def ^:private h-infinite? (host/capability :infinite?))
+(def ^:private h-nan? (host/capability :nan?))
+(def ^:private h-exception? (host/capability :exception?))
+(def ^:private h-regex? (host/capability :regex?))
+(def ^:private h-deref? (host/capability :deref?))
+(def ^:private h-bigint? (host/capability :bigint?))
+(def ^:private h-volatile? (host/capability :volatile?))
+(def ^:private h-reduced? (host/capability :reduced?))
+(def ^:private h-pending? (host/capability :pending?))
+(def ^:private h-multifn? (host/capability :multifn?))
+(def ^:private h-delay? (host/capability :delay?))
+(def ^:private h-decimal? (host/capability :decimal?))
+(def ^:private h-uuid? (host/capability :uuid?))
+(def ^:private h-reversible? (host/capability :reversible?))
+(def ^:private h-ratio? (host/capability :ratio?))
+(def ^:private h-lazy-seq? (host/capability :lazy-seq?))
+(def ^:private h-indexed? (host/capability :indexed?))
+(def ^:private h-counted? (host/capability :counted?))
+(def ^:private h-sb-append! (host/capability :sb-append!))
+(def ^:private h-sb-str (host/capability :sb-string))
+(def ^:private h-string-builder (host/capability :string-builder))
+(def ^:private h-char-code (host/capability :char-code))
+(def ^:private h-index-of (host/capability :index-of))
+(def ^:private h-upper-case (host/capability :upper-case))
+(def ^:private h-lower-case (host/capability :lower-case))
+(def ^:private h-re-find-at (host/capability :re-find-at))
+(def ^:private h-re-match-full (host/capability :re-match-full))
 
 ;; ---------------------------------------------------------------------------
 ;; misses
@@ -55,6 +95,13 @@
   "The host core's own fn for `sym` when it has one, else `fallback`."
   [sym fallback]
   (if-let [v (host/resolve-core sym)] (host/var-root v) fallback))
+
+(def ^:private hc
+  "The host's chunked seqs (adapter :chunks), or nil: the stock chunked
+   branches run over the host's own chunks; without them, over the stand-ins
+   below (ChunkBuffer, ChunkedCons)."
+  (host/chunks))
+(def ^:private hc-chunked? (or (:chunked-seq? hc) (fn [_] false)))
 
 (defn- unsupported
   "A stub for what this host lacks; marked, so a host with a java.* surface of
@@ -170,14 +217,23 @@
 
 (defn- has-dot? [sym] (not (neg? (loop [i (dec (count (name sym)))] (cond (neg? i) -1 (= "." (str (nth (name sym) i))) i :else (recur (dec i)))))))
 
+(def ^:private canon-cache (atom {}))
 (defn- canon
-  "Any bare JVM class name is a java.lang class unless listed otherwise."
+  "Any bare JVM class name is a java.lang class unless listed otherwise.
+   Memoized: instance? and the codemod's checkcasts ask it on every call, of
+   the few class tokens source names."
   [c]
-  (cond (not (symbol? c)) c
-        (contains? short-name c) (get short-name c)
-        (contains? short-name-extra c) (get short-name-extra c)
-        (has-dot? c) c
-        :else (symbol (str "java.lang." (name c)))))
+  (if-not (symbol? c)
+    c
+    (let [hit (get @canon-cache c absent)]
+      (if (identical? hit absent)
+        (let [r (cond (contains? short-name c) (get short-name c)
+                      (contains? short-name-extra c) (get short-name-extra c)
+                      (has-dot? c) c
+                      :else (symbol (str "java.lang." (name c))))]
+          (swap! canon-cache assoc c r)
+          r)
+        hit))))
 
 ;; a host whose own map-entry? exists tells entries from 2-vectors
 (def ^:private host-has-map-entry? (some? (host-fn 'map-entry? nil)))
@@ -190,8 +246,8 @@
    says (the JVM, jolt), else the JVM's threshold (an array map holds up to 8)."
   [m]
   (let [t #?(:cljs (some-> (type m) (.-cljs$lang$ctorStr)) :default (str (type m)))]
-    (cond (and (string? t) (not (neg? (host/index-of t "PersistentHashMap" 0)))) true
-          (and (string? t) (not (neg? (host/index-of t "PersistentArrayMap" 0)))) false
+    (cond (and (string? t) (not (neg? (h-index-of t "PersistentHashMap" 0)))) true
+          (and (string? t) (not (neg? (h-index-of t "PersistentArrayMap" 0)))) false
           :else (> (count m) 8))))
 
 (defn class-of
@@ -201,35 +257,35 @@
     (nil? x) nil
     (string? x) 'java.lang.String
     (boolean? x) 'java.lang.Boolean
-    (host/char?* x) 'java.lang.Character
-    (host/ratio?* x) 'clojure.lang.Ratio
-    (host/decimal?* x) 'java.math.BigDecimal
-    (host/bigint?* x) 'clojure.lang.BigInt
+    (h-char? x) 'java.lang.Character
+    (h-ratio? x) 'clojure.lang.Ratio
+    (h-decimal? x) 'java.math.BigDecimal
+    (h-bigint? x) 'clojure.lang.BigInt
     (integer? x) 'java.lang.Long
     (number? x) 'java.lang.Double
     (keyword? x) 'clojure.lang.Keyword
     (symbol? x) 'clojure.lang.Symbol
-    (host/var?* x) 'clojure.lang.Var
-    (host/lazy-seq? x) 'clojure.lang.LazySeq
+    (h-var? x) 'clojure.lang.Var
+    (h-lazy-seq? x) 'clojure.lang.LazySeq
     (and host-has-map-entry? (host-map-entry? x)) 'clojure.lang.MapEntry
     (vector? x) 'clojure.lang.PersistentVector
     (host-record? x) (type x)
-    (map? x) (cond (host/sorted?* x) 'clojure.lang.PersistentTreeMap
+    (map? x) (cond (h-sorted? x) 'clojure.lang.PersistentTreeMap
                    (hash-map-kind? x) 'clojure.lang.PersistentHashMap
                    :else 'clojure.lang.PersistentArrayMap)
     (host-queue? x) 'clojure.lang.PersistentQueue
-    (set? x) (if (host/sorted?* x) 'clojure.lang.PersistentTreeSet 'clojure.lang.PersistentHashSet)
+    (set? x) (if (h-sorted? x) 'clojure.lang.PersistentTreeSet 'clojure.lang.PersistentHashSet)
     (list? x) 'clojure.lang.PersistentList
     (seq? x) 'clojure.lang.Cons
-    (host/atom? x) 'clojure.lang.Atom
-    (host/delay?* x) 'clojure.lang.Delay
-    (host/volatile?* x) 'clojure.lang.Volatile
-    (host/reduced?* x) 'clojure.lang.Reduced
-    (or (multifn?* x) (host/multifn? x)) 'clojure.lang.MultiFn
-    (host/namespace? x) 'clojure.lang.Namespace
-    (host/regex? x) 'java.util.regex.Pattern
-    (host/uuid?* x) 'java.util.UUID
-    (host/exception? x) (canon (or (:cohost/class (ex-data x))
+    (h-atom? x) 'clojure.lang.Atom
+    (h-delay? x) 'clojure.lang.Delay
+    (h-volatile? x) 'clojure.lang.Volatile
+    (h-reduced? x) 'clojure.lang.Reduced
+    (or (multifn?* x) (h-multifn? x)) 'clojure.lang.MultiFn
+    (h-namespace? x) 'clojure.lang.Namespace
+    (h-regex? x) 'java.util.regex.Pattern
+    (h-uuid? x) 'java.util.UUID
+    (h-exception? x) (canon (or (:cohost/class (ex-data x))
                                    (when (host/ex-info? x) 'clojure.lang.ExceptionInfo)
                                    (host/exception-class x)))
     (fn? x) 'clojure.lang.AFunction
@@ -265,28 +321,28 @@
    'clojure.lang.Sequential sequential?
    'clojure.lang.Associative associative?
    'clojure.lang.ILookup #(or (map? %) (vector? %))
-   'clojure.lang.Counted host/counted?*
-   'clojure.lang.Indexed host/indexed?*
-   'clojure.lang.Reversible host/reversible?*
-   'clojure.lang.Sorted host/sorted?*
-   'clojure.lang.IChunkedSeq #(chunked-cons? %)
+   'clojure.lang.Counted h-counted?
+   'clojure.lang.Indexed h-indexed?
+   'clojure.lang.Reversible h-reversible?
+   'clojure.lang.Sorted h-sorted?
+   'clojure.lang.IChunkedSeq #(or (hc-chunked? %) (chunked-cons? %))
    'clojure.lang.IDrop (constantly false)
    'clojure.lang.IFn host/ifn?*
    'clojure.lang.Fn host/host-fn?
    'clojure.lang.IObj #(or (and (coll? %) (not (and host-has-map-entry? (host-map-entry? %)))) (symbol? %) (fn? %))
-   'clojure.lang.IMeta #(or (coll? %) (symbol? %) (fn? %) (host/var?* %) (host/namespace? %) (host/atom? %))
-   'clojure.lang.IReference #(or (host/var?* %) (host/namespace? %) (host/atom? %))
-   'clojure.lang.IRef #(or (host/var?* %) (host/atom? %))
-   'clojure.lang.IDeref host/deref?
-   'clojure.lang.IBlockingDeref host/deref?
-   'clojure.lang.IPending host/pending?
+   'clojure.lang.IMeta #(or (coll? %) (symbol? %) (fn? %) (h-var? %) (h-namespace? %) (h-atom? %))
+   'clojure.lang.IReference #(or (h-var? %) (h-namespace? %) (h-atom? %))
+   'clojure.lang.IRef #(or (h-var? %) (h-atom? %))
+   'clojure.lang.IDeref h-deref?
+   'clojure.lang.IBlockingDeref h-deref?
+   'clojure.lang.IPending h-pending?
    ;; sorted collections have no transient form
-   'clojure.lang.IEditableCollection #(and (or (vector? %) (map? %) (set? %)) (not (host/sorted?* %)) (not (host-record? %)))
-   'clojure.lang.ITransientCollection host/transient?
-   'clojure.lang.ITransientAssociative host/transient?
-   'clojure.lang.ITransientMap host/transient?
-   'clojure.lang.ITransientVector host/transient?
-   'clojure.lang.ITransientSet host/transient?
+   'clojure.lang.IEditableCollection #(and (or (vector? %) (map? %) (set? %)) (not (h-sorted? %)) (not (host-record? %)))
+   'clojure.lang.ITransientCollection h-transient?
+   'clojure.lang.ITransientAssociative h-transient?
+   'clojure.lang.ITransientMap h-transient?
+   'clojure.lang.ITransientVector h-transient?
+   'clojure.lang.ITransientSet h-transient?
    ;; vectors and lists here; ranges, an Eduction, a user type: the host's answer
    'clojure.lang.IReduceInit #(or (vector? %) (list? %) (host/host-instance? 'clojure.lang.IReduceInit %))
    'clojure.lang.IReduce #(or (vector? %) (list? %) (host/host-instance? 'clojure.lang.IReduce %))
@@ -295,26 +351,26 @@
    'java.util.Map$Entry host-map-entry?
    'clojure.lang.IMapEntry host-map-entry?
    'clojure.lang.MapEntry host-map-entry?
-   'clojure.lang.MultiFn #(or (multifn?* %) (host/multifn? %))
+   'clojure.lang.MultiFn #(or (multifn?* %) (h-multifn? %))
    'clojure.lang.TaggedLiteral host-tagged-literal?
    'clojure.lang.ReaderConditional host-reader-conditional?
    'clojure.lang.IType (constantly false)
    'clojure.lang.IRecord host-record?
-   'clojure.lang.IAtom host/atom?
-   'clojure.lang.IAtom2 host/atom?
+   'clojure.lang.IAtom h-atom?
+   'clojure.lang.IAtom2 h-atom?
    'clojure.lang.IExceptionInfo host/ex-info?
-   'java.lang.Comparable #(or (number? %) (string? %) (keyword? %) (symbol? %) (boolean? %) (vector? %) (host/char?* %))
+   'java.lang.Comparable #(or (number? %) (string? %) (keyword? %) (symbol? %) (boolean? %) (vector? %) (h-char? %))
    ;; by the host's predicates, not class-of: on a host whose chars are
    ;; one-character strings, "a" is both a String and a Character
    'java.lang.String string?
-   'java.lang.Character host/char?*
-   'java.lang.CharSequence #(or (string? %) (host/sb? %))
+   'java.lang.Character h-char?
+   'java.lang.CharSequence #(or (string? %) (h-sb? %))
    'java.lang.Number number?
    'java.lang.Integer integer?
    'java.lang.Short integer?
    'java.lang.Byte integer?
    'java.lang.Float #(host/host-instance? 'java.lang.Float %)
-   'java.math.BigInteger host/bigint?*
+   'java.math.BigInteger h-bigint?
    'java.lang.Iterable coll?
    'java.util.Collection #(and (coll? %) (not (map? %)))
    'java.util.List #(or (vector? %) (seq? %) (list? %))
@@ -327,7 +383,7 @@
    'java.util.concurrent.Callable fn?
    'java.util.concurrent.Future (constantly false)
    'java.lang.Class #(class-token? %)
-   'java.lang.Throwable host/exception?
+   'java.lang.Throwable h-exception?
    'java.lang.Object some?})
 
 (defn- class-token?
@@ -342,7 +398,7 @@
    shim's to take)."
   [x]
   (or (nil? x) (coll? x) (seq? x) (string? x) (number? x) (keyword? x) (symbol? x)
-      (boolean? x) (fn? x) (host/char?* x) (host/var?* x)))
+      (boolean? x) (fn? x) (h-char? x) (h-var? x)))
 
 (defn instance-of?
   "`(instance? c x)` for a class token `c` (a symbol): the shim's predicates
@@ -353,16 +409,19 @@
   [c x]
   (if-not (symbol? c)
     (boolean (instance? c x))
-    (let [c (canon c)]
+    ;; an interface token is already canonical: its predicate first
+    (let [p (get interface-preds c)
+          c (if p c (canon c))
+          p (or p (get interface-preds c))]
       (boolean
        (and (some? x)
-            (or (if-let [p (get interface-preds c)]
+            (or (if p
                   (p x)
                   (token-isa? (class-of x) c))
                 ;; an exception's class is the shim's hierarchy: a shim-raised
                 ;; NumberFormatException may be a host ex-info underneath, and
                 ;; is no IExceptionInfo (stock ex-data of it is nil, as on the JVM)
-                (when-not (or (builtin? x) (host/exception? x))
+                (when-not (or (builtin? x) (h-exception? x))
                   (host/host-instance? c x))))))))
 
 (defn cast-message [c x]
@@ -373,6 +432,31 @@
    clojure.string/split): x itself, nil included, when it is an instance of c."
   [c x]
   (if (or (nil? x) (instance-of? c x)) x (throw (host/ex* 'java.lang.ClassCastException (cast-message c x)))))
+
+(defn- cast-fn
+  "check-cast for the one class token c, its predicate looked up once."
+  [c]
+  (let [p (get interface-preds c)
+        c' (if p c (canon c))
+        p (or p (get interface-preds c'))]
+    (fn [x]
+      (if (or (nil? x)
+              (if p (p x) (token-isa? (class-of x) c'))
+              (and (not (builtin? x)) (not (h-exception? x)) (host/host-instance? c' x)))
+        x
+        (throw (host/ex* 'java.lang.ClassCastException (cast-message c x)))))))
+
+(defn install-casts!
+  "For each [name token]: a shim var name holding check-cast for that class
+   token, built once (on ClojureScript, a property of the shim's namespace
+   object) — the codemod's checkcast of a hinted local calls it. -> the
+   names installed."
+  [pairs]
+  (vec (for [[d c] pairs]
+         (let [v (cast-fn c)]
+           #?(:cljs (gobj/set js/cohost.shim (munge d) v)
+              :default (host/intern! 'cohost.shim (symbol d) v))
+           (symbol d)))))
 
 (defn catches?
   "Does a `(catch c e ...)` clause for JVM class `c` apply to host exception `e`?"
@@ -418,7 +502,7 @@
 (def RT-booleanCast boolean)
 ;; (int \\a) is the char's code; where chars are one-character strings the
 ;; host's int would parse the string instead
-(defn- char-aware [f] (fn [x] (if (host/char?* x) (host/char-code x) (f x))))
+(defn- char-aware [f] (fn [x] (if (h-char? x) (h-char-code x) (f x))))
 (def RT-intCast (char-aware (host-fn 'int int)))
 (def RT-longCast (char-aware (host-fn 'long (host-fn 'int identity))))
 (def RT-doubleCast (host-fn 'double (host-fn 'float identity)))
@@ -429,20 +513,20 @@
 ;; (int) / (long) / (byte) / (short) of the JVM: a double truncates and
 ;; saturates (NaN is 0), an integer keeps its low bits
 (defn- wrap32 [n] (let [m (bit-and n 0xFFFFFFFF)] (if (>= m 0x80000000) (- m 0x100000000) m)))
-(defn- d2l [d lo hi] (cond (host/nan? d) 0 (>= d hi) hi (<= d lo) lo :else (RT-longCast d)))
-(defn- int-bits [x] (cond (host/char?* x) (host/char-code x)
+(defn- d2l [d lo hi] (cond (h-nan? d) 0 (>= d hi) hi (<= d lo) lo :else (RT-longCast d)))
+(defn- int-bits [x] (cond (h-char? x) (h-char-code x)
                           (integer? x) x
                           :else (d2l (RT-doubleCast x) -2147483648 2147483647)))
 (def RT-uncheckedIntCast (fn [x] (wrap32 (int-bits x))))
 (defn- char-cce [] (host/ex* 'java.lang.ClassCastException "class java.lang.Character cannot be cast to class java.lang.Number"))
-(def RT-uncheckedLongCast (fn [x] (cond (host/char?* x) (throw (char-cce))
+(def RT-uncheckedLongCast (fn [x] (cond (h-char? x) (throw (char-cce))
                                         (integer? x) x
                                         :else (d2l (RT-doubleCast x) -9223372036854775808 9223372036854775807))))
 (def RT-uncheckedDoubleCast RT-doubleCast)
 (def RT-uncheckedFloatCast RT-floatCast)
 (def RT-uncheckedCharCast RT-charCast)
-(def RT-uncheckedByteCast (fn [x] (when (host/char?* x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 128) 255) 128)))
-(def RT-uncheckedShortCast (fn [x] (when (host/char?* x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 32768) 65535) 32768)))
+(def RT-uncheckedByteCast (fn [x] (when (h-char? x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 128) 255) 128)))
+(def RT-uncheckedShortCast (fn [x] (when (h-char? x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 32768) 65535) 32768)))
 (declare matcher?)
 ;; RT.canSeq: seqs, colls, strings, nil, arrays; not the shim's iterator or
 ;; matcher (records here, but no Seqable on the JVM)
@@ -486,7 +570,7 @@
 (defn- ieee-div-zero [x y]
   (let [cs (get (host/math-fns) 'copySign)
         neg-y (boolean (when cs (neg? (cs 1.0 y))))]
-    (cond (or (host/nan? x) (zero? x)) (host/parse-double* "NaN")
+    (cond (or (h-nan? x) (zero? x)) (host/parse-double* "NaN")
           (not= (neg? x) neg-y) (host/parse-double* "-Infinity")
           :else (host/parse-double* "Infinity"))))
 (def Numbers-divide (let [h /] (fn [x y] (if (and (zero? y) (or (float? x) (float? y))) (ieee-div-zero x y) (h x y)))))
@@ -507,8 +591,8 @@
 (def Numbers-quotient (fn [x y] (if (zero? y) (throw (divide-by-zero)) (quot x y))))
 (def Numbers-remainder (fn [x y] (if (zero? y) (throw (divide-by-zero)) (rem x y))))
 ;; Numbers.max / min: a NaN argument wins; a tie is the second argument
-(def Numbers-max (fn [x y] (cond (host/nan? x) x (host/nan? y) y (> x y) x :else y)))
-(def Numbers-min (fn [x y] (cond (host/nan? x) x (host/nan? y) y (< x y) x :else y)))
+(def Numbers-max (fn [x y] (cond (h-nan? x) x (h-nan? y) y (> x y) x :else y)))
+(def Numbers-min (fn [x y] (cond (h-nan? x) x (h-nan? y) y (< x y) x :else y)))
 (def Numbers-abs (host-fn 'abs (fn [x] (if (neg? x) (- x) x))))
 (def Numbers-num (fn [x] (if (number? x) x (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.Number x))))))
 (def Numbers-and bit-and)
@@ -524,8 +608,11 @@
 (def Numbers-flipBit (host-fn 'bit-flip (fn [x n] (bit-xor x (bit-shift-left 1 n)))))
 (def Numbers-testBit (host-fn 'bit-test (fn [x n] (not (zero? (bit-and x (bit-shift-left 1 n)))))))
 (def Numbers-unchecked_add (host-fn 'unchecked-add +))
-(def Numbers-unchecked_minus (host-fn 'unchecked-subtract (fn ([x] (- x)) ([x y] (- x y)))))
 (def Numbers-unchecked_negate (host-fn 'unchecked-negate -))
+;; Numbers.unchecked_minus(x) is unchecked-negate's: the host's
+;; unchecked-subtract has no 1-arity on every host (the JVM's has only [x y])
+(def Numbers-unchecked_minus (let [sub (host-fn 'unchecked-subtract -)]
+                               (fn ([x] (Numbers-unchecked_negate x)) ([x y] (sub x y)))))
 (def Numbers-unchecked_multiply (host-fn 'unchecked-multiply *))
 (def Numbers-unchecked_inc (host-fn 'unchecked-inc inc))
 (def Numbers-unchecked_dec (host-fn 'unchecked-dec dec))
@@ -565,8 +652,8 @@
 (def Numbers-int_array (typed-array 0 RT-intCast))
 (def Numbers-double_array (typed-array 0.0 RT-doubleCast))
 (def Numbers-long_array (typed-array 0 RT-longCast))
-(def Numbers-isNaN host/nan?)
-(def Numbers-isInfinite host/infinite?*)
+(def Numbers-isNaN h-nan?)
+(def Numbers-isInfinite h-infinite?)
 
 ;; ---------------------------------------------------------------------------
 ;; Util
@@ -609,7 +696,7 @@
 ;; Var.intern(ns, sym) creates the namespace and leaves the var unbound (the
 ;; host's 2-arity intern); Var.intern(ns, sym, root) binds it
 (def Var-intern (let [in (host-fn 'intern nil) cn (host-fn 'create-ns (fn [_] nil))
-                      ns-sym (fn [ns] (if (host/namespace? ns) (ns-name ns) ns))]
+                      ns-sym (fn [ns] (if (h-namespace? ns) (ns-name ns) ns))]
                   (fn ([ns sym] (cn (ns-sym ns))
                                 (if in (in (ns-sym ns) sym) (host/intern! (ns-sym ns) sym nil)))
                     ([ns sym val] (cn (ns-sym ns)) (host/intern! (ns-sym ns) sym val)))))
@@ -766,7 +853,7 @@
                   (when (and (empty? @out) (not @done))
                     (if (every? host/iter-has-next? its)
                       (let [r (apply rf nil (map host/iter-next! its))]
-                        (when (host/reduced?* r) (finish!))
+                        (when (h-reduced? r) (finish!))
                         (recur))
                       (finish!)))))
         step (fn step []
@@ -788,11 +875,11 @@
 (def LispReader-read (let [rd (host-fn 'read (unsupported "read"))] (fn ([rdr opts] (rd opts rdr)) ([rdr eof-error? eof-val _recursive?] (rd rdr eof-error? eof-val)))))
 (def TaggedLiteral-create (host-fn 'tagged-literal (fn [tag form] {:tag tag :form form})))
 (def ReaderConditional-create (host-fn 'reader-conditional (fn [form splicing?] {:form form :splicing? splicing?})))
-(def Delay-force (host-fn 'force (fn [x] (if (host/delay?* x) (deref x) x))))
+(def Delay-force (host-fn 'force (fn [x] (if (h-delay? x) (deref x) x))))
 (def PersistentQueue-EMPTY (host/empty-queue))
 
-(def new-LazySeq host/lazy-seq*)
-(def new-Delay host/delay*)
+(def new-LazySeq (host/capability :lazy-seq))   ; per lazy cell: no accessor lookup
+(def new-Delay (host/capability :delay))
 (def new-Atom host/atom*)
 (def new-Volatile (host-fn 'volatile! (unsupported "volatile!")))
 (def new-Reduced (host-fn 'reduced (unsupported "reduced")))
@@ -870,24 +957,45 @@
                                                          " -> " k " and " (key best) ", and neither is preferred")))))
                      nil methods)]
     (if best (val best) (get methods default))))
+(defn- mf-method
+  "The method for dispatch value dv, cached per dv as the JVM's MultiFn caches
+   it: the cache holds while the methods, the prefers and the hierarchy's
+   value are the ones it was filled under (addMethod, preferMethod, reset and
+   derive each make a new one)."
+  [state dv]
+  (let [st @state
+        h (deref (:hierarchy st))
+        c (:cache st)]
+    (if (and c (identical? (:methods c) (:methods st)) (identical? (:prefers c) (:prefers st)) (identical? (:h c) h))
+      (let [e (find (:table c) dv)]
+        (if e
+          (val e)
+          (let [m (mf-find-method st dv)]
+            (swap! state update :cache (fn [c'] (if (identical? c' c) (assoc-in c [:table dv] m) c')))
+            m)))
+      (let [m (mf-find-method st dv)]
+        (swap! state assoc :cache {:methods (:methods st) :prefers (:prefers st) :h h :table {dv m}})
+        m))))
+
 (def new-MultiFn
   (fn [name dispatch-fn default hierarchy]
-    (let [state (atom {:name name :dispatch-fn dispatch-fn :default default :hierarchy hierarchy :methods {} :prefers {}})]
+    (let [state (atom {:name name :dispatch-fn dispatch-fn :default default :hierarchy hierarchy :methods {} :prefers {}})
+          no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))]
       (with-meta
-        (fn [& args]
-          (let [st @state
-                dv (apply (:dispatch-fn st) args)
-                m (mf-find-method st dv)]
-            (if m
-              (apply m args)
-              (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))))
+        (fn
+          ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
+          ([a] (let [dv (dispatch-fn a) m (mf-method state dv)] (if m (m a) (no-method dv))))
+          ([a b] (let [dv (dispatch-fn a b) m (mf-method state dv)] (if m (m a b) (no-method dv))))
+          ([a b c] (let [dv (dispatch-fn a b c) m (mf-method state dv)] (if m (m a b c) (no-method dv))))
+          ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
+                            (if m (apply m a b c more) (no-method dv)))))
         {::multifn state}))))
 (def new-Object (fn [] (atom ::object)))
 (def new-ExceptionInfo host/ex-info*)
 ;; (Exception.) (Exception. msg) (Exception. cause) (Exception. msg cause)
 (defn- ex-ctor [klass]
   (fn ([] (host/ex* klass nil))
-    ([x] (if (host/exception? x) (host/ex* klass (str x) x) (host/ex* klass x)))
+    ([x] (if (h-exception? x) (host/ex* klass (str x) x) (host/ex* klass x)))
     ([msg cause] (host/ex* klass msg cause))))
 (def new-Exception (ex-ctor 'java.lang.Exception))
 (def new-RuntimeException (ex-ctor 'java.lang.RuntimeException))
@@ -906,19 +1014,20 @@
 (def new-NullPointerException (ex-ctor 'java.lang.NullPointerException))
 (def new-Compiler_CompilerException (ex-ctor 'clojure.lang.Compiler$CompilerException))
 ;; StringBuilder() / (int capacity) / (CharSequence s); StringBuffer is the same here
-(def new-StringBuilder (fn ([] (host/string-builder))
-                         ([s] (cond (number? s) (host/string-builder)
+(def new-StringBuilder (fn ([] (h-string-builder))
+                         ([s] (cond (number? s) (h-string-builder)
                                     (nil? s) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"String.length()\" because \"str\" is null"))
-                                    :else (host/sb-append! (host/string-builder) s)))))
+                                    :else (h-sb-append! (h-string-builder) s)))))
 (def new-StringBuffer new-StringBuilder)
 (def new-BigDecimal (host-fn 'bigdec identity))
 (def new-BigInteger (host-fn 'bigint identity))
-(def new-ChunkBuffer (fn [_capacity] (host/mutable-list)))
+(def new-ChunkBuffer (if-let [f (:chunk-buffer hc)] f (fn [_capacity] (host/mutable-list))))
 (def new-ArrayList (fn ([] (host/mutable-list)) ([n-or-coll] (let [l (host/mutable-list)] (when (coll? n-or-coll) (swap! (:state l) into n-or-coll)) l))))
 (def new-LinkedList new-ArrayList)
 ;; ChunkedCons: the seq is chunk ++ more; the chunk and the rest ride its
 ;; metadata, so chunk-first sees the whole chunk and chunk-rest the rest
-(def new-ChunkedCons (fn [chunk more] (with-meta (concat (seq chunk) more) {::chunk chunk ::more more})))
+(def new-ChunkedCons (or (:chunk-cons hc)
+                         (fn [chunk more] (with-meta (concat (seq chunk) more) {::chunk chunk ::more more}))))
 (defn chunked-cons? [x] (and (seq? x) (contains? (meta x) ::chunk)))
 (def new-Thread (unsupported "java.lang.Thread"))
 ;; Thread.currentThread(): its stack trace is empty, like every trace here
@@ -992,7 +1101,7 @@
 (defn- digit-of
   "Character.digit for the ASCII digits and letters: the value, or nil."
   [c radix]
-  (let [n (host/char-code c)
+  (let [n (h-char-code c)
         d (cond (<= 48 n 57) (- n 48) (<= 97 n 122) (- n 87) (<= 65 n 90) (- n 55) :else 99)]
     (when (< d radix) d)))
 (defn- parse-radix
@@ -1043,13 +1152,13 @@
 (def Double-valueOf (fn [x] (if (string? x) (parse-double-strict x) (RT-doubleCast x))))
 (def Double-parseDouble parse-double-strict)
 (declare nn)
-(def Double-isNaN (fn [x] (host/nan? (nn x))))
-(def Double-isInfinite (fn [x] (host/infinite?* (nn x))))
-(def Boolean-parseBoolean (fn [s] (and (string? s) (= "true" (host/lower-case s)))))
+(def Double-isNaN (fn [x] (h-nan? (nn x))))
+(def Double-isInfinite (fn [x] (h-infinite? (nn x))))
+(def Boolean-parseBoolean (fn [s] (and (string? s) (= "true" (h-lower-case s)))))
 (def Boolean-valueOf (fn [x] (if (string? x) (Boolean-parseBoolean x) (boolean x))))
 ;; Character: a char or an int code point; the host's own statics where the
 ;; adapter names them (:java-statics), else these, over the char code
-(defn- code-of [c] (if (number? c) c (host/char-code c)))
+(defn- code-of [c] (if (number? c) c (h-char-code c)))
 (defn- jstatic [nm dflt] (get (host/java-statics) nm dflt))
 (def Character-isWhitespace
   (jstatic 'Character/isWhitespace
@@ -1062,13 +1171,13 @@
 (defn- char-str [c] (str (if (number? c) (RT-charCast c) c)))
 (defn- cased [f c] (let [s (char-str c) r (f s)] (if (= 1 (count r)) (first r) (first s))))
 (def Character-isDigit (jstatic 'Character/isDigit (fn [c] (<= 48 (code-of c) 57))))
-(def Character-isLetter (jstatic 'Character/isLetter (fn [c] (let [s (char-str c)] (not= (host/upper-case s) (host/lower-case s))))))
+(def Character-isLetter (jstatic 'Character/isLetter (fn [c] (let [s (char-str c)] (not= (h-upper-case s) (h-lower-case s))))))
 (def Character-isLetterOrDigit (jstatic 'Character/isLetterOrDigit (fn [c] (or (Character-isLetter c) (Character-isDigit c)))))
 (def Character-isAlphabetic (jstatic 'Character/isAlphabetic Character-isLetter))
-(def Character-isUpperCase (jstatic 'Character/isUpperCase (fn [c] (let [s (char-str c)] (and (= s (host/upper-case s)) (not= s (host/lower-case s)))))))
-(def Character-isLowerCase (jstatic 'Character/isLowerCase (fn [c] (let [s (char-str c)] (and (= s (host/lower-case s)) (not= s (host/upper-case s)))))))
-(def Character-toUpperCase (jstatic 'Character/toUpperCase (fn [c] (let [r (cased host/upper-case c)] (if (number? c) (host/char-code r) r)))))
-(def Character-toLowerCase (jstatic 'Character/toLowerCase (fn [c] (let [r (cased host/lower-case c)] (if (number? c) (host/char-code r) r)))))
+(def Character-isUpperCase (jstatic 'Character/isUpperCase (fn [c] (let [s (char-str c)] (and (= s (h-upper-case s)) (not= s (h-lower-case s)))))))
+(def Character-isLowerCase (jstatic 'Character/isLowerCase (fn [c] (let [s (char-str c)] (and (= s (h-lower-case s)) (not= s (h-upper-case s)))))))
+(def Character-toUpperCase (jstatic 'Character/toUpperCase (fn [c] (let [r (cased host/upper-case c)] (if (number? c) (h-char-code r) r)))))
+(def Character-toLowerCase (jstatic 'Character/toLowerCase (fn [c] (let [r (cased host/lower-case c)] (if (number? c) (h-char-code r) r)))))
 (def Character-digit (jstatic 'Character/digit (fn [c radix] (or (digit-of (if (number? c) (RT-charCast c) c) radix) -1))))
 (def Character-getNumericValue (jstatic 'Character/getNumericValue (fn [c] (or (digit-of (if (number? c) (RT-charCast c) c) 36) -1))))
 (def Character-forDigit (jstatic 'Character/forDigit (fn [d radix] (if (and (<= 2 radix 36) (< -1 d radix)) (nth radix-digits d) (RT-charCast 0)))))
@@ -1091,10 +1200,10 @@
 (def Math-abs Numbers-abs)
 ;; Math.max / min: NaN wins, and 0.0 is above -0.0
 (defn- neg-zero? [x] (and (float? x) (zero? x) (neg? (/ 1.0 x))))
-(def Math-max (fn [a b] (cond (host/nan? a) a (host/nan? b) b
+(def Math-max (fn [a b] (cond (h-nan? a) a (h-nan? b) b
                               (and (zero? a) (zero? b) (float? a) (float? b)) (if (neg-zero? a) b a)
                               :else (if (>= a b) a b))))
-(def Math-min (fn [a b] (cond (host/nan? a) a (host/nan? b) b
+(def Math-min (fn [a b] (cond (h-nan? a) a (h-nan? b) b
                               (and (zero? a) (zero? b) (float? a) (float? b)) (if (neg-zero? a) a b)
                               :else (if (<= a b) a b))))
 (def Math-sin (math-fn 'sin (unsupported-math "sin")))
@@ -1125,14 +1234,14 @@
 (def Math-copySign (math-fn 'copySign (unsupported-math "copySign")))
 (def Math-toRadians (math-fn 'toRadians (fn [a] (* (double a) (/ Math-PI 180.0)))))
 (def Math-toDegrees (math-fn 'toDegrees (fn [a] (* (double a) (/ 180.0 Math-PI)))))
-(def Math-signum (math-fn 'signum (fn [a] (cond (host/nan? a) a (pos? a) 1.0 (neg? a) -1.0 :else a))))
+(def Math-signum (math-fn 'signum (fn [a] (cond (h-nan? a) a (pos? a) 1.0 (neg? a) -1.0 :else a))))
 (def Math-rint (math-fn 'rint (fn [a] (let [f (Math-floor a) d (- a f)]
                                         (cond (< d 0.5) f (> d 0.5) (+ f 1.0)
                                               (even? (long f)) f :else (+ f 1.0))))))
 ;; Math.round: floor(a + 1/2) computed exactly (adding 0.5 rounds
 ;; 0.49999999999999994 up); NaN is 0, an infinity the long's bound
-(def Math-round (math-fn 'round (fn [a] (cond (host/nan? a) 0
-                                              (host/infinite?* a) (if (pos? a) 9223372036854775807 -9223372036854775808)
+(def Math-round (math-fn 'round (fn [a] (cond (h-nan? a) 0
+                                              (h-infinite? a) (if (pos? a) 9223372036854775807 -9223372036854775808)
                                               :else (let [a (double a) f (Math-floor a)]
                                                       (long (if (>= (- a f) 0.5) (+ f 1.0) f)))))))
 (def Math-floorDiv (math-fn 'floorDiv (fn [a b] (let [q (quot a b)] (if (and (not= (neg? a) (neg? b)) (not= (* q b) a)) (dec q) q)))))
@@ -1143,7 +1252,7 @@
 (def Math-incrementExact (math-fn 'incrementExact (fn [a] (exact (+ a 1)))))
 (def Math-decrementExact (math-fn 'decrementExact (fn [a] (exact (- a 1)))))
 (def Math-negateExact (math-fn 'negateExact (fn [a] (exact (- a)))))
-(def System-nanoTime host/nano-time)
+(def System-nanoTime (host/capability :nano-time))
 (def System-currentTimeMillis host/current-time-millis)
 (def System-getProperty (fn ([_k] nil) ([_k dflt] dflt)))
 (def System-identityHashCode hash)
@@ -1155,7 +1264,7 @@
 (def String-valueOf (fn [x] (if (nil? x) "null" (str x))))
 ;; String.CASE_INSENSITIVE_ORDER compares upper- then lower-cased characters
 (def String-CASE_INSENSITIVE_ORDER
-  (fn [a b] (let [f (fn [s] (host/lower-case (host/upper-case (str s))))] (compare (f a) (f b)))))
+  (fn [a b] (let [f (fn [s] (h-lower-case (h-upper-case (str s))))] (compare (f a) (f b)))))
 (def Array-getLength count)
 (defn- aioobe [i n] (host/ex* 'java.lang.ArrayIndexOutOfBoundsException (str "Index " i " out of bounds for length " n)))
 (def Array-get (fn [a i] (let [n (count a)] (if (and (<= 0 i) (< i n)) (nth a i) (throw (aioobe i n))))))
@@ -1172,25 +1281,27 @@
 (def Array-setLong Array-set)
 (def Array-setBoolean Array-set)
 (def Array-setFloat Array-set)
+;; RT.aget / RT.aset: what aget's and aset's :inline expand to
+(def RT-aget Array-get)
+(def RT-aset (fn [a i v] (Array-set a i v) v))
 (def Array-setDouble Array-set)
 (def Array-setShort Array-set)
 (def Array-setByte Array-set)
 (def Array-setChar Array-set)
 ;; java.util.Comparator over a Clojure fn (AFunction.compare): a boolean
 ;; result means "less than" when true, else the reverse call decides.
-(defn- as-comparator [cmp]
+(defn- compare-with
+  "Comparator.compare of cmp: a Clojure fn answering a number, or a boolean
+   (true: a before b), or a java.util.Comparator that is no Clojure fn."
+  [cmp a b]
   (if (ifn? cmp)
-    (fn [a b]
-      (let [r (cmp a b)]
-        (cond (number? r) r
-              (boolean? r) (if r -1 (if (cmp b a) 1 0))
-              :else (if r -1 (if (cmp b a) 1 0)))))
-    ;; a java.util.Comparator that is no Clojure fn: its own compare
-    (fn [a b]
-      (let [r (host/invoke-member cmp "compare" [a b] absent)]
-        (if (identical? r absent)
-          (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.util.Comparator cmp)))
-          r)))))
+    (let [r (cmp a b)]
+      (if (number? r) r (if r -1 (if (cmp b a) 1 0))))
+    (let [r (host/invoke-member cmp "compare" [a b] absent)]
+      (if (identical? r absent)
+        (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.util.Comparator cmp)))
+        r))))
+(defn- as-comparator [cmp] (fn [a b] (compare-with cmp a b)))
 (def Arrays-sort (fn ([a] (host/sort-array! a compare)) ([a cmp] (host/sort-array! a (as-comparator cmp)))))
 (def Collections-shuffle (unsupported "Collections/shuffle"))
 ;; Collections.reverseOrder(): the host's own where it has java.util, else a
@@ -1212,7 +1323,7 @@
   ([mt] (let [{:keys [s from]} @(:state mt)]
           (if (> from (count s))
             (do (swap! (:state mt) assoc :m nil) false)
-            (let [r (host/re-find-at (:re mt) s from)]
+            (let [r (h-re-find-at (:re mt) s from)]
               (swap! (:state mt) assoc :m r
                      :from (if r (let [[b e] r] (if (= b e) (inc e) e)) (inc (count s))))
               (boolean r)))))
@@ -1240,14 +1351,14 @@
                           (cond
                             (= c "\\") (if (= "Q" (at (inc i)))
                                           ;; \Q...\E quotes
-                                         (let [j (host/index-of src "\\E" (+ i 2))]
+                                         (let [j (h-index-of src "\\E" (+ i 2))]
                                            (recur (if (neg? j) n (+ j 2)) g cls acc))
                                          (recur (+ i 2) g cls acc))
                             (pos? cls) (recur (inc i) g (cond (= c "[") (inc cls) (= c "]") (dec cls) :else cls) acc)
                             (= c "[") (recur (inc i) g 1 acc)
                             (= c "(") (if (= "?" (at (inc i)))
                                         (if (and (= "<" (at (+ i 2))) (not (contains? #{"=" "!"} (at (+ i 3)))))
-                                          (let [j (host/index-of src ">" (+ i 3))]
+                                          (let [j (h-index-of src ">" (+ i 3))]
                                             (recur (inc j) (inc g) cls (assoc acc (subs src (+ i 3) j) (inc g))))
                                           (recur (+ i 2) g cls acc))
                                         (recur (inc i) (inc g) cls acc))
@@ -1272,9 +1383,9 @@
 (defn- m-reset ([mt] (swap! (:state mt) assoc :m nil :from 0 :append 0) mt)
   ([mt s] (swap! (:state mt) assoc :s (str s) :m nil :from 0 :append 0) mt))
 
-(defn- digit [c] (let [i (host/index-of "0123456789" (str c) 0)] (when-not (neg? i) i)))
+(defn- digit [c] (let [i (h-index-of "0123456789" (str c) 0)] (when-not (neg? i) i)))
 
-(defn- ascii-alnum? [ch] (let [k (host/char-code ch)] (or (<= 48 k 57) (<= 65 k 90) (<= 97 k 122))))
+(defn- ascii-alnum? [ch] (let [k (h-char-code ch)] (or (<= 48 k 57) (<= 65 k 90) (<= 97 k 122))))
 
 (defn- expand-replacement
   "Matcher.appendReplacement's replacement string: \\x is x, $n is group n
@@ -1315,22 +1426,22 @@
 (defn- m-append-replacement [mt sb repl]
   (let [[b e gs] (m-match mt)
         {:keys [s append]} @(:state mt)]
-    (host/sb-append! sb (subs s append b))
-    (host/sb-append! sb (expand-replacement repl gs (group-names (:re mt))))
+    (h-sb-append! sb (subs s append b))
+    (h-sb-append! sb (expand-replacement repl gs (group-names (:re mt))))
     (swap! (:state mt) assoc :append e)
     mt))
 
 (defn- m-append-tail [mt sb]
-  (let [{:keys [s append]} @(:state mt)] (host/sb-append! sb (subs s append)) sb))
+  (let [{:keys [s append]} @(:state mt)] (h-sb-append! sb (subs s append)) sb))
 
 (defn- m-replace [mt repl all?]
   (m-reset mt)
   (if (m-find mt)
-    (let [sb (host/string-builder)]
+    (let [sb (h-string-builder)]
       (loop []
         (m-append-replacement mt sb repl)
         (when (and all? (m-find mt)) (recur)))
-      (host/sb-str (m-append-tail mt sb)))
+      (h-sb-str (m-append-tail mt sb)))
     (:s @(:state mt))))
 
 (defn- regex-split
@@ -1338,7 +1449,7 @@
    zero-width match at 0; limit 0 drops trailing empty strings."
   [re s limit]
   (when (nil? s) (throw (host/ex* 'java.lang.NullPointerException "")))
-  (when-not (or (string? s) (host/sb? s))
+  (when-not (or (string? s) (h-sb? s))
     (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.CharSequence s))))
   (let [s (str s) limited? (pos? limit) mt (new-matcher re s)]
     (loop [index 0 out []]
@@ -1376,15 +1487,15 @@
 (def -count (fn [x] (if (host/mlist? x) (count @(:state x)) (count x))))
 ;; a String method on nil is the JVM's NullPointerException
 (defn- nn [x] (if (nil? x) (throw (host/ex* 'java.lang.NullPointerException "")) x))
-(def -length (fn [x] (if (host/sb? x) (count (host/sb-str x)) (count (nn x)))))
-(def -reverse (fn [x] (if (host/sb? x)
-                        (host/sb-append! (host/string-builder) (apply str (reverse (host/sb-str x))))
+(def -length (fn [x] (if (h-sb? x) (count (h-sb-str x)) (count (nn x)))))
+(def -reverse (fn [x] (if (h-sb? x)
+                        (h-sb-append! (h-string-builder) (apply str (reverse (h-sb-str x))))
                         (reverse x))))
-(def -toUpperCase (fn [s] (host/upper-case (nn s))))
-(def -toLowerCase (fn [s] (host/lower-case (nn s))))
+(def -toUpperCase (fn [s] (h-upper-case (nn s))))
+(def -toLowerCase (fn [s] (h-lower-case (nn s))))
 (def -charValue identity)
 (def -matcher (fn [re s] (cond (nil? s) (nn s)
-                               (host/sb? s) (new-matcher re (host/sb-str s))
+                               (h-sb? s) (new-matcher re (h-sb-str s))
                                (string? s) (new-matcher re s)
                                :else (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.CharSequence s))))))
 (def -pattern (fn [x] (if (matcher? x) (:re x) (host/re-source x))))
@@ -1402,13 +1513,13 @@
                   ((unsupported "Matcher.start(group)"))))))
 (def -start (fn ([mt] (nth (m-match mt) 0)) ([mt i] (m-span mt i 1))))
 (def -end (fn ([mt] (nth (m-match mt) 1)) ([mt i] (m-span mt i 2))))
-(def -lookingAt (fn [mt] (let [{:keys [s]} @(:state mt) r (host/re-find-at (:re mt) s 0)
+(def -lookingAt (fn [mt] (let [{:keys [s]} @(:state mt) r (h-re-find-at (:re mt) s 0)
                                r (when (and r (zero? (first r))) r)]
                            (swap! (:state mt) assoc :m r) (boolean r))))
-(def -matches (fn ([mt] (let [r (host/re-match-full (:re mt) (:s @(:state mt)))]
+(def -matches (fn ([mt] (let [r (h-re-match-full (:re mt) (:s @(:state mt)))]
                           (swap! (:state mt) assoc :m r) (boolean r)))
                 ;; String.matches(regex)
-                ([s regex] (boolean (host/re-match-full (Pattern-compile regex) s)))))
+                ([s regex] (boolean (h-re-match-full (Pattern-compile regex) s)))))
 (def -appendReplacement (fn [mt sb repl] (m-append-replacement mt sb repl)))
 (def -appendTail (fn [mt sb] (m-append-tail mt sb)))
 ;; Matcher.replaceAll(repl) / String.replaceAll(regex, repl), and First
@@ -1418,21 +1529,21 @@
                      ([s regex repl] (m-replace (new-matcher (Pattern-compile regex) s) repl false))))
 ;; Pattern.split(input[, limit]) / String.split(regex[, limit])
 (def -split (fn ([x y] (-split x y 0))
-              ([x y limit] (to-array* (if (host/regex? x) (regex-split x y limit) (regex-split (Pattern-compile y) x limit))))))
+              ([x y limit] (to-array* (if (h-regex? x) (regex-split x y limit) (regex-split (Pattern-compile y) x limit))))))
 ;; String.replace(CharSequence|char target, CharSequence|char replacement): every occurrence, literally
 (def -replace (fn [s target repl]
                 (let [s (str (nn s)) t (str (nn target)) r (str (nn repl))]
                   (if (= "" t)
                     (apply str r (mapcat (fn [c] [c r]) s))
                     (loop [from 0 out []]
-                      (let [i (host/index-of s t from)]
+                      (let [i (h-index-of s t from)]
                         (if (neg? i)
                           (apply str (conj out (subs s from)))
                           (recur (+ i (count t)) (conj out (subs s from i) r)))))))))
 (def -size -count)
 (def -clear (fn [x] (reset! (:state x) []) nil))
 (def -toArray (fn [x] (to-array* (if (host/mlist? x) @(:state x) x))))
-(def -compare (fn [cmp a b] ((as-comparator cmp) a b)))
+(def -compare compare-with)
 (def -comparator (fn [coll] (host/sorted-comparator coll)))
 ;; Sorted.entryKey: a tree map's entry key, a tree set's element itself
 (def -entryKey (fn [coll e] (if (map? coll) (key e) e)))
@@ -1452,18 +1563,18 @@
                                                                 (str "class " (class-of b) " cannot be cast to class java.lang.String")))
                              :else (str (nn a) b))))
 (def -nth nth)
-(def -get (fn [x & args] (cond (host/var?* x) (host/var-root x)
-                               (host/atom? x) (deref x)
+(def -get (fn [x & args] (cond (h-var? x) (host/var-root x)
+                               (h-atom? x) (deref x)
                                (host/mlist? x) (nth @(:state x) (first args))
                                (seq args) (apply get x args)
                                (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"java.util.concurrent.Future.get()\" because the target is null"))
-                               (host/deref? x) (deref x)
+                               (h-deref? x) (deref x)
                                :else (throw (host/ex* 'java.lang.ClassCastException
                                                       (str "class " (class-of x) " cannot be cast to class java.util.concurrent.Future"))))))
 (def ^:private h-var-set (host-fn 'var-set nil))
 ;; Var.set: the thread binding; a host without var-set (ClojureScript) keeps
 ;; a binding frame's value in the var's slot
-(def -set (fn [x v] (cond (host/atom? x) (tx-write! x #(reset! x v))
+(def -set (fn [x v] (cond (h-atom? x) (tx-write! x #(reset! x v))
                           h-var-set (h-var-set x v)
                           (host/var-thread-bound? x) (host/var-set! x v)
                           :else (throw (host/ex* 'java.lang.IllegalStateException
@@ -1482,15 +1593,15 @@
 (def ^:private h-dissoc! (host-fn 'dissoc! nil))
 (def ^:private h-disj! (host-fn 'disj! nil))
 (def ^:private h-pop! (host-fn 'pop! nil))
-(def -assoc (fn [x k v] (if (host/transient? x) (h-assoc! x k v) (assoc x k v))))
+(def -assoc (fn [x k v] (if (h-transient? x) (h-assoc! x k v) (assoc x k v))))
 (def -assocN -assoc)
-(def -without (fn [x k] (if (host/transient? x) (h-dissoc! x k) (dissoc x k))))
-(def -disjoin (fn [x k] (if (host/transient? x) (h-disj! x k) (disj x k))))
+(def -without (fn [x k] (if (h-transient? x) (h-dissoc! x k) (dissoc x k))))
+(def -disjoin (fn [x k] (if (h-transient? x) (h-disj! x k) (disj x k))))
 (def -valAt (fn ([x k] (get x k)) ([x k d] (get x k d))))
 (def -entryAt find)
 (def -containsKey contains?)
 (def -peek peek)
-(def -pop (fn [x] (if (host/transient? x) (h-pop! x) (pop x))))
+(def -pop (fn [x] (if (h-transient? x) (h-pop! x) (pop x))))
 (def -meta (fn [x] (host/meta* x)))
 (def -withMeta with-meta)
 (defn- host-meta [m] (if (host/strip-inline?) (dissoc m :inline :inline-arities) m))
@@ -1504,7 +1615,12 @@
 (def -deref (fn ([x] (deref x)) ([x ms timeout-val] #?(:cljs (deref x) :default (deref x ms timeout-val)))))
 (def -invoke (fn [f & args] (apply f args)))
 (def -applyTo (fn [f args] (apply f args)))
-(def -reduce (fn ([coll f] (reduce f coll)) ([coll f init] (reduce f init coll))))
+(def -reduce (if-let [chunk? (:chunk? hc)]
+              ;; reduce1's (.reduce (chunk-first s) f val) over a host chunk
+              (let [chunk-reduce (:chunk-reduce hc)]
+                (fn ([coll f] (reduce f coll))
+                  ([coll f init] (if (chunk? coll) (chunk-reduce coll f init) (reduce f init coll)))))
+              (fn ([coll f] (reduce f coll)) ([coll f init] (reduce f init coll)))))
 (def -kvreduce (let [rk (host-fn 'reduce-kv (fn [f init coll] (reduce (fn [acc [k v]] (f acc k v)) init coll)))] (fn [coll f init] (rk f init coll))))
 (def -equiv =)
 (def -equals =)
@@ -1512,10 +1628,10 @@
 (def -hashCode (jstatic 'Object/hashCode
                         (fn [x] (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
                                       (boolean? x) (if x 1231 1237)
-                                      (or (string? x) (host/char?* x) (integer? x)) (java-hash (if (host/char?* x) (str x) x))
+                                      (or (string? x) (h-char? x) (integer? x)) (java-hash (if (h-char? x) (str x) x))
                                       :else (hash x)))))
 (def -hasheq hash)
-(def -toString (fn [x] (cond (host/sb? x) (host/sb-str x) (host/regex? x) (host/re-source x) :else (str (nn x)))))
+(def -toString (fn [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x) :else (str (nn x)))))
 (def -compareTo compare)
 (def -isEmpty (fn [x] (if (host/mlist? x) (empty? @(:state x)) (empty? x))))
 (defn- type-name
@@ -1535,14 +1651,22 @@
 (def -persistent (host-fn 'persistent! (unsupported "persistent!")))
 (def -asTransient (host-fn 'transient (unsupported "transient")))
 (def -conj (host-fn 'conj! (unsupported "conj!")))
-(def -add (fn [l x] (swap! (:state l) conj x) true))
-(def -chunk (fn [buf] @(:state buf)))
-(def -chunkedFirst (fn [s] (if (chunked-cons? s) (::chunk (meta s)) [(first s)])))
-(def -chunkedMore (fn [s] (if (chunked-cons? s) (or (::more (meta s)) ()) (rest s))))
-(def -chunkedNext (fn [s] (if (chunked-cons? s) (seq (::more (meta s))) (next s))))
+(def -add (if-let [append (:chunk-append hc)]
+           ;; an ArrayList stand-in, or a host ChunkBuffer (new-ChunkBuffer)
+           (fn [l x] (if (host/mlist? l) (do (swap! (:state l) conj x) true) (do (append l x) nil)))
+           (fn [l x] (swap! (:state l) conj x) true)))
+(def -chunk (if-let [chunk (:chunk hc)]
+             (fn [buf] (if (host/mlist? buf) @(:state buf) (chunk buf)))
+             (fn [buf] @(:state buf))))
+(def -chunkedFirst (let [f (:chunk-first hc)]
+                     (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (::chunk (meta s)) :else [(first s)]))))
+(def -chunkedMore (let [f (:chunk-rest hc)]
+                    (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (or (::more (meta s)) ()) :else (rest s)))))
+(def -chunkedNext (let [f (:chunk-next hc)]
+                    (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (seq (::more (meta s))) :else (next s)))))
 ;; Named.getName; a non-Named value is the JVM's ClassCastException (nil: NPE);
 ;; a host class object (from `class` of a record) prints its name
-(def -getName (fn [x] (cond (host/namespace? x) (ns-name x)
+(def -getName (fn [x] (cond (h-namespace? x) (ns-name x)
                             (symbol? x) (name x)
                             (keyword? x) (name x)
                             (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
@@ -1556,13 +1680,13 @@
 ;; Var.sym and Keyword.sym (core.clj's `symbol` of a keyword)
 (def -sym (fn [x] (if (keyword? x) (symbol (namespace x) (name x)) (host/var-sym x))))
 (def -ns (fn [v] (host/var-ns v)))
-(def -name (fn [x] (if (host/namespace? x) (ns-name x) (name x))))
+(def -name (fn [x] (if (h-namespace? x) (ns-name x) (name x))))
 (def -getMappings (host-fn 'ns-map (unsupported "ns-map")))
 (def -getAliases (host-fn 'ns-aliases (fn [_] {})))
 (def -addAlias (let [al (host-fn 'alias nil)]
                  (fn [ns a target]
                    #?(:cljs ((unsupported "alias"))
-                      :default (if al (binding [*ns* (the-ns ns)] (al a (if (host/namespace? target) (ns-name target) target)))
+                      :default (if al (binding [*ns* (the-ns ns)] (al a (if (h-namespace? target) (ns-name target) target)))
                                    ((unsupported "alias")))))))
 (def -removeAlias (host-fn 'ns-unalias (unsupported "ns-unalias")))
 (def -intern (fn [ns sym] (host/intern! ns sym nil)))
@@ -1587,7 +1711,7 @@
 (def -bindRoot (fn [v x] (host/set-var-root! v (constantly x)) v))
 ;; Var.alterRoot returns the new root, bindings or not
 (def -alterRoot (fn [v f args] (host/set-var-root! v (fn [old] (apply f old args))) (host/var-raw-root v)))
-(def -toSymbol (fn [v] (let [n (host/var-ns v) n (if (host/namespace? n) (ns-name n) n)]
+(def -toSymbol (fn [v] (let [n (host/var-ns v) n (if (h-namespace? n) (ns-name n) n)]
                          (if n (symbol (str n) (str (host/var-sym v))) (host/var-sym v)))))
 ;; IAtom.swap overloads: (f) (f x) (f x y) (f x y args) — the last takes the
 ;; remaining arguments as one seq, which core.clj's swap! passes through as-is.
@@ -1596,7 +1720,7 @@
 (def ^:private h-vreset! (host-fn 'vreset! nil))
 (def -reset (fn ([mf] (if (matcher? mf) (m-reset mf) (do (swap! (::multifn (meta mf)) assoc :methods {} :prefers {}) mf)))
               ([a x] (cond (matcher? a) (m-reset a x)
-                           (host/volatile?* a) (h-vreset! a x)
+                           (h-volatile? a) (h-vreset! a x)
                            :else (reset! a x)))))
 ;; IAtom2.swapVals / resetVals as the JVM does them, a compare-and-set loop
 ;; returning [old new] (a host's own swap-vals! may order the pair the other way)
@@ -1613,7 +1737,7 @@
 (def -getWatches (host-fn 'get-watches (fn [_] {})))
 (def -setValidator (host-fn 'set-validator! (unsupported "set-validator!")))
 (def -getValidator (host-fn 'get-validator (fn [_] nil)))
-(def -isRealized (host-fn 'realized? (fn [x] (if (host/pending? x) false true))))
+(def -isRealized (host-fn 'realized? (fn [x] (if (h-pending? x) false true))))
 (def -getMessage (fn [e] (host/exception-message e)))
 (def -getCause (fn [e] (host/exception-cause e)))
 (def -getData ex-data)
@@ -1638,8 +1762,8 @@
 ;; the superclass: the most specific ancestor that is a class, not an interface
 (defn- interface-token? [t]
   (let [n (name t)]
-    (or (and (zero? (host/index-of n "clojure.lang.I" 0)) (> (count n) 14)
-             (let [c (subs n 14 15)] (= c (host/upper-case c))))
+    (or (and (zero? (h-index-of n "clojure.lang.I" 0)) (> (count n) 14)
+             (let [c (subs n 14 15)] (= c (h-upper-case c))))
         (contains? '#{clojure.lang.Seqable clojure.lang.Sequential clojure.lang.Associative clojure.lang.Counted
                       clojure.lang.Indexed clojure.lang.Reversible clojure.lang.Sorted clojure.lang.Named clojure.lang.Fn
                       clojure.lang.MapEquivalence clojure.lang.Settable java.lang.Comparable java.lang.CharSequence
@@ -1659,7 +1783,7 @@
 (defn- sioobe [msg] (host/ex* 'java.lang.StringIndexOutOfBoundsException msg))
 (defn- as-string [s]
   (cond (string? (nn s)) s
-        (host/sb? s) (host/sb-str s)
+        (h-sb? s) (h-sb-str s)
         :else (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of s) " cannot be cast to class java.lang.String")))))
 (def -substring (fn ([s a] (let [s (as-string s) n (count s)]
                              (if (and (<= 0 a) (<= a n)) (subs s a) (throw (sioobe (str "begin " a ", end " n ", length " n))))))
@@ -1677,7 +1801,7 @@
                 ([s x from]
                  (if (string? s)
                    (let [x (needle (nn x)) from (max 0 from)]
-                     (if (> from (count s)) (if (= "" x) (count s) -1) (host/index-of s x from)))
+                     (if (> from (count s)) (if (= "" x) (count s) -1) (h-index-of s x from)))
                    (or (first (keep-indexed (fn [i y] (when (= y x) i)) s)) -1)))))
 ;; String.lastIndexOf(str|char[, from]): the last start at or before from
 (def -lastIndexOf (fn ([s x] (-lastIndexOf s x (count s)))
@@ -1692,7 +1816,7 @@
 ;; (Character.isWhitespace), equalsIgnoreCase, compareToIgnoreCase, repeat,
 ;; codePointAt, toCharArray: as java.lang.String has them
 (def -trim (fn [s] (let [s (nn s) n (count s)
-                         sp? (fn [i] (<= (host/char-code (nth s i)) 32))
+                         sp? (fn [i] (<= (h-char-code (nth s i)) 32))
                          b (loop [i 0] (if (and (< i n) (sp? i)) (recur (inc i)) i))
                          e (loop [j n] (if (and (> j b) (sp? (dec j))) (recur (dec j)) j))]
                      (subs s b e))))
@@ -1706,7 +1830,7 @@
 (def -stripLeading (fn [s] (strip* s true false)))
 (def -stripTrailing (fn [s] (strip* s false true)))
 (def -isBlank (fn [s] (= "" (strip* s true true))))
-(defn- char-fold [c] (host/char-code (first (host/lower-case (host/upper-case (str c))))))
+(defn- char-fold [c] (h-char-code (first (h-lower-case (h-upper-case (str c))))))
 (def -equalsIgnoreCase (fn [s t] (let [s (nn s)]
                                    (boolean (and (string? t) (= (count s) (count t))
                                                  (every? true? (map (fn [a b] (or (= a b) (= (char-fold a) (char-fold b)))) s t)))))))
@@ -1722,13 +1846,13 @@
 (def -codePointAt (fn [s i] (let [s (nn s) n (count s)]
                               (when-not (< -1 i n)
                                 (throw (host/ex* 'java.lang.StringIndexOutOfBoundsException (str "Index " i " out of bounds for length " n))))
-                              (let [hi (host/char-code (nth s i))]
+                              (let [hi (h-char-code (nth s i))]
                                 (if (and (<= 55296 hi 56319) (< (inc i) n))
-                                  (let [lo (host/char-code (nth s (inc i)))]
+                                  (let [lo (h-char-code (nth s (inc i)))]
                                     (if (<= 56320 lo 57343) (+ 65536 (* (- hi 55296) 1024) (- lo 56320)) hi))
                                   hi)))))
 (def -toCharArray (fn [s] (to-array* (vec (nn s)))))
-(def -append (fn [sb x] (host/sb-append! sb (if (nil? x) "null" x))))
+(def -append (fn [sb x] (h-sb-append! sb (if (nil? x) "null" x))))
 (def -close host/close!)
 (def -flush (fn [_] nil))
 (def -numerator (host-fn 'numerator identity))
@@ -1766,7 +1890,20 @@
 ;; data, and the shim's and adapter's own records, go to -m.
 (def ^:private shim-types
   #{(type (host/->Iter nil)) (type (host/->SB nil)) (type (host/->MList nil)) (type (->Matcher nil nil))})
-(defn host-object? [x] (and (some? x) (host/user-type? x) (not (contains? shim-types (type x)))))
+;; the answer is the type's (a host's user-type? reads only the class), asked
+;; at every member call: computed once per type
+(def ^:private host-object-types (atom {}))
+(def ^:private h-host-data? (host/capability :host-data?))
+(defn host-object? [x]
+  (and (some? x)
+       (not (h-host-data? x))
+       (let [t #?(:cljs (type x) :default (class x))
+             hit (get @host-object-types t absent)]
+         (if (identical? hit absent)
+           (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type x)))))]
+             (swap! host-object-types assoc t r)
+             r)
+           hit))))
 (defn- npe-on [m] (host/ex* 'java.lang.NullPointerException (str "Cannot invoke \"" m "()\" because the target is null")))
 ;; members defrecord itself defines, which a host's record answers otherwise
 ;; (jolt's .empty is nil, ClojureScript's records have no empty): the shim's
@@ -1790,6 +1927,32 @@
                               r (if (own? x) (host/invoke-member x m (into [a b c] more) absent) absent)]
                           (if (identical? r absent) (apply f x a b c more) r))))))
 
+(defn shim-value
+  "The value of the shim var named nm (a string). vars: (host/ns-interns-map
+   'cohost.shim), unused on ClojureScript, where it is the namespace object's
+   property the codemod's shim-ref names."
+  [vars nm]
+  #?(:cljs (gobj/get js/cohost.shim (munge nm))
+     :default (some-> (get vars (symbol nm)) host/var-root)))
+
+(defn install-dots!
+  "For each instance method -m the shim has (method-syms, symbols): dot$m,
+   the dispatcher (dot \"m\" -m), built once — the codemod's (.m x args)
+   calls it rather than building a dispatcher at every evaluation of the
+   call. A shim var (on ClojureScript, the property of the namespace object
+   its shim-ref names). -> the names installed."
+  [method-syms]
+  (let [vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))]
+    (vec (for [s method-syms
+               :let [nm (str s)
+                     f (shim-value vars nm)]
+               :when (fn? f)]
+           (let [d (str "dot$" (subs nm 1))
+                 v (dot (subs nm 1) f)]
+             #?(:cljs (gobj/set js/cohost.shim (munge d) v)
+                :default (host/intern! 'cohost.shim (symbol d) v))
+             (symbol d))))))
+
 ;; ---------------------------------------------------------------------------
 ;; java.util.Formatter, where the host's own format is not the JVM's
 ;; (ClojureScript's goog.string.format, basilisp's Python %): the specifier
@@ -1800,7 +1963,7 @@
 ;; conversion takes none of, and an argument of the wrong kind.
 
 (defn- zeros [n] (apply str (repeat n "0")))
-(defn- digit-val [c] (- (host/char-code c) 48))
+(defn- digit-val [c] (- (h-char-code c) 48))
 (defn- small-int [t]
   (let [neg (= "-" (subs t 0 1)) t (if (contains? #{"-" "+"} (subs t 0 1)) (subs t 1) t)]
     (* (if neg -1 1) (reduce (fn [a c] (+ (* a 10) (digit-val c))) 0 t))))
@@ -1810,10 +1973,10 @@
    host's shortest decimal significand, no leading or trailing zero (\"\" for 0)."
   [x]
   (let [s (str x)
-        e-at (let [i (host/index-of s "e" 0)] (if (neg? i) (host/index-of s "E" 0) i))
+        e-at (let [i (h-index-of s "e" 0)] (if (neg? i) (h-index-of s "E" 0) i))
         mant (if (neg? e-at) s (subs s 0 e-at))
         ex (if (neg? e-at) 0 (small-int (subs s (inc e-at))))
-        dot (host/index-of mant "." 0)
+        dot (h-index-of mant "." 0)
         ip (if (neg? dot) mant (subs mant 0 dot))
         ds (str ip (if (neg? dot) "" (subs mant (inc dot))))
         lead (count (take-while #(= "0" (str %)) ds))
@@ -1870,7 +2033,7 @@
 (defn- java-hash
   "Object.hashCode for %h: String's and Long's exactly, else the host's hash."
   [x]
-  (cond (string? x) (reduce (fn [h c] (wrap32 (+ (* 31 h) (host/char-code c)))) 0 x)
+  (cond (string? x) (reduce (fn [h c] (wrap32 (+ (* 31 h) (h-char-code c)))) 0 x)
         (and (integer? x) (<= 0 x 4294967295)) (wrap32 x)
         (and (integer? x) (<= -2147483648 x -1)) (- (- x) 1)
         :else (hash x)))
@@ -1878,7 +2041,7 @@
 (defn- jformat [fmt args]
   (let [fmt (str fmt) n (count fmt) args (vec args)
         at (fn [i] (when (< i n) (str (nth fmt i))))
-        digit? (fn [c] (and (some? c) (<= 48 (host/char-code c) 57)))
+        digit? (fn [c] (and (some? c) (<= 48 (h-char-code c) 57)))
         ex (fn [k msg] (host/ex* k msg))]
     (loop [i 0 out [] ordinary 0 prev nil]
       (if (>= i n)
@@ -1901,7 +2064,7 @@
                   conv (at cj)
                   _ (when (nil? conv) (throw (ex 'java.util.UnknownFormatConversionException "Conversion = '%'")))
                   spec (subs fmt i (inc cj))
-                  lc (host/lower-case conv)
+                  lc (h-lower-case conv)
                   upper? (and (not= lc conv) (contains? #{"b" "h" "s" "c" "x" "e" "g"} lc))
                   _ (when-not (contains? #{"b" "h" "s" "c" "d" "o" "x" "e" "f" "g" "n" "%"} (if upper? lc conv))
                       (if (contains? #{"t" "T"} conv)
@@ -1931,9 +2094,9 @@
                              (str sign pad mag tail)))
                   grouped (fn [ip] (if (contains? flags ",") (group-thousands ip) ip))
                   floating (fn [f]
-                             (cond (not (or (double? arg) (host/decimal?* arg))) (throw (wrong))
-                                   (host/nan? arg) "NaN"
-                                   (host/infinite?* arg) (signed (neg? arg) "Infinity" false)
+                             (cond (not (or (double? arg) (h-decimal? arg))) (throw (wrong))
+                                   (h-nan? arg) "NaN"
+                                   (h-infinite? arg) (signed (neg? arg) "Infinity" false)
                                    ;; -0.0 is negative too (where the host's str shows it)
                                    :else (let [neg? (or (neg? arg) (= "-" (subs (str arg) 0 1)))]
                                            (signed neg? (f (if neg? (- arg) arg)) true))))
@@ -1945,7 +2108,7 @@
                            "b" (trunc (str (if (nil? arg) false (if (boolean? arg) arg true))))
                            "s" (trunc (str arg))
                            "h" (trunc (Integer-toHexString (java-hash arg)))
-                           "c" (cond (host/char?* arg) (str arg)
+                           "c" (cond (h-char? arg) (str arg)
                                      (integer? arg) (str (char arg))
                                      :else (throw (wrong)))
                            "d" (if (integer? arg)
@@ -1953,7 +2116,7 @@
                                  (throw (wrong)))
                            ("o" "x") (if (integer? arg)
                                        (let [radix (if (= lc "o") 8 16)
-                                             big-neg? (and (neg? arg) (host/bigint?* arg))
+                                             big-neg? (and (neg? arg) (h-bigint? arg))
                                              mag (cond big-neg? (radix-str (- arg) radix)
                                                        (neg? arg) (if (= radix 8) (Long-toOctalString arg) (Long-toHexString arg))
                                                        :else (radix-str arg radix))
@@ -1976,7 +2139,7 @@
                                                        (str d (when (pos? (count fp)) ".") fp
                                                             "e" (if (neg? x10) "-" "+")
                                                             (let [m (if (neg? x10) (- x10) x10)] (if (< m 10) (str "0" m) (str m)))))))))))
-                  body (if upper? (host/upper-case body) body)
+                  body (if upper? (h-upper-case body) body)
                   body (cond (nil? width) body
                              (contains? flags "-") (str body (apply str (repeat (- width (count body)) " ")))
                              :else (str (apply str (repeat (- width (count body)) " ")) body))]

@@ -1,0 +1,131 @@
+{
+ "area": "boot-loader (src/cohost/boot.cljc, src/cohost/policy.cljc; line numbers as of boot.cljc mtime 14:49:19, which is being edited concurrently)",
+ "findings": [
+  {
+   "id": "scan-macros-after-every-core-form",
+   "where": "src/cohost/boot.cljc:301-312 (process-form!), 61-73 (scan-macros!)",
+   "code": "(defn- process-form! [ctx report form] ... (case action :skip (record! report :skipped {:name nm :reason reason}) :host (when-not (take-from-host! report nm) ...) ...) (scan-macros! ctx)))\n;; scan-macros!:\n(doseq [[_sym v] (host/ns-interns-map ns-sym)]\n  (let [m (host/var-meta v)]\n    (when (and (:macro m) (not (host/macro-var? v))) (host/mark-macro! v))\n    (when (and (host/macro-var? v) (not (:cohost/wrapped m))) ...)))",
+   "cost": "After each of core.clj's 719 top-level forms (plus the 2 companion forms), the scan re-enumerates every var interned in cohost.core and reads each var's meta and macro flag (macro-var? is read twice for a macro). On three hosts the enumeration also builds a fresh map each time. JVM: ns-interns is filter-key over the whole ns-map (the default java.lang imports, the referred host dynamic vars and every intern), with a persistent assoc per intern (core.clj:4144, 4233). jolt: ns-vars-pmap allocates a symbol and does a jolt-assoc per var cell (jolt host/chez/ns.ss:489-501). cljs: ns-interns builds a handle map per def and per macro, and var-meta merges three maps per var (cljs.cljs:273-281). basilisp: the map is the live .-interns, but the per-var meta reads remain. cohost.core grows toward the roughly 600 names core.clj defines (604 distinct same-line def names by grep), so the boot does on the order of V^2/2 var visits, quadratic in the number of vars. Yet a scan can only find work after a form that creates or re-creates a macro. In core.clj those are: the 3 (def ^{:macro true} let/loop/fn ...) bootstrap defs (core.clj:31-45); (def defn ...) and (def defmacro ...) with their (. (var x) (setMacro)) forms (core.clj:338, 493); and the 71 defmacro forms.",
+   "frequency": "per form at boot: about 721 full scans, each O(vars in cohost.core)",
+   "fix": "(a) Strictly identical: skip the scan when the action is :skip, when the action is :host and take-from-host! succeeded, or when it recorded :skipped :no-host-equivalent. In those cases nothing was evaluated, take-from-host! already sets :cohost/wrapped and the macro flag on the copy it interns, and a dynamic name is referred, not interned. Then run one scan at the end of boot-file!. By the policy lists this skips about 170 of the 719 forms: 119 + 29 same-line def names in host-names/skip-names, plus the import/load/require/try/ns/extend-protocol/alter-meta! forms. (b) Only scan after an evaluated form that can create or change a macro: head defmacro; a def whose name has :macro meta or is in policy/setmacro-defined; or (. (var x) (setMacro)). Also scan after any evaluated form whose head is not in policy/def-heads (add-doc-and-meta and def-aset, 26 forms). For core.clj that is at most about 104 full scans instead of about 721.",
+   "risk": "(a) On jvm/jolt/basilisp: none. On cljs, take-from-host! of a host macro stores :cohost/wrapped under the [cohost.core nm] meta-store key, but mark-macro! then moves the handle to cohost.core$macros. Today the scan right after the take adds :cohost/wrapped to that handle; with (a), the next evaluated form's scan (or the end-of-file scan) does it instead. That deferral is unobservable: grep shows scan-macros! is the only reader of :cohost/wrapped. (b) Identical for core.clj as shipped: grep shows no def init interns a macro, and the only redefinitions are dotimes, let, loop and fn, all macro over macro. But two cases would only be caught by the next full scan: a def whose init makes a macro by side effect, and, on jolt (where the macro flag lives on the Var, jolt.clj:4-5), a non-macro def over an existing macro."
+  },
+  {
+   "id": "interned-closure-builds-whole-ns-map",
+   "where": "src/cohost/boot.cljc:157-159 (make-ctx :interned?); called from src/cohost/rewrite.cljc:599-605 (user-name?) and 900-904",
+   "code": ":interned? (fn [s] (let [n (host/current-ns)]\n  (boolean (and n (try (contains? (host/ns-interns-map (symbol (str n))) s)\n                       (catch ... _ false))))))",
+   "cost": "To answer 'is s interned in the current namespace?', it builds that namespace's whole interns map. On the JVM that is filter-key plus an assoc over every mapping; on jolt a symbol plus a jolt-assoc per var cell; on cljs handle maps for every def and macro. On top of that each call does a cap lookup and a symbol -> string -> symbol round trip of the namespace name. user-name? calls it for every class-like symbol in value position that is not a local or a user type, for example the 94 (instance? Class x) sites in core.clj. rewrite.cljc:900-904 now evaluates (rw ctx (second form)) in both the test and the result of the instance? clause, so it runs twice per site. This repeats on every rewrite pass: the outer pass and each enclosing stock-macro expansion's pass (see wrap-macro). In a user or library namespace on the JVM, ns-interns also walks all of cohost.core's referred mappings, roughly 600, for each such symbol.",
+   "frequency": "per class-symbol occurrence per rewrite pass (boot and every eval)",
+   "fix": "Look up one var instead of building the map. Add an adapter capability such as :interned-var [ns-sym sym] -> handle or nil, defaulting to (get ((cap :ns-interns) ns-sym) sym), which is exactly today's answer. Give it direct host implementations. JVM: (.findInternedVar (the-ns ns) sym). jolt: the var-cell-lookup behind find-var (host/chez/ns.ss:701-705), keeping ns-interns' defined and not-class-mapping filters. cljs: a :defs lookup in ns and in its $macros ns, taking only a non-alias entry and letting the macro entry win, as its ns-interns merge does. basilisp keeps the default, since its ns-interns is already the live map. Make :interned? (some? (host/interned-var n s)). Also pass n itself instead of (symbol (str n)): every adapter's :current-ns already returns a symbol.",
+   "risk": "Low. The default is today's expression. Each host implementation must keep 'interned in this namespace' semantics (not referred)."
+  },
+  {
+   "id": "refer-core-reresolves-every-host-entry",
+   "where": "src/cohost/boot.cljc:407-423 (refer-core!)",
+   "code": "(doseq [e (:entries (:report @state))\n        :let [nm (:name e)]\n        :when (and (= :host (:status e)) (not (contains? skip nm)) (or (nil? keep) (contains? keep nm)))]\n  (when-let [hv (host/resolve-core nm)]\n    (when (host/dynamic-var? hv)\n      (try (host/refer-from-core! ns-sym nm) ...))))",
+   "cost": "Every call walks the whole boot report and calls host/resolve-core for each :host entry. There are about 190: 37 runtime-vars, about 120 core.clj :host forms and 33 companions. On jvm/jolt/basilisp, resolve-core is (get (ns-publics 'clojure.core|basilisp.core) sym) (jvm.clj:27, jolt.clj:28, basilisp.lpy:234), which rebuilds the host core's full public map for each name. JVM: filter-key + assoc (core.clj:4215). jolt: a symbol + jolt-assoc per cell (ns.ss:500). basilisp: reduce* + assoc over the interns (core.lpy:5046). All that work rediscovers the same few dozen dynamic names every time, though the answer depends only on the boot report (never changed after boot!) and the host core. On cljs, resolve-core is a set lookup, so the cost there is only the walk.",
+   "frequency": "per (ns ...) form evaluated (every library load: bench load-libs! requires 12 libraries plus their stock dependencies), per make-user-ns!, per (refer-clojure ...) directive, per refer-lib! of clojure.core",
+   "fix": "Compute the list once at the end of boot!, with the same test and in entry order: (into [] (comp (filter #(= :host (:status %))) (map :name) (filter #(some-> (host/resolve-core %) host/dynamic-var?))) (:entries r)). Store it in state beside :report, not in the returned report map. refer-core! then iterates that list with the same skip/keep filter and the same try/refer-from-core!. This removes about 190 resolve-core + dynamic-var? calls per call.",
+   "risk": "None in practice. The report is never modified after boot!, and booted code cannot reach the host core's vars to change their dynamic flag (restock maps clojure.core/x to cohost.core/x). (:host-referred ctx) holds nearly the same set, but it would differ for a core-extras name that is also a dynamic host var, so the computed list is the strictly identical choice."
+  },
+  {
+   "id": "wrap-macro-rewrites-already-rewritten-arguments",
+   "where": "src/cohost/boot.cljc:35-36 (wrap-macro), 38-43 (rewrite-output, the cljs :source path); setup cost in src/cohost/rewrite.cljc:948-962",
+   "code": "(defn wrap-macro [ctx f]\n  (fn [& args] (let [out (apply f args)] (if host/*raw-macro-output* out (rw/rewrite ctx out)))))\n(defn ^:export rewrite-output [form]\n  (if-let [c (and (not host/*raw-macro-output*) (ctx))] (rw/rewrite c form) form))",
+   "cost": "eval-form! and eval-in* first rewrite the whole top-level form, including every argument of every macro call (the rw-list :else and binding-head branches). Then every stock macro expansion is rewritten in full again, and each expansion embeds its already-rewritten arguments. For a chain like defn -> fn -> let -> when -> cond, a subform under k stock macros is walked k+1 times, and each walk repeats :interned? per class symbol and inline-fn per call form. Each rewrite call also redoes its setup: 8 dynamic bindings, (str ((:current-ns ctx))) with a cap lookup, the *imports* lookup, and *kw-unrenames* rebuilt with into over every loaded library's rename (rewrite.cljc:958-959).",
+   "frequency": "per stock macro expansion, at boot and in every eval (on cljs, through rewrite-output compiled into every stock macro body)",
+   "fix": "Return a subtree untouched when it is the identical object an earlier rewrite pass emitted. rewrite records the collections it outputs in an identity set held by ctx, and rw checks that set before descending. The set needs one small adapter capability: a java.util.IdentityHashMap-backed set on JVM/jolt, a js/WeakSet on cljs, an id()-keyed dict holding the objects on basilisp. Separately, cache *kw-unrenames* on the identity of @(:renames ctx); that part is strictly identical.",
+   "risk": "Not strictly identical. rewrite binds *locals* and *local-tags* only while it walks (rewrite.cljc:451, 485, 500, 938) and never macroexpands, so an expansion's rewrite starts with empty *locals*. Today, in (let [String \"x\"] (when true (count String))), the outer pass keeps String as a local, but the re-rewrite of the when expansion turns it into 'java.lang.String. Skipping identical subtrees keeps the outer, locals-aware result, which changes behavior in exactly those cases (arguably fixing them). Elsewhere it relies on rewrite being a fixed point on its own output, which the current design already assumes."
+  },
+  {
+   "id": "inline-fn-resolves-every-call-head",
+   "where": "src/cohost/boot.cljc:102-119 (inline-fn, new); called from src/cohost/rewrite.cljc:871-881 via 962",
+   "code": "(fn [sym n]\n  (let [v (try (resolve* (symbol (str (host/current-ns))) sym) (catch ... _ nil))]\n    (when (and v (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (ns-name x) x)))))\n      (let [m (host/var-meta v) f (:inline m) ar (:inline-arities m)]\n        (when (and (fn? f) (or (nil? ar) (ar n))) f)))))",
+   "cost": "On jolt and cljs (:rewrite-inline? true), inline-expansion calls this for every call form that reaches rw-list's :else branch: every fn call and every macro call, plus if/do/recur/throw heads, on every rewrite pass. Each call allocates the namespace string and symbol again, makes about 5 cap lookups, and resolves the head through the host's ns-resolve. On cljs that resolver is the adapter's rt-ns-resolve (from core-extras). Its var-of (cljs.cljs:459-465) calls (get (macro-defs ns) nm), and macro-defs (cljs.cljs:52-55) rebuilds the namespace's whole $macros :defs map minus aliases (that namespace holds an alias entry for every def). For a name referred from cohost.core it does this over cohost.core's roughly 600 entries, so it is O(V) per call form per pass, before building a Var with merged meta.",
+   "frequency": "per call form per rewrite pass on jolt and cljs (boot and every eval)",
+   "fix": "(1) In cljs.cljs var-of, look up the single entry: (let [e (get (defs (macros-ns ns-sym)) nm)] (when-not (alias? e) e)) instead of (get (macro-defs ns-sym) nm). Same result, O(1). (2) In inline-fn, return nil without resolving when sym is a special form (rw/special-heads: if, do, recur, throw, let*, fn* ...). (3) Use the symbol (host/current-ns) already returns instead of (symbol (str ...)); it is constant through one rewrite pass.",
+   "risk": "None for (1)-(3): the same var is found; special forms never resolve to a cohost.core var with :inline; the namespace symbol is the same."
+  },
+  {
+   "id": "take-from-host-full-host-core-walks",
+   "where": "src/cohost/boot.cljc:249-275 (take-from-host!), called at 306 (process-form!), 381-383 (prelude), 393 (companions)",
+   "code": "(when-let [hv (host/resolve-core nm)]\n  (try\n    (if (host/dynamic-var? hv)\n      (do (host/refer-from-core! core-ns nm)\n          (when-let [c (ctx)] (swap! (:host-referred c) conj nm)))\n      (let [v (host/intern! core-ns nm (ns-arg-wrap nm (host/var-root hv))) ...] ...))",
+   "cost": "There are about 190 calls per boot. Each resolve-core rebuilds the host core's full public map on jvm/jolt/basilisp (as in refer-core!). Each dynamic name then calls refer-from-core!, whose host refer walks the host core again. JVM refer computes nspublics (ns-publics ns) even for :only [sym] (core.clj:4262). jolt's refer walks every var cell of clojure.core (ns.ss:800-830).",
+   "frequency": "once per boot: about 190 resolve-core calls plus one refer per dynamic host name, each a full host-core walk",
+   "fix": "The fix goes in the adapters, not boot.cljc: make :resolve-core a single lookup that keeps the publics filter. JVM: (let [v (.findInternedVar (the-ns 'clojure.core) sym)] (when (and v (.isPublic v)) v)). basilisp: (let [v (get (ns-interns 'basilisp.core) sym)] (when (and v (not (:private (meta v)))) v)), since its ns-interns is the live map. jolt: find-var's var-cell-lookup plus its private and class-mapping checks. On the JVM, refer-from-core! can also be (.refer (the-ns into-ns) sym v) after the ns-unmap. This also shrinks refer-core!'s and core-var's cost.",
+   "risk": "Low. The same var object is returned; the public / not-private filter (on jolt also not-class-mapping) must be kept."
+  },
+  {
+   "id": "eval-in-scan-after-every-eval",
+   "where": "src/cohost/boot.cljc:174-184 (eval-in*)",
+   "code": "(let [form (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)\n      v (host/eval-form (rw/rewrite c form))]\n  (host/after-eval form ns-sym)\n  (scan-macros! c ns-sym)\n  [v (host/current-ns)])",
+   "cost": "Every non-directive form evaluated through eval-str, load-source! (libraries) and shim/eval-hook (stock eval) is followed by a full scan of its namespace. On the JVM, ns-interns walks every mapping, so for cohost.user or a library namespace the walk covers all of cohost.core's referred vars, the default imports and the referred host dynamic vars, even when the namespace interns only a handful. On cljs it builds a handle per def. A library load therefore costs forms x mappings.",
+   "frequency": "per eval: each top-level form of eval-str, each library form, each eval call from booted code",
+   "fix": "In load-source!, apply the same rule as for the core boot: run the full scan only after defmacro, a def with :macro meta or a setmacro-defined name, (. (var x) (setMacro)), and any form whose head is not in policy/def-heads. grep shows the stock libraries make macros only through their 46 defmacro forms; there is no setMacro, ^:macro or intern outside core_deftype.clj, which only boot-companion! reads. Keep the full scan for eval-str and eval-hook.",
+   "risk": "Identical for the stock libraries. In an arbitrary user library, a macro created as a side effect of a def or expression (intern with ^:macro meta, or alter-meta! :macro inside a fn) would be wrapped at the next full scan rather than immediately. Macros created through eval are unaffected, because the nested eval-in* scans."
+  },
+  {
+   "id": "strip-string-tags-full-per-char-pass",
+   "where": "src/cohost/boot.cljc:314-343 (strip-string-tags), called at 348 (boot-file!), 357 (boot-companion!), 639 (load-source!)",
+   "code": "(let [n (count src)\n      at (fn [i] (when (< i n) (nth src i)))]\n  (loop [i 0 start 0 out [] state :code]\n    (if (>= i n)\n      (apply str (conj out (subs src start n)))\n      (let [c (at i)]\n        (cond (= state :string) ... (= state :comment) ... (= c \\\\) ... (= c \\;) ... (= c \\\") ...\n              (and (= c \\^) (= (at (inc i)) \\\")) ...",
+   "cost": "This is a per-character state machine run in the host's own code. Each character costs a closure call, a bounds test, an nth and up to six = tests, across the whole source. Only core.clj contains a ^\" hint, and only one, at line 4024 of its 8229 lines. So the pass over core_deftype.clj (done twice, see boot-companion!) and over every library source returns its input unchanged, and the pass over core.clj finds nothing after line 4024.",
+   "frequency": "once per file booted or loaded: core.clj 276,144 chars, core_deftype.clj 39,540 chars twice, every library source (test.clj 27,538, string.clj 12,824, ...)",
+   "fix": "Return src at once when (neg? (host/index-of src \"^\\\"\" 0)); index-of is native on all four adapters (indexOf / find). Otherwise compute the last occurrence once with host/last-index-of*, and leave the loop with (apply str (conj out (subs src start n))) as soon as i passes it. Past the last ^\" the loop can only advance i and change state; it never adds a segment.",
+   "risk": "None; the output is identical. With no ^\" the loop returns (str (subs src 0 n)), which equals src, and after the last occurrence no branch can add to out."
+  },
+  {
+   "id": "companion-file-read-twice",
+   "where": "src/cohost/boot.cljc:352-362 (boot-companion!), 390-392 (boot! companion loop)",
+   "code": "(try (host/read-forms (strip-string-tags (host/slurp-file path))\n                      (fn [form] (when (and (nil? @found) (= nm (policy/form-name form))) (reset! found form))))\n     (catch ... _ nil))",
+   "cost": "boot-companion! is called once per policy/companion-stock name: hash-combine and namespace-munge, both in clojure/core_deftype.clj. So the file is slurped twice, stripped twice, and all 40 of its top-level forms are read twice by the host reader. The two targets are only its 2nd and 8th forms (lines 13 and 128 of 919).",
+   "frequency": "once per boot (2 slurps, 2 strips, 80 form reads where 1, 1 and 8 would do)",
+   "fix": "Group companion-stock by file, read each file once collecting the first form for each wanted name, then call process-form! on them in the same sorted order. Optionally stop reading once every wanted name is found by throwing a private sentinel from the callback; the existing catch already swallows everything.",
+   "risk": "None for the single read. The early stop leaves the rest of the file unread; the only effect is the reader's own (gensym counter steps for x# in the unread syntax-quotes)."
+  },
+  {
+   "id": "core-var-two-full-maps-per-library-load",
+   "where": "src/cohost/boot.cljc:611-625 (core-var, with-load-bindings), run per load-source! at 634",
+   "code": "(defn- core-var [sym]\n  (or (get (host/ns-interns-map core-ns) sym) (host/resolve-core sym)))\n...\n(let [bs (into {} (for [s '[*warn-on-reflection* *unchecked-math*]\n                        :let [v (core-var s)] ...",
+   "cost": "To find two vars, it builds cohost.core's whole interns map twice (on JVM/jolt/cljs). On jvm/jolt/basilisp both names are host vars referred at boot, not interned, so it then falls through to resolve-core twice, building two more full host-core public maps.",
+   "frequency": "per library load",
+   "fix": "Use the single-var :interned-var capability proposed for :interned? for the cohost.core check, and the direct :resolve-core. Which var is found does not change.",
+   "risk": "None with the capability (same lookup order). Caching the two handles at the end of boot would be cheaper, but it stops being identical if code later interns either name in cohost.core."
+  },
+  {
+   "id": "decide-rebuilds-name-sets-per-form",
+   "where": "src/cohost/policy.cljc:253-261 (decide)",
+   "code": "(let [head (form-head form)\n      nm (form-name form)\n      ov (get host-overrides host)\n      host-names (apply disj (into host-names (:host ov)) (:stock ov))\n      skip-names (into skip-names (:skip ov))] ...)",
+   "cost": "Every call rebuilds the effective host-name and skip-name sets, although they depend only on host, which is constant for a boot. On the JVM, into on a set allocates a transient, a persistent! set and a with-meta copy even when (:host ov) is nil, and does so twice per call. On basilisp, (apply disj ... '#{format printf}) builds two new versions of the 167-name set per call. On cljs, (into host-names '#{defmacro}) conj!es one element.",
+   "frequency": "per form at boot (about 721 calls)",
+   "fix": "Split out (defn lists [host] {:host-names ... :skip-names ...}). boot! computes it once per boot, and process-form! calls a decide* that takes the sets. Keep decide's 2-arity as the public wrapper that computes them. Avoid a plain memoize by host, which would stop seeing a host's later edits to the lists ('the lists are data so a host can extend them').",
+   "risk": "None: the same sets, computed once per boot from the current list values."
+  },
+  {
+   "id": "ns-arg-wrap-varargs-apply-per-call",
+   "where": "src/cohost/boot.cljc:243-247 (ns-arg-wrap)",
+   "code": ":ns (fn [x & more] (apply f (stock-ns x) (map stock-sym more)))\n:sym (fn [& args] (apply f (map stock-sym args)))",
+   "cost": "Each call of the 11 wrapped host fns (find-ns, the-ns, ns-publics, ns-interns, ns-map, ns-aliases, ns-refers, ns-imports, ns-resolve, resolve, requiring-resolve) packs a rest seq, creates a lazy map seq even when more is nil, and dispatches through apply. stock-ns also derefs state and the renames atom.",
+   "frequency": "per call of those fns. The booted core never calls them, since these names are host-taken; the calls come from clojure.test run-tests, clojure.repl, clojure.spec (resolve) and user code.",
+   "fix": "Put fixed arities in front of the variadic tail: (fn ([x] (f (stock-ns x))) ([x y] (f (stock-ns x) (stock-sym y))) ([x y & more] (apply f (stock-ns x) (stock-sym y) (map stock-sym more)))). For :sym, add ([] (f)), ([a] (f (stock-sym a))) and ([a b] ...) before a variadic tail.",
+   "risk": "None: f receives the same arguments."
+  },
+  {
+   "id": "in-ns-builds-lib-key-set",
+   "where": "src/cohost/boot.cljc:592-598 (directive!, in-ns branch)",
+   "code": "(when-not (or (some? found) (contains? (set (keys (:libs @state))) t)) (host/ensure-bare-ns! t))\n(host/set-current-ns! t)\n[(try (shim/Namespace-find t) (catch ... _ nil)) t]",
+   "cost": "Builds a set of every loaded library's name to test one key, and calls Namespace-find a second time even when the first call already found the namespace.",
+   "frequency": "per (in-ns ...) directive (rare: the stock libraries evaluated through load-source! contain none)",
+   "fix": "Use (contains? (:libs @state) t). Return found when it was non-nil, and call Namespace-find again only when the namespace was just created.",
+   "risk": "None: contains? on the map is membership in its key set, and set-current-ns! does not replace an existing namespace object."
+  },
+  {
+   "id": "basilisp-host-def-extra-walks",
+   "where": "src/cohost/boot.cljc:190-197 (mark-host-defs!), 208-212 (eval-top)",
+   "code": "(set (keys (host/ns-interns-map ns-sym)))\n...\n(doseq [[sym h] (host/ns-interns-map ns-sym) :when (not (contains? before sym))]\n  (host/alter-var-meta! h merge dm))",
+   "cost": "On a :def-meta host (basilisp), each defprotocol/deftype/defrecord form builds a set of every name in its namespace before eval, then walks the interns again after eval-in* has already walked them in scan-macros!. The cost is small: basilisp's ns-interns is the live map, so this is two O(vars) passes per such form.",
+   "frequency": "per defprotocol/deftype/defrecord form on basilisp (about 10 in the stock libraries: core/protocols, data, spec/alpha)",
+   "fix": "Do the def-meta marking inside the scan's walk: eval-top passes before and dm through eval-in* to scan-macros!, so one enumeration serves both.",
+   "risk": "None: the two passes change different meta keys (:redef vs :macro / :cohost/wrapped), so their order does not matter."
+  }
+ ]
+}

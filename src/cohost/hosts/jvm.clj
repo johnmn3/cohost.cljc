@@ -24,7 +24,13 @@
                        (binding [*ns* (the-ns into-ns)]
                          (ns-unmap into-ns sym)
                          (refer 'clojure.core :only [sym])))
-   :resolve-core (fn [sym] (get (ns-publics 'clojure.core) sym))
+   ;; one lookup each, not the namespace's whole map
+   :resolve-core (fn [sym]
+                   (let [v (.findInternedVar ^clojure.lang.Namespace (the-ns 'clojure.core) ^clojure.lang.Symbol sym)]
+                     (when (and v (.isPublic v)) v)))
+   :interned-var (fn [ns-sym sym]
+                   (when-let [n (find-ns ns-sym)] (.findInternedVar ^clojure.lang.Namespace n ^clojure.lang.Symbol sym)))
+   :current-ns (fn [] (ns-name *ns*))
    :macro-var? (fn [v] (.isMacro ^clojure.lang.Var v))
    :mark-macro! (fn [v] (.setMacro ^clojure.lang.Var v) v)
    :var-raw-root (fn [v] (.getRawRoot ^clojure.lang.Var v))
@@ -37,6 +43,11 @@
    :var-bound? (fn [v] (bound? v))
    :var-thread-bound? (fn [v] (thread-bound? v))
    :lazy-seq (fn [f] (clojure.lang.LazySeq. f))
+   ;; an ArrayChunk is no coll reduce walks: IChunk.reduce does
+   :chunks (fn [] {:chunked-seq? chunked-seq? :chunk-first chunk-first :chunk-rest chunk-rest :chunk-next chunk-next
+                   :chunk-buffer chunk-buffer :chunk-append chunk-append :chunk chunk :chunk-cons chunk-cons
+                   :chunk? (fn [x] (instance? clojure.lang.IChunk x))
+                   :chunk-reduce (fn [c f init] (.reduce ^clojure.lang.IChunk c f init))})
    :delay (fn [f] (clojure.lang.Delay. f))
    :exception? (fn [x] (instance? Throwable x))
    :nano-time (fn [] (System/nanoTime))
@@ -51,7 +62,7 @@
    :format (fn [fmt & args] (apply format fmt args))
    :sort-array! (fn [arr cmp] (java.util.Arrays/sort arr cmp) arr)
    :close! (fn [x] (.close x))
-   :index-of (fn [s sub from] (.indexOf s sub (int from)))
+   :index-of (fn [s sub from] (.indexOf ^String s ^String sub (int from)))
    :transient? (fn [x] (instance? clojure.lang.ITransientCollection x))
    :lazy-seq? (fn [x] (instance? clojure.lang.LazySeq x))
    :atom? (fn [x] (instance? clojure.lang.Atom x))

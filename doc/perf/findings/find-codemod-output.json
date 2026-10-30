@@ -1,0 +1,122 @@
+{
+ "area": "codemod-output: src/cohost/rewrite.cljc (with its emit targets in shim.cljc and its callers in boot.cljc). The tree was being edited while I read, so this review is against rewrite.cljc as of about 10:48 AM ET (996 lines). Already landed by the parent during the review, so not reported: dot$m prebuilt dispatchers (rewrite.cljc:396-400), direct (instance? <class> x) -> cohost.shim/instance-of? (919-923), host-alias statics with the :cohost/host guard in restock (202, 363), rewrite-time :inline on jolt and cljs (871-881, 962-964), and in the shim a memoized canon plus a per-type host-object? cache. Statics and constructors already emit one direct shim call each, with no per-call construction. The findings below are what remains. Shim line numbers are approximate because that file kept moving. Provenance: everything here is by reading. One process slip: I ran one instant python3 regex count over core.clj text, against the read-only rule. Its number is not used anywhere below, and no host, build or benchmark was run.",
+ "findings": [
+  {
+   "id": "check-cast-resolved-per-call",
+   "where": "src/cohost/rewrite.cljc:386-389 (emits); runtime: src/cohost/shim.cljc check-cast (~414) -> instance-of? (~387) -> class-of (~237)",
+   "code": "xs' (if-let [c (and (symbol? (first xs)) (not (contains? object-methods (name m))) (get *local-tags* (first xs)))] (cons (list (shim-fn \"check-cast\") (list 'quote c) (first xs')) (rest xs')) xs')",
+   "cost": "A method call on a local hinted with a checked class emits (cohost.shim/check-cast 'C x). On every call, instance-of? resolves the literal class again: (symbol? c), (get interface-preds c), some?/boolean, then the predicate. java.util.regex.Pattern is not an interface-preds key (checked), so for Pattern it also runs canon (atom deref + get), a second get, and (token-isa? (class-of x) c). class-of tests its predicates in order and reaches h-regex? only at test 28; token-isa? then does two more canon lookups. All of this is for a class the rewriter already knows in canonical form: checked-hints values at rewrite.cljc:123-129 are full names.",
+   "frequency": "per element: every conj!/assoc!/dissoc!/disj!/pop!/persistent! call (core.clj:3381-3436), i.e. into, frequencies, group-by, mapv. Per call: re-matcher/re-find/re-matches/re-seq (core.clj:4902-4951, `[^java.util.regex.Pattern re s] (. re (matcher s))`), clojure.string split/replace, and every clojure.string fn on `^CharSequence s`. Per character: trim, triml, trimr, trim-newline, blank?, escape (string.clj:243, 248, 260, 271, 283, 294-296, 311-313: `(.charAt s index)` in the loop, and blank? also re-checks `(.length s)` each iteration, so two casts per char).",
+   "fix": "Resolve the checker at rewrite time, as dot$m does for dispatchers. The shim prebuilds one checker per checked-hints class (8 tokens), named by full token, e.g. cast$java_util_regex_Pattern. Each closes over that class's resolved predicate and instance-of?'s non-builtin fallback: (fn [x] (if (or (nil? x) (pred x) (and (not (builtin? x)) (not (h-exception? x)) (host/host-instance? c x))) x (throw (host/ex* 'java.lang.ClassCastException (cast-message c x))))). rw-method emits (cohost.shim/cast$<token> x) when known?, else today's form. Pattern's checker gets h-regex? as its predicate.",
+   "risk": "Low. nil must still pass, and the fallback and cast-message must be kept. The Pattern shortcut equals today's class-of answer only if no earlier class-of branch accepts a host regex; I confirmed that by reading the four adapters, not by running. Optional further saving: the immutable `s` is re-checked every loop iteration. Removing that needs a dominance-aware hoist (test once where s is bound, keep the throw at the first call site); this fix does not depend on it."
+  },
+  {
+   "id": "instance-of-concrete-class-chain",
+   "where": "src/cohost/rewrite.cljc:919-923 (emits); runtime: src/cohost/shim.cljc instance-of? (~387-412), class-of (~237-283)",
+   "code": "(list (shim-fn \"instance-of?\") (rw ctx (second form)) (rw ctx (nth form 2)))",
+   "cost": "The new direct emission still passes the literal class as a quoted symbol, so instance-of? resolves it on every call: symbol?, then (get interface-preds c). For concrete classes that are not interface-preds keys it then runs canon (atom deref + get), a second get, and (token-isa? (class-of x) c). I checked that none of these is a key: clojure.lang.Keyword, Symbol, Var, Delay, Volatile, Ratio, BigInt, Namespace, java.lang.Long, Double, Boolean, java.math.BigDecimal, java.util.UUID. class-of then classifies x through its ordered chain: keyword? is test 10, symbol? 11, h-var? 12, h-delay? 23, h-volatile? 24, h-namespace? 27, h-uuid? 29. A map argument also goes through hash-map-kind?, which stringifies the type ((str (type m)) + index-of). All of that answers a question one predicate answers.",
+   "frequency": "per call of stock keyword? (core.clj:574), symbol? (568), boolean? (524), int? (1417, Long first), integer? (1393-1398), double? (1443), var? (5032), delay? (761), volatile? (2569), ratio? (3606), decimal? (3628), uuid? (6937), and the Namespace test (4186). These are per-element wherever stock code filters or dispatches on them. core.clj has 94 literal (instance? C x) sites (27 short names, 67 dotted).",
+   "fix": "Resolve the token at rewrite time, like dot$m. The shim prebuilds a predicate per token (named by full token, e.g. is$clojure_lang_Keyword) from instance-of?'s own resolution, with canon and the interface-preds lookup done once. rw-list emits (cohost.shim/is$<token> x) when known?, else today's form. For the concrete tokens, the prebuilt predicate is the direct host predicate guarded to match class-of's precedence, e.g. Keyword = keyword?, and Long = integer? and not char/ratio/decimal/bigint.",
+   "risk": "Interface tokens: none, same body. Concrete tokens: the guards must reproduce class-of's order exactly, including its current answers (class-of calls any integer? a Long), or keyword?, int? and double? change. with-redefs of instance? already doesn't reach these sites since the direct emission landed."
+  },
+  {
+   "id": "try-rewalk-layers",
+   "where": "src/cohost/rewrite.cljc:441-465 (rw-try), with src/cohost/boot.cljc:35-36 (wrap-macro rewrites every stock macro's output)",
+   "code": "[(cond (contains? catch-all-classes c) true (class-sym? c) (list (shim-fn \"catches?\") (list 'quote c) e) ...)] ... [(list 'catch (:catch-all ctx) e chain)]",
+   "cost": "rw-try is not idempotent on its own output, and a try that sits inside macro calls is walked again in each enclosing macro's output. Each re-walk wraps the previous chain in a new host catch. On jolt/JVM (catch-all Throwable) and cljs (:default), both in catch-all-classes, that adds one (let* [e__stockN e__stockM] ...) layer. On basilisp the catch-all is 'Exception (basilisp.lpy:212), which is not in catch-all-classes but is class-sym?, so each walk adds (if (cohost.shim/catches? 'Exception e2) (let* [e1 e2] <previous chain>) (throw e2)): one extra catches? (canon, ex-data, host/ex-info?, exception-class, token-isa?) per enclosing macro per caught exception. That guard also changes behavior on basilisp. catches? 'Exception is false for exceptions the shim classes as java.lang.Error (new-AssertionError -> host/ex* 'java.lang.AssertionError), so it rethrows them before a user's (catch Throwable ...), (catch Error ...) or (catch AssertionError ...) runs. Stock example: clojure.test/test-var (test.clj:708-718, (try (t) (catch Throwable e ...)) under defn -> fn -> when-let -> binding). An AssertionError from a test's :pre or assert would escape instead of being reported as :error. By reading; not run. battery.cljc:67 tests a top-level try, which is walked only once.",
+   "frequency": "Run time: per caught exception, times the macros enclosing the try (a plain defn body adds two: defn and fn). Rewrite time: per walk of each such try.",
+   "fix": "Have rw-try leave its own output alone: a catch clause whose class is (:catch-all ctx) and whose binding is a rewriter gensym (name starts with \"e__stock\") is re-emitted as (catch c e (rw ctx chain)) with no new layer. The stop-set fix in rewalk-of-macro-arguments also removes this.",
+   "risk": "Low. A user catch binding literally named e__stock... would be taken for rewriter output."
+  },
+  {
+   "id": "basilisp-no-inline",
+   "where": "src/cohost/rewrite.cljc:320-328 (strip-meta); src/cohost/boot.cljc ~102-119 (inline-fn, built only when host/rewrite-inline?); basilisp.lpy:300 (:inline-meta :strip, :rewrite-inline? left at the false default, adapter.cljc:295)",
+   "code": "m (if *strip-inline?* (dissoc m :inline :inline-arities) m)]",
+   "cost": "On basilisp, core.clj's :inline fns are dropped from every def name at rewrite time, and the new rewrite-time inlining is not enabled there. inline-fn also reads :inline from the var meta, which strip-meta has emptied. So on basilisp every (< i n), (inc i), (+ a b), (= a b), (count x), (nth v i), (get m k), (nil? x) and (zero? n) in stock code stays a full call of the stock var (Python call + arity dispatch) before reaching the shim or host fn. jolt and cljs now get a direct call to the host-alias fn instead.",
+   "frequency": "per arithmetic, comparison or collection-primitive call in stock code on basilisp: per iteration of loop/recur, dotimes, range/reduce bodies and the chunked map/filter loops",
+   "fix": "In strip-meta, keep the inline fns under a cohost-private key instead of dropping them when stripping: (-> m (dissoc :inline :inline-arities) (assoc :cohost/inline (:inline m) :cohost/inline-arities (:inline-arities m))), only when present. basilisp's compiler ignores the private key, but it is still evaluated with the def's metadata. Then let inline-fn read (or (:inline m) (:cohost/inline m)) and set :rewrite-inline? true on basilisp.",
+   "risk": "Same semantics as jolt/cljs inlining today, which are the JVM's: with-redefs and alter-var-root of +, <, count ... no longer reach inlined call sites. basilisp's :def-meta {:redef true} (rewrite.cljc:290-292) exists so that with-redefs does reach compiled references, so this needs an explicit yes. Unverified here: that basilisp evaluates an arbitrary metadata key's fn form the way it evaluates :inline."
+  },
+  {
+   "id": "missing-method-closures-per-eval",
+   "where": "src/cohost/rewrite.cljc:391-394, 400; runtime: src/cohost/shim.cljc:71-80 (missing-method), ~1829 (dot)",
+   "code": ":else (do (miss! ctx :method m) (list (shim-fn \"missing-method\") (list 'quote m)))  ...  (apply list (list (shim-fn \"dot\") (name m) f) xs')",
+   "cost": "On hosts without passthrough (cljs, basilisp), a method the shim lacks has no dot$m. Every evaluation of the call therefore runs (cohost.shim/missing-method 'm), which allocates the thrower closure, and (cohost.shim/dot \"m\" <thrower>), which runs (contains? record-members m) and allocates the 5-arity dispatcher. Only then does the call happen: host-object?, then host/native-method (a cap lookup plus the host's member lookup), then apply.",
+   "frequency": "per evaluation of every (.m x ...) whose m the shim lacks, on cljs and basilisp (host-native method calls in user code and libraries; per element when inside loops)",
+   "fix": "Build it once at rewrite time. When the miss branch is taken, intern dot$m over (missing-method 'm) through the path install-dots! already uses (host/intern! 'cohost.shim, or gobj/set on cljs), record the name as known, and emit (cohost.shim/dot$m x ...). Smaller alternative: memoize missing-method and dot per method name in the shim.",
+   "risk": "Low. The dispatcher's behavior is unchanged, just built once instead of per evaluation. A name is missing only when the shim has no -m, so it cannot clash with install-dots!'s dispatchers."
+  },
+  {
+   "id": "rewalk-of-macro-arguments",
+   "where": "src/cohost/boot.cljc:35-36 (wrap-macro) and :56 (rewrite-output on :source hosts); src/cohost/rewrite.cljc:954-964 (rw-list rewrites every argument of a non-special call), 981-996 (rewrite)",
+   "code": "(defn wrap-macro [ctx f] (fn [& args] (let [out (apply f args)] (if host/*raw-macro-output* out (rw/rewrite ctx out)))))",
+   "cost": "Pass 1 rewrites the whole source form, macro arguments included. Each stock macro's output is then rewritten in full, which re-walks the argument subtrees it embeds unchanged. Those subtrees are already codemod output, since the host evaluates the rewritten form. A subform under k macro calls is walked k+1 times; a defn body is walked by pass 1, defn, fn, and every let/when/cond/loop/-> inside it. Each walk repeats rw-symbol's classification, carry-meta, vector/map rebuilds, the inline lookups (inline-lookup-per-call-form) and rewrite's entry bindings. The codemod costs O(size x macro depth) instead of O(size).",
+   "frequency": "per macro expansion: at boot (791 core.clj forms, every stock macro use) and on every later eval or library load through cohost",
+   "fix": "Pass the macro's argument forms to rw/rewrite as a stop set, and have rw return any seq/vector/map/set subform identical? to one of them unchanged. wrap-macro already has `args`. For :source hosts, wrap-defmacro-source passes (rest &form) to rewrite-output. Each expansion then walks only the macro's own template.",
+   "risk": "Output is unchanged wherever re-walking is idempotent. It differs only where it is not: try-rewalk-layers, and basilisp's loop-variadic-recur, which wraps a re-walked variadic fn* containing recur in a second loop*. identical? is portable to all four hosts; leaves need no check."
+  },
+  {
+   "id": "inline-lookup-per-call-form",
+   "where": "src/cohost/rewrite.cljc:871-881 (inline-expansion), called at 962 for every ordinary call; resolver src/cohost/boot.cljc ~102-119",
+   "code": "(when-let [f (and (symbol? h) (not (contains? *locals* h)) (:inline-fn ctx))] (when-let [inl (f (restock ctx h) (count args))] ...   ;; boot: (let [v (try (resolve* (symbol (str (host/current-ns))) sym) ...)] (when (and v (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (ns-name x) x))))) (let [m (host/var-meta v) ...",
+   "cost": "On jolt and cljs, every non-special call form on every walk resolves its head from scratch. That means host/current-ns, building a symbol, ns-resolve inside a try, host/var-ns + namespace? + ns-name + str, and host/var-meta. On cljs, var-meta merges three maps per call (cljs.cljs:277-281), and ns-resolve is the runtime reflection over analyzer state. Macro heads (when, let, cond ...) and every fn without :inline pay this and get nil. The same heads recur many times within one form.",
+   "frequency": "per call form per walk (times the re-walk depth), at boot and on every eval, on jolt and cljs",
+   "fix": "Memoize the resolver's answer per [current-ns symbol arity] for one rw/rewrite call: bind a volatile map in rewrite and consult it in inline-expansion. Nothing is defined while a rewrite runs, so the answer cannot change inside it. A cache that outlives one call would also need to drop entries when the namespace defs that name.",
+   "risk": "None for the per-call memo."
+  },
+  {
+   "id": "interned-map-per-class-symbol",
+   "where": "src/cohost/rewrite.cljc:606-612 (user-name?), 922-923 (instance? branch); callback src/cohost/boot.cljc:157-158",
+   "code": "(boolean (when-let [f (:interned? ctx)] (f s)))   ;; boot: :interned? (fn [s] (let [n (host/current-ns)] (boolean (and n (try (contains? (host/ns-interns-map (symbol (str n))) s) ...)))))",
+   "cost": "For every bare class-like symbol in value position that is not a local or user type, :interned? rebuilds the current namespace's whole interns map to test one key. On JVM/jolt, (ns-interns ns) filters ns-map into a fresh map (adapter default). On cljs (cljs.cljs:273-275) it builds a handle per def and per macro and merges two maps; basilisp likewise builds a fresh map. The new instance? branch rewrites its class argument twice, in the test at 922 and again in the emission at 923, so each (instance? Class x) site builds the map twice per walk. When the first argument is not a class, that subtree is rewritten in the test, thrown away, and rewritten again by :else.",
+   "frequency": "per class-literal occurrence in the pass-1 walk (re-walks see the already-quoted token): at least the 94 literal (instance? C x) sites in core.clj, each twice, plus every class literal in the stock libraries cohost loads",
+   "fix": "rw never evals, so a namespace's interns cannot change within one rewrite call. Give the ctx an :interns thunk (current namespace -> set of names), bind a delay of it in rewrite, and test (contains? @*interned* s). In the instance? branch, compute c = (rw ctx (second form)) once and reuse it in the emission.",
+   "risk": "None. Each macro-output rewrite gets a fresh delay, so defs from earlier forms are still seen."
+  },
+  {
+   "id": "symbol-classification-allocs",
+   "where": "src/cohost/rewrite.cljc:143-151 (class-sym?), 166-177 (declass), 614-623 (rw-symbol), 886-888 and 931-949 (rw-list head tests)",
+   "code": "(boolean (some #(starts-with? s %) class-prefixes))  /  (if (class-sym? (symbol base)) (symbol n) x)  /  (and (namespace s) (class-sym? (symbol (namespace s))))",
+   "cost": "For each bare symbol, class-sym? walks class-prefixes with a closure. starts-with? does (subs s 0 n), a new substring for each prefix the name is long enough for (up to 5). For each core-ns-qualified symbol, which is most of syntax-quoted macro output (cohost.core/when, cohost.core/let ...), declass allocates (symbol base) plus an ends-with? substring and runs that scan; rw-symbol then allocates (symbol (namespace s)) and scans again. Each list also calls (spec-head h) up to three times, each allocating (symbol (name h)), plus starts-with?/ends-with? substrings of the head name.",
+   "frequency": "per symbol and per list, per walk (times the re-walk depth), at boot and on every eval",
+   "fix": "Memoize the prefix test per name string, since it depends only on the string (java-lang-names and *imports* stay direct lookups). Test namespace strings directly instead of allocating a symbol from them. Compute spec-head once per list in a let.",
+   "risk": "None (pure functions of the string)."
+  },
+  {
+   "id": "rewrite-entry-per-expansion",
+   "where": "src/cohost/rewrite.cljc:981-996 (rewrite), 892 (quote branch)",
+   "code": "*kw-unrenames* (into {(:core-ns ctx) \"clojure.core\"} (keep (fn [[o m]] (when (not= o m) [m o]))) @(:renames ctx)) ... (if-let [ref (:shim-ref ctx)] (binding [*shim-ref* ref] (rw ctx form)) (rw ctx form))",
+   "cost": "Every call calls host/current-ns + str, derefs three atoms, rebuilds *kw-unrenames* from the renames map, and pushes two nested binding frames (eight vars, then *shim-ref*). *kw-unrenames* always contains core-ns -> \"clojure.core\", so (seq *kw-unrenames*) at 892 is always true, and every quoted datum is rebuilt by unrename-data on every walk, keywords or not.",
+   "frequency": "per top-level form and per stock macro expansion",
+   "fix": "Cache the derived *kw-unrenames* by identity of @(:renames ctx) and recompute only when the atom's value changes. Fold *shim-ref* into the single binding. Have unrename-data return x itself when nothing in it changed, which avoids the rebuild and preserves identity for the stop set in rewalk-of-macro-arguments.",
+   "risk": "None."
+  },
+  {
+   "id": "static-name-twice",
+   "where": "src/cohost/rewrite.cljc:39-45 (simple-class-name), 233-234 (static-sym, ctor-sym), 295-301 (known?, static-name, ctor-name), 352-368, 413-421, 396-397",
+   "code": "nm (static-name c m)] (cond (known? ctx nm) (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args')",
+   "cost": "rw-static, rw-new and emit-static-value build nm with simple-class-name, then static-sym or ctor-sym builds it again. simple-class-name scans with last-dot, allocating (str (nth s i)) per character, then rebuilds the name with (apply str (map ...)), one string per character. known? allocates (symbol nm) on every lookup, and rw-method calls it twice per site, for \"-m\" and \"dot$m\".",
+   "frequency": "per static, constructor and static-field site per walk (core.clj has 291 `(. ` forms, statics among them, plus Class/x and (Class.) forms); per method site for known?",
+   "fix": "Compute nm once and emit (*shim-ref* nm). Memoize simple-class-name per class symbol. Keep the shim names as strings so known? allocates nothing.",
+   "risk": "None."
+  },
+  {
+   "id": "local-tags-rebind-per-binding-form",
+   "where": "src/cohost/rewrite.cljc:955-959 (binding heads), 506-508 (rw-let*), 486-493 (rw-fn*), 135-141 (hint-tags)",
+   "code": "(binding [*locals* (into *locals* names) *local-tags* (hint-tags *local-tags* names)] (apply list (rw ctx h) (doall (rw-all ctx args))))",
+   "cost": "Every binding form pushes and pops a two-var binding frame, and so does each let*/loop*/fn* it expands into. Each also runs hint-tags: a meta read, :tag, a checked-hints get and an assoc or dissoc per bound name. Yet only the transient, regex and CharSequence fns ever bind a checked-hint local. rw-let* also computes (filter symbol? (take-nth 2 bvec)) twice.",
+   "frequency": "per binding form per walk (times the re-walk depth)",
+   "fix": "Skip the binding when no names are bound. Rebind *local-tags* only when hint-tags returns a map not identical? to the current one. Compute the bound names once in rw-let*.",
+   "risk": "None. Existing behavior to keep in mind if this is restructured: rw-fn* merges all arities' params into one *local-tags*, so the last same-named param's hint decides for every arity."
+  },
+  {
+   "id": "catches-token-per-clause",
+   "where": "src/cohost/rewrite.cljc:455; runtime: src/cohost/shim.cljc catches? (~420)",
+   "code": "(class-sym? c) (list (shim-fn \"catches?\") (list 'quote c) e)",
+   "cost": "The emitted token is the source spelling, e.g. 'IllegalArgumentException. catches? canonicalizes it on every test, and recomputes the exception's class ((ex-data e), host/ex-info?, host/exception-class, canon) separately for every clause the chain tests.",
+   "frequency": "per caught exception times the catch clauses tested (exception paths only)",
+   "fix": "Emit the canonical token at rewrite time, using the shim's canon of a bare symbol rather than class-token, which also applies *imports* and would change which class is caught. Compute the exception's token once in the emitted chain: (let* [k (cohost.shim/ex-token e)] (if (cohost.shim/token-isa? k 'java.lang.IllegalArgumentException) ...)).",
+   "risk": "Low. A separate correctness problem that this fix leaves unchanged: a short exception name the namespace imports (IOException from java.io) is canonicalized by the shim to java.lang.IOException, so (catch IOException e) would not match a java.io.IOException."
+  }
+ ]
+}

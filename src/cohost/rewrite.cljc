@@ -128,6 +128,12 @@
     clojure.lang.ITransientVector clojure.lang.ITransientVector
     clojure.lang.ITransientSet clojure.lang.ITransientSet})
 
+(defn cast-name
+  "The shim's prebuilt checkcast for class token c (shim/install-casts!):
+   java.util.regex.Pattern -> cast$java_util_regex_Pattern."
+  [c]
+  (str "cast$" (apply str (map (fn [ch] (let [ch (str ch)] (if (= "." ch) "_" ch))) (str c)))))
+
 (def ^:private object-methods
   "java.lang.Object's methods: a call of one on a hinted local is no checkcast"
   #{"toString" "hashCode" "equals" "getClass" "notify" "notifyAll" "wait"})
@@ -199,7 +205,7 @@
   "Explicit clojure.core/x references name the booted core; explicit
    references to a stock library booted under another name name that."
   [ctx x]
-  (if-let [ns (and (symbol? x) (namespace x))]
+  (if-let [ns (and (symbol? x) (namespace x) (not (:cohost/host (meta x))) (namespace x))]
     (cond (= "clojure.core" ns) (if (or (and (contains? reader-plumbing (symbol (name x)))
                                              ;; @x after the boot names the stock deref, so
                                              ;; with-redefs of deref reaches it, as on the JVM
@@ -243,9 +249,16 @@
    call that throws (and is reported) when reached."
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
-           record? protocol-var? interned?]
+           record? protocol-var? interned? host-aliases inline-fn]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:shim-names shim-names
+   ;; {shim static name -> the host core's symbol} where the shim's static is
+   ;; the host's own fn: emitted instead, so the host's compiler sees (and may
+   ;; inline) its own +, first, get ...
+   :host-aliases (or host-aliases {})
+   ;; (fn [sym arity]) -> the :inline fn of the core fn sym names, where the
+   ;; host's compiler ignores :inline and the codemod applies it; nil elsewhere
+   :inline-fn inline-fn
    ;; per-namespace facts: a thunk naming the namespace being compiled, an atom
    ;; {ns-name {Short full}} of imports, an atom {orig-ns mapped-ns} of renamed
    ;; stock libraries, and the host's type translation for extend positions
@@ -342,6 +355,13 @@
   "Static fields a program may set!: read through cohost.shim/static-get."
   #{"RT-checkSpecAsserts"})
 
+(defn- imported
+  "c as the namespace being compiled imported it (cohost keeps its own
+   import table: the host namespace imports nothing), for interop left to
+   the host."
+  [c]
+  (get *imports* c c))
+
 (defn- emit-static-value [ctx c m]
   (let [nm (static-name c m)]
     (cond (contains? settable-statics nm) (list (shim-fn "static-get") nm)
@@ -353,20 +373,21 @@
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
         nm (static-name c m)]
-    (cond (known? ctx nm) (apply list (static-sym c m) args')
-          (:passthrough? ctx) (list '. c (apply list m args'))
+    (cond (known? ctx nm) (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args')
+          (:passthrough? ctx) (list '. (imported c) (apply list m args'))
           ;; the head is a call returning the thrower, so the arguments keep the
           ;; positions `(. C (m args))` had: -> and doto insert into them.
           :else (do (miss! ctx :static c m)
                     (apply list (list (shim-fn "missing-static") (list 'quote c) (list 'quote m)) args')))))
 
 (defn- rw-method
-  "(.m target args) -> ((cohost.shim/dot \"m\" f) target args), the head a
-   call returning the dispatcher so the arguments keep the positions the
-   source had (-> and doto insert into them): an object of a type user code
-   defined answers its own member m when it has one; anything else goes to
-   f, the shim's -m (or, when the shim lacks it, a thrower that reports the
-   miss). On a host with a java.* surface of its own, interop the shim
+  "(.m target args) -> (cohost.shim/dot$m target args), the shim's prebuilt
+   dispatcher for m (or ((cohost.shim/dot \"m\" f) target args) where there
+   is none): the head stays one form, so the arguments keep the positions
+   the source had (-> and doto insert into them). An object of a type user
+   code defined answers its own member m when it has one; anything else goes
+   to f, the shim's -m (or, when the shim lacks it, a thrower that reports
+   the miss). On a host with a java.* surface of its own, interop the shim
    lacks is left to the host."
   [ctx m xs host-form]
   ;; xs: the target and the arguments as written — none at all in a
@@ -377,7 +398,11 @@
         ;; clojure.string/upper-case of a keyword is its toString upper-cased)
         xs' (if-let [c (and (symbol? (first xs)) (not (contains? object-methods (name m)))
                             (get *local-tags* (first xs)))]
-              (cons (list (shim-fn "check-cast") (list 'quote c) (first xs')) (rest xs'))
+              (cons (let [d (cast-name c)]
+                      (if (known? ctx d)
+                        (list (shim-fn d) (first xs'))
+                        (list (shim-fn "check-cast") (list 'quote c) (first xs'))))
+                    (rest xs'))
               xs')
         nm (method-name m)
         f (cond (known? ctx nm) (method-sym m)
@@ -385,7 +410,11 @@
                 :else (do (miss! ctx :method m)
                           (list (shim-fn "missing-method") (list 'quote m))))]
     (if f
-      (apply list (list (shim-fn "dot") (name m) f) xs')
+      (let [d (str "dot$" (name m))]
+        (if (known? ctx d)
+          ;; the prebuilt dispatcher (cohost.shim/install-dots!)
+          (apply list (shim-fn d) xs')
+          (apply list (list (shim-fn "dot") (name m) f) xs')))
       ;; the host's own interop, spelled as the source spelled it (a record
       ;; field read by (.f r) is a field there, not a zero-argument method)
       (host-form xs'))))
@@ -404,7 +433,7 @@
     (cond (and (:passthrough? ctx) (not= *current-ns* (:core-ns ctx)) (contains? host-collections (class-token c)))
           (apply list 'new (class-token c) args')
           (known? ctx nm) (apply list (ctor-sym c) args')
-          (:passthrough? ctx) (apply list 'new c args')
+          (:passthrough? ctx) (apply list 'new (imported c) args')
           :else (do (miss! ctx :ctor c)
                     (apply list (list (shim-fn "missing-ctor") (list 'quote c)) args')))))
 
@@ -414,7 +443,10 @@
   (let [target (declass target)
         x (first more)
         call? (seq? x)
-        [m args] (if call? [(first x) (rest x)] [x (rest more)])]
+        [m args] (if call? [(first x) (rest x)] [x (rest more)])
+        ;; a member is named by its name alone, as the JVM compiler reads it: a
+        ;; syntax-quoted inline expansion spells (. RT (cohost.core/aget a i))
+        m (if (and (symbol? m) (namespace m)) (symbol (name m)) m)]
     (cond
       (class-sym? target)
       (if (and (not call?) (empty? args) (contains? static-fields m))
@@ -605,7 +637,8 @@
     ;; a policy replacement names the shim by its qualified symbol
       (and (namespace s) (= shim-ns (namespace s))) (shim-fn (name s))
       (and (namespace s) (class-sym? (symbol (namespace s))))
-      (or (emit-static-value ctx (symbol (namespace s)) (symbol (name s))) s)
+      (or (emit-static-value ctx (symbol (namespace s)) (symbol (name s)))
+          (let [c (symbol (namespace s))] (if (= c (imported c)) s (symbol (str (imported c)) (name s)))))
 
       (and (class-sym? s) (not (user-name? ctx s))) (list 'quote (class-token s))
       :else (carry-meta s s))))
@@ -856,6 +889,18 @@
         (rw-defprotocol ctx form)
         :else (apply list h (rw-specs ctx args))))
 
+(defn- inline-expansion
+  "On a host whose compiler ignores :inline, the codemod applies it as the JVM
+   compiler does: (h args) with h naming a core fn whose :inline covers this
+   arity -> that fn's expansion (then rewritten: (+ a b) becomes the shim's
+   Numbers-add, or the host's own + where the shim's is that). nil otherwise,
+   and for a local named like a core fn."
+  [ctx h args]
+  (when-let [f (and (symbol? h) (not (contains? special-heads h)) (not (contains? *locals* h)) (:inline-fn ctx))]
+    (when-let [inl (f (restock ctx h) (count args))]
+      (try (apply inl args)
+           (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil)))))
+
 (defn- rw-list [ctx form]
   (if (empty? form)
     form
@@ -890,6 +935,13 @@
             (and (symbol? h) (= "instance?" (name h)) (symbol? (second form)) (nil? (namespace (second form)))
                  (protocol-iface ctx (second form)))
             (list (symbol (:core-ns ctx) "satisfies?") (protocol-iface ctx (second form)) (rw ctx (nth form 2)))
+            ;; (instance? SomeClass x) naming a class: the shim's test directly, not
+            ;; core's instance? -> (. c (isInstance x)) -> a dispatcher -> the test
+            (and (symbol? h) (= "instance?" (name h)) (= 3 (count form))
+                 (or (nil? (namespace h)) (contains? core-ns-names (namespace h)))
+                 (not (contains? *locals* h))
+                 (let [c (rw ctx (second form))] (and (seq? c) (= 'quote (first c)) (symbol? (second c)))))
+            (list (shim-fn "instance-of?") (rw ctx (second form)) (rw ctx (nth form 2)))
             ;; (set! (. Class field) v) / (set! Class/field v) on a settable static
             (and (= h 'set!) (let [t (second form)]
                                (or (and (seq? t) (= '. (first t)) (class-sym? (declass (second t))))
@@ -928,7 +980,9 @@
                 (apply list (rw ctx h) (doall (rw-all ctx args)))))
             ;; case: its test constants are read as written by the host's case
             (= hn "case") (rw-case ctx h args)
-            :else (apply list (rw ctx h) (rw-all ctx args)))]
+            :else (if-let [e (inline-expansion ctx h args)]
+                    (rw ctx e)
+                    (apply list (rw ctx h) (rw-all ctx args))))]
       (carry-meta out form))))
 
 (defn rw [ctx form]
