@@ -33,14 +33,20 @@
 ;; macros: rewrite what they emit
 
 (defn wrap-macro [ctx f]
-  (fn [& args] (let [out (apply f args)] (if host/*raw-macro-output* out (rw/rewrite ctx out)))))
+  ;; args: &form, &env, then the macro's own: the expansion is rewritten
+  ;; knowing the locals of &env (a call of a local named like a core fn is no
+  ;; call of the core fn)
+  (fn [& args] (let [out (apply f args)]
+                 (if host/*raw-macro-output* out (rw/rewrite ctx out {:locals (host/env-locals (second args))})))))
 
 (defn ^:export rewrite-output
   "Rewrite a macro's expansion with the current boot's ctx. Hosts whose macro
    fns cannot be replaced after definition (:macro-wrap-style :source) get
    this call compiled into every stock macro's body instead."
-  [form]
-  (if-let [c (and (not host/*raw-macro-output*) (ctx))] (rw/rewrite c form) form))
+  ([form] (rewrite-output form nil))
+  ([form env]
+   ;; env: the macro's &env, whose locals the expansion's rewrite knows
+   (if-let [c (and (not host/*raw-macro-output*) (ctx))] (rw/rewrite c form {:locals (host/env-locals env)}) form)))
 
 (defn- wrap-defmacro-source
   "`(defmacro name doc? attr? params body...)` -> the same macro whose every
@@ -53,7 +59,8 @@
           [attrs more] (if (map? (first more)) [(first more) (rest more)] [nil more])
           arities (if (vector? (first more)) [more] more)
           arities' (map (fn [[params & body]]
-                          (list params (list (host/rewrite-output-ref) (apply list 'do body))))
+                          ;; &env: the locals the expansion's rewrite knows
+                          (list params (list (host/rewrite-output-ref) (apply list 'do body) '&env)))
                         arities)]
       (apply list 'defmacro nm (concat (when doc [doc]) (when attrs [attrs])
                                        (if (vector? (first more)) (first arities') arities'))))))
@@ -69,8 +76,15 @@
       (let [h (first form)]
         (or (not (contains? policy/def-heads h))
             (= 'defmacro h)
-            (let [nm (second form)]
-              (and (symbol? nm) (or (:macro (meta nm)) (contains? policy/setmacro-defined nm))))))))
+            (let [nm (second form)
+                  ;; defn's attr-maps: after the docstring, and at the end
+                  more (nnext form)
+                  more (if (string? (first more)) (rest more) more)]
+              (and (symbol? nm)
+                   (or (:macro (meta nm)) (contains? policy/setmacro-defined nm)
+                       (and (contains? '#{defn defn-} h)
+                            (or (and (map? (first more)) (:macro (first more)))
+                                (and (map? (last more)) (:macro (last more))))))))))))
 
 (defn- scan-macros!
   "Promote `^:macro` defs the host did not treat as macros, and wrap every
@@ -99,11 +113,16 @@
    the plain name is the one a host compiler inlines."
   [shim-names]
   (let [core (host/core-ns-sym)
+        ;; where the host's own compiler applies :inline (the JVM), a host fn
+        ;; with one is not named: its expansion would read *unchecked-math* where
+        ;; the static (Numbers.add) is always checked
+        own-inline? (not (host/rewrite-inline?))
         better? (fn [a b] (let [na (name a) nb (name b)]
                             (or (< (count na) (count nb))
                                 (and (= (count na) (count nb)) (neg? (compare na nb))))))
         by-fn (reduce (fn [m [sym h]]
-                        (let [v (try (when-not (or (host/macro-var? h) (:private (host/var-meta h)))
+                        (let [v (try (when-not (or (host/macro-var? h) (:private (host/var-meta h))
+                                                   (and own-inline? (:inline (host/var-meta h))))
                                        (host/var-root h))
                                      (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]
                           (if (and (fn? v) (or (not (contains? m v)) (better? sym (get m v)))) (assoc m v sym) m)))
@@ -118,25 +137,51 @@
                    :when hs]
                [nm (with-meta (symbol (str core) (str hs)) {:cohost/host true})]))))
 
+(defn- head-resolver
+  "(fn [sym]) -> the var sym names in the namespace being compiled, or nil:
+   the codemod tells a core fn it may inline, and a macro whose expansion it
+   rewrites, from a namespace's own name."
+  []
+  (let [resolve* (or (get (host/core-extras) 'ns-resolve)
+                     (some-> (host/resolve-core 'ns-resolve) host/var-root))]
+    (when resolve*
+      (fn [sym]
+        (try (let [v (resolve* (host/current-ns) sym)] (when (host/var?* v) v))
+             (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))))))
+
+(defn- var-meta*
+  "A resolved var's metadata (a ClojureScript Var object carries its own)."
+  [v]
+  (merge (try (host/var-meta v) (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))
+         (meta v)))
+
+(defn- stock-name
+  "(fn [v]) -> v's name when v is a var of the booted core, else nil."
+  []
+  (let [core (name core-ns)]
+    (fn [v] (when (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (ns-name x) x))))
+              (symbol (name (host/var-sym v)))))))
+
+(defn- rewritten-macro?
+  "Is v a macro whose expansion the codemod rewrites: one cohost wrapped
+   (stock or user), not the host's own?"
+  [v]
+  (let [m (var-meta* v)]
+    (boolean (and (or (:macro m) (host/macro-var? v)) (:cohost/wrapped m) (not (:cohost/host m))))))
+
 (defn- inline-fn
-  "On a host whose compiler ignores :inline: (fn [sym arity]) -> the :inline
-   fn of the core fn sym names in the namespace being compiled, when it
-   covers the arity; else nil."
+  "On a host whose compiler ignores :inline: (fn [v arity]) -> the :inline fn
+   of the core fn v, when it covers the arity; else nil."
   []
   (when (host/rewrite-inline?)
-    (let [resolve* (or (get (host/core-extras) 'ns-resolve)
-                       (some-> (host/resolve-core 'ns-resolve) host/var-root))
-          core (name core-ns)]
-      (when resolve*
-        (fn [sym n]
-          (let [v (try (resolve* (host/current-ns) sym)
-                       (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]
-            (when (and v (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (ns-name x) x)))))
-              (let [m (host/var-meta v)
-                    [f ar] (if (fn? (:inline m))
-                             [(:inline m) (:inline-arities m)]
-                             (get (:inlines @state) (symbol (name (host/var-sym v)))))]
-                (when (and (fn? f) (or (nil? ar) (ar n))) f)))))))))
+    (let [core-name (stock-name)]
+      (fn [v n]
+        (when-let [nm (core-name v)]
+          (let [m (var-meta* v)
+                [f ar] (if (fn? (:inline m))
+                         [(:inline m) (:inline-arities m)]
+                         (get (:inlines @state) nm))]
+            (when (and (fn? f) (or (nil? ar) (ar n))) f)))))))
 
 (defn make-ctx
   "The codemod's context for this host: which shim vars exist, the host's
@@ -159,6 +204,9 @@
                                 (for [c (distinct (vals rw/checked-hints))] [(rw/cast-name c) c])))))]
   (rw/make-ctx {:shim-names shim-names
                 :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
+                :resolve-head (head-resolver)
+                :stock-name (stock-name)
+                :rewritten-macro? rewritten-macro?
                 :inline-fn (inline-fn)
                 :catch-all (host/catch-all-sym)
                 :core-ns (name core-ns)
@@ -309,10 +357,12 @@
                (note-host-dynamic! nm hv)
                (when-let [c (ctx)] (swap! (:host-referred c) conj nm)))
            (let [v (host/intern! core-ns nm (ns-arg-wrap nm (host/var-root hv)))
-                 hm (host/var-meta hv)]
+                 hm (host/var-meta hv)
+                 ;; marked first: ClojureScript moves a macro to its $macros
+                 ;; namespace, where the meta must land
+                 v (if (host/macro-var? hv) (host/mark-macro! v) v)]
              (host/alter-var-meta! v merge (select-keys hm [:doc :arglists :private])
-                                   {:cohost/host true :cohost/wrapped true})
-             (when (host/macro-var? hv) (host/mark-macro! v))))
+                                   {:cohost/host true :cohost/wrapped true})))
          (record! report :host {:name nm})
          true
          (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ false))))))

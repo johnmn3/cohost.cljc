@@ -305,6 +305,9 @@
    ;; namespace: inside cohost.core that + is not basilisp's, so the codemod
    ;; names the shim's statics, not basilisp.core's fns
    :host-aliases? false
+   ;; core.clj's :inline expansions at rewrite time, as the JVM compiler applies
+   ;; them (basilisp's def meta has them stripped: boot captures them)
+   :rewrite-inline? true
    :var-bound? (fn [v] (boolean (.-is-bound v)))
    :dynamic-var? (fn [v] (boolean (or (.-dynamic v) (:dynamic (meta v)))))
    :empty-queue (fn [] (when-let [q (resolve 'basilisp.core/queue)] (q)))

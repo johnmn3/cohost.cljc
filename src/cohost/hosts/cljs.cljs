@@ -653,6 +653,21 @@
    :core-ns 'cljs.core
    ;; cljs.core's own fns standing in for the stock ones (adapter :natives),
    ;; one opt-in each, gated by the battery and the bench's JVM check
+   ;; reduce1's (.reduce (chunk-first s) f val), by index as IChunk.reduce
+   ;; walks: an IntegerRangeChunk is not reducible, and an ArrayChunk's -reduce
+   ;; walks its whole backing array, past its end
+   :chunks (fn [] {:chunked-seq? chunked-seq? :chunk-first chunk-first :chunk-rest chunk-rest
+                   :chunk-next chunk-next :chunk-buffer chunk-buffer :chunk-append chunk-append
+                   :chunk chunk :chunk-cons chunk-cons
+                   :chunk? (fn [x] (implements? IChunk x))
+                   :chunk-reduce (fn [c f init]
+                                   (let [n (count c)]
+                                     (loop [i 0 acc init]
+                                       (if (< i n)
+                                         (let [acc (f acc (nth c i))] (if (reduced? acc) acc (recur (inc i) acc)))
+                                         acc))))})
+   ;; a macro's &env is the analyzer env
+   :env-locals (fn [env] (keys (:locals env)))
    :natives {'clojure.core/frequencies frequencies 'clojure.core/group-by group-by
              'clojure.core/partition partition 'clojure.core/re-seq re-seq
              'clojure.core/sort sort 'clojure.core/sort-by sort-by

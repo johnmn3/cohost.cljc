@@ -90,6 +90,7 @@
    :meta            [['x] "x's metadata map, or nil (the host's meta; basilisp's own meta hands back a reify object's meta method unbound, so its adapter calls it)"]
    :host-type       [['token] "the host type (form) an extend / extend-type / extend-protocol position names for a JVM class token, a vector of them, or nil to keep the class symbol"]
    :user-type?      [['x] "is x an instance of a type user code defined — deftype, defrecord, reify, proxy — rather than the host's own data? (.m x args) in source then reaches x's own member before the shim's method; default false"]
+   :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
    :chunks          [[] "the host's chunked seqs, or nil: {:chunked-seq? :chunk-first :chunk-rest :chunk-next :chunk-buffer :chunk-append :chunk :chunk-cons}, plus :chunk? and :chunk-reduce when the host's reduce cannot walk one of its chunks (the JVM's ArrayChunk). The stock chunked branches (map, filter, concat, doseq, for, reduce1) then run over the host's own chunks; with nil, no host seq is chunked to stock code. Default: the host core's fns of those names, when it has them all"]
@@ -268,6 +269,7 @@
     :host-data? (fn [_] false)
     :natives {}
     :host-aliases? true
+    :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
               (let [fs (into {} (for [n '[chunked-seq? chunk-first chunk-rest chunk-next chunk-buffer chunk-append chunk chunk-cons]]
                                   [(keyword (name n)) (try (some-> ((cap :resolve-core) n) ((cap :var-get)))
@@ -470,6 +472,9 @@
 (defn chunks [] ((cap :chunks)))
 (defn natives [] (or (get @installed :natives) {}))
 (defn host-aliases? [] (boolean (cap :host-aliases?)))
+(defn env-locals "The local symbols of a macro's &env." [env]
+  (try (filter symbol? ((cap :env-locals) env))
+       (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil)))
 (defn empty-queue [] ((cap :empty-queue)))
 
 (defn slurp-file [path] ((cap :slurp) path))

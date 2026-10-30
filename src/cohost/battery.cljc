@@ -133,6 +133,12 @@
    ["a hinted argument is checked (transients, CharSequence)" "[(try (assoc! {:a 1} :b 2) (catch ClassCastException e :cce)) (try (conj! [1] 2) (catch ClassCastException e :cce)) (try (clojure.string/blank? 1) (catch ClassCastException e :cce)) (try (clojure.string/split 1 #\"a\") (catch ClassCastException e :cce)) (persistent! (assoc! (transient {}) :a 1))]" [:cce :cce :cce :cce {:a 1}]]
    ["metadata is a map" "[(try (atom nil :meta 5) (catch ClassCastException _ :cce)) (meta (atom nil :meta {:a 1}))]" [:cce {:a 1}]]
    ["String.replace of nil" "(try (clojure.string/replace \"a\" \"a\" nil) (catch NullPointerException e :npe))" :npe]
+   ;; perf passes (expected values: JVM 1.12.0)
+   ["reduce1 over the host's chunked seqs" "[(apply + (range 10)) (reverse (range 5)) (reverse (filter odd? [1 2 3 4 5])) (apply max (filter pos? [3 -1 5 2])) (apply + (filter even? (range 10)))]" [45 '(4 3 2 1 0) '(5 3 1) 5 20]]
+   ["an inline fn applies after macroexpansion" "[(-> 10 (- 1 2)) (-> 100 (/ 2 5)) (-> 1 (max 3 5)) (->> 2 (- 10)) ((fn [inc x] (inc x)) #(* 10 %) 5) (let [compare (fn [a b] :mine)] (compare 1 2)) (let [inc dec] (when true (inc 5)))]" [7 10 5 8 50 :mine 4]]
+   ["assert sees the source form" "(try (assert (= 3 (count [1 2]))) (catch Throwable e (ex-message e)))" "Assert failed: (= 3 (count [1 2]))"]
+   ["a record field named like a core fn" "(do (defprotocol BtStep (bt-run [s x])) (defrecord BtScale [inc] BtStep (bt-run [_ x] (inc x))) (bt-run (->BtScale #(* 10 %)) 5))" 50]
+   ["multimethod: a miss is not cached" "(do (derive ::bt-dog ::bt-animal) (defmulti bt-speak identity) (defmethod bt-speak [::bt-animal] [_] :generic) [(try (bt-speak (list ::bt-dog)) (catch IllegalArgumentException e :none)) (bt-speak [::bt-dog])])" [:none :generic]]
    ["macroexpand-1 is the macro's own expansion" "(do (defmacro bt-mx [x] `(.toString ~x)) (macroexpand-1 '(bt-mx 5)))" '(.toString 5)]
    ["namespace-munge and uri?" "[(namespace-munge 'a-b.c-d) (uri? \"http://x\")]" ["a_b.c_d" false]]
    ["intern" "(do (intern *ns* 'bt-interned 42) (var-get (resolve 'bt-interned)))" 42]

@@ -971,10 +971,12 @@
         (if e
           (val e)
           (let [m (mf-find-method st dv)]
-            (swap! state update :cache (fn [c'] (if (identical? c' c) (assoc-in c [:table dv] m) c')))
+            ;; a miss is not cached, as the JVM's findAndCacheBestMethod: an
+            ;; equal dispatch value may still isa? its way to a method
+            (when m (swap! state update :cache (fn [c'] (if (identical? c' c) (assoc-in c [:table dv] m) c'))))
             m)))
       (let [m (mf-find-method st dv)]
-        (swap! state assoc :cache {:methods (:methods st) :prefers (:prefers st) :h h :table {dv m}})
+        (swap! state assoc :cache {:methods (:methods st) :prefers (:prefers st) :h h :table (if m {dv m} {})})
         m))))
 
 (def new-MultiFn

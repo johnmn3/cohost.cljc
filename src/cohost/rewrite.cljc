@@ -249,15 +249,22 @@
    call that throws (and is reported) when reached."
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
-           record? protocol-var? interned? host-aliases inline-fn]
+           record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:shim-names shim-names
    ;; {shim static name -> the host core's symbol} where the shim's static is
    ;; the host's own fn: emitted instead, so the host's compiler sees (and may
    ;; inline) its own +, first, get ...
    :host-aliases (or host-aliases {})
-   ;; (fn [sym arity]) -> the :inline fn of the core fn sym names, where the
-   ;; host's compiler ignores :inline and the codemod applies it; nil elsewhere
+   ;; resolve-head: (fn [sym]) -> the var a head symbol names in the namespace
+   ;; being compiled; stock-name: (fn [var]) -> its name when it is a var of the
+   ;; booted core; rewritten-macro?: (fn [var]) is it a macro whose expansion the
+   ;; codemod rewrites (its arguments then stay as written); inline-fn:
+   ;; (fn [var arity]) -> the :inline fn of a core fn, where the host's compiler
+   ;; ignores :inline and the codemod applies it (nil elsewhere)
+   :resolve-head resolve-head
+   :stock-name (or stock-name (constantly nil))
+   :rewritten-macro? (or rewritten-macro? (constantly false))
    :inline-fn inline-fn
    ;; per-namespace facts: a thunk naming the namespace being compiled, an atom
    ;; {ns-name {Short full}} of imports, an atom {orig-ns mapped-ns} of renamed
@@ -479,8 +486,9 @@
                   clauses (map (fn [[_ c b & cb]]
                                  (let [c (declass c)]
                                    [(cond (contains? catch-all-classes c) true
-                                          ;; a JVM class: the shim's class test
-                                          (class-sym? c) (list (shim-fn "catches?") (list 'quote c) e)
+                                          ;; a JVM class: the shim's class test, of the class
+                                          ;; the namespace imported under that name
+                                          (class-sym? c) (list (shim-fn "catches?") (list 'quote (imported c)) e)
                                           ;; a host class (js/Error, a record): the host's instance?
                                           :else (list 'instance? c e))
                                     (apply list 'let* [b e] (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb))))]))
@@ -676,6 +684,19 @@
     [t]))
 
 
+(defn- bound-syms
+  "The symbols a params or fields vector binds, destructuring included (one
+   too many only keeps a call from being inlined)."
+  [params]
+  (remove #{'&} (filter symbol? (tree-seq coll? seq params))))
+
+(defn- rw-body
+  "body rewritten with the symbols params binds as locals: a field or method
+   parameter named like an inline core fn (inc, compare) is no call of it."
+  [ctx params body]
+  (binding [*locals* (into *locals* (bound-syms params))]
+    (doall (rw-all ctx body))))
+
 (defn- rw-method-impls
   "`(m [params] body...)` or `(m ([params] body...) ...)`: bodies rewritten;
    on a per-arity host, one clause per arity. -> a seq of clauses."
@@ -683,11 +704,11 @@
   (if (and (seq? x) (symbol? (first x)))
     (let [[m & arities] x]
       (if (vector? (first arities))
-        [(apply list m (first arities) (rw-all ctx (rest arities)))]
-        (let [as (map (fn [a] (if (and (seq? a) (vector? (first a)))
-                                (apply list (first a) (rw-all ctx (rest a)))
-                                a))
-                      arities)]
+        [(apply list m (first arities) (rw-body ctx (first arities) (rest arities)))]
+        (let [as (mapv (fn [a] (if (and (seq? a) (vector? (first a)))
+                                 (apply list (first a) (rw-body ctx (first a) (rest a)))
+                                 a))
+                       arities)]
           (if *per-arity-impls*
             (map (fn [a] (apply list m a)) as)
             [(apply list m as)]))))
@@ -762,7 +783,7 @@
    destructuring parameter moves into a let: the host's method parameters
    are plain symbols."
   [ctx [m params & body]]
-  (let [body (rw-all ctx body)]
+  (let [body (rw-body ctx params body)]
     (if (:python-methods? ctx)
       (let [[ps bs] (plain-params params)]
         (if (seq bs)
@@ -890,12 +911,44 @@
 (defn- rw-spec-form [ctx [h & args :as form]]
   (cond (or (= h 'deftype) (= h 'defrecord))
         (do (when (symbol? (first args)) (swap! (:user-types ctx) conj (first args)))
-            (apply list h (first args) (second args) (rw-specs ctx (nnext args))))
+            ;; the fields are locals in every method body
+            (apply list h (first args) (second args)
+                   (binding [*locals* (into *locals* (bound-syms (second args)))]
+                     (doall (rw-specs ctx (nnext args))))))
         (= h 'proxy)
         (apply list h (mapv #(get *imports* % %) (first args)) (rw ctx (second args)) (rw-specs ctx (nnext args)))
         (and (= h 'defprotocol) (:python-methods? ctx))
         (rw-defprotocol ctx form)
         :else (apply list h (rw-specs ctx args))))
+
+(def ^:dynamic *heads*
+  "One rewrite's memo of what head symbols resolve to (nothing is defined while
+   a rewrite runs)."
+  nil)
+
+(defn- head-var
+  "The var the head symbol h names in the namespace being compiled, or nil
+   (also for a local, a special form, or a host without the resolver)."
+  [ctx h]
+  (when-let [f (and (symbol? h) (not (contains? special-heads h)) (not (contains? *locals* h)) (:resolve-head ctx))]
+    (let [c *heads*]
+      (if-let [e (and c (find @c h))]
+        (val e)
+        (let [v (f (restock ctx h))]
+          (when c (vswap! c assoc h v))
+          v)))))
+
+(defn- stock-name
+  "The name of the stock core var h names, or nil (a local, or a namespace's
+   own var of that name)."
+  [ctx h]
+  (when-let [v (head-var ctx h)] ((:stock-name ctx) v)))
+
+(defn- rewritten-macro?
+  "Does h name a macro whose expansion the codemod rewrites (a stock or user
+   macro, not the host's own)?"
+  [ctx h]
+  (when-let [v (head-var ctx h)] ((:rewritten-macro? ctx) v)))
 
 (defn- inline-expansion
   "On a host whose compiler ignores :inline, the codemod applies it as the JVM
@@ -904,10 +957,11 @@
    Numbers-add, or the host's own + where the shim's is that). nil otherwise,
    and for a local named like a core fn."
   [ctx h args]
-  (when-let [f (and (symbol? h) (not (contains? special-heads h)) (not (contains? *locals* h)) (:inline-fn ctx))]
-    (when-let [inl (f (restock ctx h) (count args))]
-      (try (apply inl args)
-           (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil)))))
+  (when-let [f (:inline-fn ctx)]
+    (when-let [v (head-var ctx h)]
+      (when-let [inl (f v (count args))]
+        (try (apply inl args)
+             (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))))))
 
 (defn- rw-list [ctx form]
   (if (empty? form)
@@ -948,6 +1002,8 @@
             (and (symbol? h) (= "instance?" (name h)) (= 3 (count form))
                  (or (nil? (namespace h)) (contains? core-ns-names (namespace h)))
                  (not (contains? *locals* h))
+                 ;; the stock instance?, not a namespace's own
+                 (or (nil? (:resolve-head ctx)) (= 'instance? (stock-name ctx h)))
                  (let [c (rw ctx (second form))] (and (seq? c) (= 'quote (first c)) (symbol? (second c)))))
             (list (shim-fn "instance-of?") (rw ctx (second form)) (rw ctx (nth form 2)))
             ;; (set! (. Class field) v) / (set! Class/field v) on a settable static
@@ -980,6 +1036,13 @@
               (if (and (empty? args) (contains? static-fields m))
                 (or (emit-static-value ctx c m) (apply list h args))
                 (rw-static ctx c m args)))
+            ;; a macro whose expansion the codemod rewrites (a stock or user
+            ;; macro, not the host's): its arguments stay as written, and are
+            ;; rewritten once, in the expansion, knowing the locals around them
+            ;; (&env) and the arity they end at, as the JVM compiler inlines
+            ;; after macroexpansion ((-> 10 (- 1 2)), is and assert see the forms)
+            (rewritten-macro? ctx h)
+            (apply list (rw ctx h) args)
             ;; a binding form before it expands: what it binds are locals
             (and hn (contains? binding-heads hn))
             (let [names (bound-names hn args)]
@@ -1008,18 +1071,23 @@
     :else form))
 
 (defn rewrite
-  "The codemod: form -> form the host can compile against cohost.shim."
-  [ctx form]
-  (let [cur (when-let [f (:current-ns ctx)] (str (f)))]
-    (binding [*strip-inline?* (boolean (:strip-inline? ctx))
-              *current-ns* cur
-              *imports* (get @(:imports ctx) cur {})
-              *ns-renames* @(:renames ctx)
-              *loader-nses* @(:loader-nses ctx)
-              *per-arity-impls* (:per-arity-impls? ctx)
-              *kw-unrenames* (into {(:core-ns ctx) "clojure.core"}
-                                   (keep (fn [[o m]] (when (not= o m) [m o]))) @(:renames ctx))
-              *host-type* (:host-type ctx)]
-      (if-let [ref (:shim-ref ctx)]
-        (binding [*shim-ref* ref] (rw ctx form))
-        (rw ctx form)))))
+  "The codemod: form -> form the host can compile against cohost.shim.
+   opts :locals — the local names in scope (a macro expansion's, from its
+   &env)."
+  ([ctx form] (rewrite ctx form nil))
+  ([ctx form {:keys [locals]}]
+   (let [cur (when-let [f (:current-ns ctx)] (str (f)))]
+     (binding [*locals* (into #{} locals)
+               *heads* (volatile! {})
+               *strip-inline?* (boolean (:strip-inline? ctx))
+               *current-ns* cur
+               *imports* (get @(:imports ctx) cur {})
+               *ns-renames* @(:renames ctx)
+               *loader-nses* @(:loader-nses ctx)
+               *per-arity-impls* (:per-arity-impls? ctx)
+               *kw-unrenames* (into {(:core-ns ctx) "clojure.core"}
+                                    (keep (fn [[o m]] (when (not= o m) [m o]))) @(:renames ctx))
+               *host-type* (:host-type ctx)]
+       (if-let [ref (:shim-ref ctx)]
+         (binding [*shim-ref* ref] (rw ctx form))
+         (rw ctx form))))))

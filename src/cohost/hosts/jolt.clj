@@ -35,7 +35,10 @@
    :namespace? (fn [x] (instance? clojure.lang.Namespace x))
    :var-bound? (fn [v] (bound? v))
    :var-thread-bound? (fn [v] (thread-bound? v))
-   :lazy-seq (fn [f] (clojure.lang.LazySeq. f))
+   ;; what jolt's own lazy-seq expands to, not (clojure.lang.LazySeq. f): no
+   ;; host-new lookup and apply per lazy seq, and a body that throws runs again
+   ;; on the next force, as the JVM's LazySeq does
+   :lazy-seq (fn [f] (make-lazy-seq (^{:once true} fn* [] (coll->cells (f)))))
    :delay (fn [f] (clojure.lang.Delay. f))
    :exception? (fn [x] (instance? Throwable x))
    :nano-time (fn [] (System/nanoTime))
@@ -58,8 +61,10 @@
    :rewrite-inline? true
    ;; jolt's own predicates are one record or tag test each; its class walks the
    ;; registered class arms (0.3 µs for a transient, an atom)
-   :host-data? (fn [x] (or (transient? x) (atom? x) (fn? x) (string? x) (number? x)
-                          (keyword? x) (symbol? x) (boolean? x) (vector? x)))
+   ;; (not vector? or fn?: jolt answers both for a deftype that implements
+   ;; IPersistentVector or Fn, whose own members must still answer)
+   :host-data? (fn [x] (or (transient? x) (atom? x) (string? x) (number? x)
+                          (keyword? x) (symbol? x) (boolean? x)))
    :lazy-seq? (fn [x] (instance? clojure.lang.LazySeq x))
    :atom? (fn [x] (instance? clojure.lang.Atom x))
    :volatile? (fn [x] (volatile? x))
