@@ -1,0 +1,50 @@
+;; cohost: boot the stock clojure/core.clj inside a clojure-like.
+;; Each task installs that host's adapter (src/cohost/hosts/), boots
+;; core.clj, prints the boot report, and runs the behavior battery
+;; (src/cohost/battery.cljc) in a namespace that sees only the booted core.
+{:tasks
+ {boot:jolt {:doc "jolt (Chez Scheme): the `jolt` binary on PATH"
+             :task (shell "jolt" "-Scp" "src" "-m" "cohost.run")}
+  boot:lpy  {:doc "basilisp (Python): the uv/pip-installed `basilisp` on PATH"
+             :task (shell "basilisp" "run" "-p" "src" "-c" "(require 'cohost.run) (cohost.run/-main)")}
+  boot:jvm  {:doc "JVM Clojure as the host (the reference adapter)"
+             :task (shell "clojure" "-M" "-m" "cohost.run")}
+  boot:cljs {:doc "ClojureScript, self-hosted on Node: compile the bootstrap build, then run it"
+             :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c")
+                       (shell "node" "target/cljs-node/main.js"))}
+  boot:browser {:doc "ClojureScript, self-hosted in Chromium: compile the browser build, serve it, run it under Playwright"
+                :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-browser.edn" "-c")
+                          (shell "python3" "-I" "dev/browser_boot.py"))}
+  eval:jolt {:doc "boot on jolt, then evaluate the arguments in the stock user namespace: bb eval:jolt '(swap! (atom 0) + 1 2 3)'"
+             :task (apply shell "jolt" "-Scp" "src" "-m" "cohost.run" "--eval" *command-line-args*)}
+  corpus:jolt {:doc "a conformance corpus (rows: :suite :label :actual :expected :portability), the stock core vs jolt's own core, each side in its own jolt process: bb corpus:jolt path/to/corpus.edn (the jolt-conformance corpus is jolt's test/chez/corpus.edn, https://github.com/jolt-lang/jolt)"
+               ;; each side runs in target/corpus-cwd: rows that write files
+               ;; (spit, a directory as a file) write them there
+               :task (let [abs (fn [p] (str (babashka.fs/absolutize p)))
+                           path (if-let [p (first *command-line-args*)]
+                                  (abs p)
+                                  (do (println "usage: bb corpus:jolt path/to/corpus.edn  (jolt's test/chez/corpus.edn: https://github.com/jolt-lang/jolt)")
+                                      (System/exit 1)))
+                           run (fn [side]
+                                 (shell {:dir "target/corpus-cwd"} "jolt" "-Scp" (abs "src") "-e"
+                                        (str "(require 'cohost.run 'cohost.corpus) (cohost.boot/boot! {:root " (pr-str (abs "resources/cohost/clojure-1.12.0")) "}) (cohost.boot/make-user-ns!) "
+                                             "(cohost.corpus/run-corpus! {:path " (pr-str path) " :side " side " :out " (pr-str (abs (str "target/corpus-" (name side) ".edn"))) "}) (System/exit 0)")))]
+                       (babashka.fs/create-dirs "target/corpus-cwd")
+                       (run :stock)
+                       (run :host)
+                       (load-file "src/cohost/corpus_report.cljc")
+                       (let [rd (fn [f] (clojure.edn/read-string (slurp f)))
+                             merged ((resolve 'cohost.corpus-report/merge-sides) (rd "target/corpus-stock.edn") (rd "target/corpus-host.edn"))]
+                         ((resolve 'cohost.corpus-report/summarize) merged 40 "jolt")))}
+  corpus:jvm {:doc "after corpus:jolt: the rows jolt's core passes and the stock core fails, evaluated on JVM Clojure 1.12.0 (dev/corpus_jvm.clj) — which of them the JVM answers as the corpus expects"
+              :task (let [abs (fn [p] (str (babashka.fs/absolutize p)))
+                          cp (clojure.string/trim (:out (shell {:out :string} "clojure" "-Spath")))]
+                      (babashka.fs/create-dirs "target/corpus-cwd")
+                      (shell {:dir "target/corpus-cwd"} "java" "-cp" cp "clojure.main" (abs "dev/corpus_jvm.clj")
+                             (abs "src/cohost/corpus_report.cljc") (abs "target/corpus-stock.edn")
+                             (abs "target/corpus-host.edn") (abs "target/corpus-gap-jvm.edn")))}
+  boot:all  {:doc "every host that is on PATH"
+             :task (doseq [[t exe] [["boot:jolt" "jolt"] ["boot:lpy" "basilisp"] ["boot:jvm" "clojure"]]]
+                     (if (babashka.fs/which exe)
+                       (do (println (str "== " t " ==")) (shell "bb" t))
+                       (println (str "== " t " == (skipped: no " exe " on PATH)"))))}}}

@@ -1,0 +1,40 @@
+Zero-Clause BSD (0BSD)
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+
+---------------------------------------------------------------------------
+
+The 0BSD grant above applies to cohost's OWN original source: the codemod
+(src/cohost/rewrite.cljc), the shim (src/cohost/shim.cljc), the boot loop and
+loader (src/cohost/boot.cljc), the policy, the host adapter contract and the
+host adapters (src/cohost/adapter.cljc, src/cohost/hosts/**), the batteries,
+the corpus scoreboard, the dev scripts (dev/**), the build files and the
+documentation. cohost claims no copyright over any of it.
+
+cohost does NOT relicense anyone else's code. It boots the real, unmodified
+Clojure sources vendored under resources/cohost/clojure-1.12.0/: Clojure
+1.12.0's clojure/core.clj, its companion files and the clojure.* libraries it
+loads, from the clojure-1.12.0 release jar, and clojure.spec.alpha 0.5.238,
+from its release jar. Those files are:
+
+    Copyright (c) Rich Hickey. All rights reserved.
+    (clojure/repl.clj: Copyright (c) Chris Houser, Dec 2008.
+     All rights reserved.)
+    Licensed under the Eclipse Public License 1.0 (EPL-1.0).
+
+For that vendored code, the upstream copyright and license PASS THROUGH
+UNCHANGED. cohost imposes nothing on it: the 0BSD grant above does not apply
+to those files. They are byte for byte the files in the release jars, with
+their copyright and license headers intact, and the EPL-1.0 text travels with
+them (resources/cohost/clojure-1.12.0/LICENSE-EPL-v10.html). cohost's codemod
+rewrites their forms only in memory, as they load; no file on disk is edited.
+See NOTICE.md for full provenance.

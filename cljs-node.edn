@@ -1,0 +1,6 @@
+{:main cohost.run
+ :target :nodejs
+ :output-to "target/cljs-node/main.js"
+ :output-dir "target/cljs-node"
+ :optimizations :none
+ :dump-core true}

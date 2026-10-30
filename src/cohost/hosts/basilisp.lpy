@@ -1,0 +1,352 @@
+(ns cohost.hosts.basilisp
+  "The basilisp adapter (Clojure on Python). Macro status is var metadata;
+   chars are one-character strings; there are no sorted collections, agents
+   or refs; a few core fns are missing (the shim resolves them at load time)."
+  (:require [cohost.adapter :as adapter]
+            [basilisp.edn :as bedn])
+  (:import io time math functools re uuid fractions decimal numbers types unicodedata
+           basilisp.lang.seq basilisp.lang.delay basilisp.lang.atom
+           basilisp.lang.volatile basilisp.lang.interfaces
+           basilisp.lang.runtime basilisp.lang.multifn basilisp.lang.reduced))
+
+;; The shim's exceptions: a Python exception class per JVM class, named for it,
+;; whose str is the JVM's toString ("java.lang.Exception: boom").
+(def ^:private exception-types (atom {}))
+(defn- exception-type [klass]
+  (or (get @exception-types klass)
+      (let [n (str klass)
+            t (python/type n (python/tuple [python/Exception])
+                           (python/dict {"__str__" (fn [self] (let [m (python/getattr self "cohost_msg" nil)]
+                                                                (if (some? m) (str n ": " m) n)))}))]
+        (swap! exception-types assoc klass t)
+        t)))
+(defn- new-exception [klass msg cause]
+  (let [e ((exception-type klass) (or msg ""))]
+    (python/setattr e "cohost_msg" msg)
+    (python/setattr e "cohost_class" klass)
+    (when (some? cause) (python/setattr e "__cause__" cause))
+    e))
+
+;; java.lang.Character's classes by Unicode category
+(defn- uchar [c] (if (int? c) (python/chr c) c))
+(defn- ucat [c] (unicodedata/category (uchar c)))
+
+(defn- exception-class [e]
+  (cond (python/hasattr e "cohost_class") (python/getattr e "cohost_class")
+        ;; basilisp's own messages for what the JVM throws by class
+        (and (instance? python/TypeError e) (re-find #"not iterable" (str e))) 'IllegalArgumentException
+        (and (instance? python/TypeError e) (re-find #"positional argument|Wrong number of args" (str e))) 'clojure.lang.ArityException
+        (re-find #"Wrong number of args" (str e)) 'clojure.lang.ArityException
+        (re-find #"No implementation of method" (str e)) 'IllegalArgumentException
+        (re-find #"Invalid reference state|[Cc]annot pop an empty" (str e)) 'IllegalStateException
+        (re-find #"count not supported" (str e)) 'UnsupportedOperationException
+        ;; the reader's: the JVM reader's classes
+        (re-find #"^Invalid number format" (str e)) 'NumberFormatException
+        (re-find #"^Duplicate key" (str e)) 'IllegalArgumentException
+        (instance? python/ZeroDivisionError e) 'ArithmeticException
+        (instance? python/IndexError e) 'IndexOutOfBoundsException
+        (instance? python/KeyError e) 'IllegalArgumentException
+        (instance? python/TypeError e) 'ClassCastException
+        (instance? python/ValueError e) 'IllegalArgumentException
+        (instance? python/AttributeError e) 'IllegalArgumentException
+        (instance? python/RecursionError e) 'StackOverflowError
+        (instance? python/MemoryError e) 'OutOfMemoryError
+        :else 'RuntimeException))
+
+;; java.lang.Math over Python's math module, with the JVM's answers where
+;; Python raises: a domain error is NaN, an overflow is an infinity, log of 0
+;; is -Infinity, and ceil / floor / rint return doubles.
+(def ^:private +inf (python/float "inf"))
+(def ^:private -inf (python/float "-inf"))
+(def ^:private nan (python/float "nan"))
+(defn- finite? [x] (python/bool (math/isfinite x)))
+(defn- jvm-math
+  ([f] (jvm-math f (fn [& _] nan) (fn [& _] +inf)))
+  ([f on-domain on-overflow]
+   (fn [& args]
+     (try (apply f (map python/float args))
+          (catch python/OverflowError _ (apply on-overflow args))
+          (catch python/ValueError _ (apply on-domain args))
+          (catch python/ZeroDivisionError _ (apply on-domain args))))))
+(defn- log-like [f zero] (jvm-math f (fn [x] (if (= x zero) -inf nan)) (fn [& _] +inf)))
+(defn- signed-inf [x] (if (neg? x) -inf +inf))
+
+(def ^:private math-fns
+  {'sin (jvm-math math/sin) 'cos (jvm-math math/cos) 'tan (jvm-math math/tan)
+   'asin (jvm-math math/asin) 'acos (jvm-math math/acos) 'atan (jvm-math math/atan)
+   'atan2 (jvm-math math/atan2)
+   'exp (jvm-math math/exp) 'expm1 (jvm-math math/expm1)
+   'log (log-like math/log 0) 'log10 (log-like math/log10 0) 'log1p (log-like math/log1p -1)
+   'sqrt (jvm-math math/sqrt) 'hypot (jvm-math math/hypot)
+   ;; Python's cbrt(27.0) is 3.0000000000000004; one Newton step lands where
+   ;; the JVM's does
+   'cbrt (fn [x] (let [x (python/float x) r (math/cbrt x)]
+                   (if (and (finite? r) (not (zero? r))) (- r (/ (- (* r r r) x) (* 3.0 r r))) r)))
+   'pow (jvm-math math/pow
+                  (fn [a b] (if (and (zero? a) (neg? b)) +inf nan))
+                  (fn [a b] (if (and (neg? a) (.is-integer (python/float b)) (odd? (python/int b))) -inf +inf)))
+   'sinh (jvm-math math/sinh nan signed-inf) 'cosh (jvm-math math/cosh) 'tanh (jvm-math math/tanh)
+   'IEEEremainder (jvm-math math/remainder)
+   'ulp (jvm-math math/ulp)
+   'nextUp (fn [x] (math/nextafter (python/float x) +inf))
+   'nextDown (fn [x] (math/nextafter (python/float x) -inf))
+   'nextAfter (fn [a b] (math/nextafter (python/float a) (python/float b)))
+   'getExponent (fn [x] (let [x (python/float x)]
+                          (cond (not (finite? x)) 1024
+                                (< (python/abs x) 2.2250738585072014e-308) -1023
+                                :else (dec (second (math/frexp x))))))
+   'scalb (fn [a b] (try (math/ldexp (python/float a) (python/int b))
+                         (catch python/OverflowError _ (signed-inf a))))
+   'copySign (fn [a b] (math/copysign (python/float a) (python/float b)))
+   'toRadians (fn [a] (math/radians (python/float a)))
+   'toDegrees (fn [a] (math/degrees (python/float a)))
+   'ceil (fn [x] (let [x (python/float x)] (if (finite? x) (math/copysign (python/float (math/ceil x)) x) x)))
+   'floor (fn [x] (let [x (python/float x)] (if (finite? x) (math/copysign (python/float (math/floor x)) x) x)))
+   'rint (fn [x] (let [x (python/float x)] (if (finite? x) (math/copysign (python/float (python/round x)) x) x)))
+   'round (fn [x] (let [x (python/float x)]
+                    (cond (math/isnan x) 0
+                          (= x +inf) 9223372036854775807
+                          (= x -inf) -9223372036854775808
+                          ;; floor(x + 1/2) exactly: x + 0.5 rounds 0.49999999999999994 up
+                          :else (let [f (math/floor x)] (python/int (if (>= (- x f) 0.5) (+ f 1) f))))))})
+
+;; JVM class tokens in extend / extend-type / extend-protocol positions name
+;; these: Python's object and basilisp's collection interfaces, whose MRO
+;; dispatch matches the JVM's interface dispatch.
+(def ^:private host-types
+  '{java.lang.Object python/object
+    java.lang.CharSequence python/str
+    java.lang.String python/str
+    java.lang.Number numbers/Number
+    java.lang.Long python/int
+    java.lang.Integer python/int
+    java.lang.Double python/float
+    java.lang.Boolean python/bool
+    java.lang.Iterable basilisp.lang.interfaces/ISeqable
+    java.util.Collection basilisp.lang.interfaces/IPersistentCollection
+    java.util.Set basilisp.lang.interfaces/IPersistentSet
+    java.util.List basilisp.lang.interfaces/ISequential
+    java.util.RandomAccess basilisp.lang.interfaces/IPersistentVector
+    java.util.Map basilisp.lang.interfaces/IPersistentMap
+    java.util.Map$Entry basilisp.lang.interfaces/IMapEntry
+    clojure.lang.Keyword basilisp.lang.keyword/Keyword
+    clojure.lang.Symbol basilisp.lang.symbol/Symbol
+    clojure.lang.Named basilisp.lang.interfaces/INamed
+    clojure.lang.IPersistentCollection basilisp.lang.interfaces/IPersistentCollection
+    clojure.lang.IPersistentMap basilisp.lang.interfaces/IPersistentMap
+    clojure.lang.IPersistentVector basilisp.lang.interfaces/IPersistentVector
+    clojure.lang.IPersistentSet basilisp.lang.interfaces/IPersistentSet
+    clojure.lang.IPersistentList basilisp.lang.interfaces/IPersistentList
+    clojure.lang.IPersistentStack basilisp.lang.interfaces/IPersistentStack
+    clojure.lang.IMapEntry basilisp.lang.interfaces/IMapEntry
+    clojure.lang.ISeq basilisp.lang.interfaces/ISeq
+    clojure.lang.Seqable basilisp.lang.interfaces/ISeqable
+    clojure.lang.Sequential basilisp.lang.interfaces/ISequential
+    clojure.lang.Associative basilisp.lang.interfaces/IAssociative
+    clojure.lang.ILookup basilisp.lang.interfaces/ILookup
+    clojure.lang.Indexed basilisp.lang.interfaces/IIndexed
+    clojure.lang.Counted basilisp.lang.interfaces/ICounted
+    clojure.lang.Reversible basilisp.lang.interfaces/IReversible
+    clojure.lang.IDeref basilisp.lang.interfaces/IDeref
+    clojure.lang.IBlockingDeref basilisp.lang.interfaces/IBlockingDeref
+    clojure.lang.IPending basilisp.lang.interfaces/IPending
+    clojure.lang.IMeta basilisp.lang.interfaces/IMeta
+    clojure.lang.IObj basilisp.lang.interfaces/IWithMeta
+    clojure.lang.IRef basilisp.lang.interfaces/IRef
+    clojure.lang.IReference basilisp.lang.interfaces/IReference
+    clojure.lang.IReduce basilisp.lang.interfaces/IReduce
+    clojure.lang.IKVReduce basilisp.lang.interfaces/IReduceKV
+    clojure.lang.IRecord basilisp.lang.interfaces/IRecord
+    clojure.lang.IType basilisp.lang.interfaces/IType
+    clojure.lang.ITransientCollection basilisp.lang.interfaces/ITransientCollection
+    ;; concrete classes, for extend positions
+    clojure.lang.PersistentVector basilisp.lang.vector/PersistentVector
+    clojure.lang.APersistentVector basilisp.lang.vector/PersistentVector
+    clojure.lang.MapEntry basilisp.lang.vector/MapEntry
+    clojure.lang.PersistentHashMap basilisp.lang.map/PersistentMap
+    clojure.lang.PersistentArrayMap basilisp.lang.map/PersistentMap
+    clojure.lang.APersistentMap basilisp.lang.map/PersistentMap
+    clojure.lang.PersistentHashSet basilisp.lang.set/PersistentSet
+    clojure.lang.APersistentSet basilisp.lang.set/PersistentSet
+    clojure.lang.PersistentList basilisp.lang.list/PersistentList
+    clojure.lang.LazySeq basilisp.lang.seq/LazySeq
+    clojure.lang.Cons basilisp.lang.seq/Cons
+    clojure.lang.Atom basilisp.lang.atom/Atom
+    clojure.lang.Delay basilisp.lang.delay/Delay
+    clojure.lang.Volatile basilisp.lang.volatile/Volatile
+    clojure.lang.ExceptionInfo basilisp.lang.exception/ExceptionInfo
+    java.lang.Throwable python/BaseException
+    java.lang.Exception python/Exception
+    java.lang.RuntimeException python/Exception})
+
+;; A deftype / reify implementing a JVM interface spells its methods as the
+;; host's interface does; java.lang.Object's become Python's dunder methods,
+;; which basilisp takes head-less (the codemod puts them first). Python has no
+;; overloading: several arities of one method merge into one variadic member.
+(def ^:private host-methods
+  '{java.lang.Object {toString __str__ equals __eq__ hashCode __hash__}
+    ;; a callable is an object with __call__: IFn takes no head, as Object's methods
+    clojure.lang.IFn {invoke __call__}
+    clojure.lang.ILookup {valAt val-at}
+    clojure.lang.IDeref {deref deref}
+    clojure.lang.Counted {count __len__}
+    clojure.lang.Indexed {nth nth count __len__}
+    clojure.lang.IMeta {meta meta}
+    clojure.lang.IObj {withMeta with-meta meta meta}
+    clojure.lang.Seqable {seq seq}
+    clojure.lang.IPending {isRealized is-realized}})
+
+;; a string builder the host's str prints as its contents
+(deftype StringBuilder [buf]
+  (__str__ [this] (.getvalue buf)))
+
+(defn- groups [m re]
+  (vec (cons (.group m 0) (map (fn [i] (.group m i)) (range 1 (inc (.-groups re)))))))
+(defn- spans [m re]
+  (mapv (fn [i] (let [sp (.span m i)] (when-not (neg? (first sp)) [(first sp) (second sp)])))
+        (range 0 (inc (.-groups re)))))
+
+(def adapter
+  {:name :lpy
+   :core-ns 'basilisp.core
+   :catch-all 'Exception
+   :read-forms (fn [src cb] (doseq [f (read-seq {:eof ::eof} (io/StringIO src))] (cb f)))
+   ;; basilisp's ns refers all of basilisp.core whatever :refer-clojure says;
+   ;; a bare namespace has its refers emptied, so stock names are the only ones
+   :ensure-bare-ns! (fn [ns-sym]
+                      (binding [*ns* *ns*]
+                        (eval (list 'ns ns-sym '(:refer-clojure :only [])))
+                        (let [n (the-ns ns-sym)]
+                          (python/setattr n "_refers" {})
+                          n)))
+   :protocol-impl-style :per-arity
+   ;; methods are Python methods: one per name, plain parameters, a protocol
+   ;; receiver named this (basilisp counts the method's arity from it)
+   :type-method-style :python
+   :host-method (fn [token m] (get-in host-methods [token m]))
+   :char-code (fn [c] (python/ord c))
+   ;; basilisp's meta reads a reify object's `meta` method as a property
+   :meta (fn [x] (let [m (meta x)] (if (instance? types/MethodType m) (m) m)))
+   :refer-from-core! (fn [into-ns sym]
+                       (binding [*ns* (the-ns into-ns)]
+                         (ns-unmap into-ns sym)
+                         (refer 'basilisp.core :only [sym])))
+   :resolve-core (fn [sym] (get (ns-publics 'basilisp.core) sym))
+   :alias! (fn [into-ns a target] (.add-alias (the-ns into-ns) (the-ns target) a))
+   :host-type (fn [token] (get host-types token))
+   ;; deftype / defrecord instances and reify objects (a ReifiedType_N class)
+   ;; (not basilisp's own deftypes, its Eduction: the shim's methods answer)
+   :user-type? (fn [x] (let [t (python/type x)]
+                         (and (not (.startswith (.-__module__ t) "basilisp."))
+                              (or (instance? basilisp.lang.interfaces/IType x)
+                                  (instance? basilisp.lang.interfaces/IRecord x)
+                                  (.startswith (.-__name__ t) "ReifiedType")))))
+   ;; a field is an attribute, a method a bound method
+   :invoke-member (fn [x nm args absent]
+                    (let [n (munge nm)]
+                      (if (python/hasattr x n)
+                        (let [m (python/getattr x n)]
+                          (cond (instance? types/MethodType m) (apply m args)
+                                (seq args) absent
+                                :else m))
+                        absent)))
+   :host-class (fn [token] (when-let [t (get host-types token)] (eval t)))
+   :math math-fns
+   :upper-case (fn [s] (.upper (python/str s)))
+   :lower-case (fn [s] (.lower (python/str s)))
+   :re-find-at (fn [re s from] (when-let [m (.search re s from)] [(.start m) (.end m) (groups m re) (spans m re)]))
+   :re-match-full (fn [re s] (when-let [m (.fullmatch re s)] [0 (count s) (groups m re) (spans m re)]))
+   :re-group-count (fn [re] (.-groups re))
+   :re-source (fn [re] (.-pattern re))
+   :java-statics {'Character/isLetter (fn [c] (.startswith (ucat c) "L"))
+                  'Character/isDigit (fn [c] (= "Nd" (ucat c)))
+                  'Character/isLetterOrDigit (fn [c] (let [k (ucat c)] (or (.startswith k "L") (= k "Nd"))))
+                  'Character/isAlphabetic (fn [c] (let [k (ucat c)] (or (.startswith k "L") (= k "Nl"))))
+                  'Character/isUpperCase (fn [c] (python/bool (.isupper (uchar c))))
+                  'Character/isLowerCase (fn [c] (python/bool (.islower (uchar c))))}
+   ;; a method the shim lacks: the object's own Python method, at run time
+   :native-method (fn [x nm]
+                    (when (some? x)
+                      (let [n (munge nm)]
+                        (when (python/hasattr x n)
+                          (let [m (python/getattr x n)]
+                            (when (python/callable m) (fn [_ & args] (apply m args))))))))
+   :string-builder (fn [] (StringBuilder (io/StringIO)))
+   :sb-append! (fn [sb x] (.write (.-buf sb) (str x)) sb)
+   :sb-string (fn [sb] (.getvalue (.-buf sb)))
+   :sb? (fn [x] (instance? StringBuilder x))
+   ;; basilisp.edn consults :readers only for namespaced tags; the JVM's EdnReader
+   ;; consults them for every tag, so :default bridges the rest
+   ;; ... and the end of the input without :eof is the JVM's "EOF while reading"
+   :edn-read-string (fn [opts s]
+                      (let [readers (:readers opts) dflt (:default opts)
+                            eof (python/object)
+                            r (bedn/read-string s (assoc opts
+                                                         :eof (if (contains? opts :eof) (:eof opts) eof)
+                                                         :default (fn [tag v]
+                                                                    (if-let [r (get readers tag)]
+                                                                      (r v)
+                                                                      (if dflt
+                                                                        (dflt tag v)
+                                                                        (throw (ex-info (str "No reader function for tag " tag) {:tag tag})))))))]
+                        (if (identical? r eof)
+                          (throw (adapter/ex* 'java.lang.RuntimeException "EOF while reading"))
+                          r)))
+   ;; (recur a (next xs)) in a [a & xs] arity re-packs: xs becomes ((next xs))
+   :variadic-recur-style :repack
+   ;; a var compiles to a direct reference unless ^:redef (or ^:dynamic)
+   :def-meta {:redef true}
+   ;; :inline fns are honored at compile time; core.clj's build forms of raw JVM interop
+   :inline-meta :strip
+   :var-bound? (fn [v] (boolean (.-is-bound v)))
+   :dynamic-var? (fn [v] (boolean (or (.-dynamic v) (:dynamic (meta v)))))
+   :empty-queue (fn [] (when-let [q (resolve 'basilisp.core/queue)] (q)))
+   :namespace? (fn [x] (instance? basilisp.lang.runtime/Namespace x))
+   :lazy-seq (fn [f] (basilisp.lang.seq/LazySeq f))
+   :delay (fn [f] (basilisp.lang.delay/Delay f))
+   ;; ex-info takes two arguments here; a cause is Python's __cause__, which ex-cause reads
+   :ex-info (fn ([msg m] (ex-info msg m))
+              ([msg m cause] (let [e (ex-info msg m)] (when cause (python/setattr e "__cause__" cause)) e)))
+   :exception? (fn [x] (instance? python/BaseException x))
+   :exception-class exception-class
+   :new-exception new-exception
+   :exception-message (fn [e] (if (python/hasattr e "cohost_class") (python/getattr e "cohost_msg") (ex-message e)))
+   :nano-time (fn [] (time/perf_counter_ns))
+   :current-time-millis (fn [] (int (* 1000 (time/time))))
+   :math-ceil (fn [x] (math/ceil x))
+   :math-floor (fn [x] (math/floor x))
+   :math-sqrt (fn [x] (math/sqrt x))
+   :parse-long (fn [s] (try (python/int s) (catch python/ValueError _ nil)))
+   :parse-double (fn [s] (python/float s))
+   :nan? (fn [x] (and (float? x) (math/isnan x)))
+   :infinite? (fn [x] (and (float? x) (math/isinf x)))
+   :sort-array! (fn [arr cmp] (.sort arr ** :key (functools/cmp_to_key cmp)) arr)
+   ;; to-array makes a Python list
+   :array? (fn [x] (instance? python/list x))
+   :close! (fn [x] (.close x))
+   :index-of (fn [s sub from] (.find s sub from))
+   :transient? (fn [x] (instance? basilisp.lang.interfaces/ITransientCollection x))
+   :lazy-seq? (fn [x] (instance? basilisp.lang.seq/LazySeq x))
+   :atom? (fn [x] (instance? basilisp.lang.atom/Atom x))
+   :volatile? (fn [x] (instance? basilisp.lang.volatile/Volatile x))
+   :delay? (fn [x] (instance? basilisp.lang.delay/Delay x))
+   :reduced? (fn [x] (instance? basilisp.lang.reduced/Reduced x))
+   :deref? (fn [x] (instance? basilisp.lang.interfaces/IDeref x))
+   :pending? (fn [x] (or (instance? basilisp.lang.delay/Delay x) (instance? basilisp.lang.seq/LazySeq x)))
+   :char? (fn [x] (and (string? x) (= 1 (count x))))
+   :regex? (fn [x] (instance? re/Pattern x))
+   :uuid? (fn [x] (instance? uuid/UUID x))
+   ;; Python has one int type: a BigInt is an int a long cannot hold
+   :bigint? (fn [x] (and (integer? x) (not (boolean? x))
+                         (or (< x -9223372036854775808) (> x 9223372036854775807))))
+   ;; a Var is dynamic by its own flag, not its metadata
+   :set-dynamic! (fn [v] (.set-dynamic v true) (alter-meta! v assoc :dynamic true) v)
+   :ratio? (fn [x] (instance? fractions/Fraction x))
+   :decimal? (fn [x] (instance? decimal/Decimal x))
+   :indexed? (fn [x] (or (vector? x) (string? x)))
+   :counted? (fn [x] (or (coll? x) (string? x)))
+   :reversible? (fn [x] (vector? x))
+   :sorted? (fn [_] false)
+   :multifn? (fn [x] (instance? basilisp.lang.multifn/MultiFunction x))})
+
+(adapter/install! adapter)

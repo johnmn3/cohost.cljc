@@ -1,0 +1,6 @@
+{:main cohost.run-browser
+ :output-to "target/cljs-browser/main.js"
+ :output-dir "target/cljs-browser"
+ :asset-path "target/cljs-browser"
+ :optimizations :none
+ :dump-core true}
