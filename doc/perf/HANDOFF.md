@@ -68,49 +68,48 @@ bb bench:report target
 - **jolt corpus** (`bb corpus:jolt <jolt's test/chez/corpus.edn>`): not run on this pass.
   Run it before calling pass 1 done.
 
-## Work in progress: committed untested (3:30 PM ET)
+## After `19dbd1a`: the review fixes (validated)
 
-The commit after `19dbd1a` carries these changes. **No battery has run on them yet.** Validate
-before building on them: `bb boot:jolt`, `bb boot:jvm`, `bb boot:cljs`, `bb boot:lpy`, then
-the jolt corpus.
+These commits fix what the correctness review of the perf diff found
+(`doc/perf/findings/review-*.json`).
 
-- **Macros:** a macro whose expansion cohost rewrites (`rewritten-macro?`: `:cohost/wrapped`
-  and not `:cohost/host`) keeps its arguments as written (`rewrite.cljc` `rw-list`). They
-  are rewritten once, in its expansion, seeded with the locals of the macro's `&env`. The
-  new adapter capability `:env-locals` reads them: by default the keys of a map env (the
-  JVM's), on ClojureScript `(:locals env)`.
-  - This fixes several review findings: `(-> 10 (- 1 2))` inlined before threading; a
-    local or parameter named like a core fn called as the core fn; `assert` and `is`
-    seeing inlined forms.
-  - It replaces the stop set, which is gone.
-  - **Still to check:** what jolt and basilisp pass as `&env`. If it isn't a map of
-    locals, give the adapter an `:env-locals`.
-- **Head resolution:** heads resolve once per rewrite (`head-var`, `*heads*`). The
-  `instance?` shortcut applies only to the stock `instance?`.
-- **Review fixes:**
-  - **ClojureScript** gets `:chunks` with `:chunk?` and an index-walking `:chunk-reduce`.
+- **Inlining runs after macroexpansion, as on the JVM.**
+  - In the arguments of a macro whose expansion cohost rewrites (`rewritten-macro?`:
+    `:cohost/wrapped`, not `:cohost/host`), the codemod neither inlines nor takes the
+    `instance?` shortcut (`*inline?*`).
+  - The expansion's rewrite inlines, seeded with the locals of the macro's `&env`
+    (`:env-locals`). `wrap-macro` takes `&env` as whichever implicit argument is a map:
+    basilisp passes it first.
+  - This fixes `(-> 10 (- 1 2))`, a local or parameter named like a core fn, and the
+    forms `assert` and `is` report.
+- **Head resolution** happens once per rewrite (`head-var`, `*heads*`). The `instance?`
+  shortcut applies only to the stock `instance?`.
+- **Other fixes:**
+  - **ClojureScript:** `:chunks` with an index-walking `:chunk-reduce`.
     `(apply + (range 10))` threw.
-  - **jolt** `:host-data?` drops `vector?` and `fn?`, which deftypes answer.
+  - **jolt:** `:host-data?` without `vector?` and `fn?`.
   - **The MultiFn** caches no misses.
   - **Deftype and defrecord** fields and method parameters are locals.
-  - **The JVM** keeps inline-carrying host fns out of its aliases.
+  - **The JVM:** aliases skip host fns that have `:inline`.
   - **`may-make-macro?`** reads `defn` attr-maps.
   - **`(catch C e)`** uses the imported class.
-  - **`take-from-host!`** marks a macro before writing its meta (ClojureScript moves it).
-- **jolt:** `:lazy-seq` uses jolt's `make-lazy-seq` and `coll->cells`.
-- **basilisp:** `:rewrite-inline? true`.
-- **New battery rows** pin each fix (the "perf passes" block).
-- **Correctness review** (workflow `cohost-perf-diff-review`, run `wf_8bdb1e7b-a72`):
-  - when this was written, round 1 had found 11 items, the ones fixed above; the
-    boot/policy and adapters areas and the verifiers were still running;
-  - its results are in the session's workflow journal; copy the surviving findings into
-    `doc/perf/findings/review-*.json`.
-- **Benchmarks:** the settled re-run (`bench: settle every case`, `19dbd1a`) was running in
-  worktrees of `4ce56eb` and `19dbd1a`. Its results go in `doc/perf/before` and
-  `doc/perf/after`, replacing the unsettled first run that is there now. JVM, jolt, Node,
-  Chromium and the JVM at 1/20 size are re-run; basilisp's 1/20-size pair stands (no JIT).
+  - **`take-from-host!`** marks a macro before writing its meta.
+- **jolt:** `:lazy-seq` uses `make-lazy-seq`. **basilisp:** `:rewrite-inline? true`.
+- **Battery:** five new rows ("perf passes"). jolt and the JVM pass 138/138 and 61/61;
+  ClojureScript 136/138 and 61/61, its two host facts as before. basilisp and the jolt
+  corpus: see the commit that records them.
+- **Tried and backed out: walking each form once.** That meant leaving a rewritten macro's
+  arguments raw and rewriting them only in the expansion. It loses the type hints of
+  locals inside expansions (the checkcast the battery's "hinted argument" row tests), and
+  jolt's `&env` does not carry hints (its values are nil). Doing it needs another way to
+  carry hints, for example in a cohost meta key that the host keeps on its locals. The
+  double walk is the largest boot cost left.
+- **Not benchmarked yet:** these commits. `doc/perf/after` is `19dbd1a`.
 
 ## Measured so far: jolt, quick runs, stock core median ms
+
+The settled before/after numbers, on every host, are in `doc/PERF.md`. This table is the
+quick runs this pass used along the way.
 
 The same box, `--quick`, so ±15%. The "own" column is jolt's own core on the same run.
 

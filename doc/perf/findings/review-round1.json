@@ -1,0 +1,173 @@
+{
+ "note": "round 1 finder output (unverified when saved, 3:25 PM ET); fixed in the commits after 19dbd1a",
+ "areas": [
+  {
+   "area": "shim",
+   "findings": [
+    {
+     "id": "cljs-reduce1-over-host-chunks",
+     "where": "src/cohost/shim.cljc:1622-1627 (-reduce), reached from stock reduce1 (core.clj:942-945) now that hc (shim.cljc:99-104) and policy chunk-names hand cohost.core cljs.core's chunk fns",
+     "code": "(def -reduce (if-let [chunk? (:chunk? hc)]\n              (let [chunk-reduce (:chunk-reduce hc)] ...)\n              (fn ([coll f] (reduce f coll)) ([coll f init] (reduce f init coll)))))\n;; ClojureScript uses the default :chunks (no :chunk?/:chunk-reduce), so a host chunk goes to plain cljs reduce",
+     "scenario": "On ClojureScript, stock reduce1's (.reduce (chunk-first s) f val) now receives cljs chunks and calls (reduce f val chunk). Two cljs.core 1.12.42 facts break this. (a) IntegerRangeChunk, the chunk-first of (range n), implements neither IReduce nor ISeqable, so cljs reduce falls to seq-reduce and seq throws \"... is not ISeqable\". (b) ChunkBuffer.chunk returns (ArrayChunk. buf 0 end) over (make-array capacity), but ArrayChunk's (-reduce [_ f start] (array-reduce arr f start off)) walks to (alength arr) and ignores end, so filter/remove/keep/for-:when chunks reduce their unfilled undefined slots. Ordinary forms affected: (apply + (range 10)), (reverse (range 5)), (apply max (range 5)), (reverse (filter odd? [1 2 3 4 5])), (apply + (filter even? (range 10))), (apply max (filter pos? [3 -1 5 2])). The same applies to anything else stock that calls reduce1: get-in, merge, set of a non-IReduce seq.",
+     "before": "cohost.core's chunked-seq? was stock: (instance? IChunkedSeq s) matched only the shim's ::chunk stand-in, so it was false for host seqs and reduce1 walked element by element. Results: 45, (4 3 2 1 0), 4, (5 3 1), 20, 5.",
+     "after": "(apply + (range 10)), (reverse (range 5)) and (apply max (range 5)) throw a js Error \"[object Object] is not ISeqable\". (reverse (filter odd? [1 2 3 4 5])) => (nil nil 5 3 1). (apply + (filter even? (range 10))) => NaN. (apply max (filter pos? [3 -1 5 2])) => nil.",
+     "hosts": [
+      "ClojureScript (Node)",
+      "ClojureScript (Chromium)"
+     ],
+     "severity": "high",
+     "fix": "Reduce a host chunk by index over (count c), as IChunk.reduce does. Smallest: give hosts/cljs.cljs an explicit :chunks (the eight cljs.core fns) plus :chunk? #(implements? IChunk %) and :chunk-reduce (fn [c f init] (loop [i 0 acc init] (if (< i (count c)) (let [acc (f acc (nth c i))] (if (reduced? acc) acc (recur (inc i) acc))) acc))). The shim's -reduce already dispatches on these. Alternatively, make -reduce default to that index walk whenever hc has no :chunk-reduce."
+    },
+    {
+     "id": "jolt-host-data-skips-own-members-of-vector-deftypes",
+     "where": "src/cohost/shim.cljc:1901-1910 (host-object?, fast path at line 1903), with the predicate from src/cohost/hosts/jolt.clj:61-62",
+     "code": "(defn host-object? [x]\n  (and (some? x)\n       (not (h-host-data? x))   ; jolt: (or (transient? x) (atom? x) (fn? x) (string? x) (number? x) (keyword? x) (symbol? x) (boolean? x) (vector? x))\n       ...))",
+     "scenario": "jolt's clojure.core/vector? is true for a user deftype implementing clojure.lang.IPersistentVector (host/chez/post-prelude.ss, jrec-iface-pred?). jolt's fn? is true for one declaring clojure.lang.Fn. Such a type is an IType, so java.clj's user-type? said true. Now the fast path declares it host data, and every (.m x ...) whose m the shim has goes to the shim's -m instead of the type's own member. Example: (definterface HasName (getName [])) (deftype Row [xs] clojure.lang.IPersistentVector (count [_] (count xs)) (nth [_ i] (nth xs i)) ... HasName (getName [_] \"row\")) then (.getName (Row. [1])). A second example: a vector deftype implementing java.util.List with (get [this i] (nth this i)), called as (.get v 5) out of range.",
+     "before": "user-type? was true (IType), so dot tried invoke-member first and the type's own method ran. (.getName (Row. [1])) => \"row\"; (.get v 5) threw IndexOutOfBoundsException, as on the JVM.",
+     "after": "host-object? is false, so the shim's -getName throws ClassCastException \"... cannot be cast to class clojure.lang.Named\" (the type is coll?), and the shim's -get answers (get v 5) => nil. Any user method on such a type named like a shim method (get, add, reverse, set, size, find, reset, close ...) is misrouted.",
+     "hosts": [
+      "jolt"
+     ],
+     "severity": "medium",
+     "fix": "Keep the fast path to jolt's own data: drop (vector? x) and (fn? x) from jolt.clj's :host-data?, so those values take the per-type cache. Or use tests that do not answer for deftypes, e.g. AND them with (not (instance? clojure.lang.IType x))."
+    },
+    {
+     "id": "multifn-cache-stores-misses",
+     "where": "src/cohost/shim.cljc:960-978 (mf-method), lines 974 and 977",
+     "code": "(swap! state update :cache (fn [c'] (if (identical? c' c) (assoc-in c [:table dv] m) c')))\n...\n(swap! state assoc :cache {:methods (:methods st) :prefers (:prefers st) :h h :table {dv m}})   ; m may be nil; looked up later by (find (:table c) dv)",
+     "scenario": "A miss (no method) is cached under dv, and later lookups use = and hash. A dispatch value that is = to a cached miss but isa?-matches differently then gets the cached nil. Only vectors get isa?'s element-wise walk, so a vector and an equal list differ. Example: (derive ::dog ::animal) (defmulti speak identity) (defmethod speak [::animal] [_] :generic); first (speak (list ::dog)) throws No method and caches nil under (::dog); then (speak [::dog]).",
+     "before": "There was no cache: (speak [::dog]) => :generic, because [::dog] isa [::animal] element-wise. The JVM gives the same answer: findAndCacheBestMethod returns null without caching a miss.",
+     "after": "(speak [::dog]) finds the cached (::dog) entry (= and same hash) and throws IllegalArgumentException \"No method in multimethod 'speak' for dispatch value: [:user/dog]\".",
+     "hosts": [
+      "jolt",
+      "JVM",
+      "ClojureScript"
+     ],
+     "severity": "low",
+     "fix": "Cache only found methods, as the JVM does: skip the assoc when m is nil in both branches, e.g. (when m (swap! ...)) and (if m (swap! state assoc :cache {...}) ...)."
+    }
+   ]
+  },
+  {
+   "area": "codemod",
+   "findings": [
+    {
+     "id": "inline-before-threading",
+     "where": "src/cohost/rewrite.cljc:991 (rw-list :else), with inline-expansion at :900 and boot.cljc:121 inline-fn",
+     "code": ":else (if-let [e (inline-expansion ctx h args)] (rw ctx e) (apply list (rw ctx h) (rw-all ctx args)))",
+     "scenario": "(-> 10 (- 1 2)), (-> 100 (/ 2 5)), (-> 1 (max 3 5)), (-> 10 (-' 1 2 3)); likewise ->>, cond->, cond->>, some->, some->> and doto. The codemod rewrites a macro's arguments before the macro expands. So (- 1 2) is inlined at arity 2 into (cohost.shim/Numbers-minus 1 2), and -> then inserts 10, giving (cohost.shim/Numbers-minus 10 1 2). The JVM compiler inlines only after macroexpansion, at the final arity.",
+     "before": "7, 10, 5, 4: the threaded call reached the stock -, /, max and -' with all its arguments.",
+     "after": "jolt: an arity exception. Numbers-minus has only [x] and [x y]; Numbers-divide, Numbers-max and Numbers-min are [x y]. cljs: - throws \"Invalid arity: 3\". The single-arity shim fns, called through a js/ path, silently drop the extra argument: (-> 100 (/ 2 5)) gives 50 and (-> 1 (max 3 5)) gives 3. On both hosts (-> 10 (-' 1 2 3)) gives 8, because the nested inline (-' (-' 1 2) 3) receives 10 in front.",
+     "hosts": [
+      "jolt",
+      "cljs"
+     ],
+     "severity": "high",
+     "fix": "Inline only where the JVM compiler would, after macroexpansion. When a form's head resolves to a macro (stock, user or host, in the :else, binding-head and spec-head branches alike), rewrite its arguments with inlining off, for example through a dynamic *inline?* that inline-expansion checks. Stock and user macro output is re-walked, so the call is still inlined there, at its final arity and scope. A host macro's arguments just stay plain calls."
+    },
+    {
+     "id": "inline-ignores-locals-bound-by-qualified-binding-macros",
+     "where": "src/cohost/rewrite.cljc:917 and :984 (binding heads are recognized only when unqualified), feeding the *locals* guard of inline-expansion at :907",
+     "code": "hn (when (and (symbol? h) (nil? (namespace h))) (name h)) ... (and hn (contains? binding-heads hn)) ... ;; inline-expansion: (not (contains? *locals* h))",
+     "scenario": "(defn f [inc x] (inc x)) (f #(* 10 %) 5). A realistic case: (defn sort-desc [compare xs] (sort (fn [a b] (compare b a)) xs)) (sort-desc #(compare (count %1) (count %2)) [\"aaa\" \"b\" \"cc\"]). Stock defn expands to (def f (cohost.core/fn ([inc x] (inc x)))). When that output is re-walked, cohost.core/fn is namespace-qualified, so it is not treated as a binding head and inc is not in *locals*. (inc x) is then replaced by the core inline before fn binds the param. The same happens in every defn, defn-, defmacro, defmethod and letfn body, and in fn, let, loop, doseq, for, if-let, when-let and with-open forms whose expansion binds through a qualified cohost.core/let or cohost.core/fn (any destructuring).",
+     "before": "50, and (\"aaa\" \"cc\" \"b\"): the param is called.",
+     "after": "6, and (\"cc\" \"b\" \"aaa\"). The param is ignored: the call becomes (clojure.core/inc x) or (clojure.core/compare b a) on jolt, and the shim's Numbers-inc or cljs.core/compare on cljs. Silent wrong answer.",
+     "hosts": [
+      "jolt",
+      "cljs"
+     ],
+     "severity": "high",
+     "fix": "Recognize core-qualified binding heads: take the binding-head name from (name h) when (namespace h) is nil or in core-ns-names, as spec-head already does. The re-walk of defn's (cohost.core/fn ...) and of destructuring's (cohost.core/let ...) then binds their names. The macro-argument rule from inline-before-threading also covers this."
+    },
+    {
+     "id": "quoting-macros-see-inlined-forms",
+     "where": "src/cohost/rewrite.cljc:991 (:else) and :984 (binding-head branch, e.g. defn's :pre/:post map)",
+     "code": ":else (if-let [e (inline-expansion ctx h args)] (rw ctx e) ...)",
+     "scenario": "(defn f [x] {:pre [(pos? x)]} x) (f -1); (assert (= 3 (count [1 2]))); (is (= 1 2)). assert builds its message from (pr-str '~x), and clojure.test reports :expected '~form and an :actual built from the form's head. Both now receive the inlined call instead of the source form.",
+     "before": "AssertionError \"Assert failed: (pos? x)\" and \"Assert failed: (= 3 (count [1 2]))\". The is report shows expected (= 1 2), actual (not (= 1 2)). All as on the JVM.",
+     "after": "jolt: \"Assert failed: (clojure.core/pos? x)\", \"Assert failed: (clojure.core/= 3 (clojure.core/count [1 2]))\", and an is report with expected (clojure.core/= 1 2). cljs: the same with cljs.core/ or js/cohost.shim.* names; where the head is a js/ path, clojure.test's function? cannot resolve it, so the report's :actual is just false. A test such as (is (thrown-with-msg? AssertionError #\"\\(pos\\? x\\)\" (f -1))) passes on the JVM and now fails.",
+     "hosts": [
+      "jolt",
+      "cljs"
+     ],
+     "severity": "medium",
+     "fix": "The same as inline-before-threading: no inline expansion inside a macro's arguments. The macro's output is re-walked and inlined there."
+    },
+    {
+     "id": "inline-ignores-type-fields-and-method-params",
+     "where": "src/cohost/rewrite.cljc:760 (rw-method-clause), :679 (rw-method-impls), :890 (rw-spec-form), with the guard at :907",
+     "code": "(defn- rw-method-clause [ctx [m params & body]] (let [body (rw-all ctx body)] ...)) ;; fields and method params are never added to *locals*",
+     "scenario": "(defprotocol Step (run [s x])) (defrecord Scale [inc] Step (run [_ x] (inc x))) (run (->Scale #(* 10 %)) 5). The same applies to any deftype or defrecord field, or reify, extend-type, extend-protocol or proxy method param, named like an inline core fn (compare, get, count, max ...) and called. The host's defrecord is never re-walked, so the pre-walk is the only rewrite.",
+     "before": "50: the field is called.",
+     "after": "6: (inc x) is inlined to core inc, ignoring the field. Silent wrong answer.",
+     "hosts": [
+      "jolt",
+      "cljs"
+     ],
+     "severity": "medium",
+     "fix": "While rewriting method bodies in rw-method-clause and rw-method-impls, bind the fields (rw-spec-form's second argument) and each method's params as *locals*. doc/perf/findings/trace-arith-fncall.json already names this gap as open. The macro-argument rule from inline-before-threading also covers it."
+    },
+    {
+     "id": "instance-shortcut-hides-instance-from-clojure-test",
+     "where": "src/cohost/rewrite.cljc:948-952",
+     "code": "(and (symbol? h) (= \"instance?\" (name h)) (= 3 (count form)) ...) (list (shim-fn \"instance-of?\") (rw ctx (second form)) (rw ctx (nth form 2)))",
+     "scenario": "A failing (is (instance? String 1)) in a deftest. is now receives (cohost.shim/instance-of? 'java.lang.String 1), so clojure.test's assert-expr dispatches to :default instead of its 'instance? method.",
+     "before": "The report shows expected (instance? (quote java.lang.String) 1) and actual java.lang.Long, from the 'instance? method's (class object), as on the JVM.",
+     "after": "JVM, jolt and basilisp: actual (not (cohost.shim/instance-of? java.lang.String 1)), via assert-predicate. cljs: the js/ head does not resolve, so assert-any reports actual false. Pass or fail is unchanged; the report is not.",
+     "hosts": [
+      "jvm",
+      "jolt",
+      "cljs",
+      "basilisp"
+     ],
+     "severity": "low",
+     "fix": "Apply the instance? shortcut only outside macro arguments, using the same flag as inline-before-threading. is then still sees instance?, and its expansion's (instance? klass# object#) works as before."
+    },
+    {
+     "id": "instance-shortcut-ignores-namespace-own-instance",
+     "where": "src/cohost/rewrite.cljc:948-950",
+     "code": "(or (nil? (namespace h)) (contains? core-ns-names (namespace h))) (not (contains? *locals* h))",
+     "scenario": "(ns my.ns (:refer-clojure :exclude [instance?])) (defn instance? [c x] :mine) (instance? String 1). The same happens when instance? is referred from another library.",
+     "before": ":mine: the namespace's own fn, called with 'java.lang.String.",
+     "after": "false: the call is rewritten to cohost.shim/instance-of?, bypassing the namespace's own instance?.",
+     "hosts": [
+      "jvm",
+      "jolt",
+      "cljs",
+      "basilisp"
+     ],
+     "severity": "low",
+     "fix": "For an unqualified head, take the shortcut only when instance? is not a var of the namespace being compiled ((:interned? ctx)) and resolves to the stock cohost.core/instance? (resolve it the way inline-fn does)."
+    },
+    {
+     "id": "jvm-alias-applies-unchecked-math-inline",
+     "where": "src/cohost/rewrite.cljc:376 with src/cohost/boot.cljc:92 (host-aliases)",
+     "code": "(known? ctx nm) (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args')",
+     "scenario": "JVM host. A library loaded through cohost contains (ns my.lib) (set! *unchecked-math* true) (defn f [x] (clojure.lang.Numbers/add x 1)), and the caller runs (my.lib/f Long/MAX_VALUE). The static is now emitted as (clojure.core/+ x 1), and the JVM compiler applies +'s :inline, which reads *unchecked-math*.",
+     "before": "ArithmeticException (integer overflow), as on the JVM: Numbers/add is always checked. The call went to cohost.shim/Numbers-add, the + fn value.",
+     "after": "-9223372036854775808, from Numbers.unchecked_add. The same applies to Numbers/multiply, Numbers/inc, Numbers/dec and the RT cast statics whose host inline switches on *unchecked-math*.",
+     "hosts": [
+      "jvm"
+     ],
+     "severity": "low",
+     "fix": "On a host whose own compiler applies :inline (rewrite-inline? false and :inline-meta :keep, i.e. the JVM), keep out of host-aliases the host vars whose :inline depends on *unchecked-math* (+, *, inc, dec and the cast fns). The simpler option is not to alias the Numbers-* and RT-*Cast statics there."
+    },
+    {
+     "id": "library-macro-scan-misses-attr-map-macro",
+     "where": "src/cohost/boot.cljc:61-73 (may-make-macro?), used for library forms at :209. This is the macro scan that decides whether a macro's output goes through the codemod.",
+     "code": "(and (symbol? nm) (or (:macro (meta nm)) (contains? policy/setmacro-defined nm)))",
+     "scenario": "A library loaded by require contains (defn unless {:macro true} [&form &env c x] (list 'if c nil x)) followed by (defn g [] (unless false 1)) in the same file. defn's attr-map puts :macro in the var's meta, but the name symbol carries none. The form is therefore judged unable to make a macro, and the scan waits until the end of the library.",
+     "before": "scan-macros! ran right after the def: jolt marked the var a macro (mark-macro!), cljs moved it to the $macros namespace, and every host wrapped it. (g) returns 1.",
+     "after": "Until the library finishes loading, jolt and cljs compile (unless false 1) as a fn call, so (g) throws an arity error. On the JVM the macro expands but is unwrapped, so its output skips the codemod.",
+     "hosts": [
+      "jolt",
+      "cljs",
+      "jvm"
+     ],
+     "severity": "low",
+     "fix": "In may-make-macro?, also check a defn or defn- form's attr-map (the first map after the optional docstring, and a trailing one) for :macro."
+    }
+   ]
+  }
+ ]
+}

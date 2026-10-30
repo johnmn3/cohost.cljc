@@ -33,11 +33,15 @@
 ;; macros: rewrite what they emit
 
 (defn wrap-macro [ctx f]
-  ;; args: &form, &env, then the macro's own: the expansion is rewritten
-  ;; knowing the locals of &env (a call of a local named like a core fn is no
-  ;; call of the core fn)
-  (fn [& args] (let [out (apply f args)]
-                 (if host/*raw-macro-output* out (rw/rewrite ctx out {:locals (host/env-locals (second args))})))))
+  ;; args: &form and &env, then the macro's own. basilisp passes &env first:
+  ;; a wrapped macro (core.clj's, or one its defmacro made) takes [&form &env
+  ;; ...], so it gets them in that order (&form is a list, &env a map or nil).
+  ;; The expansion is rewritten knowing the locals of &env: a call of a local
+  ;; named like a core fn is no call of the core fn.
+  (fn [& args] (let [[a b & more] args
+                     [form env] (if (and (map? a) (not (map? b))) [b a] [a b])
+                     out (apply f form env more)]
+                 (if host/*raw-macro-output* out (rw/rewrite ctx out {:locals (host/env-locals env)})))))
 
 (defn ^:export rewrite-output
   "Rewrite a macro's expansion with the current boot's ctx. Hosts whose macro
@@ -164,7 +168,8 @@
 
 (defn- rewritten-macro?
   "Is v a macro whose expansion the codemod rewrites: one cohost wrapped
-   (stock or user), not the host's own?"
+   (stock or user), not the host's own? Its arguments are walked without
+   inlining, which its expansion's rewrite applies."
   [v]
   (let [m (var-meta* v)]
     (boolean (and (or (:macro m) (host/macro-var? v)) (:cohost/wrapped m) (not (:cohost/host m))))))
@@ -436,12 +441,30 @@
             (when-not (host/macro-var? hv) [(host/var-root hv) hv]))
           [impl nil])))))
 
+(defn- def-form-meta
+  "The documentation the stock def form gives its var: :doc, :arglists (type
+   hints dropped) and :added, as core.clj writes them."
+  [form]
+  (let [[h nm & more] form
+        [doc more] (if (string? (first more)) [(first more) (rest more)] [nil more])
+        [attrs more] (if (and (not= 'def h) (map? (first more))) [(first more) (rest more)] [nil more])
+        plain (fn [params] (mapv #(if (symbol? %) (with-meta % nil) %) params))
+        arglists (when (contains? '#{defn defn-} h)
+                   (if (vector? (first more))
+                     (list (plain (first more)))
+                     (seq (map (comp plain first) (filter #(and (seq? %) (vector? (first %))) more)))))]
+    (cond-> (select-keys (merge (meta nm) attrs) [:doc :added])
+      doc (assoc :doc doc)
+      arglists (assoc :arglists arglists))))
+
 (defn- intern-native!
-  "Intern a native as ns-sym/nm, marked :cohost/native (with the host var's
-   doc and arglists when it came from one)."
-  [ns-sym nm [v hv]]
+  "Intern a native as ns-sym/nm in place of the stock def form, marked
+   :cohost/native, with the stock definition's documentation (else the host
+   var's, for a :host native)."
+  [ns-sym nm [v hv] form]
   (let [h (host/intern! ns-sym nm v)]
     (host/alter-var-meta! h merge (when hv (select-keys (host/var-meta hv) [:doc :arglists]))
+                          (def-form-meta form)
                           {:cohost/native true :cohost/wrapped true})
     h))
 
@@ -458,9 +481,10 @@
   (let [{:keys [action reason replacement] nm :name}
         (policy/decide form (host/host-name) (or @policy-lists (policy/lists (host/host-name))))
         _ (when @verbose? (println (str "  [" (name action) "] " nm)))
-        native (when (contains? #{:eval :replace} action) (native-of "clojure.core" (if (= :replace action) replacement form)))
+        def-form (if (= :replace action) replacement form)
+        native (when (contains? #{:eval :replace} action) (native-of "clojure.core" def-form))
         evaluated (case (if native :native action)
-                    :native (do (intern-native! core-ns nm native) (record! report :native {:name nm}) nil)
+                    :native (do (intern-native! core-ns nm native def-form) (record! report :native {:name nm}) nil)
                     :skip (do (record! report :skipped {:name nm :reason reason}) nil)
                     :host (when-not (take-from-host! report nm)
                             (if (contains? policy/host-only-names nm)
@@ -812,7 +836,7 @@
                   (try
                     (case (if (and (= :eval action) (native-of (str lib) form)) :native action)
                       :skip (note! :skipped {:name nm})
-                      :native (do (intern-native! cur nm (native-of (str lib) form)) (note! :native {:name nm}))
+                      :native (do (intern-native! cur nm (native-of (str lib) form) form) (note! :native {:name nm}))
                       (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form) true)]
                         (when (not= ns' cur) (host/set-current-ns! ns'))
                         (note! :ok {:name nm})))

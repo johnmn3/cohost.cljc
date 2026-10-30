@@ -921,6 +921,13 @@
         (rw-defprotocol ctx form)
         :else (apply list h (rw-specs ctx args))))
 
+(def ^:dynamic *inline?*
+  "False while the codemod walks the arguments of a macro whose expansion it
+   rewrites: a call there is inlined in the expansion, at the arity and among
+   the locals it ends up with ((-> 10 (- 1 2)) is (- 10 1 2)), as the JVM
+   compiler inlines after macroexpansion; and assert or is see it as written."
+  true)
+
 (def ^:dynamic *heads*
   "One rewrite's memo of what head symbols resolve to (nothing is defined while
    a rewrite runs)."
@@ -957,7 +964,7 @@
    Numbers-add, or the host's own + where the shim's is that). nil otherwise,
    and for a local named like a core fn."
   [ctx h args]
-  (when-let [f (:inline-fn ctx)]
+  (when-let [f (and *inline?* (:inline-fn ctx))]
     (when-let [v (head-var ctx h)]
       (when-let [inl (f v (count args))]
         (try (apply inl args)
@@ -1002,7 +1009,9 @@
             (and (symbol? h) (= "instance?" (name h)) (= 3 (count form))
                  (or (nil? (namespace h)) (contains? core-ns-names (namespace h)))
                  (not (contains? *locals* h))
-                 ;; the stock instance?, not a namespace's own
+                 ;; the stock instance?, not a namespace's own; and not inside a
+                 ;; macro's arguments (clojure.test's is reads instance? there)
+                 *inline?*
                  (or (nil? (:resolve-head ctx)) (= 'instance? (stock-name ctx h)))
                  (let [c (rw ctx (second form))] (and (seq? c) (= 'quote (first c)) (symbol? (second c)))))
             (list (shim-fn "instance-of?") (rw ctx (second form)) (rw ctx (nth form 2)))
@@ -1036,24 +1045,22 @@
               (if (and (empty? args) (contains? static-fields m))
                 (or (emit-static-value ctx c m) (apply list h args))
                 (rw-static ctx c m args)))
-            ;; a macro whose expansion the codemod rewrites (a stock or user
-            ;; macro, not the host's): its arguments stay as written, and are
-            ;; rewritten once, in the expansion, knowing the locals around them
-            ;; (&env) and the arity they end at, as the JVM compiler inlines
-            ;; after macroexpansion ((-> 10 (- 1 2)), is and assert see the forms)
-            (rewritten-macro? ctx h)
-            (apply list (rw ctx h) args)
             ;; a binding form before it expands: what it binds are locals
             (and hn (contains? binding-heads hn))
             (let [names (bound-names hn args)]
               (binding [*locals* (into *locals* names)
-                        *local-tags* (hint-tags *local-tags* names)]
+                        *local-tags* (hint-tags *local-tags* names)
+                        *inline?* (and *inline?* (not (rewritten-macro? ctx h)))]
                 (apply list (rw ctx h) (doall (rw-all ctx args)))))
             ;; case: its test constants are read as written by the host's case
             (= hn "case") (rw-case ctx h args)
             :else (if-let [e (inline-expansion ctx h args)]
                     (rw ctx e)
-                    (apply list (rw ctx h) (rw-all ctx args))))]
+                    ;; a macro whose expansion the codemod rewrites: its
+                    ;; arguments without inlining (the expansion inlines them)
+                    (if (and *inline?* (rewritten-macro? ctx h))
+                      (binding [*inline?* false] (apply list (rw ctx h) (doall (rw-all ctx args))))
+                      (apply list (rw ctx h) (rw-all ctx args)))))]
       (carry-meta out form))))
 
 (defn rw [ctx form]
@@ -1078,6 +1085,7 @@
   ([ctx form {:keys [locals]}]
    (let [cur (when-let [f (:current-ns ctx)] (str (f)))]
      (binding [*locals* (into #{} locals)
+               *inline?* true
                *heads* (volatile! {})
                *strip-inline?* (boolean (:strip-inline? ctx))
                *current-ns* cur
