@@ -262,6 +262,12 @@
           (and (string? t) (not (neg? (h-index-of t "PersistentArrayMap" 0)))) false
           :else (> (count m) 8))))
 
+;; the type of a host object (a record's, a user type's): on Phel every struct's
+;; type is :struct and every object's :php/object, so its PHP class, as a token
+(defn- type-of [x]
+  #?(:phel (if (php/is_object x) (symbol (php/str_replace "\\" "." (php/get_class x))) (type x))
+     :default (type x)))
+
 (defn class-of
   "The JVM class token (a symbol) of a host value."
   [x]
@@ -281,7 +287,7 @@
     (h-lazy-seq? x) 'clojure.lang.LazySeq
     (and host-has-map-entry? (host-map-entry? x)) 'clojure.lang.MapEntry
     (vector? x) 'clojure.lang.PersistentVector
-    (host-record? x) (type x)
+    (host-record? x) (type-of x)
     (map? x) (cond (h-sorted? x) 'clojure.lang.PersistentTreeMap
                    (hash-map-kind? x) 'clojure.lang.PersistentHashMap
                    :else 'clojure.lang.PersistentArrayMap)
@@ -303,7 +309,7 @@
     (fn? x) 'clojure.lang.AFunction
     (host/iter? x) 'java.util.Iterator
     ;; a host class (a deftype instance, a JS or Python object): the host's own
-    :else (or (type x) 'java.lang.Object)))
+    :else (or (type-of x) 'java.lang.Object)))
 
 (defn class-supers [c] (get token-ancestors (canon c) #{}))
 (defn class-bases [c]
@@ -324,7 +330,8 @@
 
 (def ^:private interface-preds
   {'clojure.lang.IPersistentVector vector?
-   'clojure.lang.IPersistentMap map?
+   ;; a record is a map (Phel's struct is no map? to Phel)
+   'clojure.lang.IPersistentMap #(or (map? %) (host-record? %))
    'clojure.lang.IPersistentSet set?
    'clojure.lang.IPersistentList #(or (list? %) (host-queue? %))
    'clojure.lang.IPersistentStack #(or (vector? %) (list? %) (host-queue? %))
@@ -333,7 +340,7 @@
    'clojure.lang.Seqable coll?
    'clojure.lang.Sequential sequential?
    'clojure.lang.Associative associative?
-   'clojure.lang.ILookup #(or (map? %) (vector? %))
+   'clojure.lang.ILookup #(or (map? %) (vector? %) (host-record? %))
    'clojure.lang.Counted h-counted?
    'clojure.lang.Indexed h-indexed?
    'clojure.lang.Reversible h-reversible?
@@ -359,7 +366,7 @@
    ;; vectors and lists here; ranges, an Eduction, a user type: the host's answer
    'clojure.lang.IReduceInit #(or (vector? %) (list? %) (host/host-instance? 'clojure.lang.IReduceInit %))
    'clojure.lang.IReduce #(or (vector? %) (list? %) (host/host-instance? 'clojure.lang.IReduce %))
-   'clojure.lang.IKVReduce #(or (map? %) (vector? %))
+   'clojure.lang.IKVReduce #(or (map? %) (vector? %) (host-record? %))
    'clojure.lang.Named #(or (symbol? %) (keyword? %))
    'java.util.Map$Entry host-map-entry?
    'clojure.lang.IMapEntry host-map-entry?
@@ -421,7 +428,7 @@
    js/Error, a Python class) is the host's own instance? question."
   [c x]
   (if-not (symbol? c)
-    (boolean (instance? c x))
+    (boolean (host/class-instance? c x))
     ;; an interface token is already canonical: its predicate first
     (let [p (get interface-preds c)
           c (if p c (canon c))
@@ -543,8 +550,20 @@
 (def RT-conj conj)
 (def RT-count count)
 (def RT-nth nth)
-(def RT-get get)
-(def RT-assoc assoc)
+;; Phel's get reads any other object as a PHP array, which throws: the JVM's
+;; get answers not-found for what is no lookup
+(def RT-get
+  #?(:phel (let [lookup? (fn [m] (or (not (php/is_object m)) (php/is_a m "ArrayAccess") (set? m) (seq? m)
+                                     (php/is_a m "Phel\\Lang\\Collections\\HashSet\\TransientHashSetInterface")))]
+             (fn ([m k] (if (lookup? m) (get m k) nil))
+               ([m k nf] (if (lookup? m) (get m k nf) nf))))
+     :default get))
+;; a record on Phel is a struct, which holds its fields alone: a key outside
+;; them makes a map of its fields and that key (on the JVM, a record still)
+(def ^:private assoc*
+  #?(:phel (fn [m k v] (if (and (host-record? m) (not (contains? m k))) (assoc (into {} (seq m)) k v) (assoc m k v)))
+     :default assoc))
+(def RT-assoc assoc*)
 (def RT-dissoc dissoc)
 (def RT-contains contains?)
 (def RT-find find)
@@ -994,6 +1013,8 @@
 (def ^:private host-class-value?
   #?(:cljs (fn [x] (and (fn? x) (true? (.-cljs$lang$type x))))
      :lpy (fn [x] (instance? python/type x))
+     ;; (Phel: a user type's class is the token of its PHP class, type-of's)
+     :phel (fn [x] (and (symbol? x) (php/class_exists (php/str_replace "." "\\" (str x)) false)))
      :default (host-fn 'class? (constantly false))))
 (defn- h-isa? [h child parent]
   (boolean
@@ -1386,7 +1407,7 @@
 (def Collections-reverseOrder (jstatic 'Collections/reverseOrder
                                        (fn ([] (fn [a b] (compare b a)))
                                          ([c] (let [c (as-comparator c)] (fn [a b] (c b a)))))))
-(def Pattern-compile (fn [s] (re-pattern s)))
+(def Pattern-compile (fn [s] (host/re-pattern* s)))
 
 ;; java.util.regex.Matcher over the adapter's :re-find-at / :re-match-full: the
 ;; JVM's find (resuming after the last match, one past an empty one), group,
@@ -1680,7 +1701,7 @@
 (def ^:private h-dissoc! (host-fn 'dissoc! nil))
 (def ^:private h-disj! (host-fn 'disj! nil))
 (def ^:private h-pop! (host-fn 'pop! nil))
-(def -assoc (fn [x k v] (if (h-transient? x) (h-assoc! x k v) (assoc x k v))))
+(def -assoc (fn [x k v] (if (h-transient? x) (h-assoc! x k v) (assoc* x k v))))
 (def -assocN -assoc)
 (def -without (fn [x k] (if (h-transient? x) (h-dissoc! x k) (dissoc x k))))
 (def -disjoin (fn [x k] (if (h-transient? x) (h-disj! x k) (disj x k))))
@@ -1992,7 +2013,7 @@
 ;; reify, proxy) answers its own member m when it has one; the host's own
 ;; data, and the shim's and adapter's own records, go to -m.
 (def ^:private shim-types
-  #{(type (host/->Iter nil)) (type (host/->SB nil)) (type (host/->MList nil)) (type (->Matcher nil nil))})
+  #{(type-of (host/->Iter nil)) (type-of (host/->SB nil)) (type-of (host/->MList nil)) (type-of (->Matcher nil nil))})
 ;; the answer is the type's (a host's user-type? reads only the class), asked
 ;; at every member call: computed once per type
 (def ^:private host-object-types (atom {}))
@@ -2003,7 +2024,7 @@
        (let [t #?(:cljs (type x) :default (class x))
              hit (get @host-object-types t absent)]
          (if (identical? hit absent)
-           (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type x)))))]
+           (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type-of x)))))]
              (swap! host-object-types assoc t r)
              r)
            hit))))

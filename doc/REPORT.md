@@ -44,20 +44,20 @@ source, `clojure.X` booting into `cohost.X`, and its cases are compared with
 require (`src/cohost/lib_battery.cljc`; regenerate, never edit, its expected
 values).
 
-| library | cases | jolt | JVM | basilisp | ClojureScript | ClojureWasm |
-|---|---:|---:|---:|---:|---:|---:|
-| clojure.walk | 7 | 7 | 7 | 7 | 7 | 7 |
-| clojure.set | 5 | 5 | 5 | 5 | 5 | 5 |
-| clojure.string | 10 | 10 | 10 | 10 | 10 | 10 |
-| clojure.zip | 7 | 7 | 7 | 7 | 7 | 7 |
-| clojure.data | 5 | 5 | 5 | 5 | 5 | 5 |
-| clojure.edn | 4 | 4 | 4 | 4 | 4 | 4 |
-| clojure.template | 2 | 2 | 2 | 2 | 2 | 2 |
-| clojure.test | 3 | 3 | 3 | 3 | 3 | 3 |
-| clojure.math | 7 | 7 | 7 | 7 | 7 | 7 |
-| clojure.stacktrace | 2 | 2 | 2 | 2 | 2 | 2 |
-| clojure.repl | 3 | 3 | 3 | 3 | 3 | 3 |
-| clojure.spec.alpha 0.5.238 | 6 | 6 | 6 | 6 | 6 | 6 |
+| library | cases | jolt | JVM | basilisp | ClojureScript | ClojureWasm | Phel |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| clojure.walk | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
+| clojure.set | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
+| clojure.string | 10 | 10 | 10 | 10 | 10 | 10 | 10 |
+| clojure.zip | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
+| clojure.data | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
+| clojure.edn | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
+| clojure.template | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+| clojure.test | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
+| clojure.math | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
+| clojure.stacktrace | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+| clojure.repl | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
+| clojure.spec.alpha 0.5.238 | 6 | 6 | 6 | 6 | 6 | 6 | 6 |
 
 Every host loads all twelve. clojure.repl's `source` and
 `set-break-handler!` are JVM facilities (class-loader resources,
@@ -442,6 +442,86 @@ open is listed under "Deliberately not done here". What changed:
     lacks therefore stays the shim's (no passthrough), and a Thread is never
     started: one corrupts its runtime ("incorrect alignment" at a later
     collection).
+
+- **Phel** (v0.54.0, PHP 8.5) is a Lisp that compiles to PHP; its runtime is not
+  Clojure's, so its adapter builds the contract from Phel's compiler and registry.
+  Each fact below was measured on the phar and found in Phel's source.
+  - **Namespaces** are names. The compiler's current one is GlobalEnvironment's
+    (`*ns*` is no dynamic var: the adapter sets phel.core's and cohost.core's
+    copy), and `ns` takes no docstring (cohost's own namespaces carry theirs as
+    comments). phel.core is visible from every namespace, so a cohost namespace
+    sees a host name until a stock definition shadows it. `ns-publics` and
+    `ns-interns` decode each name as a namespace name (`_` becomes `-`): the
+    adapter lists the registry's names itself. It has no `all-ns`, `the-ns` or
+    `ns-name`; its `resolve` and `intern` answer a symbol, not a var.
+  - **Special forms** are `fn`, `let`, `loop`, `defonce` (and `letfn` is a
+    macro). The codemod renames `fn*`, `let*`, `loop*`, `letfn*` in its output
+    (`:special-forms`), and a call of a stock macro of one of those names is
+    written qualified, which no special form is. A special form wins over a var
+    of its name. Phel's `defonce` is no expression, and `(def x)` sets nil: the
+    adapter writes `(def x)` so a var keeps an unbound root.
+  - **Rest args** are a vector: each variadic arity makes it a seq first
+    (`:rest-args :vector`), and `cons` onto a non-seq returns a vector, so the
+    shim's `RT-cons` takes its seq.
+  - **Metadata.** `def` evaluates its name's metadata, and the compiler reads
+    `:tag` as a PHP type and applies `:inline`: both are stripped, and the codemod
+    applies the inline fns (`:inline-meta :strip`, `:rewrite-inline? true`). A
+    var's metadata is its definition's in the registry, which `def` replaces;
+    phel.core's `alter-meta!` installs an override the compiler never reads and no
+    later `def` replaces, so cohost writes the registry's. A closure (a fn that
+    captures) is a PHP Closure and carries no metadata.
+  - **Macros.** A var is a macro when its registry metadata says `:macro`. Phel
+    resolves no qualified name of a private definition outside a macro's
+    expansion. A def may not redefine a name outside its interactive mode, which
+    the adapter turns on (core.clj defines `let`, `fn`, `defn` twice). Phel's
+    own macros expand to bare phel.core heads (`and`, `or`, `case`): an
+    expansion taken from one is qualified before it reaches cohost's namespaces.
+  - **Reading.** Phel's syntax-quote qualifies a symbol only when it resolves,
+    to where it resolves, and leaves the rest bare; the adapter marks each `` ` ``
+    in the parse tree and expands it as the JVM reader does. Its reader takes
+    `08` as 8 (the JVM's is no number), reads `#"..."` as a PCRE string, has no
+    `:readers`/`:default` for tags, and reads `{:a 1 :a 2}` with a
+    `ReaderException`: the adapter's reader works on the parse tree for all four.
+  - **Macro expansions.** Its analyzer takes a seq as a call only when it is a
+    list, and its emitter writes a vector literal only when it is a
+    PersistentVector (stock `sigs` makes a macro's `:arglists` with `subvec`),
+    and no object as a literal. Every rewritten expansion is rebuilt with lists
+    and vectors, metadata included, and a Pattern becomes a call that makes it
+    (`:code-form`).
+  - **The self-call shortcut.** Phel compiles a call of `f` inside
+    `(def f (fn ...))` as a call of `$this`; in a fn of several arity clauses the
+    nested fns are classes of their own, and the shortcut then makes one call
+    itself. One clause is written `(fn [x] ...)`, and a def of several is given
+    its fn through `(do ...)`, which turns the shortcut off.
+  - **Equality.** `identical?` of two symbols is their equality.
+  - **Maps.** `reduce`, `filter`, `keep`, `map` and `some` over a map see its
+    values; its `seq` is the entries.
+  - **Strings.** `class` of a string is the PHP class that string names; `count`
+    and `subs` count characters, `get` bytes. `format` is PHP's `sprintf`
+    (core.clj's boots over the shim's Formatter).
+  - **Numbers.** PHP prints a float with 14 significant digits by default
+    (`precision`); compiled float literals are written with it. The adapter and
+    `phel-config.php` set `precision` to -1 (shortest round trip), and Phel's
+    compiled cache must not hold code compiled before that.
+  - **Types.** `deftype` and `defrecord` are `defstruct`s: a struct is a map of
+    its fields to Phel (no other key: `assoc` of one makes a map), no `map?`,
+    and its name is its constructor fn, not a class (phel.core's type registry
+    maps the fn to the class; the shim asks the adapter, `:class-instance?`).
+    A reify is an object of an anonymous class whose methods are PHP methods, one
+    arity each: the adapter's `reify` keeps every arity of a method in one fn the
+    object holds, and its protocol tables dispatch to it.
+  - **Protocols** are maps whose methods dispatch through a table each, keyed by
+    type (`:string`, `:int`, ... a class name). `defprotocol` takes no docstring
+    or options; there is no `extend`; `extend-type` takes one clause per arity
+    (`:protocol-impl-style :per-arity`).
+  - **Regexes.** A regex literal is a PCRE string with `/` delimiters. The
+    adapter's regex is a Pattern of the JVM source (`phel_host.php`): PCRE in
+    UTF-8 mode, its byte offsets turned into characters.
+  - **Math.** PHP has no `cbrt`, `ulp`, `nextUp`, `getExponent`, `scalb`,
+    `copySign` or `IEEEremainder`; `phel_host.php` computes them over a double's
+    bits. `pow` is PHP's `fpow` (IEEE 754).
+  - **Arity** is checked when a call is compiled.
+  - **Chars** are one-character strings.
 
 ## Core battery cases that fail, and why (host facts)
 

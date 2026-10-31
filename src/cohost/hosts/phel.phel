@@ -6,7 +6,8 @@
 ;; - a var is a PhelVar over the definition registry; a macro is a def whose
 ;;   metadata says :macro;
 ;; - dynamic bindings are DynamicScope frames keyed "ns/name";
-;; - chars are one-character strings, a regex is a PCRE pattern string;
+;; - chars are one-character strings, a regex is a Pattern of its JVM source
+;;   (phel_host.php), which PCRE matches;
 ;; - phel.core is visible from every namespace (Phel's ns form has no
 ;;   :refer-clojure), so cohost's namespaces see a host name until a stock
 ;;   definition shadows it.
@@ -46,6 +47,11 @@
   (:use Phel.Shared.Parser.Node.QuoteNode)
   (:use Phel.Shared.Parser.Node.ListNode)
   (:use Phel.Shared.Parser.Node.SymbolNode)
+  (:use Phel.Shared.Parser.Node.StringNode)
+  (:use Phel.Shared.Parser.Node.NumberNode)
+  (:use Phel.Shared.Parser.Node.TaggedLiteralNode)
+  (:use Phel.Compiler.Domain.Reader.Exceptions.ReaderException)
+  (:use Phel.Lang.TagRegistry)
   (:use Phel.Shared.Parser.Node.InnerNodeInterface)
   (:use Phel.Shared.Parser.Node.Token)
   (:use Phel.Compiler.Domain.Analyzer.Environment.NodeEnvironment)
@@ -55,6 +61,20 @@
 
 (defn- genv [] (GlobalEnvironmentSingleton/getInstance))
 (defn- ns-str [x] (if (string? x) x (str x)))
+
+;; ---------------------------------------------------------------------------
+;; regexes: a Pattern (phel_host.php) keeps its JVM source and gives the same
+;; Pattern for the same source. Phel's emitter writes no object: code holding
+;; one is written (re-literal source) (see walk-code).
+
+(php/eval (str "require_once " (php/var_export (str __DIR__ "/phel_host.php") true) ";"))
+(def- pattern-class "cohost\\hosts\\phel\\Pattern")
+(defn- pattern? [x] (php/is_a x pattern-class))
+(defn re-literal [src]
+  (or (php/call_user_func (str pattern-class "::of") src)
+      (throw (adapter/ex* 'java.util.regex.PatternSyntaxException
+                          (str (php/call_user_func (str pattern-class "::error") src) "\n" src)))))
+(defn- re-pattern* [x] (if (pattern? x) x (re-literal x)))
 
 ;; ---------------------------------------------------------------------------
 ;; reading: the compiler's lexer and reader, one form at a time, so a form is
@@ -70,17 +90,43 @@
 ;; (but never phel.core), else the current namespace; special forms, & and
 ;; class names stay bare, x# is a gensym per syntax-quote. The code it builds
 ;; is the same as Phel's: (apply list (concat ...)), vector, hash-map.
+;;
+;; A regex literal is the JVM's too: a Pattern of the source as written (Phel
+;; reads a PCRE string), through a marker the same way. And a number is the
+;; JVM reader's: 0-led digits are octal, so 08 is no number. A tagged literal
+;; (but Phel's #php) is read by the reader's tag-reader: a fn of the tag
+;; symbol and the form.
 
 (def- sq-mark (Symbol/create "cohost.hosts.phel/syntax-quote"))
+(def- re-mark (Symbol/create "cohost.hosts.phel/regex-literal"))
+(def- tag-mark (Symbol/create "cohost.hosts.phel/tagged-literal"))
 
-(defn- mark-syntax-quotes [node]
+;; #inst and #uuid: Phel's own handlers; any other tag has no reader
+(defn- default-tag-reader [tag form]
+  (if-let [h (.get (TagRegistry/getInstance) (name tag))]
+    (h form)
+    (throw (adapter/ex* 'java.lang.RuntimeException (str "No reader function for tag " tag)))))
+(def- tag-reader (atom default-tag-reader))
+
+(defn- mark-nodes [node]
   (cond
     (and (php/instanceof node QuoteNode) (= (.getTokenType node) Token/T_QUASIQUOTE))
     (let [s (.getStartLocation node) e (.getEndLocation node)]
       (new ListNode Token/T_OPEN_PARENTHESIS s e
-           (php/array (new SymbolNode "`" s e sq-mark) (mark-syntax-quotes (.getExpression node)))))
+           (php/array (new SymbolNode "`" s e sq-mark) (mark-nodes (.getExpression node)))))
+    (and (php/instanceof node StringNode) (php/str_starts_with (.getCode node) "#\""))
+    (let [s (.getStartLocation node) e (.getEndLocation node) src (php/substr (.getCode node) 2 -1)]
+      (new ListNode Token/T_OPEN_PARENTHESIS s e
+           (php/array (new SymbolNode "#" s e re-mark) (new StringNode (.getCode node) s e src))))
+    (and (php/instanceof node TaggedLiteralNode) (not= "php" (.getTag node)))
+    (let [s (.getStartLocation node) e (.getEndLocation node)]
+      (new ListNode Token/T_OPEN_PARENTHESIS s e
+           (php/array (new SymbolNode "#" s e tag-mark) (new SymbolNode (.getTag node) s e (Symbol/create (.getTag node)))
+                      (mark-nodes (.getForm node)))))
+    (and (php/instanceof node NumberNode) (= 1 (php/preg_match "/^[+-]?0[0-7]*[89][0-9]*N?$/" (.getCode node))))
+    (throw (adapter/ex* 'java.lang.NumberFormatException (str "Invalid number: " (.getCode node))))
     (php/instanceof node InnerNodeInterface)
-    (.replaceChildren node (php/array_map mark-syntax-quotes (.getChildren node)))
+    (.replaceChildren node (php/array_map mark-nodes (.getChildren node)))
     :else node))
 
 (defn- form-of? [head x]
@@ -122,6 +168,7 @@
 
 (defn- sq [x gensyms]
   (cond
+    (form-of? re-mark x) (re-literal (second x))
     ;; a nested syntax-quote: read first, then quoted, as the JVM reads it
     (form-of? sq-mark x) (sq (sq (second x) (atom {})) gensyms)
     ;; unquoted code: the syntax-quotes inside it are its own
@@ -130,12 +177,14 @@
     (and (php/instanceof x PersistentListInterface) (not (empty? x))) (list 'apply 'list (sq-items x gensyms))
     (and (vector? x) (not (empty? x))) (list 'apply 'vector (sq-items x gensyms))
     (and (map? x) (not (empty? x))) (list 'apply 'hash-map (sq-items (mapcat (fn [e] [(key e) (val e)]) (seq x)) gensyms))
-    (or (keyword? x) (string? x) (number? x) (nil? x) (boolean? x)) x
+    (or (keyword? x) (string? x) (number? x) (nil? x) (boolean? x) (pattern? x)) x
     :else (list 'quote x)))
 
 ;; every marker in a read form, expanded; what holds none stays the same object
 (defn- expand-syntax-quotes [x]
   (cond
+    (form-of? re-mark x) (re-literal (second x))
+    (form-of? tag-mark x) ((deref tag-reader) (second x) (expand-syntax-quotes (nth x 2)))
     (form-of? sq-mark x) (sq (second x) (atom {}))
     (php/instanceof x PersistentListInterface)
     (let [xs (mapv expand-syntax-quotes x)]
@@ -153,6 +202,13 @@
       (if (every? true? (map (fn [a b] (php/=== a b)) xs x)) x (with-meta (into #{} xs) (meta x))))
     :else x))
 
+(defn- read-node [cf tree]
+  (try (expand-syntax-quotes (.getAst (.read cf (mark-nodes tree))))
+       (catch ReaderException e
+         (if (php/str_starts_with (.getMessage e) "Duplicate key")
+           (throw (adapter/ex* 'java.lang.IllegalArgumentException (.getMessage e)))
+           (throw e)))))
+
 (defn- read-forms [src cb]
   (let [cf (new CompilerFacade)
         ts (.lexString cf src "cohost")]
@@ -160,8 +216,34 @@
       (let [tree (.parseNext cf ts)]
         (when-not (nil? tree)
           (when-not (php/instanceof tree TriviaNodeInterface)
-            (cb (expand-syntax-quotes (.getAst (.read cf (mark-syntax-quotes tree))))))
+            (cb (read-node cf tree)))
           (recur))))))
+
+;; read-string: s's first form, as read-forms reads it; with none, opts' :eof
+;; or the JVM's EOF. clojure.edn's: its :readers by tag symbol, then its
+;; :default fn, then #inst and #uuid.
+(defn- read-one [s opts]
+  (let [cf (new CompilerFacade)
+        ts (.lexString cf (str s) "cohost")]
+    (loop []
+      (let [tree (.parseNext cf ts)]
+        (cond
+          (nil? tree) (if (contains? opts :eof)
+                        (get opts :eof)
+                        (throw (adapter/ex* 'java.lang.RuntimeException "EOF while reading")))
+          (php/instanceof tree TriviaNodeInterface) (recur)
+          :else (read-node cf tree))))))
+
+(defn- edn-read-string [opts s]
+  (when-not (nil? s)
+    (let [readers (get opts :readers) dflt (get opts :default) old (deref tag-reader)]
+      (reset! tag-reader (fn [tag form]
+                           (if-let [r (get readers tag)]
+                             (r form)
+                             (if (and dflt (nil? (.get (TagRegistry/getInstance) (name tag))))
+                               (dflt tag form)
+                               (default-tag-reader tag form)))))
+      (try (read-one s opts) (finally (reset! tag-reader old))))))
 
 ;; ---------------------------------------------------------------------------
 ;; namespaces and vars
@@ -256,16 +338,24 @@
 ;; names them; deftype and defrecord bind their fields in their methods, and a
 ;; deftype's class is noted (its instances are no records)
 (declare bind-fields)
+(declare type-forms)
+(declare protocol-forms)
+(declare reify-forms)
 (defn- host-macro [nm root]
   (case nm
-    ("deftype" "defrecord")
-    (fn [form env tname fields & specs]
-      (let [out (qualify-host-expansion (apply root form env tname fields (bind-fields fields specs)))]
-        (if (= nm "deftype")
-          (let [mg (new Munge)
-                cls (str (.encodePhpNs mg *ns*) "\\" (.encode mg (name tname)))]
-            (list 'do out (list 'cohost.hosts.phel/note-deftype! cls)))
-          out)))
+    "deftype" (fn [form env tname fields & specs] (type-forms false tname fields specs))
+    "defrecord" (fn [form env tname fields & specs] (type-forms true tname fields specs))
+    "defprotocol" (fn [form env pname & specs] (protocol-forms pname specs))
+    "reify" (fn [form env & specs] (reify-forms specs))
+    ;; (Phel's drops a nil type's group: its grouping takes a nil header for none)
+    "extend-protocol" (fn [form env p & specs]
+                        (apply list 'do
+                               (loop [xs specs t nil ms [] started? false acc []]
+                                 (cond
+                                   (empty? xs) (if started? (conj acc (apply list 'phel.core/extend-type t p ms)) acc)
+                                   (php/instanceof (first xs) PersistentListInterface) (recur (rest xs) t (conj ms (first xs)) started? acc)
+                                   :else (recur (rest xs) (first xs) [] true
+                                                (if started? (conj acc (apply list 'phel.core/extend-type t p ms)) acc))))))
     (fn [& args] (qualify-host-expansion (apply root args)))))
 
 ;; A macro is a def whose metadata says :macro: the compiler then calls it with
@@ -370,6 +460,7 @@
     (let [xs (mapv (fn [y] (walk-code y q?)) x)] (code-meta x (if (same-items? xs x) x (into (empty x) xs))))
     (php/instanceof x SeqInterface) (walk-code (code-meta x (apply list (seq x))) q?)
     (php/instanceof x Symbol) (code-meta x x)
+    (and (not q?) (pattern? x)) (list 'cohost.hosts.phel/re-literal (.-src x))
     :else x))
 
 (defn- as-code [x] (walk-code x false))
@@ -419,6 +510,8 @@
         m (.encode (new Munge) (if (= nm "toString") "__toString" nm))]
     (cond
       (and (empty? args) (php/instanceof x AbstractPersistentStruct) (contains? x k)) (get x k)
+      (and (php/method_exists x "cohostFns") (contains? (.cohostFns x) (str "." nm)))
+      (apply (get (.cohostFns x) (str "." nm)) x args)
       (php/method_exists x m) (php/call_user_func_array (php/array x m) (to-php-array args))
       :else absent)))
 
@@ -434,6 +527,151 @@
                    (apply list 'let (vec (mapcat (fn [f] [f (list 'get this' (keyword (name f)))]) fields)) body)))
            x))
        specs))
+
+;; A deftype or defrecord here is Phel's: a defstruct, and an extend-type of its
+;; protocol methods. A method of a JVM interface the codemod moved to a PHP
+;; interface (host-methods) is the struct class's own method instead, which
+;; Phel's extend-type does not take.
+(defn- php-interface? [h] (and (symbol? h) (php/str_starts_with (name h) "\\")))
+
+(defn- split-specs [specs]
+  (loop [xs specs php? false ifaces [] protos []]
+    (if (empty? xs)
+      [ifaces protos]
+      (let [x (first xs)]
+        (if (symbol? x)
+          (if (php-interface? x)
+            (recur (rest xs) true (conj ifaces x) protos)
+            (recur (rest xs) false ifaces (conj protos x)))
+          (if php?
+            (recur (rest xs) php? (conj ifaces x) protos)
+            (recur (rest xs) php? ifaces (conj protos x))))))))
+
+(defn- type-forms [record? tname fields specs]
+  (let [[ifaces protos] (split-specs (bind-fields fields specs))
+        nm (name tname)
+        mg (new Munge)
+        cls (str (.encodePhpNs mg *ns*) "\\" (.encode mg nm))
+        m (gensym "m") this (gensym "this") f (gensym "f")
+        ifaces (concat ifaces ['\cohost\hosts\phel\Fields
+                               (list '__get [this f] (list 'phel.core/get this (list 'phel.core/keyword f)))])]
+    (apply list 'do
+           (concat
+            ;; the type's name in its own methods is the var defstruct makes
+            ;; (Phel compiles a name it cannot resolve to that name, a string)
+            [(list 'def tname nil)
+             (apply list 'phel.core/defstruct tname fields ifaces)
+             (list 'phel.core/defn (symbol (str "->" nm)) fields (apply list tname fields))]
+            (when record?
+              [(list 'phel.core/defn (symbol (str "map->" nm)) [m]
+                     (apply list tname (map (fn [f] (list 'phel.core/get m (keyword (name f)))) fields)))])
+            (when (seq protos) [(apply list 'phel.core/extend-type tname protos)])
+            (when-not record? [(list 'cohost.hosts.phel/note-deftype! cls)])
+            [tname]))))
+
+;; A protocol is Phel's: a map whose methods dispatch through a table each
+;; (P--m--dispatch, an atom keyed by type). Phel's defprotocol takes no
+;; docstring or options, and the protocol keeps its tables by method name
+;; here, for extend.
+(defn- protocol-forms [pname specs]
+  (let [doc (when (string? (first specs)) (first specs))
+        specs (if doc (rest specs) specs)
+        specs (loop [xs specs] (if (keyword? (first xs)) (recur (drop 2 xs)) xs))
+        ;; Phel's dispatch fn takes the arglists' names as its parameters, and
+        ;; binds no _ (nor a destructuring form): each such one is named
+        params (fn [v] (vec (map-indexed (fn [i p] (if (and (symbol? p) (not= '_ p)) p (symbol (str "p" i)))) v)))
+        clean (map (fn [m] (apply list (first m) (map params (filter vector? (rest m)))))
+                   (filter (fn [x] (php/instanceof x PersistentListInterface)) specs))
+        table (fn [m] (symbol (str (name pname) "--" (name m) "--dispatch")))]
+    (list 'do
+          (apply list 'phel.core/defprotocol pname clean)
+          (list 'def pname (list 'phel.core/assoc pname :cohost/methods
+                                 (into {} (map (fn [m] [(keyword (name (first m))) (table (first m))]) clean))
+                                 :doc doc))
+          pname)))
+
+;; A reify here: Phel's reify* object. Its PHP-interface methods are its own;
+;; every other method is a fn of the object and the arguments, every arity in
+;; one (a PHP method has one, so Phel's reify takes one), closing over the
+;; reify's locals. A protocol's is handed to the protocol's dispatch table for
+;; the object's class; a JVM interface's is what (.m x) calls (invoke-member),
+;; and ILookup's valAt is also ArrayAccess's offsetGet, which Phel's get reads.
+(defn- protocol-root [sym]
+  (when-let [r (and (symbol? sym) (.resolveAsSymbol (genv) sym (NodeEnvironment/empty)))]
+    (let [v (Phel/getDefinition (.encodeRegistryKey (new Munge) (.getNamespace r)) (.getName r))]
+      (when (and (map? v) (contains? v :dispatch)) v))))
+
+(defn register-reify! [cls p m k]
+  (let [table (or (get (get p :cohost/methods) (keyword m))
+                  (throw (ex-info (str "cohost: a reify of " (get p :name) " has no dispatch table for " m) {})))]
+    (when-not (contains? (deref table) cls)
+      (swap! table assoc cls (fn [this & args] (apply (get (.cohostFns this) k) this args))))
+    nil))
+
+(defn- reify-forms [specs]
+  (let [[ifaces others] (split-specs specs)
+        impls (loop [xs others h nil acc []]
+                (if (empty? xs)
+                  acc
+                  (let [x (first xs)]
+                    (if (symbol? x) (recur (rest xs) x acc) (recur (rest xs) h (conj acc [h x]))))))
+        ks (distinct (map (fn [[h m]] [h (name (first m))]) impls))
+        proto? (into {} (map (fn [k] [k (some? (protocol-root (first k)))]) ks))
+        fkey (fn [k] (if (get proto? k) (str (first k) "/" (second k)) (str "." (second k))))
+        clauses (fn [k] (mapcat (fn [[h m]]
+                                  (when (= k [h (name (first m))])
+                                    (let [tail (rest m)]
+                                      (if (vector? (first tail)) [(apply list tail)] tail))))
+                                impls))
+        fns (gensym "fns") obj (gensym "obj") cls (gensym "cls") k (gensym "k") v (gensym "v")
+        make (gensym "make") mk (gensym "mk") m (gensym "meta") m2 (gensym "m")
+        lookup (some (fn [kk] (when (and (not (get proto? kk)) (= "valAt" (second kk))
+                                         (php/str_ends_with (str (first kk)) "ILookup"))
+                                (fkey kk)))
+                     ks)]
+    (list 'let [fns (into {".meta" (list 'fn '[this] '(.cohostMeta this))
+                           ".withMeta" (list 'fn ['this m2] (list '.cohostWithMeta 'this m2))}
+                          (map (fn [kk] [(fkey kk) (apply list 'fn (clauses kk))]) ks))
+                ;; one fn makes the object, so with-meta makes another of its class
+                make (list 'phel.core/atom nil)
+                mk (list 'phel.core/reset! make
+                         (list 'fn [m]
+                               (apply list 'reify*
+                                      (list 'cohostFns '[_] fns)
+                                      (list 'cohostMeta '[_] m)
+                                      (list 'cohostWithMeta ['_ m2] (list (list 'phel.core/deref make) m2))
+                                      (concat ifaces
+                                   (when lookup
+                                     ['\ArrayAccess
+                                      (list 'offsetGet ['this k] (list (list 'get fns lookup) 'this k))
+                                      (list 'offsetExists ['this k] (list 'not (list 'nil? (list (list 'get fns lookup) 'this k))))
+                                      (list 'offsetSet ['this k v] (list 'throw (list 'new '\LogicException "cohost: a reify is no mutable lookup")))
+                                      (list 'offsetUnset ['this k] (list 'throw (list 'new '\LogicException "cohost: a reify is no mutable lookup")))])))))
+                obj (list mk nil)
+                cls (list 'php/get_class obj)]
+          (apply list 'do
+                 (concat (keep (fn [kk] (when (get proto? kk)
+                                          (list 'cohost.hosts.phel/register-reify! cls (first kk) (second kk) (fkey kk))))
+                               ks)
+                         [obj])))))
+
+;; The JVM interface methods a deftype or reify implements, and the PHP
+;; interface each moves to: the one Phel's runtime reads (str's __toString, =
+;; and hash's EqualsInterface and HashableInterface), or cohost's IDeref, whose
+;; deref() Phel's deref calls
+(php/eval "namespace cohost\\hosts\\phel; interface IDeref { public function deref(); }")
+(def- host-methods
+  '{java.lang.Object {toString [\Stringable __toString]
+                      equals [\Phel\Lang\EqualsInterface equals]
+                      hashCode [\Phel\Lang\HashableInterface hash]}
+    clojure.lang.IDeref {deref [\cohost\hosts\phel\IDeref deref]}})
+(def- interface-classes {'clojure.lang.IDeref "cohost\\hosts\\phel\\IDeref"})
+;; what a record is besides (a struct is no map? to phel.core)
+(def- record-interfaces
+  '#{clojure.lang.IPersistentMap clojure.lang.IPersistentCollection clojure.lang.ILookup
+     clojure.lang.Associative clojure.lang.Counted clojure.lang.Seqable clojure.lang.IRecord
+     clojure.lang.IKeywordLookup clojure.lang.IHashEq clojure.lang.IObj clojure.lang.IMeta
+     java.util.Map java.lang.Iterable java.io.Serializable})
 
 ;; Phel's protocol dispatch keys for the JVM classes an extend names
 (def- host-types
@@ -463,6 +701,25 @@
     clojure.lang.Seqable [:vector :list :hash-map :set Phel.Lang.SeqInterface]
     java.util.Collection [:vector :list :set Phel.Lang.SeqInterface]
     java.lang.Iterable [:vector :list :hash-map :set Phel.Lang.SeqInterface]})
+
+;; extend, which Phel lacks: each method's fn into its table under the type's
+;; dispatch keys (a class token's, through host-types; a struct type's class;
+;; :nil for nil)
+(defn- dispatch-key [k] (if (symbol? k) (php/str_replace "." "\\" (str k)) k))
+(defn- dispatch-keys [t]
+  (cond
+    (nil? t) [:nil]
+    (symbol? t) (let [k (get host-types t t)] (map dispatch-key (if (vector? k) k [k])))
+    :else [(get (deref (.getDefinition (Registry/getInstance) "phel.core" "*type-tag-registry*")) t t)]))
+(defn extend* [t & pairs]
+  (loop [ps pairs]
+    (when (seq ps)
+      (let [tables (get (first ps) :cohost/methods)]
+        (doseq [k (dispatch-keys t)]
+          (doseq [e (seq (second ps))]
+            (swap! (get tables (key e)) assoc k (val e)))))
+      (recur (drop 2 ps))))
+  nil)
 
 ;; ---------------------------------------------------------------------------
 ;; exceptions: the shim's are Phel ExceptionInfos (ex-data {:cohost/class c});
@@ -502,6 +759,31 @@
     (if (nil? m) (str k) (str k ": " m))))
 
 ;; ---------------------------------------------------------------------------
+;; java.lang.Math: PHP's functions of doubles (fpow is IEEE 754's pow), and
+;; JvmMath (phel_host.php) for those PHP lacks
+
+(defn- d [x] (php/floatval x))
+(defn- jvm-math-fn [m] (let [f (str "cohost\\hosts\\phel\\JvmMath::" m)] (fn [& args] (php/call_user_func_array f (to-php-array args)))))
+(def- jvm-math
+  {'sin (fn [x] (php/sin (d x))) 'cos (fn [x] (php/cos (d x))) 'tan (fn [x] (php/tan (d x)))
+   'asin (fn [x] (php/asin (d x))) 'acos (fn [x] (php/acos (d x))) 'atan (fn [x] (php/atan (d x)))
+   'atan2 (fn [y x] (php/atan2 (d y) (d x)))
+   'sinh (fn [x] (php/sinh (d x))) 'cosh (fn [x] (php/cosh (d x))) 'tanh (fn [x] (php/tanh (d x)))
+   'exp (fn [x] (php/exp (d x))) 'expm1 (fn [x] (php/expm1 (d x)))
+   'log (fn [x] (php/log (d x))) 'log10 (fn [x] (php/log10 (d x))) 'log1p (fn [x] (php/log1p (d x)))
+   'sqrt (fn [x] (php/sqrt (d x))) 'hypot (fn [a b] (php/hypot (d a) (d b)))
+   'pow (fn [a b] (php/fpow (d a) (d b)))
+   'cbrt (let [f (jvm-math-fn "cbrt")] (fn [x] (f (d x))))
+   'ulp (let [f (jvm-math-fn "ulp")] (fn [x] (f (d x))))
+   'nextUp (let [f (jvm-math-fn "nextUp")] (fn [x] (f (d x))))
+   'nextDown (let [f (jvm-math-fn "nextDown")] (fn [x] (f (d x))))
+   'nextAfter (let [f (jvm-math-fn "nextAfter")] (fn [a b] (f (d a) (d b))))
+   'getExponent (let [f (jvm-math-fn "getExponent")] (fn [x] (f (d x))))
+   'scalb (let [f (jvm-math-fn "scalb")] (fn [a n] (f (d a) (php/intval n))))
+   'copySign (let [f (jvm-math-fn "copySign")] (fn [a b] (f (d a) (d b))))
+   'IEEEremainder (let [f (jvm-math-fn "IEEEremainder")] (fn [a b] (f (d a) (d b))))})
+
+;; ---------------------------------------------------------------------------
 
 (def adapter
   {:name :phel
@@ -521,7 +803,15 @@
    :rewrite-inline? true
    :code-form as-code
    :eval (fn [form] (eval (as-code form)))
-   :read-string (fn ([s] (read-string s)) ([s _opts] (read-string s)))
+   :read-string (fn ([s] (read-one s {})) ([s opts] (read-one s opts)))
+   :edn-read-string edn-read-string
+   ;; regexes are Patterns (see re-literal)
+   :regex? pattern?
+   :re-source (fn [re] (.-src re))
+   :re-pattern re-pattern*
+   :re-find-at (fn [re s from] (.find re s from))
+   :re-match-full (fn [re s] (.matchFull re s))
+   :re-group-count (fn [re] (.groupCount re))
    :with-ns with-ns
    :ensure-bare-ns! (fn [ns-sym] (create-ns (ns-str ns-sym)) ns-sym)
    :current-ns (fn [] (symbol (.getNs (genv))))
@@ -536,20 +826,54 @@
    :alias! (fn [into-ns a target]
              (.addRequireAlias (genv) (ns-str into-ns) (Symbol/create (str a)) (Symbol/create (ns-str target))))
    :mark-macro! mark-macro!
-   :core-extras {'resolve resolve-var 'ns-resolve ns-resolve* 'the-ns the-ns* 'ns-name ns-name*
+   :core-extras {'extend extend*
+                 'resolve resolve-var 'ns-resolve ns-resolve* 'the-ns the-ns* 'ns-name ns-name*
                  'intern (fn ([ns sym] (or (var-of ns sym) (intern! ns sym unbound)))
-                             ([ns sym val] (intern! ns sym val)))}
+                             ([ns sym val] (intern! ns sym val)))
+                 're-pattern re-pattern*
+                 ;; which Phel lacks: its namespaces are their names
+                 'all-ns (fn [] (seq (loaded-namespaces)))
+                 'newline (fn [] (print "\n") nil)
+                 ;; an inst is Phel's #inst, a DateTimeImmutable
+                 'inst? (fn [x] (php/instanceof x \DateTimeInterface))
+                 'inst-ms (fn [x] (if (php/instanceof x \DateTimeInterface)
+                                    (php/intval (.format x "Uv"))
+                                    (throw (adapter/ex* 'java.lang.IllegalArgumentException
+                                                        (str "No implementation of method: :inst-ms* of protocol: #'clojure.core/Inst found for class: " (php/get_debug_type x))))))}
    ;; (phel.core's intern answers a symbol: the shim's own makes Var.create's;
    ;; its format is PHP's sprintf: core.clj's boots over the shim's Formatter)
    ;; record?, which Phel lacks: a struct no deftype made
    :resolve-core (fn [sym]
                    (if (= 'record? sym)
                      (var-of 'cohost.hosts.phel 'record?*)
-                     (let [v (when-not (contains? '#{intern format} sym) (var-of 'phel.core sym))]
+                     (let [v (when-not (contains? '#{intern format read-string} sym) (var-of 'phel.core sym))]
                        (when (and v (not (:private (meta v)))) v))))
    :user-type? user-type?
    :invoke-member invoke-member
    :host-type (fn [token] (get host-types token))
+   :type-method-style :protocols
+   ;; a protocol method's impl is one clause per arity (Phel's extend-type
+   ;; makes them one multi-arity fn)
+   :protocol-impl-style :per-arity
+   :protocol-var? (fn [ns-sym name-sym]
+                    (boolean (when-let [v (var-of ns-sym name-sym)]
+                               (let [r (.getDefinition (Registry/getInstance) (.getNamespace v) (.getName v))]
+                                 (and (map? r) (contains? r :dispatch))))))
+   ;; a struct's name is its constructor fn, which phel.core's type registry
+   ;; maps to its class
+   :class-instance? (fn [c x]
+                      (let [cls (get (deref (.getDefinition (Registry/getInstance) "phel.core" "*type-tag-registry*")) c)]
+                        (boolean (cond cls (php/is_a x cls)
+                                       (string? c) (php/is_a x c)
+                                       :else false))))
+   :host-method (fn [token m] (get-in host-methods [token m]))
+   :host-instance? (fn [token x]
+                     (let [c (get interface-classes token)]
+                       (boolean (cond c (php/is_a x c)
+                                      (and (contains? record-interfaces token) (record?* x)) true
+                                      ;; a reify carries metadata
+                                      (contains? '#{clojure.lang.IObj clojure.lang.IMeta} token) (and (php/is_object x) (php/method_exists x "cohostMeta"))
+                                      :else false))))
    :require-host! (fn [lib] (throw (ex-info (str "cohost: phel has no require at run time: " lib) {:lib lib})))
    :var-ns (fn [v] (symbol (.getNamespace v)))
    :var-sym (fn [v] (symbol (.getName v)))
@@ -568,7 +892,9 @@
    :var-raw-root (fn [v] (.getDefinition (Registry/getInstance) (.getNamespace v) (.getName v)))
    :var-bound? var-bound?
    :var-meta var-meta
-   :meta (fn [x] (if (php/instanceof x PhelVar) (var-meta x) (meta x)))
+   :meta (fn [x] (cond (php/instanceof x PhelVar) (var-meta x)
+                       (and (php/is_object x) (php/method_exists x "cohostMeta")) (.cohostMeta x)
+                       :else (meta x)))
    :lazy-seq (fn [f] (lazy-seq (f)))
    :delay (fn [f] (delay (f)))
    ;; a PHP scalar or array is never a user type; and phel.core's class of a
@@ -590,7 +916,8 @@
    :delay? (fn [x] (php/instanceof x Delay))
    :reduced? (fn [x] (php/instanceof x Reduced))
    :deref? (fn [x] (or (php/instanceof x Atom) (php/instanceof x Volatile) (php/instanceof x Delay)
-                       (php/instanceof x Reduced) (php/instanceof x Future) (php/instanceof x PhelVar)))
+                       (php/instanceof x Reduced) (php/instanceof x Future) (php/instanceof x PhelVar)
+                       (php/is_a x "cohost\\hosts\\phel\\IDeref")))
    :pending? (fn [x] (or (php/instanceof x Delay) (php/instanceof x LazySeqInterface) (php/instanceof x Future)))
    :uuid? (fn [x] (php/instanceof x UUID))
    :bigint? (fn [x] (php/instanceof x BigInt))
@@ -602,7 +929,12 @@
    :math-ceil (fn [x] (php/ceil x))
    :math-floor (fn [x] (php/floor x))
    :math-sqrt (fn [x] (php/sqrt x))
-   :parse-long (fn [s] (when (php/preg_match "/^[+-]?[0-9]+$/" s) (php/intval s)))
+   :math jvm-math
+   ;; (a PHP int saturates: one that does not print back as written overflowed)
+   :parse-long (fn [s] (when (= 1 (php/preg_match "/^[+-]?[0-9]+$/" s))
+                         (let [v (php/intval s 10)
+                               digits (php/preg_replace "/^(-?)0*(?=[0-9])/" "$1" (php/ltrim s "+"))]
+                           (when (or (= 0 v) (= digits (php/strval v))) v))))
    :parse-double (fn [s] (php/floatval s))
    :upper-case (fn [s] (php/mb_strtoupper (str s)))
    :lower-case (fn [s] (php/mb_strtolower (str s)))
@@ -623,6 +955,8 @@
 ;; A float becomes a string (in the code Phel compiles, and in str) with PHP's
 ;; precision, 14 digits by default: 0.49999999999999994 compiled as 0.5. -1 is
 ;; the shortest string that reads back as the same double, as the JVM writes it.
+;; (phel-config.php sets it before Phel compiles anything; this, where it ran
+;; from elsewhere.)
 (php/ini_set "precision" "-1")
 
 ;; cohost's boot redefines names as a REPL session does (core.clj's let, fn,

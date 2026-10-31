@@ -86,6 +86,7 @@
    :empty-queue     [[] "the host's empty persistent queue (clojure.lang.PersistentQueue/EMPTY), or nil"]
    :host-class      [['token] "the host's own class or interface a JVM class token names, or nil: instance? also asks it"]
    :host-instance?  [['token 'x] "is x, an object that is not the host's own data, an instance of the JVM class token on this host? (default: instance? of :host-class)"]
+   :class-instance? [['c 'x] "(instance? c x) for a class value c that is no JVM class token: a type user code defined, a host class (default: the host's instance?)"]
    :protocol-impl-style [[] ":clj when extend-protocol / extend-type take (m ([x] ...) ([x y] ...)); :per-arity when they take one clause per arity (basilisp)"]
    :type-method-style [[] ":jvm when deftype / reify methods overload by arity and take any parameter form; :protocols (ClojureScript) when a JVM interface method is one of the host's protocol methods (:host-method gives [protocol method], and the method moves there); :python (basilisp) when a type's methods are Python methods: one definition per name (several arities of a JVM interface method merge into one variadic member), plain-symbol parameters (a destructuring parameter moves into a let), and a protocol method signature's receiver named this (the host counts the method's arity from it)"]
    :host-method     [['token 'method] "on a :protocols host: [protocol method] implementing method of the JVM interface token, or nil to keep it. On a :python host: the host's name for method of the JVM interface token when a deftype / reify implements it (clojure.lang.ILookup valAt -> val-at; java.lang.Object toString -> __str__, a head-less dunder method), or nil to keep it"]
@@ -138,6 +139,7 @@
    :re-match-full   [['re 's] "re matching all of s: [0 (count s) groups], or nil"]
    :re-group-count  [['re] "the number of capturing groups in re"]
    :re-source       [['re] "Pattern.pattern(): re's source string (default: (str re))"]
+   :re-pattern      [['s] "Pattern.compile(s): the host's regex of the JVM source string s (default: the host's re-pattern)"]
    :string-builder  [[] "a fresh mutable string builder that the host's str prints as its contents"]
    :sb-append!      [['sb 'x] "append (str x) to sb; return sb"]
    :sb-string       [['sb] "sb's contents"]
@@ -299,6 +301,7 @@
                 (when (every? fn? (vals fs)) fs)))
     :invoke-member (fn [_ _ _ absent] absent)
     :interop-passthrough? false
+    :class-instance? (fn [c x] (instance? c x))
     :protocol-var? (fn [ns-sym name-sym]
                      (let [h (try-all (fn [] (get ((cap :ns-interns) ns-sym) name-sym)))
                            v (when h ((cap :var-get) h))]
@@ -350,6 +353,7 @@
     :infinite? (fn [x] (and (number? x) (or (= x +inf) (= x (- +inf)))))
     :format nil
     :re-source (fn [re] (str re))
+    :re-pattern (fn [s] (re-pattern s))
     :iterator (fn [_] nil)
     :iterator? (fn [_] false)
     ;; an object of a type user code defined as a java.util.Iterator: its own members
@@ -478,6 +482,7 @@
 (defn java-statics [] (get @installed :java-statics {}))
 (defn host-class [token] ((cap :host-class) token))
 (def ^:private host-classes (atom {}))
+(defn class-instance? [c x] ((cap :class-instance?) c x))
 (defn host-instance?
   "The host's own instance? answer for a JVM class token, or nil."
   [token x]
@@ -603,6 +608,7 @@
 (defn infinite?* [x] ((cap :infinite?) x))
 (defn format-fn "The host's String.format, or nil: the shim's Formatter." [] (get @installed :format))
 (defn re-source [re] ((cap :re-source) re))
+(defn re-pattern* [s] ((cap :re-pattern) s))
 (defn native-method [x nm] ((cap :native-method) x nm))
 (defn sort-array! [arr cmp] ((cap :sort-array!) arr cmp))
 (defn host-array "A host array of coll's items (adapter :to-array)." [coll] ((cap :to-array) coll))
