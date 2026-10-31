@@ -42,7 +42,7 @@ named capabilities a clojure-like implements to plug in — read/eval in a
 namespace, var and namespace surgery, four constructors, regex search
 primitives, the host's `Math`, the type predicates behind the class tokens.
 Adapters ship for **jolt**, **basilisp**, **ClojureScript (self-hosted, Node
-and browser)** and the **JVM** (as the reference host).
+and browser)**, **ClojureWasm** and the **JVM** (as the reference host).
 
 It is the method of [clinj](https://github.com/johnmn3/clinj) ("WINE, not an
 emulator": shim the JDK surface the code calls, run the real source
@@ -58,10 +58,13 @@ ecosystem, nREPL and shadow-cljs.
 | JVM Clojure 1.12.0 (reference adapter) | 465 / 202 / 66 / 58 / **0** | **139/139** | **61/61** |
 | ClojureScript 1.12.42 self-hosted, Node 24 and Chromium | 518 / 87 / 46 / 140 / **0** | **137/139** | **61/61** |
 | basilisp 0.5.1 | 529 / 130 / 36 / 96 / **0** | **138/139** | **61/61** |
+| ClojureWasm v1.15.4 (2026-10-31) | 555 / 145 / 0 / 91 / **0** | **137/139** | **61/61** |
 
 The core battery's misses are host facts:
 - `(= 1 1.0)` is true in JavaScript and Python.
 - On ClojureScript, a macro's `&env` is the analyzer's environment.
+- On ClojureWasm, a regex Matcher has no group positions (`Matcher.start(g)`), and
+  `alter-var-root` of a var the thread binds applies the fn to the binding, not the root.
 
 "Natives" are the host's own fns standing in for stock ones (see below).
 
@@ -152,6 +155,7 @@ src/cohost/
     basilisp.lpy     basilisp
     cljs.cljs        ClojureScript, self-hosted (cljs.js)
     jvm.clj          JVM Clojure (reference)
+    cljw.clj         ClojureWasm (Zig)
 resources/cohost/clojure-1.12.0/   core.clj & co., the clojure.* libraries and
                                    clojure.spec.alpha, unchanged (EPL-1.0)
 dev/browser_boot.py  serves the browser build and runs it under Playwright

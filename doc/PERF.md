@@ -81,6 +81,44 @@ What caused them:
 **jolt's `JOLT_TRACE`:** a jolt run with `JOLT_TRACE=0` measured the same as the default
 (geometric mean ×1.0; boot 2.5 s → 2.3 s). Its results are in `doc/perf/after-jolt-trace0/`.
 
+## The new hosts (doc/hosts/PLAN.md)
+
+Measured 2026-10-31 between 12:56 and 1:02 AM ET on commit `de0ca96`, on one 4-CPU box.
+The JVM run was made on the same box just before, so the ratios compare like with like.
+Neither host had natives. The files are in `doc/perf/new-hosts/`;
+`bb bench:report doc/perf/new-hosts` prints the full tables.
+
+| | ClojureWasm v1.15.4 |
+|---|---:|
+| the stock core against JVM Clojure's own core | ×47.3 |
+| the stock core against the host's own core | **×5.1** |
+| the host's own core against JVM Clojure | ×9.2 |
+| boot of core.clj (JVM Clojure: 1.1 s) | 86.3 s |
+| the twelve libraries | 2.1 s |
+| natives | 0 |
+
+**ClojureWasm's largest gaps, the stock core against its own:**
+
+| case | ratio |
+|---|---:|
+| `sort-by` a key of maps | ×129.0 |
+| `sort` numbers | ×101.4 |
+| `count`, `filter`, `map` over a range | ×69.2 |
+| `conj!` into a transient vector | ×65.6 |
+| `re-seq` | ×48.1 |
+| `apply str` | ×40.1 |
+| `clojure.string/join` | ×33.2 |
+
+All seven are cases where another host's natives closed the gap:
+- `sort` and `sort-by`: cljw's own `sort` takes 600 ms for 20,000 numbers when it is
+  given a comparator fn and 27 ms without one, and the stock `sort` passes one;
+- `re-seq`: each match walks a fresh matcher forward, because cljw's `Matcher.find`
+  takes no start index;
+- the others: lazy seqs, transients and strings go through the shim.
+
+The boot is slow because cljw evaluates each of core.clj's forms through its analyzer
+and the codemod. Its share of the time has not been measured.
+
 ## Method
 
 `cohost.bench` (`src/cohost/bench.cljc`) holds 29 cases, each a small program

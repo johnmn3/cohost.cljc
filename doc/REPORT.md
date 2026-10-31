@@ -22,6 +22,7 @@ shared the machine (the wall times are upper bounds).
 | basilisp (Python 3.13) | 0.5.1 | 565 / 130 / 96 / **0** | **131/133** | **61/61** | 8 min 3 s |
 | ClojureScript, self-hosted, Node 24 | 1.12.42 | 572 / 79 / 140 / **0** | **131/133** | **61/61** | 33 s with the compile |
 | ClojureScript, self-hosted, Chromium | 1.12.42 | 572 / 79 / 140 / **0** | **131/133** | **61/61** | 19 s in the page |
+| ClojureWasm (Zig), measured 2026-10-31 on the 139-case battery | v1.15.4 prebuilt | 555 / 145 / 91 / **0** | **137/139** | **61/61** | 86 s boot |
 
 Every top-level count is out of 791: core.clj's 719 forms, the 37-var prelude
 (the dynamic vars the JVM runtime creates before core.clj loads) and the 35
@@ -43,20 +44,20 @@ source, `clojure.X` booting into `cohost.X`, and its cases are compared with
 require (`src/cohost/lib_battery.cljc`; regenerate, never edit, its expected
 values).
 
-| library | cases | jolt | JVM | basilisp | ClojureScript |
-|---|---:|---:|---:|---:|---:|
-| clojure.walk | 7 | 7 | 7 | 7 | 7 |
-| clojure.set | 5 | 5 | 5 | 5 | 5 |
-| clojure.string | 10 | 10 | 10 | 10 | 10 |
-| clojure.zip | 7 | 7 | 7 | 7 | 7 |
-| clojure.data | 5 | 5 | 5 | 5 | 5 |
-| clojure.edn | 4 | 4 | 4 | 4 | 4 |
-| clojure.template | 2 | 2 | 2 | 2 | 2 |
-| clojure.test | 3 | 3 | 3 | 3 | 3 |
-| clojure.math | 7 | 7 | 7 | 7 | 7 |
-| clojure.stacktrace | 2 | 2 | 2 | 2 | 2 |
-| clojure.repl | 3 | 3 | 3 | 3 | 3 |
-| clojure.spec.alpha 0.5.238 | 6 | 6 | 6 | 6 | 6 |
+| library | cases | jolt | JVM | basilisp | ClojureScript | ClojureWasm |
+|---|---:|---:|---:|---:|---:|---:|
+| clojure.walk | 7 | 7 | 7 | 7 | 7 | 7 |
+| clojure.set | 5 | 5 | 5 | 5 | 5 | 5 |
+| clojure.string | 10 | 10 | 10 | 10 | 10 | 10 |
+| clojure.zip | 7 | 7 | 7 | 7 | 7 | 7 |
+| clojure.data | 5 | 5 | 5 | 5 | 5 | 5 |
+| clojure.edn | 4 | 4 | 4 | 4 | 4 | 4 |
+| clojure.template | 2 | 2 | 2 | 2 | 2 | 2 |
+| clojure.test | 3 | 3 | 3 | 3 | 3 | 3 |
+| clojure.math | 7 | 7 | 7 | 7 | 7 | 7 |
+| clojure.stacktrace | 2 | 2 | 2 | 2 | 2 | 2 |
+| clojure.repl | 3 | 3 | 3 | 3 | 3 | 3 |
+| clojure.spec.alpha 0.5.238 | 6 | 6 | 6 | 6 | 6 | 6 |
 
 Every host loads all twelve. clojure.repl's `source` and
 `set-break-handler!` are JVM facilities (class-loader resources,
@@ -401,10 +402,64 @@ open is listed under "Deliberately not done here". What changed:
   `(var x)` is a fresh object each time (`=`, not `identical?`); its
   `ns-unmap` is a compile-time macro (a `with-local-vars` var stays interned).
 
+- **ClojureWasm** (cljw v1.15.4, Zig) names clojure.lang and java.* classes of its
+  own, with the JVM's exception hierarchy, so its adapter is the jolt adapter's
+  shape. Each fact below was measured on the binary and found in cljw's source.
+  - **Reading.** It has no `clojure.core/read` over a stream. The adapter finds each
+    top-level form's extent with a scan over a vector of the chars, then reads that
+    text with `read-string`. A vector, because `nth` of a cljw string walks it.
+  - **Macros.** A var is a macro only by `defmacro`. `^:macro` on a def is ignored,
+    there is no `.setMacro`, and a later plain `def` clears the bit. `defmacro` sets
+    the bit at analysis time, on the var it interns, before analysing the macro's
+    fn. So the adapter marks a var by evaluating a `defmacro` of its name whose
+    body cannot be analysed, which leaves the root alone.
+  - **Var metadata** says `:macro` for both the bit and a def's `^:macro`. In
+    cohost's namespaces the adapter therefore tracks the roots it marked.
+  - **Dynamic vars.** A var becomes dynamic by `(def ^:dynamic x)` with no value.
+  - **`fn*`** takes no name: the codemod binds the name with `letfn*`
+    (`:named-fn*? false`).
+  - **Macro expansions.** Its analyzer takes no array seq back as code, and `apply`
+    makes a fn's rest args one. Every rewritten expansion is rebuilt with lists,
+    metadata included, and a Var object becomes `(var ...)` (`:code-form`).
+  - **Fns carry no metadata**, so the shim keeps its stubs and stock multimethods
+    by identity.
+  - **Namespaces.** `set!` of `*ns*` under a binding moves `*ns*` but not
+    `read-string`'s `::` resolution; `in-ns` moves both, and it takes the name
+    unevaluated.
+  - **Types.** Its `deftype`/`reify` turn a clojure.lang interface into protocols
+    they name bare, so cohost's namespaces keep those 28 names referred. Its
+    protocol dispatch reaches a map, a set or a number only through its own types
+    (`clojure.lang.IPersistentMap`, `APersistentSet`, `Long` ...), never
+    `java.util.Map` or `java.lang.Number`: `:host-type` translates. It has no `Inst`.
+  - **Exceptions.** Class names print without their package and `(Exception.)` has
+    the message `""`; the adapter answers as the JVM does (`:exception-string`,
+    with `str` booted stock).
+  - **Regexes.** `Matcher.find` takes no start, so a search walks forward on one
+    matcher.
+  - **Math.** Its `Math/round` gives 1 for `0.49999999999999994`; the shim's
+    serves.
+  - **Errors.** Its "not implemented" error cannot be caught. Interop the shim
+    lacks therefore stays the shim's (no passthrough), and a Thread is never
+    started: one corrupts its runtime ("incorrect alignment" at a later
+    collection).
+
 ## Core battery cases that fail, and why (host facts)
 
 - `(= 1 1.0)` is `true` on ClojureScript (one number type) and on basilisp
   (Python `1 == 1.0`).
+- `Matcher.start(g)` / `end(g)` on ClojureWasm: its `java.util.regex.Matcher` has
+  `find`, `group`, `start` and `end` for the whole match only (`Matcher.zig`), and
+  no group positions. The row "Matcher group spans" fails with the shim's "not
+  available on this host".
+- `alter-var-root` of a var the thread binds, on ClojureWasm: cljw's
+  `alter-var-root` applies the fn to the binding's value (`core.zig:1767`,
+  `v.deref()`), not the root's. The root cannot be read there:
+  - a Var has no members;
+  - a Thread started to read it corrupts the runtime;
+  - the binding frame does not pop from the adapter.
+
+  The row "alter-var-root inside binding changes the root" gets `[1 11]` for
+  `[1 10]`.
 - `&env` inside a user macro is ClojureScript's analyzer env, not the JVM's
   locals map. basilisp passes a locals map, but `&env` first: cohost hands a
   stock or user macro `&form` and `&env` in core.clj's order.
