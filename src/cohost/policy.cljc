@@ -112,7 +112,8 @@
      serialized-require requiring-resolve
      case locking
      ;; its stock def needs defprotocol, which the host gives only after core.clj
-     Inst
+     ;; (and inst? and inst-ms need it)
+     Inst inst? inst-ms
      future future-call future-done? future-cancel future-cancelled? future?
      pmap pcalls pvalues seque promise deliver
      agent send send-off send-via set-agent-send-executor!
@@ -235,7 +236,7 @@
         arities' (map (fn [[params & body]]
                         (apply list (into ['&form '&env] params) body))
                       arities)
-        m (merge attrs {:macro true :arglists (list 'quote (map first arities))} (when doc {:doc doc}))]
+        m (merge attrs {:macro true :arglists (list 'quote (apply list (map first arities)))} (when doc {:doc doc}))]
     (list 'def (with-meta nm m) (apply list 'fn* nm arities'))))
 
 (defn adapt-macro-def

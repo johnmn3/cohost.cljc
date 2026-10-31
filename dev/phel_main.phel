@@ -1,0 +1,8 @@
+;; bb boot:phel / bench:phel: cohost.run's -main with Phel's command-line
+;; arguments. A file to `phel run`, not `phel eval`: eval also loads every
+;; source under the working directory (target/ holds the ClojureScript build's
+;; copies of cohost's own).
+(ns cohost-phel-main
+  (:require [cohost.run]))
+
+(apply cohost.run/-main *argv*)

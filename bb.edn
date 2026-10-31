@@ -75,7 +75,7 @@
   boot:cljw {:doc "ClojureWasm (Zig): the `cljw` binary on PATH (v1.15.4)"
              :task (shell "cljw" "-cp" "src" "-m" "cohost.run")}
   boot:phel {:doc "Phel (PHP 8.5): the `phel` wrapper over phel.phar on PATH (v0.54.0)"
-             :task (shell "phel" "eval" "(require 'cohost.run) (cohost.run/-main)")}
+             :task (shell "phel" "run" "dev/phel_main.phel")}
   boot:lg   {:doc "let-go (Go): the `lg` binary on PATH (v1.13.0)"
              :task (shell "lg" "-source-paths" "src" "-m" "cohost.run")}
   boot:cljrs {:doc "clojurust (Rust): the cargo-installed `cljrs` on PATH (0.2.32)"
@@ -87,8 +87,7 @@
                         (apply shell "cljw" "-cp" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
   bench:phel {:doc "cohost.bench on Phel (target/bench-phel.edn)"
               :task (do (babashka.fs/create-dirs "target")
-                        (shell "phel" "eval"
-                               (str "(require 'cohost.run) (apply cohost.run/-main \"--bench\" " (pr-str (vec (cons (git-rev) *command-line-args*))) ")")))}
+                        (apply shell "phel" "run" "dev/phel_main.phel" "--bench" (git-rev) *command-line-args*))}
   bench:lg  {:doc "cohost.bench on let-go (target/bench-lg.edn)"
              :task (do (babashka.fs/create-dirs "target")
                        (apply shell "lg" "-source-paths" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}

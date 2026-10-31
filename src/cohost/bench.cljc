@@ -213,5 +213,5 @@
           out {:host label :scale scale :boot-ms boot-ms :libs-ms libs-ms
                :opts (dissoc opts :label :boot-ms :libs-ms :scale) :cases (vec results)}]
       (write-results! (str "target/bench-" label (when (not= 1 scale) (str "-s" scale)) ".edn")
-                      (binding [*print-length* nil *print-level* nil] (pr-str out)))
+                      #?(:phel (pr-str out) :default (binding [*print-length* nil *print-level* nil] (pr-str out))))
       out)))

@@ -12,11 +12,37 @@
 ;;   definition shadows it.
 (ns cohost.hosts.phel
   (:require [cohost.adapter :as adapter])
+  (:use Phel)
+  (:use Phel.Shared.Munge)
   (:use Phel.Compiler.Infrastructure.GlobalEnvironmentSingleton)
   (:use Phel.Compiler.CompilerFacade)
   (:use Phel.Lang.Symbol)
   (:use Phel.Lang.PhelVar)
-  (:use Phel.Lang.DynamicScope))
+  (:use Phel.Lang.Registry)
+  (:use Phel.Lang.DynamicScope)
+  (:use Phel.Shared.Parser.Node.TriviaNodeInterface)
+  (:use Phel.Lang.Collections.Vector.TransientVectorInterface)
+  (:use Phel.Lang.Collections.Map.TransientMapInterface)
+  (:use Phel.Lang.Collections.HashSet.TransientHashSetInterface)
+  (:use Phel.Lang.Collections.LazySeq.LazySeqInterface)
+  (:use Phel.Lang.SeqInterface)
+  (:use Phel.Lang.Collections.LinkedList.PersistentListInterface)
+  (:use Phel.Lang.Collections.Vector.PersistentVector)
+  (:use Phel.Lang.Collections.Vector.PersistentVectorInterface)
+  (:use Phel.Lang.Collections.Map.PersistentMapInterface)
+  (:use Phel.Lang.Collections.Map.MapEntry)
+  (:use Phel.Lang.Collections.HashSet.PersistentHashSetInterface)
+  (:use Phel.Lang.Atom)
+  (:use Phel.Lang.Volatile)
+  (:use Phel.Lang.Delay)
+  (:use Phel.Lang.Future)
+  (:use Phel.Lang.Reduced)
+  (:use Phel.Lang.UUID)
+  (:use Phel.Lang.BigInt)
+  (:use Phel.Lang.Ratio)
+  (:use Phel.Lang.BigDecimal)
+  (:use Phel.Lang.Collections.SortedMap.PersistentSortedMap)
+  (:use Phel.Lang.Collections.SortedSet.PersistentSortedSet))
 
 (defn- genv [] (GlobalEnvironmentSingleton/getInstance))
 (defn- ns-str [x] (if (string? x) x (str x)))
@@ -32,7 +58,7 @@
     (loop []
       (let [tree (.parseNext cf ts)]
         (when-not (nil? tree)
-          (when-not (php/instanceof tree \Phel\Compiler\Domain\Parser\ParserNode\TriviaNodeInterface)
+          (when-not (php/instanceof tree TriviaNodeInterface)
             (cb (.getAst (.read cf tree))))
           (recur))))))
 
@@ -46,19 +72,69 @@
 
 (defn- var-of [ns-sym sym] (find-var (symbol (ns-str ns-sym) (str sym))))
 
+;; A namespace's definition names as def registered them: phel.core's
+;; ns-interns and ns-publics decode each as a namespace name (a _ becomes -)
+(defn- def-names [ns-sym public?]
+  (let [enc (.encodeRegistryKey (new Munge) (ns-str ns-sym))
+        defs (Phel/getDefinitionInNamespace enc)
+        out (transient [])]
+    (foreach [k _ defs]
+      (when (or (not public?) (not (get (Phel/getDefinitionMetaData enc k) :private)))
+        (conj! out (symbol k))))
+    (persistent out)))
+
 (defn- ns-interns* [ns-sym]
-  (into {} (map (fn [k] [(symbol k) (var-of ns-sym k)])) (keys (ns-interns (ns-str ns-sym)))))
+  (into {} (map (fn [k] [k (var-of ns-sym k)])) (def-names ns-sym false)))
 
 (defn- refer-one! [into-ns sym from-ns]
   (.addRefer (genv) (ns-str into-ns) (Symbol/create (str sym)) (Symbol/create (ns-str from-ns))))
 
 (defn- refer! [into-ns from-ns {:keys [only exclude rename]}]
-  (let [names (or only (map symbol (keys (ns-publics (ns-str from-ns)))))
+  (let [names (or only (def-names from-ns true))
         ex (set exclude)]
     (doseq [n names :when (not (contains? ex n))]
       (if-let [r (get rename n)]
         (adapter/intern! into-ns r (var-get (var-of from-ns n)))
         (refer-one! into-ns n from-ns)))))
+
+;; A definition is the run-time registry's (under the name as written, as def
+;; stores it: phel.core/intern munges it) and the compiler's table's, which code
+;; compiled after it resolves the name through. Interning keeps the var's
+;; metadata, as Clojure's intern does.
+(defn- intern! [ns-sym sym val]
+  (let [enc (.encodeRegistryKey (new Munge) (ns-str ns-sym))]
+    (Phel/addDefinition enc (str sym) val (Phel/getDefinitionMetaData enc (str sym)))
+    (.addDefinition (genv) (ns-str ns-sym) (Symbol/create (str sym)) true)
+    (var-of ns-sym sym)))
+
+;; A var's metadata is its definition's, in the registry: def replaces it there,
+;; and the compiler reads it there (:macro, :private, :dynamic). phel.core's
+;; alter-meta! of a var installs an override instead, which the compiler never
+;; reads and no later def replaces; cohost writes the registry's. Without
+;; :inline: the compiler applies it, and core.clj's (definline's) build JVM
+;; interop (:inline-meta :strip, as for a def).
+(defn- set-var-meta! [v m]
+  (let [ns (.getNamespace v) nm (.getName v)]
+    (Phel/addDefinition ns nm (.getDefinition (Registry/getInstance) ns nm) (dissoc m :inline :inline-arities))
+    v))
+(defn- alter-var-meta! [v f & args] (set-var-meta! v (apply f (meta v) args)) (meta v))
+
+;; A macro is a def whose metadata says :macro: the compiler then calls it with
+;; &form and &env.
+(defn- mark-macro! [v] (set-var-meta! v (assoc (meta v) :macro true)))
+
+;; ns-resolve, which Phel lacks: its resolve, in that namespace, to the var
+(defn- ns-resolve*
+  ([ns-sym sym] (ns-resolve* ns-sym nil sym))
+  ([ns-sym _env sym]
+   (when-let [q (with-ns ns-sym (fn [] (resolve sym)))]
+     (when (namespace q) (find-var q)))))
+
+;; the-ns and ns-name, which Phel lacks: a namespace is its name there
+(defn- the-ns* [x]
+  (or (find-ns (ns-str x))
+      (throw (new \Exception (str "No namespace: " x " found")))))
+(defn- ns-name* [x] (symbol (the-ns* x)))
 
 ;; bindings: one DynamicScope frame per push, keyed as the compiled reads look
 (defn- binding-key [v] (str (.getNamespace v) "/" (.getName v)))
@@ -68,12 +144,61 @@
     (.pushFrame (DynamicScope/getInstance) frame)))
 
 ;; ---------------------------------------------------------------------------
+;; macro expansions: Phel's analyzer takes a seq as a call only when it is a
+;; PersistentList (a cons cell or a lazy seq is no code), and its emitter
+;; writes a vector literal only when it is a PersistentVector (a subvec is
+;; none: stock sigs builds a macro's :arglists with one). Every other seq
+;; becomes a list, every other vector (and a map entry) a vector, metadata
+;; included; what does not change stays the same object.
+
+(declare as-code)
+;; the same object (phel.core's identical? is equality for a symbol)
+(defn- same? [a b] (php/=== a b))
+(defn- code-meta [x x']
+  (let [m (meta x) m' (when m (as-code m))]
+    (if (and (same? x x') (same? m m')) x (with-meta x' m'))))
+
+(defn- same-items? [xs ys] (every? true? (map same? xs ys)))
+
+(defn- as-code [x]
+  (cond
+    (php/instanceof x PersistentListInterface)
+    (let [xs (mapv as-code x)] (code-meta x (if (same-items? xs x) x (apply list xs))))
+    (php/instanceof x PersistentVector)
+    (let [xs (mapv as-code x)] (code-meta x (if (same-items? xs x) x xs)))
+    (php/instanceof x PersistentVectorInterface) (code-meta x (mapv as-code x))
+    (php/instanceof x MapEntry) [(as-code (key x)) (as-code (val x))]
+    (php/instanceof x PersistentMapInterface)
+    ;; (Phel's map over a map sees its values: its seq is the entries)
+    (let [kvs (mapv (fn [e] [(as-code (key e)) (as-code (val e))]) (seq x))]
+      (code-meta x (if (every? (fn [[[k v] e]] (and (same? k (key e)) (same? v (val e)))) (map vector kvs (seq x)))
+                     x
+                     (into (empty x) kvs))))
+    (php/instanceof x PersistentHashSetInterface)
+    (let [xs (mapv as-code x)] (code-meta x (if (same-items? xs x) x (into (empty x) xs))))
+    (php/instanceof x SeqInterface) (as-code (code-meta x (apply list (seq x))))
+    (php/instanceof x Symbol) (code-meta x x)
+    :else x))
+
+;; ---------------------------------------------------------------------------
 
 (def adapter
   {:name :phel
    :core-ns 'phel.core
    :catch-all 'Throwable
    :read-forms read-forms
+   ;; Phel's special forms are fn, let, loop; letfn is phel.core's macro, named
+   ;; qualified (cohost.core's letfn, the stock macro, expands to letfn*). And
+   ;; defonce is a special form too: an entry of its own name, so a call of the
+   ;; stock macro is written qualified
+   :special-forms '{fn* fn let* let loop* loop letfn* phel.core/letfn defonce defonce}
+   ;; a fn's & rest argument is a vector
+   :rest-args :vector
+   ;; Phel applies a def's :inline fn at compile time, and core.clj's build
+   ;; JVM interop: they are stripped, and the codemod applies them
+   :inline-meta :strip
+   :rewrite-inline? true
+   :code-form as-code
    :read-string (fn ([s] (read-string s)) ([s _opts] (read-string s)))
    :with-ns with-ns
    :ensure-bare-ns! (fn [ns-sym] (create-ns (ns-str ns-sym)) ns-sym)
@@ -81,13 +206,15 @@
    :set-current-ns! (fn [ns-sym] (.setNs (genv) (ns-str ns-sym)))
    :ns-interns ns-interns*
    :interned-var (fn [ns-sym sym] (var-of ns-sym sym))
-   :ns-public-names (fn [ns-sym] (set (map symbol (keys (ns-publics (ns-str ns-sym))))))
-   :intern! (fn [ns-sym sym val] (var-of (namespace (intern (ns-str ns-sym) (str sym) val)) sym))
+   :ns-public-names (fn [ns-sym] (set (def-names ns-sym true)))
+   :intern! intern!
    :refer-all! (fn [into-ns from-ns] (refer! into-ns from-ns {}))
    :refer! refer!
    :refer-from-core! (fn [into-ns sym] (refer-one! into-ns sym 'phel.core))
    :alias! (fn [into-ns a target]
              (.addRequireAlias (genv) (ns-str into-ns) (Symbol/create (str a)) (Symbol/create (ns-str target))))
+   :mark-macro! mark-macro!
+   :core-extras {'ns-resolve ns-resolve* 'the-ns the-ns* 'ns-name ns-name*}
    :resolve-core (fn [sym] (let [v (var-of 'phel.core sym)] (when (and v (not (:private (meta v)))) v)))
    :require-host! (fn [lib] (throw (ex-info (str "cohost: phel has no require at run time: " lib) {:lib lib})))
    :var-ns (fn [v] (symbol (.getNamespace v)))
@@ -95,18 +222,35 @@
    :var? (fn [x] (php/instanceof x PhelVar))
    :namespace? (fn [_] false)
    :dynamic-var? (fn [v] (boolean (or (.isDynamic v) (:dynamic (meta v)))))
-   :set-dynamic! (fn [v] (alter-meta! v assoc :dynamic true) v)
+   :set-dynamic! (fn [v] (set-var-meta! v (assoc (meta v) :dynamic true)))
+   :alter-var-meta! alter-var-meta!
    :push-thread-bindings! push-bindings!
    :pop-thread-bindings! (fn [] (.popFrame (DynamicScope/getInstance)))
    :var-thread-bound? (fn [v] (.hasBinding (DynamicScope/getInstance) (.getNamespace v) (.getName v)))
    :lazy-seq (fn [f] (lazy-seq (f)))
    :delay (fn [f] (delay (f)))
+   ;; a PHP scalar or array is never a user type; and phel.core's class of a
+   ;; string is the class that string names, which the shim's type lookup is not
+   :host-data? (fn [x] (not (php/is_object x)))
    :exception? (fn [x] (php/instanceof x \Throwable))
    :char-code (fn [c] (php/mb_ord c))
    :char? (fn [x] (and (string? x) (= 1 (php/mb_strlen x))))
-   :transient? (fn [x] (php/instanceof x \Phel\Lang\Collections\TransientInterface))
-   :lazy-seq? (fn [x] (php/instanceof x \Phel\Lang\Collections\LazySeq\LazySeqInterface))
-   :atom? (fn [x] (= :atom (type x)))
+   :transient? (fn [x] (or (php/instanceof x TransientVectorInterface) (php/instanceof x TransientMapInterface)
+                           (php/instanceof x TransientHashSetInterface)))
+   :lazy-seq? (fn [x] (php/instanceof x LazySeqInterface))
+   :atom? (fn [x] (php/instanceof x Atom))
+   ;; Phel's reference and number types
+   :volatile? (fn [x] (php/instanceof x Volatile))
+   :delay? (fn [x] (php/instanceof x Delay))
+   :reduced? (fn [x] (php/instanceof x Reduced))
+   :deref? (fn [x] (or (php/instanceof x Atom) (php/instanceof x Volatile) (php/instanceof x Delay)
+                       (php/instanceof x Reduced) (php/instanceof x Future) (php/instanceof x PhelVar)))
+   :pending? (fn [x] (or (php/instanceof x Delay) (php/instanceof x LazySeqInterface) (php/instanceof x Future)))
+   :uuid? (fn [x] (php/instanceof x UUID))
+   :bigint? (fn [x] (php/instanceof x BigInt))
+   :ratio? (fn [x] (php/instanceof x Ratio))
+   :decimal? (fn [x] (php/instanceof x BigDecimal))
+   :sorted? (fn [x] (or (php/instanceof x PersistentSortedMap) (php/instanceof x PersistentSortedSet)))
    :nano-time (fn [] (php/hrtime true))
    :current-time-millis (fn [] (php/intdiv (php/hrtime true) 1000000))
    :math-ceil (fn [x] (php/ceil x))
@@ -117,5 +261,9 @@
    :upper-case (fn [s] (php/mb_strtoupper (str s)))
    :lower-case (fn [s] (php/mb_strtolower (str s)))
    :index-of (fn [s sub from] (let [i (php/mb_strpos s sub from)] (if (php/=== i false) -1 i)))})
+
+;; cohost's boot redefines names as a REPL session does (core.clj's let, fn,
+;; defn twice); Phel allows that in its interactive mode
+(Phel/addDefinition "phel.core" "*interactive-mode*" true)
 
 (adapter/install! adapter)

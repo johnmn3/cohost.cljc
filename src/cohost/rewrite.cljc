@@ -227,9 +227,10 @@
   [locals]
   (let [deepest (reduce (fn [m [l t d]] (if (> d (get-in m [l 1] 0)) (assoc m l [t d]) m))
                         {} (keep marker-info locals))]
-    {:tags (into {} (keep (fn [[l [t]]] (when (contains? checked-tokens t) [l t]))) deepest)
-     :classes (into {} (keep (fn [[l [t]]] (when (= 'java.lang.StringBuilder t) [l t]))) deepest)
-     :depth (into {} (map (fn [[l [_ d]]] [l d])) deepest)}))
+    ;; (seq deepest): its entries (Phel's keep and map over a map see its values)
+    {:tags (into {} (keep (fn [[l [t]]] (when (contains? checked-tokens t) [l t]))) (seq deepest))
+     :classes (into {} (keep (fn [[l [t]]] (when (= 'java.lang.StringBuilder t) [l t]))) (seq deepest))
+     :depth (into {} (map (fn [[l [_ d]]] [l d])) (seq deepest))}))
 
 (defn- markers-for
   "The marker bindings for syms, bound with the given tags and classes: a
@@ -363,7 +364,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*?]
+           instance-fn missing-dot try-all named-fn*? special-forms vector-rest-args?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:shim-names shim-names
    ;; {shim static name -> the host core's symbol} where the shim's static is
@@ -393,6 +394,11 @@
    ;; false where the host's fn* takes no name: (fn* nm ...) becomes
    ;; (letfn* [nm (fn* ...)] nm)
    :named-fn*? (if (nil? named-fn*?) true (boolean named-fn*?))
+   ;; {fn* fn ...}: the host's names for the special forms in the output
+   :special-forms special-forms
+   ;; a host whose & rest argument is a vector (Phel): each variadic arity
+   ;; makes it a seq (or nil) first, as stock code builds forms of it
+   :vector-rest-args? (boolean vector-rest-args?)
    ;; per-namespace facts: a thunk naming the namespace being compiled, an atom
    ;; {ns-name {Short full}} of imports, an atom {orig-ns mapped-ns} of renamed
    ;; stock libraries, and the host's type translation for extend positions
@@ -697,7 +703,11 @@
                                        body' (binding [*local-tags* tags *local-classes* classes *marker-depth* depths]
                                                (doall (rw-all ctx body)))
                                        body' (with-markers bs body')
-                                       body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')]
+                                       body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')
+                                       rest-arg (second (drop-while #(not= '& %) params))
+                                       body' (if (and (:vector-rest-args? ctx) (symbol? rest-arg))
+                                               [(apply list 'let* [rest-arg (list (shim-fn "RT-seq") rest-arg)] body')]
+                                               body')]
                                    (apply list (rw-params params) body')))
                                arities)))]
     (if (and nm (not (:named-fn*? ctx)))
@@ -1161,6 +1171,18 @@
       (when-let [inl (f v (count args))]
         ((:try-all ctx) (fn [] (apply inl args)))))))
 
+(defn- macro-head
+  "The head of a call of a stock macro. Where the host has a special form of
+   that name (Phel's fn, let, loop), the special form would win over the
+   macro: the head is written qualified, which no special form is."
+  [ctx h]
+  (if-let [sf (:special-forms ctx)]
+    (if (and (symbol? h) (nil? (namespace h)) (contains? (set (vals sf)) h)
+             (when-let [v (head-var ctx h)] ((:stock-name ctx) v)))
+      (symbol (:core-ns ctx) (name h))
+      (rw ctx h))
+    (rw ctx h)))
+
 (defn- rw-list [ctx form]
   (if (empty? form)
     form
@@ -1249,7 +1271,7 @@
             ;; ((-> 10 (- 1 2))), assert and is reading the forms, and the
             ;; locals of &env (typed ones through their markers)
             (rewritten-macro? ctx h)
-            (apply list (rw ctx h) args)
+            (apply list (macro-head ctx h) args)
             ;; a binding form before it expands: what it binds are locals
             (and hn (contains? binding-heads hn))
             (let [names (bound-names hn args)]
@@ -1291,9 +1313,38 @@
         [k v] (when c @c)]
     (if (and c (identical? k rn))
       v
-      (let [v (into {(:core-ns ctx) "clojure.core"} (keep (fn [[o m]] (when (not= o m) [m o]))) rn)]
+      (let [v (into {(:core-ns ctx) "clojure.core"} (keep (fn [[o m]] (when (not= o m) [m o]))) (seq rn))]
         (when c (reset! c [rn v]))
         v))))
+
+(defn- host-special-forms
+  "form with its fn*, let*, loop* and letfn* named as the host names them (sf:
+   the adapter's :special-forms); letfn*'s [name (fn* ...) ...] pairs become
+   (name arities) specs. A fn* named like one of those special forms (stock fn,
+   booted as (def fn (fn* fn ...))) loses its name, which would shadow the
+   special form in its body. Quoted forms stay as they are."
+  [sf form]
+  (letfn [(walk [x]
+            (cond
+              (seq? x)
+              (let [h (first x)]
+                (cond (or (empty? x) (= 'quote h)) x
+                      (and (= 'letfn* h) (contains? sf 'letfn*))
+                      (let [[_ bs & body] x
+                            spec (fn [[n f]]
+                                   (let [tail (rest f) tail (if (symbol? (first tail)) (rest tail) tail)]
+                                     (apply list n (map walk tail))))]
+                        (with-meta (apply list (get sf 'letfn*) (mapv spec (partition 2 bs)) (map walk body)) (meta x)))
+                      :else (let [tail (rest x)
+                                  tail (if (and (= 'fn* h) (symbol? (first tail)) (contains? (set (vals sf)) (first tail)))
+                                         (rest tail)
+                                         tail)]
+                              (with-meta (apply list (map walk (cons (get sf h h) tail))) (meta x)))))
+              (vector? x) (with-meta (mapv walk x) (meta x))
+              (map? x) (with-meta (into {} (map (fn [[k v]] [(walk k) (walk v)]) (seq x))) (meta x))
+              (set? x) (with-meta (into #{} (map walk x)) (meta x))
+              :else x))]
+    (walk form)))
 
 (defn rewrite
   "The codemod: form -> form the host can compile against cohost.shim.
@@ -1317,6 +1368,7 @@
                *per-arity-impls* (:per-arity-impls? ctx)
                *kw-unrenames* (kw-unrenames ctx)
                *host-type* (:host-type ctx)]
-       (if-let [ref (:shim-ref ctx)]
-         (binding [*shim-ref* ref] (rw ctx form))
-         (rw ctx form))))))
+       (let [out (if-let [ref (:shim-ref ctx)]
+                   (binding [*shim-ref* ref] (rw ctx form))
+                   (rw ctx form))]
+         (if-let [sf (:special-forms ctx)] (host-special-forms sf out) out))))))

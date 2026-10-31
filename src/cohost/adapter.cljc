@@ -76,6 +76,8 @@
    :code-form       [['form] "nil (the default), or a fn making a macro's expansion code the host's compiler takes back: applied to every expansion the codemod rewrites (ClojureWasm re-analyses no array seq, which is what a fn's & rest args are there)"]
    :rewrite-output-ref [[] "for :source wrapping: the symbol that names cohost.boot/rewrite-output in evaluated code"]
    :shim-ref        [[] "nil, or a fn from a shim var's name to the symbol evaluated code uses for it"]
+   :special-forms   [[] "nil (the default), or {fn* host-name ...}: the host's names for the special forms the codemod's output uses where they are not the JVM's (Phel: {fn* fn, let* let, loop* loop, letfn* phel.core/letfn}); letfn*'s [name fn ...] pairs become letfn's (name arities) specs. A call of a stock macro named like one of the values is written qualified (a special form wins over a var); an entry of a name to itself marks another such special form (Phel's defonce)"]
+   :rest-args       [[] ":seq when a fn's & rest argument is a seq, or nil when there is none (the JVM's; default); :vector when it is the host's vector (Phel): the codemod makes each variadic arity's rest argument a seq first"]
    :named-fn*?      [[] "true when (fn* name [params] body) names the fn for its body (the JVM's; default); false when the host's fn* takes no name (ClojureWasm): the codemod binds the name with letfn* instead"]
    :variadic-recur-style [[] ":jvm when `recur` in a variadic arity binds the rest param to the trailing argument; :repack when the host packs the trailing arguments into a fresh rest seq (the codemod then loops such arities)"]
    :def-meta        [[] "nil, or metadata every `def` name gets so alter-var-root / with-redefs reach compiled references (basilisp: {:redef true})"]
@@ -324,6 +326,8 @@
     :shim-ref nil
     :variadic-recur-style :jvm
     :named-fn*? true
+    :rest-args :seq
+    :special-forms nil
     :def-meta nil
     :inline-meta :keep
     :rewrite-inline? false
@@ -422,11 +426,13 @@
 
 ;; every accessor below runs through cap, many of them per element: one lookup
 (defn- cap [k]
-  (let [v (get @installed k ::absent)]
+  (let [m @installed v (get m k ::absent)]
     (if (= ::absent v)
-      (if (nil? @installed)
-        (throw (ex-info "cohost: no host adapter installed (require cohost.hosts.auto or a cohost.hosts.* namespace first)" {}))
-        (throw (ex-info (str "cohost: adapter provides no " k) {:capability k})))
+      (cond (nil? m)
+            (throw (ex-info "cohost: no host adapter installed (require cohost.hosts.auto or a cohost.hosts.* namespace first)" {}))
+            ;; Phel's get answers its not-found for a key whose value is nil
+            (contains? m k) nil
+            :else (throw (ex-info (str "cohost: adapter provides no " k) {:capability k})))
       v)))
 
 ;; ---------------------------------------------------------------------------
@@ -436,6 +442,11 @@
   "The installed adapter's capability k itself, looked up once by a caller
    that asks it per element (cohost.shim's predicates)."
   [k] (cap k))
+
+;; a namespace's name and a namespace by name, where namespaces are objects;
+;; Phel's are their names (and it has neither fn)
+(defn ns-name* [n] #?(:phel (symbol (str n)) :default (ns-name n)))
+(defn the-ns* [x] #?(:phel x :default (the-ns x)))
 
 (defn host-name [] (cap :name))
 (defn core-ns-sym [] (cap :core-ns))
@@ -448,6 +459,8 @@
 (defn shim-ref [] (get @installed :shim-ref))
 (defn loop-variadic-recur? [] (= :repack (cap :variadic-recur-style)))
 (defn named-fn*? [] (boolean (cap :named-fn*?)))
+(defn special-forms [] (get @installed :special-forms))
+(defn vector-rest-args? [] (= :vector (cap :rest-args)))
 (defn host-type-fn [] (get @installed :host-type))
 (defn user-type? [x] ((cap :user-type?) x))
 (defn invoke-member [x nm args absent] ((cap :invoke-member) x nm args absent))

@@ -17,7 +17,10 @@
 ;; classes). A member missing here is reported, not papered over: the rewriter
 ;; emits `missing-*`, which throws when reached.
 (ns cohost.shim
+  ;; the shim asks the adapter for its capabilities as it loads: a host whose
+  ;; loader orders a namespace's requires itself (Phel) installs it first
   (:require [cohost.adapter :as host]
+            [cohost.hosts.auto]
             #?(:cljs [goog.object :as gobj]))
   #?(:cljs (:require-macros [cohost.shim-names]))
   ;; the shim's -first, -seq ... are JVM method names, not cljs.core's protocol methods
@@ -315,7 +318,8 @@
         (= parent 'java.lang.Object)
         (contains? (get token-ancestors child #{}) parent))))
 
-(declare class-token? chunked-cons?)
+(declare class-token?)
+(declare chunked-cons?)
 
 (def ^:private interface-preds
   {'clojure.lang.IPersistentVector vector?
@@ -528,7 +532,9 @@
 ;; ---------------------------------------------------------------------------
 ;; RT
 
-(def RT-cons cons)
+;; Phel's cons onto anything but a seq (a vector, a map, nil) is a vector
+(def RT-cons #?(:phel (fn [x coll] (if (seq? coll) (cons x coll) (let [s (seq coll)] (if s (cons x s) (list x)))))
+                :default cons))
 (def RT-first first)
 (def RT-next next)
 (def RT-more rest)
@@ -723,7 +729,7 @@
 (def protocols-coll-reduce (fn ([coll f] (reduce (host-reducer f) coll)) ([coll f init] (reduce (host-reducer f) init coll))))
 (declare -kvreduce)
 (def protocols-kv-reduce (fn [coll f init] (-kvreduce coll f init)))
-(def protocols-iterator-reduce! (fn [it f init] (reduce f init (RT-chunkIteratorSeq it))))
+(def protocols-iterator-reduce! (fn ([it f] (reduce f (RT-chunkIteratorSeq it))) ([it f init] (reduce f init (RT-chunkIteratorSeq it)))))
 (def RT-REQUIRE_LOCK (atom ::require-lock))
 (def TimeUnit-MILLISECONDS :milliseconds)
 (def TimeUnit-SECONDS :seconds)
@@ -758,7 +764,8 @@
 ;; Var.intern(ns, sym) creates the namespace and leaves the var unbound (the
 ;; host's 2-arity intern); Var.intern(ns, sym, root) binds it
 (def Var-intern (let [in (host-fn 'intern nil) cn (host-fn 'create-ns (fn [_] nil))
-                      ns-sym (fn [ns] (if (h-namespace? ns) (ns-name ns) ns))]
+                      nn (host-fn 'ns-name identity)
+                      ns-sym (fn [ns] (if (h-namespace? ns) (nn ns) ns))]
                   (fn ([ns sym] (cn (ns-sym ns))
                                 (if in (in (ns-sym ns) sym) (host/intern! (ns-sym ns) sym nil)))
                     ([ns sym val] (cn (ns-sym ns)) (host/intern! (ns-sym ns) sym val)))))
@@ -786,7 +793,7 @@
       (when (and unmap (pos? @live-locals))
         (let [left (reduce (fn [n [sym v]]
                              (if (host/var-thread-bound? v) (inc n) (do (unmap @locals-ns sym) n)))
-                           0 (host/ns-interns-map @locals-ns))]
+                           0 (seq (host/ns-interns-map @locals-ns)))]
           (reset! live-locals left))))))
 
 (def Keyword-intern (fn ([x] (if (symbol? x) (keyword (namespace x) (name x)) (keyword x)))
@@ -1008,14 +1015,15 @@
 (defn- mf-dominates? [prefers h x y] (or (mf-prefers? prefers h x y) (h-isa? h x y)))
 (defn- mf-find-method [{:keys [name methods prefers default hierarchy]} dv]
   (let [h (deref hierarchy)
-        best (reduce (fn [best [k _ :as e]]
-                       (cond (not (h-isa? h dv k)) best
-                             (nil? best) e
-                             (mf-dominates? prefers h k (key best)) e
-                             (mf-dominates? prefers h (key best) k) best
-                             :else (throw (host/ex* 'IllegalArgumentException
-                                                    (str "Multiple methods in multimethod '" name "' match dispatch value: " dv
-                                                         " -> " k " and " (key best) ", and neither is preferred")))))
+        best (reduce (fn [best e]
+                       (let [k (first e)]
+                         (cond (not (h-isa? h dv k)) best
+                               (nil? best) e
+                               (mf-dominates? prefers h k (key best)) e
+                               (mf-dominates? prefers h (key best) k) best
+                               :else (throw (host/ex* 'IllegalArgumentException
+                                                      (str "Multiple methods in multimethod '" name "' match dispatch value: " dv
+                                                           " -> " k " and " (key best) ", and neither is preferred"))))))
                      nil methods)]
     (if best (val best) (get methods default))))
 (defn- mf-method
@@ -1655,7 +1663,12 @@
 (def -getHistoryCount (fn [_] 0))
 (def -getMinHistory (fn [_] 0))
 (def -getMaxHistory (fn [_] 10))
-(def ^:private host-alter-meta! (host-fn 'alter-meta! (fn [x f & args] (apply host/alter-var-meta! x f args))))
+(def ^:private host-alter-meta!
+  #?(;; phel.core's alter-meta! of a var installs an override its compiler
+     ;; never reads and no later def replaces: a var's goes to the adapter
+     :phel (let [am (host-fn 'alter-meta! nil)]
+             (fn [x f & args] (apply (if (h-var? x) host/alter-var-meta! am) x f args)))
+     :default (host-fn 'alter-meta! (fn [x f & args] (apply host/alter-var-meta! x f args)))))
 (def ^:private h-assoc! (host-fn 'assoc! nil))
 (def ^:private h-dissoc! (host-fn 'dissoc! nil))
 (def ^:private h-disj! (host-fn 'disj! nil))
@@ -1749,7 +1762,7 @@
                     (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (seq (::more (meta s))) :else (next s)))))
 ;; Named.getName; a non-Named value is the JVM's ClassCastException (nil: NPE);
 ;; a host class object (from `class` of a record) prints its name
-(def -getName (fn [x] (cond (h-namespace? x) (ns-name x)
+(def -getName (fn [x] (cond (h-namespace? x) (host/ns-name* x)
                             (symbol? x) (name x)
                             (keyword? x) (name x)
                             (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
@@ -1763,13 +1776,13 @@
 ;; Var.sym and Keyword.sym (core.clj's `symbol` of a keyword)
 (def -sym (fn [x] (if (keyword? x) (symbol (namespace x) (name x)) (host/var-sym x))))
 (def -ns (fn [v] (host/var-ns v)))
-(def -name (fn [x] (if (h-namespace? x) (ns-name x) (name x))))
+(def -name (fn [x] (if (h-namespace? x) (host/ns-name* x) (name x))))
 (def -getMappings (host-fn 'ns-map (unsupported "ns-map")))
 (def -getAliases (host-fn 'ns-aliases (fn [_] {})))
 (def -addAlias (let [al (host-fn 'alias nil)]
                  (fn [ns a target]
                    #?(:cljs ((unsupported "alias"))
-                      :default (if al (binding [*ns* (the-ns ns)] (al a (if (h-namespace? target) (ns-name target) target)))
+                      :default (if al (binding [*ns* (host/the-ns* ns)] (al a (if (h-namespace? target) (host/ns-name* target) target)))
                                    ((unsupported "alias")))))))
 (def -removeAlias (host-fn 'ns-unalias (unsupported "ns-unalias")))
 (def -intern (fn [ns sym] (host/intern! ns sym nil)))
@@ -1794,7 +1807,7 @@
 (def -bindRoot (fn [v x] (host/set-var-root! v (constantly x)) v))
 ;; Var.alterRoot returns the new root, bindings or not
 (def -alterRoot (fn [v f args] (host/set-var-root! v (fn [old] (apply f old args))) (host/var-raw-root v)))
-(def -toSymbol (fn [v] (let [n (host/var-ns v) n (if (h-namespace? n) (ns-name n) n)]
+(def -toSymbol (fn [v] (let [n (host/var-ns v) n (if (h-namespace? n) (host/ns-name* n) n)]
                          (if n (symbol (str n) (str (host/var-sym v))) (host/var-sym v)))))
 ;; IAtom.swap overloads: (f) (f x) (f x y) (f x y args) — the last takes the
 ;; remaining arguments as one seq, which core.clj's swap! passes through as-is.

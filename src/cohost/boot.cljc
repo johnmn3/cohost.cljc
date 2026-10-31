@@ -129,7 +129,8 @@
                                                                    (and own-inline? (:inline (host/var-meta h))))
                                                        (host/var-root h))))]
                           (if (and (fn? v) (or (not (contains? m v)) (better? sym (get m v)))) (assoc m v sym) m)))
-                      {} (host/ns-interns-map core))
+                      ;; seq: Phel's reduce over a map walks its values
+                      {} (seq (host/ns-interns-map core)))
         vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))]
     (into {} (keep (fn [s]
                      (let [nm (str s)]
@@ -162,7 +163,7 @@
   "(fn [v]) -> v's name when v is a var of the booted core, else nil."
   []
   (let [core (name core-ns)]
-    (fn [v] (when (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (ns-name x) x))))
+    (fn [v] (when (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (host/ns-name* x) x))))
               (symbol (name (host/var-sym v)))))))
 
 (defn- rewritten-macro?
@@ -220,6 +221,8 @@
                 :shim-ref (host/shim-ref)
                 :loop-variadic-recur? (host/loop-variadic-recur?)
                 :named-fn*? (host/named-fn*?)
+                :special-forms (host/special-forms)
+                :vector-rest-args? (host/vector-rest-args?)
                 :def-meta (host/def-meta)
                 :strip-inline? (host/strip-inline?)
                 :current-ns host/current-ns
@@ -229,7 +232,7 @@
                 :move-methods? (= :protocols (host/type-method-style))
                 :host-method host/host-method
                 :var-form (fn [x] (when (host/var?* x)
-                                    (let [n (host/var-ns x) n (if (host/namespace? n) (ns-name n) n)]
+                                    (let [n (host/var-ns x) n (if (host/namespace? n) (host/ns-name* n) n)]
                                       (list 'var (symbol (str n) (str (host/var-sym x)))))))
                 :passthrough? (host/interop-passthrough?)
                 :record? shim/record?*
@@ -238,7 +241,9 @@
                                      (boolean (and n (host/try-all (fn [] (some? (host/interned-var n s)))
                                                                    (fn [_] false))))))})))
 
-(declare eval-top directive directive!)
+(declare eval-top)
+(declare directive)
+(declare directive!)
 
 (defn eval-in
   "Rewrite `form` and eval it with *ns* bound to `ns-sym`. A top-level `do`
@@ -580,7 +585,7 @@
      ;; Clojure, else the host's, when it has them
      (host/with-ns core-ns
        (fn []
-         (let [stock (into {} (mapcat (fn [[file nms]] (companion-forms (str root "/" file) (set nms)))
+         (let [stock (into {} (mapcat (fn [[file nms]] (seq (companion-forms (str root "/" file) (set nms))))
                                       (group-by #(get policy/companion-stock %)
                                                 (filter #(contains? policy/companion-stock %) policy/companion-names))))]
            (doseq [nm (sort policy/companion-names)]
@@ -699,7 +704,8 @@
     (swap! state update-in [:libs lib]
            (fn [e] (-> e (update k (fnil inc 0)) (update :entries (fnil conj []) (assoc entry :status k)))))))
 
-(declare load-lib! refer-lib!)
+(declare load-lib!)
+(declare refer-lib!)
 
 (defn- import! [ns-sym specs]
   (let [pairs (mapcat (fn [spec]
@@ -772,7 +778,7 @@
     (host/ensure-bare-ns! target)
     #?(:cljs nil
        :default (when (seq ns-meta)
-                  (host/try-all (fn [] (alter-meta! (the-ns target) merge ns-meta)))))
+                  (host/try-all (fn [] (alter-meta! (host/the-ns* target) merge ns-meta)))))
     (swap! (:loader-nses (ctx)) conj (str target))
     (refer-core! target (or rc {}))
     (host/set-current-ns! target)
