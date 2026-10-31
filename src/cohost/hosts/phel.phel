@@ -1,0 +1,121 @@
+;; The Phel adapter (a Lisp on PHP 8.5). Phel reads .cljc with the :phel
+;; feature, and its runtime is not Clojure's, so this adapter builds the
+;; contract from Phel's own pieces:
+;; - namespaces are names, the compiler's current one is GlobalEnvironment's
+;;   (*ns* cannot be bound), refers and aliases are that environment's;
+;; - a var is a PhelVar over the definition registry; a macro is a def whose
+;;   metadata says :macro;
+;; - dynamic bindings are DynamicScope frames keyed "ns/name";
+;; - chars are one-character strings, a regex is a PCRE pattern string;
+;; - phel.core is visible from every namespace (Phel's ns form has no
+;;   :refer-clojure), so cohost's namespaces see a host name until a stock
+;;   definition shadows it.
+(ns cohost.hosts.phel
+  (:require [cohost.adapter :as adapter])
+  (:use Phel.Compiler.Infrastructure.GlobalEnvironmentSingleton)
+  (:use Phel.Compiler.CompilerFacade)
+  (:use Phel.Lang.Symbol)
+  (:use Phel.Lang.PhelVar)
+  (:use Phel.Lang.DynamicScope))
+
+(defn- genv [] (GlobalEnvironmentSingleton/getInstance))
+(defn- ns-str [x] (if (string? x) x (str x)))
+
+;; ---------------------------------------------------------------------------
+;; reading: the compiler's lexer and reader, one form at a time, so a form is
+;; read after the one before it ran (a ::kw after an ns form is that
+;; namespace's)
+
+(defn- read-forms [src cb]
+  (let [cf (new CompilerFacade)
+        ts (.lexString cf src "cohost")]
+    (loop []
+      (let [tree (.parseNext cf ts)]
+        (when-not (nil? tree)
+          (when-not (php/instanceof tree \Phel\Compiler\Domain\Parser\ParserNode\TriviaNodeInterface)
+            (cb (.getAst (.read cf tree))))
+          (recur))))))
+
+;; ---------------------------------------------------------------------------
+;; namespaces and vars
+
+(defn- with-ns [ns-sym thunk]
+  (let [env (genv) old (.getNs env)]
+    (.setNs env (ns-str ns-sym))
+    (try (thunk) (finally (.setNs env old)))))
+
+(defn- var-of [ns-sym sym] (find-var (symbol (ns-str ns-sym) (str sym))))
+
+(defn- ns-interns* [ns-sym]
+  (into {} (map (fn [k] [(symbol k) (var-of ns-sym k)])) (keys (ns-interns (ns-str ns-sym)))))
+
+(defn- refer-one! [into-ns sym from-ns]
+  (.addRefer (genv) (ns-str into-ns) (Symbol/create (str sym)) (Symbol/create (ns-str from-ns))))
+
+(defn- refer! [into-ns from-ns {:keys [only exclude rename]}]
+  (let [names (or only (map symbol (keys (ns-publics (ns-str from-ns)))))
+        ex (set exclude)]
+    (doseq [n names :when (not (contains? ex n))]
+      (if-let [r (get rename n)]
+        (adapter/intern! into-ns r (var-get (var-of from-ns n)))
+        (refer-one! into-ns n from-ns)))))
+
+;; bindings: one DynamicScope frame per push, keyed as the compiled reads look
+(defn- binding-key [v] (str (.getNamespace v) "/" (.getName v)))
+(defn- push-bindings! [m]
+  (let [frame (php-associative-array)]
+    (doseq [[v x] m] (php/aset frame (binding-key v) x))
+    (.pushFrame (DynamicScope/getInstance) frame)))
+
+;; ---------------------------------------------------------------------------
+
+(def adapter
+  {:name :phel
+   :core-ns 'phel.core
+   :catch-all 'Throwable
+   :read-forms read-forms
+   :read-string (fn ([s] (read-string s)) ([s _opts] (read-string s)))
+   :with-ns with-ns
+   :ensure-bare-ns! (fn [ns-sym] (create-ns (ns-str ns-sym)) ns-sym)
+   :current-ns (fn [] (symbol (.getNs (genv))))
+   :set-current-ns! (fn [ns-sym] (.setNs (genv) (ns-str ns-sym)))
+   :ns-interns ns-interns*
+   :interned-var (fn [ns-sym sym] (var-of ns-sym sym))
+   :ns-public-names (fn [ns-sym] (set (map symbol (keys (ns-publics (ns-str ns-sym))))))
+   :intern! (fn [ns-sym sym val] (var-of (namespace (intern (ns-str ns-sym) (str sym) val)) sym))
+   :refer-all! (fn [into-ns from-ns] (refer! into-ns from-ns {}))
+   :refer! refer!
+   :refer-from-core! (fn [into-ns sym] (refer-one! into-ns sym 'phel.core))
+   :alias! (fn [into-ns a target]
+             (.addRequireAlias (genv) (ns-str into-ns) (Symbol/create (str a)) (Symbol/create (ns-str target))))
+   :resolve-core (fn [sym] (let [v (var-of 'phel.core sym)] (when (and v (not (:private (meta v)))) v)))
+   :require-host! (fn [lib] (throw (ex-info (str "cohost: phel has no require at run time: " lib) {:lib lib})))
+   :var-ns (fn [v] (symbol (.getNamespace v)))
+   :var-sym (fn [v] (symbol (.getName v)))
+   :var? (fn [x] (php/instanceof x PhelVar))
+   :namespace? (fn [_] false)
+   :dynamic-var? (fn [v] (boolean (or (.isDynamic v) (:dynamic (meta v)))))
+   :set-dynamic! (fn [v] (alter-meta! v assoc :dynamic true) v)
+   :push-thread-bindings! push-bindings!
+   :pop-thread-bindings! (fn [] (.popFrame (DynamicScope/getInstance)))
+   :var-thread-bound? (fn [v] (.hasBinding (DynamicScope/getInstance) (.getNamespace v) (.getName v)))
+   :lazy-seq (fn [f] (lazy-seq (f)))
+   :delay (fn [f] (delay (f)))
+   :exception? (fn [x] (php/instanceof x \Throwable))
+   :char-code (fn [c] (php/mb_ord c))
+   :char? (fn [x] (and (string? x) (= 1 (php/mb_strlen x))))
+   :transient? (fn [x] (php/instanceof x \Phel\Lang\Collections\TransientInterface))
+   :lazy-seq? (fn [x] (php/instanceof x \Phel\Lang\Collections\LazySeq\LazySeqInterface))
+   :atom? (fn [x] (= :atom (type x)))
+   :nano-time (fn [] (php/hrtime true))
+   :current-time-millis (fn [] (php/intdiv (php/hrtime true) 1000000))
+   :math-ceil (fn [x] (php/ceil x))
+   :math-floor (fn [x] (php/floor x))
+   :math-sqrt (fn [x] (php/sqrt x))
+   :parse-long (fn [s] (when (php/preg_match "/^[+-]?[0-9]+$/" s) (php/intval s)))
+   :parse-double (fn [s] (php/floatval s))
+   :upper-case (fn [s] (php/mb_strtoupper (str s)))
+   :lower-case (fn [s] (php/mb_strtolower (str s)))
+   :index-of (fn [s sub from] (let [i (php/mb_strpos s sub from)] (if (php/=== i false) -1 i)))})
+
+(adapter/install! adapter)

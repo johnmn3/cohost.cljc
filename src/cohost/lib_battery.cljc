@@ -1,10 +1,10 @@
+;; Clojure's own standard libraries (clojure.walk, clojure.set, clojure.string,
+;; clojure.zip, clojure.data, clojure.edn, clojure.template, clojure.test,
+;; clojure.math, clojure.stacktrace, clojure.repl: 1.12.0's sources, and
+;; clojure.spec.alpha 0.5.238, the version 1.12.0 depends on; all vendored
+;; unchanged), required through cohost's loader on this host, each in its own
+;; namespace, and checked against JVM Clojure 1.12.0's answers.
 (ns cohost.lib-battery
-  "Clojure's own standard libraries (clojure.walk, clojure.set, clojure.string,
-   clojure.zip, clojure.data, clojure.edn, clojure.template, clojure.test,
-   clojure.math, clojure.stacktrace, clojure.repl: 1.12.0's sources, and
-   clojure.spec.alpha 0.5.238, the version 1.12.0 depends on; all vendored
-   unchanged), required through cohost's loader on this host, each in its own
-   namespace, and checked against JVM Clojure 1.12.0's answers."
   (:require [cohost.adapter :as host]
             [cohost.boot :as boot]))
 
@@ -104,18 +104,20 @@
   [eval-str]
   (let [results
         (doall
-         (for [{:keys [lib alias cases]} libraries]
-           (let [req-error (host/try-all (fn [] (eval-str (str "(require '[" lib " :as " alias "])")) nil)
-                                         (fn [e]
-                                           (host/error-message e)))
-                 rs (doall
-                     (for [[label src expected] cases]
-                       (let [_ (when @boot/verbose? (println (str "  [lib case] " lib " / " label)))
-                             [ok v] (host/try-all (fn [] [true (eval-str src)])
-                                                  (fn [e]
-                                                    [false (str "ERR " (host/error-message e))]))]
-                         {:label label :pass (and ok (= v expected)) :got v :expected expected})))]
-             {:lib lib :require-error req-error :results rs})))
+         (map (fn [{:keys [lib alias cases]}]
+                (let [req-error (host/try-all (fn [] (eval-str (str "(require '[" lib " :as " alias "])")) nil)
+                                              (fn [e]
+                                                (host/error-message e)))
+                      rs (doall
+                          (map (fn [[label src expected]]
+                                 (let [_ (when @boot/verbose? (println (str "  [lib case] " lib " / " label)))
+                                       [ok v] (host/try-all (fn [] [true (eval-str src)])
+                                                            (fn [e]
+                                                              [false (str "ERR " (host/error-message e))]))]
+                                   {:label label :pass (and ok (= v expected)) :got v :expected expected}))
+                               cases))]
+                  {:lib lib :require-error req-error :results rs}))
+              libraries))
         n (reduce + (map (comp count :results) results))
         passed (reduce + (map (fn [r] (count (filter :pass (:results r)))) results))]
     (println (str "libraries: " passed "/" n " cases pass across " (count results) " clojure.* libraries"))

@@ -1,11 +1,11 @@
+;; Throughput: each case is one program, compiled once in a namespace that
+;; sees only the booted stock core (cohost.user) and once in a namespace
+;; that sees the host's own core, then timed in the same process: a warm-up,
+;; then calls until a time budget is spent; the number is the median call.
+;; Both sides must return the same value, or the case is reported as
+;; differing rather than timed. On JVM Clojure the host's own core is JVM
+;; Clojure itself, the baseline the other hosts are read against.
 (ns cohost.bench
-  "Throughput: each case is one program, compiled once in a namespace that
-   sees only the booted stock core (cohost.user) and once in a namespace
-   that sees the host's own core, then timed in the same process: a warm-up,
-   then calls until a time budget is spent; the number is the median call.
-   Both sides must return the same value, or the case is reported as
-   differing rather than timed. On JVM Clojure the host's own core is JVM
-   Clojure itself, the baseline the other hosts are read against."
   (:require [cohost.adapter :as host]
             [cohost.boot :as boot]))
 
@@ -192,7 +192,7 @@
                   ": median ms per call, the host's own core vs the stock core"))
     (let [results
           (doall
-           (for [[id title n0 setup body] cases]
+           (map (fn [[id title n0 setup body]]
              (let [n (max 1 (long (* n0 scale)))
                    setup (subst-n setup n)
                    body (subst-n body n)
@@ -208,7 +208,8 @@
                                (str "  x" (fmt-ms (/ (:median s) (:median h)))))
                              (when-not same?
                                (str "  [" (or (:error h) (:error s) (str "differ: " (:value h) " vs " (:value s))) "]"))))
-               r)))
+               r))
+                cases))
           out {:host label :scale scale :boot-ms boot-ms :libs-ms libs-ms
                :opts (dissoc opts :label :boot-ms :libs-ms :scale) :cases (vec results)}]
       (write-results! (str "target/bench-" label (when (not= 1 scale) (str "-s" scale)) ".edn")

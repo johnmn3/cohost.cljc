@@ -1,19 +1,19 @@
-(ns cohost.rewrite
-  "The interop codemod. A form read from the stock clojure/core.clj is full of
-   JVM host interop: `(. clojure.lang.RT (cons x s))`, `(clojure.lang.Numbers/add
-   x y)`, `(new clojure.lang.LazySeq f)`, `(.withMeta x m)`, class symbols as
-   values (`(instance? clojure.lang.IFn x)`), `(catch IllegalArgumentException e
-   ...)`, `^String` type hints. This namespace turns every one of those into a
-   call on `cohost.shim`, whose vars map the clojure.lang surface onto the host
-   clojure-like's own data structures. Purely syntactic, host-independent; the
-   per-host facts it needs arrive in the ctx map (which shim vars exist, the
-   host's catch-all exception symbol, whether unknown interop may pass through
-   to the host untouched).
-
-   It runs twice per form: once on the source form before eval, and once on the
-   output of every stock macro (the boot wraps each macro fn), because macros
-   like `lazy-seq`, `..`, `with-open` or `definline` emit interop into their
-   callers' code.")
+;; The interop codemod. A form read from the stock clojure/core.clj is full of
+;; JVM host interop: `(. clojure.lang.RT (cons x s))`, `(clojure.lang.Numbers/add
+;; x y)`, `(new clojure.lang.LazySeq f)`, `(.withMeta x m)`, class symbols as
+;; values (`(instance? clojure.lang.IFn x)`), `(catch IllegalArgumentException e
+;; ...)`, `^String` type hints. This namespace turns every one of those into a
+;; call on `cohost.shim`, whose vars map the clojure.lang surface onto the host
+;; clojure-like's own data structures. Purely syntactic, host-independent; the
+;; per-host facts it needs arrive in the ctx map (which shim vars exist, the
+;; host's catch-all exception symbol, whether unknown interop may pass through
+;; to the host untouched).
+;;
+;; It runs twice per form: once on the source form before eval, and once on the
+;; output of every stock macro (the boot wraps each macro fn), because macros
+;; like `lazy-seq`, `..`, `with-open` or `definline` emit interop into their
+;; callers' code.
+(ns cohost.rewrite)
 
 ;; ---------------------------------------------------------------------------
 ;; small string helpers (no clojure.string: keep the host surface minimal)
@@ -607,8 +607,9 @@
 
 (defn- rw-dot
   "(. target member) / (. target (member args...)) / (. target member args...)"
-  [ctx [_ target & more :as form]]
-  (let [target (declass target)
+  [ctx form]
+  (let [[_ target & more] form
+        target (declass target)
         x (first more)
         call? (seq? x)
         [m args] (if call? [(first x) (rest x)] [x (rest more)])
@@ -680,8 +681,9 @@
       [(apply list 'loop* (vec (mapcat (fn [n] [n n]) names)) body)])
     body))
 
-(defn- rw-fn* [ctx [_ & more :as form]]
-  (let [[nm more] (if (symbol? (first more)) [(carry-meta (first more) (first more)) (rest more)] [nil more])
+(defn- rw-fn* [ctx form]
+  (let [more (rest form)
+        [nm more] (if (symbol? (first more)) [(carry-meta (first more) (first more)) (rest more)] [nil more])
         single? (vector? (first more))
         arities (if single? [more] more)
         names (into (if nm #{nm} #{})
@@ -1097,18 +1099,19 @@
                   x))
               more)))
 
-(defn- rw-spec-form [ctx [h & args :as form]]
-  (cond (or (= h 'deftype) (= h 'defrecord))
-        (do (when (symbol? (first args)) (swap! (:user-types ctx) conj (first args)))
-            ;; the fields are locals in every method body
-            (apply list h (first args) (second args)
-                   (binding [*locals* (into *locals* (bound-syms (second args)))]
-                     (doall (rw-specs ctx (nnext args))))))
-        (= h 'proxy)
-        (apply list h (mapv #(get *imports* % %) (first args)) (rw ctx (second args)) (rw-specs ctx (nnext args)))
-        (and (= h 'defprotocol) (:python-methods? ctx))
-        (rw-defprotocol ctx form)
-        :else (apply list h (rw-specs ctx args))))
+(defn- rw-spec-form [ctx form]
+  (let [[h & args] form]
+    (cond (or (= h 'deftype) (= h 'defrecord))
+          (do (when (symbol? (first args)) (swap! (:user-types ctx) conj (first args)))
+              ;; the fields are locals in every method body
+              (apply list h (first args) (second args)
+                     (binding [*locals* (into *locals* (bound-syms (second args)))]
+                       (doall (rw-specs ctx (nnext args))))))
+          (= h 'proxy)
+          (apply list h (mapv #(get *imports* % %) (first args)) (rw ctx (second args)) (rw-specs ctx (nnext args)))
+          (and (= h 'defprotocol) (:python-methods? ctx))
+          (rw-defprotocol ctx form)
+          :else (apply list h (rw-specs ctx args)))))
 
 (def ^:dynamic *inline?*
   "False while the codemod walks the arguments of a macro whose expansion it

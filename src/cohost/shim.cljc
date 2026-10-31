@@ -1,22 +1,22 @@
+;; The clojure.lang / java.* surface that clojure/core.clj calls, mapped onto
+;; the host clojure-like's own data structures. cohost.rewrite turns
+;;
+;;   (. clojure.lang.RT (cons x s))   into  (cohost.shim/RT-cons x s)
+;;   (clojure.lang.Numbers/add x y)   into  (cohost.shim/Numbers-add x y)
+;;   (new clojure.lang.LazySeq f)     into  (cohost.shim/new-LazySeq f)
+;;   (.withMeta x m)                  into  (cohost.shim/-withMeta x m)
+;;   Integer/MAX_VALUE                into  cohost.shim/Integer-MAX_VALUE
+;;   clojure.lang.IFn                 into  'clojure.lang.IFn   (a class token)
+;;
+;; so every var here is one of: `<Class>-<member>` (a static method or field),
+;; `new-<Class>` (a constructor), `-<method>` (an instance method, dispatching
+;; on the receiver where the JVM would overload). Nearly all of them are the
+;; host's core fn under its JVM name: the host's vector IS the
+;; PersistentVector, its seq IS the ISeq. What the host lacks is built here
+;; from what it has (iterators, chunk buffers, class tokens, JVM exception
+;; classes). A member missing here is reported, not papered over: the rewriter
+;; emits `missing-*`, which throws when reached.
 (ns cohost.shim
-  "The clojure.lang / java.* surface that clojure/core.clj calls, mapped onto
-   the host clojure-like's own data structures. cohost.rewrite turns
-
-     (. clojure.lang.RT (cons x s))   into  (cohost.shim/RT-cons x s)
-     (clojure.lang.Numbers/add x y)   into  (cohost.shim/Numbers-add x y)
-     (new clojure.lang.LazySeq f)     into  (cohost.shim/new-LazySeq f)
-     (.withMeta x m)                  into  (cohost.shim/-withMeta x m)
-     Integer/MAX_VALUE                into  cohost.shim/Integer-MAX_VALUE
-     clojure.lang.IFn                 into  'clojure.lang.IFn   (a class token)
-
-   so every var here is one of: `<Class>-<member>` (a static method or field),
-   `new-<Class>` (a constructor), `-<method>` (an instance method, dispatching
-   on the receiver where the JVM would overload). Nearly all of them are the
-   host's core fn under its JVM name: the host's vector IS the
-   PersistentVector, its seq IS the ISeq. What the host lacks is built here
-   from what it has (iterators, chunk buffers, class tokens, JVM exception
-   classes). A member missing here is reported, not papered over: the rewriter
-   emits `missing-*`, which throws when reached."
   (:require [cohost.adapter :as host]
             #?(:cljs [goog.object :as gobj]))
   #?(:cljs (:require-macros [cohost.shim-names]))
@@ -207,11 +207,12 @@
 
 (def ^:private short-name
   "java.lang.String and String are the same token."
-  (into {} (for [c (keys token-ancestors)
-                 :let [s (name c)
-                       i (loop [i (dec (count s))] (cond (neg? i) -1 (= "." (str (nth s i))) i :else (recur (dec i))))]
-                 :when (and (not (neg? i)) (or (= "java.lang." (subs s 0 (inc i))) (= "java.lang" (subs s 0 i))))]
-             [(symbol (subs s (inc i))) c])))
+  (into {} (keep (fn [c]
+                   (let [s (name c)
+                         i (loop [i (dec (count s))] (cond (neg? i) -1 (= "." (str (nth s i))) i :else (recur (dec i))))]
+                     (when (and (not (neg? i)) (or (= "java.lang." (subs s 0 (inc i))) (= "java.lang" (subs s 0 i))))
+                       [(symbol (subs s (inc i))) c])))
+                 (keys token-ancestors))))
 
 (def ^:private short-name-extra
   '{BigInteger java.math.BigInteger BigDecimal java.math.BigDecimal
@@ -504,11 +505,12 @@
    object) — the codemod's checkcast of a hinted local calls it. -> the
    names installed."
   [pairs]
-  (vec (for [[d c] pairs]
-         (let [v (cast-fn c)]
-           #?(:cljs (gobj/set js/cohost.shim (munge d) v)
-              :default (host/intern! 'cohost.shim (symbol d) v))
-           (symbol d)))))
+  (mapv (fn [[d c]]
+          (let [v (cast-fn c)]
+            #?(:cljs (gobj/set js/cohost.shim (munge d) v)
+               :default (host/intern! 'cohost.shim (symbol d) v))
+            (symbol d)))
+        pairs))
 
 (defn catches?
   "Does a `(catch c e ...)` clause for JVM class `c` apply to host exception `e`?"
@@ -2024,15 +2026,16 @@
    its shim-ref names). -> the names installed."
   [method-syms]
   (let [vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))]
-    (vec (for [s method-syms
-               :let [nm (str s)
-                     f (shim-value vars nm)]
-               :when (fn? f)]
-           (let [d (str "dot$" (subs nm 1))
-                 v (dot (subs nm 1) f)]
-             #?(:cljs (gobj/set js/cohost.shim (munge d) v)
-                :default (host/intern! 'cohost.shim (symbol d) v))
-             (symbol d))))))
+    (vec (keep (fn [s]
+                 (let [nm (str s)
+                       f (shim-value vars nm)]
+                   (when (fn? f)
+                     (let [d (str "dot$" (subs nm 1))
+                           v (dot (subs nm 1) f)]
+                       #?(:cljs (gobj/set js/cohost.shim (munge d) v)
+                          :default (host/intern! 'cohost.shim (symbol d) v))
+                       (symbol d)))))
+               method-syms))))
 
 ;; ---------------------------------------------------------------------------
 ;; java.util.Formatter, where the host's own format is not the JVM's

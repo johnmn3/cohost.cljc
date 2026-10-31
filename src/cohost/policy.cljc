@@ -1,10 +1,10 @@
-(ns cohost.policy
-  "Which top-level forms of clojure/core.clj boot as written (:eval), which
-   names the booted namespace takes from the host's own core instead (:host —
-   the var is referred, so it IS the host's), which are replaced by a
-   host-neutral definition (:replace), and which are skipped (:skip) because
-   they are the JVM itself: proxies, gen-class, structs, agents and refs, the
-   loader, java.io. The lists are data so a host can extend them.")
+;; Which top-level forms of clojure/core.clj boot as written (:eval), which
+;; names the booted namespace takes from the host's own core instead (:host —
+;; the var is referred, so it IS the host's), which are replaced by a
+;; host-neutral definition (:replace), and which are skipped (:skip) because
+;; they are the JVM itself: proxies, gen-class, structs, agents and refs, the
+;; loader, java.io. The lists are data so a host can extend them.
+(ns cohost.policy)
 
 (def def-heads
   '#{def defn defn- defmacro defonce definline declare defmulti defmethod

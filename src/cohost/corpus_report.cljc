@@ -1,8 +1,8 @@
-(ns cohost.corpus-report
-  "The corpus scoreboard's report, with no dependencies: babashka loads it to
-   merge the stock side's rows and the host side's rows, which run in
-   separate processes (both sides share the host's namespace registry, so a
-   row that makes a namespace on one side would meet it on the other).")
+;; The corpus scoreboard's report, with no dependencies: babashka loads it to
+;; merge the stock side's rows and the host side's rows, which run in
+;; separate processes (both sides share the host's namespace registry, so a
+;; row that makes a namespace on one side would meet it on the other).
+(ns cohost.corpus-report)
 
 (defn summarize
   "Print the scoreboard from rows of {:suite :label :actual :expected :stock

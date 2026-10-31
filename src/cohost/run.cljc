@@ -1,6 +1,6 @@
+;; Entry point: install the host's adapter, boot core.clj, print the report,
+;; run the behavior battery.
 (ns cohost.run
-  "Entry point: install the host's adapter, boot core.clj, print the report,
-   run the behavior battery."
   (:require [cohost.hosts.auto]
             [cohost.adapter :as host]
             [cohost.boot :as boot]

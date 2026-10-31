@@ -1,16 +1,16 @@
+;; Boots the stock clojure/core.clj inside the host clojure-like.
+;;
+;; For each top-level form of core.clj, in order: ask cohost.policy what to do;
+;; run the form through cohost.rewrite (JVM interop -> cohost.shim); eval it with
+;; *ns* bound to `cohost.core`, a namespace that refers nothing from the host's
+;; core, so every name core.clj defines is the stock one. After every form,
+;; each newly defined macro is wrapped so its expansions are rewritten too (a
+;; stock macro emits interop into its caller). Names the policy marks :host are
+;; referred from the host's core — they are the host's vars, not copies.
+;;
+;; The result is a report: how many forms booted, which were taken from the
+;; host, which were skipped, and every form that failed with its error.
 (ns cohost.boot
-  "Boots the stock clojure/core.clj inside the host clojure-like.
-
-   For each top-level form of core.clj, in order: ask cohost.policy what to do;
-   run the form through cohost.rewrite (JVM interop -> cohost.shim); eval it with
-   *ns* bound to `cohost.core`, a namespace that refers nothing from the host's
-   core, so every name core.clj defines is the stock one. After every form,
-   each newly defined macro is wrapped so its expansions are rewritten too (a
-   stock macro emits interop into its caller). Names the policy marks :host are
-   referred from the host's core — they are the host's vars, not copies.
-
-   The result is a report: how many forms booted, which were taken from the
-   host, which were skipped, and every form that failed with its error."
   (:require [cohost.adapter :as host]
             [cohost.rewrite :as rw]
             [cohost.shim :as shim]
@@ -131,14 +131,15 @@
                           (if (and (fn? v) (or (not (contains? m v)) (better? sym (get m v)))) (assoc m v sym) m)))
                       {} (host/ns-interns-map core))
         vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))]
-    (into {} (for [s shim-names
-                   :let [nm (str s)]
-                   ;; statics, not instance methods (-m) or their dispatchers (dot$m)
-                   :when (and (not= "-" (subs nm 0 1)) (not= "dot$" (subs nm 0 (min 4 (count nm)))))
-                   :let [v (shim/shim-value vars nm)
-                         hs (when (fn? v) (get by-fn v))]
-                   :when hs]
-               [nm (with-meta (symbol (str core) (str hs)) {:cohost/host true})]))))
+    (into {} (keep (fn [s]
+                     (let [nm (str s)]
+                       ;; statics, not instance methods (-m) or their dispatchers (dot$m)
+                       (when (and (not= "-" (subs nm 0 1)) (not= "dot$" (subs nm 0 (min 4 (count nm)))))
+                         (let [v (shim/shim-value vars nm)
+                               hs (when (fn? v) (get by-fn v))]
+                           (when hs
+                             [nm (with-meta (symbol (str core) (str hs)) {:cohost/host true})])))))
+                   shim-names))))
 
 (defn- head-resolver
   "(fn [sym]) -> the var sym names in the namespace being compiled, or nil:
@@ -204,7 +205,7 @@
                          (into (shim/install-dots!
                                 (filter #(let [s (str %)] (and (= "-" (subs s 0 1)) (> (count s) 1))) names)))
                          (into (shim/install-casts!
-                                (for [c (distinct (vals rw/checked-hints))] [(rw/cast-name c) c])))))]
+                                (map (fn [c] [(rw/cast-name c) c]) (distinct (vals rw/checked-hints)))))))]
   (rw/make-ctx {:shim-names shim-names
                 :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
                 :instance-fn shim/install-is!
@@ -579,10 +580,9 @@
      ;; Clojure, else the host's, when it has them
      (host/with-ns core-ns
        (fn []
-         (let [stock (into {} (for [[file nms] (group-by #(get policy/companion-stock %)
-                                                          (filter #(contains? policy/companion-stock %) policy/companion-names))
-                                    [nm form] (companion-forms (str root "/" file) (set nms))]
-                                [nm form]))]
+         (let [stock (into {} (mapcat (fn [[file nms]] (companion-forms (str root "/" file) (set nms)))
+                                      (group-by #(get policy/companion-stock %)
+                                                (filter #(contains? policy/companion-stock %) policy/companion-names))))]
            (doseq [nm (sort policy/companion-names)]
              (if (contains? policy/companion-stock nm)
                (if-let [form (get stock nm)]
@@ -595,11 +595,12 @@
          (scan-macros! ctx)))
      ;; reduce with core's + or * hands the host its own (shim/host-reducers)
      (shim/set-host-reducers!
-      (into {} (for [nm '[+ *]
-                     :let [sv (some-> (host/interned-var core-ns nm) host/var-root)
-                           hv (some-> (host/resolve-core nm) host/var-root)]
-                     :when (and (fn? sv) (fn? hv) (not (identical? sv hv)))]
-                 [sv hv])))
+      (into {} (keep (fn [nm]
+                       (let [sv (some-> (host/interned-var core-ns nm) host/var-root)
+                             hv (some-> (host/resolve-core nm) host/var-root)]
+                         (when (and (fn? sv) (fn? hv) (not (identical? sv hv)))
+                           [sv hv])))
+                     '[+ *])))
      (reset! (:booted? ctx) true)
      (let [r (assoc @report
                     :rewrite-misses (rw/misses ctx)
@@ -815,10 +816,11 @@
   "The JVM's load binds *warn-on-reflection* and *unchecked-math* (a library
    may set! them) and *ns*."
   [thunk]
-  (let [bs (into {} (for [s '[*warn-on-reflection* *unchecked-math*]
-                          :let [v (core-var s)]
-                          :when (and v (host/dynamic-var? v))]
-                      [v (host/var-root v)]))]
+  (let [bs (into {} (keep (fn [s]
+                            (let [v (core-var s)]
+                              (when (and v (host/dynamic-var? v))
+                                [v (host/var-root v)])))
+                          '[*warn-on-reflection* *unchecked-math*]))]
     (if (seq bs)
       (do (host/push-thread-bindings! bs)
           (try (thunk) (finally (host/pop-thread-bindings!))))

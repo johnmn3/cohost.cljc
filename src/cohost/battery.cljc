@@ -1,7 +1,7 @@
+;; Stock behaviors, evaluated in cohost.user (which sees only cohost.core).
+;; Each case is [label source expected]; the source is read inside cohost.user
+;; so syntax-quote resolves to the stock names.
 (ns cohost.battery
-  "Stock behaviors, evaluated in cohost.user (which sees only cohost.core).
-   Each case is [label source expected]; the source is read inside cohost.user
-   so syntax-quote resolves to the stock names."
   (:require [cohost.adapter :as host]
             [cohost.boot :as boot]))
 
@@ -154,12 +154,13 @@
   "eval-str: source string -> value. Prints a tally and every failure."
   [eval-str]
   (let [results (doall
-                 (for [[label src expected] cases]
-                   (let [_ (when @boot/verbose? (println (str "  [case] " label)))
-                         [ok v] (host/try-all (fn [] [true (eval-str src)])
-                                              (fn [e]
-                                                [false (str "ERR " (host/error-message e))]))]
-                     {:label label :pass (and ok (= v expected)) :got v :expected expected})))
+                 (map (fn [[label src expected]]
+                        (let [_ (when @boot/verbose? (println (str "  [case] " label)))
+                              [ok v] (host/try-all (fn [] [true (eval-str src)])
+                                                   (fn [e]
+                                                     [false (str "ERR " (host/error-message e))]))]
+                          {:label label :pass (and ok (= v expected)) :got v :expected expected}))
+                      cases))
         passed (count (filter :pass results))]
     (println (str "battery: " passed "/" (count results) " stock behaviors pass"))
     (doseq [r (remove :pass results)]

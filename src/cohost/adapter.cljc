@@ -1,22 +1,22 @@
+;; The contract between cohost and a clojure-like host.
+;;
+;; cohost boots the stock clojure/core.clj (and, by the same machinery,
+;; other JVM-Clojure source) on a host that is not the JVM. Everything it needs
+;; from the host is a named capability in the map a host passes to `install!`:
+;; how to read and eval forms in a namespace, how to touch vars and namespaces,
+;; the host's constructors for the few runtime types clojure.lang names
+;; (LazySeq, Delay, Atom, ExceptionInfo), and the type predicates behind the
+;; JVM class tokens. The rest of the library calls the accessor fns defined
+;; here and never the host directly.
+;;
+;; A host adapter is one namespace (see cohost.hosts.*) that calls
+;;
+;;   (cohost.adapter/install! {:name :jolt :core-ns 'clojure.core ...})
+;;
+;; Capabilities with a generic default (`defaults`) may be omitted; `install!`
+;; reports the required ones that are missing. Var handles are opaque: the
+;; library only passes back to the adapter what the adapter handed out.
 (ns cohost.adapter
-  "The contract between cohost and a clojure-like host.
-
-   cohost boots the stock clojure/core.clj (and, by the same machinery,
-   other JVM-Clojure source) on a host that is not the JVM. Everything it needs
-   from the host is a named capability in the map a host passes to `install!`:
-   how to read and eval forms in a namespace, how to touch vars and namespaces,
-   the host's constructors for the few runtime types clojure.lang names
-   (LazySeq, Delay, Atom, ExceptionInfo), and the type predicates behind the
-   JVM class tokens. The rest of the library calls the accessor fns defined
-   here and never the host directly.
-
-   A host adapter is one namespace (see cohost.hosts.*) that calls
-
-     (cohost.adapter/install! {:name :jolt :core-ns 'clojure.core ...})
-
-   Capabilities with a generic default (`defaults`) may be omitted; `install!`
-   reports the required ones that are missing. Var handles are opaque: the
-   library only passes back to the adapter what the adapter handed out."
   #?(:cljs (:refer-clojure :exclude [iter])))
 
 ;; ---------------------------------------------------------------------------
@@ -242,15 +242,15 @@
   (merge
    {:slurp #?(:cljs (unsupported :slurp) :default (fn [path] (slurp path)))
     :spit #?(:cljs (unsupported :spit) :default (fn [path s] (spit path s)))
-    :read-string #?(:cljs (unsupported :read-string) :default (fn ([s] (read-string s)) ([s opts] (read-string opts s))))
-    :with-ns #?(:cljs (unsupported :with-ns) :default (fn [ns-sym thunk] (binding [*ns* (the-ns ns-sym)] (thunk))))
+    :read-string #?(:cljs (unsupported :read-string) :phel (unsupported :read-string) :default (fn ([s] (read-string s)) ([s opts] (read-string opts s))))
+    :with-ns #?(:cljs (unsupported :with-ns) :phel (unsupported :with-ns) :default (fn [ns-sym thunk] (binding [*ns* (the-ns ns-sym)] (thunk))))
     :eval #?(:cljs (unsupported :eval) :default (fn [form] (eval form)))
     :error-message generic-error-message
     :ns-interns #?(:cljs (unsupported :ns-interns) :default (fn [ns-sym] (ns-interns ns-sym)))
     :interned-var (fn [ns-sym sym] (get ((cap :ns-interns) ns-sym) sym))
     :ns-public-names #?(:cljs (unsupported :ns-public-names) :default (fn [ns-sym] (set (keys (ns-publics ns-sym)))))
     :intern! #?(:cljs (unsupported :intern!) :default (fn [ns-sym sym val] (intern ns-sym sym val)))
-    :refer-all! #?(:cljs (unsupported :refer-all!) :default (fn [into-ns from-ns] (binding [*ns* (the-ns into-ns)] (refer from-ns))))
+    :refer-all! #?(:cljs (unsupported :refer-all!) :phel (unsupported :refer-all!) :default (fn [into-ns from-ns] (binding [*ns* (the-ns into-ns)] (refer from-ns))))
     :var-get #?(:cljs (fn [h] (deref h)) :default (fn [h] (var-get h)))
     :var-raw-root #?(:cljs (fn [h] (deref h)) :default (fn [h] (var-get h)))
     :var-meta (fn [h] (meta h))
@@ -266,21 +266,21 @@
     :set-dynamic! #?(:cljs (unsupported :set-dynamic!) :default (fn [h] (alter-meta! h assoc :dynamic true) h))
     :var-bound? #?(:cljs (fn [_] true) :default (fn [h] (try-all (fn [] (var-get h) true) (fn [_] false))))
     :var-thread-bound? (fn [_] false)
-    :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
-    :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
+    :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :phel (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
+    :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :phel (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
     :thread-bindings (fn [] {})
     :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
-    :current-ns #?(:cljs (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
+    :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
     :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
-    :refer! #?(:cljs (unsupported :refer!)
+    :refer! #?(:cljs (unsupported :refer!) :phel (unsupported :refer!)
                :default (fn [into-ns from-ns {:keys [only exclude rename]}]
                           (binding [*ns* (the-ns into-ns)]
                             (apply refer from-ns (concat (when only [:only only]) (when exclude [:exclude exclude])
                                                          (when rename [:rename rename]))))))
     ;; resolved, not named: a host may have no alias fn (basilisp adds aliases on the namespace)
-    :alias! #?(:cljs (unsupported :alias!) :default (fn [into-ns a target] (binding [*ns* (the-ns into-ns)] ((resolve 'alias) a target))))
-    :set-current-ns! #?(:cljs (unsupported :set-current-ns!) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
-    :require-host! #?(:cljs (unsupported :require-host!) :default (fn [lib] (require lib)))
+    :alias! #?(:cljs (unsupported :alias!) :phel (unsupported :alias!) :default (fn [into-ns a target] (binding [*ns* (the-ns into-ns)] ((resolve 'alias) a target))))
+    :set-current-ns! #?(:cljs (unsupported :set-current-ns!) :phel (unsupported :set-current-ns!) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
+    :require-host! #?(:cljs (unsupported :require-host!) :phel (unsupported :require-host!) :default (fn [lib] (require lib)))
     :core-extras {}
     :host-type nil
     :user-type? (fn [_] false)
@@ -289,8 +289,8 @@
     :host-aliases? true
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
-              (let [fs (into {} (for [n '[chunked-seq? chunk-first chunk-rest chunk-next chunk-buffer chunk-append chunk chunk-cons]]
-                                  [(keyword (name n)) (try-all (fn [] (some-> ((cap :resolve-core) n) ((cap :var-get)))))]))]
+              (let [fs (into {} (map (fn [n] [(keyword (name n)) (try-all (fn [] (some-> ((cap :resolve-core) n) ((cap :var-get)))))])
+                                  '[chunked-seq? chunk-first chunk-rest chunk-next chunk-buffer chunk-append chunk chunk-cons]))]
                 (when (every? fn? (vals fs)) fs)))
     :invoke-member (fn [_ _ _ absent] absent)
     :interop-passthrough? false
@@ -389,7 +389,8 @@
 ;; ---------------------------------------------------------------------------
 ;; registry
 
-(defonce ^:private installed (atom nil))
+#?(:phel (def ^:private installed (atom nil))
+   :default (defonce ^:private installed (atom nil)))
 
 (defn installed? [] (some? @installed))
 
