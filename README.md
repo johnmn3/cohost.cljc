@@ -106,6 +106,15 @@ JVM Clojure 1.12.0 gives. `cohost.run/-main` takes `--verbose`, `--no-libs`
 and `--eval src ...` (evaluate instead of the batteries) on every host, e.g.
 `node target/cljs-node/main.js --eval "(binding [*print-length* 2] (pr-str (range)))"`.
 
+## The `cohost` command (spike)
+
+`bin/cohost` puts the Clojure CLI's face on any host: `cohost :cljs
+-e "(+ 1 2)"` boots stock Clojure on ClojureScript and evaluates;
+a `deps.edn` in the directory is resolved with tools.deps and its
+namespaces load on the host through the ordinary loader — `-M -m`,
+`-X`, `-Spath`, aliases and `-Sdeps` included. `:jvm` delegates to the
+real CLI. Design, verified matrix and known gaps: `doc/CLI.md`.
+
 ## Use it
 
 ```clojure

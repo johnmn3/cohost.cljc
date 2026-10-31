@@ -1,0 +1,6 @@
+{:main cohost.cli
+ :target :nodejs
+ :output-to "target/cljs-cli/main.js"
+ :output-dir "target/cljs-cli"
+ :optimizations :none
+ :dump-core true}
