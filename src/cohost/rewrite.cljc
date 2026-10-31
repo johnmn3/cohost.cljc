@@ -363,7 +363,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all]
+           instance-fn missing-dot try-all named-fn*?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:shim-names shim-names
    ;; {shim static name -> the host core's symbol} where the shim's static is
@@ -390,6 +390,9 @@
    ;; host's catch-all (cohost.adapter/try-all), for an inline expansion that
    ;; does not take the form it is given
    :try-all (or try-all (fn [thunk] (thunk)))
+   ;; false where the host's fn* takes no name: (fn* nm ...) becomes
+   ;; (letfn* [nm (fn* ...)] nm)
+   :named-fn*? (if (nil? named-fn*?) true (boolean named-fn*?))
    ;; per-namespace facts: a thunk naming the namespace being compiled, an atom
    ;; {ns-name {Short full}} of imports, an atom {orig-ns mapped-ns} of renamed
    ;; stock libraries, and the host's type translation for extend positions
@@ -695,7 +698,9 @@
                                        body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')]
                                    (apply list (rw-params params) body')))
                                arities)))]
-    (apply list (carry-meta 'fn* (first form)) (concat (when nm [nm]) (if single? (first arities') arities')))))
+    (if (and nm (not (:named-fn*? ctx)))
+      (list 'letfn* [nm (apply list (carry-meta 'fn* (first form)) (if single? (first arities') arities'))] nm)
+      (apply list (carry-meta 'fn* (first form)) (concat (when nm [nm]) (if single? (first arities') arities'))))))
 
 (defn- rw-bindings [ctx bvec]
   (carry-meta (vec (mapcat (fn [[b v]] [(if (symbol? b) (carry-meta b b) (rw ctx b)) (rw ctx v)])

@@ -103,13 +103,16 @@
   (host/chunks))
 (def ^:private hc-chunked? (or (:chunked-seq? hc) (fn [_] false)))
 
+;; the stubs, by identity: a host may carry no metadata on a fn (ClojureWasm)
+(def ^:private stubs (atom #{}))
 (defn- unsupported
-  "A stub for what this host lacks; marked, so a host with a java.* surface of
-   its own is not shadowed by it (cohost.boot leaves such names to the host)."
+  "A stub for what this host lacks; registered, so a host with a java.* surface
+   of its own is not shadowed by it (cohost.boot leaves such names to the host)."
   [what]
-  (with-meta (fn [& _] (throw (ex-info (str "cohost.shim: " what " is not available on this host") {:cohost/unsupported what})))
-    {:cohost/unsupported what}))
-(defn stub? [x] (some? (:cohost/unsupported (meta x))))
+  (let [f (fn [& _] (throw (ex-info (str "cohost.shim: " what " is not available on this host") {:cohost/unsupported what})))]
+    (swap! stubs conj f)
+    f))
+(defn stub? [x] (contains? @stubs x))
 
 ;; (to-array nil) is an empty array on the JVM; some hosts reject nil
 (defn- to-array* [coll] (to-array (if (nil? coll) [] coll)))
@@ -118,8 +121,12 @@
 (def ^:private host-map-entry? (host-fn 'map-entry? (fn [x] (and (vector? x) (= 2 (count x))))))
 (def ^:private host-tagged-literal? (host-fn 'tagged-literal? (fn [x] (and (map? x) (contains? x :tag) (contains? x :form)))))
 (def ^:private host-reader-conditional? (host-fn 'reader-conditional? (fn [x] (and (map? x) (contains? x :splicing?)))))
-;; a stock multimethod is a fn whose state rides in its metadata (below)
-(defn multifn?* [x] (and (fn? x) (some? (::multifn (meta x)))))
+;; a stock multimethod is a fn whose state rides in its metadata (below), or,
+;; on a host whose fns carry none (ClojureWasm), in a table by identity
+(def ^:private fn-meta? (host/try-all (fn [] (some? (meta (with-meta (fn [] nil) {::probe true}))))))
+(def ^:private mf-states (atom {}))
+(defn- mf-state [mf] (if fn-meta? (::multifn (meta mf)) (get @mf-states mf)))
+(defn multifn?* [x] (and (fn? x) (some? (mf-state x))))
 
 ;; ---------------------------------------------------------------------------
 ;; class tokens: a class is a symbol naming it
@@ -967,7 +974,6 @@
 ;; hierarchy var, methods, prefers) rides in the fn's metadata, and dispatch
 ;; is MultiFn.findAndCacheBestMethod's: the methods whose dispatch value the
 ;; argument's isa, the dominant one by prefers or isa, ambiguity an error.
-(defn- mf-state [mf] (::multifn (meta mf)))
 (def ^:private h-host-isa? (host-fn 'isa? nil))
 ;; a host class value: what `class` returns for a type user code defined
 (def ^:private host-class-value?
@@ -1036,15 +1042,14 @@
   (fn [name dispatch-fn default hierarchy]
     (let [state (atom {:name name :dispatch-fn dispatch-fn :default default :hierarchy hierarchy :methods {} :prefers {}})
           no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))]
-      (with-meta
+      ((fn [f] (if fn-meta? (with-meta f {::multifn state}) (do (swap! mf-states assoc f state) f)))
         (fn
           ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
           ([a] (let [dv (dispatch-fn a) m (mf-method state dv)] (if m (m a) (no-method dv))))
           ([a b] (let [dv (dispatch-fn a b) m (mf-method state dv)] (if m (m a b) (no-method dv))))
           ([a b c] (let [dv (dispatch-fn a b c) m (mf-method state dv)] (if m (m a b c) (no-method dv))))
           ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
-                            (if m (apply m a b c more) (no-method dv)))))
-        {::multifn state}))))
+                            (if m (apply m a b c more) (no-method dv)))))))))
 (def new-Object (fn [] (atom ::object)))
 (def new-ExceptionInfo host/ex-info*)
 ;; (Exception.) (Exception. msg) (Exception. cause) (Exception. msg cause)
@@ -1703,7 +1708,11 @@
                                       (or (string? x) (h-char? x) (integer? x)) (java-hash (if (h-char? x) (str x) x))
                                       :else (hash x)))))
 (def -hasheq hash)
-(def -toString (fn [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x) :else (str (nn x)))))
+;; a host exception as the JVM prints it, where the host's str does not
+(def ^:private h-exception-string (host/capability :exception-string))
+(def -toString (fn [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x)
+                             (and h-exception-string (h-exception? x)) (h-exception-string x)
+                             :else (str (nn x)))))
 (def -compareTo compare)
 (def -isEmpty (fn [x] (if (host/mlist? x) (empty? @(:state x)) (empty? x))))
 (defn- type-name
@@ -1790,7 +1799,7 @@
 (def -swap (fn ([a f] (swap! a f)) ([a f x] (swap! a f x)) ([a f x y] (swap! a f x y))
              ([a f x y args] (apply swap! a f x y args))))
 (def ^:private h-vreset! (host-fn 'vreset! nil))
-(def -reset (fn ([mf] (if (matcher? mf) (m-reset mf) (do (swap! (::multifn (meta mf)) assoc :methods {} :prefers {}) mf)))
+(def -reset (fn ([mf] (if (matcher? mf) (m-reset mf) (do (swap! (mf-state mf) assoc :methods {} :prefers {}) mf)))
               ([a x] (cond (matcher? a) (m-reset a x)
                            (h-volatile? a) (h-vreset! a x)
                            :else (reset! a x)))))

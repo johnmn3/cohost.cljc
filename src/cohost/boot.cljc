@@ -41,7 +41,7 @@
   (fn [& args] (let [[a b & more] args
                      [form env] (if (and (map? a) (not (map? b))) [b a] [a b])
                      out (apply f form env more)]
-                 (if host/*raw-macro-output* out (rw/rewrite ctx out {:locals (host/env-locals env)})))))
+                 (if host/*raw-macro-output* out (host/code-form (rw/rewrite ctx out {:locals (host/env-locals env)}))))))
 
 (defn ^:export rewrite-output
   "Rewrite a macro's expansion with the current boot's ctx. Hosts whose macro
@@ -50,7 +50,7 @@
   ([form] (rewrite-output form nil))
   ([form env]
    ;; env: the macro's &env, whose locals the expansion's rewrite knows
-   (if-let [c (and (not host/*raw-macro-output*) (ctx))] (rw/rewrite c form {:locals (host/env-locals env)}) form)))
+   (if-let [c (and (not host/*raw-macro-output*) (ctx))] (host/code-form (rw/rewrite c form {:locals (host/env-locals env)})) form)))
 
 (defn- wrap-defmacro-source
   "`(defmacro name doc? attr? params body...)` -> the same macro whose every
@@ -218,6 +218,7 @@
                 :core-ns (name core-ns)
                 :shim-ref (host/shim-ref)
                 :loop-variadic-recur? (host/loop-variadic-recur?)
+                :named-fn*? (host/named-fn*?)
                 :def-meta (host/def-meta)
                 :strip-inline? (host/strip-inline?)
                 :current-ns host/current-ns

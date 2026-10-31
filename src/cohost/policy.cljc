@@ -111,6 +111,8 @@
      find-ns create-ns remove-ns the-ns loaded-libs intern import
      serialized-require requiring-resolve
      case locking
+     ;; its stock def needs defprotocol, which the host gives only after core.clj
+     Inst
      future future-call future-done? future-cancel future-cancelled? future?
      pmap pcalls pvalues seque promise deliver
      agent send send-off send-via set-agent-send-executor!
@@ -206,7 +208,10 @@
           :skip '#{}}
    ;; basilisp's format is Python's % operator: core.clj's format (and printf
    ;; over it) run String/format, the shim's java.util.Formatter
-   :lpy {:stock '#{format printf}}})
+   :lpy {:stock '#{format printf}}
+   ;; ClojureWasm's str of an exception writes the class's short name; core.clj's
+   ;; str reaches the shim's toString, which writes the JVM's
+   :cljw {:stock '#{str}}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."

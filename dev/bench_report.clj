@@ -17,7 +17,9 @@
 
 (def hosts
   [["clj" "JVM Clojure 1.12.0"] ["jolt" "jolt v0.8.23"] ["lpy" "basilisp 0.5.1"]
-   ["cljs" "ClojureScript, Node"] ["chromium" "ClojureScript, Chromium"]])
+   ["cljs" "ClojureScript, Node"] ["chromium" "ClojureScript, Chromium"]
+   ["cljw" "ClojureWasm v1.15.4"] ["phel" "Phel v0.54.0"] ["lg" "let-go v1.13.0"]
+   ["cljrs" "clojurust 0.2.32"] ["jank" "jank"]])
 (def host-name (into {} hosts))
 
 (defn load-runs
