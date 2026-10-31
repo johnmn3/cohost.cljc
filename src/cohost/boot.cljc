@@ -511,6 +511,22 @@
     (when (and (some? evaluated) (may-make-macro? evaluated))
       (scan-macros! ctx))))
 
+(defn- scan-string-end
+  "cs (n characters) from i, just inside a string literal -> past its
+   closing quote (n when it has none)."
+  [cs n i]
+  (loop [i i]
+    (if (>= i n)
+      n
+      (let [c (nth cs i)]
+        (if (= c \\) (recur (+ i 2)) (if (= c \") (inc i) (recur (inc i))))))))
+
+(defn- scan-line-end
+  "cs (n characters) from i -> past the next newline (n when none)."
+  [cs n i]
+  (loop [i i]
+    (if (>= i n) n (if (= (nth cs i) \newline) (inc i) (recur (inc i))))))
+
 (defn strip-string-tags
   "Delete `^\"...\"` type hints (JVM array class names) from source text,
    outside string, regex and character literals and comments: some host
@@ -518,32 +534,27 @@
   [src]
   (let [last-tag (host/last-index-of* src "^\"")
         n (count src)
-        cs (host/string-chars src)
-        at (fn [i] (when (< i n) (nth cs i)))]
-    (loop [i 0 start 0 out [] state :code]
+        cs (host/string-chars src)]
+    ;; The scan is one call per file, its loop written in special forms and
+    ;; its strings and comments skipped by fns of their own: clojurust's
+    ;; evaluator runs a fn's first call unlowered and expands a macro there
+    ;; again on every pass (a cond loop over core.clj's 140,000 characters
+    ;; ran past 13 minutes; doc/REPORT.md).
+    (loop [i 0 start 0 out []]
       ;; past the last ^" nothing more is cut (most sources have none)
       (if (or (>= i n) (> i last-tag))
         (if (empty? out) src (apply str (conj out (subs src start n))))
-        (let [c (at i)]
-          ;; (cond, not case: a host's case may expand into its own recur point)
-          (cond
-            (= state :string) (cond (= c \\) (recur (+ i 2) start out :string)
-                                    (= c \") (recur (inc i) start out :code)
-                                    :else (recur (inc i) start out :string))
-            (= state :comment) (if (= c \newline)
-                                 (recur (inc i) start out :code)
-                                 (recur (inc i) start out :comment))
-            (= c \\) (recur (+ i 2) start out :code)
-            (= c \;) (recur (inc i) start out :comment)
-            (= c \") (recur (inc i) start out :string)
-            (and (= c \^) (= (at (inc i)) \"))
-            (let [j (loop [j (+ i 2)]
-                      (cond (>= j n) n
-                            (= (at j) \\) (recur (+ j 2))
-                            (= (at j) \") j
-                            :else (recur (inc j))))]
-              (recur (inc j) (inc j) (conj out (subs src start i)) :code))
-            :else (recur (inc i) start out :code)))))))
+        (let [c (nth cs i)]
+          (if (= c \\)
+            (recur (+ i 2) start out)
+            (if (= c \;)
+              (recur (scan-line-end cs n (inc i)) start out)
+              (if (= c \")
+                (recur (scan-string-end cs n (inc i)) start out)
+                (if (and (= c \^) (< (inc i) n) (= (nth cs (inc i)) \"))
+                  (let [j (scan-string-end cs n (+ i 2))]
+                    (recur j j (conj out (subs src start i))))
+                  (recur (inc i) start out))))))))))
 
 (defn boot-file!
   "Boot one source file (a path) into cohost.core."

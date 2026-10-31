@@ -4,27 +4,20 @@ Read first: doc/hosts/PLAN.md (the plan and its rules), README status table, doc
 Hosts landed (M0–M5): ClojureWasm, Phel, let-go. In progress: **clojurust**. Then **jank**,
 then M6 (natives) per host.
 
-## FIRST: the regression for this commit has NOT been run
+## The regression: run, clean (2026-10-31 ET, this session)
 
-This commit carries shared-layer changes (adapter, rewrite, boot, shim, scan, policy) from
-two pieces of work. The PLAN rule is: re-run every landed host's battery + the jolt corpus;
-nothing that passed may regress. Run it before anything else (≈1–2 h, background):
+Every landed host's battery and the jolt corpus were re-run twice: on `f934eff` (the shared
+changes it carried), and again on the shared fixes of this session (the shim's `Numbers/divide`,
+the policy's `:special` list, `boot/strip-string-tags`). Both times every number matched:
+jolt 466/199/63/63/0 139/139 61/61; JVM 465/202/66/58/0 139/139 61/61; cljs 518/87/46/140/0
+137/139 61/61; lpy 529/130/36/96/0 138/139 61/61; cljw 555/145/91/0 137/139 61/61; phel
+591/73/127/0 139/139 61/61; let-go 569/105/117/0 137/139 61/61. Corpus (jolt commit 76166d17,
+4,942 rows): stock 4298/507/137 (one more pass than before: the `#?@` row now reads as the JVM
+reads it), rows stock-passes-host-fails 6, host-passes-stock-fails 176.
 
-    for h in jolt jvm cljs lpy cljw phel lg; do bb boot:$h > /tmp/reg-$h.log 2>&1; done
-    bb corpus:jolt /home/user/jolt-lang/jolt/test/chez/corpus.edn > /tmp/reg-corpus.log 2>&1
-
-Last green baseline (before this commit): jolt 466/199/63/63/0 139/139 61/61; JVM 465/202/66/58/0
-139/139 61/61; cljs 518/87/46/140/0 137/139 61/61; lpy 529/130/36/96/0 138/139 61/61; cljw
-555/145/91/0 137/139 61/61; phel 591/73/127/0 139/139 61/61; let-go 0 errors 137/139 61/61;
-corpus stock 4297/508/137, rows stock-passes-host-fails 5, host-passes-stock-fails 176.
-Any drop is a regression from this commit: fix at its source.
-
-Shared changes most likely to move numbers: `cohost.scan/resolve-conditionals` in
-`adapter/read-forms` (no-op without `#?` in the text); empty `let*`/`loop*`/`catch` bodies now
-`nil` (rewrite.cljc); shim `-toString` of a namespace = its name; let-go `:dynamic-var?` treats
-earmuffed core vars as dynamic (watch the lg battery); Phel `(:k m d)` → `(get m :k d)`;
-`eval-str` `:on-value` option; cljs `*cljs-warnings*` single-segment off; strip-string-tags
-uses `host/string-chars` (new `:string-chars` cap, default identity).
+A fresh box has none of the hosts: `dev/install/*.sh` (plus babashka 1.13.229 and the Clojure CLI
+1.12.6.1673 from their GitHub releases) restore them; installs need the user's approval. The
+corpus is jolt's `test/chez/corpus.edn` at commit 76166d17 (`git clone` then `git checkout`).
 
 ## The CLI (merged from claude/cohost-cli-spike @ 00fe5fe, reviewed and fixed)
 
@@ -42,16 +35,44 @@ project with tools.cli (Maven jar from ~/.m2; Maven Central was 429-rate-limitin
 matrix after the fixes (spot-checked only); `(let [a 1])` empty body is still an error on
 ClojureWasm (its own `let` check, documented).
 
-## clojurust (in progress — the adapter is src/cohost/hosts/cljrs.cljrs, uncommitted until now)
+## clojurust (in progress: src/cohost/hosts/cljrs.cljrs)
 
 Run: `bb boot:cljrs` (sets CLJRS_IR_THRESHOLD=1, CLJRS_NO_JIT=1, `--src-path target/cljrs-ns`).
-Last measured boot (before the CLI work): 791 forms, stock 561 / host 89 / skipped 138 /
-**errors 3** (`fn` bootstrap def, `defmacro fn`, `defmacro defn-`: "fn* expects vector or
-arity clauses" — these are policy-host names whose stock defs still evaluate; find why the
-policy `:cljrs :host` list doesn't keep them from evaluating), then a **stack overflow in the
-battery** (not yet located; use the same method below). Next: errors 0 → battery (139 minus
-documented host facts) → libraries 61/61 → bench EDN + PERF column → REPORT section + README
-row → wire `:cljrs` in bin/cohost.
+Measured 2026-10-31 ET (this session): 791 forms, stock 561 / host 89 / skipped 141 /
+**errors 0**; **battery 93/139**; **libraries 0/61** (each library's require fails: "var not
+found cohost.adapter/push-thread-bindings"). Wall: about 905 s, of which the garbage collector
+is about 730 s (see "GC" below); the boot's own work is about 35 s, the battery about 67 s.
+
+Fixed this session:
+- errors 3 -> 0: `fn` and `defn-` are special forms of its evaluator with **no var** in its core,
+  so taking them from the host found nothing and the stock defs evaluated. Policy
+  `host-overrides` gained `:special` (skipped, reason `:host-special-form`).
+- the 13-minute hang before the first form: `strip-string-tags` ran one `cond` loop over 140,000
+  characters in one call. A fn's first call is not lowered and its evaluator expands a macro again
+  on every pass (measured: 30,000 iterations of a cond loop, 35.8 s unlowered, 55 ms lowered).
+  The loop is now special forms only, its strings and comments skipped by fns of their own.
+  (`CLJRS_EAGER_LOWER=1` also fixes it, but lowering core.clj's `destructure` at definition ran
+  the box out of memory: exit 137.)
+- the stack overflow after the boot: the adapter's `require-in` ran `eval` in its own namespace
+  (eval in a fn evaluates in that fn's namespace), so `refer-all!` referred cohost.core's vars
+  into `cohost.hosts.cljrs`, whose tree-walked fns then called stock `vec`/`get`, which called
+  the shim, which called back: infinite recursion. `eval-in` moves the form into its namespace.
+
+Next, by the battery's groups: binding push/pop (`:push-thread-bindings` — every library needs
+it), `macroexpand-1`, `:sort-array!`, `:re-find-at`, deref of a volatile/delay ("cannot be cast
+to Future"), `case=`/`protocol-fn` (types and protocols), then the rest of the 46 rows → libraries
+61/61 → bench EDN + PERF column → REPORT section + README row → wire `:cljrs` in bin/cohost.
+
+**GC (the open performance question).** Its collector starts at a third of system memory (5.3 GB
+here) and then marks for minutes: 366 s at `take-nth`, about 440 s later. Measured with
+`cljrs -X debug:gc run ...` and `CLJRS_MEMORY_SOFT_LIMIT_MB`: at 1 GB, 9.2 M objects in use,
+169,000 live (27 MB), mark 42 s; every sampled stack is `PersistentList::trace` (a list's tail is
+an `Arc`, traced through without a mark: lists sharing a tail re-walk it). The structure exists
+only while a boot runs (after `boot!` returns, a mark takes 7-15 ms; during a 60-form boot it
+climbs 10 ms -> 0.8 s -> 3.4 s), and no var reaches it (a walk eight levels deep through atoms,
+maps, vectors and lists finds no long list). Not yet found: what holds it (interpreter frames,
+IR regions — `region::trace_active_regions` traces every object of an open region as a root —
+or closures). A smaller soft limit makes it worse (more marks of the same structure).
 
 clojurust facts found so far (put them in REPORT's host section when it lands):
 - Special forms (by full head text; a qualified one is a call of a stub var): def fn* fn if do

@@ -142,3 +142,30 @@ all three work. So the plan is a hybrid:
 Upstream: the object.hpp:340-360 comment plans to port the remaining concepts to
 virtual behaviors. When `countable`, `conjable`, `associatively_writable` and
 `metadatable` become bits, step 2's guard can go.
+
+## A second reading (2026-10-31 ET, same commit): what it adds
+
+Also read from source only, at `3b7ffc2`.
+
+- **Every virtual must be overridden, not just the ones a type uses.** The default bodies
+  of the "unsupported behavior" virtuals throw with `object_source(this)` (e.g.
+  `object.cpp:200-205`, `:277-282`), which calls `runtime::meta` (`core/meta.cpp:161-163`),
+  which is `visit_object` (`meta.cpp:13-35`). For an out-of-enum `obj_type` that is the
+  panic, so a missing method aborts instead of throwing. Only the `call` arity defaults
+  throw `invalid_arity` without it (`object.cpp:80-83`). J1's `cohost_object` overrides
+  every virtual and throws its own error for a method the descriptor lacks.
+- **Construction.** Allocate through a `cpp/raw` factory that returns `object_ref` from
+  `make_box<cohost_object>(...)`: `cpp/new` yields a raw `T*`, which is not convertible to a
+  jank object (`analyze/cpp_util.cpp:965`), and an untagged pointer must not be put in an
+  `object_ref` (NaN-boxed: wrap `this` as `detail::untagged(this)`, `oref.hpp:85-87`).
+  `object`'s copy constructor copies `type` but not `behaviors` (`object.cpp:11-19`).
+  `std::vector` storage is not GC-scanned: fields go in `jank::native_vector`
+  (`include/cpp/jank/type.hpp:25,40`). Read fields through C++ accessor fns.
+- **Type tests.** `map?`, `vector?`, `list?`, `set?`, `sorted?` compare the tag
+  (`core/seq.cpp:89-159`); `type` is `object_type_str`, `"unknown"` for an out-of-enum tag
+  (`core.jank:100-103`); `instance?` and `class` throw "TODO" (`core.jank:5013-5018`,
+  `:5762-5766`). The shim's class tokens answer these for user types.
+- **`&form` may not be the call form either.** `macroexpand1` builds the macro's
+  arguments as `(cons (cons (rest o) {}) o)` (`context.cpp:633-635`); read literally, that
+  is not `[&form &env & args]` as the JVM passes them. M0's `&env` probe should print
+  `&form` too.

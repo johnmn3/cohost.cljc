@@ -205,7 +205,10 @@
      defmulti defmethod try let ns in-ns]))
 
 (def host-overrides
-  "Per-host adjustments to the lists above, keyed by the adapter's :name."
+  "Per-host adjustments to the lists above, keyed by the adapter's :name:
+   :host and :stock add to and take from host-names, :skip adds to
+   skip-names, :special names the host's special forms that have no var
+   (skipped: nothing to take from the host, and no stock definition over one)."
   {:cljs {:host (set '[defmacro])        ; only cljs.core's defmacro can make a macro there
           :skip (set '[])}
    ;; basilisp's format is Python's % operator: core.clj's format (and printf
@@ -221,8 +224,10 @@
    ;; no set-validator! to give one after: core.clj's atom sets it after
    :lg {:host (set '[atom])}
    ;; clojurust's evaluator has these as special forms, which a qualified name
-   ;; does not reach and no macro of the name can replace
-   :cljrs {:host (set '[fn let loop defn defn- defmacro defonce and or letfn binding])}})
+   ;; does not reach and no macro of the name can replace; of them, fn and
+   ;; defn- have no var in its core to take (:special: neither taken nor booted)
+   :cljrs {:host (set '[let loop defn defmacro defonce and or letfn binding])
+           :special (set '[fn defn-])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."
@@ -275,7 +280,7 @@
         :else form))))
 
 (defn lists
-  "{:host-names :skip-names} for `host` (the adapter's :name): the lists above
+  "{:host-names :skip-names :special-names} for `host` (the adapter's :name): the lists above
    with its host-overrides applied, and chunk-names when chunks? (the adapter
    has :chunks). A boot computes them once."
   ([host] (lists host false))
@@ -283,7 +288,8 @@
    (let [ov (get host-overrides host)]
      {:host-names (cond-> (apply disj (into host-names (:host ov)) (:stock ov))
                     chunks? (into chunk-names))
-      :skip-names (into skip-names (:skip ov))})))
+      :skip-names (into skip-names (:skip ov))
+      :special-names (or (:special ov) #{})})))
 
 (defn decide
   "-> {:action :eval|:skip|:host|:replace, :name sym, :reason kw, :replacement form}
@@ -299,6 +305,9 @@
        (= head 'let) {:action :replace :name '*clojure-version* :replacement (get replacements 'version-let)}
        (and nm (contains? replacements nm)) {:action :replace :name nm :replacement (get replacements nm)}
        (and nm (contains? skip-names nm)) {:action :skip :name nm :reason :jvm-only}
+       ;; a special form of the host's evaluator with no var: the host has it,
+       ;; and nothing of the name can be defined over it
+       (and nm (contains? (:special-names ls) nm)) {:action :skip :name nm :reason :host-special-form}
        (and nm (contains? host-names nm))
        (if (= head 'alter-meta!)
          {:action :skip :name nm :reason :host-var}

@@ -88,10 +88,12 @@ Demo project: `deps.edn` with `org.clojure/tools.cli 1.2.245` (Maven jar), a
 | host | cases | differs from `clojure` only in |
 |---|---|---|
 | jolt | 16 (`-e` multi-form/errors/printing, `-i` order, script args, `-m`, `-M:alias`, `-X`, `-X:alias`, missing fn, `-J`, missing ns, `-`, REPL) | error location; `#'cohost.core/map`; missing-ns message; REPL prompt per form |
-| cljs, cljw, lg, lpy | 5 (multi-form `-e` + error, `-m` with jar + local deps and `*command-line-args*`, `-X:alias`, `-M:alias`, `-`) | error location |
-| phel | `(:k m f)` fix and the 5 not yet re-run after the fixes | — |
+| cljs, cljw, lg, lpy, phel | 5 (multi-form `-e` + error, `-m` with jar + local deps and `*command-line-args*`, `-X:alias`, `-M:alias`, `-`) | error location |
 
-Not re-run after the last fixes: the cross-host regression (batteries + corpus).
+Phel's five were re-run after the fixes (2026-10-31): its `(/ 1 0)` said PHP's "Division by
+zero", now the JVM's "Divide by zero" (the shim's `Numbers/divide` throws it for an exact zero
+divisor on every host). The cross-host regression (every battery and the jolt corpus) was
+re-run on these fixes and matched the earlier numbers.
 
 ## Where it differs from `clojure`
 

@@ -662,7 +662,13 @@
     (cond (or (h-nan? x) (zero? x)) (host/parse-double* "NaN")
           (not= (neg? x) neg-y) (host/parse-double* "-Infinity")
           :else (host/parse-double* "Infinity"))))
-(def Numbers-divide (let [h /] (fn [x y] (if (and (zero? y) (or (float? x) (float? y))) (ieee-div-zero x y) (h x y)))))
+(defn- divide-by-zero [] (host/ex* 'java.lang.ArithmeticException "Divide by zero"))
+;; an exact zero divisor is the JVM's ArithmeticException "Divide by zero",
+;; not the host's own error (PHP's "Division by zero", Python's
+;; ZeroDivisionError)
+(def Numbers-divide (let [h /] (fn [x y] (if (zero? y)
+                                           (if (or (float? x) (float? y)) (ieee-div-zero x y) (throw (divide-by-zero)))
+                                           (h x y)))))
 (def Numbers-inc inc)
 (def Numbers-incP (host-fn 'inc' inc))
 (def Numbers-dec dec)
@@ -675,7 +681,6 @@
 (def Numbers-isZero zero?)
 (def Numbers-isPos pos?)
 (def Numbers-isNeg neg?)
-(defn- divide-by-zero [] (host/ex* 'java.lang.ArithmeticException "Divide by zero"))
 ;; Numbers.quotient / remainder check the divisor for every operand type
 (def Numbers-quotient (fn [x y] (if (zero? y) (throw (divide-by-zero)) (quot x y))))
 (def Numbers-remainder (fn [x y] (if (zero? y) (throw (divide-by-zero)) (rem x y))))

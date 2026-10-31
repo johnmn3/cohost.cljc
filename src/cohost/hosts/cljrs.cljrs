@@ -342,7 +342,8 @@
    'ns-refers (fn [n] (walked (ns-refers n)))
    'ns-resolve (fn ([n sym] (walked (ns-resolve n (plain sym)))) ([n env sym] (walked (ns-resolve n env (plain sym)))))
    'resolve (fn ([sym] (walked (resolve (plain sym)))) ([env sym] (walked (resolve env (plain sym)))))
-   'eval (fn [form] (eval form))
+   ;; (in the caller's namespace, not this one: see eval-in)
+   'eval (fn [form] (eval (list 'do (list 'in-ns (list 'quote (ns-name *ns*))) form)))
    'intern (fn ([n sym] (walked (intern n (plain sym)))) ([n sym v] (walked (intern n (plain sym) v))))
    'apply (fn [f & args] (apply f (apply list* args)))
    'alter-meta! (fn [r f & args] (walked (alter-meta! r (fn [m] (apply f m args)))))
@@ -380,13 +381,21 @@
     (in-ns ns-sym)
     (try (thunk) (finally (in-ns old)))))
 
+(defn- eval-in
+  "Evaluate form in ns-sym. eval in a fn evaluates in that fn's own namespace,
+   whatever in-ns did before: a require eval'd here would refer into this
+   namespace (cohost.core's vec, get and seq over its own, which call the
+   shim, which calls back here: a stack overflow). The form moves first."
+  [ns-sym form]
+  (with-ns ns-sym (fn [] (eval (list 'do (list 'in-ns (list 'quote ns-sym)) form)))))
+
 ;; {ns-sym [name ...]}: the namespaces cohost makes, each with the
 ;; clojure.core names it refers
 (def ^:private core-refers (atom {}))
 
 (defn- set-core-refers! [ns-sym names]
   (swap! core-refers assoc ns-sym names)
-  (with-ns ns-sym (fn [] (eval (list 'ns ns-sym (list :refer-clojure :only (vec names)))))))
+  (eval-in ns-sym (list 'ns ns-sym (list :refer-clojure :only (vec names)))))
 
 (defn- ensure-bare-ns! [ns-sym]
   (when-not (contains? @core-refers ns-sym)
@@ -397,7 +406,7 @@
       (spit path ";; made in memory by cohost: a require of it refers its vars\n"))))
 
 (defn- require-in [into-ns spec]
-  (with-ns into-ns (fn [] (eval (list 'require (list 'quote spec))))))
+  (eval-in into-ns (list 'require (list 'quote spec))))
 
 (defn- refer!
   "A refer of :rename's names is a var of into-ns holding the value."
