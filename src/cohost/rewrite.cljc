@@ -379,7 +379,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms vector-rest-args? plain-symbol expand-macro]
+           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:plain-symbol (or plain-symbol identity)
    :shim-names shim-names
@@ -417,6 +417,9 @@
    :named-fn*? (if (nil? named-fn*?) true (boolean named-fn*?))
    ;; {fn* fn ...}: the host's names for the special forms in the output
    :special-forms special-forms
+   ;; :with-bindings where the host's bindings are scoped only: push/pop
+   ;; pairs become cohost.shim/with-thread-bindings calls (scoped-bindings)
+   :scoped-bindings? (= :with-bindings binding-style)
    ;; a host whose & rest argument is a vector (Phel): each variadic arity
    ;; makes it a seq (or nil) first, as stock code builds forms of it
    :vector-rest-args? (boolean vector-rest-args?)
@@ -1390,6 +1393,55 @@
               :else x))]
     (walk form)))
 
+;; push/pop pairs of thread bindings, as the codemod writes them: the stock fns
+;; (push-thread-bindings m) and the shim's Var-pushThreadBindings
+(def ^:private push-heads #{"push-thread-bindings" "Var-pushThreadBindings"})
+(def ^:private pop-heads #{"pop-thread-bindings" "Var-popThreadBindings"})
+(def ^:private binding-call-nses #{nil "cohost.shim" "cohost.core" "clojure.core"})
+
+(defn- binding-call? [heads x]
+  (and (seq? x) (symbol? (first x)) (contains? heads (name (first x)))
+       (contains? binding-call-nses (namespace (first x)))))
+
+(defn- popping-try-body
+  "(try body... (finally (pop-thread-bindings))) with no catch -> [body...], else nil."
+  [x]
+  (when (and (seq? x) (= 'try (first x)))
+    (let [fin (last x)]
+      (when (and (seq? fin) (= 'finally (first fin)) (= 2 (count fin)) (binding-call? pop-heads (second fin))
+                 (not-any? #(and (seq? %) (= 'catch (first %))) (rest x)))
+        (vec (butlast (rest x)))))))
+
+(defn- scoped-bindings
+  "form with each push of thread bindings that is followed by a try whose one
+   finally pops them written as (cohost.shim/with-thread-bindings m (fn* []
+   body...)): for a host whose bindings are scoped only (:binding-style
+   :with-bindings). A try body cannot recur out of itself, so the fn changes
+   nothing it means. Quoted forms stay as they are."
+  [form]
+  (letfn [(walk [x]
+            (cond
+              (seq? x)
+              (if (or (empty? x) (= 'quote (first x)))
+                x
+                (let [xs (map walk x)
+                      out (loop [xs (seq xs) out []]
+                            (if-not xs
+                              out
+                              (let [a (first xs)
+                                    body (when (and (binding-call? push-heads a) (= 2 (count a)))
+                                           (popping-try-body (second xs)))]
+                                (if body
+                                  (recur (nnext xs) (conj out (list 'cohost.shim/with-thread-bindings (second a)
+                                                                    (apply list 'fn* [] body))))
+                                  (recur (next xs) (conj out a))))))]
+                  (with-meta (apply list out) (meta x))))
+              (vector? x) (with-meta (mapv walk x) (meta x))
+              (map? x) (with-meta (into {} (map (fn [[k v]] [(walk k) (walk v)]) (seq x))) (meta x))
+              (set? x) (with-meta (into #{} (map walk x)) (meta x))
+              :else x))]
+    (walk form)))
+
 (defn rewrite
   "The codemod: form -> form the host can compile against cohost.shim.
    opts :locals — the local names in scope (a macro expansion's, from its
@@ -1415,5 +1467,6 @@
                *host-type* (:host-type ctx)]
        (let [out (if-let [ref (:shim-ref ctx)]
                    (binding [*shim-ref* ref] (rw ctx form))
-                   (rw ctx form))]
+                   (rw ctx form))
+             out (if (:scoped-bindings? ctx) (scoped-bindings out) out)]
          (if-let [sf (:special-forms ctx)] (host-special-forms sf out) out))))))

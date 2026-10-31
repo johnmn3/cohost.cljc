@@ -72,6 +72,8 @@
    :var-thread-bound? [['h] "is the var bound in this thread's binding frames?"]
    :push-thread-bindings! [['bindings] "Var.pushThreadBindings: {handle value} -> establish bindings (a frame)"]
    :pop-thread-bindings! [[] "Var.popThreadBindings: undo the last frame"]
+   :binding-style   [[] ":push-pop (the default): bindings are pushed and popped; :with-bindings: the host's bindings are scoped only (clojurust's with-bindings*), so the codemod writes each pushThreadBindings ... (try ... (finally popThreadBindings)) as one cohost.shim/with-thread-bindings call"]
+   :with-thread-bindings! [['bindings 'thunk] "(thunk) inside the frame bindings ({handle value}) establishes; the frame ends when it returns or throws (default: push, try, pop)"]
    :thread-bindings [[] "Var.getThreadBindings where the host core has no get-thread-bindings: {var value} of this thread's bindings, the innermost value of each (default {})"]
    :var-set!        [['h 'v] "Var.set where the host core has no var-set: set the value of the innermost binding of a var bound in this thread (default: alter-var-root!)"]
    :current-ns      [[] "the symbol of the namespace evaluated code currently runs in (*ns*)"]
@@ -280,12 +282,16 @@
     :set-dynamic! #?(:cljs (unsupported :set-dynamic!) :default (fn [h] (alter-meta! h assoc :dynamic true) h))
     :var-bound? #?(:cljs (fn [_] true) :default (fn [h] (try-all (fn [] (var-get h) true) (fn [_] false))))
     :var-thread-bound? (fn [_] false)
-    :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :phel (unsupported :push-thread-bindings!) :lg (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
-    :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :phel (unsupported :pop-thread-bindings!) :lg (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
+    :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :phel (unsupported :push-thread-bindings!) :lg (unsupported :push-thread-bindings!) :cljrs (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
+    :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :phel (unsupported :pop-thread-bindings!) :lg (unsupported :pop-thread-bindings!) :cljrs (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
+    :binding-style :push-pop
+    :with-thread-bindings! (fn [m thunk]
+                             ((cap :push-thread-bindings!) m)
+                             (try (thunk) (finally ((cap :pop-thread-bindings!)))))
     :thread-bindings (fn [] {})
     :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
     :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
-    :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
+    :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
     :refer! #?(:cljs (unsupported :refer!) :phel (unsupported :refer!)
                :default (fn [into-ns from-ns {:keys [only exclude rename]}]
                           (binding [*ns* (the-ns into-ns)]
@@ -464,7 +470,9 @@
 ;; a namespace's name and a namespace by name, where namespaces are objects;
 ;; Phel's are their names (and it has neither fn)
 (defn ns-name* [n] #?(:phel (symbol (str n)) :default (ns-name n)))
-(defn the-ns* [x] #?(:phel x :cljs (find-ns x) :default (the-ns x)))
+;; (clojurust's the-ns calls a find-ns its IR does not intercept: a fn holding
+;; a `.` form is never lowered)
+(defn the-ns* [x] #?(:phel x :cljs (find-ns x) :cljrs (if false (. nil tree-walked) (the-ns x)) :default (the-ns x)))
 
 (defn host-name [] (cap :name))
 (defn core-ns-sym [] (cap :core-ns))
@@ -573,6 +581,8 @@
 (defn var-thread-bound? [h] ((cap :var-thread-bound?) h))
 (defn push-thread-bindings! [m] ((cap :push-thread-bindings!) m))
 (defn pop-thread-bindings! [] ((cap :pop-thread-bindings!)))
+(defn with-thread-bindings! [m thunk] ((cap :with-thread-bindings!) m thunk))
+(defn binding-style [] (cap :binding-style))
 (defn thread-bindings [] ((cap :thread-bindings)))
 (defn var-set! [h v] ((cap :var-set!) h v))
 (defn current-ns [] ((cap :current-ns)))

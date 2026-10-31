@@ -226,6 +226,7 @@
                 :named-fn*? (host/named-fn*?)
                 :plain-symbol host/plain-symbol
                 :special-forms (host/special-forms)
+                :binding-style (host/binding-style)
                 :vector-rest-args? (host/vector-rest-args?)
                 :def-meta (host/def-meta)
                 :strip-inline? (host/strip-inline?)
@@ -845,8 +846,7 @@
                                 [v (host/var-root v)])))
                           '[*warn-on-reflection* *unchecked-math*]))]
     (if (seq bs)
-      (do (host/push-thread-bindings! bs)
-          (try (thunk) (finally (host/pop-thread-bindings!))))
+      (host/with-thread-bindings! bs thunk)
       (thunk))))
 
 (defn- load-source!

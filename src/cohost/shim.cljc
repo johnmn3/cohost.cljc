@@ -838,16 +838,25 @@
 ;; this thread holds it (the var object stays usable)
 (def ^:private live-locals (atom 0))
 (def Var-create (fn [& args] (swap! live-locals inc) (apply var-create* args)))
-(def Var-popThreadBindings
+(def ^:private unmap-dead-locals!
   ;; (ClojureScript's ns-unmap is a compile-time macro: its locals stay)
   (let [unmap #?(:cljs nil :default (host-fn 'ns-unmap nil))]
     (fn []
-      (host/pop-thread-bindings!)
       (when (and unmap (pos? @live-locals))
         (let [left (reduce (fn [n [sym v]]
                              (if (host/var-thread-bound? v) (inc n) (do (unmap @locals-ns sym) n)))
                            0 (seq (host/ns-interns-map @locals-ns)))]
           (reset! live-locals left))))))
+(def Var-popThreadBindings
+  (fn []
+    (host/pop-thread-bindings!)
+    (unmap-dead-locals!)))
+;; a pushThreadBindings ... (try ... (finally popThreadBindings)) pair as one
+;; call: what the codemod writes where the host's bindings are scoped only
+;; (:binding-style :with-bindings)
+(defn with-thread-bindings [m f]
+  (try (host/with-thread-bindings! m f)
+       (finally (unmap-dead-locals!))))
 
 (def Keyword-intern (fn ([x] (if (symbol? x)
                                (let [x #?(:lg (host/plain-symbol x) :default x)] (keyword (namespace x) (name x)))

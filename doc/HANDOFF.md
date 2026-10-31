@@ -58,21 +58,35 @@ Fixed this session:
   into `cohost.hosts.cljrs`, whose tree-walked fns then called stock `vec`/`get`, which called
   the shim, which called back: infinite recursion. `eval-in` moves the form into its namespace.
 
-Next, by the battery's groups: binding push/pop (`:push-thread-bindings` — every library needs
-it), `macroexpand-1`, `:sort-array!`, `:re-find-at`, deref of a volatile/delay ("cannot be cast
+Next, by the battery's groups: `:sort-array!`, `:re-find-at`, deref of a volatile/delay ("cannot be cast
 to Future"), `case=`/`protocol-fn` (types and protocols), then the rest of the 46 rows → libraries
 61/61 → bench EDN + PERF column → REPORT section + README row → wire `:cljrs` in bin/cohost.
 
-**GC (the open performance question).** Its collector starts at a third of system memory (5.3 GB
-here) and then marks for minutes: 366 s at `take-nth`, about 440 s later. Measured with
-`cljrs -X debug:gc run ...` and `CLJRS_MEMORY_SOFT_LIMIT_MB`: at 1 GB, 9.2 M objects in use,
-169,000 live (27 MB), mark 42 s; every sampled stack is `PersistentList::trace` (a list's tail is
-an `Arc`, traced through without a mark: lists sharing a tail re-walk it). The structure exists
-only while a boot runs (after `boot!` returns, a mark takes 7-15 ms; during a 60-form boot it
-climbs 10 ms -> 0.8 s -> 3.4 s), and no var reaches it (a walk eight levels deep through atoms,
-maps, vectors and lists finds no long list). Not yet found: what holds it (interpreter frames,
-IR regions — `region::trace_active_regions` traces every object of an open region as a root —
-or closures). A smaller soft limit makes it worse (more marks of the same structure).
+**GC: found and fixed (cohost side).** Its `vec` of a string walks it as a list and makes a list
+of the remaining characters at every step (`ValueIter::next`, `builtins.rs`); a collection can
+start at any allocation, and every object a running builtin allocated stays rooted until it
+returns, so a collection during `(vec core-clj-text)` traced every suffix: quadratic, 366 s and
+440 s pauses. Found with an instrumented clojurust (scratch build: `PersistentList::trace`
+reporting walks over 20,000 cells, `PersistentList::cons` printing a backtrace at 30,001). The
+adapter now builds a text's vector 512 characters at a time (`string-vec`): the 60-form boot's
+slowest mark went from 21 s to 15 ms; the full boot reaches its report in about 2.5 minutes.
+Upstream bug to file: `vec`/`ValueIter` over a string (and over a list: `GcPtr` per step).
+
+**Open: clojurust crashes intermittently.** About half the full runs since end with a
+segfault or "memory allocation of 140193633298272 bytes failed", both inside the IR's `str` on a
+value an IR-made closure captured (`ir_interp::alloc_closure` -> `dispatch_known_fn`); caught under
+gdb in the battery's "atoms" case. A run with the collector held off (12 GB threshold) also
+segfaulted, so suspect the IR's escape analysis (a value that escapes, allocated in a region) and
+the asynchronous lowering for the nondeterminism. This is a clojurust bug; report it upstream
+with the gdb trace. Last completed run: battery 95/139, libraries 0/61 (then failing on
+clojurust's own `the-ns`, which calls a `find-ns` its IR does not intercept — fixed since, not
+yet seen in a completed run).
+
+Since the last commit: `:binding-style :with-bindings` and `:with-thread-bindings!` in the
+contract (the codemod's `scoped-bindings` pass writes push/try/pop pairs as one
+`cohost.shim/with-thread-bindings` call; the loader uses the capability); clojurust's
+`macroexpand-1` (a macro value called through a per-arity caller: &form is that call);
+`the-ns` tree-walked. Regression on these: every number unchanged.
 
 clojurust facts found so far (put them in REPORT's host section when it lands):
 - Special forms (by full head text; a qualified one is a call of a stub var): def fn* fn if do

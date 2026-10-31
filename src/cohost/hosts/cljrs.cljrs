@@ -50,6 +50,19 @@
 ;; reader then reads it (metadata, sets, syntax-quote as a form), and the
 ;; marks and syntax-quote are expanded.
 
+;; its vec of a string walks the string as a list, making a list of the rest
+;; at every step; a collection inside that one builtin call (one can start at
+;; any allocation) traces every list it has made so far, all rooted until it
+;; returns: quadratic, minutes for core.clj. The vector of a long text is
+;; built a piece at a time.
+(defn- string-vec [s]
+  (let [n (count s)]
+    (loop [i 0 out []]
+      (if (>= i n)
+        out
+        (let [j (min n (+ i 512))]
+          (recur j (into out (subs s i j))))))))
+
 (def ^:private ws #{\space \tab \newline \return \formfeed \,})
 (def ^:private delims #{\( \) \[ \] \{ \} \" \;})
 
@@ -290,7 +303,7 @@
   (expand-marks (read-string text)))
 
 (defn- read-forms [src cb]
-  (let [cs (vec src) n (count cs)]
+  (let [cs (string-vec src) n (count cs)]
     (loop [i (skip-ws cs 0)]
       (when (< i n)
         (let [j (form-end cs i)]
@@ -300,7 +313,7 @@
 ;; read-string: s's first form, read as read-forms reads it; with none, opts'
 ;; :eof or the JVM's EOF
 (defn- read-string* [s opts]
-  (let [cs (vec s) i (skip-ws cs 0)]
+  (let [cs (string-vec s) i (skip-ws cs 0)]
     (if (>= i (count cs))
       (if (contains? opts :eof)
         (:eof opts)
@@ -462,6 +475,33 @@
    'sinh Math/sinh 'cosh Math/cosh 'tanh Math/tanh 'hypot Math/hypot})
 
 ;; ---------------------------------------------------------------------------
+;; macros: a macro is a value of its own kind (it prints #<Macro name>) and its
+;; var carries no :macro. Called with the macro's arguments it expands them
+;; (&form is that call, &env {}); apply of one throws, so each count of
+;; arguments gets a caller of its own, made once.
+
+(defn- macro-value? [x]
+  (and (= 'Object (type x)) (string/starts-with? (pr-str x) "#<Macro")))
+
+(def ^:private macro-callers (atom {}))
+
+(defn- call-macro [m args]
+  (let [n (count args)
+        f (or (get @macro-callers n)
+              (let [f (eval-in 'cohost.hosts.cljrs
+                               (list 'fn* ['m 'a] (apply list 'm (map (fn [i] (list 'nth 'a i)) (range n)))))]
+                (swap! macro-callers assoc n f)
+                f))]
+    (f m (vec args))))
+
+(defn- macroexpand-1* [form]
+  (if (and (seq? form) (symbol? (first form)))
+    (let [v (walked (ns-resolve (ns-name *ns*) (plain (first form))))
+          m (when (var? v) (var-get* v))]
+      (if (and m (macro-value? m)) (call-macro m (rest form)) form))
+    form))
+
+;; ---------------------------------------------------------------------------
 
 (def adapter
   {:name :cljrs
@@ -507,6 +547,13 @@
    :named-fn*? false
    :special-forms '{letfn* letfn}
    :code-form as-code
+   ;; (its bindings are scoped only: with-bindings*; the codemod writes each
+   ;; push ... (try ... (finally pop)) pair as one call)
+   ;; (its the-ns calls a find-ns its IR does not intercept)
+   :core-extras {'the-ns (fn [x] (walked (the-ns x)))}
+   :binding-style :with-bindings
+   :with-thread-bindings! (fn [m thunk] (with-bindings* m thunk))
+   :macroexpand-1 macroexpand-1*
    :eval (fn [form] (eval (list 'do (list 'in-ns (list 'quote (ns-name *ns*))) (as-code form))))
    :var-get var-get*
    :var-raw-root var-get*
@@ -536,7 +583,7 @@
    :math-sqrt (fn [x] (Math/sqrt x))
    :math jvm-math
    ;; (nth of a string walks it from the start)
-   :string-chars (fn [s] (vec s))
+   :string-chars string-vec
    :index-of (fn [s sub from] (let [i (string/index-of s sub from)] (if (nil? i) -1 i)))
    :upper-case (fn [s] (string/upper-case (str s)))
    :lower-case (fn [s] (string/lower-case (str s)))})
