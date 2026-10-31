@@ -2,7 +2,11 @@
 ;; arguments. A file to `phel run`, not `phel eval`: eval also loads every
 ;; source under the working directory (target/ holds the ClojureScript build's
 ;; copies of cohost's own).
+;; phel.string is loaded here because a namespace form evaluated under phel
+;; run loads nothing it requires: code run on Phel's own core (the bench's host
+;; side) requires clojure.string, which is Phel's phel.string.
 (ns cohost-phel-main
-  (:require [cohost.run]))
+  (:require [cohost.run]
+            [phel.string]))
 
 (apply cohost.run/-main *argv*)

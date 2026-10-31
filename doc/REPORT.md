@@ -23,6 +23,7 @@ shared the machine (the wall times are upper bounds).
 | ClojureScript, self-hosted, Node 24 | 1.12.42 | 572 / 79 / 140 / **0** | **131/133** | **61/61** | 33 s with the compile |
 | ClojureScript, self-hosted, Chromium | 1.12.42 | 572 / 79 / 140 / **0** | **131/133** | **61/61** | 19 s in the page |
 | ClojureWasm (Zig), measured 2026-10-31 on the 139-case battery | v1.15.4 prebuilt | 555 / 145 / 91 / **0** | **137/139** | **61/61** | 86 s boot |
+| Phel (PHP 8.5), measured 2026-10-31 on the 139-case battery | v0.54.0 phar | 591 / 73 / 127 / **0** | **139/139** | **61/61** | 41 s boot |
 
 Every top-level count is out of 791: core.clj's 719 forms, the 37-var prelude
 (the dynamic vars the JVM runtime creates before core.clj loads) and the 35
@@ -522,6 +523,14 @@ open is listed under "Deliberately not done here". What changed:
     bits. `pow` is PHP's `fpow` (IEEE 754).
   - **Arity** is checked when a call is compiled.
   - **Chars** are one-character strings.
+  - **The C stack.** Phel's own `count` of a 100,000-item lazy pipeline, and its
+    `sort`, `frequencies` and `distinct` at the bench's sizes, recurse past PHP's
+    default 8 MB C stack and segfault, which nothing catches; at 10,000 items they
+    run. `bb bench:phel` runs Phel with a 64 MB stack; the boot and the batteries
+    need none.
+  - **Loading.** Under `phel run`, an `ns` form that is evaluated loads nothing it
+    requires; `dev/phel_main.phel` loads `phel.string` (Phel's `clojure.string`)
+    for the bench's host side.
 
 ## Core battery cases that fail, and why (host facts)
 

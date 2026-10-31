@@ -805,6 +805,8 @@
    :eval (fn [form] (eval (as-code form)))
    :read-string (fn ([s] (read-one s {})) ([s opts] (read-one s opts)))
    :edn-read-string edn-read-string
+   ;; Phel's own core reads Phel's way (a regex is a PCRE string)
+   :host-read-string (fn [s] (read-string s))
    ;; regexes are Patterns (see re-literal)
    :regex? pattern?
    :re-source (fn [re] (.-src re))

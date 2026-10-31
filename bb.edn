@@ -85,9 +85,13 @@
   bench:cljw {:doc "cohost.bench on ClojureWasm (target/bench-cljw.edn)"
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "cljw" "-cp" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
-  bench:phel {:doc "cohost.bench on Phel (target/bench-phel.edn)"
+  bench:phel {:doc "cohost.bench on Phel (target/bench-phel.edn), with a 64 MB C stack"
+              ;; Phel's own count of a long lazy seq, sort, frequencies and
+              ;; distinct of 50,000-100,000 items recurse past PHP's default
+              ;; 8 MB C stack and segfault (doc/REPORT.md)
               :task (do (babashka.fs/create-dirs "target")
-                        (apply shell "phel" "run" "dev/phel_main.phel" "--bench" (git-rev) *command-line-args*))}
+                        (apply shell "bash" "-c" "ulimit -s 65536 && exec phel run dev/phel_main.phel \"$@\"" "bench-phel"
+                               "--bench" (git-rev) *command-line-args*))}
   bench:lg  {:doc "cohost.bench on let-go (target/bench-lg.edn)"
              :task (do (babashka.fs/create-dirs "target")
                        (apply shell "lg" "-source-paths" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}

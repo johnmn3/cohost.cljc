@@ -83,19 +83,21 @@ What caused them:
 
 ## The new hosts (doc/hosts/PLAN.md)
 
-Measured 2026-10-31 between 12:56 and 1:02 AM ET on commit `de0ca96`, on one 4-CPU box.
-The JVM run was made on the same box just before, so the ratios compare like with like.
-Neither host had natives. The files are in `doc/perf/new-hosts/`;
-`bb bench:report doc/perf/new-hosts` prints the full tables.
+ClojureWasm was measured 2026-10-31 between 12:56 and 1:02 AM ET on commit `de0ca96`, on
+one 4-CPU box; the JVM run was made on the same box just before, so the ratios compare like
+with like. Phel was measured on the same box 2026-10-31 between 5:37 and 5:41 AM ET, on
+`9ab825b` with this commit's bench changes, against that JVM run. Neither host had
+natives. The files are in `doc/perf/new-hosts/`; `bb bench:report doc/perf/new-hosts`
+prints the full tables.
 
-| | ClojureWasm v1.15.4 |
-|---|---:|
-| the stock core against JVM Clojure's own core | ×47.3 |
-| the stock core against the host's own core | **×5.1** |
-| the host's own core against JVM Clojure | ×9.2 |
-| boot of core.clj (JVM Clojure: 1.1 s) | 86.3 s |
-| the twelve libraries | 2.1 s |
-| natives | 0 |
+| | ClojureWasm v1.15.4 | Phel v0.54.0 (PHP 8.5) |
+|---|---:|---:|
+| the stock core against JVM Clojure's own core | ×47.3 | ×137.9 |
+| the stock core against the host's own core | **×5.1** | **×4.3** |
+| the host's own core against JVM Clojure | ×9.2 | ×35.6 |
+| boot of core.clj (JVM Clojure: 1.1 s) | 86.3 s | 41.0 s |
+| the twelve libraries | 2.1 s | 13.3 s |
+| natives | 0 | 0 |
 
 **ClojureWasm's largest gaps, the stock core against its own:**
 
@@ -118,6 +120,30 @@ All seven are cases where another host's natives closed the gap:
 
 The boot is slow because cljw evaluates each of core.clj's forms through its analyzer
 and the codemod. Its share of the time has not been measured.
+
+**Phel's largest gaps, the stock core against its own:**
+
+| case | ratio |
+|---|---:|
+| `re-seq` | ×216.1 |
+| `sort-by` a key of maps | ×76.8 |
+| `clojure.string/join` | ×72.8 |
+| `format` | ×15.0 |
+| `partition` 3 | ×13.1 |
+| `distinct` over `mapcat` | ×10.1 |
+| `group-by` | ×8.8 |
+
+- `re-seq`: the stock `re-seq` walks the shim's Matcher, one `Pattern::find` call and
+  one vector per match, where Phel's own is one `preg_match_all`.
+- `format`: Phel's own is PHP's `sprintf`; the stock core's boots over the shim's
+  Formatter, which reads the format string itself.
+- the others have not been measured apart.
+
+Two cases have no host side: their source is not Phel (Phel's `for` takes
+`[x :in coll]`, and its `defrecord` methods see no fields), so the stock core's time
+stands alone. Phel's own `count` of a 100,000-item lazy pipeline, and its `sort`,
+`frequencies` and `distinct` at the bench's sizes, recurse past PHP's default 8 MB C
+stack and segfault; `bb bench:phel` runs Phel with a 64 MB stack (`ulimit -s 65536`).
 
 ## Method
 

@@ -33,6 +33,7 @@
    :spit            [['path 's] "write s to the file at path"]
    :read-forms      [['src 'cb] "read every top-level form of src, (cb form) each, in the caller's *ns*"]
    :read-string     [['s '& 'opts] "read one form from a string, in the caller's *ns*; the 2-arity takes read-string's opts map (:eof, :read-cond, :features) and honors *data-readers* / *default-data-reader-fn* as read-string does"]
+   :host-read-string [['s] "read one form for the host's own core to run (the bench's host side): the host's own reader (default: :read-string)"]
    :with-ns         [['ns-sym 'thunk] "call thunk with *ns* set to ns-sym"]
    :ensure-bare-ns! [['ns-sym] "create ns-sym referring nothing from the host core"]
    :eval            [['form] "eval form in the current *ns*"]
@@ -525,6 +526,7 @@
 (defn spit-file [path s] ((cap :spit) path s))
 (defn read-forms [src cb] ((cap :read-forms) src cb))
 (defn read-string* ([s] ((cap :read-string) s)) ([s opts] ((cap :read-string) s opts)))
+(defn host-read-string [s] (if-let [f (get @installed :host-read-string)] (f s) (read-string* s)))
 (defn with-ns [ns-sym thunk] ((cap :with-ns) ns-sym thunk))
 (defn ensure-bare-ns! [ns-sym] ((cap :ensure-bare-ns!) ns-sym))
 (defn eval-form [form] ((cap :eval) form))

@@ -89,10 +89,10 @@
   #?(:cljs (host/with-ns 'cljs.user (fn [] (host/eval-form (list 'ns (symbol (str host-ns "$macros"))))))
      :default nil)
   (host/with-ns #?(:cljs 'cljs.user :default (host/core-ns-sym))
-    (fn [] (host/eval-form (list 'ns host-ns (cons :require requires))))))
+    (fn [] (host/eval-form (list 'ns host-ns (apply list :require requires))))))
 
 (defn- eval-host [src]
-  (host/with-ns host-ns (fn [] (host/eval-form (host/read-string* src)))))
+  (host/with-ns host-ns (fn [] (host/eval-form (host/host-read-string src)))))
 
 (defn- eval-stock [src] (boot/eval-str src {:session? false}))
 
