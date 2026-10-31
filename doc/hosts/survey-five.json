@@ -1,0 +1,764 @@
+{
+ "note": "Read-only survey of 2026-10-31: the five hosts' assessments (with sources) and the adversarial re-check. Full survey: 158 candidates.",
+ "assessments": [
+  {
+   "name": "let-go",
+   "platform": "Go (bytecode compiler and stack VM; also native-Go lowering, WASM and WASI targets)",
+   "repo_url": "https://github.com/nooga/let-go",
+   "implemented_in": "Go, with the core library in .lg (pkg/rt/core/core.lg)",
+   "status": "active",
+   "last_activity": "Latest commit 2026-10-31 (https://github.com/nooga/let-go/commits/main). Latest tag and release v1.13.0, 2026-09-20 (https://github.com/nooga/let-go/tags, https://github.com/nooga/let-go/releases).",
+   "latest_release": "v1.13.0 (2026-09-20)",
+   "feature_key": ":lg (always on, with :default; :clj and :bb match only when opted in via LG_READ_CLJ or LG_READ_BB, or set-read-clj! and set-read-bb!)",
+   "reads_cljc": "yes",
+   "runtime_eval": "yes",
+   "namespaces_vars_meta": "yes",
+   "macros_env": "partial",
+   "dynamic_binding": "yes",
+   "persistent_collections": "yes",
+   "types_protocols": "yes",
+   "exceptions_ex_info": "yes",
+   "strings_regex": "partial",
+   "conformance": "README: '5621 / 5621 assertions pass across 232 files' of jank-lang/clojure-test-suite 'through the :clj reader lens' (read with :clj enabled), with :lg overrides upstreamed to the suite. An undated example in docs/clojure-test-suite.md shows pass=3530 fail=454 over 105 files, an earlier state.",
+   "toolchain_on_box": true,
+   "install_route": "brew install nooga/tap/let-go, or release binaries (v1.13.0 has 11 assets). go install github.com/nooga/let-go@latest needs Go 1.26 or newer per the README, and main's go.mod says go 1.27 with toolchain go1.27.1. The box has go1.24.7.",
+   "adapter_fit": "Most of the contract maps directly. #?(:lg ...) and :default are on, #?@ splices, and the loader resolves .lg, then .cljc, then .clj. read-string, load-string and eval are registered in clojure.core, and a namespace-scoped eval exists. create-ns, intern, in-ns, alias, refer, resolve, ns-resolve, find-var, alter-meta!, alter-var-root, set-macro! and macroexpand-1 exist. binding uses push-binding! and pop-binding! on a per-ExecContext stack (future and go get child copies). There is no push-thread-bindings, so the adapter must push and pop a frame one var at a time. Throwable, or a bare (catch e ...), catches everything, and ex-info/ex-data work. It has persistent and sorted collections, atoms, delays and volatiles; deftype, defrecord, reify, defprotocol and extend-type/extend-protocol; and a java.lang.StringBuilder shim. Hardest gaps: &env is hard-coded to nil, by design, so locals-aware macros see nothing. A deftype can implement IFn (-invoke) and IDeref (-deref), but 'deftype instances don't support keyword lookup, assoc, seq, or count'. So shim stand-ins for clojure.lang seqs and collections must map onto let-go's native types or onto records. JVM host methods on deftype are unsupported, and lazy seqs are unchunked, so core.clj's chunked paths need shim support. Regex is RE2 with re-find and re-groups; no re-matcher or group offsets were found.",
+   "verdict": "possible",
+   "verdict_reason": "The closest of the Go hosts to strong. Every prerequisite is present except a real &env (nil by design), and regex group offsets were not found. It is very active with several contributors, used as a Gloat engine, and reports 5621/5621 test-suite assertions.",
+   "evidence": [
+    {
+     "claim": "The reader defines the tags :lg, :clj, :bb and :default. :lg and :default always match; :clj needs LG_READ_CLJ and :bb needs LG_READ_BB (or SetMatchCljConditional). The first match wins, #?@ splices, and ReadSkipNoValue is the 'single-form entry point used by read-string'.",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/pkg/compiler/reader.go",
+     "kind": "source"
+    },
+    {
+     "claim": "'The reader always matches :lg and :default, and matches :clj / :bb only when opted in.' 'Put :lg before :clj.' let-go 'reads #? in any file and its loader resolves .lg \u2192 .cljc \u2192 .clj'.",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/docs/guide/portability.md",
+     "kind": "source"
+    },
+    {
+     "claim": "read-string, load-string and eval are set as roots of clojure.core vars. evalInNSChild(code, ns) compiles in a given namespace and restores *ns*.",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/pkg/compiler/eval.go",
+     "kind": "source"
+    },
+    {
+     "claim": "lang.go registers alter-meta!, alter-var-root, macroexpand, macroexpand-1, alias, refer, set-macro!, atom, create-ns, intern, resolve, find-var, ex-info, ex-data, re-groups, re-find, volatile!, in-ns and push-binding!/pop-binding!. Bindings live on each vm.ExecContext, and Child() contexts used by future and go get a private copy.",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/pkg/rt/lang.go",
+     "kind": "source"
+    },
+    {
+     "claim": "defmacro binds &form from *macro-form* and hard-codes &env to nil; the comments say &env is deliberately not implemented. binding expands to push-binding!/pop-binding! in try/finally. deftype, defrecord, defprotocol, reify, extend-type and extend-protocol are defined. IFn (-invoke) makes a type callable and IDeref (-deref) derefable, and 'Unlike defrecord, deftype instances don't support keyword lookup, assoc, seq, or count.'",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/pkg/rt/core/core.lg",
+     "kind": "source"
+    },
+    {
+     "claim": "catch-matches?: 'Throwable matches ANY thrown value' except Cancelled, and a bare (catch e ...) desugars to Throwable. ExceptionInfo aliases vm.ExInfoType.",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/pkg/rt/exceptions.go",
+     "kind": "source"
+    },
+    {
+     "claim": "A mutable java.lang.StringBuilder shim supports append, toString, length, appendCodePoint, setLength, charAt and reverse, but not insert.",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/pkg/rt/host_stringbuilder.go",
+     "kind": "source"
+    },
+    {
+     "claim": "deftype: 'protocol implementations work; JVM host methods on deftype do not'. reify ignores hashCode/equals. Sorted collections work but range queries don't. 'Regex is Go flavor (re2), not Java regex'. Lazy seqs are unchunked.",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/docs/guide/clojure-compatibility.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "README: 'let-go is a Clojure dialect with a bytecode compiler and stack VM, written in Go'. '5621 / 5621 assertions pass across 232 files through the :clj reader lens'. Gaps: no coordinated STM or async agents, no spec, unchunked lazy seqs, no subseq/rsubseq. Install via brew, go install (Go 1.26+) or binaries; it ships an nREPL server.",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/README.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "PR #1008 (merged 2026-10-12) makes native-lowered entry-frame binaries 'carry the compiler, so eval, load-string and require work at run time'. The VM path already had them.",
+     "source": "https://github.com/nooga/let-go/pull/1008",
+     "kind": "docs"
+    },
+    {
+     "claim": "The newest commit is 2026-10-31. Recent authors are mparrett, nooga, nnunley, norbot7865 and jasalt, several commits co-authored with claude.",
+     "source": "https://github.com/nooga/let-go/commits/main",
+     "kind": "source"
+    },
+    {
+     "claim": "Tags run from v1.13.0 (2026-09-20), v1.12.2 and v1.12.1 (2026-07-20) back to v1.7.3 (2026-05-13).",
+     "source": "https://github.com/nooga/let-go/tags",
+     "kind": "source"
+    },
+    {
+     "claim": "go.mod declares 'go 1.27' and 'toolchain go1.27.1'.",
+     "source": "https://raw.githubusercontent.com/nooga/let-go/main/go.mod",
+     "kind": "source"
+    },
+    {
+     "claim": "The repository has 575 stars, 31 forks and 1,138 commits.",
+     "source": "https://github.com/nooga/let-go",
+     "kind": "docs"
+    },
+    {
+     "claim": "Gloat uses let-go as its 'lgvm' and 'lglvm' engines.",
+     "source": "https://www.clojuriststogether.org/news/august-2026-short-term-project-updates/",
+     "kind": "secondhand"
+    }
+   ]
+  },
+  {
+   "name": "jank",
+   "platform": "Native: C++ runtime with a Clang/LLVM JIT (own IR since 2026-05); AOT to native executables",
+   "repo_url": "https://github.com/jank-lang/jank",
+   "implemented_in": "C++ (compiler and runtime); clojure.core written in jank (core.jank) over cpp/ interop",
+   "status": "active",
+   "last_activity": "Latest commit 2026-10-28 ('Remove remaining core_native sources (#1166)', jeaye) on github.com/jank-lang/jank/commits/main. Only GitHub release: the rolling pre-release tagged 'latest' (the releases page shows '29 Jan' with no year; the releases.atom entry is dated 2025-01-27T08:02:37Z).",
+   "latest_release": "No versioned releases, only the rolling pre-release 'latest'. The book distributes jank as binary packages: Homebrew, jank's own Ubuntu apt repo, and AUR jank-bin.",
+   "feature_key": ":jank",
+   "reads_cljc": "yes",
+   "runtime_eval": "yes",
+   "namespaces_vars_meta": "yes",
+   "macros_env": "partial",
+   "dynamic_binding": "yes",
+   "persistent_collections": "yes",
+   "types_protocols": "no",
+   "exceptions_ex_info": "partial",
+   "strings_regex": "partial",
+   "conformance": "jank's CI runs jank-lang/clojure-test-suite through compiler+runtime/test/bash/clojure-test-suite/src/jank_test/run_clojure_test_suite.cljc. On main that list has about 215 enabled namespaces (204 clojure.core-test, 11 clojure.string-test) and 37 commented out with reasons. The runner exits 1 unless every enabled namespace passes. Example: PR #1135 (merged 2026-10-22) enabled clojure.core-test.destructure: 'Ran 1 tests containing 76 assertions. 0 failures, 0 errors.' No assertion total is published. The suite's own README still says jank cannot run clojure.test, which is out of date.",
+   "toolchain_on_box": true,
+   "install_route": "Binary packages per the jank book: Homebrew (macOS aarch64 binary; 'jank-lang/jank/jank-git' builds from source), jank's own Ubuntu apt repo ('Older versions of Ubuntu, like 22.04, will not work'), and AUR jank-bin or jank-git. Otherwise build from source with Clang/LLVM. Clang is on the box; I did not check which LLVM version jank needs.",
+   "adapter_fit": "Everything maps except user-defined types. Reader: #? and #?@ select :jank or :default (plus any extended features), so cohost adds :jank branches next to :jolt and :lpy. read-string works at run time but needs *read-eval* bound. clojure.core/read and load-string are TODO stubs, so whole files have to go through read-string. Eval: clojure.core/eval calls cpp/jank.runtime.eval; this works only in the dynamic runtime, because AOT static builds throw on eval. Namespaces and vars: create-ns, intern, find-ns, ns-resolve, ns-map, refer, alias, in-ns, alter-var-root, alter-meta! and reset-meta! all exist. A var is a macro when its meta has :macro, so setting a macro is (alter-meta! v assoc :macro true). var-set and with-local-vars are TODO stubs. Binding: push-thread-bindings and pop-thread-bindings keep frames per thread. Macros: defmacro prepends &form and &env, but macroexpand1 passes no environment ('/* TODO: Provide &env. */'). Exceptions: ex-info and ex-data exist, and any value thrown from jank can be caught as cpp/jank.runtime.object_ref. There is no catch-all for foreign C++ exceptions. Hardest gaps: there is no deftype, defrecord, defprotocol or reify ('No protocols (yet)', 'No records (yet)', 'There isn't yet a way to define new types using jank's syntax'). Until the creator's estimated Q1 2027, the shim's clojure.lang stand-ins and core.clj's deftype*/reify*/protocol forms need an emulation, either closures plus multimethods or C++ types through interop. jank's own libraries have no StringBuilder; C++ interop might supply one (not verified).",
+   "verdict": "possible",
+   "verdict_reason": "Active, funded, and the most production-bound of the native options. It has :jank reader conditionals, runtime eval, first-class namespaces and vars, per-thread binding, ex-info, regex groups, and about 215 suite namespaces green in its CI. It lacks deftype, defrecord, defprotocol and reify for now, does not pass &env to macros, and has no true catch-all.",
+   "evidence": [
+    {
+     "claim": "Reader conditionals match :jank, :default or a member of extended_features, and the first supported match wins ('We take the first match, checking for :jank first'). #?@ splices, and a top-level #?@ is rejected.",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/cpp/jank/read/parse.cpp",
+     "kind": "source"
+    },
+    {
+     "claim": "The book's example: #?(:jank (println 'hi jank!') :default (println 'hi other clojure!')).",
+     "source": "https://book.jank-lang.org/reference/error/parse/invalid-reader-conditional.html",
+     "kind": "docs"
+    },
+    {
+     "claim": "clojure.core defines eval as (cpp/jank.runtime.eval form) and read-string via cpp/jank.runtime.read_string. load-string, read, read+string, var-set and with-local-vars throw 'TODO: port ...'.",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/jank/clojure/core.jank",
+     "kind": "source"
+    },
+    {
+     "claim": "clojure.core defines create-ns, intern, find-ns, ns-resolve, resolve, refer, alias, in-ns, ns-map, ns-publics, alter-var-root, alter-meta!, reset-meta!, push-thread-bindings, pop-thread-bindings, binding, macroexpand-1, ex-info, ex-data, lazy-seq, delay, atom and defmulti.",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/jank/clojure/core.jank",
+     "kind": "source"
+    },
+    {
+     "claim": "defmacro is a defn with :macro true that prepends &form and &env to every arity's parameter vector.",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/jank/clojure/core.jank",
+     "kind": "source"
+    },
+    {
+     "claim": "macroexpand1 treats a var as a macro when its meta :macro is truthy, and carries '/* TODO: Provide &env. */'. read_string throws unless *read-eval* is bound. push_thread_bindings rejects non-dynamic vars and keeps frames per thread.",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/cpp/jank/runtime/context.cpp",
+     "kind": "source"
+    },
+    {
+     "claim": "Vars have a dynamic flag, thread-bound deref, set_meta/with_meta, bind_root, and alter_root (applies f to the root and args).",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/cpp/jank/runtime/var.cpp",
+     "kind": "source"
+    },
+    {
+     "claim": "re-find, re-matcher, re-groups, re-seq, re-pattern and re-matches are implemented over cpp/jank.runtime.*.",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/jank/clojure/core.jank",
+     "kind": "source"
+    },
+    {
+     "claim": "In clojure.core, defprotocol, deftype and reify appear only in commented-out code, and defrecord does not appear at all.",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/jank/clojure/core.jank",
+     "kind": "source"
+    },
+    {
+     "claim": "clojure.string uses no mutable builder (it builds with str and recur), and re-quote-replacement throws a TODO.",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/jank/clojure/string.jank",
+     "kind": "source"
+    },
+    {
+     "claim": "The alpha book says 'No records (yet)', 'No protocols (yet)' and 'There isn't yet a way to define new types using jank's syntax'. For AOT static builds, 'Calling something like eval will throw'. Installs via Homebrew, jank's Ubuntu repo (not 22.04) and AUR.",
+     "source": "https://book.jank-lang.org/print.html",
+     "kind": "docs"
+    },
+    {
+     "claim": "A thrown jank value is type-erased to object_ref and caught with (catch cpp/jank.runtime.object_ref e ...). The book adds: 'jank doesn't yet support the equivalent of C++'s catch all'.",
+     "source": "https://book.jank-lang.org/cpp-interop/native-exceptions.html",
+     "kind": "docs"
+    },
+    {
+     "claim": "The creator on HN: 'Protocols, records, and the like will be implemented in jank.' and 'I'd estimate Q1 next year for me to tackle those.' (shown as 80 days old on 2026-10-31).",
+     "source": "https://news.ycombinator.com/item?id=49263897",
+     "kind": "secondhand"
+    },
+    {
+     "claim": "The CI runner lists about 215 enabled suite namespaces and 37 commented out (for example descendants and parents: 'Unable to resolve symbol defprotocol'), and calls (cpp/exit 1) unless t/successful?.",
+     "source": "https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/test/bash/clojure-test-suite/src/jank_test/run_clojure_test_suite.cljc",
+     "kind": "source"
+    },
+    {
+     "claim": "PR #1135, merged 2026-10-22, enabled clojure.core-test.destructure: 'Ran 1 tests containing 76 assertions. 0 failures, 0 errors.'",
+     "source": "https://github.com/jank-lang/jank/pull/1135",
+     "kind": "docs"
+    },
+    {
+     "claim": "The suite's README: 'jank isn't able to run clojure.test yet'.",
+     "source": "https://github.com/jank-lang/clojure-test-suite",
+     "kind": "docs"
+    },
+    {
+     "claim": "README: 'jank is currently in alpha!'. The repo shows 3.4k stars and 5,091 commits.",
+     "source": "https://github.com/jank-lang/jank",
+     "kind": "docs"
+    },
+    {
+     "claim": "The newest commits on main are dated Oct 28, 2026, by jeaye (#1165, #1166, #1167).",
+     "source": "https://github.com/jank-lang/jank/commits/main",
+     "kind": "docs"
+    },
+    {
+     "claim": "The only releases are the rolling 'latest' (2025-01-27T08:02:37Z) and clojure-2022.",
+     "source": "https://github.com/jank-lang/jank/releases.atom",
+     "kind": "docs"
+    },
+    {
+     "claim": "The 2026-03-06 post says 'jank has an nREPL server now!' (tested with CIDER and Conjure), 'jank's object model has been opened up', and that the switch to alpha came in January.",
+     "source": "https://jank-lang.org/blog/2026-03-06-great-start/",
+     "kind": "docs"
+    },
+    {
+     "claim": "Clojurists Together's May-June 2026 update reports continuous Arch builds for the jank-bin AUR package and fast AOT, and quotes 'Right now is a great time to jump in and try out jank.'",
+     "source": "https://www.clojuriststogether.org/news/annually-funded-developers-update-may-june-2026/",
+     "kind": "secondhand"
+    }
+   ]
+  },
+  {
+   "name": "clojurust (cljrs, csm/clojurust)",
+   "platform": "Native: Rust tree-walking interpreter, IR interpreter and Cranelift JIT; Cranelift AOT to native binaries; a wasm target",
+   "repo_url": "https://github.com/csm/clojurust",
+   "implemented_in": "Rust (22 crates), with bootstrap clojure.core forms in .cljrs files",
+   "status": "active",
+   "last_activity": "Latest commit 2026-10-30 (merge of PR #438 'feature/virtual-threads-phase-3' by csm; other commits that day by csm and 'claude') on github.com/csm/clojurust/commits/main. Latest release v0.2.32 at 2026-10-29T14:21:52Z (releases.atom). crates.io 'cljrs' 0.2.32 was created 2026-10-29.",
+   "latest_release": "v0.2.32 (2026-10-29); ten releases, v0.2.23 to v0.2.32, between 2026-10-02 and 2026-10-29",
+   "feature_key": ":cljrs",
+   "reads_cljc": "yes",
+   "runtime_eval": "yes",
+   "namespaces_vars_meta": "partial",
+   "macros_env": "partial",
+   "dynamic_binding": "partial",
+   "persistent_collections": "yes",
+   "types_protocols": "yes",
+   "exceptions_ex_info": "yes",
+   "strings_regex": "partial",
+   "conformance": "README: '1,162 Rust tests across the workspace, plus 5,486 assertions in the clojure-test-suite, which passes identically under the interpreter and AOT-compiled.' The suite copy is vendored with branches the project added (issue #422: ':rust appears in 37 files, all under clojure-test-suite/test/'). I did not reproduce the number. For scale only: suss's ClojureScript-oracle run of the suite counted 5,834 assertions, but that is a different snapshot.",
+   "toolchain_on_box": true,
+   "install_route": "cargo install cljrs (crates.io crate 'cljrs' 0.2.32, described as 'clojurust CLI \u2014 run, repl, compile, and eval', with bin 'cljrs' and repository csm/clojurust), or cargo build from a clone. Cargo is on the box. I did not check for prebuilt binaries.",
+   "adapter_fit": "All eight prerequisites are present in some form; the gaps are in API shape. Reader: in .cljc, #? selects :cljrs (legacy :rust) or :default. The reader keeps every branch and the evaluator chooses, so loading .cljc works but forms read raw can still carry conditionals. read-string takes one argument ('Reads one object from the given string'): there is no opts map, and I found no clojure.core/read, so a whole file has to be read as one string. Eval: an eval builtin intercepted by the evaluator ('Sees namespace bindings, not the enclosing lexical scope'), plus a REPL and nREPL. Namespaces and vars: create-ns, find-ns, intern, ns-resolve, resolve, alter-var-root and alter-meta! are builtins; in-ns and alias are special forms; require takes :as and :refer. I found no refer or reset-meta! builtin. Macros: only the defmacro special form turns a fn into a Value::Macro. (def ^:macro ...) does not, and (. v setMacro) cannot work because '.' is 'interop not yet implemented', so the adapter has to mark a macro by evaluating a defmacro wrapper. Macros receive &form and &env (a map of locals). I found no Clojure-callable macroexpand-1, though the Rust macroexpand_1 exists. Binding: a binding special form with thread-local frames, plus with-bindings* and var-set!. There is no push-thread-bindings or pop-thread-bindings fn, so core.clj's binding must be rewritten onto with-bindings*. Exceptions: catch Object, Exception, Throwable, Error or :default catches everything, and ExceptionInfo matches ex-info errors. Types: deftype*, protocol*, defrecord, reify, extend-type, extend-protocol and multimethods. Strings: there is no java.lang and no StringBuilder, so the adapter supplies a builder. Regex has re-find, re-matcher, re-groups and re-pattern (I did not check group positions). The project is young (created 2026-03) and fast-moving: issue #422 is still open on :cljrs vs :rust, though v0.2.28 documents :cljrs as canonical.",
+   "verdict": "strong",
+   "verdict_reason": "Every prerequisite is present in some form: :cljrs reader conditionals, runtime eval, first-class namespaces and vars, &form and &env, thread-local binding, a catch-all, ex-info, persistent collections, deftype/protocols/reify and regex groups. It claims 5,486 suite assertions, is very active, and builds with cargo on the box. The gaps can be worked around inside an adapter: macros can be marked only through defmacro, and there is no push/pop-thread-bindings, no macroexpand-1 fn and no StringBuilder.",
+   "evidence": [
+    {
+     "claim": "README: 'A Rust-hosted dialect of the Clojure programming language'; 'The runtime platform key is :cljrs (:rust is accepted as a legacy alias)'; cljrs eval, repl and 'nrepl --port 7888'; defprotocol, extend-type, defmulti, defmethod, defrecord and reify; HAMT maps/sets and RRB vectors via rpds; lazy-seq; atom, volatile, delay, promise, future and agent; '5,486 assertions in the clojure-test-suite'.",
+     "source": "https://raw.githubusercontent.com/csm/clojurust/main/README.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "':cljrs is the canonical platform key. The older key :rust is still accepted as an alias'. Clauses are tried left to right. For .cljc, 'branches are stored as-is; the evaluator selects :cljrs'.",
+     "source": "https://docs.clj.rs/language/reader-conditionals.html",
+     "kind": "docs"
+    },
+    {
+     "claim": "v0.2.27 added :cljrs as a reader-conditional key; v0.2.28 documents :cljrs as canonical; v0.2.24 qualifies record and deftype tags by namespace (a breaking change).",
+     "source": "https://github.com/csm/clojurust/releases",
+     "kind": "docs"
+    },
+    {
+     "claim": "Issue #422 (opened 2026-10-10, still open) on choosing the canonical key: #421 added :cljrs 'because malli writes its clojurust branches with :cljrs'.",
+     "source": "https://github.com/csm/clojurust/issues/422",
+     "kind": "docs"
+    },
+    {
+     "claim": "The builtins registered include eval (a sentinel), read-string (Fixed(1)), alter-var-root, alter-meta!, intern, create-ns, find-ns, ns-resolve, resolve, with-bindings*, ex-info, ex-data, re-find, re-matcher, re-groups, re-pattern, var-get and atom. Not found: macroexpand-1, load-string, reset-meta!, refer, push-thread-bindings, pop-thread-bindings, read and StringBuilder.",
+     "source": "https://raw.githubusercontent.com/csm/clojurust/main/crates/cljrs-runtime/src/builtins/builtins.rs",
+     "kind": "source"
+    },
+    {
+     "claim": "SPECIAL_FORMS includes def, fn*, let*, loop*, var, set!, throw, try, defmacro, in-ns, alias, protocol*, deftype*, load-file and binding.",
+     "source": "https://raw.githubusercontent.com/csm/clojurust/main/crates/cljrs-runtime/src/builtins/special.rs",
+     "kind": "source"
+    },
+    {
+     "claim": "def attaches ^ meta to the var but does not create a macro. defmacro converts Fn to Macro (is_macro = true) and prepends &form. catch matches 'Object' | 'Exception' | 'Throwable' | 'Error' | 'default' as catch-all, and 'ExceptionInfo' matches Value::Error. binding pushes a frame for the body. '.' returns 'interop not yet implemented'.",
+     "source": "https://raw.githubusercontent.com/csm/clojurust/main/crates/cljrs-runtime/src/interp/special.rs",
+     "kind": "source"
+    },
+    {
+     "claim": "A macro is detected as Value::Macro, and macroexpand_1_inner passes form_val, then env_val (local bindings, empty at top level), then the args.",
+     "source": "https://raw.githubusercontent.com/csm/clojurust/main/crates/cljrs-runtime/src/interp/macros.rs",
+     "kind": "source"
+    },
+    {
+     "claim": "Bootstrap clojure.core defines the macros defprotocol, deftype, defrecord, reify, extend-type, extend-protocol, defmulti, lazy-seq and delay; re-seq is built on re-matcher.",
+     "source": "https://raw.githubusercontent.com/csm/clojurust/main/crates/cljrs-runtime/src/builtins/bootstrap.cljrs",
+     "kind": "source"
+    },
+    {
+     "claim": "'deftype is implemented: a positional ->Name constructor, inline protocol/interface method bodies with the fields in scope'. 'There is no Java class hierarchy, no java.lang.*, and no Java method calls.' sorted-map-by, refs/STM and locking are listed as not implemented.",
+     "source": "http://docs.clj.rs/print.html",
+     "kind": "docs"
+    },
+    {
+     "claim": "The latest commits are dated Oct 30, 2026, by csm and claude. The repo shows 1,597 commits and 77 stars.",
+     "source": "https://github.com/csm/clojurust/commits/main",
+     "kind": "docs"
+    },
+    {
+     "claim": "v0.2.32 was published 2026-10-29T14:21:52Z.",
+     "source": "https://github.com/csm/clojurust/releases.atom",
+     "kind": "docs"
+    },
+    {
+     "claim": "The crates.io crate 'cljrs' ('clojurust CLI \u2014 run, repl, compile, and eval') is at max version 0.2.32, created 2026-10-29, with bin_names ['cljrs'].",
+     "source": "https://crates.io/api/v1/crates/cljrs",
+     "kind": "docs"
+    }
+   ]
+  },
+  {
+   "name": "ClojureWasm (cljw)",
+   "platform": "Native Zig binary (bytecode VM plus tree-walk interpreter) embedding a WebAssembly engine (zwasm) for calling .wasm modules",
+   "repo_url": "https://github.com/clojurewasm/ClojureWasm",
+   "implemented_in": "Zig; clojure.core is reimplemented in .clj ('Independently reimplements the clojure.core API') on top of Zig primitives",
+   "status": "active",
+   "last_activity": "Latest commit 2026-10-23 (merge of PR #20 from BuddhiLW and 'chore(release): v1.15.4') on github.com/clojurewasm/ClojureWasm/commits/main. Latest release v1.15.4, dated 2026-10-23 in the CHANGELOG and on the releases page.",
+   "latest_release": "v1.15.4 (2026-10-23); v1.0.0, the 'first stable release', was 2026-07-01",
+   "feature_key": ":cljw",
+   "reads_cljc": "yes",
+   "runtime_eval": "yes",
+   "namespaces_vars_meta": "yes",
+   "macros_env": "yes",
+   "dynamic_binding": "yes",
+   "persistent_collections": "yes",
+   "types_protocols": "yes",
+   "exceptions_ex_info": "yes",
+   "strings_regex": "yes",
+   "conformance": "At cljw v1.13.4 (2026-09-10), the project's doc/conformance.md listed '57 of 247 namespaces failing and 3 aborting' (as quoted in issue #66, opened 2026-10-18, which says many are probably fixed on staging since). The 1.14.5 entry (2026-09-11) turned the eval and nth namespaces green. No current total is published.",
+   "toolchain_on_box": false,
+   "install_route": "brew install clojurewasm/tap/cljw (macOS arm64, Linux x86_64), or a prebuilt binary from GitHub Releases (each with SHA256SUMS and a signed build attestation). Building from source needs Zig 0.16, which is not on the box.",
+   "adapter_fit": "All eight prerequisites are present, with one reader catch. Reader: .cljc is read under {:cljw :clj :default}, taking the first matching branch in written order, and the set is not configurable. In a cohost conditional whose :clj branch comes before :cljw, cljw takes the JVM branch, so cohost must put :cljw ahead of :clj everywhere (the rule issue #66 gives contributors). read-string rejects #? unless {:read-cond :allow}. Eval: eval, load-string, cljw -e, a REPL and a CIDER-compatible nREPL. Namespaces and vars: the-ns, find-ns, create-ns, intern, ns-map, ns-resolve, alias, in-ns and refer are Zig primitives (namespace.zig). meta, with-meta and reset-meta! are Zig primitives (metadata.zig), and alter-meta! and alter-var-root are used in core.clj. Macro status is a flag on the Var (flags.macro_); I could not tell whether anything other than defmacro sets it. Binding: push-thread-bindings and pop-thread-bindings are Zig primitives, with-bindings* exists, and futures inherit the caller's bindings. Macros receive &form and &env (a map of in-scope locals, nil when there are none); macroexpand-1 and macroexpand are primitives. Exceptions: ex-info, plus emulated JVM-named exception classes ((catch Exception e ...) works). Types: protocols, records, deftype/reify and multimethods. Strings and regex: bare StringBuilder is auto-imported, patterns take up to 1024 capture groups, and re-groups/re-matcher exist (I did not check group positions). Hardest gaps: cljw already emulates part of java.lang and clojure.lang (a TypeDescriptor instead of Class; unresolved clojure.lang.* references load but error when evaluated), which may collide with cohost's shim. Strings index by code point, long overflow auto-promotes to BigInt, the maintainer changed in 2026-10, and Zig is not on the box (prebuilt binaries are).",
+   "verdict": "strong",
+   "verdict_reason": "Every prerequisite is backed by source or the changelog. It is very active (v1.15.4 on 2026-10-23) and ships Linux x86_64 binaries. The main adapter costs are ordering :cljw before :clj in cohost's conditionals and living alongside cljw's own JVM emulation. Its own suite run had 57 of 247 namespaces failing at v1.13.4.",
+   "evidence": [
+    {
+     "claim": "README: 'A JVM-free Clojure runtime in Zig'. What runs includes 'STM, agents, futures, real threads, transducers, protocols, records, multimethods, deftype / reify'. Not yet: core.async, java.time.format and a strict clojure.edn reader. Install via brew tap, prebuilt binaries, or zig build (Zig 0.16). 'In 2026-10 the project passed to @BuddhiLW'. Libraries such as malli, hiccup, honeysql and test.check load.",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/README.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "The reader's feature predicate is cljw, clj or default; the first matching branch in written order is read, and the set is not configurable. read-string rejects #? unless :read-cond :allow. #?@ splices a list or vector. Regex literals and ^ metadata are read.",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/src/eval/reader.zig",
+     "kind": "source"
+    },
+    {
+     "claim": "'cljw reads .cljc under {:cljw :clj :default}'; the project describes itself as 'one young entry'.",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/docs/landscape.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "Issue #66 tells contributors to 'add a :cljw branch ahead of :clj', and cites doc/conformance.md at cljw v1.13.4 (2026-09-10): '57 of 247 namespaces failing and 3 aborting'.",
+     "source": "https://github.com/BuddhiLW/ClojureWasm/issues/66",
+     "kind": "docs"
+    },
+    {
+     "claim": "Registered primitives: the-ns, ns-name, find-ns, create-ns, intern, all-ns, ns-interns, ns-publics, ns-map, ns-refers, ns-resolve, find-var, alias, ns-aliases, ns-unalias, ns-unmap, in-ns, refer, use, require and import*.",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/src/lang/primitive/namespace.zig",
+     "kind": "source"
+    },
+    {
+     "claim": "meta, with-meta and reset-meta! are primitives; the header says alter-meta! is in core.clj.",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/src/lang/primitive/metadata.zig",
+     "kind": "source"
+    },
+    {
+     "claim": "macroexpand-1 and macroexpand are primitives. In a runtime call '&env is {}', and '&form is the form being expanded'.",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/src/lang/primitive/macroexpand.zig",
+     "kind": "source"
+    },
+    {
+     "claim": "Macro expansion checks head_var.flags.macro_ and passes amp_form and amp_env; the lowered macro fn's params are [&form &env & user-params]; &env is a map of in-scope local symbols, or nil.",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/src/eval/macro_dispatch.zig",
+     "kind": "source"
+    },
+    {
+     "claim": "core.clj defines alter-meta!, with-bindings, load-string, re-groups and re-matcher. with-bindings* and with-local-vars call push-thread-bindings and pop-thread-bindings, which comments describe as Zig primitives. with-redefs-fn calls alter-var-root, and ex-info is used throughout.",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/src/lang/clj/clojure/core.clj",
+     "kind": "source"
+    },
+    {
+     "claim": "CHANGELOG entries: 1.14.5 (2026-09-11) 'clojure.core-test.eval goes from 2 errors to green'; 1.12.1 future/pmap carry the creating thread's dynamic bindings; 1.5.0 auto-imports bare StringBuilder (java.lang); 1.15.0 (2026-10-13) 'Regex patterns take up to 1024 capturing groups' and deftype/reify can implement java.util.Map$Entry; 1.0.1 (2026-07-02) (catch Exception e nil) works; the newest heading is [1.15.4] - 2026-10-23.",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/CHANGELOG.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "Documented divergences: 'cljw carries a TypeDescriptor, not a java.lang.Class'; unresolved clojure.lang.* references load but error when evaluated (AD-022); strings index by Unicode code point; Long overflow auto-promotes to BigInt; reading never executes code (#= errors).",
+     "source": "https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/docs/clojure_vs_clojurewasm.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "The latest commits are on Oct 23, 2026, by BuddhiLW and clojurewasm-release, with 4,639 commits and 193 stars.",
+     "source": "https://github.com/clojurewasm/ClojureWasm/commits/main",
+     "kind": "docs"
+    },
+    {
+     "claim": "Releases v1.15.4 (23 Oct), v1.15.3, v1.15.1 and v1.15.0 (16 Oct), and earlier v1.10.1 (12 Aug).",
+     "source": "https://github.com/clojurewasm/ClojureWasm/releases",
+     "kind": "docs"
+    }
+   ]
+  },
+  {
+   "name": "ClojuRust (clojurust/clojurust)",
+   "platform": "Rust",
+   "repo_url": "https://github.com/clojurust/clojurust",
+   "implemented_in": "Rust",
+   "status": "dead",
+   "last_activity": "Latest commit 2021-05-23 ('Change README') on github.com/clojurust/clojurust/commits. No releases seen.",
+   "latest_release": "none seen",
+   "feature_key": "none",
+   "reads_cljc": "unknown",
+   "runtime_eval": "unknown",
+   "namespaces_vars_meta": "unknown",
+   "macros_env": "unknown",
+   "dynamic_binding": "unknown",
+   "persistent_collections": "unknown",
+   "types_protocols": "unknown",
+   "exceptions_ex_info": "unknown",
+   "strings_regex": "unknown",
+   "conformance": "none",
+   "toolchain_on_box": true,
+   "install_route": "none (never reached a working version)",
+   "adapter_fit": "No working version exists. Unrelated to csm/clojurust.",
+   "verdict": "not-viable",
+   "verdict_reason": "A dead proof of concept: 'a working version is out of sight for now', with the last commit in 2021-05.",
+   "evidence": [
+    {
+     "claim": "'A proof of concept version of Clojure in Rust.' 'WIP in an analysis and test state, and so a working version is out of sight for now.'",
+     "source": "https://github.com/clojurust/clojurust",
+     "kind": "docs"
+    },
+    {
+     "claim": "The latest commit is May 23, 2021.",
+     "source": "https://github.com/clojurust/clojurust/commits",
+     "kind": "docs"
+    }
+   ]
+  },
+  {
+   "name": "Phel",
+   "platform": "PHP 8.5+ (each form is compiled to PHP and run in-process; Composer or a standalone phel.phar)",
+   "repo_url": "https://github.com/phel-lang/phel-lang",
+   "implemented_in": "PHP (compiler and runtime classes in src/php) plus Phel (phel.core in src/phel/core/*.phel)",
+   "status": "active",
+   "last_activity": "Latest commit 2026-10-30 (commits/main: 15 commits that day, all by Chemaclass). Latest release v0.54.0 'Road to One', 2026-10-04 (CHANGELOG and tags page). Tags v1.0.0-rc1 (2026-10-02) and v1.0.0-rc2 (2026-10-03) come just before it.",
+   "latest_release": "v0.54.0 (2026-10-04); v1.0.0-rc1/rc2 tags 2026-10-02/03",
+   "feature_key": ":phel (with :default as fallback)",
+   "reads_cljc": "yes",
+   "runtime_eval": "yes",
+   "namespaces_vars_meta": "yes",
+   "macros_env": "yes",
+   "dynamic_binding": "yes",
+   "persistent_collections": "yes",
+   "types_protocols": "yes",
+   "exceptions_ex_info": "yes",
+   "strings_regex": "partial",
+   "conformance": "It runs the shared .cljc clojure-test-suite. A CI workflow (run-clojure-test-suite.yml) checks out phel-lang/clojure-test-suite at a pinned commit and runs composer test with no continue-on-error, so the job is blocking. No pass/fail counts are published (unknown). jank-lang/clojure-test-suite lists Phel as one of its six dialects with a setup guide, and its portability.cljc has :phel branches.",
+   "toolchain_on_box": true,
+   "install_route": "composer require phel-lang/phel-lang, then ./vendor/bin/phel init; or the standalone phel.phar from a release. Requires PHP 8.5 or newer. PHP is on the box, but its version was not checked.",
+   "adapter_fit": "Reader: the parser's ReaderConditionalParser selects #?(:phel ...) and #?@ (falling back to :default) in any file, including .phel files. read-string, eval, load-string and eval-str all run at run time. Namespaces: create-ns, find-ns, intern, ns-interns, ns-publics, ns-refers, ns-aliases, find-var and resolve are all in core. refer and alias are not functions; they exist only through ns/require/use forms, and require takes vector specs at run time. Vars: PhelVar exposes deref, alterRoot, meta, alterMeta, resetMeta and isDynamic, and alter-var-root and alter-meta! exist. Macros: a macro is a def whose metadata has :macro true, which is how defmacro itself is defined. &form and &env are implicit in every defmacro, and macroexpand-1 is in core (it passes an empty env). Binding: DynamicScope keeps a stack of binding frames per PHP fiber, with pushFrame/popFrame. binding and with-bindings exist, but there is no push-thread-bindings function, so the adapter would call the PHP API. Types: defprotocol, defrecord and deftype (both expand to defstruct), reify, definterface. Hardest gaps: (1) Since 0.32.0 Phel aliases clojure.core/x to phel.core/x, so booting stock core.clj into a namespace named clojure.core may collide (unverified). (2) There is no char type (char literals read as 1-char strings), regex literals are PHP pattern strings, there is no StringBuilder, and there is no re-matcher or re-groups; group offsets need PHP preg_* interop. (3) Unverified whether adding :macro with alter-meta! to an existing var makes the analyzer treat it as a macro, since macroexpand-1 reads the analyzer's global-var-node metadata. (4) Requires PHP 8.5+.",
+   "verdict": "strong",
+   "verdict_reason": "Every prerequisite appears in Phel's own changelog or source: #?/#?@ with :phel (0.31.0), runtime eval, read-string and load-string, first-class vars with metadata, alter-var-root and alter-meta!, implicit &form/&env, per-fiber binding frames, persistent collections, protocols, records, deftype and reify, and ex-info. It is the most active candidate (commit 2026-10-30, 1.0 release candidates in October 2026). It already runs the shared .cljc clojure-test-suite in blocking CI, and PHP is on the box. The named gaps (clojure.core aliasing, no chars or StringBuilder, no refer/alias functions) are shim or adapter work, not missing capabilities.",
+   "evidence": [
+    {
+     "claim": "README: 'A functional, Lisp-inspired language that compiles to PHP', 'Inspired by Clojure'. Requires 'PHP 8.5 or newer'. Installs via composer require phel-lang/phel-lang or a release phel.phar. 532 stars, 34 forks.",
+     "source": "https://github.com/phel-lang/phel-lang",
+     "kind": "docs"
+    },
+    {
+     "claim": "Latest commit 2026-10-30; the 15 most recent are all dated that day.",
+     "source": "https://github.com/phel-lang/phel-lang/commits/main",
+     "kind": "source"
+    },
+    {
+     "claim": "Tags: v0.54.0 Oct 4 2026, v1.0.0-rc2 Oct 3 2026, v1.0.0-rc1 Oct 2 2026, v0.53.0 Sep 24 2026.",
+     "source": "https://github.com/phel-lang/phel-lang/tags",
+     "kind": "source"
+    },
+    {
+     "claim": "0.31.0 (2026-04-03) added '#?() reader conditionals and #?@() reader conditional splicing with :phel/:default platform keys', plus ex-info/ex-data/ex-message/ex-cause, delay/force, defprotocol/extend-type/satisfies?, re-find/re-matches, and eval-str/load-file.",
+     "source": "https://raw.githubusercontent.com/phel-lang/phel-lang/main/CHANGELOG.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "0.32.0 (2026-04-12) made '&form and &env implicit symbols in every defmacro body' and added 'defrecord and deftype macros expanding to a defstruct plus ->Name factory', reify, and 'Clojure aliasing for FQNs, enabling phel.core/fn, clojure.core/fn'.",
+     "source": "https://raw.githubusercontent.com/phel-lang/phel-lang/main/CHANGELOG.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "0.35.0 (2026-05-03) added find-ns, create-ns, remove-ns, intern and ns-interns. 0.36.0 (2026-05-08) added the (var sym) special form, a Var type with deref/meta/alter-var-root, alter-meta!/reset-meta!, and with-bindings; binding throws for non-^:dynamic vars. 0.54.0 (2026-10-04) added load-string.",
+     "source": "https://raw.githubusercontent.com/phel-lang/phel-lang/main/CHANGELOG.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "PhelVar has deref(), alterRoot(callable $f, ...), meta(), alterMeta(), resetMeta() and isDynamic(). The Var class itself carries no macro flag.",
+     "source": "https://raw.githubusercontent.com/phel-lang/phel-lang/main/src/php/Lang/PhelVar.php",
+     "kind": "source"
+    },
+    {
+     "claim": "DynamicScope keeps a LIFO stack of binding frames per PHP fiber (plus a main stack), with pushFrame(array), popFrame(), withFrame() and getBinding().",
+     "source": "https://raw.githubusercontent.com/phel-lang/phel-lang/main/src/php/Lang/DynamicScope.php",
+     "kind": "source"
+    },
+    {
+     "claim": "defmacro is defined as (def defmacro {:macro true ...} (fn [name & fdecl] (apply defn-builder &form &env name {:macro true} fdecl))).",
+     "source": "https://raw.githubusercontent.com/phel-lang/phel-lang/main/src/phel/core/defs.phel",
+     "kind": "source"
+    },
+    {
+     "claim": "macroexpand-1 checks (:macro meta) on the global var node and calls (apply macro-fn form {} args).",
+     "source": "https://raw.githubusercontent.com/phel-lang/phel-lang/main/src/phel/core/macroexpand.phel",
+     "kind": "source"
+    },
+    {
+     "claim": "The core API index (v0.54.0) lists resolve, alter-var-root, alter-meta!, reset-meta!, var-set, with-bindings, binding, eval, read-string, load-string, macroexpand-1, deftype, defrecord, defprotocol, reify, ex-info, ex-data, re-find, re-seq, lazy-seq, delay, atom and transient. It does not list refer, alias, ns-resolve, the-ns, push-thread-bindings, re-matcher or re-groups.",
+     "source": "https://phel-lang.org/documentation/reference/api/core/",
+     "kind": "docs"
+    },
+    {
+     "claim": "Divergences doc: there is no character type (a char literal reads as a one-character string), and 'a regex literal is its PHP pattern string'.",
+     "source": "https://raw.githubusercontent.com/phel-lang/phel-lang/main/docs/spec/clojure-divergences.md",
+     "kind": "docs"
+    },
+    {
+     "claim": "The CI workflow checks out phel-lang/clojure-test-suite (pinned commit on PRs, main nightly) and runs composer test. It has no continue-on-error and records no counts.",
+     "source": "https://raw.githubusercontent.com/phel-lang/phel-lang/main/.github/workflows/run-clojure-test-suite.yml",
+     "kind": "source"
+    },
+    {
+     "claim": "clojure-test-suite's portability helpers branch on :cljs, :clj, :cljr, :lpy, :jank and :phel. The suite README lists Phel as one of six dialects with a setup guide.",
+     "source": "https://raw.githubusercontent.com/jank-lang/clojure-test-suite/main/test/clojure/core_test/portability.cljc",
+     "kind": "source"
+    },
+    {
+     "claim": "Issue #3669 (opened 2026-10-28, closed 2026-10-29): ReaderConditionalParser returns only the :phel or :default branch. The reproduction uses a .phel file.",
+     "source": "https://github.com/phel-lang/phel-lang/issues/3669",
+     "kind": "docs"
+    }
+   ]
+  }
+ ],
+ "verify": [
+  {
+   "name": "let-go",
+   "claims": [
+    {
+     "claim": "Actively maintained: newest commit 2026-10-31; v1.13.0 2026-09-20",
+     "result": "confirmed",
+     "evidence": "[docs] https://github.com/nooga/let-go/commits/main.atom: newest entry 2026-10-30 8:49 PM ET (2026-10-31T00:49:30Z, so the candidate's '10-31' is the UTC date), 'test(ir): compare optimize-fn test results as values (#1103)' by mparrett. I did not re-check the tags page."
+    },
+    {
+     "claim": "Runtime eval (eval, read-string, load-string; eval in a chosen namespace)",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/nooga/let-go/main/pkg/compiler/eval.go: 'evalVar := coreNS.LookupOrAdd(vm.Symbol(\"eval\"))' / 'evalVar.(*vm.Var).SetRoot(evalFn)'. read-string and load-string get roots the same way. Also 'func evalInNSChild(code string, ns *vm.Namespace) (vm.Value, error)'."
+    },
+    {
+     "claim": "Reads .cljc under :lg (plus :default); :clj and :bb only when opted in",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/nooga/let-go/main/pkg/compiler/reader.go: 'const lgConditionalTag = vm.Keyword(\"lg\")', 'var matchCljConditional = os.Getenv(\"LG_READ_CLJ\") != \"\"', 'var matchBbConditional = os.Getenv(\"LG_READ_BB\") != \"\"'. The match test is 'isMatch := !found && (key == lgConditionalTag || (matchCljConditional && key == cljConditionalTag) || (matchBbConditional && key == bbConditionalTag) || key == defaultConditionalTag)', and #?@ splices. [docs] https://raw.githubusercontent.com/nooga/let-go/main/docs/guide/portability.md: 'its loader resolves .lg -> .cljc -> .clj'."
+    },
+    {
+     "claim": "Namespaces, vars with metadata, alter-var-root, dynamic binding (push-binding!/pop-binding!; no push-thread-bindings)",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/nooga/let-go/main/pkg/rt/lang.go has 'ns.Def(\"alter-meta!\", alterMeta)', 'ns.Def(\"alter-var-root\", alterVarRoot)' and 'ns.Def(\"macroexpand-1\", macroexpandf)'. It has '//lg:name' entries for alias, refer, set-macro!, create-ns, intern, resolve, find-var, ex-info, ex-data, re-groups and re-find. It has 'vm.NewCtxNativeFn(\"push-binding!\", ...)' and '\"pop-binding!\"'. push-thread-bindings and re-matcher are not found in lang.go. core.lg: binding expands to push-binding!/pop-binding! inside try/finally."
+    },
+    {
+     "claim": "defmacro passes a real &form; &env is hard-coded nil",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/nooga/let-go/main/pkg/rt/core/core.lg: ';; &env is NOT implemented: it is hard-coded nil here, unlike &form (which is real, bound from *macro-form*).' wrap-body emits '(cons [(symbol \"&form\") '*macro-form* (symbol \"&env\") nil] inner)', and '(def ^:dynamic *macro-form* nil)'."
+    },
+    {
+     "claim": "go install works with the box's Go",
+     "result": "refuted",
+     "evidence": "[source] https://raw.githubusercontent.com/nooga/let-go/main/go.mod declares 'go 1.27' and 'toolchain go1.27.1'. The README says 'From source (Go 1.26+)'. The box has go1.24.7 (probe), so go install would need a toolchain download. Brew ('brew install nooga/tap/let-go') and prebuilt Linux binaries are the alternatives. Conformance per README: '5621 / 5621 assertions pass across 232 files through the :clj reader lens' (self-reported)."
+    }
+   ],
+   "corrected_verdict": "possible",
+   "note": "The rating stands; all five checks match the candidate. &env is nil by design, there is no push-thread-bindings (binding pushes one var at a time with push-binding!) and no re-matcher. Install correction: go.mod needs Go 1.27 against the box's 1.24.7, so use brew or the release binaries."
+  },
+  {
+   "name": "jank",
+   "claims": [
+    {
+     "claim": "Actively maintained: newest commit 2026-10-28 (jeaye)",
+     "result": "confirmed",
+     "evidence": "[docs] https://github.com/jank-lang/jank/commits/main.atom: newest entry 2026-10-28 3:48 PM ET (19:48:39Z), 'Remove remaining core_native sources (#1166)' by jeaye. 2026-10-27: 'Fix -resolve lexing (#1161)' by djblue."
+    },
+    {
+     "claim": "Runtime eval (dynamic runtime only); read-string works; load-string, read and var-set are TODO stubs",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/jank/clojure/core.jank: '(defn eval [form] (cpp/jank.runtime.eval form))' and read-string '(cpp/jank.runtime.read_string s opts)'. load-string, read and var-set each '(throw (ex-info \"TODO: port ...\" {}))'. [source] .../src/cpp/jank/runtime/context.cpp: read_string throws 'Reading is disallowed when clojure.core/*read-eval* is unbound.' or '... bound to :unknown.' [docs] https://book.jank-lang.org/print.html: AOT static builds, 'Calling something like eval will throw.'"
+    },
+    {
+     "claim": "Reads .cljc under :jank (plus :default and extended features)",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/jank-lang/jank/main/compiler%2Bruntime/src/cpp/jank/read/parse.cpp: 'is_supported_feature{ (feature_kw == jank_keyword || feature_kw == default_keyword || contains(extended_features, feature_kw)) && result.is_none() }', with the comment 'We take the first match, checking for :jank first.' and the error 'Top-level #?@ usage is not allowed.' [source] .../runtime/module/loader.cpp tracks module sources by kind: 'jank', 'cljc', 'cpp' and 'o'."
+    },
+    {
+     "claim": "Namespaces, vars with metadata, alter-var-root, per-thread push/pop bindings",
+     "result": "confirmed",
+     "evidence": "[source] core.jank: alter-var-root is '(cpp/jank.runtime.alter_var_root v f args)'; alter-meta! goes through reset-meta!; push-thread-bindings is '(cpp/jank.runtime.push_thread_bindings bindings)'; intern uses cpp/jank.runtime.intern_var and create-ns uses cpp/jank.runtime.intern_ns; alias and refer call cpp/jank.runtime.alias and refer. context.cpp: 'Can't dynamically bind non-dynamic var'."
+    },
+    {
+     "claim": "defmacro prepends &form and &env, but the compiler passes no env",
+     "result": "confirmed",
+     "evidence": "[source] core.jank add-implicit-args: '(cons (vec (cons '&form (cons '&env args))) (next fd))'. [source] context.cpp macroexpand1 tests var meta :macro, then '/* TODO: Provide &env. */ auto const args(cons(cons(rest(o), {}), o)); return apply_to(var->deref(), args);', so &env is nil."
+    },
+    {
+     "claim": "No deftype, defrecord, defprotocol or reify today",
+     "result": "confirmed",
+     "evidence": "[source] In core.jank, defprotocol, deftype and reify appear only in commented-out code (';; (defprotocol Inst', ';; (deftype Eduction', ';; (reify'). [docs] Book: 'No records (yet)', 'No protocols (yet)', 'There isn't yet a way to define new types using jank's syntax, but you can always drop to cpp/raw'."
+    },
+    {
+     "claim": "Install route on this box",
+     "result": "confirmed",
+     "evidence": "[docs] The book's apt section covers 'Ubuntu Linux (24.04, 24.10, 25.04, 25.10, 26.04)', and the probe shows Ubuntu 24.04.5 LTS x86_64, so jank's own apt repo should apply (not tried). The book gives no LLVM version for source builds; the box has clang 18.1.3."
+    }
+   ],
+   "corrected_verdict": "possible",
+   "note": "The rating stands. All of the candidate's specifics are confirmed in source: :jank/:default matching, eval, var/ns API and per-thread frames, &env nil (TODO), and load-string/read/var-set throwing TODO. Hard prerequisite 7 (types) is not met natively; the book's analog is cpp/raw. The candidate's 'Q1 next year' estimate for protocols and records is a secondhand HN quote I did not re-check."
+  },
+  {
+   "name": "clojurust (cljrs, csm/clojurust)",
+   "claims": [
+    {
+     "claim": "Actively maintained: commit 2026-10-30; v0.2.32 2026-10-29",
+     "result": "confirmed",
+     "evidence": "[docs] https://github.com/csm/clojurust/commits/main.atom: newest entry 2026-10-30 1:11 PM ET (17:11:28Z), 'Merge pull request #438 from csm/feature/virtual-threads-phase-3'; one commit that day is by 'claude'. [docs] https://crates.io/api/v1/crates/cljrs: max_version 0.2.32, created 2026-10-29 10:21 AM ET. The crate itself was created 2026-04-10 4:14 PM ET; 5,260 downloads."
+    },
+    {
+     "claim": "Runtime eval",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/csm/clojurust/main/crates/cljrs-runtime/src/builtins/builtins.rs: '(\"eval\", Arity::Fixed(1), builtin_eval_sentinel)'. [source] .../src/interp/apply.rs: '\"eval\" => return handle_eval(arg_forms, env),'. However, read-string is '(\"read-string\", Arity::Fixed(1), builtin_read_string)', with no opts arity, and load-string is not found in builtins.rs (all 332k chars), bootstrap.cljrs, apply.rs or eval.rs."
+    },
+    {
+     "claim": "Reads .cljc under :cljrs (:rust as a legacy alias) and :default",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/csm/clojurust/main/crates/cljrs-runtime/src/builtins/form.rs: 'pub fn is_platform_feature(k: &str) -> bool { k == \"rust\" || k == \"cljrs\" }'. select_reader_cond takes the first clause matching is_platform_feature(k) or 'default', and expand_reader_conds splices a Vector or List. [docs] https://docs.clj.rs/language/reader-conditionals.html: 'The reader stores all branches of a #?(...) form; only the evaluator discards non-matching branches.' No way to enable extra features is documented."
+    },
+    {
+     "claim": "Namespaces and vars partial: alter-var-root, alter-meta!, intern, create-ns exist; no refer, reset-meta!, push/pop-thread-bindings or macroexpand-1 fns",
+     "result": "confirmed",
+     "evidence": "[source] builtins.rs registers alter-var-root, alter-meta!, intern, create-ns, find-ns, ns-resolve, with-bindings* and var-set! (not var-set). macroexpand-1, macroexpand, load-string, refer, reset-meta!, push-thread-bindings and pop-thread-bindings are absent from every chunk of builtins.rs and from bootstrap.cljrs. apply.rs and eval.rs have no such names either. in-ns, alias and binding are special forms."
+    },
+    {
+     "claim": "defmacro receives &form and a real &env (map of locals)",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/csm/clojurust/main/crates/cljrs-runtime/src/interp/special.rs: prepend_macro_params adds '&form' and '&env', and eval_defmacro sets 'mfn.is_macro = true;'. [source] .../interp/macros.rs: 'args.push(form_val); args.push(env_val);', where env_val maps env.all_local_bindings() and is empty at top level."
+    },
+    {
+     "claim": "Host interop exists as an escape hatch for adapter capabilities",
+     "result": "refuted",
+     "evidence": "[source] special.rs: '\".\" => Err(EvalError::Runtime(\"interop not yet implemented\".into())),'."
+    },
+    {
+     "claim": "Conformance: 5,486 suite assertions",
+     "result": "unverified",
+     "evidence": "[docs] https://raw.githubusercontent.com/csm/clojurust/main/README.md: 'plus 5,486 assertions in the clojure-test-suite, which passes identically under the interpreter and AOT-compiled.' This is self-reported on a vendored suite copy; I did not reproduce it. The README has no maturity label and no cargo install instructions (Building section only); crates.io describes 'cljrs' as 'clojurust CLI \u2014 run, repl, compile, and eval'. Box rustc is 1.97.0 (probe)."
+    }
+   ],
+   "corrected_verdict": "possible",
+   "note": "Downgraded from 'strong'. Source shows several hard-prerequisite capabilities only in altered shapes: no callable macroexpand-1 (prereq 4), no push/pop-thread-bindings (with-bindings* only), no refer fn and no load-string. read-string is single-arity without opts. Macros can be marked only by the defmacro special form. There is no '.' host interop to fall back on. The project is about 6.5 months old on crates.io, and its suite figure is self-reported."
+  },
+  {
+   "name": "ClojureWasm (cljw)",
+   "claims": [
+    {
+     "claim": "Actively maintained: v1.15.4 and merge on 2026-10-23",
+     "result": "confirmed",
+     "evidence": "[docs] https://github.com/clojurewasm/ClojureWasm/commits/main.atom: newest entry 2026-10-23 6:35 PM ET (22:35:13Z), 'Merge pull request #20 from BuddhiLW/main'. 'chore(release): v1.15.4' landed 2026-10-23 5:39 PM ET. [docs] README: 'In 2026-10 the project passed to @BuddhiLW'."
+    },
+    {
+     "claim": "Runtime eval",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/src/lang/primitive/core.zig ENTRIES: '.{ .name = \"eval\", .f = &evalFn }' and '.{ .name = \"__load-source\", .f = &loadSourceFn }'. [source] .../src/lang/clj/clojure/core.clj defines load-string."
+    },
+    {
+     "claim": "Reads .cljc under :cljw, but the fixed set also contains :clj (first match in written order)",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/src/eval/reader.zig: isPlatformFeature returns true for 'cljw', 'clj' or 'default', described as 'cljw's platform feature set is {:cljw, :clj, :default}' and 'The FIRST branch whose key is in that set (scanned left-to-right, clj-faithful) is read'. The set is hard-coded. read-string rejects #? 'unless the caller opts in via :read-cond :allow'. [docs] docs/landscape.md: 'cljw reads .cljc under {:cljw :clj :default}'."
+    },
+    {
+     "claim": "Namespaces, vars with metadata, alter-var-root, push/pop-thread-bindings",
+     "result": "confirmed",
+     "evidence": "[source] src/lang/primitive/namespace.zig ENTRIES include the-ns, find-ns, create-ns, intern, ns-map, ns-resolve, find-var, alias, in-ns, refer, use and require. core.zig ENTRIES include get-thread-bindings, push-thread-bindings, pop-thread-bindings, var-get, var-set and alter-var-root. core.clj: '(def alter-meta! (fn* [iref f & args] (reset-meta! iref (apply f (meta iref) args))))'. core.clj still has a stale comment, ';; The global hierarchy is an atom (cljw has no alter-var-root)', which the core.zig registration contradicts."
+    },
+    {
+     "claim": "Macros receive &form and a real &env; macroexpand-1 exists",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/clojurewasm/ClojureWasm/main/src/eval/macro_dispatch.zig: 'value_args[0] = amp_form;' and 'value_args[1] = amp_env;', described as '[&form &env & user-args]'. &env is 'a map of the in-scope local symbols' or nil when there are none. The check is 'if (!head_var.flags.macro_) return null;'. [source] src/lang/primitive/macroexpand.zig registers macroexpand-1 and macroexpand; at run time '&env is {}'."
+    },
+    {
+     "claim": "Conformance: 57 of 247 suite namespaces failing and 3 aborting at v1.13.4",
+     "result": "confirmed",
+     "evidence": "[docs] https://github.com/BuddhiLW/ClojureWasm/issues/66 (opened Oct 18, 2026, open): 'doc/conformance.md there (cljw v1.13.4, 2026-09-10) still lists 57 of 247 namespaces failing and 3 aborting'. doc/conformance.md and docs/conformance.md return 404 on clojurewasm/ClojureWasm main, and the CHANGELOG has no newer N-of-247 count. Zig is not on the box (probe); the README lists brew for 'macOS arm64, Linux x86_64' and prebuilt binaries on Releases."
+    }
+   ],
+   "corrected_verdict": "strong",
+   "note": "The rating stands. Every check holds in source, and it is the only non-JVM candidate with no API-shape gap: callable macroexpand-1, push/pop-thread-bindings, refer, alias, alter-var-root and a real &env. Caveats to carry: :clj is in its fixed feature set, so every cohost conditional needs :cljw ahead of :clj. Its last published suite figure is 57/247 namespaces failing. The maintainer changed in 2026-10. Its own java.lang/clojure.lang emulation may overlap cohost's shim (unverified)."
+  },
+  {
+   "name": "Phel",
+   "claims": [
+    {
+     "claim": "Actively maintained: commit 2026-10-30; v0.54.0 2026-10-04",
+     "result": "confirmed",
+     "evidence": "[docs] https://github.com/phel-lang/phel-lang/commits/main.atom: newest entry 2026-10-30 11:01 AM ET (15:01:59Z), 'docs: simplify unreleased release notes' by Chemaclass, plus five more fixes that day. CHANGELOG heading '0.54.0 - 2026-10-04'."
+    },
+    {
+     "claim": "Runtime eval, read-string, load-string",
+     "result": "confirmed",
+     "evidence": "[docs] https://phel-lang.org/documentation/reference/api/core/ (v0.54.0) documents eval as '(eval form) Evaluates a form and return the evaluated results.' and also lists read-string, load-string and macroexpand-1. [docs] CHANGELOG 0.54.0 added load-string."
+    },
+    {
+     "claim": "Reads .cljc with #?/#?@ under :phel (with :default)",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/phel-lang/phel-lang/main/src/php/Compiler/Domain/Parser/ExpressionParser/ReaderConditionalParser.php: 'if ($keywordCode === ':phel') {' ... '} elseif ($keywordCode === ':default') {' and '$selectedRange = $phelRange ?? $defaultRange;'. So :phel wins regardless of clause order. The keys are hard-coded, and #?@ requires a sequential node. [docs] CHANGELOG 0.31.0 (2026-04-03): '#?() reader conditionals and #?@() reader conditional splicing with :phel/:default platform keys, plus .cljc file support (#1171)', with a fix for '.cljc files not discovered by phel run and phel ns (#1176)'."
+    },
+    {
+     "claim": "Namespaces, vars with metadata, alter-var-root, dynamic binding frames",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/phel-lang/phel-lang/main/src/php/Lang/PhelVar.php: 'public function alterRoot(callable $f, mixed ...$args): mixed', alterMeta, resetMeta, meta and isDynamic. [source] .../src/php/Lang/DynamicScope.php: 'Fiber-local stack of dynamic bindings' with 'public function pushFrame(array $frame): void', 'popFrame()' and 'withFrame(array $frame, Closure $fn)'. [docs] The API reference lists alter-var-root, alter-meta!, reset-meta!, intern, create-ns, find-ns, resolve, binding and with-bindings, but not refer, alias or push-thread-bindings. CHANGELOG 0.52.0 removed set-var as source, with alter-var-root as its replacement."
+    },
+    {
+     "claim": "defmacro gets implicit &form and a real &env",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/phel-lang/phel-lang/main/src/php/Compiler/Domain/Analyzer/TypeAnalyzer/SpecialForm/InvokeSymbol.php: '$envMap = $this->buildEnvMap($env);' then '$result = $fn($list, $envMap, ...$arguments);'. A docblock says 'Builds the &env map passed to macro functions'. [source] src/phel/core/defs.phel: '(fn [name & fdecl] (apply defn-builder &form &env name {:macro true} fdecl))'."
+    },
+    {
+     "claim": "Toolchain on box: PHP is present and usable",
+     "result": "refuted",
+     "evidence": "[source] https://raw.githubusercontent.com/phel-lang/phel-lang/main/composer.json: '\"php\": \">=8.5\"'. Local probe: 'php -v' printed 'PHP 8.3.6 (cli)'. PHP 8.5 must be installed first."
+    },
+    {
+     "claim": "Already runs the shared clojure-test-suite in blocking CI",
+     "result": "confirmed",
+     "evidence": "[source] https://raw.githubusercontent.com/phel-lang/phel-lang/main/.github/workflows/run-clojure-test-suite.yml checks out 'phel-lang/clojure-test-suite' (a fork of jank-lang/clojure-test-suite) at pinned SHA 75f03dc25a11678711cf32b5fde1e5f6e98f106a on PR and push, main on the nightly cron. It runs 'composer test' with no continue-on-error. The fork's phel-config.php has '->withTestDirs(['test'])' and no excludes. No pass counts are published."
+    }
+   ],
+   "corrected_verdict": "strong",
+   "note": "Capability rating stands: every check holds in source, including a real locals &env and per-fiber frames. Refuted: 'PHP is on the box'. Phel needs PHP >=8.5 and the box has 8.3.6, so it carries an install cost like ClojureCLR's dotnet. Gaps remain at the adapter level: no refer/alias/push-thread-bindings functions (DynamicScope::pushFrame exists in PHP), no char type, regex literals are PHP pattern strings, and no re-matcher/re-groups."
+  }
+ ]
+}
