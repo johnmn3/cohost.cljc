@@ -118,7 +118,7 @@
 (defn stub? [x] (contains? @stubs x))
 
 ;; (to-array nil) is an empty array on the JVM; some hosts reject nil
-(defn- to-array* [coll] (to-array (if (nil? coll) [] coll)))
+(defn- to-array* [coll] (host/host-array (if (nil? coll) [] coll)))
 (def ^:private host-record? (host-fn 'record? (constantly false)))
 (defn record?* [x] (host-record? x))
 (def ^:private host-map-entry? (host-fn 'map-entry? (fn [x] (and (vector? x) (= 2 (count x))))))
@@ -126,7 +126,8 @@
 (def ^:private host-reader-conditional? (host-fn 'reader-conditional? (fn [x] (and (map? x) (contains? x :splicing?)))))
 ;; a stock multimethod is a fn whose state rides in its metadata (below), or,
 ;; on a host whose fns carry none (ClojureWasm), in a table by identity
-(def ^:private fn-meta? (host/try-all (fn [] (some? (meta (with-meta (fn [] nil) {::probe true}))))))
+;; (a closure, as a multimethod's is: Phel's capture-free fns take metadata, its closures none)
+(def ^:private fn-meta? (host/try-all (fn [] (let [p ::probe] (some? (meta (with-meta (fn [] p) {p true})))))))
 (def ^:private mf-states (atom {}))
 (defn- mf-state [mf] (if fn-meta? (::multifn (meta mf)) (get @mf-states mf)))
 (defn multifn?* [x] (and (fn? x) (some? (mf-state x))))
@@ -550,15 +551,15 @@
 (def RT-keys keys)
 (def RT-vals vals)
 (def RT-peek peek)
-(def RT-pop pop)
+(def RT-pop #?(:phel (fn [coll] (pop coll)) :default pop)) ; (Phel's pop is a macro)
 (def RT-subvec (host-fn 'subvec (unsupported "subvec")))
 (def ^:private arr? (or (host/array-fn) (host-fn 'array? (constantly false))))
 (def RT-vector (fn [& xs] (if (and (= 1 (count xs)) (arr? (first xs))) (vec (first xs)) (vec xs))))
 (def RT-toArray to-array*)
 (def RT-seqToTypedArray (fn ([s] (to-array* s)) ([_t s] (to-array* s))))
 (def RT-object_array (fn [n-or-seq] (if (number? n-or-seq) (to-array* (repeat n-or-seq nil)) (to-array* n-or-seq))))
-(def RT-alength (host-fn 'alength count))
-(def RT-aclone (host-fn 'aclone (fn [a] (to-array (seq a)))))
+(def RT-alength #?(:phel count :default (host-fn 'alength count))) ; (Phel's takes a PHP array)
+(def RT-aclone #?(:phel (fn [a] (to-array* (seq a))) :default (host-fn 'aclone (fn [a] (to-array (seq a))))))
 (def RT-booleanCast boolean)
 ;; (int \\a) is the char's code; where chars are one-character strings the
 ;; host's int would parse the string instead
@@ -726,7 +727,12 @@
 (defn set-host-reducers! [m] (reset! host-reducers m))
 (defn- host-reducer [f] (get @host-reducers f f))
 
-(def protocols-coll-reduce (fn ([coll f] (reduce (host-reducer f) coll)) ([coll f init] (reduce (host-reducer f) init coll))))
+;; the host's reduce over coll: Phel's over a map walks its values, so a map's
+;; entries, its seq, are walked there
+(defn- host-reduce
+  ([f coll] (reduce f #?(:phel (if (map? coll) (seq coll) coll) :default coll)))
+  ([f init coll] (reduce f init #?(:phel (if (map? coll) (seq coll) coll) :default coll))))
+(def protocols-coll-reduce (fn ([coll f] (host-reduce (host-reducer f) coll)) ([coll f init] (host-reduce (host-reducer f) init coll))))
 (declare -kvreduce)
 (def protocols-kv-reduce (fn [coll f init] (-kvreduce coll f init)))
 (def protocols-iterator-reduce! (fn ([it f] (reduce f (RT-chunkIteratorSeq it))) ([it f init] (reduce f init (RT-chunkIteratorSeq it)))))
@@ -853,7 +859,7 @@
   (fn [kvs]
     (let [ks (take-nth 2 (seq kvs))]
       (when (not= (count ks) (count (set ks)))
-        (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (frequencies ks))))))
+        (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies ks)))))))
       (apply hash-map (seq kvs)))))
 (def PersistentArrayMap-EMPTY {})
 (def PersistentArrayMap-create (fn [m] (into {} m)))
@@ -880,7 +886,7 @@
   (fn [coll]
     (let [s (seq coll)]
       (when (not= (count s) (count (set s)))
-        (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (frequencies s))))))
+        (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies s)))))))
       (set s))))
 (def PersistentTreeMap-create
   (let [sm (host-fn 'sorted-map nil) smb (host-fn 'sorted-map-by nil)]
@@ -1024,7 +1030,8 @@
                                :else (throw (host/ex* 'IllegalArgumentException
                                                       (str "Multiple methods in multimethod '" name "' match dispatch value: " dv
                                                            " -> " k " and " (key best) ", and neither is preferred"))))))
-                     nil methods)]
+                     ;; (seq: Phel's reduce over a map walks its values)
+                     nil (seq methods))]
     (if best (val best) (get methods default))))
 (defn- mf-method
   "The method for dispatch value dv, cached per dv as the JVM's MultiFn caches
@@ -1337,7 +1344,7 @@
   (fn [a b] (let [f (fn [s] (h-lower-case (h-upper-case (str s))))] (compare (f a) (f b)))))
 (def Array-getLength count)
 (defn- aioobe [i n] (host/ex* 'java.lang.ArrayIndexOutOfBoundsException (str "Index " i " out of bounds for length " n)))
-(def Array-get (fn [a i] (let [n (count a)] (if (and (<= 0 i) (< i n)) (nth a i) (throw (aioobe i n))))))
+(def Array-get (fn [a i] (let [n (count a)] (if (and (<= 0 i) (< i n)) #?(:phel (aget a i) :default (nth a i)) (throw (aioobe i n))))))
 ;; (make-array Integer/TYPE n) is zero-filled, a class token fills with nil;
 ;; (make-array t d0 d1 ...) passes its dimensions as an array: nested arrays
 (def Array-newInstance
@@ -1386,7 +1393,7 @@
 ;; start, end, matches, lookingAt, appendReplacement ($n group references,
 ;; \\ escapes), appendTail, replaceAll, replaceFirst, reset.
 (defrecord Matcher [re state])
-(defn matcher? [x] (instance? Matcher x))
+(defn matcher? [x] #?(:phel (php/is_a x "cohost\\shim\\Matcher") :default (instance? Matcher x)))
 (defn new-matcher [re s] (->Matcher re (atom {:s (str s) :m nil :from 0 :append 0})))
 
 (defn- m-find
@@ -1698,9 +1705,9 @@
 (def -reduce (if-let [chunk? (:chunk? hc)]
               ;; reduce1's (.reduce (chunk-first s) f val) over a host chunk
               (let [chunk-reduce (:chunk-reduce hc)]
-                (fn ([coll f] (reduce (host-reducer f) coll))
-                  ([coll f init] (if (chunk? coll) (chunk-reduce coll f init) (reduce (host-reducer f) init coll)))))
-              (fn ([coll f] (reduce (host-reducer f) coll)) ([coll f init] (reduce (host-reducer f) init coll)))))
+                (fn ([coll f] (host-reduce (host-reducer f) coll))
+                  ([coll f init] (if (chunk? coll) (chunk-reduce coll f init) (host-reduce (host-reducer f) init coll)))))
+              (fn ([coll f] (host-reduce (host-reducer f) coll)) ([coll f init] (host-reduce (host-reducer f) init coll)))))
 (defn chunk-reduce
   "IChunk.reduce: the chunk's elements by index, a reduced result returned
    unopened (the stock caller tests reduced? itself). The codemod sends

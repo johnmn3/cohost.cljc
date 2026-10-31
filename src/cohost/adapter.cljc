@@ -125,6 +125,7 @@
    :nan?            [['x] "is x NaN?"]
    :infinite?       [['x] "is x an infinity?"]
    :format          [['fmt '& 'args] "java.lang.String/format as the JVM's java.util.Formatter does it (the JVM, jolt), or nil (the default): the shim's own Formatter"]
+   :to-array        [['coll] "a host array of coll's items, as to-array makes one: an aset of it changes it for every holder (default: the host core's to-array; Phel: an ArrayObject, its arrays being values)"]
    :sort-array!     [['arr 'cmp] "sort a host array in place, return it"]
    :array?          [['x] "is x a host array, what to-array makes? (default: the host core's array?; basilisp: a Python list)"]
    :close!          [['x] ".close"]
@@ -187,13 +188,15 @@
 
 (defrecord SB [state])
 (defn- generic-sb "A StringBuilder stand-in (the host's str does not print it)." [] (->SB (atom [])))
-(defn- generic-sb? [x] (instance? SB x))
+;; (on Phel a record is a struct whose name is its constructor fn: its PHP
+;; class is asked, cohost\adapter\SB for SB)
+(defn- generic-sb? [x] #?(:phel (php/is_a x "cohost\\adapter\\SB") :default (instance? SB x)))
 (defn- generic-sb-append! [sb x] (swap! (:state sb) conj (str x)) sb)
 (defn- generic-sb-str [sb] (apply str @(:state sb)))
 
 (defrecord MList [state])
 (defn mutable-list "A java.util.ArrayList stand-in." [] (->MList (atom [])))
-(defn mlist? [x] (instance? MList x))
+(defn mlist? [x] #?(:phel (php/is_a x "cohost\\adapter\\MList") :default (instance? MList x)))
 
 (defn seqable?* [x] (or (nil? x) (coll? x) (string? x) (seq? x)))
 
@@ -359,6 +362,7 @@
     :exception-string nil
     :exception-message (fn [e] (ex-message e))
     :exception-cause (fn [e] (ex-cause e))
+    :to-array (fn [coll] (to-array coll))
     :sort-array! (unsupported :sort-array!)
     :array? nil
     :close! (fn [_] nil)
@@ -577,10 +581,11 @@
 
 ;; java.util.Iterator: the host's own where it has one, else the stand-in
 (defn iter "A java.util.Iterator over coll." [coll] (or ((cap :iterator) coll) (->Iter (atom (seq coll)))))
-(defn iter? [x] (or (instance? Iter x) (boolean ((cap :iterator?) x))))
-(defn iter-has-next? [it] (if (instance? Iter it) (some? @(:state it)) (boolean ((cap :iterator-has-next?) it))))
+(defn- stand-in-iter? [x] #?(:phel (php/is_a x "cohost\\adapter\\Iter") :default (instance? Iter x)))
+(defn iter? [x] (or (stand-in-iter? x) (boolean ((cap :iterator?) x))))
+(defn iter-has-next? [it] (if (stand-in-iter? it) (some? @(:state it)) (boolean ((cap :iterator-has-next?) it))))
 (defn iter-next! [it]
-  (if (instance? Iter it)
+  (if (stand-in-iter? it)
     (let [s @(:state it)]
       (when (nil? s) (throw (ex* 'java.util.NoSuchElementException nil)))
       (reset! (:state it) (next s))
@@ -600,6 +605,7 @@
 (defn re-source [re] ((cap :re-source) re))
 (defn native-method [x nm] ((cap :native-method) x nm))
 (defn sort-array! [arr cmp] ((cap :sort-array!) arr cmp))
+(defn host-array "A host array of coll's items (adapter :to-array)." [coll] ((cap :to-array) coll))
 (defn array-fn "The adapter's array test, or nil: the host core's array?." [] (get @installed :array?))
 (defn close! [x] ((cap :close!) x))
 (defn index-of [s sub from] ((cap :index-of) s sub from))

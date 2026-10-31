@@ -212,7 +212,10 @@
    :lpy {:stock '#{format printf}}
    ;; ClojureWasm's str of an exception writes the class's short name; core.clj's
    ;; str reaches the shim's toString, which writes the JVM's
-   :cljw {:stock '#{str}}})
+   :cljw {:stock '#{str}}
+   ;; Phel's str of an exception is PHP's (the class, the message, the trace);
+   ;; core.clj's str reaches the shim's toString
+   :phel {:stock '#{str}}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."
