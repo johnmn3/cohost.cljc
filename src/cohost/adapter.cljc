@@ -95,6 +95,7 @@
    :char-code       [['c] "a char's code point ((int \\a) is 97 on the JVM; where chars are one-character strings, the code of that character)"]
    :java-statics    [[] "{'Class/member fn}: the host's own java.lang statics the shim uses in place of its generic definitions (the JVM and jolt: Character/isLetter and friends, exactly)"]
    :meta            [['x] "x's metadata map, or nil (the host's meta; basilisp's own meta hands back a reify object's meta method unbound, so its adapter calls it)"]
+   :expand-macro    [['var 'form 'locals] "nil (the default), or a fn: the expansion of a call (form) of the cohost macro var holds, as the macro wrote it, with an &env of the locals; form itself when var holds none (let-go, whose compiler hands a macro no &env: the codemod expands it in place)"]
    :host-type       [['token] "the host type (form) an extend / extend-type / extend-protocol position names for a JVM class token, a vector of them, or nil to keep the class symbol"]
    :user-type?      [['x] "is x an instance of a type user code defined — deftype, defrecord, reify, proxy — rather than the host's own data? (.m x args) in source then reaches x's own member before the shim's method; default false"]
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
@@ -292,6 +293,7 @@
     :require-host! #?(:cljs (unsupported :require-host!) :phel (unsupported :require-host!) :default (fn [lib] (require lib)))
     :core-extras {}
     :host-type nil
+    :expand-macro nil
     :user-type? (fn [_] false)
     :host-data? (fn [_] false)
     :natives {}
@@ -473,6 +475,7 @@
 (defn special-forms [] (get @installed :special-forms))
 (defn vector-rest-args? [] (= :vector (cap :rest-args)))
 (defn host-type-fn [] (get @installed :host-type))
+(defn expand-macro-fn [] (get @installed :expand-macro))
 (defn user-type? [x] ((cap :user-type?) x))
 (defn invoke-member [x nm args absent] ((cap :invoke-member) x nm args absent))
 (defn interop-passthrough? [] (boolean (cap :interop-passthrough?)))

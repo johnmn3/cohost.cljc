@@ -216,7 +216,10 @@
    :cljw {:stock (set '[str])}
    ;; Phel's str of an exception is PHP's (the class, the message, the trace);
    ;; core.clj's str reaches the shim's toString
-   :phel {:stock (set '[str])}})
+   :phel {:stock (set '[str])}
+   ;; let-go's atom takes its validator when it is made (:validator), and has
+   ;; no set-validator! to give one after: core.clj's atom sets it after
+   :lg {:host (set '[atom])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."

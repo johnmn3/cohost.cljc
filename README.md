@@ -42,7 +42,7 @@ named capabilities a clojure-like implements to plug in — read/eval in a
 namespace, var and namespace surgery, four constructors, regex search
 primitives, the host's `Math`, the type predicates behind the class tokens.
 Adapters ship for **jolt**, **basilisp**, **ClojureScript (self-hosted, Node
-and browser)**, **ClojureWasm**, **Phel** and the **JVM** (as the reference host).
+and browser)**, **ClojureWasm**, **Phel**, **let-go** and the **JVM** (as the reference host).
 
 It is the method of [clinj](https://github.com/johnmn3/clinj) ("WINE, not an
 emulator": shim the JDK surface the code calls, run the real source
@@ -60,12 +60,16 @@ ecosystem, nREPL and shadow-cljs.
 | basilisp 0.5.1 | 529 / 130 / 36 / 96 / **0** | **138/139** | **61/61** |
 | ClojureWasm v1.15.4 (2026-10-31) | 555 / 145 / 0 / 91 / **0** | **137/139** | **61/61** |
 | Phel v0.54.0 on PHP 8.5 (2026-10-31) | 591 / 73 / 0 / 127 / **0** | **139/139** | **61/61** |
+| let-go v1.13.0 on Go (2026-10-31) | 569 / 105 / 0 / 117 / **0** | **137/139** | **61/61** |
 
 The core battery's misses are host facts:
 - `(= 1 1.0)` is true in JavaScript and Python.
 - On ClojureScript, a macro's `&env` is the analyzer's environment.
 - On ClojureWasm, a regex Matcher has no group positions (`Matcher.start(g)`), and
   `alter-var-root` of a var the thread binds applies the fn to the binding, not the root.
+- On let-go, a regex Matcher has no group positions either (Go's RE2 gives none), and
+  its sets and map keys hash and compare a deftype instance by identity: the type's own
+  `equals` and `hashCode` answer `=` and `hash`, not a let-go set.
 
 "Natives" are the host's own fns standing in for stock ones (see below).
 
@@ -159,11 +163,13 @@ src/cohost/
     cljw.clj         ClojureWasm (Zig)
     phel.phel        Phel (PHP 8.5)
     phel_host.php    the JVM classes Phel's adapter builds in PHP (Pattern, Math)
+    lg.lg            let-go (Go)
 resources/cohost/clojure-1.12.0/   core.clj & co., the clojure.* libraries and
                                    clojure.spec.alpha, unchanged (EPL-1.0)
 dev/browser_boot.py  serves the browser build and runs it under Playwright
 dev/corpus_jvm.clj   the corpus gap evaluated on JVM Clojure (bb corpus:jvm)
 dev/phel_main.phel   bb boot:phel's entry (cohost.run's -main under phel run)
+dev/lg_main.lg       bb boot:lg's entry (let-go has no -m)
 doc/REPORT.md      the measurements
 doc/ROADMAP.md     where this goes
 LICENSE            0BSD for cohost's own code; the vendored sources keep EPL-1.0

@@ -96,6 +96,10 @@
           (throw (IllegalArgumentException. (str "Duplicate key: " t))))
         (recur (skip-ws cs j) (inc n) (if (or set? (even? n)) (conj seen t) seen))))))
 
+;; # then one of these is no tag; #inst and #uuid are let-go's own
+(def ^:private tag-starts-not (set "({\"'=_^?:#!<"))
+(def ^:private native-tags #{"inst" "uuid"})
+
 (declare mark-text)
 (defn- mark-text
   "The text of cs[i, j) with every ` and ^ outside strings, comments and
@@ -124,6 +128,14 @@
           (let [k (string-end cs (inc i))] (recur k (conj! out (apply str (subvec cs i k)))))
           (= c \`) (let [a (skip-ws cs (inc i)) b (form-end cs a)]
                      (recur b (conj! out (str "(cohost.hosts.lg/syntax-quote " (mark-text cs a b) ")"))))
+          ;; a tagged literal (let-go's data reader drops a tag it does not
+          ;; know): the tag's reader applies when the mark is expanded
+          (and (= c \#) (or (zero? i) (contains? ws (nth cs (dec i))) (contains? delims (nth cs (dec i))))
+               (let [d (nth cs (inc i) nil)]
+                 (and d (not (contains? ws d)) (not (contains? delims d)) (not (contains? tag-starts-not d))
+                      (not (contains? native-tags (apply str (subvec cs (inc i) (token-end cs (inc i)))))))))
+          (let [te (token-end cs (inc i)) fa (skip-ws cs te) fb (form-end cs fa)]
+            (recur fb (conj! out (str "(cohost.hosts.lg/tagged " (apply str (subvec cs (inc i) te)) " " (mark-text cs fa fb) ")"))))
           (or (= c \^) (and (= c \#) (= \^ (nth cs (inc i) nil))))
           (let [ma (skip-ws cs (if (= c \^) (inc i) (+ i 2))) mb (form-end cs ma)
                 fa (skip-ws cs mb) fb (form-end cs fa)]
@@ -135,11 +147,23 @@
 ;; {:tag Sym}; let-go's data reader quotes it), and syntax-quote as the JVM
 ;; reads it: an alias's target, the namespace a name resolves to, else the
 ;; current namespace; special forms, & and class names stay bare, x# is a
-;; gensym per syntax-quote. The code it builds is (seq (concat ...)), vector,
-;; hash-map, hash-set, with-meta.
+;; gensym per syntax-quote. The code it builds is let-go core's (core/seq
+;; (core/concat ...)), core/vector, core/hash-map, core/hash-set,
+;; core/with-meta: a namespace that excludes those names still reads it.
 
 (def ^:private sq-mark 'cohost.hosts.lg/syntax-quote)
 (def ^:private meta-mark 'cohost.hosts.lg/meta)
+(def ^:private tag-mark 'cohost.hosts.lg/tagged)
+
+;; a tagged literal's value: *data-readers*' fn for its tag (an edn read's
+;; :readers and :default while one runs)
+(def ^:private tag-reader (atom nil))
+(defn- read-tagged [tag v]
+  (if-let [f @tag-reader]
+    (f tag v)
+    (if-let [r (get *data-readers* tag)]
+      (r v)
+      (throw (RuntimeException. (str "No reader function for tag " tag))))))
 
 (defn- form-of? [head x] (and (seq? x) (seq x) (= head (first x))))
 
@@ -184,10 +208,10 @@
 (declare sq)
 (declare expand-marks)
 (defn- sq-items [xs gensyms]
-  (apply list 'concat
+  (apply list 'core/concat
          (map (fn [x] (if (form-of? 'unquote-splicing x)
                         (expand-marks (second x))
-                        (list 'list (sq x gensyms))))
+                        (list 'core/list (sq x gensyms))))
               xs)))
 
 (defn- sq [x gensyms]
@@ -195,19 +219,20 @@
     (form-of? sq-mark x) (sq (sq (second x) (atom {})) gensyms)
     (form-of? meta-mark x) (let [m (meta-map (expand-marks (nth x 2)))
                                  f (sq (second x) gensyms)]
-                             (list 'with-meta f (sq m gensyms)))
+                             (list 'core/with-meta f (sq m gensyms)))
     (form-of? 'unquote x) (expand-marks (second x))
     (symbol? x) (list 'quote (sq-symbol x gensyms))
-    (and (seq? x) (seq x)) (list 'seq (sq-items x gensyms))
-    (and (vector? x) (seq x)) (list 'apply 'vector (sq-items x gensyms))
-    (and (map? x) (seq x)) (list 'apply 'hash-map (sq-items (mapcat (fn [[k v]] [k v]) x) gensyms))
-    (and (set? x) (seq x)) (list 'apply 'hash-set (sq-items x gensyms))
+    (and (seq? x) (seq x)) (list 'core/seq (sq-items x gensyms))
+    (and (vector? x) (seq x)) (list 'core/apply 'core/vector (sq-items x gensyms))
+    (and (map? x) (seq x)) (list 'core/apply 'core/hash-map (sq-items (mapcat (fn [[k v]] [k v]) x) gensyms))
+    (and (set? x) (seq x)) (list 'core/apply 'core/hash-set (sq-items x gensyms))
     (or (keyword? x) (string? x) (number? x) (nil? x) (boolean? x) (char? x)) x
     :else (list 'quote x)))
 
 (defn- expand-marks [x]
   (cond
     (form-of? sq-mark x) (sq (second x) (atom {}))
+    (form-of? tag-mark x) (read-tagged (second x) (expand-marks (nth x 2)))
     (form-of? meta-mark x) (let [f (expand-marks (second x))
                                  m (meta-map (expand-marks (nth x 2)))]
                              (with-meta f (merge (meta f) m)))
@@ -248,6 +273,15 @@
           (throw (RuntimeException. "EOF while reading"))
           (read-one (mark-text cs i j)))))))
 
+(defn- edn-read-string [opts s]
+  (when-not (nil? s)
+    (let [readers (:readers opts) dflt (:default opts) old @tag-reader]
+      (reset! tag-reader (fn [tag v]
+                           (cond (contains? readers tag) ((get readers tag) v)
+                                 dflt (dflt tag v)
+                                 :else (throw (RuntimeException. (str "No reader function for tag " tag))))))
+      (try (read-string* s opts) (finally (reset! tag-reader old))))))
+
 ;; ---------------------------------------------------------------------------
 ;; code for let-go's compiler: a symbol's metadata (on its with-meta wrapper)
 ;; is let-go's (with-meta sym m) as a def's name, with m's quoted values read
@@ -255,13 +289,48 @@
 ;; matter to let-go's compiler). Every seq becomes a list; what does not
 ;; change stays the same object.
 
+;; (with-meta sym nil) is a wrapper too, with no metadata to tell it by
 (defn plain "sym without the wrapper its metadata lives on" [x]
-  (if (and (symbol? x) (some? (meta x))) (symbol (str x)) x))
+  (if (symbol? x)
+    (if (some? (meta x)) (symbol (str x)) (let [p (symbol (str x))] (if (= p x) x p)))
+    x))
 
 (defn- def-meta [m]
   (into {} (map (fn [[k v]] [k (if (form-of? 'quote v) (second v) v)])) (dissoc m :line :column :file)))
 
 (declare as-code)
+
+;; (def name init) whose name carries metadata: let-go's def takes the map as
+;; data, the JVM's evaluates it, so a value that is code (deftest's :test fn,
+;; an :inline fn) is assoc'd onto the var once it is defined
+(defn- def-code [[_ nm & more]]
+  (let [m (dissoc (meta nm) :line :column :file)
+        nm (plain nm)
+        code? (fn [v] (and (seq? v) (seq v) (not (form-of? 'quote v))))
+        data (def-meta (into {} (remove (fn [[_ v]] (code? v))) m))
+        evaled (filter (fn [[_ v]] (code? v)) m)
+        d (apply list 'def (if (seq data) (list 'with-meta nm data) nm) (map as-code more))]
+    (if (seq evaled)
+      (list 'do d
+            (apply list 'core/alter-meta! (list 'var nm) 'core/assoc (mapcat (fn [[k v]] [k (as-code v)]) evaled))
+            (list 'var nm))
+      d)))
+(declare macro-var?)
+
+;; let-go's special forms (its compiler's table; throw, new, . and
+;; monitor-enter / -exit are core vars)
+(def ^:private specials
+  (set '[if do def set! fn* quote var let* loop* recur try catch finally &]))
+
+;; a call of a macro (cohost's or let-go's): its arguments are the macro's, as
+;; written (a name's metadata is the macro's to read). A special form is no
+;; macro call, whatever a namespace's own var of its name is (spec's def)
+(defn- macro-call? [h]
+  (when (and (symbol? h) (not (contains? specials (plain h))))
+    ;; (resolve: let-go's ns-resolve does not see what a refer of a whole
+    ;; namespace referred)
+    (let [v (adapter/try-all (fn [] (resolve (plain h))))]
+      (and (var? v) (macro-var? v)))))
 
 ;; letfn*, which let-go lacks (its letfn is a macro): each fn's name is a fn
 ;; that calls the fn in a cell, filled once all are made; a lone named fn
@@ -281,27 +350,76 @@
   (let [m (meta x)]
     (if (identical? x x') x (if m (with-meta x' m) x'))))
 
+;; a collection literal's metadata: let-go's compiler takes no vector that
+;; carries any (with-meta makes it another vector type) and drops a map's or a
+;; set's, so an evaluated literal's is written (with-meta coll m), evaluated
+;; as the JVM evaluates it (a type hint read as its symbol); a binding vector
+;; (fn* params, let* and loop* bindings) is written bare
+(def ^:private reader-keys [:line :column :file :end-line :end-column])
+
+(defn- literal-meta [x]
+  (let [m (apply dissoc (meta x) reader-keys)] (when (seq m) m)))
+
+(defn- meta-code [m]
+  (into {} (map (fn [[k v]] [k (if (and (= :tag k) (symbol? v)) (list 'quote v) (as-code v))])) m))
+
+(defn- literal [x x']
+  (if-let [m (literal-meta x)]
+    (list 'core/with-meta (if (meta x') (with-meta x' nil) x') (meta-code m))
+    (code-meta x x')))
+
+;; (let-go's compiler takes only its array vector: mapv and into make the
+;; other kind past 32 elements, apply vector does not)
+(defn- code-vec [xs] (apply vector xs))
+(defn- array-vector? [x] (= "let-go.lang.ArrayVector" (str (type x))))
+(defn- bare-vec [v] (code-vec (map as-code v)))
+
+(defn- fn-code [x]
+  (let [more (rest x)
+        nm (when (symbol? (first more)) (plain (first more)))
+        more (if nm (rest more) more)
+        arity (fn [a] (cons (bare-vec (first a)) (map as-code (rest a))))]
+    (apply list (concat ['fn*] (when nm [nm])
+                        (if (vector? (first more)) (arity more) (map (fn [a] (apply list (arity a))) more))))))
+
+;; let-go compiles (= a b) as its VM's equality, not a call, whatever var the
+;; bare name = resolves to (so too +, <, inc and the rest, whose results are
+;; the JVM's); a qualified name is called. core.clj's = takes a type's own
+;; equals and a symbol's name, so (= a b) calls the var = names, qualified.
+(defn- opcode-free [sym]
+  (let [v (adapter/try-all (fn [] (get (ns-map *ns*) sym)))]
+    (when (and (var? v) (not= 'core (var-ns-sym v))) (var-sym v))))
+
 (defn- as-code [x]
   (cond
     (symbol? x) (plain x)
+    ;; (let-go compiles an empty list carrying metadata as a call of nil)
+    (and (seq? x) (empty? x)) (if (meta x) (list) x)
     (seq? x)
-    (cond
-      (form-of? 'quote x) (code-meta x (apply list 'quote (map plain (rest x))))
-      (form-of? 'letfn* x) (code-meta x (letfn-code x))
-      :else
-      (let [x (if (and (form-of? 'def x) (symbol? (second x)) (some? (meta (second x))))
-                (let [nm (second x) m (def-meta (meta nm))]
-                  (apply list 'def (if (seq m) (list 'with-meta (plain nm) m) (plain nm)) (nnext x)))
-                x)
-            xs (doall (map as-code x))]
-        (code-meta x (if (and (list? x) (every? true? (map identical? xs x))) x (apply list xs)))))
-    (vector? x) (let [xs (mapv as-code x)] (code-meta x (if (every? true? (map identical? xs x)) x xs)))
+    (let [h (when (symbol? (first x)) (plain (first x)))]
+      (cond
+        (= 'quote h) (code-meta x (apply list 'quote (map plain (rest x))))
+        (= 'letfn* h) (code-meta x (letfn-code x))
+        (= 'fn* h) (code-meta x (fn-code x))
+        (or (= 'let* h) (= 'loop* h)) (code-meta x (apply list h (bare-vec (second x)) (map as-code (nnext x))))
+        (macro-call? (first x)) (code-meta x (apply list (plain (first x)) (rest x)))
+        (and (= 'def h) (symbol? (second x)) (some? (meta (second x))))
+        (code-meta x (def-code x))
+        (and (= '= h) (= 3 (count x)) (opcode-free '=))
+        (code-meta x (apply list (opcode-free '=) (map as-code (rest x))))
+        :else
+        (let [xs (doall (map as-code x))]
+          (code-meta x (if (and (list? x) (every? true? (map identical? xs x))) x (apply list xs))))))
+    (vector? x) (let [xs (doall (map as-code x))]
+                  (cond (literal-meta x) (literal x (code-vec xs))
+                        (and (nil? (meta x)) (array-vector? x) (every? true? (map identical? xs x))) x
+                        :else (code-vec xs)))
     (and (map? x) (not (record? x)))
     (let [kvs (mapv (fn [[k v]] [(as-code k) (as-code v)]) x)]
-      (code-meta x (if (every? (fn [[[k v] [k0 v0]]] (and (identical? k k0) (identical? v v0))) (map vector kvs x))
-                     x
-                     (into {} kvs))))
-    (set? x) (let [xs (mapv as-code x)] (code-meta x (if (every? true? (map identical? xs x)) x (into #{} xs))))
+      (literal x (if (every? (fn [[[k v] [k0 v0]]] (and (identical? k k0) (identical? v v0))) (map vector kvs x))
+                   x
+                   (into {} kvs))))
+    (set? x) (let [xs (mapv as-code x)] (literal x (if (every? true? (map identical? xs x)) x (into #{} xs))))
     :else x))
 
 ;; ---------------------------------------------------------------------------
@@ -319,11 +437,10 @@
 ;; macros: let-go calls a macro var's fn with the call's arguments alone (the
 ;; call form bound to core/*macro-form*). cohost's macro fns take &form and
 ;; &env first; each macro var cohost marks holds a fn that adds them, and the
-;; fn it adds them to is kept here, as the var's root to cohost. The codemod,
-;; which expands a macro where it knows the locals (:macro-env? false), hands
-;; that fn a FormEnv: the form and an &env of those locals.
+;; fn it adds them to is kept here, as the var's root to cohost. The codemod
+;; expands a call of one where it knows the locals (:expand-macro), calling
+;; that fn with &env a map of them; let-go's own expansion gives it none.
 
-(defrecord FormEnv [form env])
 ;; the namespaces cohost makes
 (def ^:private cohost-nses (atom #{}))
 ;; {var [entry f]}: the fn let-go calls, and the macro's fn it calls
@@ -331,52 +448,102 @@
 
 (defn- macro-entry [v]
   (fn [& args]
-    (let [f (second (get @macro-fns v)) a (first args)]
-      (if (instance? FormEnv a)
-        (apply f (:form a) (:env a) (rest args))
-        (apply f (deref (var core/*macro-form*)) nil args)))))
+    (apply (second (get @macro-fns v)) (deref (var core/*macro-form*)) nil args)))
 
 ;; [entry f] of v while v holds its entry (a def since replaced the root)
 (defn- live-entry [v]
   (let [ef (get @macro-fns v)]
     (when (and ef (identical? (first ef) (var-get v))) ef)))
 
+;; a call of a cohost macro, expanded by the codemod where it knows the locals
+;; (let-go's compiler hands a macro none): the expansion as the macro wrote it,
+;; which the codemod rewrites in place, with an &env of those locals; the form
+;; itself when v holds no cohost macro
+(defn- expand-macro [v form locals]
+  (if-let [ef (and v (live-entry v))]
+    (binding [adapter/*raw-macro-output* true]
+      (apply (second ef) form (zipmap locals (repeat nil)) (rest form)))
+    form))
+
 ;; let-go's own macros expand to bare names (its syntax-quote qualifies
 ;; nothing), which resolve where the expansion lands. So an expansion taken from
 ;; one is expanded through: a call of another of let-go's macros is expanded
 ;; here (it would expand to bare names too), and a call's head that names a
 ;; core fn is written core/name, as the JVM's syntax-quote would have it
-;; let-go's special forms (its compiler's table; throw, new, . and
-;; monitor-enter / -exit are core vars)
-(def ^:private specials
-  (set '[if do def set! fn* quote var let* loop* recur try catch finally &]))
 (def ^:private special-vars ['throw 'new '. 'monitor-enter 'monitor-exit])
 
 (defn- core-var [h]
-  (when (and (symbol? h) (not (contains? specials h))
-             (or (nil? (namespace h)) (= "core" (namespace h))))
-    (let [v (ns-resolve 'core (symbol (name h)))] (when (var? v) v))))
+  (when-let [h (when (symbol? h) (plain h))]
+    (when (and (not (contains? specials h))
+               (or (nil? (namespace h)) (= "core" (namespace h))))
+      (let [v (ns-resolve 'core (symbol (name h)))] (when (var? v) v)))))
 
 (defn- call-host-macro [v form]
   (let [mf (var core/*macro-form*)]
     (push-binding! mf form)
     (try (apply (var-get v) (rest form)) (finally (pop-binding! mf)))))
 
-(defn- qualify-heads [x]
-  (cond
-    (and (seq? x) (seq x))
-    (if (form-of? 'quote x)
-      x
-      (let [h (first x) v (core-var h)]
-        (if (and v (:macro (meta v)))
-          (qualify-heads (call-host-macro v x))
-          (let [xs (if (= 'def h)
-                     (cons 'def (cons (second x) (map qualify-heads (nnext x))))
-                     (cons (if v (symbol "core" (name h)) (qualify-heads h)) (map qualify-heads (rest x))))]
-            (code-meta x (apply list xs))))))
-    (vector? x) (code-meta x (mapv qualify-heads x))
-    (and (map? x) (not (record? x))) (code-meta x (into {} (map (fn [[k v]] [(qualify-heads k) (qualify-heads v)])) x))
-    :else x))
+(declare qualify-heads)
+
+(defn- arg-heads [args]
+  (into #{} (keep (fn [x] (when (and (seq? x) (symbol? (first x))) (plain (first x))))) (tree-seq coll? seq args)))
+
+;; the names a binding vector, or a params vector, binds (after expansion: bare
+;; symbols)
+(defn- params-bound [ps] (remove #{'&} (filter symbol? (map plain ps))))
+
+(defn- qualify-fn [x locals]
+  (let [[h & more] x
+        nm (when (symbol? (first more)) (first more))
+        more (if nm (rest more) more)
+        ls0 (if nm (conj locals (plain nm)) locals)
+        arity (fn [[ps & body]]
+                (let [ls (into ls0 (params-bound ps))]
+                  (cons ps (map #(qualify-heads % ls) body))))]
+    (apply list (concat [h] (when nm [nm])
+                        (if (vector? (first more)) (arity more) (map #(apply list (arity %)) more))))))
+
+;; locals: the names bound where x is (a local's call is no core fn's), and
+;; the heads the macro's caller wrote, which name what they name where the
+;; call is (let-go hands its macro no &env: those locals are not known)
+(defn- qualify-heads
+  ([x] (qualify-heads x #{}))
+  ([x locals]
+   (cond
+     (and (seq? x) (seq x))
+     (let [h (first x) ph (when (symbol? h) (plain h))]
+       (cond
+         (= 'quote ph) x
+         (or (= 'let* ph) (= 'loop* ph))
+         (let [[_ bv & body] x
+               [bv' ls] (loop [ps (partition 2 bv) acc [] ls locals]
+                          (if (seq ps)
+                            (let [[b init] (first ps)]
+                              (recur (rest ps) (conj acc b (qualify-heads init ls)) (conj ls (plain b))))
+                            [acc ls]))]
+           (code-meta x (apply list h bv' (map #(qualify-heads % ls) body))))
+         (= 'fn* ph) (code-meta x (qualify-fn x locals))
+         (= 'letfn* ph)
+         (let [[_ bv & body] x
+               ls (into locals (map plain (take-nth 2 bv)))]
+           (code-meta x (apply list h (vec (mapcat (fn [[n f]] [n (qualify-heads f ls)]) (partition 2 bv)))
+                               (map #(qualify-heads % ls) body))))
+         (= 'catch ph)
+         (let [[_ c e & body] x ls (conj locals (plain e))]
+           (code-meta x (apply list h c e (map #(qualify-heads % ls) body))))
+         (contains? locals ph) (code-meta x (apply list h (map #(qualify-heads % locals) (rest x))))
+         :else
+         (let [v (core-var h)]
+           (if (and v (:macro (meta v)))
+             (qualify-heads (call-host-macro v x) locals)
+             (let [xs (if (= 'def ph)
+                        (cons 'def (cons (second x) (map #(qualify-heads % locals) (nnext x))))
+                        (cons (if v (symbol "core" (name ph)) (qualify-heads h locals))
+                              (map #(qualify-heads % locals) (rest x))))]
+               (code-meta x (apply list xs)))))))
+     (vector? x) (code-meta x (mapv #(qualify-heads % locals) x))
+     (and (map? x) (not (record? x))) (code-meta x (into {} (map (fn [[k v]] [(qualify-heads k locals) (qualify-heads v locals)])) x))
+     :else x)))
 
 (def ^:private core-macro-roots
   (delay (vec (keep (fn [[_ v]] (when (:macro (meta v)) (var-get v))) (ns-publics 'core)))))
@@ -391,14 +558,139 @@
   (boolean (or (some? (live-entry v)) (contains? @host-marked v)
                (and (not (contains? @cohost-nses (var-ns-sym v))) (:macro (meta v))))))
 
+;; deftype, defrecord and reify: let-go's take protocols alone, and one fn per
+;; method name (a later arity replaces an earlier one). So the methods of one
+;; name are one fn of every arity, dispatching on the count; a JVM interface's
+;; method is a protocol of that one method here (made the first time a type
+;; defines it), which let-go's (. x m args) finds by name; IDeref's deref is
+;; let-go's IDeref and IFn's invoke let-go's IFn (its args in one vector).
+
+(def ^:private method-ns 'cohost.hosts.lg.methods)
+(def ^:private method-protocols (atom {}))
+
+(declare with-ns)
+(defn- method-protocol
+  "{:protocol :method :p :f} of JVM method m: a protocol of one method, named
+   so let-go's (. x m) never finds it by name (invoke-member calls it)"
+  [m]
+  (or (get @method-protocols m)
+      (let [pname (symbol (str "M-" m)) mname (symbol (str "-jvm-" m))]
+        (create-ns method-ns)
+        (with-ns method-ns (fn [] (eval (list 'core/defprotocol pname (list mname '[this & args])))))
+        (let [e {:protocol (symbol (str method-ns) (str pname)) :method mname
+                 :p (var-get (find-var (symbol (str method-ns) (str pname))))
+                 :f (var-get (find-var (symbol (str method-ns) (str mname))))}]
+          (swap! method-protocols assoc m e)
+          e))))
+
+(defn- method-specs [m clause]
+  (let [{:keys [protocol method]} (method-protocol m)]
+    [protocol (apply list method (rest clause))]))
+
+(defn- protocol-value? [h]
+  (let [v (adapter/try-all (fn [] (resolve (plain h))))]
+    (and (var? v) (= "let-go.lang.Protocol" (str (type (var-get v)))))))
+
+;; the clauses (m [this params] body...) of one name -> one clause taking
+;; [this & args]; arg-vec?: the args as one vector (IFn's -invoke)
+(defn- merged-clause [m clauses arg-vec?]
+  (let [this (gensym "this__") args (gensym "args__")
+        arity (fn [[_ ps & body]]
+                (let [[recv & more] ps]
+                  [(if (some #(= '& %) more) :variadic (count more))
+                   (list 'core/let [recv this (vec more) args] (cons 'do body))]))
+        arms (map arity clauses)
+        fixed (mapcat (fn [[n b]] (when (number? n) [n b])) arms)
+        variadic (some (fn [[n b]] (when (= :variadic n) b)) arms)]
+    (list m (if arg-vec? [this args] [this '& args])
+          (apply list 'core/case (list 'core/count args)
+                 (concat fixed [(or variadic (list 'core/throw (list 'core/ex-info "wrong number of arguments" {})))])))))
+
+(defn- method-groups
+  "specs -> [[head [clause ...]] ...] in order"
+  [specs]
+  (loop [xs specs h nil acc []]
+    (cond (empty? xs) acc
+          (symbol? (first xs)) (recur (rest xs) (first xs) (conj acc [(first xs) []]))
+          :else (recur (rest xs) h (if (seq acc) (update-in acc [(dec (count acc)) 1] conj (first xs)) acc)))))
+
+(defn- object? [h] (contains? #{"Object" "java.lang.Object"} (str (plain h))))
+
+(defn- type-specs
+  "specs as let-go's deftype or reify takes them, but for Object's toString,
+   which let-go's reify takes in an Object group and its deftype not at all:
+   -> [specs toString-clause]"
+  [specs reify?]
+  (let [groups (method-groups specs)
+        object-clauses (mapcat second (filter (comp object? first) groups))
+        to-string (last (filter #(= 'toString (plain (first %))) object-clauses))
+        by-name (fn [cs] (map (fn [m] [m (filter #(= m (plain (first %))) cs)]) (distinct (map #(plain (first %)) cs))))
+        one (fn [m cs] (if (next cs) (merged-clause m cs false) (first cs)))
+        out (mapcat
+             (fn [[h clauses]]
+               (let [n (let [t (str (plain h)) i (last-index-of t ".")] (if i (subs t (inc i)) t))]
+                 (cond
+                   (= "IDeref" n)
+                   (cons 'core/IDeref (map (fn [[_ cs]] (apply list '-deref (rest (first cs)))) (by-name clauses)))
+                   (= "IFn" n)
+                   (let [inv (filter #(= 'invoke (plain (first %))) clauses)]
+                     (when (seq inv) ['core/IFn (merged-clause '-invoke inv true)]))
+                   (object? h)
+                   (concat (when (and reify? to-string) ['Object to-string])
+                           (mapcat (fn [[m cs]] (method-specs m (one m cs)))
+                                   (by-name (remove #(= 'toString (plain (first %))) clauses))))
+                   (protocol-value? h)
+                   (cons h (map (fn [[m cs]] (one m cs)) (by-name clauses)))
+                   :else
+                   (mapcat (fn [[m cs]] (method-specs m (one m cs))) (by-name clauses)))))
+             groups)]
+    [out (when-not reify? to-string)]))
+
+;; a deftype's toString, as let-go prints the type: a fn of the instance with
+;; the fields bound
+(defn- to-string-fn [fields [_ [recv] & body]]
+  (let [r (gensym "this__")]
+    (list 'core/fn [r]
+          (list* 'core/let (vec (concat [recv r] (mapcat (fn [f] [f (list '. r f)]) fields)))
+                 body))))
+
+;; let-go's extend-protocol reads a method of several arities as a type: the
+;; call is its extend-type per type, which takes them
+(defn- method-impl? [x]
+  (and (seq? x) (symbol? (first x))
+       (or (vector? (second x)) (and (seq? (second x)) (vector? (first (second x)))))))
+
+(defn- extend-protocol-forms [p specs]
+  (loop [xs specs t nil ms [] started? false acc []]
+    (let [done (fn [] (if started? (conj acc (apply list 'core/extend-type t p ms)) acc))]
+      (cond (empty? xs) (apply list 'do (done))
+            (and started? (method-impl? (first xs))) (recur (rest xs) t (conj ms (first xs)) true acc)
+            :else (recur (rest xs) (first xs) [] true (done))))))
+
 (defn- mark-macro! [v]
   (when-not (or (live-entry v) (contains? @host-marked v))
-    (let [f (var-get v)]
-      (if (host-macro-fn? f)
+    (let [f (var-get v)
+          host? (host-macro-fn? f)
+          f0 f
+          f (if host?
+              (case (name (var-sym v))
+                "extend-protocol" (fn [p & specs] (extend-protocol-forms p specs))
+                ("deftype" "defrecord")
+                (fn [nm fields & specs]
+                  (let [[specs ts] (type-specs specs false)
+                        out (apply f0 nm fields specs)
+                        fs (map plain fields)]
+                    (if ts
+                      (list 'do out (list 'core/-set-deftype-to-string! (plain nm) (to-string-fn fs ts)) (plain nm))
+                      out)))
+                "reify" (fn [& specs] (apply f0 (first (type-specs specs true))))
+                f)
+              f)]
+      (if host?
         ;; one of let-go's: its arguments as let-go gives them, its expansion
         ;; qualified
         (do (swap! host-marked conj v)
-            (alter-var-root v (constantly (fn [& args] (qualify-heads (apply f args))))))
+            (alter-var-root v (constantly (fn [& args] (as-code (qualify-heads (apply f args) (arg-heads args)))))))
         (let [e (macro-entry v)]
           (swap! macro-fns assoc v [e f])
           (alter-var-root v (constantly e))))))
@@ -440,8 +732,32 @@
     (second (get (swap! macro-fns update-in [v 1] f) v))
     (alter-var-root v f)))
 
+;; Var.set: the innermost binding replaced
+(defn- var-set! [v x] (pop-binding! v) (push-binding! v x) x)
+
 (defn- thread-bindings []
   (into {} (map (fn [v] [v (var-get v)])) (distinct (apply concat @frames))))
+
+;; ---------------------------------------------------------------------------
+;; resolution: let-go's ns-resolve does not see a name a refer of a whole
+;; namespace referred, and its resolve falls back to let-go's core in a
+;; namespace that refers nothing; the JVM's read the namespace's mappings
+
+(defn- ns-resolve*
+  ([ns sym] (ns-resolve* ns nil sym))
+  ([ns env sym]
+   (when-not (contains? env sym)
+     (let [n (the-ns ns) sym (plain sym)]
+       (if-let [q (namespace sym)]
+         ;; ns/name: a var interned in ns (or the namespace q aliases)
+         (when-let [t (or (get (ns-aliases n) (symbol q)) (find-ns (symbol q)))]
+           (let [v (find-var (symbol (str (ns-name t)) (name sym)))]
+             (when (and (var? v) (= (ns-name t) (var-ns-sym v))) v)))
+         (get (ns-map n) sym))))))
+
+(defn- resolve*
+  ([sym] (ns-resolve* *ns* sym))
+  ([env sym] (ns-resolve* *ns* env sym)))
 
 ;; ---------------------------------------------------------------------------
 ;; exceptions: a class let-go constructs is its type (IllegalArgumentException.
@@ -450,11 +766,19 @@
 
 (def ^:private no-message "\u0000cohost:no-message")
 
+;; an error as a report shows it: let-go writes an error's causes into its
+;; message, a "caused by" line each, and the innermost says what failed
+(defn- error-message [e]
+  (let [m (or (ex-message e) (str e))
+        i (last-index-of m "caused by ")]
+    (if (nil? i) m (str (subs m (+ i 10)) "  (outer: " (first (string/split-lines m)) ")"))))
+
 (def ^:private message-classes
   [[#"index out of bounds|index out of range|out of bounds" 'java.lang.IndexOutOfBoundsException]
    [#"divide by zero|integer overflow" 'java.lang.ArithmeticException]
    [#"not supported on|expected Counted|cannot add|cannot subtract|cannot multiply|cannot compare|expected Number|is not a function|interface conversion" 'java.lang.ClassCastException]
    [#"strconv\.|invalid syntax" 'java.lang.NumberFormatException]
+   [#"must be nil or (map|function)" 'java.lang.ClassCastException]
    [#"doesn't have a .*-arity variant|wrong number of arguments" 'clojure.lang.ArityException]])
 
 (defn- exception-class [e]
@@ -508,21 +832,31 @@
          (not (or (.startsWith t "let-go.") (.startsWith t "java.") (.startsWith t "clojure.")
                   (string? x) (number? x) (keyword? x) (symbol? x) (boolean? x) (char? x) (fn? x))))))
 
-(def ^:private members (atom {}))
+;; a member of an object of a type user code defined: a JVM method a type
+;; cohost wrote defines is its one-method protocol's; deref and invoke are
+;; let-go's IDeref and IFn; a record's field is its key; a deftype's field is
+;; let-go's (. x -field). (let-go's (. x m) of a name the object lacks calls
+;; whatever var of that name a namespace holds: it is not asked for methods.)
+(def ^:private field-fns (atom {}))
+(defn- field-fn [nm]
+  (or (get @field-fns nm)
+      (let [f (with-ns 'cohost.hosts.lg (fn [] (eval (list 'fn* '[o] (list '. 'o (symbol (str "-" nm)))))))]
+        (swap! field-fns assoc nm f)
+        f)))
+
 (defn- invoke-member [x nm args absent]
-  (let [n (count args) k [nm n]
-        f (or (get @members k)
-              (let [ps (vec (map (fn [i] (symbol (str "a" i))) (range n)))
-                    f (with-ns 'cohost.hosts.lg
-                        (fn [] (eval (list 'fn* (vec (cons 'o ps))
-                                           (apply list '. 'o (symbol nm) ps)))))]
-                (swap! members assoc k f)
-                f))]
-    (try (apply f x args)
-         (catch Throwable e
-           (if (re-find #"expected Receiver|no method|has no method|unknown method|no field" (or (ex-message e) ""))
-             absent
-             (throw e))))))
+  (let [m (symbol nm) e (get @method-protocols m)]
+    (cond
+      (and e (satisfies? (:p e) x)) (apply (:f e) x args)
+      (and (= 'deref m) (empty? args) (satisfies? IDeref x)) (deref x)
+      (and (= 'invoke m) (satisfies? IFn x)) (apply x args)
+      (seq args) absent
+      (record? x) (let [k (keyword nm)] (if (contains? x k) (get x k) absent))
+      :else (try ((field-fn nm) x)
+                 (catch Throwable e
+                   (if (re-find #"expected Receiver|no method|has no method|unknown method|no field" (or (ex-message e) ""))
+                     absent
+                     (throw e)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; regexes: let-go's are Go's (RE2): no start index and no positions. A
@@ -582,10 +916,11 @@
 ;; ---------------------------------------------------------------------------
 ;; core names cohost boots from core.clj though let-go has its own: format is
 ;; Go's Sprintf (core.clj's boots over the shim's Formatter); str prints an
-;; exception as #error {...}; let-go's refs are atoms (no transactions)
+;; exception as #error {...}; let-go's refs are atoms (no transactions); it
+;; has no locking (core.clj's is monitor-enter / -exit)
 (def ^:private stock-anyway
   (set '[format str read-string ref ref-set alter commute ensure ref-history-count ref-min-history
-         ref-max-history dosync sync io!]))
+         ref-max-history dosync sync io! locking]))
 
 ;; the class and interface names let-go's deftype, reify and extend-type take
 ;; (core vars: java.lang.Long, clojure.lang.IDeref ...): the qualified ones, and
@@ -597,6 +932,55 @@
                                              (not (.startsWith n "core.")))))
                               (keys (ns-publics 'core)))
                       '[IDeref IFn IReduce]))))
+
+;; ---------------------------------------------------------------------------
+;; extend positions: let-go dispatches a protocol on a value's own type (or
+;; java.lang.Object, its fallback), so a JVM class or interface is each let-go
+;; type it stands for, named by a value of it (a lazy seq, a cons and a list
+;; are one type; a map entry is a vector)
+
+(def ^:private host-types
+  (let [vecs 'core/clojure.lang.IPersistentVector
+        maps 'core/clojure.lang.IPersistentMap
+        lst '(core/type (core/list 1))
+        st '(core/type (core/hash-set))
+        sst '(core/type (core/sorted-set))
+        rng '(core/type (core/range 1))
+        seqs [lst rng '(core/type (core/iterate core/inc 1)) '(core/type (core/repeat 1))]
+        sets [st sst]
+        nums ['(core/type 1) '(core/type 1.5) '(core/type 1N) '(core/type 1/2) '(core/type 1M)]
+        colls (vec (concat [vecs maps] sets seqs))]
+    {'java.lang.Object 'core/java.lang.Object
+     'java.lang.String '(core/type "") 'java.lang.CharSequence '(core/type "")
+     'java.lang.Character '(core/type \a) 'java.lang.Boolean '(core/type true)
+     'java.lang.Long '(core/type 1) 'java.lang.Integer '(core/type 1) 'java.lang.Short '(core/type 1)
+     'java.lang.Byte '(core/type 1) 'java.lang.Double '(core/type 1.5) 'java.lang.Float '(core/type 1.5)
+     'clojure.lang.BigInt '(core/type 1N) 'java.math.BigInteger '(core/type 1N)
+     'clojure.lang.Ratio '(core/type 1/2) 'java.math.BigDecimal '(core/type 1M)
+     'java.lang.Number nums
+     'clojure.lang.Keyword '(core/type :k) 'clojure.lang.Symbol '(core/type (quote s))
+     'clojure.lang.Fn '(core/type (fn* [] nil)) 'clojure.lang.AFn '(core/type (fn* [] nil))
+     'java.util.regex.Pattern '(core/type #"a") 'clojure.lang.Atom '(core/type (core/atom nil))
+     'clojure.lang.PersistentVector vecs 'clojure.lang.APersistentVector vecs 'clojure.lang.IPersistentVector vecs
+     'java.util.RandomAccess vecs 'clojure.lang.MapEntry vecs 'clojure.lang.IMapEntry vecs 'java.util.Map$Entry vecs
+     'clojure.lang.PersistentArrayMap maps 'clojure.lang.PersistentHashMap maps 'clojure.lang.APersistentMap maps
+     'clojure.lang.IPersistentMap maps 'java.util.Map maps
+     'clojure.lang.PersistentTreeMap '(core/type (core/sorted-map))
+     'clojure.lang.PersistentHashSet st 'clojure.lang.PersistentTreeSet sst
+     'clojure.lang.APersistentSet sets 'clojure.lang.IPersistentSet sets 'java.util.Set sets
+     'clojure.lang.PersistentList lst 'clojure.lang.IPersistentList lst 'clojure.lang.LazySeq lst
+     'clojure.lang.Cons lst 'clojure.lang.ASeq lst 'clojure.lang.ISeq seqs
+     'clojure.lang.Range rng 'clojure.lang.LongRange rng
+     'java.util.List (vec (cons vecs seqs)) 'clojure.lang.Sequential (vec (cons vecs seqs))
+     'java.util.Collection (vec (concat [vecs] sets seqs))
+     'java.lang.Iterable colls 'clojure.lang.IPersistentCollection colls 'clojure.lang.Seqable colls
+     'clojure.lang.Counted (vec (concat [vecs maps lst] sets)) 'clojure.lang.Associative [maps vecs]}))
+
+(def ^:private meta-tokens (set '[clojure.lang.IObj clojure.lang.IMeta]))
+
+;; extend: each protocol's methods (a map of keyword to fn) onto the type
+(defn- extend* [t & pms]
+  (doseq [[p m] (partition 2 pms)] (extend-type* p t m)))
 
 ;; ---------------------------------------------------------------------------
 
@@ -622,11 +1006,24 @@
    :resolve-core (fn [sym]
                    (let [v (when-not (contains? stock-anyway sym) (ns-resolve 'core sym))]
                      (when (and (var? v) (not (:private (meta v)))) v)))
+   ;; (let-go writes *out* unbuffered: flush has nothing to do)
+   :core-extras {'ns-resolve ns-resolve* 'resolve resolve* 'extend extend*
+                 'newline (fn [] (print "\n") nil) 'flush (fn [] nil)}
+   :host-type (fn [token] (get host-types token))
+   ;; (a reify carries metadata, as the JVM's does: let-go names its type reify__N)
+   :host-instance? (fn [token x]
+                     (boolean (and (contains? meta-tokens token)
+                                   (user-type? x) (.startsWith (str (type x)) "reify__"))))
+   :protocol-var? (fn [ns-sym name-sym]
+                    (let [v (find-var (symbol (str ns-sym) (str name-sym)))]
+                      (and (var? v) (= "let-go.lang.Protocol" (str (type (var-get v)))))))
    :plain-symbol plain
    ;; fn* takes no name: the codemod binds it with letfn* (see letfn-code)
    :named-fn*? false
+   :expand-macro expand-macro
    :read-string (fn ([s] (read-string* s {})) ([s opts] (read-string* s opts)))
    :host-read-string (fn [s] (read-string s))
+   :edn-read-string edn-read-string
    :code-form as-code
    :eval (fn [form] (eval (as-code form)))
    :with-ns with-ns
@@ -651,6 +1048,7 @@
                            (doseq [[from to] rename]
                              (intern into-ns to (var-get (find-var (symbol (str from-ns) (str from))))))))))
    :alias! (fn [into-ns a target] (in-ns-of into-ns (fn [] (alias a target))))
+   :namespace? (fn [x] (= "let-go.lang.Namespace" (str (type x))))
    :var-get var-get*
    :var-raw-root raw-root
    :alter-var-root! alter-root!
@@ -660,9 +1058,13 @@
    :push-thread-bindings! push-bindings!
    :pop-thread-bindings! pop-bindings!
    :var-thread-bound? bound-in-frames?
+   :var-set! var-set!
    :thread-bindings thread-bindings
    :var-bound? (fn [v] (bound? v))
+   :error-message error-message
    :exception-class exception-class
+   ;; (let-go's own errors carry ex-data, a :trace)
+   :ex-info? (fn [x] (and (= "let-go.lang.ExceptionInfo" (str (type x))) (not (contains? (ex-data x) :cohost/class))))
    :exception-message exception-message
    :exception-string exception-string
    :new-exception new-exception
@@ -685,12 +1087,14 @@
                   (let [v (vec (sort cmp (seq arr)))]
                     (dotimes [i (count v)] (aset arr i (nth v i)))
                     arr))
+   :array? (fn [x] (= "let-go.lang.Array" (str (type x))))
    :char? (fn [x] (char? x))
    :char-code (fn [c] (int c))
    :volatile? (fn [x] (= "let-go.lang.Volatile" (str (type x))))
    :delay? (fn [x] (delay? x))
    :reduced? (fn [x] (reduced? x))
-   :deref? (fn [x] (contains? #{"let-go.lang.Atom" "let-go.lang.Volatile" "let-go.lang.Delay" "let-go.lang.Reduced" "let-go.lang.Promise"} (str (type x))))
+   :deref? (fn [x] (or (contains? #{"let-go.lang.Atom" "let-go.lang.Volatile" "let-go.lang.Delay" "let-go.lang.Reduced" "let-go.lang.Promise"} (str (type x)))
+                       (and (user-type? x) (satisfies? IDeref x))))
    :pending? (fn [x] (contains? #{"let-go.lang.Delay" "let-go.lang.Promise"} (str (type x))))
    :uuid? (fn [x] (uuid? x))
    :bigint? (fn [x] (= "let-go.lang.BigInt" (str (type x))))

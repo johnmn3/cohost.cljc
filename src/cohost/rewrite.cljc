@@ -15,6 +15,12 @@
 ;; callers' code.
 (ns cohost.rewrite)
 
+(def ^:dynamic *plain*
+  "A symbol taken from a form, bare: the adapter's :plain-symbol (a let-go
+   symbol carrying metadata is a wrapper no symbol equals, with no name or
+   namespace of its own); identity elsewhere."
+  identity)
+
 ;; ---------------------------------------------------------------------------
 ;; small string helpers (no clojure.string: keep the host surface minimal)
 
@@ -42,13 +48,14 @@
    Memoized (a per-character walk, asked at every static, constructor and
    method site)."
   [sym]
+  (let [sym (*plain* sym)]
   (or (get @simple-class-names sym)
       (let [s (name sym)
             i (last-dot s)
             s (if (neg? i) s (subs s (inc i)))
             r (apply str (map (fn [c] (if (= "$" (str c)) "_" (str c))) s))]
         (swap! simple-class-names assoc sym r)
-        r)))
+        r))))
 
 ;; ---------------------------------------------------------------------------
 ;; class-symbol recognition
@@ -109,11 +116,6 @@
   "nil, or a fn from a class token to the host type form(s) an `extend`,
    `extend-type` or `extend-protocol` position should name on this host."
   nil)
-(def ^:dynamic *plain*
-  "A name taken from a form, bare: the adapter's :plain-symbol (a let-go symbol
-   carrying metadata is a wrapper no symbol equals); identity elsewhere."
-  identity)
-
 (def ^:dynamic *locals*
   "The names the enclosing forms bind (fn and let params, catch bindings, the
    binding vectors of let / loop / for / doseq ... before they expand): a
@@ -204,7 +206,7 @@
   [local token d]
   (let [i (or (loop [i 0] (cond (= i (count marked-classes)) nil (= token (nth marked-classes i)) i :else (recur (inc i))))
               (count marked-classes))]
-    (symbol (str marker-prefix i "_" d "__" (name local)))))
+    (symbol (str marker-prefix i "_" d "__" (name (*plain* local))))))
 
 (defn- parse-nat [s]
   (when (seq s)
@@ -216,7 +218,7 @@
 (defn- marker-info
   "[local token-or-nil depth] of a marker symbol, else nil."
   [sym]
-  (let [n (name sym) p (count marker-prefix)]
+  (let [n (name (*plain* sym)) p (count marker-prefix)]
     (when (and (> (count n) p) (= marker-prefix (subs n 0 p)))
       (let [r (subs n p)
             us (loop [j 0 acc []] (if (>= j (count r)) acc (recur (inc j) (if (= "_" (subs r j (inc j))) (conj acc j) acc))))]
@@ -272,10 +274,11 @@
   "A bare symbol naming a JVM class (or clojure.core.protocols, whose fns the
    rewriter treats like statics: `clojure.core.protocols/coll-reduce`)."
   [x]
-  (and (symbol? x) (nil? (namespace x))
-       (or (contains? java-lang-names x)
-           (contains? *imports* x)
-           (class-prefixed? (name x)))))
+  (let [x (*plain* x)]
+    (and (symbol? x) (nil? (namespace x))
+         (or (contains? java-lang-names x)
+             (contains? *imports* x)
+             (class-prefixed? (name x))))))
 
 (def static-fields
   "Members of `(. Class member)` / `Class/member` that are fields (values), not
@@ -295,13 +298,14 @@
    is a class (or a class constructor); else the symbol itself. Syntax-quote in
    a library namespace qualifies its imported class names with that namespace."
   [x]
+  (let [x (*plain* x)]
   (if (and (symbol? x) (namespace x)
            (or (contains? core-ns-names (namespace x)) (= *current-ns* (namespace x))
                (contains? *loader-nses* (namespace x))))
     (let [n (name x)
           base (if (and (> (count n) 1) (ends-with? n ".")) (subs n 0 (dec (count n))) n)]
       (if (class-sym? (symbol base)) (symbol n) x))
-    x))
+    x)))
 
 (def special-heads
   (set '[quote var . new try catch finally fn* let* loop* letfn* def do if throw
@@ -311,10 +315,11 @@
   "basilisp.core/new -> new: some readers namespace-qualify special forms
    inside syntax-quote."
   [h]
-  (if (and (symbol? h) (namespace h) (contains? core-ns-names (namespace h))
-           (contains? special-heads (symbol (name h))))
-    (symbol (name h))
-    h))
+  (let [h (*plain* h)]
+    (if (and (symbol? h) (namespace h) (contains? core-ns-names (namespace h))
+             (contains? special-heads (symbol (name h))))
+      (symbol (name h))
+      h)))
 
 (def reader-plumbing
   "clojure.core/ names a reader emits for `, ~@, @ and #': host plumbing that
@@ -326,7 +331,8 @@
   "Explicit clojure.core/x references name the booted core; explicit
    references to a stock library booted under another name name that."
   [ctx x]
-  (if-let [ns (and (symbol? x) (namespace x) (not (:cohost/host (meta x))) (namespace x))]
+  (let [host? (:cohost/host (meta x)) x (*plain* x)]
+  (if-let [ns (and (symbol? x) (namespace x) (not host?) (namespace x))]
     (cond (= "clojure.core" ns) (if (or (and (contains? reader-plumbing (symbol (name x)))
                                              ;; @x after the boot names the stock deref, so
                                              ;; with-redefs of deref reaches it, as on the JVM
@@ -338,7 +344,7 @@
                                   (symbol (:core-ns ctx) (name x)))
           (contains? *ns-renames* ns) (symbol (get *ns-renames* ns) (name x))
           :else x)
-    x))
+    x)))
 
 (def catch-all-classes
   "Catches everything. `Exception` is not here: on the JVM it leaves Errors
@@ -357,9 +363,9 @@
    shim namespace (self-hosted ClojureScript) supplies a js/ property path."
   (fn [nm] (symbol shim-ns nm)))
 
-(defn static-sym [c m] (*shim-ref* (str (simple-class-name c) "-" (name m))))
+(defn static-sym [c m] (*shim-ref* (str (simple-class-name c) "-" (name (*plain* m)))))
 (defn ctor-sym   [c]   (*shim-ref* (str "new-" (simple-class-name c))))
-(defn method-sym [m]   (*shim-ref* (str "-" (name m))))
+(defn method-sym [m]   (*shim-ref* (str "-" (name (*plain* m)))))
 (defn- shim-fn   [nm]  (*shim-ref* nm))
 
 (defn make-ctx
@@ -371,7 +377,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms vector-rest-args? plain-symbol]
+           instance-fn missing-dot try-all named-fn*? special-forms vector-rest-args? plain-symbol expand-macro]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:plain-symbol (or plain-symbol identity)
    :shim-names shim-names
@@ -394,6 +400,11 @@
    :resolve-head resolve-head
    :stock-name (or stock-name (constantly nil))
    :rewritten-macro? (or rewritten-macro? (constantly false))
+   ;; expand-macro: nil, or (fn [var form locals]) -> the expansion of a call
+   ;; of the macro var holds, as it wrote it, given an &env of the locals (the
+   ;; form itself when var holds none): where the host's compiler hands a
+   ;; macro no &env (let-go), the codemod expands it in place
+   :expand-macro expand-macro
    :inline-fn inline-fn
    ;; try-all: (fn [thunk]) -> (thunk), or nil when it throws anything: the
    ;; host's catch-all (cohost.adapter/try-all), for an inline expansion that
@@ -450,9 +461,9 @@
   "Is the shim var (named by its unqualified name) present?"
   [ctx nm] (contains? (:shim-names ctx) (symbol nm)))
 
-(defn- static-name [c m] (str (simple-class-name c) "-" (name m)))
+(defn- static-name [c m] (str (simple-class-name c) "-" (name (*plain* m))))
 (defn- ctor-name [c] (str "new-" (simple-class-name c)))
-(defn- method-name [m] (str "-" (name m)))
+(defn- method-name [m] (str "-" (name (*plain* m))))
 
 (defn- miss! [ctx kind & ks]
   (swap! (:misses ctx) update (into [kind] ks) (fnil inc 0))
@@ -501,7 +512,11 @@
   [out orig]
   (if (meta-capable? out)
     (let [m (strip-meta (meta orig))]
-      (if (= m (meta out)) out (with-meta out (or m {}))))
+      (cond (= m (meta out)) out
+            ;; left none: bare (a let-go symbol given any, even none, is a
+            ;; wrapper no symbol equals)
+            (nil? m) (*plain* (with-meta out {}))
+            :else (with-meta out m)))
     out))
 
 ;; ---------------------------------------------------------------------------
@@ -546,7 +561,7 @@
   [x]
   (cond (symbol? x) (= 'java.lang.StringBuilder (get *local-classes* x))
         (sb-ctor? x) true
-        (seq? x) (let [h (first x)]
+        (seq? x) (let [h (*plain* (first x))]
                    (and (symbol? h) (nil? (namespace h))
                         (contains? sb-returning h)
                         (sb-typed? (second x))))
@@ -629,6 +644,7 @@
         [m args] (if call? [(first x) (rest x)] [x (rest more)])
         ;; a member is named by its name alone, as the JVM compiler reads it: a
         ;; syntax-quoted inline expansion spells (. RT (cohost.core/aget a i))
+        m (*plain* m)
         m (if (and (symbol? m) (namespace m)) (symbol (name m)) m)]
     (cond
       (class-sym? target)
@@ -651,7 +667,7 @@
         ;; its one catch-all clause is kept, not wrapped in another layer
         own? (and (= 1 (count catches))
                   (let [[_ c b] (first catches)]
-                    (and (= c (:catch-all ctx)) (symbol? b) (starts-with? (name b) "e__stock"))))
+                    (and (= c (:catch-all ctx)) (symbol? b) (starts-with? (name (*plain* b)) "e__stock"))))
         catch-clause
         (if own?
           (let [[_ c b & cb] (first catches)]
@@ -845,10 +861,11 @@
   "A class symbol as a value: its full name, so the token compares equal to
    what `class` returns and dispatches a multimethod defined on it."
   [s]
+  (let [s (*plain* s)]
   (cond (contains? *imports* s) (get *imports* s)
         (contains? class-canon s) (get class-canon s)
         (neg? (last-dot (name s))) (symbol (str "java.lang." (name s)))
-        :else s))
+        :else s)))
 
 (defn- user-name?
   "A bare symbol spelled like a class that is a local, a var of the namespace
@@ -882,9 +899,10 @@
 (defn- spec-head
   "The unqualified spec head of h, also when a macro's syntax-quote qualified it."
   [h]
+  (let [h (*plain* h)]
   (when (and (symbol? h) (contains? spec-heads (symbol (name h)))
              (or (nil? (namespace h)) (contains? core-ns-names (namespace h))))
-    (symbol (name h))))
+    (symbol (name h)))))
 
 (defn- host-types
   "The host type forms a type position stands for: a class symbol goes
@@ -933,7 +951,7 @@
    another name (or a namespace the loader made) and Proto is one of its
    protocols; else nil (a record or deftype keeps its class test)."
   [ctx s]
-  (let [n (name s) i (last-dot n)]
+  (let [n (name (*plain* s)) i (last-dot n)]
     (when (pos? i)
       (let [prefix (subs n 0 i) nm (subs n (inc i))]
         (when-let [mapped (or (get *ns-renames* prefix) (when (contains? *loader-nses* prefix) prefix))]
@@ -1286,7 +1304,10 @@
             ;; ((-> 10 (- 1 2))), assert and is reading the forms, and the
             ;; locals of &env (typed ones through their markers)
             (rewritten-macro? ctx h)
-            (apply list (macro-head ctx h) args)
+            (if-let [ex (:expand-macro ctx)]
+              (let [x (ex (head-var ctx h) form *locals*)]
+                (if (identical? x form) (apply list (macro-head ctx h) args) (rw ctx x)))
+              (apply list (macro-head ctx h) args))
             ;; a binding form before it expands: what it binds are locals
             (and hn (contains? binding-heads hn))
             (let [names (bound-names hn args)]

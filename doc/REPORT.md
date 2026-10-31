@@ -45,20 +45,20 @@ source, `clojure.X` booting into `cohost.X`, and its cases are compared with
 require (`src/cohost/lib_battery.cljc`; regenerate, never edit, its expected
 values).
 
-| library | cases | jolt | JVM | basilisp | ClojureScript | ClojureWasm | Phel |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| clojure.walk | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
-| clojure.set | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
-| clojure.string | 10 | 10 | 10 | 10 | 10 | 10 | 10 |
-| clojure.zip | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
-| clojure.data | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
-| clojure.edn | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
-| clojure.template | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
-| clojure.test | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
-| clojure.math | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
-| clojure.stacktrace | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
-| clojure.repl | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
-| clojure.spec.alpha 0.5.238 | 6 | 6 | 6 | 6 | 6 | 6 | 6 |
+| library | cases | jolt | JVM | basilisp | ClojureScript | ClojureWasm | Phel | let-go |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| clojure.walk | 7 | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
+| clojure.set | 5 | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
+| clojure.string | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 10 |
+| clojure.zip | 7 | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
+| clojure.data | 5 | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
+| clojure.edn | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
+| clojure.template | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+| clojure.test | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
+| clojure.math | 7 | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
+| clojure.stacktrace | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+| clojure.repl | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
+| clojure.spec.alpha 0.5.238 | 6 | 6 | 6 | 6 | 6 | 6 | 6 | 6 |
 
 Every host loads all twelve. clojure.repl's `source` and
 `set-break-handler!` are JVM facilities (class-loader resources,
@@ -532,6 +532,70 @@ open is listed under "Deliberately not done here". What changed:
     requires; `dev/phel_main.phel` loads `phel.string` (Phel's `clojure.string`)
     for the bench's host side.
 
+- **let-go** (v1.13.0, Go) is a Clojure dialect on a Go VM; its runtime is its own, so
+  its adapter (`src/cohost/hosts/lg.lg`) builds the contract from its pieces. Each fact
+  below was measured on the `lg` binary and found in its source.
+  - **Namespaces.** Its core namespace is `core`; every namespace it makes refers all
+    of it, and its `resolve` falls back to it in a namespace that refers nothing.
+    cohost's namespaces drop those refers and refer only `throw`, `new`, `.` and
+    `monitor-enter`/`-exit` (core vars there, special forms on the JVM) and the
+    `clojure.lang.*` / `java.*` names its `deftype` and `extend-type` take. Its
+    `ns-resolve` does not see a name a refer of a whole namespace referred: the
+    adapter's `resolve` and `ns-resolve` read the namespace's mappings. A binding of
+    `*ns*` around `eval` does not come back; `in-ns` moves the compiler's namespace.
+  - **Symbols** are Go strings and carry no metadata: `with-meta` wraps one in a
+    value no symbol equals and whose `name` and `namespace` throw, even
+    `(with-meta s nil)`. The reader keeps a symbol's metadata on that wrapper; the
+    codemod takes every symbol bare (`:plain-symbol`); the shim's `withMeta` of a
+    symbol with none is the symbol, and `=`, `hash` and `name` take the bare one.
+  - **Reading.** Its code reader expands syntax-quote at read time qualifying
+    nothing, reads `^m x` as `(with-meta x m)` and `#{}` as `(hash-set ...)` (so
+    `'#{a}` is a list); its data reader reads real sets but no symbol metadata, and
+    drops a tag it does not know. cohost reads with a scan of each form's extent,
+    marks `` ` ``, `^` and `#tag` in the text, has the data reader read it, then
+    expands the marks: syntax-quote as the JVM's (an alias's target, the namespace
+    a name resolves to), metadata, and a tagged literal through `*data-readers*`
+    (an edn read's `:readers` and `:default`).
+  - **Compiling.** `def` takes its name's metadata as data, unevaluated: a value
+    that is code (deftest's `:test` fn, an `:inline` fn) is assoc'd onto the var
+    after. Its compiler takes no vector that carries metadata, nor one `mapv` or
+    `into` built past 32 elements (another vector type: Go's "index out of range
+    [-1]"), compiles an empty list that carries metadata as a call of nil, and
+    drops a map's or a set's metadata: cohost writes such a literal
+    `(with-meta coll m)`. `fn*` takes no name (`:named-fn*? false`: a cell) and
+    there is no `letfn*`. `(= a b)` compiles to its VM's equality whatever var the
+    bare `=` names (so do `+`, `-`, `*`, `<`, `<=`, `>`, `>=`, `inc`, `dec` and the
+    bit operations, with the JVM's results): cohost writes `=` qualified.
+  - **Macros** get their arguments alone (`&form` through `core/*macro-form*`) and
+    no `&env`. The codemod expands a call of a cohost macro itself, where it knows
+    the locals (`:expand-macro`), so `&env` is a map of them. let-go's own macros
+    expand to bare names, which resolve where the expansion lands: their heads are
+    written `core/...`, but for a local's call and a head the caller wrote.
+  - **Bindings** are per var (`push-binding!` / `pop-binding!`); `var-set` pops
+    and pushes the innermost.
+  - **Types.** `deftype`, `defrecord` and `reify` take protocols alone, and one fn
+    per method name (a later arity replaces an earlier). The adapter makes one fn of
+    a method's arities, a JVM interface's method a protocol of that method,
+    `IDeref`'s `deref` let-go's `IDeref`, `IFn`'s `invoke` its `IFn`, and a
+    deftype's `toString` let-go's printing hook. Its `.` of a name an object lacks
+    calls any var of that name a namespace holds, so the adapter calls those
+    protocols itself. Its `extend-protocol` reads a method of several arities as
+    a type: the adapter writes one `extend-type` per type. A protocol dispatches
+    on a value's exact type or `Object`: an extend position's JVM class is each
+    let-go type it stands for (a lazy seq, a cons and a list are one type; a map
+    entry is a vector). There is no `extend`. A record is no `coll?`.
+  - **Errors** are `java.lang.Exception` with a message, whose words decide the
+    JVM class (`divide by zero` is `ArithmeticException`); a cause chain is written
+    into the message, one "caused by" line each. `ex-info` takes no nil message.
+  - **Regexes** are Go's RE2: no start index and no positions. The adapter finds a
+    search's matches once, in order, and their positions from the text between
+    them; a group's position is not known.
+  - **Missing** from its core, and supplied: `newline`, `flush` (it writes
+    unbuffered), `locking` (core.clj's, over `monitor-enter`), `set-validator!` (its
+    atom takes `:validator` when made: cohost.core takes its `atom`), a `conj` of
+    a map or nil onto a map. `format` is Go's `Sprintf`: core.clj's boots over the
+    shim's Formatter.
+
 ## Core battery cases that fail, and why (host facts)
 
 - `(= 1 1.0)` is `true` on ClojureScript (one number type) and on basilisp
@@ -549,6 +613,15 @@ open is listed under "Deliberately not done here". What changed:
 
   The row "alter-var-root inside binding changes the root" gets `[1 11]` for
   `[1 10]`.
+- `Matcher.start(g)` / `end(g)` on let-go: its regexes are Go's RE2, which let-go
+  gives no positions; the adapter finds a whole match's from the text around it, not a
+  group's. The row "Matcher group spans" fails with the shim's "not available on this
+  host".
+- A set of deftype instances on let-go: let-go's sets and map keys hash and compare a
+  deftype instance by identity (`DTypeInstance.Equals`/`Hash`, `vm/deftype.go`), and no
+  hook reaches the type's own methods. The type's `equals` and `hashCode` answer `=`
+  and `hash` through core.clj's. The row "deftype implementing JVM interfaces" gets
+  `[5 true 2]` for `[5 true 1]`: the set of two equal instances keeps both.
 - `&env` inside a user macro is ClojureScript's analyzer env, not the JVM's
   locals map. basilisp passes a locals map, but `&env` first: cohost hands a
   stock or user macro `&form` and `&env` in core.clj's order.

@@ -338,13 +338,14 @@
    'clojure.lang.IPersistentSet set?
    'clojure.lang.IPersistentList #(or (list? %) (host-queue? %))
    'clojure.lang.IPersistentStack #(or (vector? %) (list? %) (host-queue? %))
-   'clojure.lang.IPersistentCollection coll?
+   ;; (a record is a collection where the host's coll? says not: let-go's)
+   'clojure.lang.IPersistentCollection #(or (coll? %) (host-record? %))
    'clojure.lang.ISeq seq?
-   'clojure.lang.Seqable coll?
+   'clojure.lang.Seqable #(or (coll? %) (host-record? %))
    'clojure.lang.Sequential sequential?
-   'clojure.lang.Associative associative?
+   'clojure.lang.Associative #(or (associative? %) (host-record? %))
    'clojure.lang.ILookup #(or (map? %) (vector? %) (host-record? %))
-   'clojure.lang.Counted h-counted?
+   'clojure.lang.Counted #(or (h-counted? %) (host-record? %))
    'clojure.lang.Indexed h-indexed?
    'clojure.lang.Reversible h-reversible?
    'clojure.lang.Sorted h-sorted?
@@ -552,7 +553,9 @@
 (def RT-next next)
 (def RT-more rest)
 (def RT-seq seq)
-(def RT-conj conj)
+;; (let-go's conj takes no map onto a map, nor nil, as the JVM's does)
+(def RT-conj #?(:lg (fn [coll x] (if (and (map? coll) (or (nil? x) (map? x))) (into coll x) (conj coll x)))
+                :default conj))
 (def RT-count count)
 (def RT-nth nth)
 ;; Phel's get reads any other object as a PHP array, which throws: the JVM's
@@ -765,8 +768,20 @@
 (def TimeUnit-SECONDS :seconds)
 (def TimeUnit-NANOSECONDS :nanoseconds)
 
-(def Util-equiv =)
-(def Util-equals =)
+;; let-go: a symbol carrying metadata is a wrapper no symbol equals, whose name
+;; and namespace it does not answer: equality, hashes and names take the bare
+;; symbol (host/plain-symbol). let-go compares and hashes an instance of a type
+;; user code defined by identity: its own equals and hashCode answer here.
+(declare host-object?)
+#?(:lg (defn- lg-own [x m args]
+         (if (and (some? x) (not (coll? x)) (not (number? x)) (not (string? x)) (not (keyword? x))
+                  (not (host-record? x)) (host-object? x))
+           (host/invoke-member x m args absent)
+           absent)))
+(def Util-equiv #?(:lg (fn [a b] (let [a (host/plain-symbol a) b (host/plain-symbol b) r (lg-own a "equals" [b])]
+                                   (if (identical? r absent) (= a b) (boolean r))))
+                   :default =))
+(def Util-equals Util-equiv)
 (def Util-compare compare)
 ;; Util.hash is Object.hashCode (nil is 0), not hasheq; hashCombine is boost's,
 ;; in 32-bit int arithmetic (0x9e3779b9 as an int)
@@ -775,7 +790,9 @@
 (def Util-hashCombine (fn [seed h]
                         (let [seed (wrap32 seed)]
                           (bit-xor seed (wrap32 (+ (wrap32 h) -1640531527 (wrap32 (bit-shift-left seed 6)) (bit-shift-right seed 2)))))))
-(def Util-hasheq hash)
+(def Util-hasheq #?(:lg (fn [x] (let [x (host/plain-symbol x) r (lg-own x "hashCode" [])]
+                                  (if (identical? r absent) (hash x) r)))
+                    :default hash))
 ;; JVM keywords are interned, so equal keywords are identical; a host that
 ;; does not intern them (ClojureScript) answers by equality for keywords
 (def Util-identical (let [h (host-fn 'identical? (fn [a b] (identical? a b)))]
@@ -826,12 +843,15 @@
                            0 (seq (host/ns-interns-map @locals-ns)))]
           (reset! live-locals left))))))
 
-(def Keyword-intern (fn ([x] (if (symbol? x) (keyword (namespace x) (name x)) (keyword x)))
+(def Keyword-intern (fn ([x] (if (symbol? x)
+                               (let [x #?(:lg (host/plain-symbol x) :default x)] (keyword (namespace x) (name x)))
+                               (keyword x)))
                       ([ns n] (keyword ns n))))
 (def Keyword-find (let [fk (host-fn 'find-keyword nil)]
                     (fn ([x] (if fk (if (symbol? x) (fk (namespace x) (name x)) (fk x)) (Keyword-intern x)))
                       ([ns n] (if fk (fk ns n) (keyword ns n))))))
-(def Symbol-intern (fn ([s] (symbol s)) ([ns n] (symbol ns n))))
+(def Symbol-intern #?(:lg (fn ([s] (symbol (host/plain-symbol s))) ([ns n] (symbol ns n)))
+                     :default (fn ([s] (symbol s)) ([ns n] (symbol ns n)))))
 (def Symbol-create (fn ([s] (symbol nil s)) ([ns n] (symbol ns n))))
 (def Namespace-find (host-fn 'find-ns (unsupported "find-ns")))
 (def Namespace-findOrCreate (host-fn 'create-ns (unsupported "create-ns")))
@@ -895,7 +915,7 @@
     ;; nothing, a [k v] pair or a map its entries, anything else is an error
     (let [s (seq arr)
           odd (odd? (count s))
-          tail (when odd (conj {} (last s)))]
+          tail (when odd (RT-conj {} (last s)))]
       ;; the tail's entries follow the pairs; each key keeps its first
       ;; position and its last value, in the host's array map, which keeps
       ;; that order at any size (assoc would make a hash map past 8 entries)
@@ -1020,6 +1040,8 @@
      :lpy (fn [x] (instance? python/type x))
      ;; (Phel: a user type's class is the token of its PHP class, type-of's)
      :phel (fn [x] (and (symbol? x) (php/class_exists (php/str_replace "." "\\" (str x)) false)))
+     ;; (let-go: a user type's class is its type, a let-go.lang.Type)
+     :lg (fn [x] (= "let-go.lang.Type" (str (type x))))
      :default (host-fn 'class? (constantly false))))
 (defn- h-isa? [h child parent]
   (boolean
@@ -1716,7 +1738,10 @@
 (def -peek peek)
 (def -pop (fn [x] (if (h-transient? x) (h-pop! x) (pop x))))
 (def -meta (fn [x] (host/meta* x)))
-(def -withMeta with-meta)
+;; let-go: a symbol given no metadata is the bare symbol (with-meta makes a
+;; wrapper no symbol equals, even of none)
+(def -withMeta #?(:lg (fn [x m] (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m)))
+                  :default with-meta))
 (defn- host-meta [m] (if (host/strip-inline?) (dissoc m :inline :inline-arities) m))
 (defn- meta-map [m]
   (if (or (nil? m) (map? m)) m (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentMap m)))))
@@ -1748,14 +1773,14 @@
 
 (def -kvreduce (let [rk (host-fn 'reduce-kv (fn [f init coll] (reduce (fn [acc [k v]] (f acc k v)) init coll)))] (fn [coll f init] (rk f init coll))))
 (def -equiv =)
-(def -equals =)
+(def -equals Util-equals)
 (declare java-hash)
 (def -hashCode (jstatic 'Object/hashCode
                         (fn [x] (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
                                       (boolean? x) (if x 1231 1237)
                                       (or (string? x) (h-char? x) (integer? x)) (java-hash (if (h-char? x) (str x) x))
-                                      :else (hash x)))))
-(def -hasheq hash)
+                                      :else (Util-hasheq x)))))
+(def -hasheq Util-hasheq)
 ;; a host exception as the JVM prints it, where the host's str does not
 (def ^:private h-exception-string (host/capability :exception-string))
 (def -toString (fn [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x)
@@ -1796,13 +1821,13 @@
 ;; Named.getName; a non-Named value is the JVM's ClassCastException (nil: NPE);
 ;; a host class object (from `class` of a record) prints its name
 (def -getName (fn [x] (cond (h-namespace? x) (host/ns-name* x)
-                            (symbol? x) (name x)
+                            (symbol? x) (name #?(:lg (host/plain-symbol x) :default x))
                             (keyword? x) (name x)
                             (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
                             (or (string? x) (number? x) (boolean? x) (coll? x))
                             (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Named x)))
                             :else (str x))))
-(def -getNamespace namespace)
+(def -getNamespace #?(:lg (fn [x] (namespace (host/plain-symbol x))) :default namespace))
 (def -getSimpleName (fn [x] (let [n (if (symbol? x) (name (canon x)) (pr-str x))
                                   i (max (host/last-index-of* n ".") (host/last-index-of* n "$") (host/last-index-of* n "/"))]
                               (subs n (inc i)))))
@@ -2173,7 +2198,8 @@
 (defn- jformat [fmt args]
   (let [fmt (str fmt) n (count fmt) args (vec args)
         at (fn [i] (when (< i n) (str (nth fmt i))))
-        digit? (fn [c] (and (some? c) (<= 48 (h-char-code c) 57)))
+        ;; (c is a one-character string: a host with chars codes its char)
+        digit? (fn [c] (and (some? c) (<= 48 (h-char-code (first c)) 57)))
         ex (fn [k msg] (host/ex* k msg))]
     (loop [i 0 out [] ordinary 0 prev nil]
       (if (>= i n)
