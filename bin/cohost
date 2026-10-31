@@ -3,19 +3,20 @@
 ;;
 ;;   cohost :<host> <clojure CLI args...>
 ;;
-;; The first argument names the runtime (cljs, jvm, jolt, lpy, cljw);
-;; everything after it is the Clojure CLI's own surface: -Sdeps, -M/-X
-;; aliases, -e, -i, -m, -X fn, -Spath, -P, -Sdescribe. deps.edn in the
-;; current directory is resolved with tools.deps (via the Clojure CLI,
-;; the same resolver `clj` uses); every classpath entry becomes a
-;; cohost source root — directories as they are, jars extracted under
-;; ~/.cache/cohost/deps — so booted code's `require` finds dependency
-;; namespaces through cohost's ordinary loader. :jvm delegates to the
-;; real Clojure CLI untouched; -T (tools) does too, on every host.
+;; The first argument names the runtime; everything after it is the Clojure
+;; CLI's own surface: -Sdeps, -A/-M/-X aliases (with their :main-opts,
+;; :exec-fn and :exec-args), -e, -i, -m, a script, -, -r, -X fn kvs, -Spath,
+;; -P, -Sdescribe. deps.edn in the current directory is resolved with
+;; tools.deps (through the Clojure CLI, the resolver `clj` uses); every
+;; classpath entry becomes a cohost source root — directories as they are,
+;; jars extracted under ~/.cache/cohost/deps — so booted code's `require`
+;; finds dependency namespaces through cohost's ordinary loader. :jvm runs
+;; the real Clojure CLI; -T (tools) does too, on every host.
 ;;
-;; Design + what's supported: doc/CLI.md.
+;; Design, what's supported and what isn't: doc/CLI.md.
 (require '[babashka.fs :as fs]
          '[babashka.process :as p]
+         '[clojure.edn :as edn]
          '[clojure.string :as str]
          '[clojure.java.io :as io])
 
@@ -24,8 +25,8 @@
 (def stock-root (str repo "/resources/cohost/clojure-1.12.0"))
 (def cache-dir (str (fs/home) "/.cache/cohost"))
 
-(def hosts #{"cljs" "jvm" "jolt" "lpy" "cljw" "phel" "lg" "cljrs" "jank"})
-(def unwired #{"phel" "lg" "cljrs" "jank"})
+(def wired ["cljs" "jolt" "lpy" "cljw" "phel" "lg"])
+(def hosts (set (concat ["jvm" "cljrs" "jank"] wired)))
 
 (defn die [code & lines]
   (doseq [l lines] (binding [*out* *err*] (println l)))
@@ -34,7 +35,7 @@
 (defn usage []
   (die 2
        "usage: cohost :<host> <clojure CLI args...>"
-       "  hosts: :cljs :jvm :jolt :lpy :cljw   (:phel :lg :cljrs :jank not wired yet)"
+       (str "  hosts: :jvm " (str/join " " (map #(str ":" %) wired)) "   (:cljrs :jank not wired yet)")
        "  e.g. cohost :cljs -e \"(+ 1 2)\""
        "       cohost :cljs -M -m demo.main arg1"
        "       cohost :jolt -X demo.core/run :x 1"
@@ -44,6 +45,31 @@
   "Run cmd with inherited stdio in dir; -> its exit code."
   [dir cmd]
   (-> (p/process cmd {:dir dir :inherit true}) deref :exit))
+
+;; --------------------------------------------------------------------------
+;; arguments, as the Clojure CLI's own script reads them: its options first,
+;; then -M/-X/-T (or the first other argument) and what follows it
+
+(defn parse-args [args]
+  (loop [[a & more :as args] args
+         o {:sdeps [] :resolve [] :aliases []}]
+    (cond
+      (nil? a) o
+      (= a "-Sdeps") (recur (next more) (update o :sdeps conj (first more)))
+      (= a "-Sthreads") (recur (next more) (update o :resolve conj a (first more)))
+      (#{"-Srepro" "-Sforce"} a) (recur more (update o :resolve conj a))
+      (= a "-Spath") (recur more (assoc o :spath? true))
+      (= a "-Sdescribe") (recur more (assoc o :describe? true))
+      (= a "-Sverbose") (recur more (assoc o :verbose? true))
+      (= a "-P") (recur more (assoc o :prepare? true))
+      ;; JVM options mean nothing off the JVM
+      (str/starts-with? a "-J") (recur more o)
+      (re-matches #"-A(:.*)?" a) (recur more (update o :aliases conj a))
+      (re-matches #"-M(:.*)?" a) (assoc o :mode :M :alias a :main more)
+      (re-matches #"-X(:.*)?" a) (assoc o :mode :X :alias a :main more)
+      (re-matches #"-T(:.*)?" a) (assoc o :mode :T)
+      ;; anything else starts clojure.main's own arguments
+      :else (assoc o :mode :M :main args))))
 
 ;; --------------------------------------------------------------------------
 ;; tools.deps resolution
@@ -68,90 +94,85 @@
       (spit (fs/file dir ".cohost-done") ""))
     (str dir)))
 
-(defn resolve-roots
-  "tools.deps resolution of the current directory's deps.edn, through
-   `clojure -Spath` (the Clojure CLI is tools.deps' front end, so
-   -Sdeps/aliases/root+user config merge exactly as they do for `clj`).
-   -> ordered source roots: classpath directories as they are, jars
-   extracted. The org.clojure/clojure jar is skipped: the host runtime
-   IS the language, booted from cohost's pinned stock sources."
-  [cwd sdeps alias-token]
-  (let [cmd (vec (concat ["clojure" "-Spath"] (mapcat (fn [d] ["-Sdeps" d]) sdeps)
-                         (when alias-token [alias-token])))
+(defn resolve-deps
+  "tools.deps resolution of the current directory's deps.edn, through the
+   Clojure CLI (tools.deps' front end, so -Sdeps, aliases and the
+   root/user/project config chain merge exactly as they do for `clj`).
+   -> {:roots [...] :argmap {...}}: the source roots in classpath order —
+   directories as they are, jars extracted; org.clojure/clojure's jar is
+   left out, since the host runtime IS the language, booted from cohost's
+   pinned stock sources — and the aliases' argmap (:main-opts, :exec-fn,
+   :exec-args, :ns-default, :ns-aliases), read from the basis the CLI
+   writes beside the classpath."
+  [cwd {:keys [sdeps resolve aliases alias]}]
+  (let [cmd (vec (concat ["clojure" "-Sverbose" "-Spath"] (mapcat (fn [d] ["-Sdeps" d]) sdeps)
+                         resolve aliases (when alias [alias])))
         out (-> (p/process cmd {:dir cwd :out :string :err :string}) deref)]
     (when-not (zero? (:exit out))
-      (binding [*out* *err*] (print (:err out)))
-      (die 1 "cohost: tools.deps resolution failed (command: " (str/join " " cmd) ")"))
-    (let [cp (str/trim (last (str/split-lines (:out out))))]
-      (vec (keep (fn [entry]
-                   (let [abs (if (fs/absolute? entry) entry (str (fs/file cwd entry)))]
-                     (cond
-                       (fs/directory? abs) abs
-                       (str/ends-with? abs ".jar")
-                       (when-not (re-find #"/clojure-1\.\d+\.\d+\.jar$" abs)
-                         (extract-jar! abs))
-                       :else (do (binding [*out* *err*]
-                                   (println (str "cohost: skipping classpath entry " abs)))
-                                 nil))))
-                 (str/split cp #":"))))))
+      (binding [*out* *err*] (print (:err out)) (flush))
+      (die 1 (str "cohost: tools.deps resolution failed (" (str/join " " cmd) ")")))
+    (let [lines (str/split-lines (:out out))
+          cp-file (some #(second (re-matches #"cp_file\s*=\s*(.*)" %)) lines)
+          basis (when cp-file (fs/file (fs/path cwd (str/replace cp-file #"\.cp$" ".basis"))))
+          argmap (when (and basis (fs/exists? basis))
+                   (:argmap (edn/read-string {:default tagged-literal} (slurp basis))))]
+      {:argmap argmap
+       :roots (vec (keep (fn [entry]
+                           (let [abs (str (fs/absolutize (fs/path cwd entry)))]
+                             (cond
+                               (fs/directory? abs) abs
+                               (str/ends-with? abs ".jar")
+                               (when-not (re-find #"/org/clojure/clojure/[^/]+/clojure-[^/]+\.jar$" abs)
+                                 (extract-jar! abs))
+                               (fs/exists? abs) (do (binding [*out* *err*]
+                                                      (println (str "cohost: skipping classpath entry " abs)))
+                                                    nil)
+                               ;; a :paths entry that does not exist: as for clj, nothing
+                               :else nil)))
+                         (str/split (str/trim (last lines)) #":")))})))
 
 ;; --------------------------------------------------------------------------
-;; argument parsing (the Clojure CLI's shape, after the host key)
+;; clojure.main's arguments, and clojure.run.exec's
 
-(defn parse-args
-  "rest-args -> {:sdeps [...] :alias \"-M:dev\" :flag :M|:X|:T
-                 :spath? bool :prepare? bool :describe? bool
-                 :main [tokens after the -M/-X flag]}"
-  [args]
-  (let [flag-idx (first (keep-indexed (fn [i t] (when (re-matches #"^-[MXT](:.*)?$" t) i)) args))
-        pre (subvec (vec args) 0 (or flag-idx (count args)))
-        flag-token (when flag-idx (nth args flag-idx))
-        ;; with no -M/-X flag, the main opts are the arguments themselves
-        ;; (the Clojure CLI reads a bare -e as an implied -M), minus the
-        ;; resolution-level options
-        main (if flag-idx
-               (subvec (vec args) (inc flag-idx))
-               (loop [toks (seq pre) acc []]
-                 (cond (nil? toks) acc
-                       (= "-Sdeps" (first toks)) (recur (nnext toks) acc)
-                       (#{"-Spath" "-P" "-Sverbose"} (first toks)) (recur (next toks) acc)
-                       :else (recur (next toks) (conj acc (first toks))))))
-        sdeps (vec (keep-indexed (fn [i t] (when (and (= t "-Sdeps") (< (inc i) (count pre)))
-                                             (nth pre (inc i)))) pre))]
-    {:sdeps sdeps
-     :alias flag-token
-     :flag (when flag-token (keyword (subs flag-token 1 2)))
-     :spath? (boolean (some #{"-Spath"} args))
-     :prepare? (boolean (some #{"-P"} args))
-     :describe? (boolean (some #{"-Sdescribe"} args))
-     :main main
-     :pre pre}))
+(defn abs-path [cwd f] (str (fs/absolutize (fs/path cwd f))))
 
-(defn main-action
-  "Main opts (after -M) or exec opts (after -X) -> a cohost.cli action."
-  [flag main]
-  (if (= flag :X)
-    (let [[f & kvs] main]
-      (when-not (and f (str/includes? f "/"))
-        (die 2 "cohost: -X needs a qualified function, e.g. cohost :cljs -X demo.core/run :x 1"))
-      (let [[ns fn] (str/split f #"/" 2)]
-        {:type :exec :ns ns :fn fn
-         :exec-args-edn (str "{" (str/join " " kvs) "}")}))
-    (loop [toks (seq main) exprs [] inits []]
-      (cond
-        (nil? toks) (if (or (seq exprs) (seq inits))
-                      {:type :eval :exprs exprs :inits inits}
-                      {:type :stdin})
-        (= "-e" (first toks)) (recur (nnext toks) (conj exprs (second toks)) inits)
-        (= "-i" (first toks)) (recur (nnext toks) exprs (conj inits (str (fs/absolutize (fs/file (second toks))))))
-        (= "-m" (first toks)) {:type :main :ns (second toks) :inits inits
-                               :prog-args (vec (drop 2 toks))}
-        (= "-r" (first toks)) {:type :stdin}
-        (= "-" (first toks)) {:type :stdin}
-        (and (str/ends-with? (first toks) ".clj") (not (str/starts-with? (first toks) "-")))
-        {:type :eval :exprs [] :inits (conj inits (str (fs/absolutize (fs/file (first toks)))))}
-        :else (die 2 (str "cohost: unsupported main option " (first toks)
-                          " (spike supports -e, -i, -m, -r, -, script.clj, -X fn)"))))))
+(defn main-config
+  "clojure.main's arguments: init options (-i/--init, -e/--eval, in the
+   order given), then one main option. -> {:inits [...] :main {...}|nil}"
+  [cwd args]
+  (loop [[a b & more :as args] args inits []]
+    (cond
+      (nil? a) {:inits inits :main (when (empty? inits) {:type :repl})}
+      (#{"-i" "--init"} a) (recur more (conj inits [:i (abs-path cwd b)]))
+      (#{"-e" "--eval"} a) (recur more (conj inits [:e b]))
+      (#{"-m" "--main"} a) {:inits inits :main {:type :main :ns b :args (vec more)}}
+      (#{"-r" "--repl"} a) {:inits inits :main {:type :repl}}
+      (= "-" a) {:inits inits :main {:type :stdin :args (vec (rest args))}}
+      (#{"-h" "--help" "-?"} a) (usage)
+      (str/starts-with? a "-") (die 2 (str "cohost: unknown option " a))
+      :else {:inits inits :main {:type :script :path (abs-path cwd a) :args (vec (rest args))}})))
+
+(defn exec-config
+  "clojure.run.exec's arguments: an optional fn symbol, then key value pairs
+   (a vector key is a path) and an optional trailing map, merged over the
+   aliases' :exec-args. -> the :exec main."
+  [args argmap]
+  (let [vals (mapv #(try (edn/read-string %)
+                         (catch Exception _ (die 2 (str "cohost: unreadable -X argument " %))))
+                   args)
+        [f kvs] (if (symbol? (first vals)) [(first vals) (rest vals)] [nil vals])
+        f (or f (:exec-fn argmap)
+              (die 2 "No function found on command line or in :exec-fn"))
+        f (cond (namespace f) (let [ns (symbol (namespace f))]
+                                (symbol (str (get (:ns-aliases argmap) ns ns)) (name f)))
+                (:ns-default argmap) (symbol (str (:ns-default argmap)) (name f))
+                :else (die 2 (str "cohost: unqualified function " f " and no :ns-default")))
+        [pairs trailing] (if (odd? (count kvs)) [(butlast kvs) (last kvs)] [kvs nil])
+        exec-args (merge (reduce (fn [m [k v]] (if (vector? k) (assoc-in m k v) (assoc m k v)))
+                                 (or (:exec-args argmap) {})
+                                 (partition 2 pairs))
+                         trailing)]
+    {:type :exec :ns (namespace f) :fn (name f) :args-edn (pr-str exec-args)}))
 
 ;; --------------------------------------------------------------------------
 ;; host launches
@@ -162,13 +183,13 @@
         stale? (or (not (fs/exists? out))
                    (> (lm (fs/file repo "cljs-cli.edn")) (lm out))
                    (boolean (some (fn [f] (> (lm f) (lm out)))
-                                  (fs/glob (fs/file repo "src") "**.cljc"))))]
+                                  (fs/glob (fs/file repo "src") "**.{cljc,cljs}"))))]
     (when stale?
       (binding [*out* *err*] (println "cohost: compiling the ClojureScript host build (target/cljs-cli) ..."))
-      ;; cljs-cli.edn's relative output paths are load-bearing: the
-      ;; nodejs bootstrap joins the output-dir onto the process cwd, so
-      ;; the build — and the node launch in launch! — both run from the
-      ;; repo, and cohost.cli chdirs to the project directory (:cwd).
+      ;; cljs-cli.edn's relative output paths are load-bearing: the nodejs
+      ;; bootstrap joins the output-dir onto the process's directory, so the
+      ;; build — and the node launch — both run from the repo, and cohost.cli
+      ;; moves to the project directory (:cwd).
       (let [sdeps (System/getenv "COHOST_CLI_SDEPS")
             cmd (vec (concat ["clojure"] (when sdeps ["-Sdeps" sdeps])
                              ["-M:cljs" "-m" "cljs.main" "-co" "cljs-cli.edn" "-c"]))]
@@ -179,16 +200,16 @@
   (let [cfg (str config)
         src (str repo "/src")]
     (case host
-      ;; the build's bootstrap joins its output-dir onto the process cwd,
-      ;; so node must start in the repo; cohost.cli chdirs to :cwd (the
-      ;; project directory) before it does anything else.
+      ;; node starts in the repo, Phel too (its phel-config.php names the
+      ;; source directories); cohost.cli moves to the project directory
       "cljs" (do (ensure-cljs-build!)
                  (run-inherit repo ["node" (str repo "/target/cljs-cli/main.js") cfg]))
+      "phel" (run-inherit repo ["phel" "run" "dev/phel_cli.phel" cfg])
       "jolt" (run-inherit cwd ["jolt" "-Scp" src "-m" "cohost.cli" cfg])
       "cljw" (run-inherit cwd ["cljw" "-cp" src "-m" "cohost.cli" cfg])
       "lpy" (run-inherit cwd ["basilisp" "run" "-p" src "-c"
-                              (str "(require 'cohost.cli) (cohost.cli/-main \"" cfg "\")")])
-      (die 2 (str "cohost: host :" host " is not wired into the CLI yet")))))
+                              (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])
+      "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg]))))
 
 ;; --------------------------------------------------------------------------
 
@@ -196,39 +217,33 @@
   (when (or (empty? args) (#{"-h" "--help" "help"} (first args))) (usage))
   (let [host (str/replace (first args) #"^:" "")
         rest-args (vec (rest args))
-        cwd (str (fs/canonicalize "."))]
+        cwd (str (fs/canonicalize "."))
+        {:keys [mode] :as o} (parse-args rest-args)]
     (when-not (hosts host)
-      (die 2 (str "cohost: unknown host " (first args) " (hosts: :cljs :jvm :jolt :lpy :cljw :phel :lg :cljrs :jank)")))
+      (die 2 (str "cohost: unknown host " (first args) " (hosts: "
+                  (str/join " " (map #(str ":" %) (sort hosts))) ")")))
     (cond
-      ;; the JVM runs the real CLI, whole
-      (= host "jvm")
+      ;; the JVM runs the real CLI, whole; tools are JVM programs, on every host
+      (or (= host "jvm") (= mode :T) (:describe? o))
       (System/exit (run-inherit cwd (vec (cons "clojure" rest-args))))
 
-      ;; tools are JVM programs: delegate, on every host
-      (some #(re-matches #"^-T(:.*)?$" %) rest-args)
-      (System/exit (run-inherit cwd (vec (cons "clojure" rest-args))))
-
-      (unwired host)
-      (die 2 (str "cohost: :" host " is not wired into the CLI yet — its boot is still in flight (see doc/hosts/PLAN.md)"))
+      (not (some #{host} wired))
+      (die 2 (str "cohost: :" host " is not wired into the CLI yet: its boot is still in flight (doc/hosts/PLAN.md)"))
 
       :else
-      (let [{:keys [sdeps alias flag spath? prepare? describe?] :as parsed} (parse-args rest-args)]
+      (let [{:keys [roots argmap]} (resolve-deps cwd o)]
         (cond
-          describe?
-          (System/exit (run-inherit cwd (vec (concat ["clojure" "-Sdescribe"]
-                                                     (mapcat (fn [d] ["-Sdeps" d]) sdeps)))))
+          (:spath? o) (println (str/join ":" roots))
+          (:prepare? o) (binding [*out* *err*]
+                          (println (str "cohost: prepared " (count roots) " source roots under " cache-dir)))
           :else
-          (let [roots (resolve-roots cwd sdeps (when (#{:M :X} flag) alias))]
-            (cond
-              spath? (do (println (str/join ":" roots)) (System/exit 0))
-              prepare? (do (binding [*out* *err*]
-                             (println (str "cohost: prepared " (count roots) " source roots under " cache-dir)))
-                           (System/exit 0))
-              :else
-              (let [action (main-action flag (:main parsed))
-                    cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))]
-                (fs/create-dirs (fs/parent cfg-file))
-                (spit cfg-file (pr-str {:stock-root stock-root :roots roots :action action :cwd cwd}))
-                (try
-                  (System/exit (launch! host cwd cfg-file))
-                  (finally (fs/delete cfg-file)))))))))))
+          (let [run (if (= mode :X)
+                      {:inits [] :main (exec-config (:main o) argmap)}
+                      (main-config cwd (concat (when (= mode :M) (:main-opts argmap)) (:main o))))
+                cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))]
+            (fs/create-dirs (fs/parent cfg-file))
+            (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
+                                               :verbose (boolean (System/getenv "COHOST_VERBOSE"))})))
+            ;; System/exit skips finally: the config goes before it
+            (let [code (try (launch! host cwd cfg-file) (finally (fs/delete-if-exists cfg-file)))]
+              (System/exit code))))))))

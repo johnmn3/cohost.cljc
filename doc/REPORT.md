@@ -354,6 +354,41 @@ open is listed under "Deliberately not done here". What changed:
   defrecord's does (jolt's `.empty` member answered nil, and ClojureScript's
   records have no `empty`). Two battery cases pin them (131 → 133).
 
+## The `cohost` command, and what it found
+
+`bin/cohost` (doc/CLI.md) loads a project's dependencies, jars included, through
+cohost's loader on every host. Run against a demo project (a Maven jar,
+`org.clojure/tools.cli`, and a `:local/root` library) and compared line by line with
+the Clojure CLI 1.12.0.1530's output, it found these in cohost, each fixed where it
+arose (measured 2026-10-31 ET):
+
+- **Reader conditionals read as the JVM reads a `.cljc`, on every host.** Each
+  host's reader took its own feature (`:cljs`, `:lpy`, `:phel` …): a library's
+  `#?(:clj a :cljs b)` read as nothing on most hosts, and as the cljs.core / goog
+  branch on ClojureScript, while booted code is JVM Clojure. `cohost.scan` now
+  resolves every `#?` in text the loader or `eval-str` reads — the first `:clj`
+  branch, else `:default`, `#?@` spliced, at any depth — before the host's reader
+  sees it (`adapter/read-forms`; text without `#?` is untouched). Checked against
+  the JVM reader: the same forms for `tools.cli` (42) and `cohost/shim.cljc` (797).
+- **jolt read nothing after a top-level `#?` with no branch for it**: its `read`
+  takes that conditional for the end of the text (host/chez/reader.ss,
+  `rdr-read-one-data`), so `tools.cli` booted 3 of its 42 forms with no error. No
+  `#?` reaches jolt's reader now.
+- **ClojureWasm's `let*`, `loop*` and `letfn*` take no empty body** ("requires a
+  binding vector and a body"); the JVM's are nil. The codemod gives an empty one
+  `nil` (an empty `(catch Throwable _)` in `tools.cli` hit it). Its `let` macro
+  checks the same by name: `(let [a 1])` is still an error there.
+- **Phel compiles `(:k m f)` with a fn as the not-found value to that fn's printed
+  name**, a string (`(:a {} str)` is `"<function:str>"`); the adapter writes it
+  `(get m :k f)`.
+- **let-go's own `*ns*`, `*out*` and the rest carry no `:dynamic`** (no metadata),
+  so cohost copied their values: `*ns*` read `cohost.core` wherever code ran. A
+  let-go core var named `*x*` is dynamic to the adapter now, referred as itself.
+  And `(str ns)` of a namespace is its name, as the JVM's `toString` gives (let-go's
+  `str` says `<ns user>`). let-go's own `pr-str` does not honor `*print-length*`.
+- let-go warned "already refers to" for each name cohost's own namespaces define
+  that its core also has; they exclude those names now.
+
 ## What each host needed (the adapter's job)
 
 - **jolt** keeps macro status on the Var (`.setMacro`), expands syntax-quote

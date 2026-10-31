@@ -219,7 +219,10 @@
    :phel {:stock (set '[str])}
    ;; let-go's atom takes its validator when it is made (:validator), and has
    ;; no set-validator! to give one after: core.clj's atom sets it after
-   :lg {:host (set '[atom])}})
+   :lg {:host (set '[atom])}
+   ;; clojurust's evaluator has these as special forms, which a qualified name
+   ;; does not reach and no macro of the name can replace
+   :cljrs {:host (set '[fn let loop defn defn- defmacro defonce and or letfn binding])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."

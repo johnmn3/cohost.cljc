@@ -1,0 +1,6 @@
+;; bin/cohost :lg — cohost.cli's -main with let-go's command-line arguments
+;; (the launcher's config file; lg has no -m: it runs a file).
+(ns lg-cli
+  (:require [cohost.cli]))
+
+(apply cohost.cli/-main *command-line-args*)

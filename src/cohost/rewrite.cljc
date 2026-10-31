@@ -13,7 +13,9 @@
 ;; output of every stock macro (the boot wraps each macro fn), because macros
 ;; like `lazy-seq`, `..`, `with-open` or `definline` emit interop into their
 ;; callers' code.
-(ns cohost.rewrite)
+(ns cohost.rewrite
+  ;; names defined here that let-go's core also has (it warns of each)
+  #?(:lg (:refer-clojure :exclude [starts-with? ends-with?])))
 
 (def ^:dynamic *plain*
   "A symbol taken from a form, bare: the adapter's :plain-symbol (a let-go
@@ -256,7 +258,7 @@
 (defn- with-markers
   "body under a let* of the marker bindings (when there are any)."
   [bs body]
-  (if (seq bs) [(apply list 'let* bs body)] body))
+  (if (seq bs) [(apply list 'let* bs (or (seq body) [nil]))] body))
 
 (def ^:private class-prefixed (atom {}))
 (defn- class-prefixed?
@@ -683,7 +685,8 @@
                                           (class-sym? c) (list (shim-fn "catches?") (list 'quote (imported c)) e)
                                           ;; a host class (js/Error, a record): the host's instance?
                                           :else (list 'instance? c e))
-                                    (apply list 'let* [b e] (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb))))]))
+                                    ;; (an empty catch body is nil: ClojureWasm's let* takes no empty one)
+                                    (apply list 'let* [b e] (or (seq (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb)))) [nil]))]))
                                catches)
                   chain (reduce (fn [else [test then]]
                                   (if (true? test) then (list 'if test then else)))
@@ -753,7 +756,9 @@
     (binding [*locals* (into *locals* syms)
               *local-tags* tags *local-classes* classes *marker-depth* depths]
       (let [bvec' (rw-bindings ctx bvec)
-            body' (doall (rw-all ctx body))]
+            ;; an empty body is nil: ClojureWasm's let*, loop* and letfn* take
+            ;; no empty one
+            body' (or (seq (doall (rw-all ctx body))) [nil])]
         (if (and (= h 'let*) (seq bs))
           ;; each marker right after its local, so the inits after it see it
           ;; too (a loop*'s bindings are recur's arity: its body gets them)
@@ -1222,7 +1227,10 @@
     (let [h (declass (canon-head (*plain* (first form))))
           args (rest form)
           hn (when (and (symbol? h) (nil? (namespace h))) (name h))
-          inst-c (delay (rw ctx (second form)))
+          ;; (memoized by hand: a delay made in a clojurust fn compiled to its
+          ;; IR throws)
+          inst-c (let [v (volatile! nil) done? (volatile! false)]
+                   (fn [] (when-not @done? (vreset! v (rw ctx (second form))) (vreset! done? true)) @v))
           out
           (cond
             (= h 'var) (if (symbol? (second form)) (list 'var (restock ctx (second form))) form)
@@ -1260,8 +1268,8 @@
                  ;; macro's arguments (clojure.test's is reads instance? there)
                  *inline?*
                  (or (nil? (:resolve-head ctx)) (= 'instance? (stock-name ctx h)))
-                 (let [c @inst-c] (and (seq? c) (= 'quote (first c)) (symbol? (second c)))))
-            (let [c @inst-c
+                 (let [c (inst-c)] (and (seq? c) (= 'quote (first c)) (symbol? (second c)))))
+            (let [c (inst-c)
                   nm (when-let [f (:instance-fn ctx)] (f (second c)))]
               (if nm
                 ;; the class's prebuilt test (cohost.shim/install-is!)

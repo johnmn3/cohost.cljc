@@ -78,8 +78,14 @@
              :task (shell "phel" "run" "dev/phel_main.phel")}
   boot:lg   {:doc "let-go (Go): the `lg` binary on PATH (v1.13.0); it has no -m, so dev/lg_main.lg calls cohost.run"
              :task (shell "lg" "-source-paths" "src" "dev/lg_main.lg")}
+  ;; CLJRS_IR_THRESHOLD=1: clojurust lowers a fn to its IR on the first call,
+  ;; not the fiftieth; its evaluator expands a fn's macros again on every run
+  ;; until then. CLJRS_NO_JIT: its JIT compiles calls of vswap!, intern and
+  ;; their kind as calls of values, which throw. --src-path target/cljrs-ns:
+  ;; the adapter writes a file there for each namespace cohost makes, so that
+  ;; clojurust's require (its only refer) can refer it (doc/REPORT.md)
   boot:cljrs {:doc "clojurust (Rust): the cargo-installed `cljrs` on PATH (0.2.32)"
-              :task (shell "cljrs" "run" "--src-path" "src" "src/cohost/run.cljc")}
+              :task (shell {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}} "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns" "src/cohost/run.cljc")}
   boot:jank {:doc "jank (C++/LLVM): the apt-installed `jank` on PATH"
              :task (shell "jank" "--module-path" "src" "run-main" "cohost.run")}
   bench:cljw {:doc "cohost.bench on ClojureWasm (target/bench-cljw.edn)"
@@ -97,7 +103,7 @@
                        (apply shell "lg" "-source-paths" "src" "dev/lg_main.lg" "--bench" (git-rev) *command-line-args*))}
   bench:cljrs {:doc "cohost.bench on clojurust (target/bench-cljrs.edn)"
                :task (do (babashka.fs/create-dirs "target")
-                         (apply shell "cljrs" "run" "--src-path" "src" "src/cohost/run.cljc" "--" "--bench" (git-rev) *command-line-args*))}
+                         (apply shell {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}} "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns" "src/cohost/run.cljc" "--" "--bench" (git-rev) *command-line-args*))}
   bench:jank {:doc "cohost.bench on jank (target/bench-jank.edn)"
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "jank" "--module-path" "src" "run-main" "cohost.run" "--" "--bench" (git-rev) *command-line-args*))}

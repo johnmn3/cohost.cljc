@@ -84,8 +84,10 @@
 
 (defn- js-eval! [form ns-sym]
   (let [res (atom nil)]
-    ;; a stock macro's body may use a private fn of its own namespace, as on the JVM
-    (binding [ana/*private-var-access-nowarn* true]
+    ;; a stock macro's body may use a private fn of its own namespace, as on the
+    ;; JVM; and a namespace may be named user, as clojure.main's is
+    (binding [ana/*private-var-access-nowarn* true
+              ana/*cljs-warnings* (assoc ana/*cljs-warnings* :single-segment-namespace false)]
       (cljs/eval st form {:eval cljs/js-eval :ns ns-sym :context :expr :def-emits-var true
                           :load (fn [_ cb] (cb {:lang :clj :source ""}))}
                  (fn [r] (reset! res r))))

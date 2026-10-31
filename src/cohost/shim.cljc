@@ -26,7 +26,8 @@
   ;; the shim's -first, -seq ... are JVM method names, not cljs.core's protocol methods
   #?(:cljs (:refer-clojure :exclude [-assoc -comparator -compare -conj -count -deref -disjoin -drop -empty
                                      -equiv -find -first -flush -invoke -iterator -meta -name -next -nth -peek
-                                     -pop -reduce -reset -rseq -seq])))
+                                     -pop -reduce -reset -rseq -seq])
+     :lg (:refer-clojure :exclude [-deref -invoke monitor-enter monitor-exit])))
 
 ;; ---------------------------------------------------------------------------
 ;; the adapter's predicates, asked per element: looked up once, not through
@@ -1785,6 +1786,8 @@
 (def ^:private h-exception-string (host/capability :exception-string))
 (def -toString (fn [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x)
                              (and h-exception-string (h-exception? x)) (h-exception-string x)
+                             ;; a namespace is its name (let-go's str says <ns name>)
+                             (h-namespace? x) (str (host/ns-name* x))
                              :else (str (nn x)))))
 (def -compareTo compare)
 (def -isEmpty (fn [x] (if (host/mlist? x) (empty? @(:state x)) (empty? x))))
@@ -2053,7 +2056,7 @@
 (defn host-object? [x]
   (and (some? x)
        (not (h-host-data? x))
-       (let [t #?(:cljs (type x) :default (class x))
+       (let [t #?(:cljs (type x) :cljrs (type x) :default (class x))
              hit (get @host-object-types t absent)]
          (if (identical? hit absent)
            (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type-of x)))))]

@@ -428,16 +428,22 @@
         [nm tail]))))
 
 (defn- unshortcut [x]
-  (if (and (php/instanceof x PersistentListInterface) (= 'def (first x)) (= 2 (count x)) (symbol? (second x)))
-    (with-meta (list 'def (second x) (list 'cohost.hosts.phel/keep-root (.getNs (genv)) (name (second x)))) (meta x))
-  (if-let [[nm clauses] (fn-clauses x)]
-    (if (= 1 (count clauses))
-      (with-meta (apply list (concat ['fn] (when nm [nm]) (first clauses))) (meta x))
-      x)
-    (if (and (php/instanceof x PersistentListInterface) (= 'def (first x)) (= 3 (count x))
-             (fn-clauses (nth x 2)))
-      (with-meta (list 'def (second x) (list 'do (nth x 2))) (meta x))
-      x))))
+  (let [l? (php/instanceof x PersistentListInterface)]
+    (cond
+      ;; (:k m not-found): Phel compiles a fn given as not-found as its printed
+      ;; name, a string ((:a {} str) is "<function:str>"): (get m :k not-found)
+      (and l? (keyword? (first x)) (= 3 (count x)))
+      (with-meta (list 'get (nth x 1) (first x) (nth x 2)) (meta x))
+      (and l? (= 'def (first x)) (= 2 (count x)) (symbol? (second x)))
+      (with-meta (list 'def (second x) (list 'cohost.hosts.phel/keep-root (.getNs (genv)) (name (second x)))) (meta x))
+      :else
+      (if-let [[nm clauses] (fn-clauses x)]
+        (if (= 1 (count clauses))
+          (with-meta (apply list (concat ['fn] (when nm [nm]) (first clauses))) (meta x))
+          x)
+        (if (and l? (= 'def (first x)) (= 3 (count x)) (fn-clauses (nth x 2)))
+          (with-meta (list 'def (second x) (list 'do (nth x 2))) (meta x))
+          x)))))
 
 (defn- walk-code [x q?]
   (cond

@@ -1059,7 +1059,13 @@
    :alter-var-root! alter-root!
    :macro-var? macro-var?
    :mark-macro! mark-macro!
-   :dynamic-var? (fn [v] (true? (:dynamic (meta v))))
+   ;; let-go's own *ns*, *out* and the rest carry no :dynamic (no metadata at
+   ;; all), and bind as any var does: a core var named *x* is dynamic, and
+   ;; referred where it is used rather than copied
+   :dynamic-var? (fn [v] (or (true? (:dynamic (meta v)))
+                             (and (= 'core (var-ns-sym v))
+                                  (let [n (name (var-sym v))]
+                                    (and (> (count n) 2) (= "*" (subs n 0 1)) (= "*" (subs n (dec (count n)))))))))
    :push-thread-bindings! push-bindings!
    :pop-thread-bindings! pop-bindings!
    :var-thread-bound? bound-in-frames?

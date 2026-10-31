@@ -518,7 +518,8 @@
   [src]
   (let [last-tag (host/last-index-of* src "^\"")
         n (count src)
-        at (fn [i] (when (< i n) (nth src i)))]
+        cs (host/string-chars src)
+        at (fn [i] (when (< i n) (nth cs i)))]
     (loop [i 0 start 0 out [] state :code]
       ;; past the last ^" nothing more is cut (most sources have none)
       (if (or (>= i n) (> i last-tag))
@@ -917,7 +918,8 @@
   "Read and eval every form of source text, each in the namespace the one
    before it left — starting where the last eval-str ended (cohost.user at
    first), as a REPL session does; -> the last value. opts {:session? false}
-   evaluates in cohost.user without moving the session."
+   evaluates in cohost.user without moving the session; {:on-value f} calls
+   (f value ns) after each form, with the namespace it left."
   ([src] (eval-str src nil))
   ([src opts]
    (let [c (or (ctx) (let [c (make-ctx)] (swap! state assoc :ctx c) c))
@@ -933,7 +935,8 @@
                                   (let [[_ ns] @at
                                         [v ns'] (eval-top c ns form)]
                                     (when (not= ns' ns) (host/set-current-ns! ns'))
-                                    (reset! at [v ns']))))))
+                                    (reset! at [v ns'])
+                                    (when-let [f (:on-value opts)] (f v ns')))))))
        (first @at)
        (finally (when session? (reset! session-ns (second @at))))))))
 

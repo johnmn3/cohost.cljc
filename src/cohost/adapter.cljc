@@ -17,7 +17,10 @@
 ;; reports the required ones that are missing. Var handles are opaque: the
 ;; library only passes back to the adapter what the adapter handed out.
 (ns cohost.adapter
-  #?(:cljs (:refer-clojure :exclude [iter])))
+  (:require [cohost.scan :as scan])
+  ;; names defined here that the host's core also has (let-go warns of each)
+  #?(:cljs (:refer-clojure :exclude [iter])
+     :lg (:refer-clojure :exclude [upper-case lower-case lazy-seq* delay* close! index-of lazy-seq?])))
 
 ;; ---------------------------------------------------------------------------
 ;; the contract, as data
@@ -134,6 +137,7 @@
    :array?          [['x] "is x a host array, what to-array makes? (default: the host core's array?; basilisp: a Python list)"]
    :close!          [['x] ".close"]
    :index-of        [['s 'sub 'from] "index of sub in s from from, or -1"]
+   :string-chars    [['s] "s as nth reads it in constant time: s itself (the default), or a vector of its characters where nth of a string walks it (clojurust)"]
    :random          [[] "a double in [0,1)"]
    :math            [[] "{sym fn} of java.lang.Math statics by their JVM names ('sin, 'nextUp ...), as the host computes them"]
    :upper-case      [['s] "String.toUpperCase"]
@@ -376,6 +380,7 @@
     :array? nil
     :close! (fn [_] nil)
     :index-of generic-index-of
+    :string-chars identity
     :random (fn [] (rand))
     ;; (:transient? :lazy-seq? :atom? are required: answering false would
     ;; mis-type every value of the host's own kind)
@@ -459,7 +464,7 @@
 ;; a namespace's name and a namespace by name, where namespaces are objects;
 ;; Phel's are their names (and it has neither fn)
 (defn ns-name* [n] #?(:phel (symbol (str n)) :default (ns-name n)))
-(defn the-ns* [x] #?(:phel x :default (the-ns x)))
+(defn the-ns* [x] #?(:phel x :cljs (find-ns x) :default (the-ns x)))
 
 (defn host-name [] (cap :name))
 (defn core-ns-sym [] (cap :core-ns))
@@ -529,7 +534,12 @@
 
 (defn slurp-file [path] ((cap :slurp) path))
 (defn spit-file [path s] ((cap :spit) path s))
-(defn read-forms [src cb] ((cap :read-forms) src cb))
+(defn read-forms
+  "cb of each top-level form of src, read as the JVM reads a .cljc: cohost.scan
+   resolves its reader conditionals (:clj, else :default) before the host's
+   reader sees the text, so every host takes the branch the JVM takes."
+  [src cb]
+  ((cap :read-forms) (if (neg? ((cap :index-of) src "#?" 0)) src (scan/resolve-conditionals src #{":clj"})) cb))
 (defn read-string* ([s] ((cap :read-string) s)) ([s opts] ((cap :read-string) s opts)))
 (defn plain-symbol "x, a name taken from a form: the bare symbol (adapter :plain-symbol)." [x] ((cap :plain-symbol) x))
 (defn host-read-string [s] (if-let [f (get @installed :host-read-string)] (f s) (read-string* s)))
@@ -623,6 +633,7 @@
 (defn array-fn "The adapter's array test, or nil: the host core's array?." [] (get @installed :array?))
 (defn close! [x] ((cap :close!) x))
 (defn index-of [s sub from] ((cap :index-of) s sub from))
+(defn string-chars [s] ((cap :string-chars) s))
 (defn last-index-of* "The last index of sub in s, or -1." [s sub]
   (loop [i -1] (let [j (index-of s sub (inc i))] (if (neg? j) i (recur j)))))
 (defn random [] ((cap :random)))

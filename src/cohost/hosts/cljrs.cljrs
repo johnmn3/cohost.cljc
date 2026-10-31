@@ -1,0 +1,535 @@
+;; The clojurust adapter (cljrs, a Clojure interpreter in Rust). Its runtime is
+;; its own, so this adapter builds the contract from its pieces:
+;; - fn, let, loop, defn, defmacro, binding and more are special forms of its
+;;   evaluator, which win over a var of their name;
+;; - it has no `.` interop: every JVM member reaches the shim;
+;; - its reader keeps ` as (syntax-quote form), and reads ::kw without the
+;;   namespace, a tag it does not know as the form alone, and a duplicate key.
+(ns cohost.hosts.cljrs
+  (:require [cohost.adapter :as adapter]
+            [clojure.string :as string]
+            [clojure.rust.io :as io]))
+
+;; ---------------------------------------------------------------------------
+;; clojurust's evaluator intercepts ns-resolve, intern, alter-meta! and their
+;; kind where they are called by name; a fn it calls often is lowered to its
+;; IR, whose calls of them do not reach that interception (they throw). Its
+;; lowerer declines a fn that holds a `.` form: each fn here that calls one
+;; holds one, never run, and stays with the evaluator.
+
+(defmacro ^:private walked [& body]
+  `(if false (. nil ~'tree-walked) (do ~@body)))
+
+;; ---------------------------------------------------------------------------
+;; its IR answers a call of clojure.core's identical? by comparing the
+;; addresses of its two argument slots, never the same (tiered/ir_interp.rs,
+;; KnownFn::Identical), and lowers true? and false? to that call: in a lowered
+;; fn (identical? x x), (true? true) and (false? false) are false. Its lowerer
+;; takes a name for core's only where the namespace maps it to core's own var,
+;; so each namespace of cohost's source gets vars of its own holding core's
+;; builtins, before the namespace is loaded (cohost.adapter and cohost.scan
+;; are loaded already, and none of their fns has run). A namespace added to cohost's source is
+;; added here.
+
+(def ^:private cohost-source-nses
+  '[cohost.scan cohost.adapter cohost.hosts.auto cohost.hosts.cljrs cohost.policy cohost.shim-names cohost.shim
+    cohost.rewrite cohost.boot cohost.battery cohost.lib-battery cohost.bench cohost.corpus-report
+    cohost.corpus cohost.run cohost.cli])
+
+(doseq [n cohost-source-nses]
+  (create-ns n)
+  (intern n 'identical? (var-get #'clojure.core/identical?))
+  (intern n 'true? (var-get #'clojure.core/true?))
+  (intern n 'false? (var-get #'clojure.core/false?)))
+
+;; ---------------------------------------------------------------------------
+;; reading: each top-level form's extent by a scan, so a form is read after
+;; the one before it ran (a ::kw after an ns form is that namespace's). The
+;; text is marked first, for the JVM's reading: ::kw is written with its
+;; namespace, #tag form as (cohost.hosts.cljrs/tagged tag form); clojurust's
+;; reader then reads it (metadata, sets, syntax-quote as a form), and the
+;; marks and syntax-quote are expanded.
+
+(def ^:private ws #{\space \tab \newline \return \formfeed \,})
+(def ^:private delims #{\( \) \[ \] \{ \} \" \;})
+
+(defn- skip-ws
+  "The index of the next form at or after i, past whitespace, commas and
+   ; comments."
+  [cs i]
+  (let [n (count cs)]
+    (loop [i i]
+      (if (>= i n)
+        n
+        (let [c (nth cs i)]
+          (cond (contains? ws c) (recur (inc i))
+                (= c \;) (recur (loop [j i] (if (or (>= j n) (= (nth cs j) \newline)) j (recur (inc j)))))
+                :else i))))))
+
+(defn- token-end [cs i]
+  (let [n (count cs)]
+    (loop [i i]
+      (if (or (>= i n) (let [c (nth cs i)] (or (contains? ws c) (contains? delims c)))) i (recur (inc i))))))
+
+(defn- string-end "i at the opening quote -> past the closing one" [cs i]
+  (loop [i (inc i)]
+    (let [c (nth cs i)]
+      (cond (= c \\) (recur (+ i 2)) (= c \") (inc i) :else (recur (inc i))))))
+
+(declare form-end)
+(defn- coll-end [cs i close]
+  (loop [i (skip-ws cs i)]
+    (if (= (nth cs i) close) (inc i) (recur (skip-ws cs (form-end cs i))))))
+
+(defn- form-end
+  "The index past the form starting at i (a #_ discard runs on to the form
+   after it)."
+  [cs i]
+  (if (>= i (count cs))
+    i
+    (let [c (nth cs i)
+          after (fn [k] (form-end cs (skip-ws cs k)))]
+      (case c
+        \( (coll-end cs (inc i) \))
+        \[ (coll-end cs (inc i) \])
+        \{ (coll-end cs (inc i) \})
+        \" (string-end cs i)
+        \\ (token-end cs (+ i 2))
+        (\' \` \@) (after (inc i))
+        \~ (after (if (= \@ (nth cs (inc i) nil)) (+ i 2) (inc i)))
+        \^ (after (form-end cs (skip-ws cs (inc i))))
+        \# (let [d (nth cs (inc i) nil)]
+             (case d
+               (\( \{) (form-end cs (inc i))
+               \" (string-end cs (inc i))
+               (\' \=) (after (+ i 2))
+               (\_ \^) (after (form-end cs (skip-ws cs (+ i 2))))
+               \? (after (if (= \@ (nth cs (+ i 2) nil)) (+ i 3) (+ i 2)))
+               \: (after (token-end cs (+ i 2)))
+               \# (token-end cs (+ i 2))
+               ;; a tagged literal: the tag, then its form
+               (after (token-end cs (inc i)))))
+        (token-end cs i)))))
+
+(def ^:private digit-starts (set "+-0123456789"))
+
+(defn- reader-error [klass msg]
+  (adapter/ex* klass msg))
+
+(defn- check-keys
+  "i past a map's or set's opening brace: throw the JVM reader's
+   IllegalArgumentException when two keys (every element of a set) are
+   written the same."
+  [src cs i set?]
+  (loop [i (skip-ws cs i) n 0 seen #{}]
+    (when (not= (nth cs i nil) \})
+      (let [j (form-end cs i) t (subs src i j)]
+        (when (and (or set? (even? n)) (contains? seen t))
+          (throw (reader-error 'java.lang.IllegalArgumentException (str "Duplicate key: " t))))
+        (recur (skip-ws cs j) (inc n) (if (or set? (even? n)) (conj seen t) seen))))))
+
+;; # then one of these is no tag; #inst and #uuid are clojurust's own
+(def ^:private tag-starts-not (set "({\"'=_^?:#!<"))
+(def ^:private native-tags #{"inst" "uuid"})
+
+(defn- token-start? [cs i]
+  (or (zero? i) (contains? ws (nth cs (dec i))) (contains? delims (nth cs (dec i)))
+      (contains? #{\' \` \~ \@ \^} (nth cs (dec i)))))
+
+;; ::name and ::alias/name, with the namespace they name now
+(defn- auto-keyword [t]
+  (walked
+  (let [body (subs t 2) i (string/index-of body "/")]
+    (if (nil? i)
+      (str ":" (ns-name *ns*) "/" body)
+      (let [a (subs body 0 i)
+            target (get (ns-aliases *ns*) (symbol a))]
+        (if target
+          (str ":" (ns-name target) "/" (subs body (inc i)))
+          (throw (reader-error 'java.lang.RuntimeException (str "Invalid token: " t)))))))))
+
+(declare mark-text)
+(defn- mark-text
+  "The text of src[i, j) with ::kw resolved and every #tag marked, outside
+   strings, comments and character literals. (cs: src's characters.) The text
+   is copied a span at a time: clojurust's str of many parts takes time in
+   the square of their number."
+  [src cs i j]
+  (loop [i i a i out []]
+    (if (>= i j)
+      (apply str (conj out (subs src a j)))
+      (let [c (nth cs i)]
+        (cond
+          (= c \") (recur (string-end cs i) a out)
+          (= c \;) (recur (loop [k i] (if (or (>= k j) (= (nth cs k) \newline)) k (recur (inc k)))) a out)
+          (= c \\) (recur (token-end cs (+ i 2)) a out)
+          ;; a number is the JVM reader's: 0-led digits are octal, so 08 is none
+          (and (contains? digit-starts c) (token-start? cs i))
+          (let [k (token-end cs i)]
+            (when (re-matches #"[+-]?0[0-7]*[89][0-9]*N?" (subs src i k))
+              (throw (reader-error 'java.lang.NumberFormatException (str "Invalid number: " (subs src i k)))))
+            (recur k a out))
+          (and (= c \:) (= \: (nth cs (inc i) nil)) (token-start? cs i))
+          (let [k (token-end cs i)]
+            (recur k k (conj out (subs src a i) (auto-keyword (subs src i k)))))
+          ;; a map or set literal's keys: the JVM reader rejects a duplicate
+          (or (= c \{) (and (= c \#) (= \{ (nth cs (inc i) nil))))
+          (do (check-keys src cs (if (= c \{) (inc i) (+ i 2)) (= c \#))
+              (recur (inc i) a out))
+          (and (= c \#) (= \" (nth cs (inc i) nil)))
+          (recur (string-end cs (inc i)) a out)
+          ;; a tagged literal (clojurust's reader keeps the form alone): the
+          ;; tag's reader applies when the mark is expanded
+          (and (= c \#) (token-start? cs i)
+               (let [d (nth cs (inc i) nil)]
+                 (and d (not (contains? ws d)) (not (contains? delims d)) (not (contains? tag-starts-not d))
+                      (not (contains? native-tags (subs src (inc i) (token-end cs (inc i))))))))
+          (let [te (token-end cs (inc i)) fa (skip-ws cs te) fb (form-end cs fa)]
+            (recur fb fb (conj out (subs src a i)
+                               (str "(cohost.hosts.cljrs/tagged " (subs src (inc i) te) " " (mark-text src cs fa fb) ")"))))
+          :else (recur (inc i) a out))))))
+
+;; ---------------------------------------------------------------------------
+;; the marks and syntax-quote, expanded: syntax-quote as the JVM reads it (an
+;; alias's target, the namespace a name resolves to, else the current
+;; namespace; special forms, & and class names stay bare, x# is a gensym per
+;; syntax-quote), building clojure.core's (seq (concat ...)), vector,
+;; hash-map, hash-set, with-meta; a tagged literal through *data-readers*
+
+(defn- form-of? [head x] (and (seq? x) (seq x) (= head (first x))))
+
+(def ^:private sq-mark 'syntax-quote)
+(def ^:private tag-mark 'cohost.hosts.cljrs/tagged)
+
+(def ^:private tag-reader (atom nil))
+(defn- read-tagged [tag v]
+  (if-let [f @tag-reader]
+    (f tag v)
+    (if-let [r (get *data-readers* tag)]
+      (r v)
+      (throw (reader-error 'java.lang.RuntimeException (str "No reader function for tag " tag))))))
+
+(def ^:private sq-specials
+  (set '[def if do let* fn* loop* recur quote var throw try catch finally new set! letfn*
+         case* deftype* reify* import* monitor-enter monitor-exit . &]))
+
+(def ^:private sq-counter (atom 0))
+
+;; a var's namespace and name: its printed form, #'ns/name
+(defn- var-sym [v] (symbol (subs (str v) 2)))
+(defn- var-ns-sym [v] (symbol (namespace (var-sym v))))
+
+(defn- upper? [s] (let [c (subs s 0 1)] (and (= c (string/upper-case c)) (not= c (string/lower-case c)))))
+
+(defn- sq-symbol [sym gensyms]
+  (walked
+  (let [n (name sym) ns (namespace sym)]
+    (cond
+      ns (if-let [t (get (ns-aliases *ns*) (symbol ns))] (symbol (str (ns-name t)) n) sym)
+      (contains? sq-specials sym) sym
+      (string/ends-with? n "#")
+      (or (get @gensyms n)
+          (let [g (symbol (str (subs n 0 (dec (count n))) "__" (swap! sq-counter inc) "__auto__"))]
+            (swap! gensyms assoc n g)
+            g))
+      (or (string/starts-with? n ".") (string/ends-with? n ".") (string/includes? n ".")) sym
+      :else
+      (let [v (get (ns-map *ns*) sym)]
+        (cond (var? v) (var-sym v)
+              (and (nil? v) (upper? n)) sym
+              :else (symbol (str (ns-name *ns*)) n)))))))
+
+(defn- code-meta-of [x] (not-empty (dissoc (meta x) :line :column :file :end-line :end-column)))
+
+(declare sq)
+(declare expand-marks)
+(defn- sq-items [xs gensyms]
+  (apply list 'clojure.core/concat
+         (map (fn [x] (if (form-of? 'unquote-splicing x)
+                        (expand-marks (second x))
+                        (list 'clojure.core/list (sq x gensyms))))
+              xs)))
+
+(defn- sq* [x gensyms]
+  (cond
+    (form-of? sq-mark x) (sq (sq (second x) (atom {})) gensyms)
+    (form-of? 'unquote x) (expand-marks (second x))
+    (symbol? x) (list 'quote (sq-symbol x gensyms))
+    (and (seq? x) (seq x)) (list 'clojure.core/seq (sq-items x gensyms))
+    (and (vector? x) (seq x)) (list 'clojure.core/apply 'clojure.core/vector (sq-items x gensyms))
+    (and (map? x) (seq x)) (list 'clojure.core/apply 'clojure.core/hash-map (sq-items (mapcat (fn [[k v]] [k v]) x) gensyms))
+    (and (set? x) (seq x)) (list 'clojure.core/apply 'clojure.core/hash-set (sq-items x gensyms))
+    (or (keyword? x) (string? x) (number? x) (nil? x) (boolean? x) (char? x)) x
+    :else (list 'quote x)))
+
+;; a form's metadata (^Tag x inside the template) is syntax-quoted with it
+(defn- sq [x gensyms]
+  (let [m (when (or (symbol? x) (coll? x)) (code-meta-of x))
+        out (sq* x gensyms)]
+    (if (and m (not (form-of? 'unquote x)) (not (form-of? 'unquote-splicing x)))
+      (list 'clojure.core/with-meta out (sq m gensyms))
+      out)))
+
+(defn- expand-marks [x]
+  (cond
+    (form-of? sq-mark x) (sq (second x) (atom {}))
+    (form-of? tag-mark x) (read-tagged (second x) (expand-marks (nth x 2)))
+    (seq? x) (let [xs (map expand-marks x)]
+               (if (every? true? (map identical? xs x)) x (with-meta (apply list xs) (meta x))))
+    (vector? x) (let [xs (mapv expand-marks x)]
+                  (if (every? true? (map identical? xs x)) x (with-meta xs (meta x))))
+    (map? x) (let [kvs (mapv (fn [[k v]] [(expand-marks k) (expand-marks v)]) x)]
+               (if (every? (fn [[[k v] [k0 v0]]] (and (identical? k k0) (identical? v v0))) (map vector kvs x))
+                 x
+                 (with-meta (into {} kvs) (meta x))))
+    (set? x) (let [xs (mapv expand-marks x)]
+               (if (every? true? (map identical? xs x)) x (with-meta (into #{} xs) (meta x))))
+    :else x))
+
+(defn- read-one [text]
+  (expand-marks (read-string text)))
+
+(defn- read-forms [src cb]
+  (let [cs (vec src) n (count cs)]
+    (loop [i (skip-ws cs 0)]
+      (when (< i n)
+        (let [j (form-end cs i)]
+          (cb (read-one (mark-text src cs i j)))
+          (recur (skip-ws cs j)))))))
+
+;; read-string: s's first form, read as read-forms reads it; with none, opts'
+;; :eof or the JVM's EOF
+(defn- read-string* [s opts]
+  (let [cs (vec s) i (skip-ws cs 0)]
+    (if (>= i (count cs))
+      (if (contains? opts :eof)
+        (:eof opts)
+        (throw (reader-error 'java.lang.RuntimeException "EOF while reading")))
+      ;; a form the scan runs off the end of: the JVM's EOF
+      (let [j (adapter/try-all (fn [] (form-end cs i)))]
+        (if (or (nil? j) (> j (count cs)))
+          (throw (reader-error 'java.lang.RuntimeException "EOF while reading"))
+          (read-one (mark-text s cs i j)))))))
+
+(defn- edn-read-string [opts s]
+  (when-not (nil? s)
+    (let [readers (:readers opts) dflt (:default opts) old @tag-reader]
+      (reset! tag-reader (fn [tag v]
+                           (cond (contains? readers tag) ((get readers tag) v)
+                                 dflt (dflt tag v)
+                                 :else (throw (reader-error 'java.lang.RuntimeException (str "No reader function for tag " tag))))))
+      (try (read-string* s opts) (finally (reset! tag-reader old))))))
+
+;; ---------------------------------------------------------------------------
+;; core fns the evaluator intercepts where they are called by name: as values
+;; they are sentinels that throw. cohost reads a core var's value through
+;; these, each a fn that calls the name.
+
+;; a symbol carrying metadata is another kind of value to ns-resolve and
+;; intern ("must be symbol, got symbol"): they are given it bare
+(defn plain "sym without its metadata" [x]
+  (if (symbol? x) (symbol (namespace x) (name x)) x))
+
+(def ^:private sentinel-fns
+  {'all-ns (fn [] (walked (all-ns)))
+   'create-ns (fn [n] (walked (create-ns n)))
+   'find-ns (fn [n] (walked (find-ns n)))
+   'remove-ns (fn [n] (walked (remove-ns n)))
+   'ns-aliases (fn [n] (walked (ns-aliases n)))
+   'ns-interns (fn [n] (walked (ns-interns n)))
+   'ns-map (fn [n] (walked (ns-map n)))
+   'ns-publics (fn [n] (walked (ns-publics n)))
+   'ns-refers (fn [n] (walked (ns-refers n)))
+   'ns-resolve (fn ([n sym] (walked (ns-resolve n (plain sym)))) ([n env sym] (walked (ns-resolve n env (plain sym)))))
+   'resolve (fn ([sym] (walked (resolve (plain sym)))) ([env sym] (walked (resolve env (plain sym)))))
+   'eval (fn [form] (eval form))
+   'intern (fn ([n sym] (walked (intern n (plain sym)))) ([n sym v] (walked (intern n (plain sym) v))))
+   'apply (fn [f & args] (apply f (apply list* args)))
+   'alter-meta! (fn [r f & args] (walked (alter-meta! r (fn [m] (apply f m args)))))
+   'alter-var-root (fn [v f & args] (alter-var-root v (fn [x] (apply f x args))))
+   ;; its vary-meta changes a var's metadata alone, and gives back any
+   ;; other value as it was
+   'vary-meta (fn [x f & args]
+                (if (var? x) (vary-meta x (fn [m] (apply f m args))) (with-meta x (apply f (meta x) args))))
+   'swap! (fn ([a f] (swap! a f)) ([a f x] (swap! a f x)) ([a f x y] (swap! a f x y))
+            ([a f x y & more] (swap! a (fn [v] (apply f v x y more)))))
+   'vswap! (fn [v f & args] (vswap! v (fn [x] (apply f x args))))
+   'send (fn [a f & args] (send a (fn [x] (apply f x args))))
+   'with-bindings* (fn [m f & args] (with-bindings* m (fn [] (apply f args))))})
+
+(def ^:private sentinel-of
+  (into {} (keep (fn [[s f]] (walked (when-let [v (ns-resolve 'clojure.core s)] [v f])))) sentinel-fns))
+
+(defn- var-get* [v] (if-let [f (get sentinel-of v)] f (var-get v)))
+
+;; ---------------------------------------------------------------------------
+;; namespaces: in-ns moves the evaluator's namespace (a binding of *ns* does
+;; not reach eval), so with-ns moves there and back. in-ns also refers all of
+;; clojure.core into the namespace it enters, unless an ns form's
+;; (:refer-clojure ...) gave the namespace a filter: a namespace cohost makes
+;; gets one, naming the host vars it refers (none at first). There is no
+;; refer: require refers another namespace's vars (the vars themselves), once
+;; it has loaded that namespace from a file on the source path. A namespace
+;; cohost makes gets a file of no forms under ns-dir, which bb boot:cljrs
+;; passes as a source path, so a require of it loads nothing and refers.
+
+(def ^:private ns-dir "target/cljrs-ns")
+
+(defn- with-ns [ns-sym thunk]
+  (let [old (ns-name *ns*)]
+    (in-ns ns-sym)
+    (try (thunk) (finally (in-ns old)))))
+
+;; {ns-sym [name ...]}: the namespaces cohost makes, each with the
+;; clojure.core names it refers
+(def ^:private core-refers (atom {}))
+
+(defn- set-core-refers! [ns-sym names]
+  (swap! core-refers assoc ns-sym names)
+  (with-ns ns-sym (fn [] (eval (list 'ns ns-sym (list :refer-clojure :only (vec names)))))))
+
+(defn- ensure-bare-ns! [ns-sym]
+  (when-not (contains? @core-refers ns-sym)
+    (walked (create-ns ns-sym))
+    (set-core-refers! ns-sym [])
+    (let [path (str ns-dir "/" (-> (str ns-sym) (string/replace "." "/") (string/replace "-" "_")) ".cljrs")]
+      (io/make-parents path)
+      (spit path ";; made in memory by cohost: a require of it refers its vars\n"))))
+
+(defn- require-in [into-ns spec]
+  (with-ns into-ns (fn [] (eval (list 'require (list 'quote spec))))))
+
+(defn- refer!
+  "A refer of :rename's names is a var of into-ns holding the value."
+  [into-ns from-ns {:keys [only exclude rename]}]
+  (let [names (remove (set exclude) (or only (walked (keys (ns-publics from-ns)))))]
+    (require-in into-ns [from-ns :refer (vec (remove #(contains? rename %) names))])
+    (doseq [n names :when (contains? rename n)]
+      (walked (intern into-ns (plain (get rename n)) (var-get (ns-resolve from-ns (plain n))))))))
+
+;; ---------------------------------------------------------------------------
+;; code for its evaluator: fn, let, loop, defn, defmacro, and, or, binding and
+;; the rest are special forms by their bare name alone (a qualified one is a
+;; call of a stub var), and win over any var: a head syntax-quote qualified to
+;; clojure.core or cohost.core is written bare. Its IR takes a special form
+;; by a head that is a symbol alone: a head carrying metadata (core.clj's
+;; lazy-seq writes ^{:once true} fn*) is compiled as a var's value, so the
+;; head is written without it
+
+(def ^:private special-names
+  (set '[def fn* fn if do let* let loop* loop recur quote var set! throw try defn defn-
+         defmacro defonce and or . ns require letfn in-ns alias protocol* deftype* load-file
+         binding with-out-str await]))
+
+(def ^:private core-nses #{"clojure.core" "cohost.core"})
+
+(defn- as-code [x]
+  (cond
+    (and (seq? x) (= 'quote (first x))) x
+    (and (seq? x) (seq x))
+    (let [h (first x)
+          h' (if (and (symbol? h) (contains? special-names (symbol (name h)))
+                      (or (contains? core-nses (namespace h)) (and (nil? (namespace h)) (some? (meta h)))))
+               (symbol (name h))
+               h)
+          xs (map as-code (rest x))]
+      (if (and (identical? h h') (every? true? (map identical? xs (rest x))))
+        x
+        (with-meta (apply list h' xs) (meta x))))
+    (vector? x) (let [xs (mapv as-code x)] (if (every? true? (map identical? xs x)) x (with-meta xs (meta x))))
+    (and (map? x) (not (record? x)))
+    (let [kvs (mapv (fn [[k v]] [(as-code k) (as-code v)]) x)]
+      (if (every? (fn [[[k v] [k0 v0]]] (and (identical? k k0) (identical? v v0))) (map vector kvs x))
+        x
+        (with-meta (into {} kvs) (meta x))))
+    :else x))
+
+;; ---------------------------------------------------------------------------
+;; java.lang.Math: clojurust's Math/ fns, by the JVM's names
+
+(def ^:private jvm-math
+  {'sin Math/sin 'cos Math/cos 'tan Math/tan 'asin Math/asin 'acos Math/acos 'atan Math/atan
+   'atan2 Math/atan2 'exp Math/exp 'log Math/log 'log10 Math/log10 'sqrt Math/sqrt 'pow Math/pow
+   'sinh Math/sinh 'cosh Math/cosh 'tanh Math/tanh 'hypot Math/hypot})
+
+;; ---------------------------------------------------------------------------
+
+(def adapter
+  {:name :cljrs
+   :core-ns 'clojure.core
+   :catch-all 'Throwable
+   :read-forms read-forms
+   :read-string (fn ([s] (read-string* s {})) ([s opts] (read-string* s opts)))
+   :edn-read-string edn-read-string
+   :ensure-bare-ns! ensure-bare-ns!
+   :refer-from-core! (fn [into-ns sym]
+                       (when (walked (ns-resolve 'clojure.core (plain sym)))
+                         (set-core-refers! into-ns (conj (vec (get @core-refers into-ns)) (plain sym)))))
+   :refer-all! (fn [into-ns from-ns] (require-in into-ns [from-ns :refer :all]))
+   :refer! refer!
+   :resolve-core (fn [sym]
+                   (walked
+                    (let [v (ns-resolve 'clojure.core (plain sym))]
+                      (when (and (var? v) (= 'clojure.core (var-ns-sym v)) (not (:private (meta v)))) v))))
+   :ns-interns (fn [ns-sym] (walked (ns-interns ns-sym)))
+   :ns-public-names (fn [ns-sym] (walked (set (keys (ns-publics ns-sym)))))
+   :interned-var (fn [ns-sym sym]
+                   (walked
+                    (when (find-ns ns-sym)
+                      (let [v (ns-resolve ns-sym (plain sym))]
+                        (when (and (var? v) (= ns-sym (var-ns-sym v))) v)))))
+   :intern! (fn [ns-sym sym val]
+              (walked (let [v (intern ns-sym (plain sym) val)]
+                        (when-let [m (meta sym)] (alter-meta! v merge m))
+                        v)))
+   :plain-symbol plain
+   :alter-var-meta! (fn [h f & args] (walked (alter-meta! h (fn [m] (apply f m args)))))
+   :set-dynamic! (fn [h] (walked (alter-meta! h assoc :dynamic true)) h)
+   :with-ns with-ns
+   :set-current-ns! (fn [ns-sym] (in-ns ns-sym))
+   :current-ns (fn [] (ns-name *ns*))
+   ;; (eval in a fn evaluates in the fn's own namespace: the form moves to
+   ;; the current one first)
+   ;; (only its defmacro form makes a macro, and a macro's fn is no var root
+   ;; to replace: each stock macro's body rewrites its own output)
+   :macro-def-style :defmacro
+   :macro-wrap-style :source
+   ;; (its fn* takes no name: the codemod binds one with letfn*, its letfn)
+   :named-fn*? false
+   :special-forms '{letfn* letfn}
+   :code-form as-code
+   :eval (fn [form] (eval (list 'do (list 'in-ns (list 'quote (ns-name *ns*))) (as-code form))))
+   :var-get var-get*
+   :var-raw-root var-get*
+   ;; (its lazy-seq and delay make their fn through make-lazy-seq and
+   ;; make-delay, which take no fn its IR made)
+   :lazy-seq (fn [f] (walked (lazy-seq (f))))
+   :delay (fn [f] (walked (delay (f))))
+   :exception? (fn [x] (instance? "Exception" x))
+   :transient? (fn [x] (and (= 'Object (type x)) (string/starts-with? (pr-str x) "#<Transient")))
+   :lazy-seq? (fn [x] (and (= 'List (type x)) (instance? "clojure.lang.IPending" x)))
+   :atom? (fn [x] (= 'Atom (type x)))
+   :volatile? (fn [x] (= 'Volatile (type x)))
+   :delay? (fn [x] (= 'Delay (type x)))
+   :char? (fn [x] (char? x))
+   :regex? (fn [x] (instance? "java.util.regex.Pattern" x))
+   :uuid? (fn [x] (uuid? x))
+   :bigint? (fn [x] (= 'BigInt (type x)))
+   :ratio? (fn [x] (ratio? x))
+   :decimal? (fn [x] (decimal? x))
+   :sorted? (fn [x] (sorted? x))
+   :parse-long (fn [s] (parse-long s))
+   :parse-double (fn [s] (parse-double s))
+   :nano-time (fn [] (System/nanoTime))
+   :current-time-millis (fn [] (System/currentTimeMillis))
+   :math-ceil (fn [x] (Math/ceil x))
+   :math-floor (fn [x] (Math/floor x))
+   :math-sqrt (fn [x] (Math/sqrt x))
+   :math jvm-math
+   ;; (nth of a string walks it from the start)
+   :string-chars (fn [s] (vec s))
+   :index-of (fn [s sub from] (let [i (string/index-of s sub from)] (if (nil? i) -1 i)))
+   :upper-case (fn [s] (string/upper-case (str s)))
+   :lower-case (fn [s] (string/lower-case (str s)))})
+
+(adapter/install! adapter)

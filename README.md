@@ -111,14 +111,16 @@ JVM Clojure 1.12.0 gives. `cohost.run/-main` takes `--verbose`, `--no-libs`
 and `--eval src ...` (evaluate instead of the batteries) on every host, e.g.
 `node target/cljs-node/main.js --eval "(binding [*print-length* 2] (pr-str (range)))"`.
 
-## The `cohost` command (spike)
+## The `cohost` command
 
-`bin/cohost` puts the Clojure CLI's face on any host: `cohost :cljs
--e "(+ 1 2)"` boots stock Clojure on ClojureScript and evaluates;
-a `deps.edn` in the directory is resolved with tools.deps and its
-namespaces load on the host through the ordinary loader — `-M -m`,
-`-X`, `-Spath`, aliases and `-Sdeps` included. `:jvm` delegates to the
-real CLI. Design, verified matrix and known gaps: `doc/CLI.md`.
+`bin/cohost` puts the Clojure CLI's face on any host: `cohost :cljs -e "(+ 1 2)"`
+boots stock Clojure on ClojureScript and evaluates. A `deps.edn` in the directory
+is resolved with tools.deps (through the Clojure CLI itself), and its namespaces,
+jars included, load on the host through the ordinary loader: `-e`, `-i`, `-m`,
+scripts, `-X`, `-Spath`, `-Sdeps` and the aliases' `:main-opts` / `:exec-fn` /
+`:exec-args` behave as `clojure.main` and `clojure.run.exec` do. Wired: `:cljs
+:jolt :lpy :cljw :phel :lg`; `:jvm` runs the real CLI. Design, the verified
+matrix and the differences: `doc/CLI.md`.
 
 ## Use it
 

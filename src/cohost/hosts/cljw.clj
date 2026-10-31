@@ -13,83 +13,23 @@
    - an unknown member is a catchable error, but cljw's \"not implemented\"
      is not: interop the shim lacks stays the shim's (no passthrough)."
   (:require [cohost.adapter :as adapter]
+            [cohost.scan :as scan]
             [clojure.edn :as edn]))
 
 ;; ---------------------------------------------------------------------------
-;; reading: each top-level form's extent by a scan, then read-string of that
-;; text, so a form is read after the one before it ran (a ::kw after an ns
-;; form is that namespace's). The scan indexes a vector of the chars: nth of
-;; a cljw string walks it from the start.
-
-(def ^:private delims #{\( \) \[ \] \{ \} \" \;})
-(defn- ws? [c] (or (= c \,) (Character/isWhitespace c)))
-
-(defn- skip-ws
-  "The index of the next form at or after i, past whitespace, commas and
-   ; comments."
-  [cs i]
-  (let [n (count cs)]
-    (loop [i i]
-      (if (>= i n)
-        n
-        (let [c (nth cs i)]
-          (cond (ws? c) (recur (inc i))
-                (= c \;) (recur (loop [j i] (if (or (>= j n) (= (nth cs j) \newline)) j (recur (inc j)))))
-                :else i))))))
-
-(defn- token-end [cs i]
-  (let [n (count cs)]
-    (loop [i i]
-      (if (or (>= i n) (let [c (nth cs i)] (or (ws? c) (contains? delims c)))) i (recur (inc i))))))
-
-(defn- string-end "i at the opening quote -> past the closing one" [cs i]
-  (loop [i (inc i)]
-    (let [c (nth cs i)]
-      (cond (= c \\) (recur (+ i 2)) (= c \") (inc i) :else (recur (inc i))))))
-
-(declare form-end)
-(defn- coll-end [cs i close]
-  (loop [i (skip-ws cs i)]
-    (if (= (nth cs i) close) (inc i) (recur (skip-ws cs (form-end cs i))))))
-
-(defn- form-end
-  "The index past the form starting at i (a #_ discard runs on to the form
-   after it)."
-  [cs i]
-  (if (>= i (count cs))
-    i
-    (let [c (nth cs i)
-          after (fn [k] (form-end cs (skip-ws cs k)))]
-      (case c
-        \( (coll-end cs (inc i) \))
-        \[ (coll-end cs (inc i) \])
-        \{ (coll-end cs (inc i) \})
-        \" (string-end cs i)
-        \\ (token-end cs (+ i 2))
-        (\' \` \@) (after (inc i))
-        \~ (after (if (= \@ (nth cs (inc i) nil)) (+ i 2) (inc i)))
-        \^ (after (form-end cs (skip-ws cs (inc i))))
-        \# (let [d (nth cs (inc i) nil)]
-             (case d
-               (\( \{) (form-end cs (inc i))
-               \" (string-end cs (inc i))
-               (\' \=) (after (+ i 2))
-               (\_ \^) (after (form-end cs (skip-ws cs (+ i 2))))
-               \? (after (if (= \@ (nth cs (+ i 2) nil)) (+ i 3) (+ i 2)))
-               \: (after (token-end cs (+ i 2)))
-               \# (token-end cs (+ i 2))
-               ;; a tagged literal: the tag, then its form
-               (after (token-end cs (inc i)))))
-        (token-end cs i)))))
+;; reading: each top-level form's extent by a scan (cohost.scan), then
+;; read-string of that text, so a form is read after the one before it ran (a
+;; ::kw after an ns form is that namespace's). The scan indexes a vector of
+;; the chars: nth of a cljw string walks it from the start.
 
 (defn- read-forms [src cb]
   (let [cs (vec src) n (count cs)]
-    (loop [i (skip-ws cs 0)]
+    (loop [i (scan/skip-ws cs 0)]
       (when (< i n)
-        (let [j (form-end cs i)
+        (let [j (scan/form-end cs i)
               f (read-string {:eof ::none :read-cond :allow} (subs src i j))]
           (when-not (= f ::none) (cb f))
-          (recur (skip-ws cs j)))))))
+          (recur (scan/skip-ws cs j)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; vars

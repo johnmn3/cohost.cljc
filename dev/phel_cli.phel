@@ -1,0 +1,9 @@
+;; bin/cohost :phel — cohost.cli's -main with Phel's command-line arguments
+;; (the launcher's config file). Run from the repo (phel-config.php names the
+;; source directories); cohost.cli moves to the project directory.
+;; phel.string: see dev/phel_main.phel.
+(ns cohost-phel-cli
+  (:require [cohost.cli]
+            [phel.string]))
+
+(apply cohost.cli/-main *argv*)
