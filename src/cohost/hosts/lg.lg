@@ -881,7 +881,12 @@
   (let [[re0 s0 ms0] @last-matches
         ms (if (and (identical? re re0) (identical? s s0)) ms0
                (let [ms (all-matches re s)] (vreset! last-matches [re s ms]) ms))]
-    (first (filter (fn [m] (>= (first m) from)) ms))))
+    ;; (the first match starting at or after from: they are in order)
+    (loop [lo 0 hi (count ms)]
+      (if (< lo hi)
+        (let [mid (quot (+ lo hi) 2)]
+          (if (< (first (nth ms mid)) from) (recur (inc mid) hi) (recur lo mid)))
+        (when (< lo (count ms)) (nth ms lo))))))
 
 (defn- re-match-full [re s]
   (when-let [g (re-matches re s)] [0 (count s) (if (vector? g) g [g]) nil]))

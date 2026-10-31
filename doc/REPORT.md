@@ -24,6 +24,7 @@ shared the machine (the wall times are upper bounds).
 | ClojureScript, self-hosted, Chromium | 1.12.42 | 572 / 79 / 140 / **0** | **131/133** | **61/61** | 19 s in the page |
 | ClojureWasm (Zig), measured 2026-10-31 on the 139-case battery | v1.15.4 prebuilt | 555 / 145 / 91 / **0** | **137/139** | **61/61** | 86 s boot |
 | Phel (PHP 8.5), measured 2026-10-31 on the 139-case battery | v0.54.0 phar | 591 / 73 / 127 / **0** | **139/139** | **61/61** | 41 s boot |
+| let-go (Go), measured 2026-10-31 on the 139-case battery | v1.13.0 prebuilt | 569 / 105 / 117 / **0** | **137/139** | **61/61** | 12 s boot |
 
 Every top-level count is out of 791: core.clj's 719 forms, the 37-var prelude
 (the dynamic vars the JVM runtime creates before core.clj loads) and the 35

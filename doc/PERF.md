@@ -86,18 +86,18 @@ What caused them:
 ClojureWasm was measured 2026-10-31 between 12:56 and 1:02 AM ET on commit `de0ca96`, on
 one 4-CPU box; the JVM run was made on the same box just before, so the ratios compare like
 with like. Phel was measured on the same box 2026-10-31 between 5:37 and 5:41 AM ET, on
-`9ab825b` with this commit's bench changes, against that JVM run. Neither host had
-natives. The files are in `doc/perf/new-hosts/`; `bb bench:report doc/perf/new-hosts`
+`9ab825b` with this commit's bench changes, against that JVM run; let-go between 7:46 and
+7:49 AM ET, on `4250439` with its commit's regex change. No host had natives. The files are in `doc/perf/new-hosts/`; `bb bench:report doc/perf/new-hosts`
 prints the full tables.
 
-| | ClojureWasm v1.15.4 | Phel v0.54.0 (PHP 8.5) |
-|---|---:|---:|
-| the stock core against JVM Clojure's own core | ×47.3 | ×137.9 |
-| the stock core against the host's own core | **×5.1** | **×4.3** |
-| the host's own core against JVM Clojure | ×9.2 | ×35.6 |
-| boot of core.clj (JVM Clojure: 1.1 s) | 86.3 s | 41.0 s |
-| the twelve libraries | 2.1 s | 13.3 s |
-| natives | 0 | 0 |
+| | ClojureWasm v1.15.4 | Phel v0.54.0 (PHP 8.5) | let-go v1.13.0 (Go) |
+|---|---:|---:|---:|
+| the stock core against JVM Clojure's own core | ×47.3 | ×137.9 | ×84.9 |
+| the stock core against the host's own core | **×5.1** | **×4.3** | **×6.9** |
+| the host's own core against JVM Clojure | ×9.2 | ×35.6 | ×12.3 |
+| boot of core.clj (JVM Clojure: 1.1 s) | 86.3 s | 41.0 s | 11.8 s |
+| the twelve libraries | 2.1 s | 13.3 s | 5.9 s |
+| natives | 0 | 0 | 0 |
 
 **ClojureWasm's largest gaps, the stock core against its own:**
 
@@ -144,6 +144,28 @@ Two cases have no host side: their source is not Phel (Phel's `for` takes
 stands alone. Phel's own `count` of a 100,000-item lazy pipeline, and its `sort`,
 `frequencies` and `distinct` at the bench's sizes, recurse past PHP's default 8 MB C
 stack and segfault; `bb bench:phel` runs Phel with a 64 MB stack (`ulimit -s 65536`).
+
+**let-go's largest gaps, the stock core against its own:**
+
+| case | ratio |
+|---|---:|
+| `format` | ×148.1 |
+| `re-seq` | ×110.5 |
+| `apply str` | ×89.4 |
+| `conj!` into a transient vector | ×51.9 |
+| `get` from a 1,000-key map | ×37.3 |
+| `frequencies` | ×28.8 |
+| build a set | ×25.5 |
+
+- `format`: let-go's own is Go's `Sprintf`; the stock core's boots over the shim's
+  Formatter, which reads the format string itself.
+- `re-seq`: let-go's regexes report no positions, so the adapter finds a search's
+  matches once, by a replace that marks each, and every `find` of the stock `re-seq` is
+  a binary search over them; the first measure, a scan from the first match on every
+  `find`, was ×3034.
+- `apply str`: core.clj's `str` is booted (let-go's prints an exception as `#error
+  {...}`), and builds through the shim's StringBuilder.
+- the others have not been measured apart.
 
 ## Method
 
