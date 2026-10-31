@@ -1,5 +1,5 @@
 ;; Which top-level forms of clojure/core.clj boot as written (:eval), which
-;; names the booted namespace takes from the host's own core instead (:host —
+;; names the booted namespace takes from the host's own core instead (:host --
 ;; the var is referred, so it IS the host's), which are replaced by a
 ;; host-neutral definition (:replace), and which are skipped (:skip) because
 ;; they are the JVM itself: proxies, gen-class, structs, agents and refs, the
@@ -24,7 +24,7 @@
         :else nil))))
 
 ;; Taken from the host: its reader, printer, namespaces, loader, regexes, IO,
-;; multimethods, concurrency — the parts of core.clj that are a facade over
+;; multimethods, concurrency -- the parts of core.clj that are a facade over
 ;; the JVM runtime rather than Clojure written in Clojure.
 (def host-names
   (set '[;; printing / reading / IO

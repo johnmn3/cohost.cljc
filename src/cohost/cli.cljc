@@ -1,8 +1,8 @@
 ;; Command-line runner: the host-side half of `bin/cohost` (doc/CLI.md).
 ;;
 ;; The launcher resolves the project's deps.edn with tools.deps (through the
-;; Clojure CLI), turns every classpath entry into a source root — directories
-;; as they are, jars extracted under ~/.cache/cohost — and writes one EDN
+;; Clojure CLI), turns every classpath entry into a source root -- directories
+;; as they are, jars extracted under ~/.cache/cohost -- and writes one EDN
 ;; config, which -main reads:
 ;;
 ;;   {:stock-root "/abs/resources/cohost/clojure-1.12.0"
@@ -18,8 +18,8 @@
 ;;
 ;; It boots the stock core against :stock-root, registers :roots with
 ;; boot/add-source-root! (a dependency's namespace loads through the ordinary
-;; loader, rewritten like everything else), and runs as clojure.main does —
-;; clojure.run.exec for -X — in a namespace named user: each -e form's value
+;; loader, rewritten like everything else), and runs as clojure.main does --
+;; clojure.run.exec for -X -- in a namespace named user: each -e form's value
 ;; is printed when it is not nil, a script's and -m's are not, and an error is
 ;; printed to stderr and ends the run with exit code 1.
 (ns cohost.cli

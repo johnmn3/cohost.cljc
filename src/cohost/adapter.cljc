@@ -88,7 +88,7 @@
    :named-fn*?      [[] "true when (fn* name [params] body) names the fn for its body (the JVM's; default); false when the host's fn* takes no name (ClojureWasm): the codemod binds the name with letfn* instead"]
    :variadic-recur-style [[] ":jvm when `recur` in a variadic arity binds the rest param to the trailing argument; :repack when the host packs the trailing arguments into a fresh rest seq (the codemod then loops such arities)"]
    :def-meta        [[] "nil, or metadata every `def` name gets so alter-var-root / with-redefs reach compiled references (basilisp: {:redef true})"]
-   :inline-meta     [[] ":keep when the host ignores a var's :inline fn or is the JVM; :strip when it honors it (basilisp) — the stock inline fns build forms holding quoted JVM interop"]
+   :inline-meta     [[] ":keep when the host ignores a var's :inline fn or is the JVM; :strip when it honors it (basilisp) -- the stock inline fns build forms holding quoted JVM interop"]
    :rewrite-inline? [[] "true when the host's compiler ignores a var's :inline fn: the codemod applies core.clj's own inline expansions at rewrite time, as the JVM compiler does (with :inline-meta :keep); default false"]
    :empty-queue     [[] "the host's empty persistent queue (clojure.lang.PersistentQueue/EMPTY), or nil"]
    :host-class      [['token] "the host's own class or interface a JVM class token names, or nil: instance? also asks it"]
@@ -102,7 +102,7 @@
    :meta            [['x] "x's metadata map, or nil (the host's meta; basilisp's own meta hands back a reify object's meta method unbound, so its adapter calls it)"]
    :expand-macro    [['var 'form 'locals] "nil (the default), or a fn: the expansion of a call (form) of the cohost macro var holds, as the macro wrote it, with an &env of the locals; form itself when var holds none (let-go, whose compiler hands a macro no &env: the codemod expands it in place)"]
    :host-type       [['token] "the host type (form) an extend / extend-type / extend-protocol position names for a JVM class token, a vector of them, or nil to keep the class symbol"]
-   :user-type?      [['x] "is x an instance of a type user code defined — deftype, defrecord, reify, proxy — rather than the host's own data? (.m x args) in source then reaches x's own member before the shim's method; default false"]
+   :user-type?      [['x] "is x an instance of a type user code defined -- deftype, defrecord, reify, proxy -- rather than the host's own data? (.m x args) in source then reaches x's own member before the shim's method; default false"]
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
@@ -190,24 +190,28 @@
 ;; ---------------------------------------------------------------------------
 ;; generic pieces: stand-ins a host need not provide
 
-(defrecord Iter [state])
+;; jank has no records: there a stand-in is a map tagged with its name
+(defn standin [tag m] (assoc m :cohost/standin tag))
+(defn standin? [tag x] (and (map? x) (= tag (get x :cohost/standin))))
+
+#?(:jank (defn ->Iter [state] (standin 'Iter {:state state})) :default (defrecord Iter [state]))
 
 (def ^:dynamic *raw-macro-output*
   "True while stock macroexpand-1 runs: a stock macro's expansion comes back as
    the macro wrote it, not rewritten for the host's compiler."
   false)
 
-(defrecord SB [state])
+#?(:jank (defn ->SB [state] (standin 'SB {:state state})) :default (defrecord SB [state]))
 (defn- generic-sb "A StringBuilder stand-in (the host's str does not print it)." [] (->SB (atom [])))
 ;; (on Phel a record is a struct whose name is its constructor fn: its PHP
 ;; class is asked, cohost\adapter\SB for SB)
-(defn- generic-sb? [x] #?(:phel (php/is_a x "cohost\\adapter\\SB") :default (instance? SB x)))
+(defn- generic-sb? [x] #?(:phel (php/is_a x "cohost\\adapter\\SB") :jank (standin? 'SB x) :default (instance? SB x)))
 (defn- generic-sb-append! [sb x] (swap! (:state sb) conj (str x)) sb)
 (defn- generic-sb-str [sb] (apply str @(:state sb)))
 
-(defrecord MList [state])
+#?(:jank (defn ->MList [state] (standin 'MList {:state state})) :default (defrecord MList [state]))
 (defn mutable-list "A java.util.ArrayList stand-in." [] (->MList (atom [])))
-(defn mlist? [x] #?(:phel (php/is_a x "cohost\\adapter\\MList") :default (instance? MList x)))
+(defn mlist? [x] #?(:phel (php/is_a x "cohost\\adapter\\MList") :jank (standin? 'MList x) :default (instance? MList x)))
 
 (defn seqable?* [x] (or (nil? x) (coll? x) (string? x) (seq? x)))
 
@@ -227,6 +231,13 @@
         rm (when-not (identical? root e) (trunc (or (ex-message root) (str root)) 400))]
     (if rm (str rm "  (outer: " m ")") m)))
 
+#?(:jank (def ^:private native-exception (gensym "native-exception")))
+;; a jank compile error (jank::error_ref, a C++ value) and its message
+#?(:jank (cpp/raw "#include <jank/error.hpp>
+namespace cohost_err {
+  inline jank::runtime::object_ref message(jank::error_ref const e)
+  { return jank::runtime::make_box(e->message); }
+}"))
 (defn try-all
   "(try (thunk) (catch <anything> e (handler e))); handler defaults to nil.
    cohost's own code catches everything through this, so each host's catch-all
@@ -238,9 +249,21 @@
    tell them apart. (Code cohost evaluates gets the adapter's :catch-all.)"
   ([thunk] (try-all thunk (fn [_] nil)))
   ([thunk handler]
-   (try (thunk)
-        (catch #?(:cljs :default :jank :default :lpy Exception :default Throwable) e
-          (handler e)))))
+   #?(:jank
+      ;; jank's (catch :default e) binds e to nil: a thrown jank value is caught
+      ;; as an object_ref; a native C++ exception reaches the handler as an ex-info
+      (let [r (try (thunk)
+                   (catch cpp/jank.runtime.object_ref e (handler e))
+                   (catch cpp/jank.error_ref e
+                     (handler (ex-info (cpp/cohost_err.message e) {:cohost/class 'clojure.lang.Compiler$CompilerException})))
+                   (catch :default _ native-exception))]
+        (if (identical? r native-exception)
+          (handler (ex-info "a native C++ exception" {:cohost/native true}))
+          r))
+      :default
+      (try (thunk)
+           (catch #?(:cljs :default :lpy Exception :default Throwable) e
+             (handler e))))))
 
 (defn- unsupported [k]
   (fn [& _] (throw (ex-info (str "cohost: this host provides no " k) {:cohost/unsupported k}))))
@@ -299,7 +322,7 @@
                                                          (when rename [:rename rename]))))))
     ;; resolved, not named: a host may have no alias fn (basilisp adds aliases on the namespace)
     :alias! #?(:cljs (unsupported :alias!) :phel (unsupported :alias!) :default (fn [into-ns a target] (binding [*ns* (the-ns into-ns)] ((resolve 'alias) a target))))
-    :set-current-ns! #?(:cljs (unsupported :set-current-ns!) :phel (unsupported :set-current-ns!) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
+    :set-current-ns! #?(:cljs (unsupported :set-current-ns!) :phel (unsupported :set-current-ns!) :jank (fn [ns-sym] (in-ns ns-sym)) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
     :require-host! #?(:cljs (unsupported :require-host!) :phel (unsupported :require-host!) :default (fn [lib] (require lib)))
     :core-extras {}
     :host-type nil
@@ -614,7 +637,7 @@
 
 ;; java.util.Iterator: the host's own where it has one, else the stand-in
 (defn iter "A java.util.Iterator over coll." [coll] (or ((cap :iterator) coll) (->Iter (atom (seq coll)))))
-(defn- stand-in-iter? [x] #?(:phel (php/is_a x "cohost\\adapter\\Iter") :default (instance? Iter x)))
+(defn- stand-in-iter? [x] #?(:phel (php/is_a x "cohost\\adapter\\Iter") :jank (standin? 'Iter x) :default (instance? Iter x)))
 (defn iter? [x] (or (stand-in-iter? x) (boolean ((cap :iterator?) x))))
 (defn iter-has-next? [it] (if (stand-in-iter? it) (some? @(:state it)) (boolean ((cap :iterator-has-next?) it))))
 (defn iter-next! [it]

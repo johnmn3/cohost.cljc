@@ -519,7 +519,7 @@
 (defn install-casts!
   "For each [name token]: a shim var name holding check-cast for that class
    token, built once (on ClojureScript, a property of the shim's namespace
-   object) — the codemod's checkcast of a hinted local calls it. -> the
+   object) -- the codemod's checkcast of a hinted local calls it. -> the
    names installed."
   [pairs]
   (mapv (fn [[d c]]
@@ -1455,8 +1455,8 @@
 ;; JVM's find (resuming after the last match, one past an empty one), group,
 ;; start, end, matches, lookingAt, appendReplacement ($n group references,
 ;; \\ escapes), appendTail, replaceAll, replaceFirst, reset.
-(defrecord Matcher [re state])
-(defn matcher? [x] #?(:phel (php/is_a x "cohost\\shim\\Matcher") :default (instance? Matcher x)))
+#?(:jank (defn ->Matcher [re state] (host/standin 'Matcher {:re re :state state})) :default (defrecord Matcher [re state]))
+(defn matcher? [x] #?(:phel (php/is_a x "cohost\\shim\\Matcher") :jank (host/standin? 'Matcher x) :default (instance? Matcher x)))
 (defn new-matcher [re s] (->Matcher re (atom {:s (str s) :m nil :from 0 :append 0})))
 
 (defn- m-find
@@ -1884,7 +1884,7 @@
 (def -alterRoot (fn [v f args] (host/set-var-root! v (fn [old] (apply f old args))) (host/var-raw-root v)))
 (def -toSymbol (fn [v] (let [n (host/var-ns v) n (if (h-namespace? n) (host/ns-name* n) n)]
                          (if n (symbol (str n) (str (host/var-sym v))) (host/var-sym v)))))
-;; IAtom.swap overloads: (f) (f x) (f x y) (f x y args) — the last takes the
+;; IAtom.swap overloads: (f) (f x) (f x y) (f x y args) -- the last takes the
 ;; remaining arguments as one seq, which core.clj's swap! passes through as-is.
 (def -swap (fn ([a f] (swap! a f)) ([a f x] (swap! a f x)) ([a f x y] (swap! a f x y))
              ([a f x y args] (apply swap! a f x y args))))
@@ -2070,7 +2070,7 @@
 (defn host-object? [x]
   (and (some? x)
        (not (h-host-data? x))
-       (let [t #?(:cljs (type x) :cljrs (type x) :default (class x))
+       (let [t #?(:cljs (type x) :cljrs (type x) :jank (type x) :default (class x))
              hit (get @host-object-types t absent)]
          (if (identical? hit absent)
            (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type-of x)))))]
@@ -2110,7 +2110,7 @@
 
 (defn install-dots!
   "For each instance method -m the shim has (method-syms, symbols): dot$m,
-   the dispatcher (dot \"m\" -m), built once — the codemod's (.m x args)
+   the dispatcher (dot \"m\" -m), built once -- the codemod's (.m x args)
    calls it rather than building a dispatcher at every evaluation of the
    call. A shim var (on ClojureScript, the property of the namespace object
    its shim-ref names). -> the names installed."

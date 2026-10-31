@@ -79,8 +79,8 @@
 
 (defn- branch
   "The text a reader conditional at i reads as: its first branch whose feature
-   is one of features (strings, \":clj\") or :default — a #?@ branch's
-   collection by its elements — or nothing. -> [text end]"
+   is one of features (strings, \":clj\") or :default -- a #?@ branch's
+   collection by its elements -- or nothing. -> [text end]"
   [src cs i features]
   (let [splice? (= \@ (at cs (+ i 2)))
         end (form-end cs i)

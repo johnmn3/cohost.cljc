@@ -442,7 +442,7 @@
    :host-method host-method
    ;; record?: is a form a record instance (a reader literal); protocol-var?:
    ;; (fn [ns-sym name-sym]) is that var a protocol; interned?: (fn [sym]) is
-   ;; sym a var of the namespace being compiled — such a name is never a class
+   ;; sym a var of the namespace being compiled -- such a name is never a class
    ;; token. user-types: names deftype / defrecord forms defined, same reason.
    :record? record?
    :protocol-var? protocol-var?
@@ -503,7 +503,10 @@
    string); any other :tag is data and stays."
   [m]
   (when m
-    (let [m (if (let [t (:tag m)] (or (symbol? t) (string? t))) (dissoc m :tag) m)
+    ;; (jank's reader keeps ^Class as :tag (quote Class))
+    (let [m (if (let [t (:tag m)] (or (symbol? t) (string? t) (and (seq? t) (= 'quote (first t)) (symbol? (second t)))))
+              (dissoc m :tag)
+              m)
           m (dissoc m :rettag)
           m (if *strip-inline?* (dissoc m :inline :inline-arities) m)
           m (if (contains? m :arglists) (update m :arglists strip-arglists) m)]
@@ -582,7 +585,7 @@
    the miss). On a host with a java.* surface of its own, interop the shim
    lacks is left to the host."
   [ctx m xs host-form]
-  ;; xs: the target and the arguments as written — none at all in a
+  ;; xs: the target and the arguments as written -- none at all in a
   ;; `(.m)` a threading macro will fill, so no target is invented
   (let [xs' (rw-all ctx xs)
         ;; a target hinted with a checked class: the JVM's checkcast first, to
@@ -1239,7 +1242,7 @@
             (= h 'var) (if (symbol? (second form)) (list 'var (restock ctx (second form))) form)
             (= h 'quote) (if (seq *kw-unrenames*) (list 'quote (unrename-data (second form))) form)
             ;; jolt's reader keeps ` as a marker the analyzer expands in *ns*;
-            ;; the template is data — the macro's output gets rewritten instead.
+            ;; the template is data -- the macro's output gets rewritten instead.
             (= h 'clojure.core/syntax-quote) form
             (= h '.) (rw-dot ctx form)
             ;; (.. x f more...) is expanded here, before its first argument can be
@@ -1444,7 +1447,7 @@
 
 (defn rewrite
   "The codemod: form -> form the host can compile against cohost.shim.
-   opts :locals — the local names in scope (a macro expansion's, from its
+   opts :locals -- the local names in scope (a macro expansion's, from its
    &env)."
   ([ctx form] (rewrite ctx form nil))
   ([ctx form {:keys [locals]}]

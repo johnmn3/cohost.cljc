@@ -6,7 +6,7 @@
 ;; core, so every name core.clj defines is the stock one. After every form,
 ;; each newly defined macro is wrapped so its expansions are rewritten too (a
 ;; stock macro emits interop into its caller). Names the policy marks :host are
-;; referred from the host's core — they are the host's vars, not copies.
+;; referred from the host's core -- they are the host's vars, not copies.
 ;;
 ;; The result is a report: how many forms booted, which were taken from the
 ;; host, which were skipped, and every form that failed with its error.
@@ -577,8 +577,8 @@
     @found))
 
 (defn boot!
-  "Boot core.clj. opts: :root — the directory holding clojure/core.clj
-   (default resources/cohost/clojure-1.12.0); :files — paths under it."
+  "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
+   (default resources/cohost/clojure-1.12.0); :files -- paths under it."
   ([] (boot! {}))
   ([{:keys [root files verbose] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
@@ -927,7 +927,7 @@
 
 (defn eval-str
   "Read and eval every form of source text, each in the namespace the one
-   before it left — starting where the last eval-str ended (cohost.user at
+   before it left -- starting where the last eval-str ended (cohost.user at
    first), as a REPL session does; -> the last value. opts {:session? false}
    evaluates in cohost.user without moving the session; {:on-value f} calls
    (f value ns) after each form, with the namespace it left."

@@ -119,6 +119,42 @@ clojurust facts found so far (put them in REPORT's host section when it lands):
   --src-path <dir> probe.cljrs -- <root>`) that boots a core.clj truncated just past the
   failing form and evals pieces one at a time; `gdb -batch` gives Rust frames (no symbols).
 
+## jank (in progress: src/cohost/hosts/jank.jank)
+
+Installed from jank's apt repository (`dev/install/jank.sh`): package `0.1-noble`, jank-0.1-alpha.
+Run: `bb boot:jank`. Measured 2026-10-31 ET: 791 forms, stock 542 / host 159 / skipped 90 /
+**errors 0**; **battery 103/139**; **libraries 29/61** (walk, set, zip, template whole). A boot
+plus both batteries runs in about 35 s.
+
+jank facts found (REPORT's host section when it lands; each verified on the binary):
+- Its lexer rejects any non-ASCII character, in a string or a comment: cohost's sources are
+  ASCII now (em dashes `--`; the battery's three non-ASCII characters are `\u` escapes, so its
+  rows read the same on every host). The stock sources are ASCII.
+- A macro's fn takes [&form &env & args], but jank's expander passes &form `((args))` and &env
+  the macro's own name: `:expand-macro` (the let-go route) expands cohost's macros with the call
+  form and an &env of the locals.
+- Type hints are C++ types to its compiler, and its reader keeps `^Class` as `:tag (quote
+  Class)`: the codemod's `strip-meta` now drops a quoted-symbol tag too. (User idea, open:
+  translate JVM primitive hints to jank's native types for speed; measure with the bench.)
+- Its compiler honors `:inline`, and core.clj's write raw JVM interop: `:inline-meta :strip`,
+  `:rewrite-inline? true`.
+- Its syntax-quote expands at read time through `clojure.core/concat*` (private): the adapter
+  interns it into cohost.core.
+- `(catch :default e)` binds nil; a jank value is caught as `cpp/jank.runtime.object_ref`, a
+  compile error as `cpp/jank.error_ref` (its message through a `cpp/raw` helper); `try-all` has a
+  `:jank` branch for the three.
+- No records, types or protocols: cohost's own records (Iter, SB, MList, Matcher) are maps tagged
+  `:cohost/standin` there. `class` and `instance?` throw TODO; `type` answers name strings
+  (`volatile_`, `re_pattern`, `persistent_vector`, `big_integer`; a map entry is a vector).
+- `push-thread-bindings` takes a hash map only; `indexed?`, `rseq` and refs' `sync` are TODO
+  stubs; `(/ 1 3)` is 0 (no ratios); no clock (C++ `<chrono>` through `cpp/raw`), no `Math/`
+  (C++ `<cmath>`).
+
+Next, by the battery's groups: the A3 type layer (deftype/defrecord/defprotocol/reify; read
+doc/hosts/jank-J0.md first: one `cpp/raw` object type is possible but jank's count/conj/assoc/meta
+abort on an unknown type), `:sort-array!`, `:re-find-at`, `format` (jank's prints C-style), the
+deref of a volatile/delay, native C++ exceptions in a few rows, `with-local-vars`, refs.
+
 ## Rules worth re-reading (doc/hosts/PLAN.md)
 Never edit vendored sources under resources/; host facts go in REPORT with a battery row;
 never weaken a test; commit + push after each milestone; long runs in the background;

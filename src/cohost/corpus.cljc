@@ -1,8 +1,8 @@
 ;; A scoreboard: the jolt-conformance corpus (jolt's test/chez/corpus.edn,
 ;; expected values meant as JVM Clojure's; doc/REPORT.md counts the rows where
-;; JVM Clojure 1.12.0 answers otherwise) evaluated twice per row —
+;; JVM Clojure 1.12.0 answers otherwise) evaluated twice per row --
 ;; through the booted stock core (cohost.user) and through the host's own
-;; core — and compared, as printed, to the JVM's answer. Two numbers per host:
+;; core -- and compared, as printed, to the JVM's answer. Two numbers per host:
 ;; how stock the booted core is, and how it compares to the host's hand-written
 ;; core on the same rows. Printing differences count against both equally.
 (ns cohost.corpus

@@ -1,0 +1,114 @@
+;; The jank adapter (jank, a Clojure on C++/LLVM). jank has Clojure's own
+;; persistent collections, lazy seqs, atoms, vars and namespaces; it has no
+;; deftype, defprotocol or reify, and no JVM classes: every JVM member reaches
+;; the shim. Facts measured on jank 0.1 (apt 0.1-noble), doc/REPORT.md:
+;; - `type` answers a name string ("persistent_vector", "lazy_sequence");
+;; - (catch :default e ...) catches everything and binds e to nil; a thrown jank
+;;   value is caught by cpp/jank.runtime.object_ref, which misses a native C++
+;;   exception;
+;; - a macro gets its arguments right, but &form and &env wrong;
+;; - push-thread-bindings takes a hash map only.
+(ns cohost.hosts.jank
+  (:require [cohost.adapter :as adapter]
+            [cohost.scan :as scan]
+            [clojure.string :as string]))
+
+;; ---------------------------------------------------------------------------
+;; reading: each top-level form's extent by a scan (cohost.scan), then
+;; read-string of that text, so a form is read after the one before it ran
+
+(defn- read-forms [src cb]
+  (let [cs (vec src) n (count cs)]
+    (binding [*read-eval* true]
+      (loop [i (scan/skip-ws cs 0)]
+        (when (< i n)
+          (let [j (scan/form-end cs i)]
+            (cb (read-string (subs src i j)))
+            (recur (scan/skip-ws cs j))))))))
+
+(defn- type? [t x] (= t (type x)))
+
+;; clocks: jank has none of its own; C++'s, through cpp/raw
+(cpp/raw "#include <chrono>
+namespace cohost_time {
+  inline long long nano_time() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+  inline long long millis() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
+}")
+(cpp/raw "#include <cmath>
+namespace cohost_math {
+  inline double floor_(double x) { return std::floor(x); }
+  inline double ceil_(double x) { return std::ceil(x); }
+  inline double sqrt_(double x) { return std::sqrt(x); }
+}")
+
+;; a macro's fn takes [&form &env & args], but jank's expander hands it the
+;; arguments with &form and &env wrong (&form ((args)), &env the macro's name):
+;; the codemod expands a call of a cohost macro itself, with the call form and
+;; an &env of the locals it knows
+(defn- expand-macro [v form locals]
+  (if (and v (:macro (meta v)) (not= "clojure.core" (str (:ns (meta v)))))
+    (binding [adapter/*raw-macro-output* true]
+      (apply (var-get v) form (zipmap locals (repeat nil)) (rest form)))
+    form))
+
+(def ^:private concat-star (var-get (get (ns-interns 'clojure.core) 'concat*)))
+
+(def adapter
+  {:name :jank
+   :core-ns 'clojure.core
+   :catch-all 'cpp/jank.runtime.object_ref
+   :read-forms read-forms
+   ;; (cohost.core also gets the concat* its syntax-quote expands through:
+   ;; cohost renames clojure.core/concat* there with every other core name)
+   :ensure-bare-ns! (fn [ns-sym]
+                      (create-ns ns-sym)
+                      (when (= 'cohost.core ns-sym) (intern ns-sym 'concat* concat-star))
+                      ns-sym)
+   :refer-from-core! (fn [into-ns sym]
+                       (binding [*ns* (the-ns into-ns)]
+                         (refer 'clojure.core :only [sym])))
+   :resolve-core (fn [sym] (get (ns-publics 'clojure.core) sym))
+   :mark-macro! (fn [v] (alter-meta! v assoc :macro true) v)
+   :expand-macro expand-macro
+   ;; its compiler honors a var's :inline, and core.clj's write raw JVM interop:
+   ;; the codemod applies them itself, and strips them from what jank sees
+   :inline-meta :strip
+   :rewrite-inline? true
+   :lazy-seq (fn [f] (lazy-seq (f)))
+   :delay (fn [f] (delay (f)))
+   :exception? (fn [x] (type? "exception_info" x))
+   :transient? (fn [x] (let [t (type x)] (and (string? t) (string/starts-with? t "transient"))))
+   :lazy-seq? (fn [x] (type? "lazy_sequence" x))
+   :atom? (fn [x] (type? "atom" x))
+   :volatile? (fn [x] (type? "volatile_" x))
+   :delay? (fn [x] (type? "delay" x))
+   :parse-double (fn [s] (parse-double s))
+   :parse-long (fn [s] (parse-long s))
+   :nan? (fn [x] (and (number? x) (NaN? x)))
+   :infinite? (fn [x] (and (number? x) (infinite? x)))
+   :char? (fn [x] (char? x))
+   :uuid? (fn [x] (uuid? x))
+   :ratio? (fn [x] (ratio? x))
+   :decimal? (fn [x] (type? "big_decimal" x))
+   :sorted? (fn [x] (sorted? x))
+   ;; (its indexed? is a TODO stub)
+   :indexed? (fn [x] (vector? x))
+   :regex? (fn [x] (type? "re_pattern" x))
+   :bigint? (fn [x] (type? "big_integer" x))
+   :counted? (fn [x] (counted? x))
+   :reversible? (fn [x] (reversible? x))
+   :reduced? (fn [x] (reduced? x))
+   ;; (its push-thread-bindings takes a hash map only, no array map)
+   :push-thread-bindings! (fn [m] (push-thread-bindings (apply hash-map (mapcat identity m))))
+   :var-bound? (fn [v] (bound? v))
+   :var-thread-bound? (fn [v] (thread-bound? v))
+   :nano-time (fn [] (cpp/cohost_time.nano_time))
+   :math-floor (fn [x] (cpp/cohost_math.floor_ (double x)))
+   :math-ceil (fn [x] (cpp/cohost_math.ceil_ (double x)))
+   :math-sqrt (fn [x] (cpp/cohost_math.sqrt_ (double x)))
+   :upper-case (fn [s] (string/upper-case (str s)))
+   :lower-case (fn [s] (string/lower-case (str s)))
+   :index-of (fn [s sub from] (let [i (string/index-of s sub from)] (if (nil? i) -1 i)))
+   :current-time-millis (fn [] (cpp/cohost_time.millis))})
+
+(adapter/install! adapter)
