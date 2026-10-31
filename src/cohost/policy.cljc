@@ -4,11 +4,12 @@
 ;; host-neutral definition (:replace), and which are skipped (:skip) because
 ;; they are the JVM itself: proxies, gen-class, structs, agents and refs, the
 ;; loader, java.io. The lists are data so a host can extend them.
-(ns cohost.policy)
+(ns cohost.policy
+  (:require [cohost.adapter :as host]))
 
 (def def-heads
-  '#{def defn defn- defmacro defonce definline declare defmulti defmethod
-     defprotocol deftype defrecord})
+  (set '[def defn defn- defmacro defonce definline declare defmulti defmethod
+     defprotocol deftype defrecord]))
 
 (defn form-head [form] (when (seq? form) (first form)))
 
@@ -18,15 +19,15 @@
   (when (seq? form)
     (let [[h x] form]
       (cond
-        (and (contains? def-heads h) (symbol? x)) x
-        (and (= h 'alter-meta!) (seq? x) (= 'var (first x))) (second x)
+        (and (contains? def-heads h) (symbol? x)) (host/plain-symbol x)
+        (and (= h 'alter-meta!) (seq? x) (= 'var (first x))) (host/plain-symbol (second x))
         :else nil))))
 
 ;; Taken from the host: its reader, printer, namespaces, loader, regexes, IO,
 ;; multimethods, concurrency — the parts of core.clj that are a facade over
 ;; the JVM runtime rather than Clojure written in Clojure.
 (def host-names
-  '#{;; printing / reading / IO
+  (set '[;; printing / reading / IO
      str pr prn print println newline flush printf pr-str prn-str print-str println-str
      pr-on print-simple print-ctor print-sequential print-map print-meta
      format read read-string read-line read+string
@@ -68,11 +69,11 @@
      uuid? random-uuid parse-uuid inst? inst-ms
      eduction iteration
      Throwable->map StackTraceElement->vec
-     tap> add-tap remove-tap})
+     tap> add-tap remove-tap]))
 
 ;; Skipped: the JVM itself, or private machinery behind a :host name.
 (def skip-names
-  '#{proxy proxy-super init-proxy update-proxy proxy-mappings proxy-name
+  (set '[proxy proxy-super init-proxy update-proxy proxy-mappings proxy-name
      proxy-call-with-super get-proxy-class construct-proxy
      gen-class gen-interface definterface deftype defrecord reify extend
      extend-type extend-protocol defprotocol satisfies? extends? extenders
@@ -89,18 +90,18 @@
      process-annotation add-annotations
      Eduction file-seq resultset-seq enumeration-seq
      vector-of
-     *clojure-version*})
+     *clojure-version*]))
 
 (def chunk-names
   "core.clj's chunk fns: taken from the host when its adapter has :chunks, so
    the stock chunked branches (map, filter, concat, doseq, for) build and walk
    the host's own chunks with its own fns."
-  '#{chunked-seq? chunk-first chunk-rest chunk-next chunk-buffer chunk-append chunk chunk-cons})
+  (set '[chunked-seq? chunk-first chunk-rest chunk-next chunk-buffer chunk-append chunk chunk-cons]))
 
 (def host-only-names
   "Of host-names, those whose stock definition cannot work without the JVM:
    when the host lacks one, it is skipped rather than reported as an error."
-  '#{pr prn print println newline flush pr-str prn-str print-str println-str
+  (set '[pr prn print println newline flush pr-str prn-str print-str println-str
      pr-on print-simple print-ctor print-sequential print-map print-meta
      read read-line read+string load-reader load-string load-file load compile
      slurp spit line-seq with-out-str with-in-str
@@ -125,7 +126,7 @@
      tap> add-tap remove-tap
      struct-map struct create-struct defstruct accessor
      ;; clojure.instant's and clojure.uuid's readers
-     default-data-readers})
+     default-data-readers]))
 
 (def companion-names
   "clojure.core names that the booted forms do not define: they come from the
@@ -134,13 +135,13 @@
    skips (->Eduction). Those with a plain-Clojure definition (companion-stock)
    are booted from it; the rest are taken from the host at the end of the boot
    when it has them, skipped otherwise."
-  '#{deftype defrecord defprotocol reify extend extend-type extend-protocol
+  (set '[deftype defrecord defprotocol reify extend extend-type extend-protocol
      extenders extends? satisfies? record? definterface munge
      proxy proxy-super init-proxy update-proxy get-proxy-class construct-proxy
      proxy-mappings proxy-name bean gen-class gen-interface vector-of
      print-method print-dup Throwable->map StackTraceElement->vec
      char-escape-string char-name-string inst-ms* namespace-munge hash-combine
-     ->Eduction})
+     ->Eduction]))
 
 (def companion-stock
   "Companion names whose stock definition is plain Clojure over the shim:
@@ -200,33 +201,33 @@
 ;; clojure/version.properties), the one `try` (data readers), the imports, the
 ;; `load`s of the companion files (the boot drives those explicitly).
 (def skip-heads
-  '#{import load require when-class deftype defprotocol extend-protocol
-     defmulti defmethod try let ns in-ns})
+  (set '[import load require when-class deftype defprotocol extend-protocol
+     defmulti defmethod try let ns in-ns]))
 
 (def host-overrides
   "Per-host adjustments to the lists above, keyed by the adapter's :name."
-  {:cljs {:host '#{defmacro}        ; only cljs.core's defmacro can make a macro there
-          :skip '#{}}
+  {:cljs {:host (set '[defmacro])        ; only cljs.core's defmacro can make a macro there
+          :skip (set '[])}
    ;; basilisp's format is Python's % operator: core.clj's format (and printf
    ;; over it) run String/format, the shim's java.util.Formatter
-   :lpy {:stock '#{format printf}}
+   :lpy {:stock (set '[format printf])}
    ;; ClojureWasm's str of an exception writes the class's short name; core.clj's
    ;; str reaches the shim's toString, which writes the JVM's
-   :cljw {:stock '#{str}}
+   :cljw {:stock (set '[str])}
    ;; Phel's str of an exception is PHP's (the class, the message, the trace);
    ;; core.clj's str reaches the shim's toString
-   :phel {:stock '#{str}}})
+   :phel {:stock (set '[str])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."
-  '#{defn defmacro})
+  (set '[defn defmacro]))
 
 (def self-referential-macros
   "Macros whose redefinition expands through themselves: `(defmacro fn ...)`
    becomes `(def fn (fn fn ...))`. A host that drops a var's macro status when
    it sees the `def` (basilisp) then compiles that init as a call. These are
    emitted as a direct `(def ^:macro name (fn* name ([&form &env & params] ...)))`."
-  '#{fn})
+  (set '[fn]))
 
 (defn direct-macro-def
   "`(defmacro name doc? attr? params body...)` or `(defmacro name doc? attr?
@@ -242,6 +243,8 @@
         m (merge attrs {:macro true :arglists (list 'quote (apply list (map first arities)))} (when doc {:doc doc}))]
     (list 'def (with-meta nm m) (apply list 'fn* nm arities'))))
 
+(def ^:private fn-heads (set '[fn* fn]))
+
 (defn adapt-macro-def
   "On hosts where only a defmacro form makes a macro (style :defmacro), turn the
    bootstrap `(def ^:macro x (fn* x [&form &env & args] body))` defs, and the
@@ -254,7 +257,7 @@
       (cond
         (and (= h 'def) (symbol? nm)
              (or (:macro (meta nm)) (contains? setmacro-defined nm))
-             (seq? init) (contains? '#{fn* fn} (first init)))
+             (seq? init) (contains? fn-heads (first init)))
         ;; `(fn* name? [params] body...)` or `(fn* name? ([params] body...)+)`:
         ;; each arity drops its leading &form &env, which defmacro adds back.
         (let [more (rest init)

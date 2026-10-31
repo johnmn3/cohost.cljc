@@ -136,78 +136,81 @@
 ;; class tokens: a class is a symbol naming it
 
 (def ^:private token-ancestors
-  '{clojure.lang.PersistentVector #{clojure.lang.IPersistentVector clojure.lang.APersistentVector clojure.lang.IPersistentCollection clojure.lang.IPersistentStack clojure.lang.Associative clojure.lang.Sequential clojure.lang.Indexed clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.Reversible clojure.lang.IEditableCollection clojure.lang.IReduce clojure.lang.IReduceInit clojure.lang.IKVReduce clojure.lang.ILookup java.util.List java.util.Collection java.lang.Iterable java.lang.Comparable java.lang.Object}
-    clojure.lang.PersistentArrayMap #{clojure.lang.IPersistentMap clojure.lang.APersistentMap clojure.lang.IPersistentCollection clojure.lang.Associative clojure.lang.ILookup clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.IEditableCollection clojure.lang.IKVReduce clojure.lang.Seqable java.util.Map java.lang.Iterable java.lang.Object}
-    clojure.lang.MapEntry #{clojure.lang.AMapEntry clojure.lang.APersistentVector clojure.lang.AFn clojure.lang.IMapEntry java.util.Map$Entry clojure.lang.IPersistentVector clojure.lang.Associative clojure.lang.IPersistentStack clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Indexed clojure.lang.Counted clojure.lang.IFn clojure.lang.Reversible clojure.lang.ILookup clojure.lang.IHashEq clojure.lang.Seqable java.util.List java.util.RandomAccess java.util.Collection java.lang.Iterable java.lang.Comparable java.lang.Runnable java.util.concurrent.Callable java.io.Serializable java.lang.Object}
-    clojure.lang.PersistentQueue #{clojure.lang.IPersistentList clojure.lang.IPersistentStack clojure.lang.IPersistentCollection clojure.lang.Obj clojure.lang.IObj clojure.lang.IMeta clojure.lang.Counted clojure.lang.Sequential clojure.lang.Seqable clojure.lang.IHashEq java.util.Collection java.lang.Iterable java.io.Serializable java.lang.Object}
-    clojure.lang.PersistentHashMap #{clojure.lang.IPersistentMap clojure.lang.APersistentMap clojure.lang.IPersistentCollection clojure.lang.Associative clojure.lang.ILookup clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.IEditableCollection clojure.lang.IKVReduce clojure.lang.Seqable java.util.Map java.lang.Iterable java.lang.Object}
-    clojure.lang.PersistentTreeMap #{clojure.lang.IPersistentMap clojure.lang.APersistentMap clojure.lang.IPersistentCollection clojure.lang.Associative clojure.lang.ILookup clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.Sorted clojure.lang.Reversible clojure.lang.IKVReduce java.util.Map java.lang.Object}
-    clojure.lang.PersistentHashSet #{clojure.lang.IPersistentSet clojure.lang.APersistentSet clojure.lang.IPersistentCollection clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.IEditableCollection java.util.Set java.util.Collection java.lang.Iterable java.lang.Object}
-    clojure.lang.PersistentTreeSet #{clojure.lang.IPersistentSet clojure.lang.APersistentSet clojure.lang.IPersistentCollection clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.Sorted clojure.lang.Reversible java.util.Set java.lang.Object}
-    clojure.lang.PersistentList #{clojure.lang.IPersistentList clojure.lang.ISeq clojure.lang.ASeq clojure.lang.IPersistentCollection clojure.lang.IPersistentStack clojure.lang.Sequential clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IReduce clojure.lang.IReduceInit java.util.List java.lang.Object}
-    clojure.lang.LazySeq #{clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IPending clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object}
-    clojure.lang.Cons #{clojure.lang.ISeq clojure.lang.ASeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object}
-    clojure.lang.ASeq #{clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.lang.Object}
-    clojure.lang.Symbol #{clojure.lang.Named clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn java.lang.Comparable java.lang.Object}
-    clojure.lang.Keyword #{clojure.lang.Named clojure.lang.IFn java.lang.Comparable java.lang.Object}
-    clojure.lang.Var #{clojure.lang.IRef clojure.lang.IReference clojure.lang.IDeref clojure.lang.IMeta clojure.lang.IFn clojure.lang.Settable java.lang.Object}
-    clojure.lang.Atom #{clojure.lang.IAtom clojure.lang.IAtom2 clojure.lang.IRef clojure.lang.IReference clojure.lang.IDeref clojure.lang.IMeta java.lang.Object}
-    clojure.lang.Delay #{clojure.lang.IDeref clojure.lang.IPending java.lang.Object}
-    clojure.lang.Volatile #{clojure.lang.IDeref java.lang.Object}
-    clojure.lang.Reduced #{clojure.lang.IDeref java.lang.Object}
-    clojure.lang.AFunction #{clojure.lang.Fn clojure.lang.IFn clojure.lang.IObj clojure.lang.IMeta java.lang.Runnable java.util.concurrent.Callable java.util.Comparator java.lang.Object}
-    clojure.lang.MultiFn #{clojure.lang.IFn java.lang.Object}
-    clojure.lang.Namespace #{clojure.lang.IReference clojure.lang.IMeta java.lang.Object}
-    java.lang.String #{java.lang.CharSequence java.lang.Comparable java.lang.Object}
-    java.lang.Long #{java.lang.Number java.lang.Comparable java.lang.Object}
-    java.lang.Double #{java.lang.Number java.lang.Comparable java.lang.Object}
-    java.lang.Boolean #{java.lang.Comparable java.lang.Object}
-    java.lang.Character #{java.lang.Comparable java.lang.Object}
-    clojure.lang.BigInt #{java.lang.Number java.lang.Object}
-    java.math.BigDecimal #{java.lang.Number java.lang.Comparable java.lang.Object}
-    clojure.lang.Ratio #{java.lang.Number java.lang.Comparable java.lang.Object}
-    java.util.regex.Pattern #{java.lang.Object}
-    java.util.UUID #{java.lang.Comparable java.lang.Object}
-    clojure.lang.ExceptionInfo #{clojure.lang.IExceptionInfo java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.RuntimeException #{java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.IllegalArgumentException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.IllegalFormatException #{java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.IllegalFormatConversionException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.IllegalFormatPrecisionException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.IllegalFormatWidthException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.IllegalFormatFlagsException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.IllegalFormatArgumentIndexException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.IllegalFormatCodePointException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.FormatFlagsConversionMismatchException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.MissingFormatArgumentException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.MissingFormatWidthException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.UnknownFormatConversionException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.UnknownFormatFlagsException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.DuplicateFormatFlagsException #{java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.NumberFormatException #{java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.IllegalStateException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.UnsupportedOperationException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.ArithmeticException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.ClassCastException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.NullPointerException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.IndexOutOfBoundsException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.ArrayIndexOutOfBoundsException #{java.lang.IndexOutOfBoundsException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.StringIndexOutOfBoundsException #{java.lang.IndexOutOfBoundsException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.NoSuchElementException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.ConcurrentModificationException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    clojure.lang.Compiler$CompilerException #{java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.InterruptedException #{java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.io.IOException #{java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.Error #{java.lang.Throwable java.lang.Object}
-    java.lang.AssertionError #{java.lang.Error java.lang.Throwable java.lang.Object}
-    java.lang.StackOverflowError #{java.lang.VirtualMachineError java.lang.Error java.lang.Throwable java.lang.Object}
-    java.lang.OutOfMemoryError #{java.lang.VirtualMachineError java.lang.Error java.lang.Throwable java.lang.Object}
-    java.lang.IllegalAccessError #{java.lang.IncompatibleClassChangeError java.lang.LinkageError java.lang.Error java.lang.Throwable java.lang.Object}
-    java.lang.Exception #{java.lang.Throwable java.lang.Object}
-    clojure.lang.ArityException #{java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.util.regex.PatternSyntaxException #{java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object}
-    java.lang.Throwable #{java.lang.Object}
-    java.lang.Class #{java.lang.Object}})
+  ;; (each set written as a vector: let-go reads a set literal inside a quoted
+  ;; form as a (hash-set ...) list; seq: Phel's map over a map sees its values)
+  (into {} (map (fn [[k v]] [k (set v)]))
+        (seq '{clojure.lang.PersistentVector [clojure.lang.IPersistentVector clojure.lang.APersistentVector clojure.lang.IPersistentCollection clojure.lang.IPersistentStack clojure.lang.Associative clojure.lang.Sequential clojure.lang.Indexed clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.Reversible clojure.lang.IEditableCollection clojure.lang.IReduce clojure.lang.IReduceInit clojure.lang.IKVReduce clojure.lang.ILookup java.util.List java.util.Collection java.lang.Iterable java.lang.Comparable java.lang.Object]
+    clojure.lang.PersistentArrayMap [clojure.lang.IPersistentMap clojure.lang.APersistentMap clojure.lang.IPersistentCollection clojure.lang.Associative clojure.lang.ILookup clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.IEditableCollection clojure.lang.IKVReduce clojure.lang.Seqable java.util.Map java.lang.Iterable java.lang.Object]
+    clojure.lang.MapEntry [clojure.lang.AMapEntry clojure.lang.APersistentVector clojure.lang.AFn clojure.lang.IMapEntry java.util.Map$Entry clojure.lang.IPersistentVector clojure.lang.Associative clojure.lang.IPersistentStack clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Indexed clojure.lang.Counted clojure.lang.IFn clojure.lang.Reversible clojure.lang.ILookup clojure.lang.IHashEq clojure.lang.Seqable java.util.List java.util.RandomAccess java.util.Collection java.lang.Iterable java.lang.Comparable java.lang.Runnable java.util.concurrent.Callable java.io.Serializable java.lang.Object]
+    clojure.lang.PersistentQueue [clojure.lang.IPersistentList clojure.lang.IPersistentStack clojure.lang.IPersistentCollection clojure.lang.Obj clojure.lang.IObj clojure.lang.IMeta clojure.lang.Counted clojure.lang.Sequential clojure.lang.Seqable clojure.lang.IHashEq java.util.Collection java.lang.Iterable java.io.Serializable java.lang.Object]
+    clojure.lang.PersistentHashMap [clojure.lang.IPersistentMap clojure.lang.APersistentMap clojure.lang.IPersistentCollection clojure.lang.Associative clojure.lang.ILookup clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.IEditableCollection clojure.lang.IKVReduce clojure.lang.Seqable java.util.Map java.lang.Iterable java.lang.Object]
+    clojure.lang.PersistentTreeMap [clojure.lang.IPersistentMap clojure.lang.APersistentMap clojure.lang.IPersistentCollection clojure.lang.Associative clojure.lang.ILookup clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.Sorted clojure.lang.Reversible clojure.lang.IKVReduce java.util.Map java.lang.Object]
+    clojure.lang.PersistentHashSet [clojure.lang.IPersistentSet clojure.lang.APersistentSet clojure.lang.IPersistentCollection clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.IEditableCollection java.util.Set java.util.Collection java.lang.Iterable java.lang.Object]
+    clojure.lang.PersistentTreeSet [clojure.lang.IPersistentSet clojure.lang.APersistentSet clojure.lang.IPersistentCollection clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn clojure.lang.Sorted clojure.lang.Reversible java.util.Set java.lang.Object]
+    clojure.lang.PersistentList [clojure.lang.IPersistentList clojure.lang.ISeq clojure.lang.ASeq clojure.lang.IPersistentCollection clojure.lang.IPersistentStack clojure.lang.Sequential clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IReduce clojure.lang.IReduceInit java.util.List java.lang.Object]
+    clojure.lang.LazySeq [clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IPending clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.Cons [clojure.lang.ISeq clojure.lang.ASeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.ASeq [clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.lang.Object]
+    clojure.lang.Symbol [clojure.lang.Named clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn java.lang.Comparable java.lang.Object]
+    clojure.lang.Keyword [clojure.lang.Named clojure.lang.IFn java.lang.Comparable java.lang.Object]
+    clojure.lang.Var [clojure.lang.IRef clojure.lang.IReference clojure.lang.IDeref clojure.lang.IMeta clojure.lang.IFn clojure.lang.Settable java.lang.Object]
+    clojure.lang.Atom [clojure.lang.IAtom clojure.lang.IAtom2 clojure.lang.IRef clojure.lang.IReference clojure.lang.IDeref clojure.lang.IMeta java.lang.Object]
+    clojure.lang.Delay [clojure.lang.IDeref clojure.lang.IPending java.lang.Object]
+    clojure.lang.Volatile [clojure.lang.IDeref java.lang.Object]
+    clojure.lang.Reduced [clojure.lang.IDeref java.lang.Object]
+    clojure.lang.AFunction [clojure.lang.Fn clojure.lang.IFn clojure.lang.IObj clojure.lang.IMeta java.lang.Runnable java.util.concurrent.Callable java.util.Comparator java.lang.Object]
+    clojure.lang.MultiFn [clojure.lang.IFn java.lang.Object]
+    clojure.lang.Namespace [clojure.lang.IReference clojure.lang.IMeta java.lang.Object]
+    java.lang.String [java.lang.CharSequence java.lang.Comparable java.lang.Object]
+    java.lang.Long [java.lang.Number java.lang.Comparable java.lang.Object]
+    java.lang.Double [java.lang.Number java.lang.Comparable java.lang.Object]
+    java.lang.Boolean [java.lang.Comparable java.lang.Object]
+    java.lang.Character [java.lang.Comparable java.lang.Object]
+    clojure.lang.BigInt [java.lang.Number java.lang.Object]
+    java.math.BigDecimal [java.lang.Number java.lang.Comparable java.lang.Object]
+    clojure.lang.Ratio [java.lang.Number java.lang.Comparable java.lang.Object]
+    java.util.regex.Pattern [java.lang.Object]
+    java.util.UUID [java.lang.Comparable java.lang.Object]
+    clojure.lang.ExceptionInfo [clojure.lang.IExceptionInfo java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.RuntimeException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.IllegalArgumentException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.IllegalFormatException [java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.IllegalFormatConversionException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.IllegalFormatPrecisionException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.IllegalFormatWidthException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.IllegalFormatFlagsException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.IllegalFormatArgumentIndexException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.IllegalFormatCodePointException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.FormatFlagsConversionMismatchException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.MissingFormatArgumentException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.MissingFormatWidthException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.UnknownFormatConversionException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.UnknownFormatFlagsException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.DuplicateFormatFlagsException [java.util.IllegalFormatException java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.NumberFormatException [java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.IllegalStateException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.UnsupportedOperationException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.ArithmeticException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.ClassCastException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.NullPointerException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.IndexOutOfBoundsException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.ArrayIndexOutOfBoundsException [java.lang.IndexOutOfBoundsException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.StringIndexOutOfBoundsException [java.lang.IndexOutOfBoundsException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.NoSuchElementException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.ConcurrentModificationException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    clojure.lang.Compiler$CompilerException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.InterruptedException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.io.IOException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.Error [java.lang.Throwable java.lang.Object]
+    java.lang.AssertionError [java.lang.Error java.lang.Throwable java.lang.Object]
+    java.lang.StackOverflowError [java.lang.VirtualMachineError java.lang.Error java.lang.Throwable java.lang.Object]
+    java.lang.OutOfMemoryError [java.lang.VirtualMachineError java.lang.Error java.lang.Throwable java.lang.Object]
+    java.lang.IllegalAccessError [java.lang.IncompatibleClassChangeError java.lang.LinkageError java.lang.Error java.lang.Throwable java.lang.Object]
+    java.lang.Exception [java.lang.Throwable java.lang.Object]
+    clojure.lang.ArityException [java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.regex.PatternSyntaxException [java.lang.IllegalArgumentException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.lang.Throwable [java.lang.Object]
+    java.lang.Class [java.lang.Object]})))
 
 (def ^:private short-name
   "java.lang.String and String are the same token."
@@ -524,11 +527,13 @@
             (symbol d)))
         pairs))
 
+(def ^:private catch-all-tokens (set '[java.lang.Throwable java.lang.Object]))
+
 (defn catches?
   "Does a `(catch c e ...)` clause for JVM class `c` apply to host exception `e`?"
   [c e]
   (let [c (canon c)]
-    (if (contains? '#{java.lang.Throwable java.lang.Object} c)
+    (if (contains? catch-all-tokens c)
       true
       ;; Exception and RuntimeException go through the hierarchy too: on the
       ;; JVM they leave Errors (AssertionError, StackOverflowError) alone
@@ -843,8 +848,8 @@
 (def Compiler-macroexpand1 (fn [form] (binding [host/*raw-macro-output* true] (host/macroexpand-1* form))))
 (def Compiler-maybeResolveIn (let [r (host-fn 'ns-resolve nil)] (fn [ns sym] (if r (r ns sym) (get (host/ns-interns-map ns) sym)))))
 (def Compiler-specials
-  '#{def if do let* loop* recur fn* quote var throw try catch finally monitor-enter monitor-exit
-     . new set! deftype* reify* letfn* case* & clojure.core/import*})
+  (set '[def if do let* loop* recur fn* quote var throw try catch finally monitor-enter monitor-exit
+     . new set! deftype* reify* letfn* case* & clojure.core/import*]))
 (def Compiler-munge (host-fn 'munge identity))
 ;; Compiler.demunge: each munged token back to its character ("_" is "-",
 ;; "_QMARK_" is "?", "$" is "/"), the longest token first, as the JVM does
@@ -1884,17 +1889,19 @@
 (def -isInterface (fn [c] (contains? interface-preds (canon c))))
 (def -getComponentType (fn [_] nil))
 ;; the superclass: the most specific ancestor that is a class, not an interface
+(def ^:private interface-class-tokens
+  (set '[clojure.lang.Seqable clojure.lang.Sequential clojure.lang.Associative clojure.lang.Counted
+         clojure.lang.Indexed clojure.lang.Reversible clojure.lang.Sorted clojure.lang.Named clojure.lang.Fn
+         clojure.lang.MapEquivalence clojure.lang.Settable java.lang.Comparable java.lang.CharSequence
+         java.lang.Iterable java.lang.Runnable java.lang.Cloneable java.lang.AutoCloseable java.lang.Appendable
+         java.io.Serializable java.util.Collection java.util.List java.util.Set java.util.Map java.util.Map$Entry
+         java.util.RandomAccess java.util.Iterator java.util.SequencedCollection java.util.concurrent.Callable
+         java.util.concurrent.Future java.lang.constant.Constable java.lang.constant.ConstantDesc]))
 (defn- interface-token? [t]
   (let [n (name t)]
     (or (and (zero? (h-index-of n "clojure.lang.I" 0)) (> (count n) 14)
              (let [c (subs n 14 15)] (= c (h-upper-case c))))
-        (contains? '#{clojure.lang.Seqable clojure.lang.Sequential clojure.lang.Associative clojure.lang.Counted
-                      clojure.lang.Indexed clojure.lang.Reversible clojure.lang.Sorted clojure.lang.Named clojure.lang.Fn
-                      clojure.lang.MapEquivalence clojure.lang.Settable java.lang.Comparable java.lang.CharSequence
-                      java.lang.Iterable java.lang.Runnable java.lang.Cloneable java.lang.AutoCloseable java.lang.Appendable
-                      java.io.Serializable java.util.Collection java.util.List java.util.Set java.util.Map java.util.Map$Entry
-                      java.util.RandomAccess java.util.Iterator java.util.SequencedCollection java.util.concurrent.Callable
-                      java.util.concurrent.Future java.lang.constant.Constable java.lang.constant.ConstantDesc} t))))
+        (contains? interface-class-tokens t))))
 (def -getSuperclass
   (fn [c] (let [c (canon c)
                 classes (remove #(or (= % c) (interface-token? %)) (get token-ancestors c))]

@@ -1,0 +1,727 @@
+;; The let-go adapter (a Clojure dialect on a Go VM). let-go's runtime is its
+;; own, so this adapter builds the contract from its pieces:
+;; - its core namespace is `core`, which every namespace it creates refers;
+;; - macros get no &env (and their &form through core/*macro-form*);
+;; - binding is per var (push-binding! / pop-binding!);
+;; - a symbol is a Go string and carries no metadata of its own: with-meta
+;;   wraps it in a value no other symbol equals, so the reader keeps a
+;;   symbol's metadata on that wrapper and the code given to let-go's compiler
+;;   writes it as let-go's reader does, (with-meta sym m);
+;; - its reader expands syntax-quote at read time, qualifying nothing.
+(ns cohost.hosts.lg
+  (:require [cohost.adapter :as adapter]
+            [clojure.math :as math]
+            [clojure.string :as string]))
+
+;; ---------------------------------------------------------------------------
+;; reading: each top-level form's extent by a scan, so a form is read after
+;; the one before it ran (a ::kw after an ns form is that namespace's). Two
+;; reader macros are marked in the text first, for the JVM's reading:
+;; ` becomes (cohost.hosts.lg/syntax-quote form) and ^m form
+;; (cohost.hosts.lg/meta form m); let-go's data reader then reads the text
+;; (real sets, metadata on collections) and the marks are expanded.
+
+(def ^:private ws #{\space \tab \newline \return \formfeed \,})
+(def ^:private delims #{\( \) \[ \] \{ \} \" \;})
+
+(defn- skip-ws
+  "The index of the next form at or after i, past whitespace, commas and
+   ; comments."
+  [cs i]
+  (let [n (count cs)]
+    (loop [i i]
+      (if (>= i n)
+        n
+        (let [c (nth cs i)]
+          (cond (contains? ws c) (recur (inc i))
+                (= c \;) (recur (loop [j i] (if (or (>= j n) (= (nth cs j) \newline)) j (recur (inc j)))))
+                :else i))))))
+
+(defn- token-end [cs i]
+  (let [n (count cs)]
+    (loop [i i]
+      (if (or (>= i n) (let [c (nth cs i)] (or (contains? ws c) (contains? delims c)))) i (recur (inc i))))))
+
+(defn- string-end "i at the opening quote -> past the closing one" [cs i]
+  (loop [i (inc i)]
+    (let [c (nth cs i)]
+      (cond (= c \\) (recur (+ i 2)) (= c \") (inc i) :else (recur (inc i))))))
+
+(declare form-end)
+(defn- coll-end [cs i close]
+  (loop [i (skip-ws cs i)]
+    (if (= (nth cs i) close) (inc i) (recur (skip-ws cs (form-end cs i))))))
+
+(defn- form-end
+  "The index past the form starting at i (a #_ discard runs on to the form
+   after it)."
+  [cs i]
+  (if (>= i (count cs))
+    i
+    (let [c (nth cs i)
+          after (fn [k] (form-end cs (skip-ws cs k)))]
+      (case c
+        \( (coll-end cs (inc i) \))
+        \[ (coll-end cs (inc i) \])
+        \{ (coll-end cs (inc i) \})
+        \" (string-end cs i)
+        \\ (token-end cs (+ i 2))
+        (\' \` \@) (after (inc i))
+        \~ (after (if (= \@ (nth cs (inc i) nil)) (+ i 2) (inc i)))
+        \^ (after (form-end cs (skip-ws cs (inc i))))
+        \# (let [d (nth cs (inc i) nil)]
+             (case d
+               (\( \{) (form-end cs (inc i))
+               \" (string-end cs (inc i))
+               (\' \=) (after (+ i 2))
+               (\_ \^) (after (form-end cs (skip-ws cs (+ i 2))))
+               \? (after (if (= \@ (nth cs (+ i 2) nil)) (+ i 3) (+ i 2)))
+               \: (after (token-end cs (+ i 2)))
+               \# (token-end cs (+ i 2))
+               ;; a tagged literal: the tag, then its form
+               (after (token-end cs (inc i)))))
+        (token-end cs i)))))
+
+(def ^:private digit-starts (set "+-0123456789"))
+
+(defn- check-keys
+  "i past a map's or set's opening brace: throw the JVM reader's
+   IllegalArgumentException when two keys (every element of a set) are
+   written the same."
+  [cs i set?]
+  (loop [i (skip-ws cs i) n 0 seen #{}]
+    (when (not= (nth cs i nil) \})
+      (let [j (form-end cs i) t (apply str (subvec cs i j))]
+        (when (and (or set? (even? n)) (contains? seen t))
+          (throw (IllegalArgumentException. (str "Duplicate key: " t))))
+        (recur (skip-ws cs j) (inc n) (if (or set? (even? n)) (conj seen t) seen))))))
+
+(declare mark-text)
+(defn- mark-text
+  "The text of cs[i, j) with every ` and ^ outside strings, comments and
+   character literals written as a mark the reader keeps."
+  [cs i j]
+  (loop [i i out (transient [])]
+    (if (>= i j)
+      (apply str (persistent! out))
+      (let [c (nth cs i)]
+        (cond
+          (= c \") (let [k (string-end cs i)] (recur k (conj! out (apply str (subvec cs i k)))))
+          (= c \;) (let [k (loop [k i] (if (or (>= k j) (= (nth cs k) \newline)) k (recur (inc k))))]
+                     (recur k (conj! out (apply str (subvec cs i k)))))
+          (= c \\) (let [k (token-end cs (+ i 2))] (recur k (conj! out (apply str (subvec cs i k)))))
+          ;; a number is the JVM reader's: 0-led digits are octal, so 08 is none
+          (and (contains? digit-starts c) (or (zero? i) (contains? ws (nth cs (dec i))) (contains? delims (nth cs (dec i)))))
+          (let [k (token-end cs i) t (apply str (subvec cs i k))]
+            (when (re-matches #"[+-]?0[0-7]*[89][0-9]*N?" t)
+              (throw (NumberFormatException. (str "Invalid number: " t))))
+            (recur k (conj! out t)))
+          ;; a map or set literal's keys: the JVM reader rejects a duplicate
+          (or (= c \{) (and (= c \#) (= \{ (nth cs (inc i) nil))))
+          (do (check-keys cs (if (= c \{) (inc i) (+ i 2)) (= c \#))
+              (recur (inc i) (conj! out (str c))))
+          (and (= c \#) (= \" (nth cs (inc i) nil)))
+          (let [k (string-end cs (inc i))] (recur k (conj! out (apply str (subvec cs i k)))))
+          (= c \`) (let [a (skip-ws cs (inc i)) b (form-end cs a)]
+                     (recur b (conj! out (str "(cohost.hosts.lg/syntax-quote " (mark-text cs a b) ")"))))
+          (or (= c \^) (and (= c \#) (= \^ (nth cs (inc i) nil))))
+          (let [ma (skip-ws cs (if (= c \^) (inc i) (+ i 2))) mb (form-end cs ma)
+                fa (skip-ws cs mb) fb (form-end cs fa)]
+            (recur fb (conj! out (str "(cohost.hosts.lg/meta " (mark-text cs fa fb) " " (mark-text cs ma mb) ")"))))
+          :else (recur (inc i) (conj! out (str c))))))))
+
+;; ---------------------------------------------------------------------------
+;; the marks, expanded: metadata as the JVM reader gives it (a symbol tag is
+;; {:tag Sym}; let-go's data reader quotes it), and syntax-quote as the JVM
+;; reads it: an alias's target, the namespace a name resolves to, else the
+;; current namespace; special forms, & and class names stay bare, x# is a
+;; gensym per syntax-quote. The code it builds is (seq (concat ...)), vector,
+;; hash-map, hash-set, with-meta.
+
+(def ^:private sq-mark 'cohost.hosts.lg/syntax-quote)
+(def ^:private meta-mark 'cohost.hosts.lg/meta)
+
+(defn- form-of? [head x] (and (seq? x) (seq x) (= head (first x))))
+
+(defn- meta-map [m]
+  (cond (keyword? m) {m true}
+        (symbol? m) {:tag m}
+        (string? m) {:tag m}
+        (map? m) (into {} (map (fn [[k v]] [k (if (and (= :tag k) (form-of? 'quote v)) (second v) v)])) m)
+        :else m))
+
+;; (a quoted set literal reads as a (hash-set ...) list in let-go: (set '[...]))
+(def ^:private sq-specials
+  (set '[def if do let* fn* loop* recur quote var throw try catch finally new set! letfn*
+         case* deftype* reify* import* monitor-enter monitor-exit . &]))
+
+(def ^:private sq-counter (atom 0))
+
+;; a var's namespace and name: its printed form, #'ns/name (its :ns metadata
+;; is not always the Namespace)
+(defn- var-sym [v] (symbol (subs (str v) 2)))
+(defn- var-ns-sym [v] (symbol (namespace (var-sym v))))
+
+(defn- sq-symbol [sym gensyms]
+  (let [n (name sym) ns (namespace sym)]
+    (cond
+      ns (if-let [t (get (ns-aliases *ns*) (symbol ns))] (symbol (str (ns-name t)) n) sym)
+      (contains? sq-specials sym) sym
+      (.endsWith n "#")
+      (or (get @gensyms n)
+          (let [g (symbol (str (subs n 0 (dec (count n))) "__" (swap! sq-counter inc) "__auto__"))]
+            (swap! gensyms assoc n g)
+            g))
+      (or (.startsWith n ".") (.endsWith n ".") (.contains n ".")) sym
+      :else
+      ;; (the namespace's own mappings: let-go's resolve falls back to its core
+      ;; in a namespace that refers nothing)
+      (let [v (get (ns-map *ns*) sym)]
+        (cond (var? v) (var-sym v)
+              (and (nil? v) (let [c (subs n 0 1)] (= c (.toUpperCase c)) (not= c (.toLowerCase c)))) sym
+              :else (symbol (str (ns-name *ns*)) n))))))
+
+(declare sq)
+(declare expand-marks)
+(defn- sq-items [xs gensyms]
+  (apply list 'concat
+         (map (fn [x] (if (form-of? 'unquote-splicing x)
+                        (expand-marks (second x))
+                        (list 'list (sq x gensyms))))
+              xs)))
+
+(defn- sq [x gensyms]
+  (cond
+    (form-of? sq-mark x) (sq (sq (second x) (atom {})) gensyms)
+    (form-of? meta-mark x) (let [m (meta-map (expand-marks (nth x 2)))
+                                 f (sq (second x) gensyms)]
+                             (list 'with-meta f (sq m gensyms)))
+    (form-of? 'unquote x) (expand-marks (second x))
+    (symbol? x) (list 'quote (sq-symbol x gensyms))
+    (and (seq? x) (seq x)) (list 'seq (sq-items x gensyms))
+    (and (vector? x) (seq x)) (list 'apply 'vector (sq-items x gensyms))
+    (and (map? x) (seq x)) (list 'apply 'hash-map (sq-items (mapcat (fn [[k v]] [k v]) x) gensyms))
+    (and (set? x) (seq x)) (list 'apply 'hash-set (sq-items x gensyms))
+    (or (keyword? x) (string? x) (number? x) (nil? x) (boolean? x) (char? x)) x
+    :else (list 'quote x)))
+
+(defn- expand-marks [x]
+  (cond
+    (form-of? sq-mark x) (sq (second x) (atom {}))
+    (form-of? meta-mark x) (let [f (expand-marks (second x))
+                                 m (meta-map (expand-marks (nth x 2)))]
+                             (with-meta f (merge (meta f) m)))
+    (seq? x) (let [xs (map expand-marks x)]
+               (if (every? true? (map identical? xs x)) x (with-meta (apply list xs) (meta x))))
+    (vector? x) (let [xs (mapv expand-marks x)]
+                  (if (every? true? (map identical? xs x)) x (with-meta xs (meta x))))
+    (map? x) (let [kvs (mapv (fn [[k v]] [(expand-marks k) (expand-marks v)]) x)]
+               (if (every? (fn [[[k v] [k0 v0]]] (and (identical? k k0) (identical? v v0))) (map vector kvs x))
+                 x
+                 (with-meta (into {} kvs) (meta x))))
+    (set? x) (let [xs (mapv expand-marks x)]
+               (if (every? true? (map identical? xs x)) x (with-meta (into #{} xs) (meta x))))
+    :else x))
+
+(defn- read-one [text]
+  (expand-marks (read-data-string text)))
+
+(defn- read-forms [src cb]
+  (let [cs (vec src) n (count cs)]
+    (loop [i (skip-ws cs 0)]
+      (when (< i n)
+        (let [j (form-end cs i)]
+          (cb (read-one (mark-text cs i j)))
+          (recur (skip-ws cs j)))))))
+
+;; read-string: s's first form, read as read-forms reads it; with none, opts'
+;; :eof or the JVM's EOF
+(defn- read-string* [s opts]
+  (let [cs (vec s) i (skip-ws cs 0)]
+    (if (>= i (count cs))
+      (if (contains? opts :eof)
+        (:eof opts)
+        (throw (RuntimeException. "EOF while reading")))
+      ;; a form the scan runs off the end of: the JVM's EOF
+      (let [j (try (form-end cs i) (catch Throwable _ nil))]
+        (if (or (nil? j) (> j (count cs)))
+          (throw (RuntimeException. "EOF while reading"))
+          (read-one (mark-text cs i j)))))))
+
+;; ---------------------------------------------------------------------------
+;; code for let-go's compiler: a symbol's metadata (on its with-meta wrapper)
+;; is let-go's (with-meta sym m) as a def's name, with m's quoted values read
+;; (def takes m as data, unevaluated); a bare symbol elsewhere (a hint is no
+;; matter to let-go's compiler). Every seq becomes a list; what does not
+;; change stays the same object.
+
+(defn plain "sym without the wrapper its metadata lives on" [x]
+  (if (and (symbol? x) (some? (meta x))) (symbol (str x)) x))
+
+(defn- def-meta [m]
+  (into {} (map (fn [[k v]] [k (if (form-of? 'quote v) (second v) v)])) (dissoc m :line :column :file)))
+
+(declare as-code)
+
+;; letfn*, which let-go lacks (its letfn is a macro): each fn's name is a fn
+;; that calls the fn in a cell, filled once all are made; a lone named fn
+;; (the codemod's (letfn* [f (fn* ...)] f)) is the fn from the cell itself
+(defn- letfn-code [[_ bs & body]]
+  (let [pairs (partition 2 bs)
+        cells (map (fn [[n _]] (gensym (str (name (plain n)) "__cell"))) pairs)
+        lone? (and (= 1 (count pairs)) (= 1 (count body)) (= (plain (ffirst pairs)) (plain (first body))))]
+    (apply list 'let*
+           (vec (concat
+                 (mapcat (fn [c] [c (list 'core/atom nil)]) cells)
+                 (mapcat (fn [[n _] c] [(plain n) (list 'fn* ['& 'args] (list 'core/apply (list 'core/deref c) 'args))]) pairs cells)
+                 (mapcat (fn [[_ f] c] [(gensym "_") (list 'core/reset! c (as-code f))]) pairs cells)))
+           (if lone? [(list 'core/deref (first cells))] (map as-code body)))))
+
+(defn- code-meta [x x']
+  (let [m (meta x)]
+    (if (identical? x x') x (if m (with-meta x' m) x'))))
+
+(defn- as-code [x]
+  (cond
+    (symbol? x) (plain x)
+    (seq? x)
+    (cond
+      (form-of? 'quote x) (code-meta x (apply list 'quote (map plain (rest x))))
+      (form-of? 'letfn* x) (code-meta x (letfn-code x))
+      :else
+      (let [x (if (and (form-of? 'def x) (symbol? (second x)) (some? (meta (second x))))
+                (let [nm (second x) m (def-meta (meta nm))]
+                  (apply list 'def (if (seq m) (list 'with-meta (plain nm) m) (plain nm)) (nnext x)))
+                x)
+            xs (doall (map as-code x))]
+        (code-meta x (if (and (list? x) (every? true? (map identical? xs x))) x (apply list xs)))))
+    (vector? x) (let [xs (mapv as-code x)] (code-meta x (if (every? true? (map identical? xs x)) x xs)))
+    (and (map? x) (not (record? x)))
+    (let [kvs (mapv (fn [[k v]] [(as-code k) (as-code v)]) x)]
+      (code-meta x (if (every? (fn [[[k v] [k0 v0]]] (and (identical? k k0) (identical? v v0))) (map vector kvs x))
+                     x
+                     (into {} kvs))))
+    (set? x) (let [xs (mapv as-code x)] (code-meta x (if (every? true? (map identical? xs x)) x (into #{} xs))))
+    :else x))
+
+;; ---------------------------------------------------------------------------
+;; namespaces: in-ns moves *ns* and the compiler's namespace (a binding of
+;; *ns* around eval does not come back), so with-ns moves there and back
+
+(defn- with-ns [ns-sym thunk]
+  (let [old (ns-name *ns*)]
+    (in-ns ns-sym)
+    (try (thunk) (finally (in-ns old)))))
+
+(defn- in-ns-of [ns-sym thunk] (with-ns ns-sym thunk))
+
+;; ---------------------------------------------------------------------------
+;; macros: let-go calls a macro var's fn with the call's arguments alone (the
+;; call form bound to core/*macro-form*). cohost's macro fns take &form and
+;; &env first; each macro var cohost marks holds a fn that adds them, and the
+;; fn it adds them to is kept here, as the var's root to cohost. The codemod,
+;; which expands a macro where it knows the locals (:macro-env? false), hands
+;; that fn a FormEnv: the form and an &env of those locals.
+
+(defrecord FormEnv [form env])
+;; the namespaces cohost makes
+(def ^:private cohost-nses (atom #{}))
+;; {var [entry f]}: the fn let-go calls, and the macro's fn it calls
+(def ^:private macro-fns (atom {}))
+
+(defn- macro-entry [v]
+  (fn [& args]
+    (let [f (second (get @macro-fns v)) a (first args)]
+      (if (instance? FormEnv a)
+        (apply f (:form a) (:env a) (rest args))
+        (apply f (deref (var core/*macro-form*)) nil args)))))
+
+;; [entry f] of v while v holds its entry (a def since replaced the root)
+(defn- live-entry [v]
+  (let [ef (get @macro-fns v)]
+    (when (and ef (identical? (first ef) (var-get v))) ef)))
+
+;; let-go's own macros expand to bare names (its syntax-quote qualifies
+;; nothing), which resolve where the expansion lands. So an expansion taken from
+;; one is expanded through: a call of another of let-go's macros is expanded
+;; here (it would expand to bare names too), and a call's head that names a
+;; core fn is written core/name, as the JVM's syntax-quote would have it
+;; let-go's special forms (its compiler's table; throw, new, . and
+;; monitor-enter / -exit are core vars)
+(def ^:private specials
+  (set '[if do def set! fn* quote var let* loop* recur try catch finally &]))
+(def ^:private special-vars ['throw 'new '. 'monitor-enter 'monitor-exit])
+
+(defn- core-var [h]
+  (when (and (symbol? h) (not (contains? specials h))
+             (or (nil? (namespace h)) (= "core" (namespace h))))
+    (let [v (ns-resolve 'core (symbol (name h)))] (when (var? v) v))))
+
+(defn- call-host-macro [v form]
+  (let [mf (var core/*macro-form*)]
+    (push-binding! mf form)
+    (try (apply (var-get v) (rest form)) (finally (pop-binding! mf)))))
+
+(defn- qualify-heads [x]
+  (cond
+    (and (seq? x) (seq x))
+    (if (form-of? 'quote x)
+      x
+      (let [h (first x) v (core-var h)]
+        (if (and v (:macro (meta v)))
+          (qualify-heads (call-host-macro v x))
+          (let [xs (if (= 'def h)
+                     (cons 'def (cons (second x) (map qualify-heads (nnext x))))
+                     (cons (if v (symbol "core" (name h)) (qualify-heads h)) (map qualify-heads (rest x))))]
+            (code-meta x (apply list xs))))))
+    (vector? x) (code-meta x (mapv qualify-heads x))
+    (and (map? x) (not (record? x))) (code-meta x (into {} (map (fn [[k v]] [(qualify-heads k) (qualify-heads v)])) x))
+    :else x))
+
+(def ^:private core-macro-roots
+  (delay (vec (keep (fn [[_ v]] (when (:macro (meta v)) (var-get v))) (ns-publics 'core)))))
+(defn- host-macro-fn? [f] (boolean (some #(identical? f %) @core-macro-roots)))
+
+;; A var is a macro to let-go by its own flag, which set-macro! sets; a def's
+;; ^{:macro true} reaches only the metadata. So a var cohost marked is known
+;; here; elsewhere (let-go's own namespaces) the metadata answers.
+(def ^:private host-marked (atom #{}))
+
+(defn- macro-var? [v]
+  (boolean (or (some? (live-entry v)) (contains? @host-marked v)
+               (and (not (contains? @cohost-nses (var-ns-sym v))) (:macro (meta v))))))
+
+(defn- mark-macro! [v]
+  (when-not (or (live-entry v) (contains? @host-marked v))
+    (let [f (var-get v)]
+      (if (host-macro-fn? f)
+        ;; one of let-go's: its arguments as let-go gives them, its expansion
+        ;; qualified
+        (do (swap! host-marked conj v)
+            (alter-var-root v (constantly (fn [& args] (qualify-heads (apply f args))))))
+        (let [e (macro-entry v)]
+          (swap! macro-fns assoc v [e f])
+          (alter-var-root v (constantly e))))))
+  (set-macro! v)
+  v)
+
+;; ---------------------------------------------------------------------------
+;; bindings: a frame is the vars one push bound, each pushed by push-binding!;
+;; cohost's own frames are known, so a var's root while one binds it is read
+;; with them popped and pushed back
+
+(def ^:private frames (atom ()))
+
+(defn- push-bindings! [m]
+  (doseq [[v x] m] (push-binding! v x))
+  (swap! frames conj (vec (keys m))))
+
+(defn- pop-bindings! []
+  (let [f (first @frames)]
+    (swap! frames rest)
+    (doseq [v f] (pop-binding! v))))
+
+(defn- bound-in-frames? [v] (boolean (some (fn [f] (some #(identical? % v) f)) @frames)))
+
+(defn- raw-root [v]
+  (if-let [ef (live-entry v)]
+    (second ef)
+    (if (bound-in-frames? v)
+      (let [vals (loop [acc [] n (count (filter (fn [f] (some #(identical? % v) f)) @frames))]
+                   (if (zero? n) acc (let [x (var-get v)] (pop-binding! v) (recur (conj acc x) (dec n)))))]
+        (try (var-get v)
+             (finally (doseq [x (rseq vals)] (push-binding! v x)))))
+      (var-get v))))
+
+(defn- var-get* [v] (if-let [ef (live-entry v)] (second ef) (var-get v)))
+
+(defn- alter-root! [v f]
+  (if (live-entry v)
+    (second (get (swap! macro-fns update-in [v 1] f) v))
+    (alter-var-root v f)))
+
+(defn- thread-bindings []
+  (into {} (map (fn [v] [v (var-get v)])) (distinct (apply concat @frames))))
+
+;; ---------------------------------------------------------------------------
+;; exceptions: a class let-go constructs is its type (IllegalArgumentException.
+;; and kin); its own errors are java.lang.Exception, whose message decides the
+;; JVM's class. ex-info takes no nil message: a marker no message is written as.
+
+(def ^:private no-message "\u0000cohost:no-message")
+
+(def ^:private message-classes
+  [[#"index out of bounds|index out of range|out of bounds" 'java.lang.IndexOutOfBoundsException]
+   [#"divide by zero|integer overflow" 'java.lang.ArithmeticException]
+   [#"not supported on|expected Counted|cannot add|cannot subtract|cannot multiply|cannot compare|expected Number|is not a function|interface conversion" 'java.lang.ClassCastException]
+   [#"strconv\.|invalid syntax" 'java.lang.NumberFormatException]
+   [#"doesn't have a .*-arity variant|wrong number of arguments" 'clojure.lang.ArityException]])
+
+(defn- exception-class [e]
+  (let [t (str (type e))]
+    (cond (= t "let-go.lang.ExceptionInfo") 'clojure.lang.ExceptionInfo
+          (not= t "java.lang.Exception") (symbol t)
+          :else (let [m (or (ex-message e) "")]
+                  (or (some (fn [[re c]] (when (re-find re m) c)) message-classes)
+                      'java.lang.Exception)))))
+
+(defn- exception-message [e]
+  (let [m (ex-message e)] (when-not (or (= no-message m) (= "" m)) m)))
+
+(defn- exception-string [e]
+  (let [k (or (:cohost/class (ex-data e)) (exception-class e)) m (exception-message e)]
+    (if (nil? m) (str k) (str k ": " m))))
+
+(def ^:private exception-ctors
+  {'java.lang.Throwable [#(Throwable.) #(Throwable. %) #(Throwable. %1 %2)]
+   'java.lang.Exception [#(Exception.) #(Exception. %) #(Exception. %1 %2)]
+   'java.lang.RuntimeException [#(RuntimeException.) #(RuntimeException. %) #(RuntimeException. %1 %2)]
+   'java.lang.Error [#(Error.) #(Error. %) #(Error. %1 %2)]
+   'java.lang.IllegalArgumentException [#(IllegalArgumentException.) #(IllegalArgumentException. %) #(IllegalArgumentException. %1 %2)]
+   'java.lang.IllegalStateException [#(IllegalStateException.) #(IllegalStateException. %) #(IllegalStateException. %1 %2)]
+   'java.lang.UnsupportedOperationException [#(UnsupportedOperationException.) #(UnsupportedOperationException. %) #(UnsupportedOperationException. %1 %2)]
+   'java.lang.ArithmeticException [#(ArithmeticException.) #(ArithmeticException. %) #(ArithmeticException. %1 %2)]
+   'java.lang.NumberFormatException [#(NumberFormatException.) #(NumberFormatException. %) #(NumberFormatException. %1 %2)]
+   'java.lang.ClassCastException [#(ClassCastException.) #(ClassCastException. %) #(ClassCastException. %1 %2)]
+   'java.lang.NullPointerException [#(NullPointerException.) #(NullPointerException. %) #(NullPointerException. %1 %2)]
+   'java.lang.IndexOutOfBoundsException [#(IndexOutOfBoundsException.) #(IndexOutOfBoundsException. %) #(IndexOutOfBoundsException. %1 %2)]
+   'java.lang.AssertionError [#(AssertionError.) #(AssertionError. %) #(AssertionError. %1 %2)]})
+
+(defn- new-exception [klass msg cause]
+  (when-let [cs (get exception-ctors klass)]
+    (cond (some? cause) ((nth cs 2) (or msg "") cause)
+          (some? msg) ((nth cs 1) msg)
+          :else ((nth cs 0)))))
+
+(defn- new-ex-info
+  ([msg m] (ex-info (if (nil? msg) no-message msg) m))
+  ([msg m cause] (ex-info (if (nil? msg) no-message msg) m cause)))
+
+;; ---------------------------------------------------------------------------
+;; user types: deftype / defrecord / reify instances are what is not let-go's
+;; own (its types are let-go.lang.*, java.*); a member is let-go's own . call,
+;; compiled once per [name arity]
+
+(defn- user-type? [x]
+  (and (some? x)
+       (let [t (str (type x))]
+         (not (or (.startsWith t "let-go.") (.startsWith t "java.") (.startsWith t "clojure.")
+                  (string? x) (number? x) (keyword? x) (symbol? x) (boolean? x) (char? x) (fn? x))))))
+
+(def ^:private members (atom {}))
+(defn- invoke-member [x nm args absent]
+  (let [n (count args) k [nm n]
+        f (or (get @members k)
+              (let [ps (vec (map (fn [i] (symbol (str "a" i))) (range n)))
+                    f (with-ns 'cohost.hosts.lg
+                        (fn [] (eval (list 'fn* (vec (cons 'o ps))
+                                           (apply list '. 'o (symbol nm) ps)))))]
+                (swap! members assoc k f)
+                f))]
+    (try (apply f x args)
+         (catch Throwable e
+           (if (re-find #"expected Receiver|no method|has no method|unknown method|no field" (or (ex-message e) ""))
+             absent
+             (throw e))))))
+
+;; ---------------------------------------------------------------------------
+;; regexes: let-go's are Go's (RE2): no start index and no positions. A
+;; search's matches are found once, in order, by a replace that writes a mark
+;; for each (their positions are the text between); group positions are not
+;; known.
+
+(def ^:private mark "\u0001")
+
+(defn- all-matches [re s]
+  (let [ms (atom [])
+        out (string/replace s re (fn [g] (swap! ms conj (if (vector? g) g [g])) mark))
+        segs (string/split out #"\x{1}" -1)]
+    (loop [i 0 pos 0 acc []]
+      (if (< i (count @ms))
+        (let [g (nth @ms i) start (+ pos (count (nth segs i))) end (+ start (count (first g)))]
+          (recur (inc i) end (conj acc [start end g nil])))
+        acc))))
+
+(def ^:private last-matches (volatile! nil))
+(defn- re-find-at [re s from]
+  (let [[re0 s0 ms0] @last-matches
+        ms (if (and (identical? re re0) (identical? s s0)) ms0
+               (let [ms (all-matches re s)] (vreset! last-matches [re s ms]) ms))]
+    (first (filter (fn [m] (>= (first m) from)) ms))))
+
+(defn- re-match-full [re s]
+  (when-let [g (re-matches re s)] [0 (count s) (if (vector? g) g [g]) nil]))
+
+;; its source: let-go writes a regex #"..." with \ and " escaped
+(defn- re-source [re]
+  (let [t (str re) t (subs t 2 (dec (count t))) n (count t)]
+    (loop [i 0 out (transient [])]
+      (if (>= i n)
+        (apply str (persistent! out))
+        (let [c (nth t i)]
+          (if (and (= c \\) (< (inc i) n) (contains? #{\\ \"} (nth t (inc i))))
+            (recur (+ i 2) (conj! out (nth t (inc i))))
+            (recur (inc i) (conj! out c))))))))
+
+(defn- re-group-count [re]
+  (let [g (re-find (re-pattern (str "(?:" (re-source re) ")|")) "")]
+    (if (vector? g) (dec (count g)) 0)))
+
+;; ---------------------------------------------------------------------------
+;; java.lang.Math: clojure.math's (Go's math), by the JVM's names
+
+(def ^:private jvm-math
+  {'sin math/sin 'cos math/cos 'tan math/tan 'asin math/asin 'acos math/acos 'atan math/atan
+   'atan2 math/atan2 'exp math/exp 'expm1 math/expm1 'log math/log 'log10 math/log10 'log1p math/log1p
+   'sqrt math/sqrt 'cbrt math/cbrt 'hypot math/hypot 'pow math/pow 'sinh math/sinh 'cosh math/cosh
+   'tanh math/tanh 'ulp math/ulp 'nextUp math/next-up 'nextDown math/next-down 'nextAfter math/next-after
+   'getExponent math/get-exponent 'scalb math/scalb 'copySign math/copy-sign
+   'IEEEremainder math/IEEE-remainder 'rint math/rint 'signum math/signum
+   'toRadians math/to-radians 'toDegrees math/to-degrees})
+
+;; ---------------------------------------------------------------------------
+;; core names cohost boots from core.clj though let-go has its own: format is
+;; Go's Sprintf (core.clj's boots over the shim's Formatter); str prints an
+;; exception as #error {...}; let-go's refs are atoms (no transactions)
+(def ^:private stock-anyway
+  (set '[format str read-string ref ref-set alter commute ensure ref-history-count ref-min-history
+         ref-max-history dosync sync io!]))
+
+;; the class and interface names let-go's deftype, reify and extend-type take
+;; (core vars: java.lang.Long, clojure.lang.IDeref ...): the qualified ones, and
+;; its own protocols; a bare class name the codemod knows (String, Object) is
+;; left to it
+(def ^:private class-vars
+  (delay (vec (concat (filter (fn [s] (let [n (str s)]
+                                        (and (.contains n ".") (not (.endsWith n ".")) (not (.startsWith n "->"))
+                                             (not (.startsWith n "core.")))))
+                              (keys (ns-publics 'core)))
+                      '[IDeref IFn IReduce]))))
+
+;; ---------------------------------------------------------------------------
+
+(def adapter
+  {:name :lg
+   :core-ns 'core
+   :catch-all 'Throwable
+   :read-forms read-forms
+   ;; (bare but for the core vars that are special forms on the JVM)
+   :ensure-bare-ns! (fn [ns-sym]
+                      (swap! cohost-nses conj ns-sym)
+                      (let [n (create-ns ns-sym)]
+                        (doseq [[s _] (ns-refers n)] (ns-unmap n s))
+                        (in-ns-of ns-sym (fn [] (refer-list 'core (vec (concat special-vars @class-vars)))))
+                        n))
+   :refer-from-core! (fn [into-ns sym]
+                       (ns-unmap into-ns sym)
+                       (let [old (ns-name *ns*)]
+                         (in-ns into-ns)
+                         ;; (let-go's refer is (refer ns alias all?): one name is refer-list's)
+                         (try (refer-list 'core [sym]) (finally (in-ns old)))))
+   ;; (format is Go's Sprintf: core.clj's boots over the shim's Formatter)
+   :resolve-core (fn [sym]
+                   (let [v (when-not (contains? stock-anyway sym) (ns-resolve 'core sym))]
+                     (when (and (var? v) (not (:private (meta v)))) v)))
+   :plain-symbol plain
+   ;; fn* takes no name: the codemod binds it with letfn* (see letfn-code)
+   :named-fn*? false
+   :read-string (fn ([s] (read-string* s {})) ([s opts] (read-string* s opts)))
+   :host-read-string (fn [s] (read-string s))
+   :code-form as-code
+   :eval (fn [form] (eval (as-code form)))
+   :with-ns with-ns
+   :set-current-ns! (fn [ns-sym] (in-ns ns-sym))
+   :current-ns (fn [] (ns-name *ns*))
+   :interned-var (fn [ns-sym sym]
+                   (when (find-ns ns-sym)
+                     (let [v (find-var (symbol (str ns-sym) (str (plain sym))))]
+                       (when (and v (= ns-sym (var-ns-sym v))) v))))
+   :intern! (fn [ns-sym sym val]
+              (let [v (intern ns-sym (plain sym) val)]
+                (when-let [m (meta sym)] (alter-meta! v merge m))
+                v))
+   :refer-all! (fn [into-ns from-ns] (in-ns-of into-ns (fn [] (refer from-ns "" true))))
+   :refer! (fn [into-ns from-ns {:keys [only exclude rename]}]
+             (in-ns-of into-ns
+                       (fn []
+                         (let [pubs (keys (ns-publics from-ns))
+                               syms (cond only (vec only)
+                                          :else (vec (remove (set exclude) pubs)))]
+                           (refer-list from-ns (vec (remove (set (keys rename)) syms)))
+                           (doseq [[from to] rename]
+                             (intern into-ns to (var-get (find-var (symbol (str from-ns) (str from))))))))))
+   :alias! (fn [into-ns a target] (in-ns-of into-ns (fn [] (alias a target))))
+   :var-get var-get*
+   :var-raw-root raw-root
+   :alter-var-root! alter-root!
+   :macro-var? macro-var?
+   :mark-macro! mark-macro!
+   :dynamic-var? (fn [v] (true? (:dynamic (meta v))))
+   :push-thread-bindings! push-bindings!
+   :pop-thread-bindings! pop-bindings!
+   :var-thread-bound? bound-in-frames?
+   :thread-bindings thread-bindings
+   :var-bound? (fn [v] (bound? v))
+   :exception-class exception-class
+   :exception-message exception-message
+   :exception-string exception-string
+   :new-exception new-exception
+   :ex-info new-ex-info
+   :user-type? user-type?
+   :invoke-member invoke-member
+   :regex? (fn [x] (= "let-go.lang.Regex" (str (type x))))
+   :re-source re-source
+   :re-pattern (fn [s] (if (= "let-go.lang.Regex" (str (type s))) s (re-pattern s)))
+   :re-find-at re-find-at
+   :re-match-full re-match-full
+   :re-group-count re-group-count
+   :java-statics {'Character/isLetter (fn [c] (boolean (re-matches #"\p{L}" (str c))))
+                  'Character/isDigit (fn [c] (boolean (re-matches #"\p{Nd}" (str c))))
+                  'Character/isLetterOrDigit (fn [c] (boolean (re-matches #"[\p{L}\p{Nd}]" (str c))))
+                  'Character/isAlphabetic (fn [c] (boolean (re-matches #"[\p{L}\p{Nl}]" (str c))))
+                  'Character/isUpperCase (fn [c] (boolean (re-matches #"\p{Lu}" (str c))))
+                  'Character/isLowerCase (fn [c] (boolean (re-matches #"\p{Ll}" (str c))))}
+   :sort-array! (fn [arr cmp]
+                  (let [v (vec (sort cmp (seq arr)))]
+                    (dotimes [i (count v)] (aset arr i (nth v i)))
+                    arr))
+   :char? (fn [x] (char? x))
+   :char-code (fn [c] (int c))
+   :volatile? (fn [x] (= "let-go.lang.Volatile" (str (type x))))
+   :delay? (fn [x] (delay? x))
+   :reduced? (fn [x] (reduced? x))
+   :deref? (fn [x] (contains? #{"let-go.lang.Atom" "let-go.lang.Volatile" "let-go.lang.Delay" "let-go.lang.Reduced" "let-go.lang.Promise"} (str (type x))))
+   :pending? (fn [x] (contains? #{"let-go.lang.Delay" "let-go.lang.Promise"} (str (type x))))
+   :uuid? (fn [x] (uuid? x))
+   :bigint? (fn [x] (= "let-go.lang.BigInt" (str (type x))))
+   :ratio? (fn [x] (ratio? x))
+   :decimal? (fn [x] (decimal? x))
+   :sorted? (fn [x] (sorted? x))
+   :indexed? (fn [x] (indexed? x))
+   :counted? (fn [x] (counted? x))
+   :reversible? (fn [x] (reversible? x))
+   :nan? (fn [x] (and (number? x) (NaN? x)))
+   :infinite? (fn [x] (and (number? x) (infinite? x)))
+   :parse-long (fn [s] (parse-long s))
+   :parse-double (fn [s] (parse-double s))
+   :nano-time (fn [] (System/nanoTime))
+   :current-time-millis (fn [] (System/currentTimeMillis))
+   :math-ceil (fn [x] (math/ceil x))
+   :math-floor (fn [x] (math/floor x))
+   :math-sqrt (fn [x] (math/sqrt x))
+   :math jvm-math
+   :index-of (fn [s sub from] (let [i (index-of s sub from)] (if (nil? i) -1 i)))
+   :upper-case (fn [s] (.toUpperCase (str s)))
+   :lower-case (fn [s] (.toLowerCase (str s)))
+   :string-builder (fn [] (StringBuilder.))
+   :sb-append! (fn [sb x] (.append sb (str x)) sb)
+   :sb-string (fn [sb] (.toString sb))
+   :sb? (fn [x] (= "java.lang.StringBuilder" (str (type x))))
+   :lazy-seq (fn [f] (lazy-seq (f)))
+   :delay (fn [f] (delay (f)))
+   :exception? (fn [x] (instance? Throwable x))
+   :transient? (fn [x] (contains? #{"let-go.lang.TransientVector" "let-go.lang.TransientMap" "let-go.lang.TransientSet"} (str (type x))))
+   :lazy-seq? (fn [x] (lazy-seq? x))
+   :atom? (fn [x] (= "let-go.lang.Atom" (str (type x))))})
+
+(adapter/install! adapter)

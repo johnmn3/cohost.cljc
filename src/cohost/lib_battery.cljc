@@ -10,6 +10,8 @@
 
 ;; Generated from JVM Clojure 1.12.0: each expected value is what the source
 ;; evaluates to there, after the same require. Regenerate rather than edit.
+;; A value holding a set is written as code, not quoted: let-go reads a set
+;; literal inside a quoted form as a (hash-set ...) list.
 (def libraries
   [{:lib 'clojure.walk :alias 'w
     :cases
@@ -17,16 +19,16 @@
      ["prewalk-replace" "(w/prewalk-replace {:a 1} [:a {:b :a}])" (quote [1 {:b 1}])]
      ["keywordize-keys" "(w/keywordize-keys {\"a\" {\"b\" 1}})" (quote {:a {:b 1}})]
      ["stringify-keys" "(w/stringify-keys {:a {:b 1}})" (quote {"a" {"b" 1}})]
-     ["postwalk over list, set, map" "(w/postwalk (fn [x] (if (number? x) (inc x) x)) '(1 [2 #{3}] {4 5}))" (quote (2 [3 #{4}] {5 6}))]
+     ["postwalk over list, set, map" "(w/postwalk (fn [x] (if (number? x) (inc x) x)) '(1 [2 #{3}] {4 5}))" (list 2 [3 #{4}] {5 6})]
      ["prewalk order" "(let [acc (atom [])] (w/prewalk (fn [x] (swap! acc conj x) x) [1 [2]]) @acc)" (quote [[1 [2]] 1 [2] 2])]
      ["macroexpand-all" "(w/macroexpand-all '(when x (-> y z)))" (quote (if x (do (z y))))]]}
    {:lib 'clojure.set :alias 's
     :cases
-    [["union intersection difference" "[(s/union #{1} #{2}) (s/intersection #{1 2} #{2 3}) (s/difference #{1 2} #{2})]" (quote [#{1 2} #{2} #{1}])]
+    [["union intersection difference" "[(s/union #{1} #{2}) (s/intersection #{1 2} #{2 3}) (s/difference #{1 2} #{2})]" [#{1 2} #{2} #{1}]]
      ["subset? superset?" "[(s/subset? #{1} #{1 2}) (s/superset? #{1} #{1 2})]" (quote [true false])]
-     ["select project" "[(s/select odd? #{1 2 3}) (s/project #{{:a 1 :b 2}} [:a])]" (quote [#{1 3} #{{:a 1}}])]
-     ["rename-keys rename" "[(s/rename-keys {:a 1 :b 2} {:a :b :b :a}) (s/rename #{{:a 1}} {:a :z})]" (quote [{:b 1, :a 2} #{{:z 1}}])]
-     ["index join map-invert" "[(s/index #{{:a 1} {:a 2}} [:a]) (s/join #{{:a 1}} #{{:a 1 :b 2}}) (s/map-invert {:a 1})]" (quote [{{:a 1} #{{:a 1}}, {:a 2} #{{:a 2}}} #{{:a 1, :b 2}} {1 :a}])]]}
+     ["select project" "[(s/select odd? #{1 2 3}) (s/project #{{:a 1 :b 2}} [:a])]" [#{1 3} #{{:a 1}}]]
+     ["rename-keys rename" "[(s/rename-keys {:a 1 :b 2} {:a :b :b :a}) (s/rename #{{:a 1}} {:a :z})]" [{:b 1, :a 2} #{{:z 1}}]]
+     ["index join map-invert" "[(s/index #{{:a 1} {:a 2}} [:a]) (s/join #{{:a 1}} #{{:a 1 :b 2}}) (s/map-invert {:a 1})]" [{{:a 1} #{{:a 1}}, {:a 2} #{{:a 2}}} #{{:a 1, :b 2}} {1 :a}]]]}
    {:lib 'clojure.string :alias 'str
     :cases
     [["case" "[(str/upper-case \"ab\") (str/lower-case \"AB\") (str/capitalize \"aBC\")]" (quote ["AB" "ab" "Abc"])]
@@ -52,12 +54,12 @@
     :cases
     [["maps" "(d/diff {:a 1 :b 2} {:a 1 :b 3})" (quote ({:b 2} {:b 3} {:a 1}))]
      ["vectors" "(d/diff [1 2 3] [1 2 4])" (quote [[nil nil 3] [nil nil 4] [1 2]])]
-     ["sets" "(d/diff #{1 2} #{2 3})" (quote [#{1} #{3} #{2}])]
+     ["sets" "(d/diff #{1 2} #{2 3})" [#{1} #{3} #{2}]]
      ["scalars and nil" "[(d/diff 1 2) (d/diff nil {:a 1}) (d/diff \"a\" \"a\")]" (quote [[1 2 nil] [nil {:a 1} nil] [nil nil "a"]])]
-     ["nested" "(d/diff {:a [1 2] :b #{1}} {:a [1 3] :b #{1}})" (quote ({:a [nil 2]} {:a [nil 3]} {:b #{1}, :a [1]}))]]}
+     ["nested" "(d/diff {:a [1 2] :b #{1}} {:a [1 3] :b #{1}})" (list {:a [nil 2]} {:a [nil 3]} {:b #{1}, :a [1]})]]}
    {:lib 'clojure.edn :alias 'edn
     :cases
-    [["read-string" "[(edn/read-string \"{:a [1 2]}\") (edn/read-string \"#{1 2}\") (edn/read-string \"[1 \\\"s\\\" :k sym 1.5]\")]" (quote [{:a [1 2]} #{1 2} [1 "s" :k sym 1.5]])]
+    [["read-string" "[(edn/read-string \"{:a [1 2]}\") (edn/read-string \"#{1 2}\") (edn/read-string \"[1 \\\"s\\\" :k sym 1.5]\")]" [{:a [1 2]} #{1 2} [1 "s" :k 'sym 1.5]]]
      [":readers" "(edn/read-string {:readers {'foo inc}} \"#foo 1\")" 2]
      [":default" "(edn/read-string {:default (fn [t v] [t v])} \"#bar 1\")" (quote [bar 1])]
      [":eof and nil" "[(edn/read-string {:eof :done} \"\") (edn/read-string nil)]" (quote [:done nil])]]}

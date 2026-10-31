@@ -55,7 +55,7 @@
 
 (def java-lang-names
   "java.lang (auto-imported on the JVM) plus the classes core.clj imports."
-  '#{Object String Boolean Byte Short Integer Long Float Double Character Number
+  (set '[Object String Boolean Byte Short Integer Long Float Double Character Number
      Math System Class Thread Runnable Comparable CharSequence StringBuilder
      StringBuffer Iterable Throwable Exception Error RuntimeException
      IllegalArgumentException IllegalStateException UnsupportedOperationException
@@ -66,7 +66,7 @@
      Runtime ThreadLocal ClassLoader StackTraceElement Appendable
      ;; (import ...) forms in core.clj
      BigInteger BigDecimal Array ExceptionInfo IExceptionInfo BlockingQueue
-     LinkedBlockingQueue Callable Future Writer})
+     LinkedBlockingQueue Callable Future Writer]))
 
 (def class-prefixes
   ["java." "javax." "clojure.lang." "clojure.asm." "clojure.core.protocols"])
@@ -109,6 +109,11 @@
   "nil, or a fn from a class token to the host type form(s) an `extend`,
    `extend-type` or `extend-protocol` position should name on this host."
   nil)
+(def ^:dynamic *plain*
+  "A name taken from a form, bare: the adapter's :plain-symbol (a let-go symbol
+   carrying metadata is a wrapper no symbol equals); identity elsewhere."
+  identity)
+
 (def ^:dynamic *locals*
   "The names the enclosing forms bind (fn and let params, catch bindings, the
    binding vectors of let / loop / for / doseq ... before they expand): a
@@ -148,7 +153,7 @@
   "*local-tags* once syms are bound: a sym hinted with a checked class gains its
    class token; any other bound here shadows an outer one."
   [tags syms]
-  (reduce (fn [m s] (let [t (:tag (meta s))]
+  (reduce (fn [m s] (let [t (:tag (meta s)) s (*plain* s)]
                       (if-let [c (and (symbol? t) (get checked-hints t))] (assoc m s c) (dissoc m s))))
           tags syms))
 
@@ -160,22 +165,24 @@
    the shim's, with no user-type dispatch (no user type is a StringBuilder)."
   {})
 
-(def ^:private sb-hints '#{StringBuilder java.lang.StringBuilder})
+(def ^:private sb-hints (set '[StringBuilder java.lang.StringBuilder]))
+(def ^:private sb-ctors (set '[StringBuilder. java.lang.StringBuilder.]))
+(def ^:private sb-returning (set '[.append .insert .reverse]))
 
 (defn- sb-ctor?
   "Does form x build a StringBuilder?"
   [x]
   (and (seq? x)
        (let [h (first x)]
-         (or (contains? '#{StringBuilder. java.lang.StringBuilder.} h)
+         (or (contains? sb-ctors h)
              (and (= 'new h) (contains? sb-hints (second x)))))))
 
 (defn- class-tags
   "*local-classes* once [sym init] pairs are bound (init nil for a parameter)."
   [classes pairs]
   (reduce (fn [m [s init]] (if (or (contains? sb-hints (:tag (meta s))) (sb-ctor? init))
-                             (assoc m s 'java.lang.StringBuilder)
-                             (dissoc m s)))
+                             (assoc m (*plain* s) 'java.lang.StringBuilder)
+                             (dissoc m (*plain* s))))
           classes pairs))
 
 (def ^:private marked-classes
@@ -273,10 +280,10 @@
 (def static-fields
   "Members of `(. Class member)` / `Class/member` that are fields (values), not
    zero-arg methods. Everything else bare is called."
-  '#{creator EMPTY TRUE FALSE MAX_VALUE MIN_VALUE TYPE NaN POSITIVE_INFINITY
+  (set '[creator EMPTY TRUE FALSE MAX_VALUE MIN_VALUE TYPE NaN POSITIVE_INFINITY
      NEGATIVE_INFINITY out err in ZERO ONE TEN CASE_INSENSITIVE_ORDER
      MILLISECONDS SECONDS NANOSECONDS MICROSECONDS specials REQUIRE_LOCK checkSpecAsserts
-     PI E MIN_NORMAL MIN_EXPONENT MAX_EXPONENT SIZE BYTES})
+     PI E MIN_NORMAL MIN_EXPONENT MAX_EXPONENT SIZE BYTES]))
 
 (def core-ns-names
   "Syntax-quote in a core namespace qualifies an unknown class name with the
@@ -297,8 +304,8 @@
     x))
 
 (def special-heads
-  '#{quote var . new try catch finally fn* let* loop* letfn* def do if throw
-     recur set! monitor-enter monitor-exit deftype* reify* case* import*})
+  (set '[quote var . new try catch finally fn* let* loop* letfn* def do if throw
+     recur set! monitor-enter monitor-exit deftype* reify* case* import*]))
 
 (defn canon-head
   "basilisp.core/new -> new: some readers namespace-qualify special forms
@@ -312,8 +319,8 @@
 (def reader-plumbing
   "clojure.core/ names a reader emits for `, ~@, @ and #': host plumbing that
    stays the host's."
-  '#{deref seq concat list vector hash-map hash-set with-meta apply unquote
-     unquote-splicing syntax-quote import* in-ns refer alias load name})
+  (set '[deref seq concat list vector hash-map hash-set with-meta apply unquote
+     unquote-splicing syntax-quote import* in-ns refer alias load name]))
 
 (defn restock
   "Explicit clojure.core/x references name the booted core; explicit
@@ -337,7 +344,7 @@
   "Catches everything. `Exception` is not here: on the JVM it leaves Errors
    (AssertionError, StackOverflowError) alone, which the shim's class test
    reproduces."
-  '#{Throwable Object java.lang.Throwable java.lang.Object :default})
+  (set '[Throwable Object java.lang.Throwable java.lang.Object :default]))
 
 ;; ---------------------------------------------------------------------------
 ;; shim symbol naming
@@ -364,9 +371,10 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms vector-rest-args?]
+           instance-fn missing-dot try-all named-fn*? special-forms vector-rest-args? plain-symbol]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
-  {:shim-names shim-names
+  {:plain-symbol (or plain-symbol identity)
+   :shim-names shim-names
    ;; {shim static name -> the host core's symbol} where the shim's static is
    ;; the host's own fn: emitted instead, so the host's compiler sees (and may
    ;; inline) its own +, first, get ...
@@ -540,7 +548,7 @@
         (sb-ctor? x) true
         (seq? x) (let [h (first x)]
                    (and (symbol? h) (nil? (namespace h))
-                        (contains? '#{.append .insert .reverse} h)
+                        (contains? sb-returning h)
                         (sb-typed? (second x))))
         :else false))
 
@@ -599,7 +607,7 @@
   "java.util collections a host with a java.* surface has natively: code
    outside cohost.core gets the host's own (the shim's stand-ins serve
    core.clj's internals, partition-all and partition-by)."
-  '#{java.util.ArrayList java.util.LinkedList})
+  (set '[java.util.ArrayList java.util.LinkedList]))
 
 (defn- rw-new [ctx c args]
   (let [args' (rw-all ctx args)
@@ -696,8 +704,9 @@
                     (mapcat (fn [[params]] (filter #(and (symbol? %) (not= '& %)) params)) arities))
         arities' (binding [*locals* (into *locals* names)]
                    (doall (map (fn [[params & body]]
-                                 (let [ps (filter symbol? params)
-                                       tags (hint-tags *local-tags* ps)
+                                 (let [ps0 (filter symbol? params)
+                                       ps (map *plain* ps0)
+                                       tags (hint-tags *local-tags* ps0)
                                        classes (class-tags *local-classes* (map (fn [p] [p nil]) ps))
                                        [bs depths] (markers-for ps tags classes)
                                        body' (binding [*local-tags* tags *local-classes* classes *marker-depth* depths]
@@ -720,8 +729,9 @@
               bvec))
 
 (defn- rw-let* [ctx [h bvec & body]]
-  (let [syms (filter symbol? (take-nth 2 bvec))
-        tags (hint-tags *local-tags* syms)
+  (let [syms0 (filter symbol? (take-nth 2 bvec))
+        syms (map *plain* syms0)
+        tags (hint-tags *local-tags* syms0)
         classes (class-tags *local-classes* (filter (comp symbol? first) (partition 2 bvec)))
         [bs depths] (markers-for syms tags classes)]
     (binding [*locals* (into *locals* syms)
@@ -732,7 +742,7 @@
           ;; each marker right after its local, so the inits after it see it
           ;; too (a loop*'s bindings are recur's arity: its body gets them)
           (let [ms (into {} (map (fn [[m _]] [(first (marker-info m)) m]) (partition 2 bs)))
-                bvec'' (vec (mapcat (fn [[b v]] (if-let [m (and (symbol? b) (get ms b))] [b v m nil] [b v]))
+                bvec'' (vec (mapcat (fn [[b v]] (if-let [m (and (symbol? b) (get ms (*plain* b)))] [b v m nil] [b v]))
                                     (partition 2 bvec')))]
             (apply list h (carry-meta bvec'' bvec') body'))
           (apply list h bvec' (with-markers bs body')))))))
@@ -740,7 +750,7 @@
 ;; Binding forms before they expand: the names they bind are locals in the
 ;; whole form, so `(let [String "x"] String)` keeps its local.
 (defn- pattern-syms [p]
-  (cond (symbol? p) (if (= '& p) [] [p])
+  (cond (symbol? p) (let [p (*plain* p)] (if (= '& p) [] [p]))
         (vector? p) (mapcat pattern-syms p)
         (map? p) (mapcat (fn [[k v]]
                            (cond (= k :as) [v]
@@ -849,7 +859,8 @@
       (boolean (when-let [f (:interned? ctx)] (f s)))))
 
 (defn- rw-symbol [ctx s]
-  (let [s (restock ctx (declass s))]
+  (let [s0 s
+        s (restock ctx (declass (*plain* s)))]
     (cond
     ;; a policy replacement names the shim by its qualified symbol
       (and (namespace s) (= shim-ns (namespace s))) (shim-fn (name s))
@@ -858,13 +869,15 @@
           (let [c (symbol (namespace s))] (if (= c (imported c)) s (symbol (str (imported c)) (name s)))))
 
       (and (class-sym? s) (not (user-name? ctx s))) (list 'quote (class-token s))
-      :else (carry-meta s s))))
+      :else (carry-meta s s0))))
+
+(def ^:private extend-heads (set '[extend extend-type extend-protocol]))
 
 (def spec-heads
   "Host forms whose structure names classes and interfaces (never values):
    only their method bodies are rewritten."
-  '#{deftype defrecord reify proxy extend-type extend-protocol extend
-     definterface defprotocol})
+  (set '[deftype defrecord reify proxy extend-type extend-protocol extend
+     definterface defprotocol]))
 
 (defn- spec-head
   "The unqualified spec head of h, also when a macro's syntax-quote qualified it."
@@ -889,7 +902,7 @@
   "The symbols a params or fields vector binds, destructuring included (one
    too many only keeps a call from being inlined)."
   [params]
-  (remove #{'&} (filter symbol? (tree-seq coll? seq params))))
+  (remove #{'&} (map *plain* (filter symbol? (tree-seq coll? seq params)))))
 
 (defn- rw-body
   "body rewritten with the symbols params binds as locals: a field or method
@@ -938,6 +951,8 @@
               (conj acc [x []])))
           [] xs))
 
+(def ^:private bare-base-types (set '[default object string number boolean function array symbol bigint]))
+
 (defn- rw-extend [ctx h args]
   (case h
     extend-protocol
@@ -958,7 +973,7 @@
           ;; a base type a host names by a bare word (ClojureScript's default,
           ;; string ...) is a value to the extend fn: quoted
           forms (map (fn [ht] (apply list h (cond (and (symbol? ht) (nil? (namespace ht))
-                                                       (contains? '#{default object string number boolean function array symbol bigint} ht))
+                                                       (contains? bare-base-types ht))
                                                   (list 'quote ht)
                                                   (symbol? ht) ht
                                                   :else (rw ctx ht))
@@ -1186,7 +1201,7 @@
 (defn- rw-list [ctx form]
   (if (empty? form)
     form
-    (let [h (declass (canon-head (first form)))
+    (let [h (declass (canon-head (*plain* (first form))))
           args (rest form)
           hn (when (and (symbol? h) (nil? (namespace h))) (name h))
           inst-c (delay (rw ctx (second form)))
@@ -1241,7 +1256,7 @@
             (let [t (second form)
                   [c f] (if (seq? t) [(declass (second t)) (nth t 2)] [(symbol (namespace t)) (symbol (name t))])]
               (list (shim-fn "static-set!") (static-name c f) (rw ctx (nth form 2))))
-            (contains? '#{extend extend-type extend-protocol} (spec-head h))
+            (contains? extend-heads (spec-head h))
             (rw-extend ctx (spec-head h) args)
             (spec-head h) (rw-spec-form ctx (cons (spec-head h) args))
             (or (= h 'monitor-enter) (= h 'monitor-exit))
@@ -1354,7 +1369,8 @@
   ([ctx form {:keys [locals]}]
    (let [cur (when-let [f (:current-ns ctx)] (str (f)))
          types (env-types locals)]
-     (binding [*locals* (into #{} locals)
+     (binding [*plain* (:plain-symbol ctx identity)
+               *locals* (into #{} locals)
                *local-tags* (:tags types)
                *local-classes* (:classes types)
                *marker-depth* (:depth types)

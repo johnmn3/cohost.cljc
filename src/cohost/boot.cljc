@@ -69,6 +69,9 @@
       (apply list 'defmacro nm (concat (when doc [doc]) (when attrs [attrs])
                                        (if (vector? (first more)) (first arities') arities'))))))
 
+(def ^:private defn-heads (set '[defn defn-]))
+(def ^:private inline-def-heads (set '[defn defn- def]))
+
 (defn- may-make-macro?
   "Can evaluating form create a macro or change one? A defmacro; a def of a
    `^:macro` name or of one core.clj turns into a macro with setMacro; and
@@ -86,7 +89,7 @@
                   more (if (string? (first more)) (rest more) more)]
               (and (symbol? nm)
                    (or (:macro (meta nm)) (contains? policy/setmacro-defined nm)
-                       (and (contains? '#{defn defn-} h)
+                       (and (contains? defn-heads h)
                             (or (and (map? (first more)) (:macro (first more)))
                                 (and (map? (last more)) (:macro (last more))))))))))))
 
@@ -221,6 +224,7 @@
                 :shim-ref (host/shim-ref)
                 :loop-variadic-recur? (host/loop-variadic-recur?)
                 :named-fn*? (host/named-fn*?)
+                :plain-symbol host/plain-symbol
                 :special-forms (host/special-forms)
                 :vector-rest-args? (host/vector-rest-args?)
                 :def-meta (host/def-meta)
@@ -399,7 +403,7 @@
   "[name inline-form arities-form] of a defn or def whose metadata carries
    :inline (core.clj's + is `(defn + {:inline (nary-inline 'add ...)} ...)`)."
   [form]
-  (when (and (seq? form) (contains? '#{defn defn- def} (first form)) (symbol? (second form)))
+  (when (and (seq? form) (contains? inline-def-heads (first form)) (symbol? (second form)))
     (let [nm (second form)
           more (nnext form)
           more (if (string? (first more)) (rest more) more)
@@ -435,7 +439,7 @@
 
 (def ^:private native-heads
   "The def forms a native can stand in for: fns (a macro has no native)."
-  '#{def defn defn- defonce definline})
+  (set '[def defn defn- defonce definline]))
 
 (defn- native-of
   "The adapter's native (adapter :natives) for the def form `form` of library
@@ -458,7 +462,7 @@
         [doc more] (if (string? (first more)) [(first more) (rest more)] [nil more])
         [attrs more] (if (and (not= 'def h) (map? (first more))) [(first more) (rest more)] [nil more])
         plain (fn [params] (mapv #(if (symbol? %) (with-meta % nil) %) params))
-        arglists (when (contains? '#{defn defn-} h)
+        arglists (when (contains? defn-heads h)
                    (if (vector? (first more))
                      (list (plain (first more)))
                      (seq (map (comp plain first) (filter #(and (seq? %) (vector? (first %))) more)))))]
@@ -680,7 +684,7 @@
 
 (defn- unquote* [x] (if (and (seq? x) (= 'quote (first x))) (second x) x))
 
-(def ^:private directive-heads '#{ns in-ns require use import refer-clojure alias})
+(def ^:private directive-heads (set '[ns in-ns require use import refer-clojure alias]))
 
 (defn- directive
   "A top-level loader form -> [head args], when every argument is literal."

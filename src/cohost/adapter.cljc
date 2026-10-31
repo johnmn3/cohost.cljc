@@ -34,6 +34,7 @@
    :read-forms      [['src 'cb] "read every top-level form of src, (cb form) each, in the caller's *ns*"]
    :read-string     [['s '& 'opts] "read one form from a string, in the caller's *ns*; the 2-arity takes read-string's opts map (:eof, :read-cond, :features) and honors *data-readers* / *default-data-reader-fn* as read-string does"]
    :host-read-string [['s] "read one form for the host's own core to run (the bench's host side): the host's own reader (default: :read-string)"]
+   :plain-symbol    [['x] "x itself, or the bare symbol when x is a symbol carrying metadata on a host whose symbols hold none of their own (let-go: with-meta wraps a symbol in a value no symbol equals); default: x"]
    :with-ns         [['ns-sym 'thunk] "call thunk with *ns* set to ns-sym"]
    :ensure-bare-ns! [['ns-sym] "create ns-sym referring nothing from the host core"]
    :eval            [['form] "eval form in the current *ns*"]
@@ -274,8 +275,8 @@
     :set-dynamic! #?(:cljs (unsupported :set-dynamic!) :default (fn [h] (alter-meta! h assoc :dynamic true) h))
     :var-bound? #?(:cljs (fn [_] true) :default (fn [h] (try-all (fn [] (var-get h) true) (fn [_] false))))
     :var-thread-bound? (fn [_] false)
-    :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :phel (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
-    :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :phel (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
+    :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :phel (unsupported :push-thread-bindings!) :lg (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
+    :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :phel (unsupported :pop-thread-bindings!) :lg (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
     :thread-bindings (fn [] {})
     :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
     :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
@@ -303,6 +304,7 @@
     :invoke-member (fn [_ _ _ absent] absent)
     :interop-passthrough? false
     :class-instance? (fn [c x] (instance? c x))
+    :plain-symbol (fn [x] x)
     :protocol-var? (fn [ns-sym name-sym]
                      (let [h (try-all (fn [] (get ((cap :ns-interns) ns-sym) name-sym)))
                            v (when h ((cap :var-get) h))]
@@ -526,6 +528,7 @@
 (defn spit-file [path s] ((cap :spit) path s))
 (defn read-forms [src cb] ((cap :read-forms) src cb))
 (defn read-string* ([s] ((cap :read-string) s)) ([s opts] ((cap :read-string) s opts)))
+(defn plain-symbol "x, a name taken from a form: the bare symbol (adapter :plain-symbol)." [x] ((cap :plain-symbol) x))
 (defn host-read-string [s] (if-let [f (get @installed :host-read-string)] (f s) (read-string* s)))
 (defn with-ns [ns-sym thunk] ((cap :with-ns) ns-sym thunk))
 (defn ensure-bare-ns! [ns-sym] ((cap :ensure-bare-ns!) ns-sym))

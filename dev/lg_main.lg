@@ -1,0 +1,6 @@
+;; bb boot:lg / bench:lg: cohost.run's -main with let-go's command-line
+;; arguments (lg has no -m: it runs a file).
+(ns lg-main
+  (:require [cohost.run]))
+
+(apply cohost.run/-main *command-line-args*)
