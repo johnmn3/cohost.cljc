@@ -42,7 +42,14 @@
   (:use Phel.Lang.Ratio)
   (:use Phel.Lang.BigDecimal)
   (:use Phel.Lang.Collections.SortedMap.PersistentSortedMap)
-  (:use Phel.Lang.Collections.SortedSet.PersistentSortedSet))
+  (:use Phel.Lang.Collections.SortedSet.PersistentSortedSet)
+  (:use Phel.Shared.Parser.Node.QuoteNode)
+  (:use Phel.Shared.Parser.Node.ListNode)
+  (:use Phel.Shared.Parser.Node.SymbolNode)
+  (:use Phel.Shared.Parser.Node.InnerNodeInterface)
+  (:use Phel.Shared.Parser.Node.Token)
+  (:use Phel.Compiler.Domain.Analyzer.Environment.NodeEnvironment)
+  (:use Phel.Compiler.Domain.Analyzer.Ast.GlobalVarNode))
 
 (defn- genv [] (GlobalEnvironmentSingleton/getInstance))
 (defn- ns-str [x] (if (string? x) x (str x)))
@@ -51,6 +58,98 @@
 ;; reading: the compiler's lexer and reader, one form at a time, so a form is
 ;; read after the one before it ran (a ::kw after an ns form is that
 ;; namespace's)
+;;
+;; Syntax-quote is the JVM reader's, not Phel's: Phel qualifies a symbol only
+;; when it resolves, to where it resolves (core.clj's own and, read before
+;; cohost.core has an and, becomes phel.core/and), and leaves the rest bare
+;; (spec's `and-spec-impl, defined after the macro that names it). Each ` in
+;; the parse tree becomes a marker list the reader takes as is, expanded here
+;; as the JVM reads it: an alias's target, the namespace a name resolves to
+;; (but never phel.core), else the current namespace; special forms, & and
+;; class names stay bare, x# is a gensym per syntax-quote. The code it builds
+;; is the same as Phel's: (apply list (concat ...)), vector, hash-map.
+
+(def- sq-mark (Symbol/create "cohost.hosts.phel/syntax-quote"))
+
+(defn- mark-syntax-quotes [node]
+  (cond
+    (and (php/instanceof node QuoteNode) (= (.getTokenType node) Token/T_QUASIQUOTE))
+    (let [s (.getStartLocation node) e (.getEndLocation node)]
+      (new ListNode Token/T_OPEN_PARENTHESIS s e
+           (php/array (new SymbolNode "`" s e sq-mark) (mark-syntax-quotes (.getExpression node)))))
+    (php/instanceof node InnerNodeInterface)
+    (.replaceChildren node (php/array_map mark-syntax-quotes (.getChildren node)))
+    :else node))
+
+(defn- form-of? [head x]
+  (and (php/instanceof x PersistentListInterface) (not (empty? x)) (= head (first x))))
+
+(def- sq-specials
+  '#{def if do let* fn* loop* recur quote var throw try catch finally new set! letfn*
+     case* deftype* reify* import* monitor-enter monitor-exit . &})
+
+(def- sq-counter (atom 0))
+
+(defn- sq-symbol [sym gensyms]
+  (let [n (name sym) ns (namespace sym)]
+    (cond
+      ns (if-let [t (.resolveAlias (genv) ns)] (symbol t n) sym)
+      (contains? sq-specials sym) sym
+      (php/str_ends_with n "#")
+      (or (get @gensyms n)
+          (let [g (symbol (str (php/substr n 0 -1) "__" (swap! sq-counter inc) "__auto__"))]
+            (swap! gensyms assoc n g)
+            g))
+      (or (php/str_starts_with n ".") (php/str_ends_with n ".") (php/str_contains n ".")) sym
+      :else
+      (let [node (try (.resolve (genv) sym (NodeEnvironment/empty)) (catch \Throwable _ nil))]
+        (cond
+          (and (php/instanceof node GlobalVarNode) (not= "phel.core" (.getNamespace node)))
+          (symbol (.getNamespace node) n)
+          (and (not (php/instanceof node GlobalVarNode)) (php/ctype_upper (php/substr n 0 1))) sym
+          :else (symbol (.getNs (genv)) n))))))
+
+(declare sq)
+(declare expand-syntax-quotes)
+(defn- sq-items [xs gensyms]
+  (apply list 'concat
+         (map (fn [x] (if (form-of? 'unquote-splicing x)
+                        (expand-syntax-quotes (second x))
+                        (list 'list (sq x gensyms))))
+              xs)))
+
+(defn- sq [x gensyms]
+  (cond
+    ;; a nested syntax-quote: read first, then quoted, as the JVM reads it
+    (form-of? sq-mark x) (sq (sq (second x) (atom {})) gensyms)
+    ;; unquoted code: the syntax-quotes inside it are its own
+    (form-of? 'unquote x) (expand-syntax-quotes (second x))
+    (symbol? x) (list 'quote (sq-symbol x gensyms))
+    (and (php/instanceof x PersistentListInterface) (not (empty? x))) (list 'apply 'list (sq-items x gensyms))
+    (and (vector? x) (not (empty? x))) (list 'apply 'vector (sq-items x gensyms))
+    (and (map? x) (not (empty? x))) (list 'apply 'hash-map (sq-items (mapcat (fn [e] [(key e) (val e)]) (seq x)) gensyms))
+    (or (keyword? x) (string? x) (number? x) (nil? x) (boolean? x)) x
+    :else (list 'quote x)))
+
+;; every marker in a read form, expanded; what holds none stays the same object
+(defn- expand-syntax-quotes [x]
+  (cond
+    (form-of? sq-mark x) (sq (second x) (atom {}))
+    (php/instanceof x PersistentListInterface)
+    (let [xs (mapv expand-syntax-quotes x)]
+      (if (every? true? (map (fn [a b] (php/=== a b)) xs x)) x (with-meta (apply list xs) (meta x))))
+    (vector? x)
+    (let [xs (mapv expand-syntax-quotes x)]
+      (if (every? true? (map (fn [a b] (php/=== a b)) xs x)) x (with-meta xs (meta x))))
+    (map? x)
+    (let [kvs (mapv (fn [e] [(expand-syntax-quotes (key e)) (expand-syntax-quotes (val e))]) (seq x))]
+      (if (every? (fn [[[k v] e]] (and (php/=== k (key e)) (php/=== v (val e)))) (map vector kvs (seq x)))
+        x
+        (with-meta (into {} kvs) (meta x))))
+    (set? x)
+    (let [xs (mapv expand-syntax-quotes x)]
+      (if (every? true? (map (fn [a b] (php/=== a b)) xs x)) x (with-meta (into #{} xs) (meta x))))
+    :else x))
 
 (defn- read-forms [src cb]
   (let [cf (new CompilerFacade)
@@ -59,7 +158,7 @@
       (let [tree (.parseNext cf ts)]
         (when-not (nil? tree)
           (when-not (php/instanceof tree TriviaNodeInterface)
-            (cb (.getAst (.read cf tree))))
+            (cb (expand-syntax-quotes (.getAst (.read cf (mark-syntax-quotes tree))))))
           (recur))))))
 
 ;; ---------------------------------------------------------------------------
@@ -119,16 +218,54 @@
     v))
 (defn- alter-var-meta! [v f & args] (set-var-meta! v (apply f (meta v) args)) (meta v))
 
-;; A macro is a def whose metadata says :macro: the compiler then calls it with
-;; &form and &env.
-(defn- mark-macro! [v] (set-var-meta! v (assoc (meta v) :macro true)))
+;; Phel's own macros name the macros they expand into bare (case its own case
+;; and an or, or its own or), so the namespace of the call resolves them: in
+;; spec's, which defines an or, its or. A macro cohost.core takes from Phel
+;; has its expansion's heads named as cohost.core names them (its own macro of
+;; that name, else phel.core's), which keeps every expansion step cohost's.
+(defn- phel-macro? [sym]
+  (let [m (Phel/getDefinitionMetaData "phel.core" (name sym))]
+    (boolean (and m (get m :macro)))))
 
-;; ns-resolve, which Phel lacks: its resolve, in that namespace, to the var
+(defn- own-head [sym]
+  (let [n (name sym)]
+    (if (some? (find-var (symbol "cohost.core" n))) (symbol "cohost.core" n) (symbol "phel.core" n))))
+
+(defn- qualify-host-expansion [x]
+  (cond
+    (and (php/instanceof x PersistentListInterface) (not (empty? x)))
+    (let [h (first x)]
+      (if (= 'quote h)
+        x
+        (let [h' (if (and (symbol? h) (nil? (namespace h)) (phel-macro? h)) (own-head h) h)]
+          (with-meta (apply list h' (map qualify-host-expansion (rest x))) (meta x)))))
+    (vector? x) (with-meta (mapv qualify-host-expansion x) (meta x))
+    :else x))
+
+;; A macro is a def whose metadata says :macro: the compiler then calls it with
+;; &form and &env. A Phel macro taken into another namespace (its root is
+;; phel.core's macro fn) expands through qualify-host-expansion.
+(defn- mark-macro! [v]
+  (let [ns (.getNamespace v) nm (.getName v)
+        root (.getDefinition (Registry/getInstance) ns nm)
+        host (when (not= "phel.core" ns) (var-of 'phel.core nm))
+        root (if (and host (php/=== root (var-get host)) (phel-macro? (symbol nm)))
+               (fn [& args] (qualify-host-expansion (apply root args)))
+               root)]
+    (Phel/addDefinition ns nm root (dissoc (assoc (meta v) :macro true) :inline :inline-arities))
+    v))
+
+;; resolve and ns-resolve: the var a symbol names in a namespace, or nil.
+;; phel.core's resolve returns a symbol, and every namespace sees phel.core
+;; there: a name only phel.core has resolves to nothing, as on the JVM.
+(defn- resolve-var [sym]
+  (let [node (try (.resolve (genv) sym (NodeEnvironment/empty)) (catch \Throwable _ nil))]
+    (when (and (php/instanceof node GlobalVarNode) (not= "phel.core" (.getNamespace node)))
+      (find-var (symbol (.getNamespace node) (name sym))))))
+
 (defn- ns-resolve*
   ([ns-sym sym] (ns-resolve* ns-sym nil sym))
-  ([ns-sym _env sym]
-   (when-let [q (with-ns ns-sym (fn [] (resolve sym)))]
-     (when (namespace q) (find-var q)))))
+  ([ns-sym _env sym] (with-ns ns-sym (fn [] (resolve-var sym)))))
 
 ;; the-ns and ns-name, which Phel lacks: a namespace is its name there
 (defn- the-ns* [x]
@@ -151,34 +288,63 @@
 ;; becomes a list, every other vector (and a map entry) a vector, metadata
 ;; included; what does not change stays the same object.
 
-(declare as-code)
+(declare walk-code)
 ;; the same object (phel.core's identical? is equality for a symbol)
 (defn- same? [a b] (php/=== a b))
+;; metadata is data
 (defn- code-meta [x x']
-  (let [m (meta x) m' (when m (as-code m))]
+  (let [m (meta x) m' (when m (walk-code m true))]
     (if (and (same? x x') (same? m m')) x (with-meta x' m'))))
 
 (defn- same-items? [xs ys] (every? true? (map same? xs ys)))
 
-(defn- as-code [x]
+;; Phel compiles (def f (fn ...)) with a shortcut: a call of f in its body is a
+;; call of $this. A fn of arity clauses (fn ([x] ...) ...) compiles its nested
+;; fns to classes of their own, whose $this is not f: the shortcut then makes
+;; a nested fn call itself. One clause is written (fn [x] ...), which compiles
+;; right; a def of several is given its fn through (do ...), which turns the
+;; shortcut off (the call goes through the registry).
+(defn- fn-clauses [x]
+  (when (and (php/instanceof x PersistentListInterface) (= 'fn (first x)))
+    (let [tail (rest x)
+          [nm tail] (if (symbol? (first tail)) [(first tail) (rest tail)] [nil tail])]
+      (when (and (seq tail) (every? (fn [c] (php/instanceof c PersistentListInterface)) tail))
+        [nm tail]))))
+
+(defn- unshortcut [x]
+  (if-let [[nm clauses] (fn-clauses x)]
+    (if (= 1 (count clauses))
+      (with-meta (apply list (concat ['fn] (when nm [nm]) (first clauses))) (meta x))
+      x)
+    (if (and (php/instanceof x PersistentListInterface) (= 'def (first x)) (= 3 (count x))
+             (fn-clauses (nth x 2)))
+      (with-meta (list 'def (second x) (list 'do (nth x 2))) (meta x))
+      x)))
+
+(defn- walk-code [x q?]
   (cond
     (php/instanceof x PersistentListInterface)
-    (let [xs (mapv as-code x)] (code-meta x (if (same-items? xs x) x (apply list xs))))
+    (let [q? (or q? (= 'quote (first x)))
+          xs (mapv (fn [y] (walk-code y q?)) x)
+          x' (if (same-items? xs x) x (code-meta x (apply list xs)))]
+      (if q? x' (unshortcut x')))
     (php/instanceof x PersistentVector)
-    (let [xs (mapv as-code x)] (code-meta x (if (same-items? xs x) x xs)))
-    (php/instanceof x PersistentVectorInterface) (code-meta x (mapv as-code x))
-    (php/instanceof x MapEntry) [(as-code (key x)) (as-code (val x))]
+    (let [xs (mapv (fn [y] (walk-code y q?)) x)] (code-meta x (if (same-items? xs x) x xs)))
+    (php/instanceof x PersistentVectorInterface) (code-meta x (mapv (fn [y] (walk-code y q?)) x))
+    (php/instanceof x MapEntry) [(walk-code (key x) q?) (walk-code (val x) q?)]
     (php/instanceof x PersistentMapInterface)
     ;; (Phel's map over a map sees its values: its seq is the entries)
-    (let [kvs (mapv (fn [e] [(as-code (key e)) (as-code (val e))]) (seq x))]
+    (let [kvs (mapv (fn [e] [(walk-code (key e) q?) (walk-code (val e) q?)]) (seq x))]
       (code-meta x (if (every? (fn [[[k v] e]] (and (same? k (key e)) (same? v (val e)))) (map vector kvs (seq x)))
                      x
                      (into (empty x) kvs))))
     (php/instanceof x PersistentHashSetInterface)
-    (let [xs (mapv as-code x)] (code-meta x (if (same-items? xs x) x (into (empty x) xs))))
-    (php/instanceof x SeqInterface) (as-code (code-meta x (apply list (seq x))))
+    (let [xs (mapv (fn [y] (walk-code y q?)) x)] (code-meta x (if (same-items? xs x) x (into (empty x) xs))))
+    (php/instanceof x SeqInterface) (walk-code (code-meta x (apply list (seq x))) q?)
     (php/instanceof x Symbol) (code-meta x x)
     :else x))
+
+(defn- as-code [x] (walk-code x false))
 
 ;; ---------------------------------------------------------------------------
 
@@ -199,6 +365,7 @@
    :inline-meta :strip
    :rewrite-inline? true
    :code-form as-code
+   :eval (fn [form] (eval (as-code form)))
    :read-string (fn ([s] (read-string s)) ([s _opts] (read-string s)))
    :with-ns with-ns
    :ensure-bare-ns! (fn [ns-sym] (create-ns (ns-str ns-sym)) ns-sym)
@@ -214,7 +381,7 @@
    :alias! (fn [into-ns a target]
              (.addRequireAlias (genv) (ns-str into-ns) (Symbol/create (str a)) (Symbol/create (ns-str target))))
    :mark-macro! mark-macro!
-   :core-extras {'ns-resolve ns-resolve* 'the-ns the-ns* 'ns-name ns-name*}
+   :core-extras {'resolve resolve-var 'ns-resolve ns-resolve* 'the-ns the-ns* 'ns-name ns-name*}
    :resolve-core (fn [sym] (let [v (var-of 'phel.core sym)] (when (and v (not (:private (meta v)))) v)))
    :require-host! (fn [lib] (throw (ex-info (str "cohost: phel has no require at run time: " lib) {:lib lib})))
    :var-ns (fn [v] (symbol (.getNamespace v)))
