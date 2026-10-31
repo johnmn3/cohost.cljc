@@ -156,9 +156,9 @@
   (let [results (doall
                  (for [[label src expected] cases]
                    (let [_ (when @boot/verbose? (println (str "  [case] " label)))
-                         [ok v] (try [true (eval-str src)]
-                                     (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-                                       [false (str "ERR " (host/error-message e))]))]
+                         [ok v] (host/try-all (fn [] [true (eval-str src)])
+                                              (fn [e]
+                                                [false (str "ERR " (host/error-message e))]))]
                      {:label label :pass (and ok (= v expected)) :got v :expected expected})))
         passed (count (filter :pass results))]
     (println (str "battery: " passed "/" (count results) " stock behaviors pass"))

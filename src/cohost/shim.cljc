@@ -954,12 +954,12 @@
     (if (some? @tx)
       (f)
       (do (reset! tx {})
-          (try (f)
-               (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-                 (let [written @tx]
-                   (reset! tx nil)
-                   (doseq [[r v] written] (reset! r v)))
-                 (throw e))
+          (try (host/try-all f
+                             (fn [e]
+                               (let [written @tx]
+                                 (reset! tx nil)
+                                 (doseq [[r v] written] (reset! r v)))
+                               (throw e)))
                (finally (reset! tx nil)))))))
 (def LockingTransaction-isRunning (fn [] (some? @tx)))
 (def new-Agent (host-fn 'agent (unsupported "agent")))

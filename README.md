@@ -87,7 +87,12 @@ bb boot:jvm       # JVM Clojure as the host: the reference adapter
 bb corpus:jolt path/to/corpus.edn         # a conformance corpus (jolt's test/chez/corpus.edn): stock core vs jolt's own
 bb corpus:jvm                             # then: which rows the stock core fails JVM Clojure answers as expected
 bb eval:jolt '(require (quote [clojure.string :as str]))' '(str/split "a,b" #",")'
+bb lint:reader-order                      # cohost's #? arms: :jolt and :cljw ahead of :clj, nothing after :default
 ```
+
+The five hosts in progress (`doc/hosts/PLAN.md`) have the same tasks: `bb boot:cljw`,
+`boot:phel`, `boot:lg`, `boot:cljrs`, `boot:jank` and their `bench:` twins. Each one's
+install is `dev/install/<host>.sh`.
 
 Each boots core.clj, prints the boot report (booted / from host / skipped /
 errors, every error's root cause, the interop the shim lacks), runs
@@ -180,6 +185,13 @@ exact `Character` predicates). A host whose `format` is not the JVM's leaves
 shortest complete example; `hosts/cljs.cljs` the most involved (no macro
 vars, no run-time namespace reflection, no run-time `extend`: the adapter
 supplies all three from the analyzer state).
+
+cohost's own source reads on every host. A new host's reader feature goes in
+`dev/lint_reader_order.clj`'s list, and `bb lint:reader-order` checks every
+`#?` in `src`. The host's catch-all, the symbol whose `catch` catches
+everything, is written once, in `cohost.adapter/try-all`; cohost's own code
+catches only through it. (The adapter's `:catch-all` is the same fact for the
+code cohost evaluates.)
 
 ### Natives: the host's own fns, one at a time
 

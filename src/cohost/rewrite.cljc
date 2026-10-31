@@ -363,7 +363,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot]
+           instance-fn missing-dot try-all]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:shim-names shim-names
    ;; {shim static name -> the host core's symbol} where the shim's static is
@@ -386,6 +386,10 @@
    :stock-name (or stock-name (constantly nil))
    :rewritten-macro? (or rewritten-macro? (constantly false))
    :inline-fn inline-fn
+   ;; try-all: (fn [thunk]) -> (thunk), or nil when it throws anything: the
+   ;; host's catch-all (cohost.adapter/try-all), for an inline expansion that
+   ;; does not take the form it is given
+   :try-all (or try-all (fn [thunk] (thunk)))
    ;; per-namespace facts: a thunk naming the namespace being compiled, an atom
    ;; {ns-name {Short full}} of imports, an atom {orig-ns mapped-ns} of renamed
    ;; stock libraries, and the host's type translation for extend positions
@@ -1147,8 +1151,7 @@
   (when-let [f (and *inline?* (:inline-fn ctx))]
     (when-let [v (head-var ctx h)]
       (when-let [inl (f v (count args))]
-        (try (apply inl args)
-             (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))))))
+        ((:try-all ctx) (fn [] (apply inl args)))))))
 
 (defn- rw-list [ctx form]
   (if (empty? form)

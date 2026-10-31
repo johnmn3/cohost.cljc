@@ -105,15 +105,15 @@
   (let [results
         (doall
          (for [{:keys [lib alias cases]} libraries]
-           (let [req-error (try (eval-str (str "(require '[" lib " :as " alias "])")) nil
-                                (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-                                  (host/error-message e)))
+           (let [req-error (host/try-all (fn [] (eval-str (str "(require '[" lib " :as " alias "])")) nil)
+                                         (fn [e]
+                                           (host/error-message e)))
                  rs (doall
                      (for [[label src expected] cases]
                        (let [_ (when @boot/verbose? (println (str "  [lib case] " lib " / " label)))
-                             [ok v] (try [true (eval-str src)]
-                                         (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-                                           [false (str "ERR " (host/error-message e))]))]
+                             [ok v] (host/try-all (fn [] [true (eval-str src)])
+                                                  (fn [e]
+                                                    [false (str "ERR " (host/error-message e))]))]
                          {:label label :pass (and ok (= v expected)) :got v :expected expected})))]
              {:lib lib :require-error req-error :results rs})))
         n (reduce + (map (comp count :results) results))

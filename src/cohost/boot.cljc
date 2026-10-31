@@ -125,10 +125,9 @@
                             (or (< (count na) (count nb))
                                 (and (= (count na) (count nb)) (neg? (compare na nb))))))
         by-fn (reduce (fn [m [sym h]]
-                        (let [v (try (when-not (or (host/macro-var? h) (:private (host/var-meta h))
-                                                   (and own-inline? (:inline (host/var-meta h))))
-                                       (host/var-root h))
-                                     (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]
+                        (let [v (host/try-all (fn [] (when-not (or (host/macro-var? h) (:private (host/var-meta h))
+                                                                   (and own-inline? (:inline (host/var-meta h))))
+                                                       (host/var-root h))))]
                           (if (and (fn? v) (or (not (contains? m v)) (better? sym (get m v)))) (assoc m v sym) m)))
                       {} (host/ns-interns-map core))
         vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))]
@@ -150,13 +149,12 @@
                      (some-> (host/resolve-core 'ns-resolve) host/var-root))]
     (when resolve*
       (fn [sym]
-        (try (let [v (resolve* (host/current-ns) sym)] (when (host/var?* v) v))
-             (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))))))
+        (host/try-all (fn [] (let [v (resolve* (host/current-ns) sym)] (when (host/var?* v) v))))))))
 
 (defn- var-meta*
   "A resolved var's metadata (a ClojureScript Var object carries its own)."
   [v]
-  (merge (try (host/var-meta v) (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))
+  (merge (host/try-all (fn [] (host/var-meta v)))
          (meta v)))
 
 (defn- stock-name
@@ -216,6 +214,7 @@
                 :rewritten-macro? rewritten-macro?
                 :inline-fn (inline-fn)
                 :catch-all (host/catch-all-sym)
+                :try-all host/try-all
                 :core-ns (name core-ns)
                 :shim-ref (host/shim-ref)
                 :loop-variadic-recur? (host/loop-variadic-recur?)
@@ -234,8 +233,8 @@
                 :record? shim/record?*
                 :protocol-var? host/protocol-var?
                 :interned? (fn [s] (let [n (host/current-ns)]
-                                     (boolean (and n (try (some? (host/interned-var n s))
-                                                          (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ false))))))})))
+                                     (boolean (and n (host/try-all (fn [] (some? (host/interned-var n s)))
+                                                                   (fn [_] false))))))})))
 
 (declare eval-top directive directive!)
 
@@ -358,21 +357,22 @@
          (note-host-dynamic! nm nil)
          true)
      (when-let [hv (host/resolve-core nm)]
-       (try
-         (if (host/dynamic-var? hv)
-           (do (host/refer-from-core! core-ns nm)
-               (note-host-dynamic! nm hv)
-               (when-let [c (ctx)] (swap! (:host-referred c) conj nm)))
-           (let [v (host/intern! core-ns nm (ns-arg-wrap nm (host/var-root hv)))
-                 hm (host/var-meta hv)
-                 ;; marked first: ClojureScript moves a macro to its $macros
-                 ;; namespace, where the meta must land
-                 v (if (host/macro-var? hv) (host/mark-macro! v) v)]
-             (host/alter-var-meta! v merge (select-keys hm [:doc :arglists :private])
-                                   {:cohost/host true :cohost/wrapped true})))
-         (record! report :host {:name nm})
-         true
-         (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ false))))))
+       (host/try-all
+        (fn []
+          (if (host/dynamic-var? hv)
+            (do (host/refer-from-core! core-ns nm)
+                (note-host-dynamic! nm hv)
+                (when-let [c (ctx)] (swap! (:host-referred c) conj nm)))
+            (let [v (host/intern! core-ns nm (ns-arg-wrap nm (host/var-root hv)))
+                  hm (host/var-meta hv)
+                  ;; marked first: ClojureScript moves a macro to its $macros
+                  ;; namespace, where the meta must land
+                  v (if (host/macro-var? hv) (host/mark-macro! v) v)]
+              (host/alter-var-meta! v merge (select-keys hm [:doc :arglists :private])
+                                    {:cohost/host true :cohost/wrapped true})))
+          (record! report :host {:name nm})
+          true)
+        (fn [_] false))))))
 
 (defn- prepare
   "Source-level adjustments before the codemod: self-referential macro
@@ -411,18 +411,18 @@
       (swap! state assoc :capture-inline?
              (not (fn? (some-> (host/interned-var core-ns nm) host/var-meta :inline)))))
     (when (:capture-inline? @state)
-      (try (let [[f a] (host/eval-form (rw/rewrite ctx (list 'vector inl ar)))]
-             (when (fn? f) (swap! state assoc-in [:inlines nm] [f a])))
-           (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil)))))
+      (host/try-all (fn [] (let [[f a] (host/eval-form (rw/rewrite ctx (list 'vector inl ar)))]
+                             (when (fn? f) (swap! state assoc-in [:inlines nm] [f a]))))))))
 
 (defn- eval-form! [ctx report form name status]
-  (try
-    (host/eval-form (rw/rewrite ctx (prepare form)))
-    (host/after-eval form core-ns)
-    (capture-inline! ctx form)
-    (record! report status {:name name})
-    (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-      (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
+  (host/try-all
+   (fn []
+     (host/eval-form (rw/rewrite ctx (prepare form)))
+     (host/after-eval form core-ns)
+     (capture-inline! ctx form)
+     (record! report status {:name name}))
+   (fn [e]
+     (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
 
 (def verbose? (atom false))
 
@@ -545,11 +545,10 @@
    at path, read once (the file's other forms are not evaluated)."
   [path names]
   (let [found (atom {})]
-    (try (host/read-forms (strip-string-tags (host/slurp-file path))
-                          (fn [form] (let [nm (policy/form-name form)]
-                                       (when (and (contains? names nm) (not (contains? @found nm)))
-                                         (swap! found assoc nm form)))))
-         (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))
+    (host/try-all (fn [] (host/read-forms (strip-string-tags (host/slurp-file path))
+                                          (fn [form] (let [nm (policy/form-name form)]
+                                                       (when (and (contains? names nm) (not (contains? @found nm)))
+                                                         (swap! found assoc nm form)))))))
     @found))
 
 (defn boot!
@@ -621,8 +620,7 @@
   (let [skip (set exclude) keep (when only (set only))]
     (doseq [nm (:host-dynamic @state)
             :when (and (not (contains? skip nm)) (or (nil? keep) (contains? keep nm)))]
-      (try (host/refer-from-core! ns-sym nm)
-           (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))))
+      (host/try-all (fn [] (host/refer-from-core! ns-sym nm)))))
   ns-sym)
 
 (def ^:private session-ns
@@ -654,8 +652,7 @@
   (apply str (map (fn [c] (let [c (str c)] (cond (= c ".") "/" (= c "-") "_" :else c))) (str lib))))
 
 (defn- try-slurp [path]
-  (try (host/slurp-file path)
-       (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil)))
+  (host/try-all (fn [] (host/slurp-file path))))
 
 (defn- find-source [lib]
   (some (fn [root]
@@ -773,8 +770,7 @@
     (host/ensure-bare-ns! target)
     #?(:cljs nil
        :default (when (seq ns-meta)
-                  (try (alter-meta! (the-ns target) merge ns-meta)
-                       (catch #?(:jolt Throwable :clj Throwable :default Exception) _ nil))))
+                  (host/try-all (fn [] (alter-meta! (the-ns target) merge ns-meta)))))
     (swap! (:loader-nses (ctx)) conj (str target))
     (refer-core! target (or rc {}))
     (host/set-current-ns! target)
@@ -794,11 +790,11 @@
       ns [nil (ns! (first args) (rest args))]
       in-ns (let [t (first args)
                   t (if-let [m (get @(:renames (ctx)) (str t))] (symbol m) t)
-                  found (try (shim/Namespace-find t) (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]
+                  found (host/try-all (fn [] (shim/Namespace-find t)))]
               ;; an existing namespace is entered as it is; a new one is bare
               (when-not (or (some? found) (contains? (:libs @state) t)) (host/ensure-bare-ns! t))
               (host/set-current-ns! t)
-              [(or found (try (shim/Namespace-find t) (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))) t])
+              [(or found (host/try-all (fn [] (shim/Namespace-find t)))) t])
       require (do (require! cur args false) [nil cur])
       use (do (require! cur args true) [nil cur])
       import (do (import! cur args) [nil cur])
@@ -844,15 +840,16 @@
                 (let [cur (host/current-ns)
                       {:keys [action replacement] nm :name} (policy/decide-lib form lib)]
                   (when @verbose? (println (str "  [" (name action) "] " lib " " nm)))
-                  (try
-                    (case (if (and (= :eval action) (native-of (str lib) form)) :native action)
-                      :skip (note! :skipped {:name nm})
-                      :native (do (intern-native! cur nm (native-of (str lib) form) form) (note! :native {:name nm}))
-                      (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form) true)]
-                        (when (not= ns' cur) (host/set-current-ns! ns'))
-                        (note! :ok {:name nm})))
-                    (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-                      (note! :error {:name nm :error (error-message e) :form (short-form form)}))))))
+                  (host/try-all
+                   (fn []
+                     (case (if (and (= :eval action) (native-of (str lib) form)) :native action)
+                       :skip (note! :skipped {:name nm})
+                       :native (do (intern-native! cur nm (native-of (str lib) form) form) (note! :native {:name nm}))
+                       (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form) true)]
+                         (when (not= ns' cur) (host/set-current-ns! ns'))
+                         (note! :ok {:name nm}))))
+                   (fn [e]
+                     (note! :error {:name nm :error (error-message e) :form (short-form form)}))))))
              ;; a macro some form made by a side effect is wrapped now
              (scan-macros! c (host/current-ns)))))))))
 
@@ -871,10 +868,8 @@
            (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
            (swap! (:renames (ctx)) assoc (str lib) (str target))
            (swap! state assoc :loading lib)
-           (try (load-source! lib src from-ns)
-                (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-                  (forget!)
-                  (throw e))
+           (try (host/try-all (fn [] (load-source! lib src from-ns))
+                              (fn [e] (forget!) (throw e)))
                 (finally (swap! state assoc :loading outer)))
            (when-not (contains? @(:loader-nses (ctx)) (str target))
              (forget!)

@@ -29,9 +29,9 @@
       (seq evals)
       (doseq [src evals]
         (println (str src "\n   => "
-                      (try (pr-str (boot/eval-str src))
-                           (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-                             (str "ERR " (host/error-message e)))))))
+                      (host/try-all (fn [] (pr-str (boot/eval-str src)))
+                                    (fn [e]
+                                      (str "ERR " (host/error-message e)))))))
       (contains? flags "--bench")
       (bench/run-bench! (merge {:boot-ms boot-ms :libs-ms (bench/load-libs!)}
                                ;; --scale=x: every case at x times its size
@@ -49,7 +49,7 @@
           (when-not (contains? flags "--no-libs")
             (lib-battery/run-lib-battery! boot/eval-str))))
     ;; a future's thread pool keeps the JVM (and jolt) alive a minute
-    #?(:jolt (shutdown-agents) :clj (shutdown-agents))
+    #?(:jolt (shutdown-agents) :cljw (shutdown-agents) :clj (shutdown-agents))
     nil))
 
 #?(:cljs (set! *main-cli-fn* -main))

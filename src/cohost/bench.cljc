@@ -121,11 +121,12 @@
 (defn- side
   "Set up and time one case on one side; -> the measurement, or {:error msg}."
   [eval-fn setup body opts]
-  (try
-    (when setup (eval-fn setup))
-    (measure (eval-fn (str "(fn [] " body ")")) opts)
-    (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-      {:error (host/error-message e)})))
+  (host/try-all
+   (fn []
+     (when setup (eval-fn setup))
+     (measure (eval-fn (str "(fn [] " body ")")) opts))
+   (fn [e]
+     {:error (host/error-message e)})))
 
 (defn- fmt-ms [x]
   (if (number? x) (str (/ (int (* 100.0 x)) 100.0)) "-"))
@@ -162,10 +163,9 @@
     (doseq [[_ _ n0 setup body] cases
             ev [eval-host eval-stock]]
       (let [n (max 1 (long (* n0 scale)))]
-        (try (when setup (ev (subst-n setup n)))
-             (let [f (ev (str "(fn [] " (subst-n body n) ")")) t0 (now-ms)]
-               (loop [] (f) (when (< (- (now-ms) t0) settle-ms) (recur))))
-             (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))))))
+        (host/try-all (fn [] (when setup (ev (subst-n setup n)))
+                             (let [f (ev (str "(fn [] " (subst-n body n) ")")) t0 (now-ms)]
+                               (loop [] (f) (when (< (- (now-ms) t0) settle-ms) (recur))))))))))
 
 (defn- subst-n
   "s with each %N replaced by n."

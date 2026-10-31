@@ -208,6 +208,21 @@
         rm (when-not (identical? root e) (trunc (or (ex-message root) (str root)) 400))]
     (if rm (str rm "  (outer: " m ")") m)))
 
+(defn try-all
+  "(try (thunk) (catch <anything> e (handler e))); handler defaults to nil.
+   cohost's own code catches everything through this, so each host's catch-all
+   is written once, here: ClojureScript's and jank's is :default, basilisp's
+   Exception, every other host's Throwable (the JVM, jolt, ClojureWasm, let-go
+   and Phel catch nothing else; ClojureWasm reads (catch :default e) as an
+   ex-info whose :type is :default). A fn, not a macro: the ClojureScript build
+   expands cohost's own macros on the JVM, and jank passes a macro no &env to
+   tell them apart. (Code cohost evaluates gets the adapter's :catch-all.)"
+  ([thunk] (try-all thunk (fn [_] nil)))
+  ([thunk handler]
+   (try (thunk)
+        (catch #?(:cljs :default :jank :default :lpy Exception :default Throwable) e
+          (handler e)))))
+
 (defn- unsupported [k]
   (fn [& _] (throw (ex-info (str "cohost: this host provides no " k) {:cohost/unsupported k}))))
 
@@ -246,7 +261,7 @@
     :namespace? (fn [_] false)
     :dynamic-var? (fn [h] (true? (:dynamic (meta h))))
     :set-dynamic! #?(:cljs (unsupported :set-dynamic!) :default (fn [h] (alter-meta! h assoc :dynamic true) h))
-    :var-bound? #?(:cljs (fn [_] true) :default (fn [h] (try (var-get h) true (catch #?(:clj Throwable :default Exception) _ false))))
+    :var-bound? #?(:cljs (fn [_] true) :default (fn [h] (try-all (fn [] (var-get h) true) (fn [_] false))))
     :var-thread-bound? (fn [_] false)
     :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
     :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
@@ -272,14 +287,12 @@
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
               (let [fs (into {} (for [n '[chunked-seq? chunk-first chunk-rest chunk-next chunk-buffer chunk-append chunk chunk-cons]]
-                                  [(keyword (name n)) (try (some-> ((cap :resolve-core) n) ((cap :var-get)))
-                                                           (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]))]
+                                  [(keyword (name n)) (try-all (fn [] (some-> ((cap :resolve-core) n) ((cap :var-get)))))]))]
                 (when (every? fn? (vals fs)) fs)))
     :invoke-member (fn [_ _ _ absent] absent)
     :interop-passthrough? false
     :protocol-var? (fn [ns-sym name-sym]
-                     (let [h (try (get ((cap :ns-interns) ns-sym) name-sym)
-                                  (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))
+                     (let [h (try-all (fn [] (get ((cap :ns-interns) ns-sym) name-sym)))
                            v (when h ((cap :var-get) h))]
                        (boolean (and (map? v) (some #(contains? v %) [:on :on-interface :interface :sigs :method-map])))))
     :protocol-impl-style :clj
@@ -446,7 +459,7 @@
     (let [m @host-classes
           k (if (contains? m token)
               (get m token)
-              (let [k (try (host-class token) (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil))]
+              (let [k (try-all (fn [] (host-class token)))]
                 (swap! host-classes assoc token k)
                 k))]
       (when k (instance? k x)))))
@@ -473,8 +486,7 @@
 (defn natives [] (or (get @installed :natives) {}))
 (defn host-aliases? [] (boolean (cap :host-aliases?)))
 (defn env-locals "The local symbols of a macro's &env." [env]
-  (try (filter symbol? ((cap :env-locals) env))
-       (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) _ nil)))
+  (try-all (fn [] (filter symbol? ((cap :env-locals) env)))))
 (defn empty-queue [] ((cap :empty-queue)))
 
 (defn slurp-file [path] ((cap :slurp) path))

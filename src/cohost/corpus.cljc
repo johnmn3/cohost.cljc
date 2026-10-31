@@ -22,13 +22,13 @@
   (host/with-ns host-ns (fn [] (host/eval-form (host/read-string* src)))))
 
 (defn- outcome [f expected]
-  (try (let [v (f)
-             printed (pr-str v)]
-         (cond (= expected :throws) [:fail printed]
-               (= expected printed) [:pass printed]
-               :else [:fail printed]))
-       (catch #?(:cljs :default :jolt Throwable :clj Throwable :default Exception) e
-         (if (= expected :throws) [:pass :threw] [:error (host/error-message e)]))))
+  (host/try-all (fn [] (let [v (f)
+                             printed (pr-str v)]
+                         (cond (= expected :throws) [:fail printed]
+                               (= expected printed) [:pass printed]
+                               :else [:fail printed])))
+                (fn [e]
+                  (if (= expected :throws) [:pass :threw] [:error (host/error-message e)]))))
 
 (defn run-corpus!
   "opts: :path (the corpus.edn), :limit (rows), :skip, :verbose, :show (print
