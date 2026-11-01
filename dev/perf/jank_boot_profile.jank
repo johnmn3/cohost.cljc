@@ -2,6 +2,7 @@
 ;; Timers are on only because boot! is called with {:profile? true}.
 ;;
 ;;   jank --module-path src run dev/perf/jank_boot_profile.jank
+;;   (AOT: module-path is <aot-cache>:src, same script)
 (require 'cohost.hosts.jank-host)
 (require 'cohost.boot)
 

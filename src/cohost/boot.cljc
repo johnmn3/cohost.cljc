@@ -26,6 +26,8 @@
 ;; Phase timers for the boot profile. Off unless boot! is called with
 ;; {:profile? true}: the off path does not call :nano-time and does not
 ;; record forms. Every host's boot report stays the numbers it prints today.
+;; The predicate is not named with a trailing ? because jank rejects a
+;; zero-arg call of such a name as boolean.
 (defn- profiling [] (some? (:profile @state)))
 
 (def ^:private prof+
@@ -38,14 +40,15 @@
     (let [bucket (or (:profile-bucket @state) :core)]
       (swap! (:profile @state) update-in [:phases bucket k] (fn [n] (prof+ (or n 0) dt))))))
 
-(defn- profile-form! [ns-sym form name dt]
-  (when (and (profiling) dt (pos? dt))
+(defn- profile-form! [ns-sym form name rewrite-dt eval-dt]
+  (when (and (profiling) (or (and rewrite-dt (pos? rewrite-dt)) (and eval-dt (pos? eval-dt))))
     (let [h (when (seq? form) (first form))]
       (swap! (:profile @state) update :forms conj
              {:ns (str ns-sym)
               :head (if (symbol? h) (str h) "-")
               :name (str (or name "-"))
-              :eval dt
+              :rewrite (or rewrite-dt 0)
+              :eval (or eval-dt 0)
               :bucket (or (:profile-bucket @state) :core)}))))
 
 (defn- prof
@@ -334,7 +337,8 @@
                              t2 (host/nano-time)]
                          (profile-add! :rewrite (- t1 t0))
                          (profile-add! :eval (- t2 t1))
-                         (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form))) (- t2 t1))
+                         (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form)))
+                                        (- t1 t0) (- t2 t1))
                          v))]
                (host/after-eval form' ns-sym)
                (when (or (not lib?) (may-make-macro? form))
@@ -509,7 +513,7 @@
              t3 (host/nano-time)]
          (profile-add! :rewrite (- t1 t0))
          (profile-add! :eval (prof+ (- t2 t1) (- t3 t2)))
-         (profile-form! core-ns form name (- t2 t1))))
+         (profile-form! core-ns form name (- t1 t0) (- t2 t1))))
      (record! report status {:name name}))
    (fn [e]
      (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
@@ -659,7 +663,9 @@
 
 (defn boot!
   "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
-   (default resources/cohost/clojure-1.12.0); :files -- paths under it."
+   (default resources/cohost/clojure-1.12.0); :files -- paths under it;
+   :profile? -- record phase timers (off unless true; the off path does not
+   call :nano-time)."
   ([] (boot! {}))
   ([{:keys [root files verbose profile?] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
@@ -685,7 +691,8 @@
      (doseq [f files]
        (boot-file! ctx report (str root "/" f)))
      ;; the companion files' names: the stock definition where it is plain
-     ;; Clojure, else the host's, when it has them
+     ;; Clojure, else the host's, when it has them. The wall is one region:
+     ;; its read, rewrite and eval stay in the :companion bucket.
      (host/with-ns core-ns
        (fn []
          (let [run-companions
@@ -743,13 +750,24 @@
         (swap! state assoc :profile-bucket (or prev :core))
         v))))
 
-(defn- profile-top [forms n]
-  (take n (sort-by :eval (fn [a b] (compare b a)) forms)))
+(defn- profile-top [forms k n]
+  (take n (sort-by k (fn [a b] (compare b a)) forms)))
+
+(defn- print-split!
+  "Top n forms in bucket, ranked by rank-key. Each line is codemod ns then eval ns."
+  [forms bucket rank-key n]
+  (let [rows (profile-top (filter (fn [f] (= bucket (:bucket f))) forms) rank-key n)]
+    (doseq [[i f] (map-indexed vector rows)]
+      (println (str "PROFILE-SPLIT " (name bucket) " " (name rank-key) " " (inc i)
+                    " " (:ns f) " " (:head f) " " (:name f)
+                    " " (:rewrite f) " " (:eval f))))))
 
 (defn print-profile!
   "Print the boot profile. Phases partition the measured total: core reading,
    codemod, eval, scan-macros!, setup (make-ctx), the companion-file wall,
-   the library-phase wall, and the unaccounted remainder."
+   the library-phase wall, and the unaccounted remainder. PROFILE-SPLIT lines
+   are the top 20 forms of the core and library phases, once by codemod time
+   and once by eval time; each line prints both."
   []
   (when-let [a (:profile @state)]
     (let [p @a
@@ -762,18 +780,21 @@
           companion (get-in p [:walls :companion] 0)
           library (get-in p [:walls :library] 0)
           boot-wall (or (:boot-wall p) 0)
-          total (+ boot-wall library)
+          total (prof+ boot-wall library)
           named (prof+ read rewrite ev scan setup companion library)
           other (- total named)
           rows [["reading" read] ["codemod" rewrite] ["eval" ev] ["scan-macros" scan]
                 ["setup" setup] ["companion" companion] ["library" library] ["other" other]]
-          pct (fn [n] (if (pos? total) (/ (* 100.0 n) total) 0.0))]
+          pct (fn [n] (if (pos? total) (/ (* 100.0 n) total) 0.0))
+          forms (:forms p)]
       (println (str "PROFILE-TOTAL " total))
       (doseq [[k n] rows]
         (println (str "PROFILE-PHASE " k " " n " " (pct n))))
       (println (str "PROFILE-SUM " (prof+ named other)))
-      (doseq [[i f] (map-indexed vector (profile-top (:forms p) 20))]
-        (println (str "PROFILE-TOP " (inc i) " " (:bucket f) " " (:ns f) " " (:head f) " " (:name f) " " (:eval f)))))))
+      (print-split! forms :core :rewrite 20)
+      (print-split! forms :core :eval 20)
+      (print-split! forms :library :rewrite 20)
+      (print-split! forms :library :eval 20))))
 
 ;; ---------------------------------------------------------------------------
 ;; using it

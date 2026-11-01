@@ -99,6 +99,11 @@
   ;; the twelve libraries. One run. Median of three: dev/perf/jank_boot_profile.sh
   boot:jank-profile {:doc "jank boot with phase timers (doc/perf/jank.md, Boot profile). One run."
                      :task (shell "jank" "--module-path" "src" "run" "dev/perf/jank_boot_profile.jank")}
+  ;; Same profile after the AOT modules boot:jank loads. Median of three:
+  ;; dev/perf/jank_aot_profile.sh
+  boot:jank-aot-profile {:doc "jank boot profile with cohost namespaces AOT'd -O3. One run."
+                         :task (shell "jank" "--module-path" (str (jank-aot-dir) ":src")
+                                      "run" "dev/perf/jank_boot_profile.jank")}
   ;; jank-FAST Step 6 stage 1. Same objects as boot:jank, then the load stamp
   ;; immediately before cohost.run/-main (dev/perf/jank_aot_load.jank).
   ;; The adapter is cohost.hosts.jank-host (not cohost.hosts.jank): the C++
