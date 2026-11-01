@@ -906,4 +906,100 @@ Reading:
 
 ## Codemod
 
-WIP. Branch `grok/jank-codemod` is open for jank-FAST Step 3. Measurements have not been run on this branch yet.
+Measured 2026-11-01 ET on jank `0.1-noble`, branch `grok/jank-codemod`, after rebase onto `972ecc0`. Timers sum with `prof+` (`#?(:lpy + :default +')`). `bb boot:jank` does not pass `:profile?`. The phase commands are `bb boot:jank-profile` (JIT) and `bb boot:jank-aot-profile` (compile-module `-O3` of `cohost.run` when `cohost/run.o` is missing, then the same script with the AOT cache ahead of `src`). `rewrite.o` is produced. `cohost.hosts.jank` produces no object: its C++ namespace is `jank`, so `jank::runtime` resolves inward. The load path still has `src`.
+
+### AOT vs JIT
+
+Median of three runs. Share is the median phase over the median total. JIT totals were `52932129886`, `55342174973`, `64859700633`. AOT totals were `20507734657`, `20842052679`, `20866967972`.
+
+| phase | JIT median ns | JIT share | AOT median ns | AOT share |
+|---|---:|---:|---:|---:|
+| reading | 2591613764 | 4.6829% | 528120085 | 2.5339% |
+| codemod | 21578079728 | 38.9903% | 9051148855 | 43.4273% |
+| eval | 2501915405 | 4.5208% | 1643867968 | 7.8873% |
+| scan-macros | 254410073 | 0.4597% | 125291138 | 0.6011% |
+| setup | 1295181762 | 2.3403% | 32870035 | 0.1577% |
+| companion | 172866733 | 0.3124% | 92603210 | 0.4443% |
+| library | 24899918816 | 44.9927% | 8908766388 | 42.7442% |
+| other | 2219298611 | 4.0101% | 225563883 | 1.0823% |
+| total | 55342174973 | | 20842052679 | |
+
+The sum of the eight JIT median phases is `55513284892` (`1.003092` times the JIT median total). The sum of the eight AOT median phases is `20608231562` (`0.988781` times the AOT median total).
+
+Compiling `rewrite.cljc` at `-O3` (as part of the `cohost.run` module graph) shrinks the codemod phase from `21578079728` ns to `9051148855` ns. The share does not shrink: the rest of the boot shrinks too, because `boot.o` and `shim.o` are on the same path. The codemod is still about 43% of the AOT boot.
+
+### Per form
+
+JIT run whose total is the median total (`55342174973` ns). Each line is codemod ns, then eval ns.
+
+The one `clojure.spec.alpha/def` is the top-level form at `clojure/spec/alpha.clj` line 1792, `(clojure.spec.alpha/def ::kvs->map (conformer ...))`. On this run its codemod time is `3482633810` ns and its eval time is `3992027700` ns. The other two JIT runs were `3083197527` / `3445629415` and `5044920622` / `5790749041`. It is both sides: the macro expand (one later AOT run timed that expand alone at `931466155` ns) and the eval of `def-impl` / `conformer`.
+
+Core, top 5 by codemod:
+
+```
+1 def *print-namespace-maps* 1478373529 76131225
+2 definline booleans 1184761906 174031646
+3 defn to-array 1171261946 255102
+4 defn maybe-destructured 1035451323 1239531
+5 defn- maybe-min-hash 922656303 1777308
+```
+
+Core, top 5 by eval:
+
+```
+1 definline booleans 1184761906 174031646
+2 defonce *loaded-libs* 105495248 137056243
+3 defn alength 310691 110204358
+4 defn aclone 347138 100856650
+5 def not-every? 134223 96957061
+```
+
+Library, top 5 by codemod:
+
+```
+1 clojure.spec.alpha/def 3482633810 3992027700
+2 clojure.zip/up 778895033 1071660
+3 clojure.test/report (defmulti) 680749359 222726929
+4 EqualityPartition 570209536 393921732
+5 clojure.test/report (defmethod) 431321658 177481038
+```
+
+Library, top 5 by eval:
+
+```
+1 clojure.spec.alpha/def 3482633810 3992027700
+2 lazy-prims 291976579 2032474460
+3 lazy-combinators 304000023 1638019971
+4 extend-protocol 160243500 481289273
+5 EqualityPartition 570209536 393921732
+```
+
+The early core defs (`*print-namespace-maps*`, `to-array`) are small forms. Their codemod time drops once `rewrite.o` is loaded: on an AOT run the top core codemod forms are `maybe-min-hash` and `with-redefs-fn`, not the first defs. That early JIT cost is compilation of the codemod, which is the AOT shrink above.
+
+### Hot functions
+
+`jank --profile` on the AOT boot (`--profile-output target/jank-aot-boot.profile`, module path `<aot-cache>:src`) does not name `cohost.rewrite` functions. Exclusive time sums to the span `24744627159` ns (mismatch 0). Top exclusive: `jit eval_string` `13605896260` (54.985%), `eval ast node call` `7316051899` (29.566%), `eval ast node let` `602219661` (2.434%), `rt read_string` `553738592` (2.238%), `rt intern_keyword` `506402492` (2.047%). That run's own phase total was `21868868078` ns. The AOT rewrite time sits inside `jit eval_string`, which is the evaluator calling into the compiled codemod.
+
+Dispatch-branch timers in `rewrite.cljc` (`timed`, off unless `profile-branches` is set) give exclusive shares of one AOT profiled boot. Branch sum `11875764379` ns:
+
+| branch | exclusive ns | share |
+|---|---:|---:|
+| macro | 8553172114 | 72.022% |
+| call | 2211312726 | 18.620% |
+| seq | 382407816 | 3.220% |
+| symbol | 192632306 | 1.622% |
+| head-var | 131909481 | 1.111% |
+
+`macro` is the expand call, not the walk of the expansion (that walk is in the nested branches). One AOT run's expand times, same boot as the shape split: `let/plain` `767743194` ns / 334 calls, `let/vector` `337165901` / 31, `loop/plain` `108051164` / 44, `loop/vector` `365858076` / 9, `for` `852945285` / 2, `defn` `786553947` / 585, `clojure.spec.alpha/def` `931466155` / 1, `definline` `671322169` / 8.
+
+JIT of this instrumented `rw-list` exited 139. The branch shares and the shortcut medians below are AOT runs.
+
+### Plain let and loop
+
+`rw-list` turns `(let [sym init ...] body)` and `(loop [sym init ...] body)` into `let*` / `loop*` without calling the macro, only when `codemod-expands?` is true (the codemod would have applied the macro; a `clojure.core` macro is still left for the host). Destructuring bindings stay on the macro. Functions added: `plain-bindings?`, `codemod-expands?`. The `let` and `loop` clauses of `rw-list` are the only dispatch changes.
+
+Before, three AOT profile runs with the branch timers and no shortcut. Codemod ns `8515313920`, `9170745944`, `9187529144` (median `9170745944`). Totals `18576322213`, `20325561303`, `20562352550` (median `20325561303`).
+
+After, three AOT profile runs. Codemod ns `8147647056`, `8304989494`, `8736504646` (median `8304989494`). Totals `17966559842`, `18305395228`, `18719317550` (median `18305395228`).
+
+`let/plain` and `loop/plain` are absent from the after expand list. `let/vector` remains (31 calls). `dev/perf/jank_let_eq.jank` compared rewrite to macroexpand after boot and printed DIFF with the rewrite still headed by `let`: that call resolved a `let` the codemod does not expand, so it did not take the shortcut. The boot profiles are the evidence the shortcut ran.
