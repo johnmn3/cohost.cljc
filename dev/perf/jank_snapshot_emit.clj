@@ -94,14 +94,22 @@
 
 (defn bridge-forms [nm]
   (when (= (str nm) "cohost.core")
-    ["(def concat* (clojure.core/deref (clojure.core/ns-resolve 'clojure.core 'concat*)))"
-     "(def str (clojure.core/deref (clojure.core/ns-resolve 'clojure.core 'str)))"]))
+    ["(do (clojure.core/ns-unmap *ns* 'concat*) (def concat* (clojure.core/deref (clojure.core/ns-resolve 'clojure.core 'concat*))))"
+     "(do (clojure.core/ns-unmap *ns* 'str) (def str (clojure.core/deref (clojure.core/ns-resolve 'clojure.core 'str))))"]))
+
+(def compiler-specials
+  "Host copies of these names shadow the forms jank needs while it compiles
+   the snapshot. cohost.core/ns in particular makes the namespace symbol fail
+   to resolve."
+  #{'ns})
 
 (defn host-forms [ns-sym]
   (for [e events
-        :when (and (= (:op e) :host) (= (str (:ns e)) (str ns-sym)))]
-    (str "(def " (:sym e) " (clojure.core/deref (clojure.core/ns-resolve 'clojure.core '" (:sym e) ")))\n"
-         "(clojure.core/alter-meta! (var " (:sym e) ") clojure.core/merge '" (pr-src (:meta e)) ")")))
+        :when (and (= (:op e) :host) (= (str (:ns e)) (str ns-sym))
+                   (not (contains? compiler-specials (:sym e))))]
+    (str "(do (clojure.core/ns-unmap *ns* '" (:sym e) ")\n"
+         "    (def " (:sym e) " (clojure.core/deref (clojure.core/ns-resolve 'clojure.core '" (:sym e) ")))\n"
+         "    (clojure.core/alter-meta! (var " (:sym e) ") clojure.core/merge '" (pr-src (:meta e)) "))")))
 
 (defn defined-syms [ns-sym]
   (set (concat
@@ -129,10 +137,24 @@
       (str "(clojure.core/alter-meta! (var " (:sym e) ") clojure.core/assoc :macro true :cohost/wrapped true)\n"
            "(clojure.core/alter-var-root (var " (:sym e) ") (fn* [f] (cohost.boot/wrap-macro (cohost.boot/ctx) f)))"))))
 
+(defn def-name [form]
+  (cond
+    (and (seq? form) (symbol? (second form))
+         (contains? #{'def 'defn 'defn- 'defmacro} (first form)))
+    (second form)
+    (and (seq? form) (= 'do (first form)) (seq? (second form))
+         (symbol? (second (second form)))
+         (contains? #{'def 'defn 'defn- 'defmacro} (first (second form))))
+    (second (second form))))
+
 (defn body-forms [ns-sym]
   (for [e events
-        :when (and (= (:op e) :form) (= (str (:ns e)) (str ns-sym)))]
-    (pr-src (retarget (:form e)))))
+        :when (and (= (:op e) :form) (= (str (:ns e)) (str ns-sym)))
+        :let [form (retarget (:form e))
+              nm (def-name form)]]
+    (if nm
+      (str "(do (clojure.core/ns-unmap *ns* '" nm ")\n    " (pr-src form) ")")
+      (pr-src form))))
 
 (def nses
   (distinct
