@@ -1004,7 +1004,15 @@
           more (rw-all ctx more)
           ;; a base type a host names by a bare word (ClojureScript's default,
           ;; string ...) is a value to the extend fn: quoted
-          forms (map (fn [ht] (apply list h (cond (and (symbol? ht) (nil? (namespace ht))
+          forms (map (fn [ht] (apply list h (cond ;; on a :cohost-types host a class
+                                                  ;; has no value but its token: quoted,
+                                                  ;; as rw-symbol quotes a class symbol
+                                                  ;; in any other value position
+                                                  (and (symbol? ht) (:cohost-types? ctx)
+                                                       (symbol? t) (not (user-name? ctx t))
+                                                       (or (class-sym? t) (namespace t)))
+                                                  (list 'quote ht)
+                                                  (and (symbol? ht) (nil? (namespace ht))
                                                        (contains? bare-base-types ht))
                                                   (list 'quote ht)
                                                   (symbol? ht) ht

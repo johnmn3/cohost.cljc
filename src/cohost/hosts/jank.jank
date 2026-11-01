@@ -17,13 +17,31 @@
 ;; reading: each top-level form's extent by a scan (cohost.scan), then
 ;; read-string of that text, so a form is read after the one before it ran
 
+;; jank's reader attaches a hint as :tag (quote SomeClass) where the JVM's
+;; attaches the symbol itself: the codemod's hint checks (rewrite/hint-tags)
+;; test (symbol? (:tag (meta s))) and so saw no checked hint anywhere.
+;; Normalize the tag back to the symbol on every form read here.
+(defn- fix-tags [x]
+  (let [m (meta x)
+        x (cond (seq? x) (apply list (map fix-tags x))
+                (vector? x) (mapv fix-tags x)
+                (map? x) (into {} (map (fn [e] [(fix-tags (key e)) (fix-tags (val e))])) x)
+                (set? x) (into #{} (map fix-tags) x)
+                :else x)
+        t (:tag m)]
+    (if m
+      (with-meta x (if (and (seq? t) (= 'quote (first t)) (symbol? (second t)))
+                     (assoc m :tag (second t))
+                     m))
+      x)))
+
 (defn- read-forms [src cb]
   (let [cs (vec src) n (count cs)]
     (binding [*read-eval* true]
       (loop [i (scan/skip-ws cs 0)]
         (when (< i n)
           (let [j (scan/form-end cs i)]
-            (cb (read-string (subs src i j)))
+            (cb (fix-tags (read-string (subs src i j))))
             (recur (scan/skip-ws cs j))))))))
 
 (defn- type? [t x] (= t (type x)))
@@ -43,11 +61,171 @@ namespace cohost_time {
   inline long long millis() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 }")
 (cpp/raw "#include <cmath>
+#include <limits>
 namespace cohost_math {
-  inline double floor_(double x) { return std::floor(x); }
-  inline double ceil_(double x) { return std::ceil(x); }
-  inline double sqrt_(double x) { return std::sqrt(x); }
+  inline double canon_(double v) { return std::isnan(v) ? std::numeric_limits<double>::quiet_NaN() : v; }
+  inline double floor_(double x) { return canon_(std::floor(x)); }
+  inline double ceil_(double x) { return canon_(std::ceil(x)); }
+  inline double sqrt_(double x) { return canon_(std::sqrt(x)); }
+  inline double sin_(double x) { return canon_(std::sin(x)); }
+  inline double cos_(double x) { return canon_(std::cos(x)); }
+  inline double tan_(double x) { return canon_(std::tan(x)); }
+  inline double asin_(double x) { return canon_(std::asin(x)); }
+  inline double acos_(double x) { return canon_(std::acos(x)); }
+  inline double atan_(double x) { return canon_(std::atan(x)); }
+  inline double atan2_(double y, double x) { return canon_(std::atan2(y, x)); }
+  inline double exp_(double x) { return canon_(std::exp(x)); }
+  inline double log_(double x) { return canon_(std::log(x)); }
+  inline double log10_(double x) { return canon_(std::log10(x)); }
+  inline double pow_(double x, double y) { return canon_(std::pow(x, y)); }
+  inline double cbrt_(double x) { double y = std::cbrt(x); if (std::isfinite(y) && y != 0.0) { y = (2.0 * y + x / (y * y)) / 3.0; } return canon_(y); }
+  inline double hypot_(double x, double y) { return canon_(std::hypot(x, y)); }
+  inline double sinh_(double x) { return canon_(std::sinh(x)); }
+  inline double cosh_(double x) { return canon_(std::cosh(x)); }
+  inline double tanh_(double x) { return canon_(std::tanh(x)); }
+  inline double expm1_(double x) { return canon_(std::expm1(x)); }
+  inline double log1p_(double x) { return canon_(std::log1p(x)); }
+  inline double remainder_(double x, double y) { return canon_(std::remainder(x, y)); }
+  inline double copysign_(double x, double y) { return canon_(std::copysign(x, y)); }
+  inline double scalbn_(double x, long long n) { return canon_(std::scalbn(x, (int)n)); }
+  inline double nextafter_(double x, double y) { return canon_(std::nextafter(x, y)); }
+  inline double ulp_(double x) {
+    if (std::isnan(x)) { return canon_(x); }
+    if (std::isinf(x)) { return std::numeric_limits<double>::infinity(); }
+    double ax = std::fabs(x);
+    if (ax == 0.0) { return std::numeric_limits<double>::denorm_min(); }
+    return std::nextafter(ax, std::numeric_limits<double>::infinity()) - ax;
+  }
+  inline long long get_exponent_(double x) {
+    if (std::isnan(x) || std::isinf(x)) { return 1024; }
+    double ax = std::fabs(x);
+    if (ax == 0.0) { return -1023; }
+    if (ax < 2.2250738585072014e-308) { return -1023; }
+    int e = 0; std::frexp(ax, &e); return (long long)(e - 1);
+  }
 }")
+
+(cpp/raw "
+#include <jank/runtime/obj/array.hpp>
+#include <jank/runtime/obj/persistent_string.hpp>
+#include <jank/runtime/var.hpp>
+#include <regex>
+#include <string>
+namespace cohost_regex {
+  using namespace jank::runtime;
+  inline std::string cpp_str(object_ref x) {
+    auto s = jank::runtime::to_string(x);
+    return std::string(s.data(), s.size());
+  }
+  inline void put_group(obj::array<object_ref> *arr, std::size_t i, std::smatch const &m, std::size_t gi) {
+    if (gi < m.size() && m[gi].matched) {
+      arr->data.data[i] = make_box<obj::persistent_string>(jtl::immutable_string(m[gi].str()));
+    } else {
+      arr->data.data[i] = make_box<obj::nil>();
+    }
+  }
+  // fills out[0]=start out[1]=end out[2..]=group strings (nil when a group
+  // did not take part); returns 1 on a match, 0 on none, -1 when the
+  // pattern is not one std::regex accepts. The catch clause holds no jank
+  // objects: in cpp/raw a catch block loses the runtime namespace (found
+  // by probe), so it only sets a flag.
+  inline void put_spans(obj::array<object_ref> *sp, std::smatch const &m, jank::i64 base) {
+    for (std::size_t i = 0; i < m.size(); ++i) {
+      if (m[i].matched) {
+        sp->data.data[2 * i] = make_box(base + (jank::i64)m.position(i));
+        sp->data.data[2 * i + 1] = make_box(base + (jank::i64)m.position(i) + (jank::i64)m.length(i));
+      } else {
+        sp->data.data[2 * i] = make_box((jank::i64)-1);
+        sp->data.data[2 * i + 1] = make_box((jank::i64)-1);
+      }
+    }
+  }
+  inline jank::i64 find_at(object_ref pat, object_ref str, jank::i64 from, bool icase, object_ref out, object_ref spans) {
+    auto *arr = static_cast<obj::array<object_ref> *>(out.ptr());
+    auto *sp = static_cast<obj::array<object_ref> *>(spans.ptr());
+    bool bad = false;
+    std::smatch m;
+    bool matched = false;
+    jank::i64 pos = 0;
+    std::string sub;
+    try {
+      auto flags = std::regex::ECMAScript;
+      if (icase) { flags |= std::regex::icase; }
+      std::regex re(cpp_str(pat), flags);
+      sub = cpp_str(str).substr((std::size_t)from);
+      matched = std::regex_search(sub, m, re);
+      if (matched) { pos = (jank::i64)m.position(); }
+    } catch (...) { bad = true; }
+    if (bad) { return -1; }
+    if (!matched) { return 0; }
+    arr->data.data[0] = make_box(from + pos);
+    arr->data.data[1] = make_box(from + pos + (jank::i64)m.length());
+    for (std::size_t i = 0; i < m.size(); ++i) { put_group(arr, 2 + i, m, i); }
+    put_spans(sp, m, from);
+    return 1;
+  }
+  inline jank::i64 match_full(object_ref pat, object_ref str, bool icase, object_ref out, object_ref spans) {
+    auto *arr = static_cast<obj::array<object_ref> *>(out.ptr());
+    auto *sp = static_cast<obj::array<object_ref> *>(spans.ptr());
+    bool bad = false;
+    std::smatch m;
+    bool matched = false;
+    std::string s;
+    try {
+      auto flags = std::regex::ECMAScript;
+      if (icase) { flags |= std::regex::icase; }
+      std::regex re(cpp_str(pat), flags);
+      s = cpp_str(str);
+      matched = std::regex_match(s, m, re);
+    } catch (...) { bad = true; }
+    if (bad) { return -1; }
+    if (!matched) { return 0; }
+    arr->data.data[0] = make_box((jank::i64)0);
+    arr->data.data[1] = make_box((jank::i64)s.size());
+    for (std::size_t i = 0; i < m.size(); ++i) { put_group(arr, 2 + i, m, i); }
+    put_spans(sp, m, 0);
+    return 1;
+  }
+  inline jank::i64 group_count(object_ref pat, bool icase) {
+    bool bad = false;
+    jank::i64 n = 0;
+    try {
+      auto flags = std::regex::ECMAScript;
+      if (icase) { flags |= std::regex::icase; }
+      n = (jank::i64)std::regex(cpp_str(pat), flags).mark_count();
+    } catch (...) { bad = true; }
+    if (bad) { return -1; }
+    return n;
+  }
+}
+namespace cohost_sort {
+  using namespace jank::runtime;
+  inline object_ref sort_array(object_ref arr, object_ref cmp) {
+    auto *a = static_cast<obj::array<object_ref> *>(arr.ptr());
+    std::stable_sort(a->data.data, a->data.data + a->size,
+                     [&](object_ref const &x, object_ref const &y) {
+                       return cmp.call(x, y).to_integer() < 0;
+                     });
+    return arr;
+  }
+}
+namespace cohost_var {
+  using namespace jank::runtime;
+  inline object_ref set_dynamic(object_ref v) {
+    static_cast<jank::runtime::var *>(v.ptr())->set_dynamic(true);
+    return v;
+  }
+  // Var.set: write the var's thread binding (jank's own var-set is a
+  // TODO stub); the result is an error string when no binding is active
+  inline object_ref set_var(object_ref v, object_ref val) {
+    auto r = static_cast<jank::runtime::var *>(v.ptr())->set(val);
+    if (r.is_err()) {
+      throw make_box<obj::exception_info>(r.expect_err(), make_box<obj::nil>());
+    }
+    return val;
+  }
+}
+")
 
 ;; a macro's fn takes [&form &env & args], but jank's expander hands it the
 ;; arguments with &form and &env wrong (&form ((args)), &env the macro's name):
@@ -413,6 +591,28 @@ namespace cohost_obj {
 ;; (through cohost.hosts.auto), so this namespace cannot require it back
 (def ^:private shim-class-of (delay (var-get (resolve 'cohost.shim/class-of))))
 (def ^:private shim-string-format (delay (var-get (resolve 'cohost.shim/String-format))))
+(def ^:private shim-supers (delay (var-get (resolve 'cohost.shim/class-supers))))
+(def ^:private shim-bases (delay (var-get (resolve 'cohost.shim/class-bases))))
+
+(defn- supers-by-distance
+  "key's ancestors breadth-first by inheritance distance, direct bases
+   first. class-supers is a set: a flat some over it lets java.lang.Object
+   (registered by a plain extend, as clojure.data does) shadow an
+   interface impl (java.util.Set) by iteration luck."
+  [key]
+  (loop [seen #{key} frontier (vec (@shim-bases key)) order []]
+    (if (empty? frontier)
+      order
+      (let [s (first frontier)]
+        (if (contains? seen s)
+          (recur seen (subvec frontier 1) order)
+          (recur (conj seen s)
+                 (into (subvec frontier 1) (remove seen (@shim-bases s)))
+                 (conj order s)))))))
+(def ^:private shim-set (delay (var-get (resolve 'cohost.shim/-set))))
+(def ^:private shim-alter (delay (var-get (resolve 'cohost.shim/-alter))))
+(def ^:private shim-commute (delay (var-get (resolve 'cohost.shim/-commute))))
+(def ^:private shim-touch (delay (var-get (resolve 'cohost.shim/-touch))))
 
 (defn type-key
   "The protocol dispatch key of a value."
@@ -427,11 +627,22 @@ namespace cohost_obj {
 (defn protocol-impl
   "The impl fn of method msym of protocol p for x, or nil."
   [p msym x]
-  (let [impls @(:impls p)]
+  (let [impls @(:impls p)
+        key (type-key x)]
     (or (when (cpp/cohost_obj.is_cohost x)
           (or (get-in (instance-desc x) [:protocols (:var p) msym])
+              ;; a reify's groups resolve when the reify form evaluates,
+              ;; in the caller's *ns*: a protocol head that resolves only
+              ;; in its defining ns is filed by make-type as an interface
+              ;; group under the head's simple name instead
+              (get-in (instance-desc x) [:iface-methods (symbol (name (:name p))) msym])
               (get (get impls (:name (instance-desc x))) msym)))
-        (get (get impls (type-key x)) msym)
+        (get (get impls key) msym)
+        ;; an impl registered for an interface or superclass of x's class
+        ;; (clojure.data registers EqualityPartition for java.util.Set /
+        ;; List / Map): walk the shim's class-supers before Object
+        (when (symbol? key)
+          (some (fn [s] (get (get impls s) msym)) (supers-by-distance key)))
         (get (get impls 'java.lang.Object) msym))))
 
 (defn protocol-dispatch [p msym args]
@@ -623,6 +834,8 @@ namespace cohost_obj {
   (list '. 'clojure.lang.LockingTransaction
         (list 'runInTransaction (apply list 'fn [] body))))
 
+(declare xform-seq)
+
 (def ^:private type-core-extras
   {'deftype deftype-macro
    'defrecord defrecord-macro
@@ -630,8 +843,15 @@ namespace cohost_obj {
    'reify reify-macro
    'extend-type extend-type-macro
    'extend-protocol extend-protocol-macro
-   'extend (fn [t p & {:as mmap}]
-             (register-impl! p t (into {} (map (fn [e] [(symbol (name (key e))) (val e)])) mmap)))
+   ;; stock extend takes any number of protocol / method-map pairs
+   ;; ((extend Object Diff {...} EqualityPartition {...}) in clojure.data);
+   ;; a one-pair-only shape here made the second pair destructure as
+   ;; keyword arguments and throw a native C++ exception
+   'extend (fn [t & proto+mmaps]
+             (reduce (fn [_ [p mmap]]
+                       (register-impl! p t (into {} (map (fn [e] [(symbol (name (key e))) (val e)])) mmap))
+                       nil)
+                     nil (partition 2 proto+mmaps)))
    'satisfies? (fn [p x] (boolean (when (map? p) (some (fn [msym] (protocol-impl p msym x)) (keys (:sigs p))))))
    'extends? (fn [p t] (boolean (when (map? p) (or (contains? @(:impls p) (if (map? t) (:name t) t))
                                                   (and (map? t) (contains? (:protocols t) (:var p)))))))
@@ -642,15 +862,79 @@ namespace cohost_obj {
    'sync sync-macro
    ;; jank's own dosync expands to jank's sync, a TODO stub: this one
    ;; expands to cohost.core's sync, above
-   'dosync (fn [&form &env & body] (cons 'sync (cons nil body)))})
+   'dosync (fn [&form &env & body] (cons 'sync (cons nil body)))
+   ;; a cohost ref is a shim Ref (an atom over the transaction state), and
+   ;; jank's own alter is a TODO stub: the transaction words run the
+   ;; shim's, which branch on a ref into the LockingTransaction machinery
+   ;; cohost.core/str is jank's str, whose rendering of an ex-info is
+   ;; its #error dump: a standin exception prints as its class instead
+   'str (fn [& args] (apply str (map (fn [x] (if (adapter/exception? x)
+                                               ((adapter/capability :exception-string) x)
+                                               x))
+                                     args)))
+   ;; jank's own newline is a TODO stub that throws ("TODO: port
+   ;; newline"); clojure.stacktrace's print-throwable calls it
+   'newline (fn [] (print "\n"))
+   ;; jank's own printf prints the format string literally, args
+   ;; ignored; stock printf formats through String/format
+   'printf (fn [fmt & args] (print (apply @shim-string-format fmt args)))
+   'ref-set (fn [r v] (@shim-set r v))
+   'alter (fn [r f & args] (@shim-alter r f args))
+   'commute (fn [r f & args] (@shim-commute r f args))
+   'ensure (fn [r] (@shim-touch r) r)
+   ;; jank's own sequence is a TODO stub (eduction's seq uses it too)
+   'sequence (fn ([coll] coll)
+               ([xform coll] (xform-seq xform coll))
+               ([xform coll & colls] (xform-seq xform (apply map list coll colls))))
+   'unchecked-dec (fn [x] (dec x))
+   'unchecked-inc (fn [x] (inc x))
+   ;; jank's assoc! / conj! accept anything; the JVM's throw
+   ;; ClassCastException on a non-transient, which core.clj's hinted
+   ;; callers rely on (the battery's hinted-argument row)
+   'assoc! (fn [c & kvs] (if (adapter/transient? c) (apply assoc! c kvs)
+                           (throw (adapter/ex* 'java.lang.ClassCastException
+                                               (str "class " (type c) " cannot be cast to class clojure.lang.ITransientCollection")))))
+   'conj! (fn [c x] (if (adapter/transient? c) (conj! c x)
+                      (throw (adapter/ex* 'java.lang.ClassCastException
+                                          (str "class " (type c) " cannot be cast to class clojure.lang.ITransientCollection")))))})
 
 (def ^:private type-macro-names
   (into #{} (filter (fn [s] (contains? type-core-extras s))
                     ['deftype 'defrecord 'defprotocol 'reify 'extend-type 'extend-protocol 'sync 'dosync])))
 
+;; jank's own sequence is a TODO stub: a lazy pull-through transducer seq.
+;; The reducing fn runs over a fresh vector per input, so the vector holds
+;; exactly the outputs that input produced; the completion arity runs when
+;; the input runs out, so a buffering transducer (partition-all and kin)
+;; still flushes its tail.
+(defn- xform-seq [xform coll]
+  (let [rf (xform (fn ([] []) ([acc] acc) ([acc x] (conj acc x))))
+        state (volatile! {:s (seq coll) :out [] :done false})]
+    (letfn [(emit []
+              (lazy-seq
+                (loop []
+                  (let [st @state
+                        s (get st :s) out (get st :out) done (get st :done)]
+                    (cond (seq out)
+                          (do (vswap! state assoc :out (subvec out 1))
+                              (cons (first out) (emit)))
+                          done nil
+                          (seq s)
+                          (let [r0 (rf [] (first s))
+                                red (reduced? r0)]
+                            (vswap! state assoc :s (rest s)
+                                    :out (if red @r0 r0))
+                            (when red (vswap! state assoc :done true))
+                            (recur))
+                          :else
+                          (let [r0 (rf [])]
+                            (vswap! state assoc :done true :out (if (reduced? r0) @r0 r0))
+                            (recur)))))))]
+      (emit))))
+
 ;; clojure.lang.Eduction: core.clj's own is a deftype the boot skips, so
 ;; eduction comes from here: a cohost type whose seq runs the transducer.
-(def ^:private eduction-seq (fn [x] (sequence (inst-field x 0) (inst-field x 1))))
+(def ^:private eduction-seq (fn [x] (xform-seq (inst-field x 0) (inst-field x 1))))
 
 (def ^:private eduction-desc
   (let [d (make-type {:name 'clojure.lang.Eduction :kind :deftype :fields '[xform coll] :groups []})]
@@ -658,6 +942,269 @@ namespace cohost_obj {
 
 (defn- eduction* [& xfs]
   (new-instance eduction-desc [(apply comp (butlast xfs)) (last xfs)]))
+
+;; std::regex has no (?i) group syntax: a leading (?flags) or (?flags:...)
+;; group folds into the icase flag the cpp side takes (the m and s flags
+;; have no std::regex ECMAScript counterpart and are dropped).
+
+;; ---- read-string and the edn reader -------------------------------------
+;; jank's read-string builds every value right, but its errors are native
+;; (no class to catch) and it does not check literal maps/sets for duplicate
+;; keys. So read-string walks the text with cohost.scan first and throws
+;; the JVM reader's standins: IllegalArgumentException for a duplicate
+;; literal key, RuntimeException for EOF or a stray delimiter inside a
+;; form, NumberFormatException for a number token jank cannot read; then
+;; it hands the text to jank. The edn reader builds its value itself,
+;; because a tagged literal needs the caller's :readers/:default, which
+;; jank's reader does not take.
+
+(def ^:private digit-chars #{\0 \1 \2 \3 \4 \5 \6 \7 \8 \9})
+
+(defn- number-token? [t]
+  (let [cs (vec t)
+        c0 (nth cs 0 nil) c1 (nth cs 1 nil) c2 (nth cs 2 nil)]
+    (boolean
+     (or (contains? digit-chars c0)
+         (and (or (= c0 \+) (= c0 \-))
+              (or (contains? digit-chars c1)
+                  (and (= c1 \.) (contains? digit-chars c2))))
+         (and (= c0 \.) (contains? digit-chars c1))))))
+
+(defn- read-leaf
+  "jank's read-string of one leaf form's text, its errors as standins."
+  [text]
+  (adapter/try-all
+   (fn [] (read-string text))
+   (fn [e] (throw (if (number-token? text)
+                    (adapter/ex* 'java.lang.NumberFormatException
+                                 (str "Invalid number: " text))
+                    (adapter/ex* 'java.lang.RuntimeException
+                                 (str "read error: " (ex-message e))))))))
+
+(defn- delim-char? [c]
+  (or (= c \space) (= c \,) (= c \newline) (= c \tab) (= c \return)
+      (= c \formfeed) (= c \() (= c \)) (= c \[) (= c \]) (= c \{)
+      (= c \}) (= c \") (= c \;)))
+
+(defn- token-end* [cs i]
+  (let [n (count cs)]
+    (loop [j i]
+      (if (or (>= j n) (delim-char? (nth cs j))) j (recur (inc j))))))
+
+(declare check-form!)
+
+(defn- check-dups!
+  "spans are [start end] pairs: a map literal's keys, or a set literal's
+   elements. A repeat, read, is the JVM reader's IllegalArgument."
+  [src spans]
+  (loop [spans spans seen []]
+    (when (seq spans)
+      (let [sp (first spans)
+            k (read-leaf (subs src (nth sp 0) (nth sp 1)))]
+        (when (some (fn [o] (= o k)) seen)
+          (throw (adapter/ex* 'java.lang.IllegalArgumentException
+                              (str "Duplicate key: " (pr-str k)))))
+        (recur (rest spans) (conj seen k))))))
+
+(defn- check-coll!
+  "Walk the collection whose opening delimiter is at index open; kind is
+   :list, :vec, :map or :set. Returns the index past its close."
+  [src cs open kind]
+  (let [n (count cs)
+        close (if (= kind :list) \) (if (= kind :vec) \] \}))]
+    (loop [j (scan/skip-ws cs (inc open)) spans []]
+      (cond (>= j n)
+            (throw (adapter/ex* 'java.lang.RuntimeException "EOF while reading"))
+            (= (nth cs j) close)
+            (do (when (= kind :map)
+                  (when (odd? (count spans))
+                    (throw (adapter/ex* 'java.lang.RuntimeException
+                                        "Map literal must contain an even number of forms")))
+                  (check-dups! src (take-nth 2 spans)))
+                (when (= kind :set) (check-dups! src spans))
+                (inc j))
+            (or (= (nth cs j) \)) (= (nth cs j) \]) (= (nth cs j) \}))
+            (throw (adapter/ex* 'java.lang.RuntimeException "Unmatched delimiter"))
+            :else
+            (let [e (check-form! src cs j)]
+              (recur (scan/skip-ws cs e) (conj spans [j e])))))))
+
+(defn- check-form!
+  "Validate the form at i in cs; returns the index past it."
+  [src cs i]
+  (let [i (scan/skip-ws cs i)
+        n (count cs)]
+    (if (>= i n)
+      (throw (adapter/ex* 'java.lang.RuntimeException "EOF while reading"))
+      (let [c (nth cs i)
+            d (when (< (inc i) n) (nth cs (inc i)))]
+        (cond
+          (= c \() (check-coll! src cs i :list)
+          (= c \[) (check-coll! src cs i :vec)
+          (= c \{) (check-coll! src cs i :map)
+          (= c \") (scan/form-end cs i)
+          (= c \\) (scan/form-end cs i)
+          (or (= c \') (= c \`) (= c \@)) (check-form! src cs (inc i))
+          (= c \~) (check-form! src cs (if (= d \@) (+ i 2) (inc i)))
+          (= c \^) (check-form! src cs (check-form! src cs (inc i)))
+          (= c \#)
+          (cond (= d \{) (check-coll! src cs (inc i) :set)
+                (= d \() (check-coll! src cs (inc i) :list)
+                (= d \") (scan/form-end cs i)
+                (= d \_) (check-form! src cs (check-form! src cs (+ i 2)))
+                (= d \?) (let [j (+ i 2)
+                               j (if (= (nth cs j nil) \@) (inc j) j)]
+                           (check-coll! src cs j :list))
+                :else (check-form! src cs (token-end* cs (inc i))))
+          :else (let [e (scan/form-end cs i)]
+                  (when (number-token? (subs src i e)) (read-leaf (subs src i e)))
+                  e))))))
+
+(defn- jank-read-string
+  ([s]
+   (let [cs (vec s)
+         i (scan/skip-ws cs 0)]
+     (if (>= i (count cs))
+       (throw (adapter/ex* 'java.lang.RuntimeException "EOF while reading"))
+       (do (check-form! s cs i)
+           (fix-tags (read-string s))))))
+  ([opts s]
+   (let [cs (vec s)
+         i (scan/skip-ws cs 0)]
+     (cond (>= i (count cs))
+           (if (contains? opts :eof)
+             (:eof opts)
+             (throw (adapter/ex* 'java.lang.RuntimeException "EOF while reading")))
+           :else (do (check-form! s cs i)
+                     (fix-tags (read-string s)))))))
+
+(def ^:private edn-discard (atom nil))
+
+(declare parse-edn-form)
+
+(defn- edn-children
+  "The values inside the collection opening at index open, and the index
+   past its close."
+  [opts src cs open close]
+  (let [n (count cs)]
+    (loop [j (scan/skip-ws cs (inc open)) vals []]
+      (cond (>= j n)
+            (throw (adapter/ex* 'java.lang.RuntimeException "EOF while reading"))
+            (= (nth cs j) close) [vals (inc j)]
+            (or (= (nth cs j) \)) (= (nth cs j) \]) (= (nth cs j) \}))
+            (throw (adapter/ex* 'java.lang.RuntimeException "Unmatched delimiter"))
+            :else (let [r (parse-edn-form opts src cs j)
+                        v (nth r 0) e (nth r 1)]
+                    (if (identical? v edn-discard)
+                      (recur (scan/skip-ws cs e) vals)
+                      (recur (scan/skip-ws cs e) (conj vals v))))))))
+
+(defn- check-value-dups! [vals]
+  (loop [vals vals seen []]
+    (when (seq vals)
+      (let [k (first vals)]
+        (when (some (fn [o] (= o k)) seen)
+          (throw (adapter/ex* 'java.lang.IllegalArgumentException
+                              (str "Duplicate key: " (pr-str k)))))
+        (recur (rest vals) (conj seen k))))))
+
+(defn- parse-edn-form
+  "The edn form at i in cs: [value index-past-it]."
+  [opts src cs i]
+  (let [i (scan/skip-ws cs i)
+        n (count cs)]
+    (if (>= i n)
+      (throw (adapter/ex* 'java.lang.RuntimeException "EOF while reading"))
+      (let [c (nth cs i)
+            d (when (< (inc i) n) (nth cs (inc i)))]
+        (cond
+          (= c \() (let [r (edn-children opts src cs i \))]
+                     [(apply list (nth r 0)) (nth r 1)])
+          (= c \[) (edn-children opts src cs i \])
+          (= c \{) (let [r (edn-children opts src cs i \})
+                         vals (nth r 0)]
+                     (when (odd? (count vals))
+                       (throw (adapter/ex* 'java.lang.RuntimeException
+                                           "Map literal must contain an even number of forms")))
+                     (check-value-dups! (take-nth 2 vals))
+                     [(apply hash-map vals) (nth r 1)])
+          (= c \") (let [e (scan/form-end cs i)]
+                     [(read-leaf (subs src i e)) e])
+          (= c \\) (let [e (scan/form-end cs i)]
+                     [(read-leaf (subs src i e)) e])
+          (= c \#)
+          (cond (= d \{) (let [r (edn-children opts src cs (inc i) \})
+                               vals (nth r 0)]
+                           (check-value-dups! vals)
+                           [(set vals) (nth r 1)])
+                (= d \_) (let [r (parse-edn-form opts src cs (+ i 2))]
+                           [edn-discard (nth r 1)])
+                (or (= d \() (= d \") (= d \?))
+                (throw (adapter/ex* 'java.lang.RuntimeException
+                                    "edn: not a data form"))
+                :else (let [te (token-end* cs (inc i))
+                            tag (read-leaf (subs src (inc i) te))
+                            r (parse-edn-form opts src cs te)
+                            v (nth r 0)
+                            readers (:readers opts)
+                            dflt (:default opts)]
+                        [(cond (contains? readers tag) ((get readers tag) v)
+                               dflt (dflt tag v)
+                               (or (= tag 'inst) (= tag 'uuid))
+                               (read-leaf (subs src i (nth r 1)))
+                               :else (throw (adapter/ex* 'java.lang.RuntimeException
+                                                         (str "No reader function for tag " tag))))
+                         (nth r 1)]))
+          (or (= c \') (= c \`) (= c \@) (= c \~) (= c \^))
+          (throw (adapter/ex* 'java.lang.RuntimeException
+                              "edn: not a data form"))
+          :else (let [e (token-end* cs i)
+                      t (subs src i e)]
+                  [(cond (= t "nil") nil
+                         (= t "true") true
+                         (= t "false") false
+                         :else (read-leaf t))
+                   e]))))))
+
+(defn- edn-read-string* [opts s]
+  (cond (nil? s) nil
+        :else
+        (let [cs (vec s)
+              i (scan/skip-ws cs 0)]
+          (if (>= i (count cs))
+            (if (contains? opts :eof)
+              (:eof opts)
+              (throw (adapter/ex* 'java.lang.RuntimeException "EOF while reading")))
+            (let [r (parse-edn-form opts s cs i)]
+              (if (identical? (nth r 0) edn-discard)
+                (edn-read-string* opts (subs s (nth r 1)))
+                (nth r 0)))))))
+
+(defn- regex-parts [re]
+  (let [s (str re)
+        n (count s)]
+    (if (and (> n 3) (string/starts-with? s "(?"))
+      (let [j (loop [i 2] (if (and (< i n) (contains? #{\i \m \s \x \-} (nth s i))) (recur (inc i)) i))
+            flags (subs s 2 j)
+            icase (boolean (some (fn [c] (= \i c)) flags))]
+        (cond (and (< j n) (= (nth s j) \))) [(subs s (inc j)) icase]
+              (and (< j n) (= (nth s j) \:)) [(str "(?:" (subs s (inc j))) icase]
+              :else [s false]))
+      [s false])))
+
+(defn- regex-throw [pat]
+  (throw (adapter/ex* 'java.util.regex.PatternSyntaxException
+                      (str "Pattern syntax not supported by std::regex: " pat))))
+
+;; the shim's StringBuilder: on hosts whose str knows the standin it is a
+;; tagged map; here it is a cohost type whose toString slot returns its
+;; contents, so jank's str prints them. State: an atom of appended chunks.
+(def ^:private sb-desc
+  (let [contents (fn [x] (apply str @(inst-field x 0)))
+        d (make-type {:name 'cohost.shim.StringBuilder :kind :deftype :fields '[state] :groups []})]
+    (assoc d :methods (assoc (:methods d) 2 contents 3 contents)
+             :object-methods {'append (fn [x & args] (swap! (inst-field x 0) conj (apply str args)) x)
+                              'toString (fn [x] (apply str @(inst-field x 0)))})))
 
 (def adapter
   {:name :jank
@@ -676,7 +1223,8 @@ namespace cohost_obj {
    ;; the type layer above: deftype & friends are the adapter's own macros
    ;; and fns, marked as macros when they are interned into cohost.core
    :type-method-style :cohost-types
-   :core-extras (assoc type-core-extras 'eduction eduction*)
+   :core-extras (assoc type-core-extras 'eduction eduction*
+                                        'read-string jank-read-string)
    :intern! (fn [ns-sym sym val]
               (let [v (intern ns-sym sym val)]
                 (when (and (= 'cohost.core ns-sym) (contains? type-macro-names sym))
@@ -720,7 +1268,10 @@ namespace cohost_obj {
    :deref? (fn [x] (or (contains? #{"atom" "delay" "volatile_" "var" "future" "promise"} (type x))
                        (boolean (when-let [d (instance-desc x)] (:deref d)))))
    :pending? (fn [x] (contains? #{"delay" "future" "promise" "lazy_sequence"} (type x)))
-   :resolve-core (fn [sym] (get (ns-publics 'clojure.core) sym))
+   ;; unchecked-dec: jank's own is a TODO stub that throws, and the
+   ;; shim's Numbers/unchecked_dec prefers the host fn over its dec
+   ;; fallback -- report it absent so the fallback runs
+   :resolve-core (fn [sym] (when-not (= 'unchecked-dec sym) (get (ns-publics 'clojure.core) sym)))
    :mark-macro! (fn [v] (alter-meta! v assoc :macro true) v)
    :expand-macro expand-macro
    ;; its compiler honors a var's :inline, and core.clj's write raw JVM interop:
@@ -764,6 +1315,90 @@ namespace cohost_obj {
    :upper-case (fn [s] (string/upper-case (str s)))
    :lower-case (fn [s] (string/lower-case (str s)))
    :index-of (fn [s sub from] (let [i (string/index-of s sub from)] (if (nil? i) -1 i)))
-   :current-time-millis (fn [] (cpp/cohost_time.millis))})
+   :current-time-millis (fn [] (cpp/cohost_time.millis))
+   ;; java.lang.Math statics, by JVM name (the shim's :math readers)
+   :math {'sin (fn [a] (cpp/cohost_math.sin_ (double a)))
+          'cos (fn [a] (cpp/cohost_math.cos_ (double a)))
+          'tan (fn [a] (cpp/cohost_math.tan_ (double a)))
+          'asin (fn [a] (cpp/cohost_math.asin_ (double a)))
+          'acos (fn [a] (cpp/cohost_math.acos_ (double a)))
+          'atan (fn [a] (cpp/cohost_math.atan_ (double a)))
+          'atan2 (fn [a b] (cpp/cohost_math.atan2_ (double a) (double b)))
+          'exp (fn [a] (cpp/cohost_math.exp_ (double a)))
+          'log (fn [a] (cpp/cohost_math.log_ (double a)))
+          'log10 (fn [a] (cpp/cohost_math.log10_ (double a)))
+          'pow (fn [a b] (cpp/cohost_math.pow_ (double a) (double b)))
+          'cbrt (fn [a] (cpp/cohost_math.cbrt_ (double a)))
+          'hypot (fn [a b] (cpp/cohost_math.hypot_ (double a) (double b)))
+          'sinh (fn [a] (cpp/cohost_math.sinh_ (double a)))
+          'cosh (fn [a] (cpp/cohost_math.cosh_ (double a)))
+          'tanh (fn [a] (cpp/cohost_math.tanh_ (double a)))
+          'expm1 (fn [a] (cpp/cohost_math.expm1_ (double a)))
+          'log1p (fn [a] (cpp/cohost_math.log1p_ (double a)))
+          'IEEEremainder (fn [a b] (cpp/cohost_math.remainder_ (double a) (double b)))
+          'ulp (fn [a] (cpp/cohost_math.ulp_ (double a)))
+          'nextUp (fn [a] (cpp/cohost_math.nextafter_ (double a) 1.7976931348623157E308))
+          'nextDown (fn [a] (cpp/cohost_math.nextafter_ (double a) -1.7976931348623157E308))
+          'nextAfter (fn [a b] (cpp/cohost_math.nextafter_ (double a) (double b)))
+          'getExponent (fn [a] (cpp/cohost_math.get_exponent_ (double a)))
+          'scalb (fn [a b] (cpp/cohost_math.scalbn_ (double a) (long b)))
+          'copySign (fn [a b] (cpp/cohost_math.copysign_ (double a) (double b)))}
+   ;; regex positions and groups over std::regex (see cohost_regex above)
+   :re-find-at (fn [re s from]
+                 (let [[pat icase] (regex-parts re)
+                       gc (cpp/cohost_regex.group_count pat icase)]
+                   (when (neg? gc) (regex-throw pat))
+                   (let [out (object-array (+ 3 gc))
+                         sp (object-array (* 2 (inc gc)))]
+                     (case (cpp/cohost_regex.find_at pat (str s) (long from) icase out sp)
+                       1 [(aget out 0) (aget out 1) (mapv (fn [i] (aget out i)) (range 2 (+ 3 gc)))
+                          (mapv (fn [i] (let [a (aget sp (* 2 i))] (when-not (neg? a) [a (aget sp (inc (* 2 i)))]))) (range (inc gc)))]
+                       0 nil
+                       -1 (regex-throw pat)))))
+   :re-match-full (fn [re s]
+                    (let [[pat icase] (regex-parts re)
+                          gc (cpp/cohost_regex.group_count pat icase)]
+                      (when (neg? gc) (regex-throw pat))
+                      (let [out (object-array (+ 3 gc))
+                            sp (object-array (* 2 (inc gc)))]
+                        (case (cpp/cohost_regex.match_full pat (str s) icase out sp)
+                          1 [(aget out 0) (aget out 1) (mapv (fn [i] (aget out i)) (range 2 (+ 3 gc)))
+                             (mapv (fn [i] (let [a (aget sp (* 2 i))] (when-not (neg? a) [a (aget sp (inc (* 2 i)))]))) (range (inc gc)))]
+                          0 nil
+                          -1 (regex-throw pat)))))
+   :re-group-count (fn [re] (let [[pat icase] (regex-parts re)
+                                  gc (cpp/cohost_regex.group_count pat icase)]
+                              (if (neg? gc) (regex-throw pat) gc)))
+   ;; in-place sort of a host array by a comparator fn (the shim's
+   ;; Arrays/sort wraps every comparator into one)
+   :sort-array! (fn [arr cmp] (cpp/cohost_sort.sort_array arr cmp))
+   :edn-read-string (fn [opts s] (edn-read-string* opts s))
+   ;; with-local-vars binds through the shim's Var, whose create marks the
+   ;; var dynamic here: alter-meta!'s :dynamic alone does not flip jank's
+   ;; own dynamic flag, and pushThreadBindings checks that flag
+   :set-dynamic! (fn [v] (cpp/cohost_var.set_dynamic v) (alter-meta! v assoc :dynamic true) v)
+   ;; Var.set (jank's own var-set is a TODO stub the shim would call)
+   :var-set! (fn [v val] (cpp/cohost_var.set_var v val))
+   ;; standin exceptions print as their class (the shim asks this first);
+   ;; jank's own str of an exception is its #error dump
+   :exception-string (fn [e] (let [c (or (get (ex-data e) :cohost/class)
+                                         (adapter/exception-class e))]
+                               (str c
+                                    (when (some? (adapter/exception-message e))
+                                      (str ": " (adapter/exception-message e))))))
+   ;; jank's ex-info rejects a nil message; the JVM's accepts it and
+   ;; getMessage answers nil. Store "" and mark it, and let
+   ;; :exception-message translate the mark back to nil.
+   :ex-info (fn ([msg m] (ex-info (or msg "") (if (nil? msg) (assoc m :cohost/nil-message true) m)))
+              ([msg m cause] (ex-info (or msg "") (if (nil? msg) (assoc m :cohost/nil-message true) m) cause)))
+   :exception-message (fn [e] (let [d (ex-data e)]
+                                (if (and (map? d) (:cohost/nil-message d)) nil (ex-message e))))
+   ;; StringBuilder as a cohost type (sb-desc above)
+   :string-builder (fn [] (new-instance sb-desc [(atom [])]))
+   :sb? (fn [x] (identical? sb-desc (instance-desc x)))
+   :sb-append! (fn [sb s] (swap! (inst-field sb 0) conj (str s)) sb)
+   :sb-string (fn [sb] (apply str @(inst-field sb 0)))
+})
+
 
 (adapter/install! adapter)
