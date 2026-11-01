@@ -1,7 +1,7 @@
 ;; Checks after a normal boot of clojure.walk, and eval time of the dumped
 ;; snapshot forms when /tmp/jank-snap-src is present. The compiled module is
 ;; not loaded here: compile-module does not produce one (see the doc).
-(require 'cohost.hosts.jank)
+(require 'cohost.hosts.jank-host)
 (require 'cohost.boot)
 (require 'cohost.adapter)
 

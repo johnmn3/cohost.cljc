@@ -2,7 +2,7 @@
 ;; Timers are on only because boot! is called with {:profile? true}.
 ;;
 ;;   jank --module-path src run dev/perf/jank_boot_profile.jank
-(require 'cohost.hosts.jank)
+(require 'cohost.hosts.jank-host)
 (require 'cohost.boot)
 
 (def libs

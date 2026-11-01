@@ -9,5 +9,5 @@
                :phel [cohost.hosts.phel]
                :lg [cohost.hosts.lg]
                :cljrs [cohost.hosts.cljrs]
-               :jank [cohost.hosts.jank]
+               :jank [cohost.hosts.jank-host]
                :clj [cohost.hosts.jvm])))

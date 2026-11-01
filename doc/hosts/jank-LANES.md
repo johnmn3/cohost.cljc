@@ -17,7 +17,7 @@ follows file ownership, so the lanes do not edit the same code.
 
 ## Lane M (muse): correctness, then runtime speed, in the adapter and the shim
 
-Owns `src/cohost/hosts/jank.jank` and the `:jank` branches of `src/cohost/shim.cljc` and
+Owns `src/cohost/hosts/jank_host.jank` and the `:jank` branches of `src/cohost/shim.cljc` and
 `src/cohost/adapter.cljc`.
 1. **Push Step 1 now**, as it stands (`jj git push` of the change to its own branch, e.g.
    `muse/jank-step1`, if it is not ready for the main branch). Then finish it: exception class
