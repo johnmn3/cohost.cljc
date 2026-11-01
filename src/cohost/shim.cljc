@@ -682,9 +682,13 @@
                           :else (d2l (RT-doubleCast x) -2147483648 2147483647)))
 (def RT-uncheckedIntCast (fn [x] (wrap32 (int-bits x))))
 (defn- char-cce [] (host/ex* 'java.lang.ClassCastException "class java.lang.Character cannot be cast to class java.lang.Number"))
+;; Long/MIN_VALUE. A jank object turns the literal -9223372036854775808 into a
+;; garbage double (doc/upstream/jank-10-aot-long-min-literal.md). Subtracting
+;; one from the next long is the same value, and the object keeps it.
+(def ^:private long-min-value (- -9223372036854775807 1))
 (def RT-uncheckedLongCast (fn [x] (cond (h-char? x) (throw (char-cce))
                                         (integer? x) x
-                                        :else (d2l (RT-doubleCast x) -9223372036854775808 9223372036854775807))))
+                                        :else (d2l (RT-doubleCast x) long-min-value 9223372036854775807))))
 (def RT-uncheckedDoubleCast RT-doubleCast)
 (def RT-uncheckedFloatCast RT-floatCast)
 (def RT-uncheckedCharCast RT-charCast)
@@ -1278,7 +1282,7 @@
 (def Character-TYPE 'char)
 (def Boolean-TYPE 'boolean)
 (def Long-MAX_VALUE 9223372036854775807)
-(def Long-MIN_VALUE -9223372036854775808)
+(def Long-MIN_VALUE long-min-value)
 (def Double-NaN (host/parse-double* "NaN"))
 (def Double-MAX_VALUE 1.7976931348623157E308)
 (def Double-MIN_VALUE 4.9E-324)
@@ -1350,7 +1354,7 @@
           (throw (nfe s radix)))
         (let [v (if (= "-" c0) (Numbers-minusP acc) acc)]
           (if (or (< v lo) (> v hi)) (throw (nfe s radix)) v))))))
-(def ^:private lmin -9223372036854775808)
+(def ^:private lmin long-min-value)
 (def ^:private lmax 9223372036854775807)
 (defn- parse-long-strict [s] (parse-radix s 10 lmin lmax))
 (declare Math-pow)
@@ -1411,7 +1415,7 @@
 (def Character-forDigit (jstatic 'Character/forDigit (fn [d radix] (if (and (<= 2 radix 36) (< -1 d radix)) (nth radix-digits d) (RT-charCast 0)))))
 ;; java.lang.Math: the host's own functions where it has them (the adapter's
 ;; :math map, by JVM name), else these, which follow the JVM's definitions
-(def ^:private long-min -9223372036854775808)
+(def ^:private long-min long-min-value)
 (def ^:private long-max 9223372036854775807)
 (defn- exact [x]
   (if (or (< x long-min) (> x long-max))
@@ -1469,7 +1473,7 @@
 ;; Math.round: floor(a + 1/2) computed exactly (adding 0.5 rounds
 ;; 0.49999999999999994 up); NaN is 0, an infinity the long's bound
 (def Math-round (math-fn 'round (fn [a] (cond (h-nan? a) 0
-                                              (h-infinite? a) (if (pos? a) 9223372036854775807 -9223372036854775808)
+                                              (h-infinite? a) (if (pos? a) 9223372036854775807 long-min-value)
                                               :else (let [a (double a) f (Math-floor a)]
                                                       (long (if (>= (- a f) 0.5) (+ f 1.0) f)))))))
 (def Math-floorDiv (math-fn 'floorDiv (fn [a b] (let [q (quot a b)] (if (and (not= (neg? a) (neg? b)) (not= (* q b) a)) (dec q) q)))))
