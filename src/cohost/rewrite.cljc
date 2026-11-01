@@ -31,9 +31,6 @@
 (def profile-branches (volatile! nil))
 (def profile-child (volatile! 0))
 
-(def ^:private prof+
-  ;; same sum as boot's prof+: jank's + wraps at 32 bits; basilisp has no +'
-  #?(:lpy + :default +'))
 ;; macro name -> expand ns, and macro name -> call count. Profiling on only.
 (def profile-macro-ns (volatile! nil))
 (def profile-macro-n (volatile! nil))
@@ -1514,23 +1511,7 @@
             (rewritten-macro? ctx h)
             (timed :macro
               (if-let [ex (:expand-macro ctx)]
-                (let [hv (head-var ctx h)
-                      acc @profile-macro-ns
-                      t0 (when acc (host/nano-time))
-                      x (ex hv form *locals*)
-                      _ (when acc
-                          (let [dt (- (host/nano-time) t0)
-                                shape (when (or (= hn "let") (= hn "loop"))
-                                        (let [b (first args)]
-                                          (cond
-                                            (not (vector? b)) "other"
-                                            (every? symbol? (take-nth 2 b)) "plain"
-                                            (some map? (take-nth 2 b)) "map"
-                                            (some vector? (take-nth 2 b)) "vector"
-                                            :else "other")))
-                                nm (if shape (str h "/" shape) (str h))]
-                            (vswap! profile-macro-ns update nm (fn [n] (prof+ (or n 0) dt)))
-                            (vswap! profile-macro-n update nm (fn [n] (prof+ (or n 0) 1)))))]
+                (let [x (ex (head-var ctx h) form *locals*)]
                   (if (identical? x form) (apply list (macro-head ctx h) args) (rw ctx x)))
                 (apply list (macro-head ctx h) args)))
             ;; a binding form before it expands: what it binds are locals
