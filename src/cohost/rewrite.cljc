@@ -1385,13 +1385,18 @@
            (>= n 10)
            (= (subs ns (- n 10)) "spec.alpha")))))
 
+(defn- spec-keep [orig built]
+  (if (and (meta orig) (meta-capable? built))
+    (with-meta built (meta orig))
+    built))
+
 (defn- spec-replace [m form]
   (cond
     (contains? m form) (get m form)
-    (map? form) (into (empty form) (map (fn [[k v]] [(spec-replace m k) (spec-replace m v)]) form))
-    (vector? form) (into (empty form) (map #(spec-replace m %) form))
-    (set? form) (into (empty form) (map #(spec-replace m %) form))
-    (seq? form) (apply list (map #(spec-replace m %) form))
+    (map? form) (spec-keep form (into (empty form) (map (fn [[k v]] [(spec-replace m k) (spec-replace m v)]) form)))
+    (vector? form) (spec-keep form (into (empty form) (map #(spec-replace m %) form)))
+    (set? form) (spec-keep form (into (empty form) (map #(spec-replace m %) form)))
+    (seq? form) (spec-keep form (apply list (map #(spec-replace m %) form)))
     :else form))
 
 (defn- spec-unfn
@@ -1412,10 +1417,10 @@
 (defn- spec-walk [form]
   (cond
     (symbol? form) (spec-res-sym form)
-    (map? form) (into (empty form) (map (fn [[k v]] [(spec-walk k) (spec-walk v)]) form))
-    (vector? form) (into (empty form) (map spec-walk form))
-    (set? form) (into (empty form) (map spec-walk form))
-    (seq? form) (apply list (map spec-walk form))
+    (map? form) (spec-keep form (into (empty form) (map (fn [[k v]] [(spec-walk k) (spec-walk v)]) form)))
+    (vector? form) (spec-keep form (into (empty form) (map spec-walk form)))
+    (set? form) (spec-keep form (into (empty form) (map spec-walk form)))
+    (seq? form) (spec-keep form (apply list (map spec-walk form)))
     :else form))
 
 (defn- spec-res [form]
