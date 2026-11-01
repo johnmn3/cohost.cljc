@@ -91,9 +91,9 @@
 (defn parse-run [proc]
   (let [out (or (:out proc) "")
         lines (str/split-lines out)
-        results (vec (keep #(when (str/starts-with? % "PROGRAM-RESULT ") (subs % 15)) lines))
-        ms (vec (keep #(when (str/starts-with? % "PROGRAM-MS ")
-                         (Double/parseDouble (str/trim (subs % 12)))) lines))
+        results (vec (keep #(second (re-matches #"PROGRAM-RESULT (.*)" %)) lines))
+        ms (vec (keep #(when-let [[_ n] (re-matches #"PROGRAM-MS (.*)" %)]
+                         (Double/parseDouble (str/trim n))) lines))
         err (str/trim (or (:err proc) ""))]
     {:exit (:exit proc) :result (last results) :ms ms :err err :out out}))
 

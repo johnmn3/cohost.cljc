@@ -439,19 +439,40 @@ bb bench:report --compare doc/perf/before doc/perf/after
 
 ## Programs against JVM Clojure
 
-jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Programs live in `bench/programs/`. The driver is `dev/bench_programs.clj`. `MEDIAN-MS` is the middle of five timed calls after one untimed call in the same process. `COLD-MS` is one call in a fresh process. Both clocks are inside the process (`System/nanoTime` on the JVM, `cpp/jank.runtime.current_time` on jank). The result is checked against JVM Clojure before the time is kept.
+jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Programs live in `bench/programs/`. The driver is `dev/bench_programs.clj`. `MEDIAN-MS` is the middle of five timed calls after one untimed call in the same process. `COLD-MS` is one call in a fresh process. The clock is inside the process (`System/nanoTime` on the JVM, `cpp/jank.runtime.current_time` on jank). Each timed call reads its size argument at runtime and adds the result into a volatile. A program's printed result is compared with the JVM result. `first-output` is process wall time until stdout contains `ok` (one cold process, one discarded warmup process, then five).
 
-Measured 2026-11-01. `bb bench:programs jvm` and `bb bench:programs jank-jit`. fib 30 returned `832040` on both, hinted and unhinted (`SAME`).
+Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`, binary-trees `8`, fannkuch `7`, nsieve `12`, k-nucleotide `2000`, pipeline `2000`, dispatch `20000`, json `20`.
 
-| program | jvm median ms | jvm cold ms | jank-jit median ms | jank-jit cold ms | jank-jit / jvm |
-|---|---:|---:|---:|---:|---:|
-| fib | 0.104438 | 4.427374 | 2.25409 | 7.76525 | 21.583044485723587 |
-| fib-hinted | 0.290369 | 0.465622 | 9.808602 | 57.017453 | 33.77978365459123 |
+Measured 2026-11-01 with `bb bench:programs jvm`. Every program printed `SAME` and the result in the last column.
 
-Geometric mean of those two ratios: `27.001306881985567`.
+| program | jvm median ms | jvm cold ms | result |
+|---|---:|---:|---:|
+| fib | 5.293441 | 18.17026 | 832040 |
+| fib-hinted | 4.425011 | 17.725987 | 832040 |
+| tak | 1.367668 | 6.945293 | 7 |
+| tak-hinted | 1.129298 | 3.340478 | 7 |
+| nbody | 3.876606 | 13.552441 | -169027 |
+| nbody-hinted | 3.079164 | 14.419944 | -169027 |
+| spectral-norm | 0.663116 | 15.028961 | 784826 |
+| spectral-norm-hinted | 1.674702 | 13.756405 | 784826 |
+| mandelbrot | 0.444768 | 1.998482 | 608 |
+| mandelbrot-hinted | 0.213834 | 1.950147 | 608 |
+| binary-trees | 0.518609 | 3.696582 | 7083 |
+| binary-trees-hinted | 1.276997 | 3.619701 | 7083 |
+| fannkuch | 21.31977 | 60.519953 | -502 |
+| fannkuch-hinted | 20.498867 | 67.888894 | -502 |
+| nsieve | 0.835891 | 3.45517 | 564 |
+| nsieve-hinted | 1.023101 | 2.823484 | 564 |
+| k-nucleotide | 1.125359 | 5.198497 | 500 |
+| pipeline | 2.510401 | 9.299799 | 5995001 |
+| dispatch | 2.168401 | 10.863573 | 200183333 |
+| json | 0.145791 | 0.566916 | 580 |
+| first-output | 385.120548 | 377.261128 | ok |
 
-Not timed yet, binary present: `jvm-cohost`, `jank-aot`, `jank` (cohost AOT), `cljrs`, `cljrs-cohost`. The runner for those targets is not written.
+Ratio of every JVM median to itself is 1. Geometric mean of those ratios: `1`.
+
+Hinted median / unhinted median on the JVM: fib `0.835942`, tak `0.825711`, nbody `0.794294`, spectral-norm `2.525504`, mandelbrot `0.480776`, binary-trees `2.462350`, fannkuch `0.961496`, nsieve `1.223965`. Geometric mean of those eight ratios: `1.085595`.
+
+Not measured yet on this box: `jank-jit`, `jank-aot`, `jank` (cohost on jank), `jvm-cohost`, `cljrs`, `cljrs-cohost`.
 
 Absent on this box: `jolt` and `jolt-cohost` (no `jolt` on PATH), `lpy` and `lpy-cohost` (no `basilisp`), `cljw` and `cljw-cohost` (no `cljw`), `phel` and `phel-cohost` (no `phel`), `lg` and `lg-cohost` (no `lg`). `cljs`, `cljs-cohost`, `browser`, and `browser-cohost` have `node` but no ClojureScript jar in the local Maven repo, so the build cannot be compiled here.
-
-Programs not written yet: tak, nbody, spectral-norm, mandelbrot, binary-trees, fannkuch-redux, nsieve, k-nucleotide, the map pipeline, protocol/multimethod dispatch, the JSON-like printer/reader, and time to first output.
