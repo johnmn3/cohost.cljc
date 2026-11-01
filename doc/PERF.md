@@ -443,7 +443,7 @@ jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Prog
 
 Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`, binary-trees `8`, fannkuch `7`, nsieve `12`, k-nucleotide `2000`, pipeline `2000`, dispatch `20000`, json `20`.
 
-Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`). A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` has no AOT runner yet (`NOT-TIMED`).
+Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`). A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` has no AOT or cohost runner yet (`NOT-TIMED`).
 
 | program | jvm median | jvm cold | jit median | jit cold | jit/jvm | aot median | aot cold | aot/jvm | result |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -479,6 +479,38 @@ Hinted median / unhinted median on the JVM: fib `0.835942`, tak `0.825711`, nbod
 
 On jank-jit, where both forms ran: fib `0.984637`, tak `1.580872`, binary-trees `1.002156`. On jank-aot: fib `1.741068`, tak `1.901595`, binary-trees `1.050502`.
 
-Not measured yet on this box: `jank` (cohost on jank), `jvm-cohost`, `cljrs`, `cljrs-cohost`.
+`jank` is cohost on jank. Times are milliseconds.
+
+| program | cohost median | cohost cold | cohost/jvm | result |
+|---|---:|---:|---:|---|
+| fib | 126.469398 | 401.822922 | 23.891718 | 832040 |
+| fib-hinted | 442.530535 | 732.72114 | 100.006652 | 832040 |
+| tak | 10.118948 | 284.221359 | 7.398687 | 7 |
+| tak-hinted | 31.30494 | 314.73165 | 27.720708 | 7 |
+| nbody | ABSENT | | | -169027 |
+| nbody-hinted | ABSENT | | | -169027 |
+| spectral-norm | 31.55363 | 1532.564494 | 47.583877 | 784826 |
+| spectral-norm-hinted | 48.056577 | 1614.759454 | 28.695599 | 784826 |
+| mandelbrot | ABSENT | | | 608 |
+| mandelbrot-hinted | ABSENT | | | 608 |
+| binary-trees | 2.152043 | 575.325684 | 4.149645 | 7083 |
+| binary-trees-hinted | 2.644479 | 592.012082 | 2.070858 | 7083 |
+| fannkuch | ABSENT | | | -502 |
+| fannkuch-hinted | ABSENT | | | -502 |
+| nsieve | ABSENT | | | 564 |
+| nsieve-hinted | ABSENT | | | 564 |
+| k-nucleotide | 2.518669 | 365.33767 | 2.238103 | 500 |
+| pipeline | 5.749218 | 1079.960877 | 2.290159 | 5995001 |
+| dispatch | 24.320671 | 921.303304 | 11.215947 | 200183333 |
+| json | 0.262185 | 1639.843371 | 1.798362 | 580 |
+| first-output | NOT-TIMED | | | ok |
+
+Cohost ABSENT reasons: nbody and nbody-hinted, `use of undeclared identifier 's34'`. mandelbrot and mandelbrot-hinted, `use of undeclared identifier 's36'`. fannkuch and fannkuch-hinted, `use of undeclared identifier 's28'`. nsieve and nsieve-hinted, `use of undeclared identifier 's61'`.
+
+Geometric mean of the twelve cohost / JVM median ratios: `9.575854`.
+
+Hinted median / unhinted median on cohost, where both ran: fib `3.499112`, tak `3.093695`, spectral-norm `1.523013`, binary-trees `1.228823`.
+
+Not measured yet on this box: `jvm-cohost`, `cljrs`, `cljrs-cohost`.
 
 Absent on this box: `jolt` and `jolt-cohost` (no `jolt` on PATH), `lpy` and `lpy-cohost` (no `basilisp`), `cljw` and `cljw-cohost` (no `cljw`), `phel` and `phel-cohost` (no `phel`), `lg` and `lg-cohost` (no `lg`). `cljs`, `cljs-cohost`, `browser`, and `browser-cohost` have `node` but no ClojureScript jar in the local Maven repo, so the build cannot be compiled here.
