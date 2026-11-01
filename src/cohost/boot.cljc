@@ -147,6 +147,23 @@
                             (or (and (map? (first more)) (:macro (first more)))
                                 (and (map? (last more)) (:macro (last more))))))))))))
 
+;; Record mode for the AOT snapshot. nil unless boot! was given {:record? true}.
+;; Defined above the first use: jank's analyzer does not resolve a var whose
+;; def is later in the file. The off path is this nil check. :snapshot-emit
+;; stays nil, so nothing is called unless a task installs a fn.
+(def snapshot-log (atom nil))
+
+(defn snapshot-events
+  "The vector of events from the current {:record? true} boot, or nil."
+  []
+  @snapshot-log)
+
+(defn- snap! [event]
+  (when @snapshot-log
+    (swap! snapshot-log conj event)
+    (when-let [f (host/snapshot-emit)]
+      (when (fn? f) (f event)))))
+
 (defn- scan-macros!
   "Promote `^:macro` defs the host did not treat as macros, and wrap every
    not-yet-wrapped macro of ns-sym so its output goes through the codemod."
@@ -545,22 +562,6 @@
      (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
 
 (def verbose? (atom false))
-
-;; Record mode for the AOT snapshot. nil unless boot! was given {:record? true}.
-;; The off path is this nil check. :snapshot-emit stays nil on every host, so
-;; nothing is called unless a task installs a fn.
-(def snapshot-log (atom nil))
-
-(defn snapshot-events
-  "The vector of events from the current {:record? true} boot, or nil."
-  []
-  @snapshot-log)
-
-(defn- snap! [event]
-  (when @snapshot-log
-    (swap! snapshot-log conj event)
-    (when-let [f (host/snapshot-emit)]
-      (when (fn? f) (f event)))))
 
 (def ^:private native-heads
   "The def forms a native can stand in for: fns (a macro has no native)."
