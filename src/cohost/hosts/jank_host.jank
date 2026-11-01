@@ -1299,6 +1299,7 @@ namespace cohost_obj {
                 v))
    :user-type? (fn [x] (cohost-object? x))
    :instance-desc instance-desc
+   :cohost-inst? (fn [x] (cpp/cohost_obj.is_cohost x))
    :instance-field inst-field
    :new-instance (fn [desc fields] (new-instance desc fields))
    :with-meta (fn [x m] (if (cohost-object? x) (with-inst-meta x m) (with-meta x m)))
