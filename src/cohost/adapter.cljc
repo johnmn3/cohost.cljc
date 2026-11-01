@@ -106,6 +106,7 @@
    :new-instance    [['desc 'fields] "a new instance of the user type desc (a descriptor map) with these field values, on a :cohost-types host; the shim's type dispatch keys off :instance-desc, not this"]
    :instance-desc   [['x] "the descriptor (a map) of the cohost type x is an instance of, on a :cohost-types host, or nil; the descriptor carries the type's own fns for the operations the host's fns cannot do on it (:count :assoc :dissoc :conj :nth :empty :seq :get :deref :compare :reduce)"]
    :instance-field  [['x 'i] "field i of a cohost type instance, on a :cohost-types host"]
+   :cohost-inst?    [['x] "true when x is an instance of a cohost type, on a :cohost-types host: the bare tag test, without returning the descriptor (:instance-desc); default false"]
    :with-meta       [['x 'm] "x with its metadata replaced by m: the host's with-meta (the default), or the type's own on a :cohost-types host, whose instances the host's with-meta cannot touch"]
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
@@ -335,6 +336,7 @@ namespace cohost_err {
     :user-type? (fn [_] false)
     :new-instance (unsupported :new-instance)
     :instance-desc (fn [_] nil)
+    :cohost-inst? (fn [_] false)
     :instance-field (fn [_ _] nil)
     :with-meta (fn [x m] (with-meta x m))
     :host-data? (fn [_] false)

@@ -337,11 +337,23 @@
 (declare class-token?)
 (declare chunked-cons?)
 
+;; the bare C++ tag test for a cohost type instance, its capability fn
+;; read once at load (as h-host-data? reads its capability below): the
+;; guard on every RT-count/conj/nth/assoc and interface test must not pay
+;; a capability map lookup plus a descriptor build per call
+(def ^:private h-cohost-inst? (host/capability :cohost-inst?))
+
+;; :instance-desc's capability fn, likewise read once: the descriptor
+;; path itself stays for values that ARE instances (protocol dispatch),
+;; and it must not pay the capability map lookup per call either
+(def ^:private h-instance-desc (host/capability :instance-desc))
+
 (defn- jank-impl?
   "On a :cohost-types host, does x's type implement k (:seq :get :assoc
    :count :nth :conj :reduce :compare)? Never elsewhere."
   [x k]
-  #?(:jank (boolean (when-let [d (host/instance-desc x)] (get d k)))
+  #?(:jank (boolean (and (h-cohost-inst? x)
+                         (when-let [d (h-instance-desc x)] (get d k))))
      :default false))
 
 (defn- cohost-inst?
@@ -349,13 +361,14 @@
    predicates (coll?, associative?, sequential?, counted?, empty?) abort
    the process on such an object, so the shim asks this first."
   [x]
-  #?(:jank (some? (host/instance-desc x)) :default false))
+  #?(:jank (h-cohost-inst? x) :default false))
 
 (defn- jank-head?
   "On a :cohost-types host, did x's type name the class token among its
    spec heads?"
   [x token]
-  #?(:jank (boolean (when-let [d (host/instance-desc x)] (contains? (:heads d) token)))
+  #?(:jank (boolean (and (h-cohost-inst? x)
+                         (when-let [d (h-instance-desc x)] (contains? (:heads d) token))))
      :default false))
 
 (defn- coll?*
