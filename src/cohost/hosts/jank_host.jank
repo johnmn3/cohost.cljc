@@ -44,8 +44,6 @@
             (cb (fix-tags (read-string (subs src i j))))
             (recur (scan/skip-ws cs j))))))))
 
-(defn- type? [t x] (= t (type x)))
-
 (defn- var-ns-of [h]
   (let [s (str h)]
     (when (string/starts-with? s "#'") (symbol (subs s 2 (string/index-of s "/"))))))
@@ -60,6 +58,75 @@ namespace cohost_time {
   inline long long nano_time() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
   inline long long millis() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 }")
+;; type tags: the predicates below test jank's object_type as an integer,
+;; never as a name string (the string form costs a (type x) and a string
+;; compare on every call). The constants are read from the compiler's own
+;; enum at compile time, as object_type::max was for cohost_object's tag.
+(cpp/raw "
+namespace cohost_tag {
+  using namespace jank::runtime;
+  inline int of(object_ref x) { return static_cast<int>(x.get_type()); }
+  inline int atom() { return static_cast<int>(object_type::atom); }
+  inline int delay() { return static_cast<int>(object_type::delay); }
+  inline int volatile_() { return static_cast<int>(object_type::volatile_); }
+  inline int var() { return static_cast<int>(object_type::var); }
+  inline int future() { return static_cast<int>(object_type::future); }
+  inline int promise() { return static_cast<int>(object_type::promise); }
+  inline int lazy_sequence() { return static_cast<int>(object_type::lazy_sequence); }
+  inline int exception_info() { return static_cast<int>(object_type::exception_info); }
+  inline int big_decimal() { return static_cast<int>(object_type::big_decimal); }
+  inline int big_integer() { return static_cast<int>(object_type::big_integer); }
+  inline int re_pattern() { return static_cast<int>(object_type::re_pattern); }
+  inline bool is_transient(object_ref x) {
+    switch (x.get_type()) {
+      case object_type::transient_vector:
+      case object_type::transient_array_map:
+      case object_type::transient_hash_map:
+      case object_type::transient_sorted_map:
+      case object_type::transient_hash_set:
+      case object_type::transient_sorted_set:
+        return true;
+      default:
+        return false;
+    }
+  }
+  inline bool is_deref(object_ref x) {
+    switch (x.get_type()) {
+      case object_type::atom:
+      case object_type::delay:
+      case object_type::volatile_:
+      case object_type::var:
+      case object_type::future:
+      case object_type::promise:
+        return true;
+      default:
+        return false;
+    }
+  }
+  inline bool is_pending(object_ref x) {
+    switch (x.get_type()) {
+      case object_type::delay:
+      case object_type::future:
+      case object_type::promise:
+      case object_type::lazy_sequence:
+        return true;
+      default:
+        return false;
+    }
+  }
+}")
+
+
+(def ^:private tag-atom (cpp/cohost_tag.atom))
+(def ^:private tag-delay (cpp/cohost_tag.delay))
+(def ^:private tag-volatile (cpp/cohost_tag.volatile_))
+(def ^:private tag-lazy-sequence (cpp/cohost_tag.lazy_sequence))
+(def ^:private tag-exception-info (cpp/cohost_tag.exception_info))
+(def ^:private tag-big-decimal (cpp/cohost_tag.big_decimal))
+(def ^:private tag-big-integer (cpp/cohost_tag.big_integer))
+(def ^:private tag-re-pattern (cpp/cohost_tag.re_pattern))
+
+(defn- type? [t x] (= t (cpp/cohost_tag.of x)))
 (cpp/raw "#include <cmath>
 #include <limits>
 namespace cohost_math {
@@ -1265,9 +1332,9 @@ namespace cohost_obj {
                                     (and (= token 'clojure.lang.IReduceInit) (some? (:reduce d)))
                                     (and (= token 'clojure.lang.Seqable) (some? (:seq d)))
                                     (and (= token 'clojure.lang.ILookup) (some? (:get d)))))))
-   :deref? (fn [x] (or (contains? #{"atom" "delay" "volatile_" "var" "future" "promise"} (type x))
+   :deref? (fn [x] (or (cpp/cohost_tag.is_deref x)
                        (boolean (when-let [d (instance-desc x)] (:deref d)))))
-   :pending? (fn [x] (contains? #{"delay" "future" "promise" "lazy_sequence"} (type x)))
+   :pending? (fn [x] (cpp/cohost_tag.is_pending x))
    ;; unchecked-dec: jank's own is a TODO stub that throws, and the
    ;; shim's Numbers/unchecked_dec prefers the host fn over its dec
    ;; fallback -- report it absent so the fallback runs
@@ -1280,12 +1347,12 @@ namespace cohost_obj {
    :rewrite-inline? true
    :lazy-seq (fn [f] (lazy-seq (f)))
    :delay (fn [f] (delay (f)))
-   :exception? (fn [x] (type? "exception_info" x))
-   :transient? (fn [x] (let [t (type x)] (and (string? t) (string/starts-with? t "transient"))))
-   :lazy-seq? (fn [x] (type? "lazy_sequence" x))
-   :atom? (fn [x] (type? "atom" x))
-   :volatile? (fn [x] (type? "volatile_" x))
-   :delay? (fn [x] (type? "delay" x))
+   :exception? (fn [x] (type? tag-exception-info x))
+   :transient? (fn [x] (cpp/cohost_tag.is_transient x))
+   :lazy-seq? (fn [x] (type? tag-lazy-sequence x))
+   :atom? (fn [x] (type? tag-atom x))
+   :volatile? (fn [x] (type? tag-volatile x))
+   :delay? (fn [x] (type? tag-delay x))
    :parse-double (fn [s] (parse-double s))
    :parse-long (fn [s] (parse-long s))
    :nan? (fn [x] (and (number? x) (NaN? x)))
@@ -1293,12 +1360,12 @@ namespace cohost_obj {
    :char? (fn [x] (char? x))
    :uuid? (fn [x] (uuid? x))
    :ratio? (fn [x] (ratio? x))
-   :decimal? (fn [x] (type? "big_decimal" x))
+   :decimal? (fn [x] (type? tag-big-decimal x))
    :sorted? (fn [x] (sorted? x))
    ;; (its indexed? is a TODO stub)
    :indexed? (fn [x] (or (vector? x) (boolean (when-let [d (instance-desc x)] (:nth d)))))
-   :regex? (fn [x] (type? "re_pattern" x))
-   :bigint? (fn [x] (type? "big_integer" x))
+   :regex? (fn [x] (type? tag-re-pattern x))
+   :bigint? (fn [x] (type? tag-big-integer x))
    :counted? (fn [x] (if-let [d (instance-desc x)] (boolean (:count d)) (counted? x)))
    ;; (its reversible? and rseq are TODO stubs: vectors and sorted
    ;; collections are reversible, and the shim's -rseq reverses)
