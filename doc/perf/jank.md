@@ -1003,3 +1003,23 @@ Before, three AOT profile runs with the branch timers and no shortcut. Codemod n
 After, three AOT profile runs. Codemod ns `8147647056`, `8304989494`, `8736504646` (median `8304989494`). Totals `17966559842`, `18305395228`, `18719317550` (median `18305395228`).
 
 `let/plain` and `loop/plain` are absent from the after expand list. `let/vector` remains (31 calls). `dev/perf/jank_let_eq.jank` compared rewrite to macroexpand after boot and printed DIFF with the rewrite still headed by `let`: that call resolved a `let` the codemod does not expand, so it did not take the shortcut. The boot profiles are the evidence the shortcut ran.
+
+The `timed` macro now expands to its body. jank's JIT of the instrumented `rw-list` exited 139 on `run-main cohost.run` with the timers off. The shares above were captured before that expansion was removed.
+
+Timers off, after that change. `bb boot:jvm`:
+
+```
+booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0
+battery: 144/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The one JVM failure is `reduce over an eduction; a :tag that is data` (`Eduction` cannot be cast to `IReduce`). `jank --module-path src run-main cohost.run`:
+
+```
+booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The two jank failures are `subs count nth first last butlast` (`Unterminated vector.`) and `Character outside ASCII` (`Unexpected end of file.`).

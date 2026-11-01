@@ -38,18 +38,12 @@
 (def profile-macro-ns (volatile! nil))
 (def profile-macro-n (volatile! nil))
 
+;; The branch timer used to wrap every dispatch. jank's JIT of that rw-list
+;; exited 139 (bb boot:jank, timers off). The measured shares are in
+;; doc/perf/jank.md. The macro stays so the call sites read as the branch
+;; names, and expands to the body only.
 (defmacro ^:private timed [k & body]
-  `(let [acc# @profile-branches]
-     (if-not acc#
-       (do ~@body)
-       (let [t0# (host/nano-time)
-             c0# @profile-child
-             v# (do ~@body)
-             dt# (- (host/nano-time) t0#)
-             kids# (- @profile-child c0#)]
-         (vswap! profile-branches update ~k (fn [n#] (prof+ (or n# 0) (- dt# kids#))))
-         (vreset! profile-child (prof+ c0# dt#))
-         v#))))
+  `(do ~@body))
 
 ;; ---------------------------------------------------------------------------
 ;; small string helpers (no clojure.string: keep the host surface minimal)
