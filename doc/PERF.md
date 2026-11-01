@@ -451,21 +451,21 @@ Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`,
 | fib-hinted | 4.425011 | 17.725987 | 79.821299 | 247.66818 | 18.038667 | 7.362588 | 7.320614 | 1.663858 | 832040 |
 | tak | 1.367668 | 6.945293 | 2.653217 | 253.907528 | 1.939957 | 0.324893 | 0.370587 | 0.237553 | 7 |
 | tak-hinted | 1.129298 | 3.340478 | 4.194396 | 42.517684 | 3.714162 | 0.617815 | 0.705569 | 0.547079 | 7 |
-| nbody | 3.876606 | 13.552441 | ABSENT | | | ABSENT | | | -169027 |
-| nbody-hinted | 3.079164 | 14.419944 | ABSENT | | | ABSENT | | | -169027 |
-| spectral-norm | 0.663116 | 15.028961 | ABSENT | | | ABSENT | | | 784826 |
-| spectral-norm-hinted | 1.674702 | 13.756405 | ABSENT | | | ABSENT | | | 784826 |
-| mandelbrot | 0.444768 | 1.998482 | ABSENT | | | ABSENT | | | 608 |
-| mandelbrot-hinted | 0.213834 | 1.950147 | ABSENT | | | ABSENT | | | 608 |
+| nbody | 3.876606 | 13.552441 | ABSENT Math/sqrt | | | ABSENT Math/sqrt | | | -169027 |
+| nbody-hinted | 3.079164 | 14.419944 | ABSENT Math/sqrt | | | ABSENT Math/sqrt | | | -169027 |
+| spectral-norm | 0.663116 | 15.028961 | ABSENT Math/round | | | ABSENT Math/round | | | 784826 |
+| spectral-norm-hinted | 1.674702 | 13.756405 | ABSENT Math/round | | | ABSENT Math/round | | | 784826 |
+| mandelbrot | 0.444768 | 1.998482 | ABSENT s35 | | | ABSENT s35 | | | 608 |
+| mandelbrot-hinted | 0.213834 | 1.950147 | ABSENT s35 | | | ABSENT s35 | | | 608 |
 | binary-trees | 0.518609 | 3.696582 | 1.736672 | 353.635392 | 3.348712 | 0.905763 | 0.556616 | 1.746524 | 7083 |
 | binary-trees-hinted | 1.276997 | 3.619701 | 1.740416 | 290.493741 | 1.362897 | 0.951506 | 1.972727 | 0.745112 | 7083 |
-| fannkuch | 21.31977 | 60.519953 | ABSENT | | | ABSENT | | | -502 |
-| fannkuch-hinted | 20.498867 | 67.888894 | ABSENT | | | ABSENT | | | -502 |
-| nsieve | 0.835891 | 3.45517 | ABSENT | | | ABSENT | | | 564 |
-| nsieve-hinted | 1.023101 | 2.823484 | ABSENT | | | ABSENT | | | 564 |
+| fannkuch | 21.31977 | 60.519953 | ABSENT s28 | | | ABSENT s28 | | | -502 |
+| fannkuch-hinted | 20.498867 | 67.888894 | ABSENT s28 | | | ABSENT s28 | | | -502 |
+| nsieve | 0.835891 | 3.45517 | ABSENT s56 | | | ABSENT s56 | | | 564 |
+| nsieve-hinted | 1.023101 | 2.823484 | ABSENT s56 | | | ABSENT s56 | | | 564 |
 | k-nucleotide | 1.125359 | 5.198497 | 1.078813 | 113.019317 | 0.958639 | 0.491155 | 0.596223 | 0.436443 | 500 |
 | pipeline | 2.510401 | 9.299799 | 4.264566 | 368.019931 | 1.698759 | 3.360476 | 2.776184 | 1.338621 | 5995001 |
-| dispatch | 2.168401 | 10.863573 | ABSENT | | | ABSENT | | | 200183333 |
+| dispatch | 2.168401 | 10.863573 | ABSENT defprotocol | | | ABSENT defprotocol | | | 200183333 |
 | json | 0.145791 | 0.566916 | 0.073902 | 790.121021 | 0.506904 | 0.033901 | 0.106072 | 0.232532 | 580 |
 | first-output | 385.120548 | 377.261128 | 362.395388 | 373.893489 | 0.940992 | 384.276232 | 662.439066 | 0.997808 | ok |
 
@@ -487,18 +487,18 @@ On jank-jit, where both forms ran: fib `0.984637`, tak `1.580872`, binary-trees 
 | fib-hinted | 442.530535 | 732.72114 | 100.006652 | 832040 |
 | tak | 10.118948 | 284.221359 | 7.398687 | 7 |
 | tak-hinted | 31.30494 | 314.73165 | 27.720708 | 7 |
-| nbody | ABSENT | | | -169027 |
-| nbody-hinted | ABSENT | | | -169027 |
+| nbody | ABSENT s34 | | | -169027 |
+| nbody-hinted | ABSENT s34 | | | -169027 |
 | spectral-norm | 31.55363 | 1532.564494 | 47.583877 | 784826 |
 | spectral-norm-hinted | 48.056577 | 1614.759454 | 28.695599 | 784826 |
-| mandelbrot | ABSENT | | | 608 |
-| mandelbrot-hinted | ABSENT | | | 608 |
+| mandelbrot | ABSENT s36 | | | 608 |
+| mandelbrot-hinted | ABSENT s36 | | | 608 |
 | binary-trees | 2.152043 | 575.325684 | 4.149645 | 7083 |
 | binary-trees-hinted | 2.644479 | 592.012082 | 2.070858 | 7083 |
-| fannkuch | ABSENT | | | -502 |
-| fannkuch-hinted | ABSENT | | | -502 |
-| nsieve | ABSENT | | | 564 |
-| nsieve-hinted | ABSENT | | | 564 |
+| fannkuch | ABSENT s28 | | | -502 |
+| fannkuch-hinted | ABSENT s28 | | | -502 |
+| nsieve | ABSENT s61 | | | 564 |
+| nsieve-hinted | ABSENT s61 | | | 564 |
 | k-nucleotide | 2.518669 | 365.33767 | 2.238103 | 500 |
 | pipeline | 5.749218 | 1079.960877 | 2.290159 | 5995001 |
 | dispatch | 24.320671 | 921.303304 | 11.215947 | 200183333 |
@@ -519,16 +519,16 @@ Hinted median / unhinted median on cohost, where both ran: fib `3.499112`, tak `
 | fib-hinted | 1350.766075 | 1319.948278 | 305.257111 | 832040 |
 | tak | 30.360394 | 34.486952 | 22.198658 | 7 |
 | tak-hinted | 30.24246 | 31.79012 | 26.779876 | 7 |
-| nbody | ABSENT | | | -169027 |
-| nbody-hinted | ABSENT | | | -169027 |
+| nbody | ABSENT not callable: <nil> is not | | | -169027 |
+| nbody-hinted | ABSENT not callable: <nil> is not | | | -169027 |
 | spectral-norm | 364.45816 | 415.780843 | 549.614487 | 784826 |
 | spectral-norm-hinted | 421.163685 | 473.198959 | 251.485748 | 784826 |
 | mandelbrot | 5.973609 | 16.83927 | 13.430843 | 608 |
 | mandelbrot-hinted | 6.937899 | 17.972488 | 32.445257 | 608 |
 | binary-trees | 10.920277 | 13.61334 | 21.056860 | 7083 |
 | binary-trees-hinted | 11.107553 | 12.140018 | 8.698183 | 7083 |
-| fannkuch | ABSENT | | | -502 |
-| fannkuch-hinted | ABSENT | | | -502 |
+| fannkuch | ABSENT vector index out of bounds: 0 | | | -502 |
+| fannkuch-hinted | ABSENT vector index out of bounds: 0 | | | -502 |
 | nsieve | 705.783142 | 703.566645 | 844.348297 | 564 |
 | nsieve-hinted | 776.055012 | 768.159621 | 758.532161 | 564 |
 | k-nucleotide | 11.595415 | 11.994055 | 10.303748 | 500 |
@@ -537,7 +537,7 @@ Hinted median / unhinted median on cohost, where both ran: fib `3.499112`, tak `
 | json | 18.164097 | 27.988001 | 124.589975 | 580 |
 | first-output | 11.607159 | 17.149073 | 0.030139 | ok |
 
-clojurust ABSENT reasons, as printed by the suite: nbody and nbody-hinted, `not callable: <nil> is not`. fannkuch and fannkuch-hinted, `vector index out of bounds: 0`.
+clojurust ABSENT reasons, as printed by `bb bench:programs cljrs`: nbody and nbody-hinted, `not callable: <nil> is not`. fannkuch and fannkuch-hinted, `vector index out of bounds: 0`.
 
 Geometric mean of the seventeen cljrs / JVM median ratios: `48.975879`.
 
