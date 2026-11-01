@@ -26,15 +26,15 @@
 ;; Phase timers for the boot profile. Off unless boot! is called with
 ;; {:profile? true}: the off path does not call :nano-time and does not
 ;; record forms. Every host's boot report stays the numbers it prints today.
-(defn- profile? [] (some? (:profile @state)))
+(defn- profiling [] (some? (:profile @state)))
 
 (defn- profile-add! [k dt]
-  (when (and (profile?) dt)
+  (when (and (profiling) dt)
     (let [bucket (or (:profile-bucket @state) :core)]
       (swap! (:profile @state) update-in [:phases bucket k] (fnil + 0) dt))))
 
 (defn- profile-form! [ns-sym form name dt]
-  (when (and (profile?) dt (pos? dt))
+  (when (and (profiling) dt (pos? dt))
     (let [h (when (seq? form) (first form))]
       (swap! (:profile @state) update :forms conj
              {:ns (str ns-sym)
@@ -46,7 +46,7 @@
 (defn- prof
   "Call thunk. When profiling, add its :nano-time to phase key k."
   [k thunk]
-  (if-not (profile?)
+  (if-not (profiling)
     (thunk)
     (let [t0 (host/nano-time)
           v (thunk)
@@ -58,7 +58,7 @@
   "read-forms. When profiling, the time between forms (the read) is :read;
    the callback's time is not."
   [src cb]
-  (if-not (profile?)
+  (if-not (profiling)
     (host/read-forms src cb)
     (let [mark (volatile! (host/nano-time))]
       (host/read-forms src
@@ -320,7 +320,7 @@
     (fn [] (if-let [d (directive form)]
              (directive! d)
              (let [form' (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
-                   v (if-not (profile?)
+                   v (if-not (profiling)
                        (host/eval-form (rw/rewrite c form'))
                        (let [t0 (host/nano-time)
                              rewritten (rw/rewrite c form')
@@ -489,7 +489,7 @@
 (defn- eval-form! [ctx report form name status]
   (host/try-all
    (fn []
-     (if-not (profile?)
+     (if-not (profiling)
        (host/eval-form (rw/rewrite ctx (prepare form)))
        (let [t0 (host/nano-time)
              prepared (prepare form)
@@ -629,7 +629,7 @@
 (defn boot-file!
   "Boot one source file (a path) into cohost.core."
   [ctx report path]
-  (let [src (if (profile?)
+  (let [src (if (profiling)
               (prof :read #(strip-string-tags (host/slurp-file path)))
               (strip-string-tags (host/slurp-file path)))]
     (host/with-ns core-ns
@@ -641,7 +641,7 @@
    at path, read once (the file's other forms are not evaluated)."
   [path names]
   (let [found (atom {})]
-    (host/try-all (fn [] (let [src (if (profile?)
+    (host/try-all (fn [] (let [src (if (profiling)
                                       (prof :read #(strip-string-tags (host/slurp-file path)))
                                       (strip-string-tags (host/slurp-file path)))]
                            (read-prof src (fn [form] (let [nm (policy/form-name form)]
@@ -658,9 +658,9 @@
    (if profile?
      (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
      (swap! state dissoc :profile :profile-bucket))
-   (let [t-boot (when (profile?) (host/nano-time))]
+   (let [t-boot (when (profiling) (host/nano-time))]
    (host/ensure-bare-ns! core-ns)
-   (let [ctx (if (profile?) (prof :setup #(make-ctx)) (make-ctx))
+   (let [ctx (if (profiling) (prof :setup #(make-ctx)) (make-ctx))
          report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
      (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks))))
      (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
@@ -695,7 +695,7 @@
                            (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil))
                            (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
                  (scan-macros! ctx))]
-           (if-not (profile?)
+           (if-not (profiling)
              (run-companions)
              (let [prev (:profile-bucket @state)
                    t0 (host/nano-time)]
@@ -724,7 +724,7 @@
   "Run thunk in profile bucket k and record its wall time. A no-op addition
    when profiling is off: thunk still runs."
   [k thunk]
-  (if-not (profile?)
+  (if-not (profiling)
     (thunk)
     (let [prev (:profile-bucket @state)]
       (swap! state assoc :profile-bucket k)
@@ -997,7 +997,7 @@
          (host/with-ns (or from-ns core-ns)
            (fn []
              (read-prof
-              (if (profile?) (prof :read #(strip-string-tags src)) (strip-string-tags src))
+              (if (profiling) (prof :read #(strip-string-tags src)) (strip-string-tags src))
               (fn [form]
                 (let [cur (host/current-ns)
                       {:keys [action replacement] nm :name} (policy/decide-lib form lib)]
