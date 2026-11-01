@@ -31,14 +31,15 @@
 (defn- profile-add! [k dt]
   (when (and (profiling) dt)
     (let [bucket (or (:profile-bucket @state) :core)]
-      (swap! (:profile @state) update-in [:phases bucket k] (fnil + 0) dt))))
+      ;; jank's + wraps at 32 bits; +' does not.
+      (swap! (:profile @state) update-in [:phases bucket k] (fn [n] (+' (or n 0) dt))))))
 
 (defn- profile-form! [ns-sym form name dt]
   (when (and (profiling) dt (pos? dt))
     (let [h (when (seq? form) (first form))]
       (swap! (:profile @state) update :forms conj
              {:ns (str ns-sym)
-              :head (if (symbol? h) (name h) "-")
+              :head (if (symbol? h) (str h) "-")
               :name (str (or name "-"))
               :eval dt
               :bucket (or (:profile-bucket @state) :core)}))))
@@ -329,7 +330,7 @@
                              t2 (host/nano-time)]
                          (profile-add! :rewrite (- t1 t0))
                          (profile-add! :eval (- t2 t1))
-                         (profile-form! ns-sym form' (or (policy/form-name form) (when (seq? form) (first form))) (- t2 t1))
+                         (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form))) (- t2 t1))
                          v))]
                (host/after-eval form' ns-sym)
                (when (or (not lib?) (may-make-macro? form))
@@ -490,18 +491,21 @@
   (host/try-all
    (fn []
      (if-not (profiling)
-       (host/eval-form (rw/rewrite ctx (prepare form)))
+       (do (host/eval-form (rw/rewrite ctx (prepare form)))
+           (host/after-eval form core-ns)
+           (capture-inline! ctx form))
        (let [t0 (host/nano-time)
              prepared (prepare form)
              rewritten (rw/rewrite ctx prepared)
              t1 (host/nano-time)
              _ (host/eval-form rewritten)
-             t2 (host/nano-time)]
+             t2 (host/nano-time)
+             _ (host/after-eval form core-ns)
+             _ (capture-inline! ctx form)
+             t3 (host/nano-time)]
          (profile-add! :rewrite (- t1 t0))
-         (profile-add! :eval (- t2 t1))
+         (profile-add! :eval (+' (- t2 t1) (- t3 t2)))
          (profile-form! core-ns form name (- t2 t1))))
-     (host/after-eval form core-ns)
-     (capture-inline! ctx form)
      (record! report status {:name name}))
    (fn [e]
      (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
@@ -755,7 +759,7 @@
           library (get-in p [:walls :library] 0)
           boot-wall (or (:boot-wall p) 0)
           total (+ boot-wall library)
-          named (+ read rewrite ev scan setup companion library)
+          named (+' read rewrite ev scan setup companion library)
           other (- total named)
           rows [["reading" read] ["codemod" rewrite] ["eval" ev] ["scan-macros" scan]
                 ["setup" setup] ["companion" companion] ["library" library] ["other" other]]
@@ -763,7 +767,7 @@
       (println (str "PROFILE-TOTAL " total))
       (doseq [[k n] rows]
         (println (str "PROFILE-PHASE " k " " n " " (pct n))))
-      (println (str "PROFILE-SUM " (+ named other)))
+      (println (str "PROFILE-SUM " (+' named other)))
       (doseq [[i f] (map-indexed vector (profile-top (:forms p) 20))]
         (println (str "PROFILE-TOP " (inc i) " " (:bucket f) " " (:ns f) " " (:head f) " " (:name f) " " (:eval f)))))))
 
