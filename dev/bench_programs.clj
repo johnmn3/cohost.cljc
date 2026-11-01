@@ -57,7 +57,7 @@
    {:id "cljrs" :exe "cljrs"}
    {:id "cljrs-cohost" :exe "cljrs"}])
 
-(def timed-ids #{"jvm" "jank-jit" "jank-aot" "jank" "cljrs" "cljrs-cohost"})
+(def timed-ids #{"jvm" "jvm-cohost" "jank-jit" "jank-aot" "jank" "cljrs" "cljrs-cohost"})
 
 (defn reason [t]
   (cond
@@ -101,11 +101,18 @@
   (nth (vec (sort xs)) (quot (count xs) 2)))
 
 (defn one-error [err]
-  (or (some #(when (or (str/includes? % "error:") (str/includes? % "Error") (str/includes? % "Exception"))
-               (str/trim %))
-            (str/split-lines err))
-      (let [t (str/trim err)]
-        (when (seq t) (subs t 0 (min 180 (count t)))))))
+  (let [lines (str/split-lines (or err ""))]
+    (or (some (fn [line]
+                (when-let [[_ m] (re-find #"=> ERR (.*)" line)]
+                  (str/trim m)))
+              lines)
+        (some #(when (or (str/includes? % "error:")
+                         (str/includes? % "Error")
+                         (str/includes? % "Exception"))
+                 (str/trim %))
+              lines)
+        (let [t (str/trim (or err ""))]
+          (when (seq t) (subs t 0 (min 220 (count t))))))))
 
 (defn run-jvm [src arg cold?]
   (fs/create-dirs "target/bench-programs")
@@ -157,19 +164,26 @@
         (harness src "(System/nanoTime)" false))
   (run! ["cljrs" "run" "target/bench-programs/wrap.clj" "--" arg (if cold? "cold" "warm")]))
 
+(defn run-jvm-cohost [src arg cold?]
+  (let [mode (if cold? "cold" "warm")
+        code (str (harness src "(System/nanoTime)" false)
+                  "(-main " (pr-str arg) " " (pr-str mode) ")")]
+    (apply shell {:out :string :err :string :continue true :timeout 300000}
+           ["clojure" "-M" "-m" "cohost.run" "--" "--eval" code])))
+
 (defn run-cljrs-cohost [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/cohost.clj"
-        (str (harness src "(System/nanoTime)" false)
-             "(-main " (pr-str arg) " " (pr-str (if cold? "cold" "warm")) ")\n"))
-  (shell {:out :string :err :string :continue true :timeout 180000
-          :extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}}
-         "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
-         "src/cohost/run.cljc" "--" "--eval" "(load-file \"target/bench-programs/cohost.clj\")"))
+  (let [mode (if cold? "cold" "warm")
+        code (str (harness src "(System/nanoTime)" false)
+                  "(-main " (pr-str arg) " " (pr-str mode) ")")]
+    (apply shell {:out :string :err :string :continue true :timeout 300000
+                  :extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}}
+           ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
+            "src/cohost/run.cljc" "--" "--eval" code])))
 
 (defn runner-for [id]
   (case id
     "jvm" (fn [id src arg cold?] (run-jvm src arg cold?))
+    "jvm-cohost" (fn [id src arg cold?] (run-jvm-cohost src arg cold?))
     "jank-jit" (fn [id src arg cold?] (run-jank-jit src arg cold?))
     "jank-aot" run-jank-aot
     "jank" (fn [id src arg cold?] (run-jank-cohost src arg cold?))
@@ -208,13 +222,19 @@
              ["jank" "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
               "--eval" "(println \"ok\")"])
     "cljrs" (wall-cljrs-cmd)
+    "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" "(println \"ok\")"]
+    "cljrs-cohost" ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
+                    "src/cohost/run.cljc" "--" "--eval" "(println \"ok\")"]
     nil))
 
 (defn wall-run [id file]
   (try
     (if-let [cmd (wall-cmd id file)]
       (let [t0 (System/nanoTime)
-            proc (run! cmd)
+            proc (apply shell (merge {:out :string :err :string :continue true :timeout 300000}
+                                      (when (= id "cljrs-cohost")
+                                        {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}}))
+                        cmd)
             ms (double (/ (- (System/nanoTime) t0) 1000000.0))]
         {:exit (:exit proc) :ms ms :out (or (:out proc) "") :err (or (:err proc) "")})
       nil)
@@ -223,7 +243,7 @@
 
 (defn report-wall [t p]
   (let [id (:id t)
-        runner-ok (#{"jvm" "jank-jit" "jank-aot" "jank" "cljrs"} id)]
+        runner-ok (#{"jvm" "jvm-cohost" "jank-jit" "jank-aot" "jank" "cljrs" "cljrs-cohost"} id)]
     (if-not runner-ok
       (println (str "  PROGRAM first-output NOT-TIMED runner not written"))
       (let [cold (wall-run id (:file p))

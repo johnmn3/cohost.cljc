@@ -443,7 +443,7 @@ jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Prog
 
 Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`, binary-trees `8`, fannkuch `7`, nsieve `12`, k-nucleotide `2000`, pipeline `2000`, dispatch `20000`, json `20`.
 
-Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core). A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` is timed for jvm, jank-jit, jank-aot, cohost on jank, and clojurust.
+Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core), then `bb bench:programs jvm-cohost` (`clojure -M -m cohost.run -- --eval`). A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` is timed for jvm, jank-jit, jank-aot, cohost on jank, and clojurust.
 
 | program | jvm median | jvm cold | jit median | jit cold | jit/jvm | aot median | aot cold | aot/jvm | result |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -543,10 +543,40 @@ Geometric mean of the seventeen cljrs / JVM median ratios: `48.975879`.
 
 Hinted median / unhinted median on cljrs, where both ran: fib `0.942893`, tak `0.996116`, spectral-norm `1.155589`, mandelbrot `1.161425`, binary-trees `1.017149`, nsieve `1.099566`.
 
+`jvm-cohost` is `bb boot:jvm`'s entry, `clojure -M -m cohost.run`, with the program source passed to `--eval`. `bb bench:programs jvm-cohost`. Times are milliseconds.
+
+| program | jvm-cohost median | jvm-cohost cold | jvm-cohost/jvm | result |
+|---|---:|---:|---:|---|
+| fib | 6.925279 | 100.765007 | 1.308275 | 832040 |
+| fib-hinted | ABSENT cohost.user$fib cannot be cast to clojure.lang.IFn$LO | | | 832040 |
+| tak | 1.493625 | 2.279273 | 1.092096 | 7 |
+| tak-hinted | ABSENT cohost.user$tak cannot be cast to clojure.lang.IFn$LLLO | | | 7 |
+| nbody | 5.881155 | 11.028646 | 1.517089 | -169027 |
+| nbody-hinted | ABSENT cohost.user$advance cannot be cast to clojure.lang.IFn$ODO | | | -169027 |
+| spectral-norm | 2.972595 | 11.769845 | 4.482768 | 784826 |
+| spectral-norm-hinted | ABSENT cohost.user$eval_a cannot be cast to clojure.lang.IFn$LLO | | | 784826 |
+| mandelbrot | 0.739784 | 4.120885 | 1.663303 | 608 |
+| mandelbrot-hinted | ABSENT cohost.user$inside_QMARK_ cannot be cast to clojure.lang.IFn$DDO | | | 608 |
+| binary-trees | 0.407226 | 2.500697 | 0.785227 | 7083 |
+| binary-trees-hinted | ABSENT cohost.user$build cannot be cast to clojure.lang.IFn$LO | | | 7083 |
+| fannkuch | 31.943536 | 50.202803 | 1.498306 | -502 |
+| fannkuch-hinted | 25.690042 | 41.558123 | 1.253242 | -502 |
+| nsieve | 2.396237 | 7.064721 | 2.866686 | 564 |
+| nsieve-hinted | 2.447969 | 9.586698 | 2.392695 | 564 |
+| k-nucleotide | 1.311027 | 2.932697 | 1.164986 | 500 |
+| pipeline | 1.270138 | 5.243058 | 0.505950 | 5995001 |
+| dispatch | 10.115538 | 13.574763 | 4.664976 | 200183333 |
+| json | 0.121365 | 0.742074 | 0.832459 | 580 |
+| first-output | 2763.332345 | 2787.681567 | 7.175240 | ok |
+
+Geometric mean of the fifteen jvm-cohost / JVM median ratios: `1.692743`.
+
+Hinted median / unhinted median on jvm-cohost, where both ran: fannkuch `0.804232`, nsieve `1.021588`.
+
 ## Cohost AOT optimization level
 
 `bb boot:jank` calls `jank-aot-dir` (`bb.edn` lines 14-15), which loads `dev/perf/jank_aot_ensure.clj`. The recompile is one command, `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot`, at `dev/perf/jank_aot_ensure.clj:68-69`. That `-O3` covers `cohost.run` and the namespaces it depends on, including `cohost.shim` and `cohost.hosts.jank-host`. The script requires `cohost/shim.o` and `cohost/hosts/jank_host.o` in that same cache. There is no environment variable for the level. jank's own flag is `-O` / `--optimization`, values 0 through 3. The boot does not read it from the environment. The level is the literal `-O3` on that line, so the default is already `-O3`. `bb bench:programs jank` loads those objects. A second target would repeat the same compile. Default and `-O3` are that run: fib median `126.469398` ms, and the geometric mean of cohost `-O3` / default is `1`.
 
-Not measured yet on this box: `jvm-cohost`, `cljrs-cohost`.
+Not measured yet on this box: `cljrs-cohost`.
 
 Absent on this box: `jolt` and `jolt-cohost` (no `jolt` on PATH), `lpy` and `lpy-cohost` (no `basilisp`), `cljw` and `cljw-cohost` (no `cljw`), `phel` and `phel-cohost` (no `phel`), `lg` and `lg-cohost` (no `lg`). `cljs`, `cljs-cohost`, `browser`, and `browser-cohost` have `node` but no ClojureScript jar in the local Maven repo, so the build cannot be compiled here.
