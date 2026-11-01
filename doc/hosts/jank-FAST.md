@@ -162,8 +162,9 @@ not know (each fix upstream removes a shim guard here).
 The 30 bench cases measure cohost's overhead (the stock core against the host's own core), and
 the boot measures startup. Neither says how fast a program is against JVM Clojure, which is the
 goal: applications on cohost as fast as on the JVM. A suite under `bench/programs/`, each
-program portable Clojure, run on JVM Clojure 1.12 (the baseline), jank's own core, cohost on
-jank, and every other host:
+program portable Clojure, run on every supported target -- JVM Clojure 1.12 (the baseline), jolt,
+basilisp, ClojureScript on Node and in Chromium, ClojureWasm, Phel, let-go, clojurust, jank -- each
+on the host's own core and on cohost's stock core booted there, all on one box:
 - calls and recursion: fib 30, tak; floats: nbody, spectral-norm, mandelbrot; allocation and GC:
   binary-trees; arrays and mutation: fannkuch-redux, nsieve; maps and strings: k-nucleotide
   (frequencies over a generated string); persistent collections: a reduce/assoc/update-in data
