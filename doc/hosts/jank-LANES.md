@@ -23,7 +23,8 @@ Owns `src/cohost/hosts/jank.jank` and the `:jank` branches of `src/cohost/shim.c
    `muse/jank-step1`, if it is not ready for the main branch). Then finish it: exception class
    names, reduce over an eduction, the reader for `read-string`/edn, a clean libraries run, the
    two Character host facts. Done-bar: jank-FAST Step 1's.
-2. Step 2: the full bench baseline, the profile, the split of the boot's 44 s. Push the numbers
+2. Step 2: the full bench baseline and the runtime profile (the boot's split and profile moved to
+   lane G, 2026-11-01, as G-8: it feeds Step 6 stage 2). Push the numbers
    (doc/PERF.md, doc/perf/jank.md) before starting Step 3: lane G reads them.
 3. Step 3: the cheap adapter/shim wins (type tests by tag, the C++ instance guard, capability
    lookups, the syntax-quote metadata pass).
