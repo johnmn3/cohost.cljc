@@ -345,3 +345,98 @@ Return-type hints are unused (`ret_only` has no convert). `let` and `loop` local
 H1's map, from the spellings above: `long` -> `long`, `double` -> `double`, `boolean` -> `bool` (the symbol `boolean` does not resolve), `int` -> `int`. `jtl.i64` and `jank.i64` are the `long long` spelling of a 64-bit integer. Apply it to `fn*` parameter vectors. Leave return hints and `let` / `loop` local hints stripped. Strings, keywords, and every other tag stay stripped.
 
 Step 5 does not end at H0: the carried-loop cases gain. The gain is inside the hinted function. Hinting `+`, `<`, or `inc` themselves, so each call boxes on the way out, loses.
+
+## AOT stage 1
+
+Measured 2026-11-01 ET on jank `0.1-noble` (`jank compiler jank-0.1-alpha`). Load time is nanoseconds from process start (`time.time_ns`, the same CLOCK_REALTIME clock as `cpp/jank.runtime.current_time`) until the `LOAD-BEFORE-BOOT-NS` line, which is the first form after `(require 'cohost.run)` and immediately before `cohost.run/-main`. `-main` calls `boot!` after it parses its arguments. `--load-only` stops at the stamp.
+
+### Compile
+
+```
+jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot
+```
+
+The shell recorded `EXIT:0`. Clang still rejected `cohost.hosts.jank`. The log begins:
+
+```
+/workspace/src/cohost/hosts/jank.jank:231:1: error: no member named 'runtime' in namespace 'cohost::hosts::jank'; did you mean '::jank::runtime'?
+  231 | jank::runtime::obj::keyword_ref const_2830{ _jank_null{ } };
+      | ^~~~~~~~~~~~~
+      | ::jank::runtime
+```
+
+and ends `fatal error: too many errors emitted, stopping now [-ferror-limit=]` / `20 errors generated.` No `cohost/hosts/jank.o` was written. The other objects were:
+
+`target/jank-aot/_cache/x86_64-unknown-linux-gnu-d41ef4a07a9d4dd9963044192227fbfde2da40c9f817907bab326588f8e7ef94/cohost/{adapter,battery,bench,boot,lib_battery,policy,rewrite,run,scan,shim}.o` and `cohost/hosts/auto.o`.
+
+The same failure on a namespace whose name ends in `jank`, with no cohost code:
+
+```
+jank --module-path /tmp/repro compile-module repro.jank -O0 --target-dir /tmp/repro-out
+```
+
+exited 0 and Clang reported `no member named 'runtime' in namespace 'repro::jank'; did you mean '::jank::runtime'?`. Inside the generated namespace `…::jank`, the qualifier `jank::` binds to that namespace, so `jank::runtime` does not name the runtime. `cohost.hosts.jank` therefore stays source. The boot below puts the object directory ahead of `src`; jank still requires the source on the path. With only the object directory:
+
+```
+error: The registered module `cohost.run` has no source files.
+```
+
+(`runtime/module-binary-without-source`).
+
+### Load time
+
+`bash dev/perf/jank_aot_time.sh` printed:
+
+```
+aot-dir target/jank-aot/_cache/x86_64-unknown-linux-gnu-d41ef4a07a9d4dd9963044192227fbfde2da40c9f817907bab326588f8e7ef94
+warmup jit
+warmup aot
+jit run 1 load-ns 5150953051
+jit run 2 load-ns 5093467970
+jit run 3 load-ns 5169138294
+jit run 4 load-ns 5027232320
+jit run 5 load-ns 5196487980
+median-ns 5150953051
+aot run 1 load-ns 1504751759
+aot run 2 load-ns 1487988698
+aot run 3 load-ns 1468460498
+aot run 4 load-ns 1499645531
+aot run 5 load-ns 1511217965
+median-ns 1499645531
+```
+
+| module path | median of 5 `load-ns` |
+|---|---:|
+| `src` (source) | 5150953051 |
+| `<aot-dir>:src` (objects ahead of source) | 1499645531 |
+
+### Boot
+
+`bb boot:jank` printed:
+
+```
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 124/139 stock behaviors pass
+libraries: 30/61 cases pass across 12 clojure.* libraries
+```
+
+`bb boot:jank-aot` printed:
+
+```
+LOAD-BEFORE-BOOT-NS 1793543844087418012
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 123/139 stock behaviors pass
+libraries: 30/61 cases pass across 12 clojure.* libraries
+```
+
+The boot line and the library line match. The battery does not. The AOT run has one failure the source run does not:
+
+```
+   FAIL radix parsing and printing
+        got      "ERR For input string: \"-zz\" under radix 36"
+        expected [255 -1295 "ff" "ffffffff" "101"]
+```
+
+That row is `(Long/parseLong "-zz" 36)` through `cohost.shim/parse-radix`, and `shim.o` is one of the objects loaded ahead of `shim.cljc`. The source boot does not print this FAIL. No `src/` file was edited.

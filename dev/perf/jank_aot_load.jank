@@ -1,0 +1,13 @@
+;; jank-FAST Step 6 stage 1. Require cohost's namespaces, stamp, then boot.
+;; The stamp is the first form after the require, immediately before -main.
+;; cohost.run/-main calls boot! after it parses args.
+;;
+;;   jank --module-path src run dev/perf/jank_aot_load.jank --
+;;   jank --module-path <aot-dir>:src run dev/perf/jank_aot_load.jank --
+;;
+;; --load-only prints the stamp and does not call -main.
+(require 'cohost.run)
+(println "LOAD-BEFORE-BOOT-NS" (cpp/jank.runtime.current_time))
+(let [args (or *command-line-args* ())]
+  (when-not (= "--load-only" (first args))
+    (apply cohost.run/-main args)))

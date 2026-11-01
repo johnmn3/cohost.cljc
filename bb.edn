@@ -88,6 +88,21 @@
               :task (shell {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}} "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns" "src/cohost/run.cljc")}
   boot:jank {:doc "jank (C++/LLVM): the apt-installed `jank` on PATH"
              :task (shell "jank" "--module-path" "src" "run-main" "cohost.run")}
+  ;; jank-FAST Step 6 stage 1. Compiles cohost's namespaces to object files
+  ;; and boots with that directory ahead of src, so a newer object is loaded
+  ;; and the source stays on the path (jank refuses an object with no source).
+  ;; cohost.hosts.jank produces no object on jank 0.1: its C++ namespace is
+  ;; named jank, so jank::runtime resolves inward. It loads from source.
+  ;; Load-time medians: dev/perf/jank_aot_time.sh
+  boot:jank-aot {:doc "jank: AOT cohost's namespaces (compile-module -O3) and boot. See dev/perf/jank_aot_time.sh for the load-time medians."
+                 :task (do
+                         (babashka.fs/create-dirs "target")
+                         (when (empty? (babashka.fs/glob "target/jank-aot" "**/cohost/run.o"))
+                           (shell "jank" "--module-path" "src" "compile-module" "cohost.run"
+                                  "-O3" "--target-dir" "target/jank-aot"))
+                         (let [aot (str (first (babashka.fs/list-dir "target/jank-aot/_cache")))]
+                           (apply shell "jank" "--module-path" (str aot ":src")
+                                  "run" "dev/perf/jank_aot_load.jank" "--" *command-line-args*)))}
   bench:cljw {:doc "cohost.bench on ClojureWasm (target/bench-cljw.edn)"
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "cljw" "-cp" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
