@@ -440,3 +440,84 @@ The boot line and the library line match. The battery does not. The AOT run has 
 ```
 
 That row is `(Long/parseLong "-zz" 36)` through `cohost.shim/parse-radix`, and `shim.o` is one of the objects loaded ahead of `shim.cljc`. The source boot does not print this FAIL. No `src/` file was edited.
+
+## Type hints (H1)
+
+Measured 2026-11-01 ET on jank `0.1-noble`, base `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.
+
+JVM Clojure 1.12.0, `clojure -M -e` of the four shapes the battery now runs:
+
+```
+:long-double [1 -1]
+:double-long [2.0 1.5]
+:cce java.lang.ClassCastException
+:loop [6 10 0]
+:npe java.lang.NullPointerException
+```
+
+`(fn [^long x] x)` of 1.9 is 1 and of -1.9 is -1. `(fn [^double x] x)` of 2 is 2.0 and of 1.5 is 1.5. `(fn [^long x] x)` of `"a"` is ClassCastException, of nil is NullPointerException. `(fn [^long n] (loop [i n a 0] (if (pos? i) (recur (dec i) (+ a i)) a)))` of 3.9 is 6, of 4 is 10, of -1.2 is 0.
+
+The codemod coerces a primitive `fn*` parameter on every host (`long`, `double`, `int`, `boolean`), so those rows match the JVM. A non-number does not reach jank's `long` or `double`: jank's conversion throws a native error that `catch` of an object does not see, and a real into `^long` or an integer into `^double` throws where the JVM truncates or widens. nil becomes a NullPointerException; anything else that is not a number becomes a ClassCastException. `:native-hints` defaults to nil. jank's map is `{long long, double double, boolean bool, int int}`. The native tag is passed through only when that map names the hint and the arity's body has `loop`, `loop*`, or `recur` outside a nested fn. The outer parameter stays untyped. One `let*` coerces, then one call enters `(fn* [^{:tag (quote long)} n] ...)`. A leaf stays coerced and untagged: H0's called-leaf ratios are above 1.
+
+`bb boot:jvm` before:
+
+```
+cohost.boot on clj: 791 top-level forms
+  booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0
+battery: 138/139 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The one failure is the pre-existing row "reduce over an eduction; a :tag that is data". After the four rows:
+
+```
+cohost.boot on clj: 791 top-level forms
+  booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0
+battery: 142/143 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+Same failure, and no other. 138 + 4 = 142 and 139 + 4 = 143.
+
+`bb boot:jank` before and after printed the same boot line. Battery went from 124/139 to 128/143. The fifteen failures are the same rows. Libraries stayed 30/61.
+
+```
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 124/139 stock behaviors pass
+libraries: 30/61 cases pass across 12 clojure.* libraries
+```
+
+```
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 128/143 stock behaviors pass
+libraries: 30/61 cases pass across 12 clojure.* libraries
+```
+
+`bb bench:jank` medians, host then stock. `loop-arith` and `reduce-range` are loops over unhinted `+`, `<`, `inc`, and `range`. H1 does not retag those. Both sides moved between the two runs.
+
+before:
+
+```
+  loop-arith  host 1.45  stock 1.57  x1.08
+  reduce-range  host 7.54  stock 11.14  x1.47
+```
+
+after:
+
+```
+  loop-arith  host 1.36  stock 1.38  x1.01
+  reduce-range  host 5.39  stock 8.34  x1.54
+```
+
+`bb boot:cljrs` (cljrs 0.2.32), this session, after the change. No before line was recorded. The four new rows are not in the failure list. Boot errors stayed 0 and libraries stayed 0/61. cljrs's `fn` is a special form, so the codemod coerces a primitive parameter on the `fn` form itself; `:native-hints` is nil, so the form gets no native tag.
+
+```
+cohost.boot on cljrs: 791 top-level forms
+  booted as stock: 561   from host: 95   skipped: 135   errors: 0
+battery: 99/143 stock behaviors pass
+libraries: 0/61 cases pass across 12 clojure.* libraries
+```
+
+Shared files: `src/cohost/adapter.cljc` (capability `:native-hints`, default nil), `src/cohost/rewrite.cljc` (coerce every primitive `fn*` parameter; native tag only when the arity loops), `src/cohost/battery.cljc` (four rows), `src/cohost/hosts/jank.jank` (one key). `doc/perf/jank.md` section "Type hints (H1)" only.

@@ -14,6 +14,7 @@
 ;; like `lazy-seq`, `..`, `with-open` or `definline` emit interop into their
 ;; callers' code.
 (ns cohost.rewrite
+  (:require [cohost.adapter :as host])
   ;; names defined here that let-go's core also has (it warns of each)
   #?(:lg (:refer-clojure :exclude [starts-with? ends-with?])))
 
@@ -723,6 +724,106 @@
       [(apply list 'loop* (vec (mapcat (fn [n] [n n]) names)) body)])
     body))
 
+(def ^:private primitive-hints #{'long 'double 'int 'boolean})
+
+(defn- primitive-hint
+  "long, double, int, or boolean when tag is that fn* primitive hint.
+   The JVM reader stores ^long as the symbol long; jank stores (quote long)."
+  [tag]
+  (let [n (cond
+            (symbol? tag) tag
+            (and (seq? tag) (= 'quote (first tag)) (symbol? (second tag)) (nil? (next (next tag))))
+            (second tag)
+            :else nil)]
+    (when (and (symbol? n) (nil? (namespace n)) (contains? primitive-hints n)) n)))
+
+(defn- arity-loops?
+  "True when this arity's body has loop, loop*, or recur outside a nested fn.
+   A quoted form and a nested fn/fn* keep their own recur targets."
+  [body]
+  (letfn [(hit? [x]
+            (cond
+              (not (coll? x)) false
+              (seq? x)
+              (let [h (first x)
+                    n (when (symbol? h) (symbol (name (*plain* h))))]
+                (cond
+                  (or (= 'quote h) (= 'clojure.core/syntax-quote h) (= 'fn* n) (= 'fn n)) false
+                  (or (= 'loop n) (= 'loop* n) (= 'recur n)) true
+                  :else (boolean (some hit? x))))
+              :else (boolean (some hit? x))))]
+    (boolean (some hit? body))))
+
+(defn- coerce-form
+  "The JVM's coercion of a primitive fn* parameter, in front of any native
+   conversion. jank's long throws on a real and its double throws on an
+   integer, and either throws a native error on a non-number that no catch
+   of an object can see: a non-number becomes the exception the JVM raises."
+  [hint sym]
+  (if (= 'boolean hint)
+    (list 'boolean sym)
+    (let [method (if (= 'double hint) "doubleValue" (if (= 'int hint) "intValue" "longValue"))]
+      (list 'if (list 'number? sym)
+            (list hint sym)
+            (list 'if (list 'nil? sym)
+                  (list 'throw (list (shim-fn "new-NullPointerException")
+                                     (str "Cannot invoke \"java.lang.Number." method "()\" because the argument is null")))
+                  (list 'throw (list (shim-fn "new-ClassCastException")
+                                     "class java.lang.Object cannot be cast to class java.lang.Number")))))))
+
+(defn- fn-form-primitive?
+  "Does this fn form carry a primitive hint on a parameter? Asked only when
+   the host will not expand fn before the codemod (cljrs: fn is a special
+   form, so the stock macro never runs and a ^long would be ignored)."
+  [form]
+  (let [more (rest form)
+        more (if (symbol? (first more)) (rest more) more)
+        arities (if (vector? (first more)) [more] more)]
+    (boolean (some (fn [[params]]
+                     (and (vector? params)
+                          (some #(and (symbol? %) (primitive-hint (:tag (meta %)))) params)))
+                   arities))))
+
+(defn- bare-sym
+  "The parameter's name with no metadata. The hint stays on the parameter
+   only; a let binding or a call argument that still carried it would be a
+   hinted local, which jank compiles as a native conversion."
+  [p]
+  (let [s (*plain* p)]
+    (if (meta s) (with-meta s nil) s)))
+
+(defn- emit-arity
+  "One fn* arity. A primitive hint is coerced on every host, so the value
+   matches the JVM. The host's native tag is passed through only when
+   :native-hints names it and this arity loops or recurs: H0 measured a
+   parameter hint paying for a loop that carries it and losing on a leaf.
+   The outer parameter stays untyped; the coerced value is handed to one
+   inner fn* that carries the tag, so jank never converts the original
+   argument itself."
+  [params body']
+  (let [hints (mapv (fn [p] (when (symbol? p) (primitive-hint (:tag (meta p))))) params)]
+    (if-not (some some? hints)
+      (apply list (rw-params params) body')
+      (let [body' (or (seq body') '(nil))
+            binds (into [] (mapcat (fn [p h]
+                                     (when h (let [s (bare-sym p)] [s (coerce-form h s)])))
+                                   params hints))
+            spells (host/native-hints)
+            native? (and spells
+                         (arity-loops? body')
+                         (every? #(and (symbol? %) (not= '& (*plain* %))) params)
+                         (some (fn [h] (when h (get spells h))) hints))
+            forms (if native?
+                    (let [ips (mapv (fn [p h]
+                                      (if-let [sp (and h spells (get spells h))]
+                                        (with-meta (bare-sym p) {:tag (list 'quote sp)})
+                                        (carry-meta p p)))
+                                    params hints)]
+                      [(apply list (apply list 'fn* (cons (carry-meta ips params) body'))
+                              (map bare-sym params))])
+                    body')]
+        (apply list (rw-params params) [(apply list 'let* binds forms)])))))
+
 (defn- rw-fn* [ctx form]
   (let [more (rest form)
         [nm more] (if (symbol? (first more)) [(carry-meta (first more) (first more)) (rest more)] [nil more])
@@ -745,7 +846,7 @@
                                        body' (if (and (:vector-rest-args? ctx) (symbol? rest-arg))
                                                [(apply list 'let* [rest-arg (list (shim-fn "RT-seq") rest-arg)] body')]
                                                body')]
-                                   (apply list (rw-params params) body')))
+                                   (emit-arity params body')))
                                arities)))]
     (if (and nm (not (:named-fn*? ctx)))
       (list 'letfn* [nm (apply list (carry-meta 'fn* (first form)) (if single? (first arities') arities'))] nm)
@@ -1260,6 +1361,12 @@
                            (apply list 'new c (rw-all ctx (nnext form)))))
             (= h 'try) (rw-try ctx form)
             (= h 'fn*) (rw-fn* ctx form)
+            ;; cljrs's fn is a special form, so the stock macro never expands
+            ;; it and a ^long parameter would be ignored. Coerce those here.
+            ;; A host that expands fn (jank's :expand-macro) keeps that path.
+            (and (nil? (:expand-macro ctx)) (symbol? h) (= "fn" (name (*plain* h)))
+                 (not (contains? *locals* (*plain* h))) (fn-form-primitive? form))
+            (rw-fn* ctx (cons 'fn* (rest form)))
             (or (= h 'let*) (= h 'loop*) (= h 'letfn*)) (rw-let* ctx form)
             (or (= h 'deftype*) (= h 'reify*)) form
             (= h 'def) (rw-def ctx form)

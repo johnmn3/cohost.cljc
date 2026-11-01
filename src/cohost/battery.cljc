@@ -148,7 +148,13 @@
    ["extend-protocol to concrete classes" "(do (defprotocol BtSh (bt-area [s])) (extend-protocol BtSh clojure.lang.PersistentVector (bt-area [v] (count v)) clojure.lang.PersistentHashSet (bt-area [s] :set)) [(bt-area [1 2]) (bt-area #{1})])" [2 :set]]
    ["with-redefs of a protocol method" "(do (defprotocol BtRP (bt-rp [x])) (extend-protocol BtRP Long (bt-rp [x] :orig)) (defn bt-callrp [] (bt-rp 1)) (with-redefs [bt-rp (fn [_] :redef)] (bt-callrp)))" :redef]
    ["hash-combine hashes its argument as Object.hashCode does" "[(hash-combine 0 \"a\") (hash-combine 0 nil) (hash-combine 1 2) (hash-combine -5 \"hello\")]" [-1640531430 -1640531527 -1640531462 1541369522]]
-   ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]])
+   ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]
+   ;; primitive fn* parameters coerce as JVM Clojure 1.12.0 does (measured
+   ;; with clojure -M). Every host must pass these; the native tag is separate.
+   ["a ^long parameter truncates a double" "(let [f (fn [^long x] x)] [(f 1.9) (f -1.9)])" [1 -1]]
+   ["a ^double parameter widens a long" "(let [f (fn [^double x] x)] [(f 2) (f 1.5)])" [2.0 1.5]]
+   ["a ^long parameter rejects a non-number" "(let [f (fn [^long x] x)] (try (f \"a\") (catch ClassCastException e :cce)))" :cce]
+   ["a ^long fn recurred from its loop truncates" "(let [f (fn [^long n] (loop [i n a 0] (if (pos? i) (recur (dec i) (+ a i)) a)))] [(f 3.9) (f 4)])" [6 10]]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."
