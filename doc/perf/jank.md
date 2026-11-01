@@ -521,3 +521,67 @@ libraries: 0/61 cases pass across 12 clojure.* libraries
 ```
 
 Shared files: `src/cohost/adapter.cljc` (capability `:native-hints`, default nil), `src/cohost/rewrite.cljc` (coerce every primitive `fn*` parameter; native tag only when the arity loops), `src/cohost/battery.cljc` (four rows), `src/cohost/hosts/jank.jank` (one key). `doc/perf/jank.md` section "Type hints (H1)" only.
+
+### Finish
+
+The `fn` to `fn*` clause is gated. It runs only when `policy/host-overrides` `:special` contains `fn` (cljrs), and only when every parameter of every arity is a plain symbol and no arity opens with a condition map (a map followed by more body, the stock `fn` macro's test). A `:pre` / `:post` map or a destructured parameter stays as written, and every other host leaves `fn` for the stock macro. `fn*` coercion is unchanged.
+
+Two more battery rows. `clojure -M -e` on Clojure 1.12.0 printed `:pre` and `6`.
+
+`bb boot:jvm` after the gate and the two rows:
+
+```
+cohost.boot on clj: 791 top-level forms
+  booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0
+battery: 144/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The only failure is still "reduce over an eduction; a :tag that is data" (`class clojure.core.Eduction cannot be cast to class clojure.lang.IReduce`). The two new rows are not in the failure list. On this machine:
+
+```
+$ clojure -Sdescribe
+{:version "1.12.6.1673"
+ :config-files ["/usr/local/lib/clojure/deps.edn" "/home/ubuntu/.clojure/deps.edn" "deps.edn" ]
+ :install-dir "/usr/local/lib/clojure"
+ :config-dir "/home/ubuntu/.clojure"
+ :cache-dir ".cpcache"
+ :force false
+ :repro false
+ :main-aliases ""
+ :repl-aliases ""}
+$ clojure -M -e '(clojure-version)'
+1.12.0
+$ bb --version
+babashka v1.13.229
+```
+
+`bb boot:jank` printed the same boot line (`542` stock, `171` host, `78` skipped, `0` errors). Battery `130/145`. Libraries `30/61`. The two new rows are not in the failure list.
+
+`bb boot:cljrs` printed `561` stock, `95` host, `135` skipped, `0` errors. Battery `101/145`. Libraries `0/61`. The two new rows are not in the failure list.
+
+`hinted-loop` is `(defn f [^long n] (loop [i 0 a 0] (if (< i n) (recur (inc i) (+ a i)) a)))` then `(f 200000)`, timed on both sides by `bb bench:jank`. Five runs with `:native-hints` as shipped (`{long long, double double, boolean bool, int int}`), then five runs with that key set to `nil` for the process and restored afterward (the committed adapter map is the shipped one). Each line is that run's median ms. The median of the five stock medians is the middle value.
+
+shipped:
+
+```
+  hinted-loop  host 1.26  stock 1.26  x0.99
+  hinted-loop  host 1.38  stock 1.44  x1.03
+  hinted-loop  host 1.26  stock 1.27  x1.0
+  hinted-loop  host 1.24  stock 1.25  x1.0
+  hinted-loop  host 1.21  stock 1.24  x1.02
+```
+
+median of the five: host `1.26`, stock `1.26`.
+
+`:native-hints` nil:
+
+```
+  hinted-loop  host 1.26  stock 2.36  x1.87
+  hinted-loop  host 1.27  stock 2.25  x1.77
+  hinted-loop  host 1.26  stock 2.35  x1.86
+  hinted-loop  host 1.27  stock 2.45  x1.93
+  hinted-loop  host 1.26  stock 2.46  x1.95
+```
+
+median of the five: host `1.26`, stock `2.36`. The host side is raw jank either way. The stock side is the rewritten `^long` parameter: with the native tag its median matches the host (`1.26`); without it the median is `2.36`.
