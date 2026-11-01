@@ -436,3 +436,7 @@ bb bench:report target
 ```bash
 bb bench:report --compare doc/perf/before doc/perf/after
 ```
+
+## Programs against JVM Clojure
+
+jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Programs live in `bench/programs/`. The driver is `dev/bench_programs.clj`. A target with no binary on PATH prints `ABSENT` and the missing executable. Times are not in this table yet.

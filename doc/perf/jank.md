@@ -903,3 +903,5 @@ Reading:
   graph; it is the runtime-profile counterpart of the boot profile's
   compile-heavy split, and it is what AOT (Step 6) removes by compiling
   ahead of time.
+
+Step 8's program suite (fib, tak, nbody, and the rest) is `bb bench:programs`. The table is "Programs against JVM Clojure" in `doc/PERF.md`.
