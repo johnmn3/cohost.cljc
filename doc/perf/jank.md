@@ -490,6 +490,54 @@ libraries: 61/61 cases pass across 12 clojure.* libraries
 
 Both fail the same two rows, `subs count nth first last butlast` (`Unterminated vector.`) and `Character outside ASCII` (`Unexpected end of file.`). The AOT boot does not fail `radix parsing and printing`.
 
+### Default
+
+Measured 2026-11-01 ET. `bb boot:jank` and `bb bench:jank` load the compiled modules. `bb boot:jank-jit` stays `jank --module-path src run-main cohost.run`.
+
+`dev/perf/jank_aot_ensure.clj` hashes every regular file under `src/cohost`: the sorted relative paths, one `sha256sum` per file, then `sha256sum` of that listing. The stamp beside the objects (`<cache>/stamp`) is that hash and the line from `jank print-binary-version`. A missing `cohost/run.o`, `cohost/hosts/jank_host.o`, or `cohost/shim.o`, a missing stamp, or a mismatch deletes `target/jank-aot/_cache` and runs `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot` before anything loads the objects. A match prints `AOT-FRESH`.
+
+`jank print-binary-version` printed `x86_64-unknown-linux-gnu-cf627abb22b776c8ebbb6caee09f4f22fe25a16e33827b2ccc2eb155085e5e68`. The first `bb boot:jank` printed `AOT-RECOMPILE` and this stamp:
+
+```
+d4500fc9360363e4e5616a4a97be295ca95154f5a95985031b943e171dc7945a
+x86_64-unknown-linux-gnu-cf627abb22b776c8ebbb6caee09f4f22fe25a16e33827b2ccc2eb155085e5e68
+```
+
+`cohost/shim.o` from that compile was 10659624 bytes. The boot printed:
+
+```
+AOT-RECOMPILE
+AOT-DIR target/jank-aot/_cache/x86_64-unknown-linux-gnu-d41ef4a07a9d4dd9963044192227fbfde2da40c9f817907bab326588f8e7ef94
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The same two rows fail (`Unterminated vector.`, `Unexpected end of file.`). `radix parsing and printing` passed with `shim.o` loaded. The object used to throw that row because the literal `-9223372036854775808` becomes a garbage double at every `-O` level; `long-min-value` is `(- -9223372036854775807 1)` instead. The minimal repro is `doc/upstream/jank-10-aot-long-min-literal.md`.
+
+Appending `;; g12-stamp-touch` to `src/cohost/run.cljc` made the next `bb boot:jank` print `AOT-RECOMPILE`, then the same boot, battery, and library lines. The stamp hash became `acc112880e2ac668348809b22275876f26ef84d5352271514c476999d1d7de0b`. `git checkout -- src/cohost/run.cljc` removed the line. The next `bb bench:jank --quick` printed `AOT-RECOMPILE` and wrote the `d4500fc9…` stamp again. The two benches after that printed `AOT-FRESH`.
+
+`bb bench:jank --quick` sets `warm-ms` 0, `budget-ms` 0, `min-runs` 1, `settle-ms` 0. Before is the source module path (`jank --module-path src run-main cohost.run -- --bench --quick`). After is `bb bench:jank --quick` (the object directory ahead of `src`, `shim.o` included). `boot-ms` and `libs-ms` are the values in `target/bench-jank.edn`. The median is the middle of the three sorted runs.
+
+| | run 1 | run 2 | run 3 | median |
+|---|---:|---:|---:|---:|
+| JIT `boot-ms` | 28614.529163 | 30967.885298 | 29644.042124 | 29644.042124 |
+| JIT `libs-ms` | 23322.846218999475 | 29486.88468999788 | 23494.7270280011 | 23494.7270280011 |
+| AOT `boot-ms` | 8612.379721 | 8714.469301 | 8568.13362 | 8612.379721 |
+| AOT `libs-ms` | 5696.899114001542 | 6101.376775000244 | 5855.873693000525 | 5855.873693000525 |
+
+The AOT `shim.o` on that recompile was 10659648 bytes. `boot-ms` is the time inside the jank process, after `ensure!` returns, so the recompile on the first AOT bench is not part of `boot-ms`.
+
+The same objects with `shim.o` moved aside (so `cohost.shim` loaded from source; `ensure!` was not used, because a missing `shim.o` is stale) and then three `jank --module-path <aot-dir>:src run-main cohost.run -- --bench --quick` runs:
+
+| | run 1 | run 2 | run 3 | median |
+|---|---:|---:|---:|---:|
+| AOT, shim from source, `boot-ms` | 10807.08871 | 11021.98627 | 11640.262625 | 11021.98627 |
+| AOT, shim from source, `libs-ms` | 8103.36599900201 | 9084.837037999183 | 9241.82250900194 | 9084.837037999183 |
+
+`shim.o` was moved back after those runs (10659648 bytes). Loading it is the faster of the two AOT medians: `boot-ms` 8612.379721 against 11021.98627, `libs-ms` 5855.873693000525 against 9084.837037999183.
+
 ## AOT stage 2 probe
 
 Measured 2026-11-01 ET on jank `0.1-noble`. The boot was not changed. A temporary local hook (not committed) appended each rewritten form `boot!` and `load-lib!` actually evaluated. `cohost.core` produced 550 forms (`boot!` printed `BOOT 524 171 78 0`; the file has 791 top-level forms counted by the boot report, and fewer than 2,000 are evaluated, so the module is all 550, not a 2,000-form prefix). `clojure.walk` produced 10 forms in `cohost.walk`.
