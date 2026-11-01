@@ -1,0 +1,42 @@
+;; Checks after a normal boot of clojure.walk, and eval time of the dumped
+;; snapshot forms when /tmp/jank-snap-src is present. The compiled module is
+;; not loaded here: compile-module does not produce one (see the doc).
+(require 'cohost.hosts.jank)
+(require 'cohost.boot)
+(require 'cohost.adapter)
+
+(cohost.boot/boot! {})
+(cohost.boot/load-lib! 'clojure.walk)
+
+(defn show [label thunk]
+  (println label (try (pr-str (thunk)) (catch :default e "ERR"))))
+
+(show "CHECK walk-var" #(some? (ns-resolve 'cohost.walk 'walk)))
+(show "CHECK walk-doc" #(:doc (meta (ns-resolve 'cohost.walk 'walk))))
+(show "CHECK walk-arglists" #(:arglists (meta (ns-resolve 'cohost.walk 'walk))))
+(show "CHECK mx-macro" #(:macro (meta (ns-resolve 'cohost.walk 'macroexpand-all))))
+(show "CHECK keywordize" #(cohost.walk/keywordize-keys {"a" 1}))
+(show "CHECK when-macro" #(:macro (meta (ns-resolve 'cohost.core 'when))))
+(show "CHECK print-method" #(some? (ns-resolve 'cohost.core 'print-method)))
+(show "CHECK print-method-keys" #(vec (keys (meta (ns-resolve 'cohost.core 'print-method)))))
+(show "CHECK type-atom" #(type (atom 1)))
+(show "CHECK cpp-cohost" #(eval (read-string "(cpp/cohost_obj.is_cohost (atom 1))")))
+(show "CHECK record" #(eval (read-string "(do (defrecord SnapRec [a]) (:a (->SnapRec 1)))")))
+
+(defn time-file [path]
+  (let [src (cohost.adapter/slurp-file path)
+        n (atom 0)
+        t0 (cohost.adapter/nano-time)]
+    (cohost.adapter/read-forms src
+      (fn [form]
+        (when-not (and (seq? form) (= 'ns (first form)))
+          (try (eval form) (catch :default e nil))
+          (swap! n inc))))
+    (println "EVAL-NS" path (- (cohost.adapter/nano-time) t0) "forms" @n)))
+
+(when (cohost.adapter/slurp-file "/tmp/jank-snap-src/cohost/walk.jank")
+  (cohost.adapter/with-ns 'cohost.walk
+    (fn [] (time-file "/tmp/jank-snap-src/cohost/walk.jank"))))
+(when (cohost.adapter/slurp-file "/tmp/jank-snap-src/cohost/core.jank")
+  (cohost.adapter/with-ns 'cohost.core
+    (fn [] (time-file "/tmp/jank-snap-src/cohost/core.jank"))))
