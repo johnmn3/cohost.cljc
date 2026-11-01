@@ -1502,7 +1502,15 @@
                       x (ex hv form *locals*)
                       _ (when acc
                           (let [dt (- (host/nano-time) t0)
-                                nm (str h)]
+                                shape (when (or (= hn "let") (= hn "loop"))
+                                        (let [b (first args)]
+                                          (cond
+                                            (not (vector? b)) "other"
+                                            (every? symbol? (take-nth 2 b)) "plain"
+                                            (some map? (take-nth 2 b)) "map"
+                                            (some vector? (take-nth 2 b)) "vector"
+                                            :else "other")))
+                                nm (if shape (str h "/" shape) (str h))]
                             (vswap! profile-macro-ns update nm (fn [n] (prof+ (or n 0) dt)))
                             (vswap! profile-macro-n update nm (fn [n] (prof+ (or n 0) 1)))))]
                   (if (identical? x form) (apply list (macro-head ctx h) args) (rw ctx x)))
