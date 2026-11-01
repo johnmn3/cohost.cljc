@@ -167,6 +167,52 @@ stack and segfault; `bb bench:phel` runs Phel with a 64 MB stack (`ulimit -s 655
   {...}`), and builds through the shim's StringBuilder.
 - the others have not been measured apart.
 
+## jank baseline (jank-FAST Step 2)
+
+Measured 2026-11-01 ET on one 4-CPU box, alone on the box, `bb bench:jank` (full, not
+--quick) on muse/jank-step2 @ 573ee4d5 -- the M-2 tip (54bddac8) plus this step's bench.cljc
+fix, which gives the protocol case a host side; the bench's own EDN records the git as
+54bddac-dirty for that reason. Boot: errors 0 (stock 542 / host 171 / skipped 78);
+boot-ms 54,619 and libs-ms 44,080 in the bench's own run. Every case ran on both sides;
+no "provides no" errors. Times are median ms per call at the case's full size; the ratio
+is the stock core's time over the host's own core's time, so above 1 the stock core loses.
+Geometric mean of the ratio over the 30 cases: x4.09. This is the baseline column
+jank-FAST Steps 3 and 4 are measured against; the five worst cases are profiled in
+doc/perf/jank.md, "Runtime profile".
+
+| case | what it does | host (jank's own core) | baseline (the stock core) | ratio |
+|---|---|---:|---:|---:|
+| fn-call | a defn called in a loop | 9.26 | 9.49 | 1.03 |
+| loop-arith | loop/recur arithmetic | 3.33 | 3.35 | 1.01 |
+| hinted-loop | a ^long fn whose loop compares against the parameter | 2.90 | 2.90 | 1.00 |
+| reduce-range | reduce + over a range | 11.41 | 15.69 | 1.38 |
+| lazy-pipeline | count, filter, map over a range | 151.40 | 494.19 | 3.26 |
+| transduce | transduce (comp (map inc) (filter odd?)) | 6.94 | 150.51 | 21.68 |
+| into-vector | into [] with a map transducer | 6.51 | 197.52 | 30.32 |
+| conj-vector | reduce conj [] (persistent vector) | 44.16 | 99.34 | 2.25 |
+| transient-vector | conj! into a transient vector | 8.63 | 161.03 | 18.66 |
+| assoc-map | assoc into a map | 78.68 | 110.42 | 1.40 |
+| map-lookup | get from a 1,000-key map | 23.98 | 51.12 | 2.13 |
+| keyword-lookup | keyword lookup on small maps | 26.47 | 20.80 | 0.79 |
+| destructure | map destructuring in fn args | 29.45 | 185.24 | 6.29 |
+| frequencies | frequencies | 88.70 | 492.15 | 5.55 |
+| group-by | group-by into 31 groups | 34.28 | 360.95 | 10.53 |
+| sort | sort numbers | 22.09 | 336.35 | 15.23 |
+| sort-by | sort-by a key of maps | 15.60 | 428.28 | 27.46 |
+| set-build | build a set | 18.91 | 209.42 | 11.08 |
+| distinct | distinct over mapcat | 406.58 | 851.23 | 2.09 |
+| partition | partition 3 | 133.07 | 367.66 | 2.76 |
+| lazy-iterate | nth of a lazy iterate | 7.86 | 42.26 | 5.38 |
+| atom-swap | swap! an atom | 14.81 | 97.89 | 6.61 |
+| protocol | protocol call on a record | 163.10 | 166.05 | 1.02 |
+| multimethod | multimethod call | 40.87 | 95.66 | 2.34 |
+| equality | = of two equal vectors | 1.29 | 1.27 | 0.99 |
+| str-build | apply str over numbers | 9.89 | 152.86 | 15.46 |
+| string-join | clojure.string/join | 2701.27 | 110.34 | 0.04 |
+| regex | re-seq over a string of numbers | 4.35 | 1392.67 | 320.11 |
+| format | format | 4.77 | 236.31 | 49.58 |
+| pr-str | pr-str of small maps | 1.45 | 1.45 | 1.00 |
+
 ## Method
 
 `cohost.bench` (`src/cohost/bench.cljc`) holds 29 cases, each a small program
