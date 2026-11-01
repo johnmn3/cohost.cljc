@@ -141,13 +141,15 @@
            "run-main" "bench.prog" "--" arg (if cold? "cold" "warm")])))
 
 (defn run-jank-cohost [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/cohost.clj"
-        (str (harness src "(cpp/jank.runtime.current_time)" false)
-             "(-main " (pr-str arg) " " (pr-str (if cold? "cold" "warm")) ")\n"))
-  (let [dir (load-file "dev/perf/jank_aot_ensure.clj")]
-    (run! ["jank" "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
-           "--eval" "(load-file \"target/bench-programs/cohost.clj\")"])))
+  ;; cohost's jank boot has no load-file (it is a host var Clojure's RT
+  ;; provides). --eval reads every form, so the program source is the argument.
+  (let [dir (load-file "dev/perf/jank_aot_ensure.clj")
+        mode (if cold? "cold" "warm")
+        code (str (harness src "(cpp/jank.runtime.current_time)" false)
+                  "(-main " (pr-str arg) " " (pr-str mode) ")")]
+    (apply shell {:out :string :err :string :continue true :timeout 300000}
+           ["jank" "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
+            "--eval" code])))
 
 (defn run-cljrs [src arg cold?]
   (fs/create-dirs "target/bench-programs")
