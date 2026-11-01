@@ -377,7 +377,7 @@
    wide java.* shim of its own); false means it becomes a `cohost.shim/missing-*`
    call that throws (and is reported) when reached."
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
-           current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? host-method
+           current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? cohost-types? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
            instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
@@ -439,6 +439,9 @@
    ;; a host whose JVM interface methods are protocol methods of its own
    ;; (ClojureScript): host-method gives [protocol method] for each
    :move-methods? (boolean move-methods?)
+   ;; a host whose types are cohost's own (:cohost-types): a (.-f x) field
+   ;; read is a member call the shim dispatches, not the host's own access
+   :cohost-types? (boolean cohost-types?)
    :host-method host-method
    ;; record?: is a form a record instance (a reader literal); protocol-var?:
    ;; (fn [ns-sym name-sym]) is that var a protocol; interned?: (fn [sym]) is
@@ -1296,10 +1299,12 @@
             ;; (.method target args...) and (.-field target): a field the shim
             ;; does not name stays the host's own property access
             (and hn (starts-with? hn ".") (> (count hn) 1) (not= hn ".."))
-            (if (and (starts-with? hn ".-") (> (count hn) 2))
+            (if (and (starts-with? hn ".-") (> (count hn) 2) (not (:cohost-types? ctx)))
               ;; `(.-x o)` is strictly a field on the JVM: the host's own access
               (apply list h (rw-all ctx args))
-              (rw-method ctx (symbol (subs hn 1)) args (fn [xs'] (apply list h xs'))))
+              ;; on a :cohost-types host a field read is a member call like
+              ;; any other: the shim's dispatcher reaches the descriptor
+              (rw-method ctx (symbol (subs hn (if (starts-with? hn ".-") 2 1))) args (fn [xs'] (apply list h xs'))))
             ;; (Class. args...)
             (and hn (ends-with? hn ".") (> (count hn) 1)
                  (class-sym? (symbol (subs hn 0 (dec (count hn))))))

@@ -120,7 +120,11 @@
 
 ;; (to-array nil) is an empty array on the JVM; some hosts reject nil
 (defn- to-array* [coll] (host/host-array (if (nil? coll) [] coll)))
-(def ^:private host-record? (host-fn 'record? (constantly false)))
+(def ^:private host-record?
+  ;; on a :cohost-types host a record is a cohost type instance of kind
+  ;; :record; the host's own record? (jank's) knows none of them
+  #?(:jank (fn [x] (boolean (when-let [d (host/instance-desc x)] (= :record (:kind d)))))
+     :default (host-fn 'record? (constantly false))))
 (defn record?* [x] (host-record? x))
 (def ^:private host-map-entry? (host-fn 'map-entry? (fn [x] (and (vector? x) (= 2 (count x))))))
 (def ^:private host-tagged-literal? (host-fn 'tagged-literal? (fn [x] (and (map? x) (contains? x :tag) (contains? x :form)))))
@@ -270,6 +274,7 @@
 ;; type is :struct and every object's :php/object, so its PHP class, as a token
 (defn- type-of [x]
   #?(:phel (if (php/is_object x) (symbol (php/str_replace "\\" "." (php/get_class x))) (type x))
+     :jank (if-let [d (host/instance-desc x)] (:name d) (type x))
      :default (type x)))
 
 (defn class-of
@@ -332,6 +337,34 @@
 (declare class-token?)
 (declare chunked-cons?)
 
+(defn- jank-impl?
+  "On a :cohost-types host, does x's type implement k (:seq :get :assoc
+   :count :nth :conj :reduce :compare)? Never elsewhere."
+  [x k]
+  #?(:jank (boolean (when-let [d (host/instance-desc x)] (get d k)))
+     :default false))
+
+(defn- cohost-inst?
+  "Is x a cohost type instance? On jank several of the host's own
+   predicates (coll?, associative?, sequential?, counted?, empty?) abort
+   the process on such an object, so the shim asks this first."
+  [x]
+  #?(:jank (some? (host/instance-desc x)) :default false))
+
+(defn- jank-head?
+  "On a :cohost-types host, did x's type name the class token among its
+   spec heads?"
+  [x token]
+  #?(:jank (boolean (when-let [d (host/instance-desc x)] (contains? (:heads d) token)))
+     :default false))
+
+(defn- coll?*
+  "coll? that is safe on a cohost type instance (the host's aborts on one):
+   an instance counts when its type is a collection (it has a conj)."
+  [x]
+  #?(:jank (if (cohost-inst? x) (jank-impl? x :conj) (coll? x))
+     :default (coll? x)))
+
 (def ^:private interface-preds
   {'clojure.lang.IPersistentVector vector?
    ;; a record is a map (Phel's struct is no map? to Phel)
@@ -340,22 +373,22 @@
    'clojure.lang.IPersistentList #(or (list? %) (host-queue? %))
    'clojure.lang.IPersistentStack #(or (vector? %) (list? %) (host-queue? %))
    ;; (a record is a collection where the host's coll? says not: let-go's)
-   'clojure.lang.IPersistentCollection #(or (coll? %) (host-record? %))
+   'clojure.lang.IPersistentCollection #(or (jank-impl? % :conj) (host-record? %) (and (not (cohost-inst? %)) (coll? %)))
    'clojure.lang.ISeq seq?
-   'clojure.lang.Seqable #(or (coll? %) (host-record? %))
-   'clojure.lang.Sequential sequential?
-   'clojure.lang.Associative #(or (associative? %) (host-record? %))
-   'clojure.lang.ILookup #(or (map? %) (vector? %) (host-record? %))
-   'clojure.lang.Counted #(or (h-counted? %) (host-record? %))
-   'clojure.lang.Indexed h-indexed?
+   'clojure.lang.Seqable #(or (jank-impl? % :seq) (host-record? %) (and (not (cohost-inst? %)) (coll? %)))
+   'clojure.lang.Sequential #(or (jank-head? % 'clojure.lang.Sequential) (and (not (cohost-inst? %)) (sequential? %)))
+   'clojure.lang.Associative #(or (jank-impl? % :assoc) (host-record? %) (and (not (cohost-inst? %)) (associative? %)))
+   'clojure.lang.ILookup #(or (map? %) (vector? %) (host-record? %) (jank-impl? % :get))
+   'clojure.lang.Counted #(or (h-counted? %) (host-record? %) (jank-impl? % :count))
+   'clojure.lang.Indexed #(or (h-indexed? %) (jank-impl? % :nth))
    'clojure.lang.Reversible h-reversible?
    'clojure.lang.Sorted h-sorted?
    'clojure.lang.IChunkedSeq #(or (hc-chunked? %) (chunked-cons? %))
    'clojure.lang.IDrop (constantly false)
    'clojure.lang.IFn host/ifn?*
    'clojure.lang.Fn host/host-fn?
-   'clojure.lang.IObj #(or (and (coll? %) (not (and host-has-map-entry? (host-map-entry? %)))) (symbol? %) (fn? %))
-   'clojure.lang.IMeta #(or (coll? %) (symbol? %) (fn? %) (h-var? %) (h-namespace? %) (h-atom? %))
+   'clojure.lang.IObj #(or (jank-impl? % :name) (and (not (cohost-inst? %)) (or (and (coll? %) (not (and host-has-map-entry? (host-map-entry? %)))) (symbol? %) (fn? %))))
+   'clojure.lang.IMeta #(or (jank-impl? % :name) (and (not (cohost-inst? %)) (or (coll? %) (symbol? %) (fn? %) (h-var? %) (h-namespace? %) (h-atom? %))))
    'clojure.lang.IReference #(or (h-var? %) (h-namespace? %) (h-atom? %))
    'clojure.lang.IRef #(or (h-var? %) (h-atom? %))
    'clojure.lang.IDeref h-deref?
@@ -369,8 +402,8 @@
    'clojure.lang.ITransientVector h-transient?
    'clojure.lang.ITransientSet h-transient?
    ;; vectors and lists here; ranges, an Eduction, a user type: the host's answer
-   'clojure.lang.IReduceInit #(or (vector? %) (list? %) (host/host-instance? 'clojure.lang.IReduceInit %))
-   'clojure.lang.IReduce #(or (vector? %) (list? %) (host/host-instance? 'clojure.lang.IReduce %))
+   'clojure.lang.IReduceInit #(or (vector? %) (list? %) (jank-impl? % :reduce) (host/host-instance? 'clojure.lang.IReduceInit %))
+   'clojure.lang.IReduce #(or (vector? %) (list? %) (jank-impl? % :reduce) (host/host-instance? 'clojure.lang.IReduce %))
    'clojure.lang.IKVReduce #(or (map? %) (vector? %) (host-record? %))
    'clojure.lang.Named #(or (symbol? %) (keyword? %))
    'java.util.Map$Entry host-map-entry?
@@ -384,7 +417,7 @@
    'clojure.lang.IAtom h-atom?
    'clojure.lang.IAtom2 h-atom?
    'clojure.lang.IExceptionInfo host/ex-info?
-   'java.lang.Comparable #(or (number? %) (string? %) (keyword? %) (symbol? %) (boolean? %) (vector? %) (h-char? %))
+   'java.lang.Comparable #(or (number? %) (string? %) (keyword? %) (symbol? %) (boolean? %) (vector? %) (h-char? %) (jank-impl? % :compare))
    ;; by the host's predicates, not class-of: on a host whose chars are
    ;; one-character strings, "a" is both a String and a Character
    'java.lang.String string?
@@ -396,11 +429,11 @@
    'java.lang.Byte integer?
    'java.lang.Float #(host/host-instance? 'java.lang.Float %)
    'java.math.BigInteger h-bigint?
-   'java.lang.Iterable coll?
-   'java.util.Collection #(and (coll? %) (not (map? %)))
+   'java.lang.Iterable #(or (jank-impl? % :seq) (host-record? %) (and (not (cohost-inst? %)) (coll? %)))
+   'java.util.Collection #(and (not (cohost-inst? %)) (coll? %) (not (map? %)))
    'java.util.List #(or (vector? %) (seq? %) (list? %))
    'java.util.Set set?
-   'java.util.Map map?
+   'java.util.Map #(or (map? %) (host-record? %))
    'java.util.RandomAccess vector?
    'java.util.Iterator host/iter?
    'java.util.regex.Matcher (constantly false)
@@ -422,8 +455,9 @@
    for these (a JVM vector is an IDrop, but core.clj's IDrop path is not the
    shim's to take)."
   [x]
-  (or (nil? x) (coll? x) (seq? x) (string? x) (number? x) (keyword? x) (symbol? x)
-      (boolean? x) (fn? x) (h-char? x) (h-var? x)))
+  (and (not (cohost-inst? x))
+       (or (nil? x) (coll? x) (seq? x) (string? x) (number? x) (keyword? x) (symbol? x)
+           (boolean? x) (fn? x) (h-char? x) (h-var? x))))
 
 (defn instance-of?
   "`(instance? c x)` for a class token `c` (a symbol): the shim's predicates
@@ -556,9 +590,28 @@
 (def RT-seq seq)
 ;; (let-go's conj takes no map onto a map, nor nil, as the JVM's does)
 (def RT-conj #?(:lg (fn [coll x] (if (and (map? coll) (or (nil? x) (map? x))) (into coll x) (conj coll x)))
+                ;; a cohost type instance: jank's conj panics on its type
+                :jank (fn [coll x] (if-let [d (host/instance-desc coll)]
+                                     (if-let [f (:conj d)] (f coll x)
+                                       (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.IPersistentCollection"))))
+                                     (conj coll x)))
                 :default conj))
-(def RT-count count)
-(def RT-nth nth)
+;; on a :cohost-types host, count and nth of an instance are the
+;; descriptor's (jank's own panic on an unknown type); the JVM's messages
+(def RT-count #?(:jank (fn [x] (if-let [d (host/instance-desc x)]
+                                 (if-let [f (:count d)] (f x)
+                                   (throw (host/ex* 'java.lang.UnsupportedOperationException (str "count not supported on this type: " (:name d)))))
+                                 (count x)))
+                 :default count))
+(def RT-nth #?(:jank (fn ([x i] (if-let [d (host/instance-desc x)]
+                                  (if-let [f (:nth d)] (f x i)
+                                    (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
+                                  (nth x i)))
+                       ([x i nf] (if-let [d (host/instance-desc x)]
+                                   (if-let [f (:nth d)] (f x i nf)
+                                     (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
+                                   (nth x i nf))))
+               :default nth))
 ;; Phel's get reads any other object as a PHP array, which throws: the JVM's
 ;; get answers not-found for what is no lookup
 (def RT-get
@@ -571,11 +624,27 @@
 ;; them makes a map of its fields and that key (on the JVM, a record still)
 (def ^:private assoc*
   #?(:phel (fn [m k v] (if (and (host-record? m) (not (contains? m k))) (assoc (into {} (seq m)) k v) (assoc m k v)))
+     ;; a cohost type instance: jank's assoc panics on its type
+     :jank (fn [m k v] (if-let [d (host/instance-desc m)]
+                         (if-let [f (:assoc d)] (f m k v)
+                           (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.Associative"))))
+                         (assoc m k v)))
      :default assoc))
 (def RT-assoc assoc*)
-(def RT-dissoc dissoc)
-(def RT-contains contains?)
-(def RT-find find)
+(def RT-dissoc #?(:jank (fn [m & ks] (if-let [d (host/instance-desc m)]
+                                       (if-let [f (:dissoc d)] (reduce f m ks)
+                                         (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.IPersistentMap"))))
+                                       (apply dissoc m ks)))
+                  :default dissoc))
+(def RT-contains #?(:jank (fn [coll k] (if-let [d (host/instance-desc coll)]
+                                         (some? (if-let [f (:find d)] (f coll k) (when-let [g (:get d)] (g coll k))))
+                                         (contains? coll k)))
+                    :default contains?))
+(def RT-find #?(:jank (fn [coll k] (if-let [d (host/instance-desc coll)]
+                                     (if-let [f (:find d)] (f coll k)
+                                       (when-let [g (:get d)] (let [v (g coll k ::absent)] (when (not= ::absent v) [k v]))))
+                                     (find coll k)))
+                :default find))
 (def RT-keys keys)
 (def RT-vals vals)
 (def RT-peek peek)
@@ -1162,7 +1231,7 @@
 (def new-BigDecimal (host-fn 'bigdec identity))
 (def new-BigInteger (host-fn 'bigint identity))
 (def new-ChunkBuffer (if-let [f (:chunk-buffer hc)] f (fn [_capacity] (host/mutable-list))))
-(def new-ArrayList (fn ([] (host/mutable-list)) ([n-or-coll] (let [l (host/mutable-list)] (when (coll? n-or-coll) (swap! (:state l) into n-or-coll)) l))))
+(def new-ArrayList (fn ([] (host/mutable-list)) ([n-or-coll] (let [l (host/mutable-list)] (when (coll?* n-or-coll) (swap! (:state l) into n-or-coll)) l))))
 (def new-LinkedList new-ArrayList)
 ;; ChunkedCons: the seq is chunk ++ more; the chunk and the rest ride its
 ;; metadata, so chunk-first sees the whole chunk and chunk-rest the rest
@@ -1750,12 +1819,22 @@
 (def -valAt (fn ([x k] (get x k)) ([x k d] (get x k d))))
 (def -entryAt find)
 (def -containsKey contains?)
-(def -peek peek)
-(def -pop (fn [x] (if (h-transient? x) (h-pop! x) (pop x))))
+(def -peek #?(:jank (fn [x] (if (cohost-inst? x)
+                              (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
+                              (peek x)))
+              :default peek))
+(def -pop (fn [x] (if (h-transient? x) (h-pop! x)
+                    #?(:jank (if (cohost-inst? x)
+                               (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
+                               (pop x))
+                       :default (pop x)))))
 (def -meta (fn [x] (host/meta* x)))
 ;; let-go: a symbol given no metadata is the bare symbol (with-meta makes a
 ;; wrapper no symbol equals, even of none)
 (def -withMeta #?(:lg (fn [x m] (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m)))
+                  ;; a cohost type instance's meta is its own slot, which
+                  ;; jank's with-meta cannot reach (it panics on the type)
+                  :jank (fn [x m] (host/with-meta* x m))
                   :default with-meta))
 (defn- host-meta [m] (if (host/strip-inline?) (dissoc m :inline :inline-arities) m))
 (defn- meta-map [m]
@@ -1804,7 +1883,9 @@
                              (h-namespace? x) (str (host/ns-name* x))
                              :else (str (nn x)))))
 (def -compareTo compare)
-(def -isEmpty (fn [x] (if (host/mlist? x) (empty? @(:state x)) (empty? x))))
+(def -isEmpty (fn [x] (if (host/mlist? x) (empty? @(:state x))
+                         #?(:jank (if (cohost-inst? x) (not (seq x)) (empty? x))
+                            :default (empty? x)))))
 (defn- type-name
   "A user type's name as the host prints it, without Python's <class '...'>."
   [t]
@@ -1813,10 +1894,16 @@
 (def -empty (let [h (host-fn 'empty (fn [coll] (cond (vector? coll) [] (map? coll) {} (set? coll) #{} :else ())))]
               ;; defrecord's empty throws (a record without its fields is no record)
               (fn [coll]
-                (if (host-record? coll)
-                  (throw (host/ex* 'java.lang.UnsupportedOperationException (str "Can't create empty: " (type-name (type coll)))))
-                  (h coll)))))
-(def -rseq (host-fn 'rseq (fn [coll] (seq (reverse coll)))))
+                #?(:jank (if-let [d (host/instance-desc coll)]
+                           (if-let [f (:empty d)] (f coll)
+                             (throw (host/ex* 'java.lang.UnsupportedOperationException (str "Can't create empty: " (:name d)))))
+                           (h coll))
+                   :default (if (host-record? coll)
+                              (throw (host/ex* 'java.lang.UnsupportedOperationException (str "Can't create empty: " (type-name (type coll)))))
+                              (h coll))))))
+;; jank's rseq is a TODO stub; reversing is its whole content there
+(def -rseq #?(:jank (fn [coll] (seq (reverse coll)))
+              :default (host-fn 'rseq (fn [coll] (seq (reverse coll))))))
 (def -iterator (fn [x] (RT-iter (if (host/mlist? x) @(:state x) x))))
 (def -drop (fn [coll n] (drop n coll)))
 (def -persistent (host-fn 'persistent! (unsupported "persistent!")))
@@ -1841,7 +1928,7 @@
                             (symbol? x) (name #?(:lg (host/plain-symbol x) :default x))
                             (keyword? x) (name x)
                             (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
-                            (or (string? x) (number? x) (boolean? x) (coll? x))
+                            (or (string? x) (number? x) (boolean? x) (coll?* x))
                             (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Named x)))
                             :else (str x))))
 (def -getNamespace #?(:lg (fn [x] (namespace (host/plain-symbol x))) :default namespace))

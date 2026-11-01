@@ -103,6 +103,10 @@
    :expand-macro    [['var 'form 'locals] "nil (the default), or a fn: the expansion of a call (form) of the cohost macro var holds, as the macro wrote it, with an &env of the locals; form itself when var holds none (let-go, whose compiler hands a macro no &env: the codemod expands it in place)"]
    :host-type       [['token] "the host type (form) an extend / extend-type / extend-protocol position names for a JVM class token, a vector of them, or nil to keep the class symbol"]
    :user-type?      [['x] "is x an instance of a type user code defined -- deftype, defrecord, reify, proxy -- rather than the host's own data? (.m x args) in source then reaches x's own member before the shim's method; default false"]
+   :new-instance    [['desc 'fields] "a new instance of the user type desc (a descriptor map) with these field values, on a :cohost-types host; the shim's type dispatch keys off :instance-desc, not this"]
+   :instance-desc   [['x] "the descriptor (a map) of the cohost type x is an instance of, on a :cohost-types host, or nil; the descriptor carries the type's own fns for the operations the host's fns cannot do on it (:count :assoc :dissoc :conj :nth :empty :seq :get :deref :compare :reduce)"]
+   :instance-field  [['x 'i] "field i of a cohost type instance, on a :cohost-types host"]
+   :with-meta       [['x 'm] "x with its metadata replaced by m: the host's with-meta (the default), or the type's own on a :cohost-types host, whose instances the host's with-meta cannot touch"]
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
@@ -328,6 +332,10 @@ namespace cohost_err {
     :host-type nil
     :expand-macro nil
     :user-type? (fn [_] false)
+    :new-instance (fn [_ _] (unsupported :new-instance))
+    :instance-desc (fn [_] nil)
+    :instance-field (fn [_ _] nil)
+    :with-meta (fn [x m] (with-meta x m))
     :host-data? (fn [_] false)
     :natives {}
     :host-aliases? true
@@ -513,6 +521,10 @@ namespace cohost_err {
 (defn host-type-fn [] (get @installed :host-type))
 (defn expand-macro-fn [] (get @installed :expand-macro))
 (defn user-type? [x] ((cap :user-type?) x))
+(defn new-instance [desc fields] ((cap :new-instance) desc fields))
+(defn instance-desc [x] ((cap :instance-desc) x))
+(defn instance-field [x i] ((cap :instance-field) x i))
+(defn with-meta* [x m] ((cap :with-meta) x m))
 (defn invoke-member [x nm args absent] ((cap :invoke-member) x nm args absent))
 (defn interop-passthrough? [] (boolean (cap :interop-passthrough?)))
 (defn protocol-var? [ns-sym name-sym] (boolean ((cap :protocol-var?) ns-sym name-sym)))

@@ -236,6 +236,7 @@
                 :per-arity-impls? (= :per-arity (host/protocol-impl-style))
                 :python-methods? (= :python (host/type-method-style))
                 :move-methods? (= :protocols (host/type-method-style))
+                :cohost-types? (= :cohost-types (host/type-method-style))
                 :host-method host/host-method
                 :var-form (fn [x] (when (host/var?* x)
                                     (let [n (host/var-ns x) n (if (host/namespace? n) (host/ns-name* n) n)]

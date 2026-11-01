@@ -28,6 +28,14 @@
 
 (defn- type? [t x] (= t (type x)))
 
+(defn- var-ns-of [h]
+  (let [s (str h)]
+    (when (string/starts-with? s "#'") (symbol (subs s 2 (string/index-of s "/"))))))
+
+(defn- var-sym-of [h]
+  (let [s (str h)]
+    (when (string/starts-with? s "#'") (symbol (subs s (inc (string/index-of s "/")))))))
+
 ;; clocks: jank has none of its own; C++'s, through cpp/raw
 (cpp/raw "#include <chrono>
 namespace cohost_time {
@@ -53,6 +61,602 @@ namespace cohost_math {
 
 (def ^:private concat-star (var-get (get (ns-interns 'clojure.core) 'concat*)))
 
+
+;; ---------------------------------------------------------------------------
+;; the type layer: deftype, defrecord, defprotocol and reify on a host with
+;; none (plan A3, style :cohost-types). Every cohost type is the one C++
+;; object below: it carries a descriptor (a plain map; the value of the
+;; type's var), a methods vector whose slots the C++ behaviors call, a
+;; fields vector, an extmap (records) and a meta slot. The C++ behaviors
+;; dispatch =, hash, str, pr-str, call, deref, get, find, seq and compare
+;; per instance. count, conj, assoc, dissoc, nth and meta panic in jank's
+;; own fns on an unknown type, so the shim routes those through the
+;; descriptor instead (cohost.adapter :instance-desc). Protocols are
+;; dispatch tables in the descriptor and the protocol's :impls atom.
+
+(cpp/raw "
+#include <jank/runtime/object.hpp>
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/core/call.hpp>
+#include <jank/runtime/core/truthy.hpp>
+#include <jank/runtime/obj/persistent_vector.hpp>
+#include <jank/runtime/obj/cons.hpp>
+#include <jank/runtime/obj/exception_info.hpp>
+#include <jank/runtime/obj/nil.hpp>
+
+namespace cohost_obj {
+  using namespace jank::runtime;
+
+  [[noreturn]] inline void unsupported(char const *what) {
+    throw make_box<obj::exception_info>(jtl::immutable_string{ what }, make_box<obj::nil>());
+  }
+
+  /* methods vector slots: 0 equiv, 1 hasheq, 2 toString, 3 toCodeString,
+     4 invoke, 5 deref, 6 get, 7 seq, 8 compare, 9 find */
+  struct cohost_object : object {
+    static constexpr object_type obj_type{ static_cast<object_type>(71) };
+    static constexpr object_behavior obj_behaviors{
+      object_behavior::call | object_behavior::get | object_behavior::find
+      | object_behavior::compare | object_behavior::seqable | object_behavior::indexable
+      | object_behavior::deref };
+    static constexpr bool pointer_free{ false };
+
+    object_ref descriptor;
+    object_ref methods;
+    object_ref fields;
+    object_ref extmap;
+    object_ref meta_;
+
+    cohost_object(object_ref d, object_ref m, object_ref f, object_ref e, object_ref mt)
+      : object{ obj_type, obj_behaviors }, descriptor{ d }, methods{ m }, fields{ f },
+        extmap{ e }, meta_{ mt } {}
+
+    object_ref self() const { return object_ref{ detail::untagged(this) }; }
+    object_ref slot(jank::i64 i) const { return methods.is_nil() ? methods : methods.nth(make_box(i)); }
+    bool has_slot(jank::i64 i) const { return !slot(i).is_nil(); }
+
+    bool equal(object const &o) const override {
+      if (!has_slot(0)) { return this == &o; }
+      return truthy(slot(0).call(self(), object_ref{ detail::untagged(&o) }));
+    }
+    jank::uhash to_hash() const override {
+      if (!has_slot(1)) { return static_cast<jank::uhash>(reinterpret_cast<uintptr_t>(this) >> 4); }
+      return static_cast<jank::uhash>(slot(1).call(self()).to_integer());
+    }
+    jtl::immutable_string to_string() const override {
+      if (!has_slot(2)) { return jtl::immutable_string{ \"#cohost-object\" }; }
+      return jank::runtime::to_string(slot(2).call(self()));
+    }
+    void to_string(jtl::string_builder &b) const override { b(to_string()); }
+    jtl::immutable_string to_code_string() const override {
+      if (!has_slot(3)) { return to_string(); }
+      return jank::runtime::to_string(slot(3).call(self()));
+    }
+    object_ref deref() override {
+      if (!has_slot(5)) { unsupported(\"cohost: this type does not implement IDeref\"); }
+      return slot(5).call(self());
+    }
+    object_ref get(object_ref key) const override {
+      if (!has_slot(6)) { return make_box<obj::nil>(); }
+      return slot(6).call(self(), key);
+    }
+    object_ref get(object_ref key, object_ref fb) const override {
+      if (!has_slot(6)) { return fb; }
+      return slot(6).call(self(), key, fb);
+    }
+    bool contains(object_ref key) const override {
+      if (has_slot(9)) { return !slot(9).call(self(), key).is_nil(); }
+      return !get(key).is_nil();
+    }
+    object_ref find(object_ref key) const override {
+      if (has_slot(9)) { return slot(9).call(self(), key); }
+      auto v = get(key);
+      if (v.is_nil()) { return v; }
+      return make_box<obj::persistent_vector>(std::in_place, key, v);
+    }
+    object_ref seq() const override {
+      if (!has_slot(7)) { unsupported(\"cohost: this type is not Seqable\"); }
+      return slot(7).call(self());
+    }
+    object_ref fresh_seq() const override { return seq(); }
+    jank::i64 compare(object const &o) const override {
+      if (!has_slot(8)) { unsupported(\"cohost: this type is not Comparable\"); }
+      return slot(8).call(self(), object_ref{ detail::untagged(&o) }).to_integer();
+    }
+    object_ref nth(object_ref) const override { unsupported(\"cohost: nth is the shim's, not jank's\"); }
+    object_ref nth(object_ref, object_ref fb) const override { return fb; }
+    object_ref call() const override { return invoke0(); }
+    object_ref call(object_ref a1) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1); }
+    object_ref call(object_ref a1, object_ref a2) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6, a7); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7, object_ref a8) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6, a7, a8); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7, object_ref a8, object_ref a9) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6, a7, a8, a9); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7, object_ref a8, object_ref a9, object_ref a10) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6, a7, a8, a9, a10); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7, object_ref a8, object_ref a9, object_ref a10, object_ref more) const override {
+      if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); }
+      object_ref args = more;
+      args = make_box<obj::cons>(a10, args);
+      args = make_box<obj::cons>(a9, args);
+      args = make_box<obj::cons>(a8, args);
+      args = make_box<obj::cons>(a7, args);
+      args = make_box<obj::cons>(a6, args);
+      args = make_box<obj::cons>(a5, args);
+      args = make_box<obj::cons>(a4, args);
+      args = make_box<obj::cons>(a3, args);
+      args = make_box<obj::cons>(a2, args);
+      args = make_box<obj::cons>(a1, args);
+      args = make_box<obj::cons>(self(), args);
+      return apply_to(slot(4), args);
+    }
+    object_ref invoke0() const {
+      if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); }
+      return slot(4).call(self());
+    }
+    void set_validator(object_ref const) override { unsupported(\"cohost: no validator on a cohost type\"); }
+    object_ref get_validator() const override { return make_box<obj::nil>(); }
+    void add_watch(object_ref const, object_ref const) override { unsupported(\"cohost: no watches on a cohost type\"); }
+    void remove_watch(object_ref const) override { unsupported(\"cohost: no watches on a cohost type\"); }
+    jank::i64 to_integer() const override { unsupported(\"cohost: not a number\"); }
+    jank::f64 to_real() const override { unsupported(\"cohost: not a number\"); }
+    object_ref first() const override { unsupported(\"cohost: not a sequence\"); }
+    object_ref next() const override { unsupported(\"cohost: not a sequence\"); }
+    object_ref next_in_place() override { unsupported(\"cohost: not a sequence\"); }
+    array_element_type get_element_type() const override { unsupported(\"cohost: not an array\"); }
+    object_ref aset(jank::i64 const, object_ref const) override { unsupported(\"cohost: not an array\"); }
+    object_ref aclone() const override { unsupported(\"cohost: not an array\"); }
+  };
+
+  object_ref make(object_ref d, object_ref m, object_ref f, object_ref e, object_ref mt) {
+    return make_box<cohost_object>(d, m, f, e, mt);
+  }
+  bool is_cohost(object_ref x) {
+    return !x.is_nil() && x.get_type() == cohost_object::obj_type;
+  }
+  object_ref descriptor_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->descriptor; }
+  object_ref fields_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->fields; }
+  object_ref extmap_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->extmap; }
+  object_ref meta_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->meta_; }
+  object_ref field(object_ref x, jank::i64 i) { return static_cast<cohost_object *>(x.ptr())->fields.nth(make_box(i)); }
+}
+")
+
+;; -- instance access (the adapter's :instance-desc / :instance-field) ------
+
+(defn cohost-object? [x] (cpp/cohost_obj.is_cohost x))
+
+(defn instance-desc
+  "x's type descriptor (a map), or nil when x is no cohost type instance."
+  [x] (when (cpp/cohost_obj.is_cohost x) (cpp/cohost_obj.descriptor_of x)))
+
+(defn inst-fields [x] (cpp/cohost_obj.fields_of x))
+(defn inst-field [x i] (cpp/cohost_obj.field x i))
+(defn inst-extmap [x] (cpp/cohost_obj.extmap_of x))
+(defn inst-meta [x] (cpp/cohost_obj.meta_of x))
+
+(defn new-instance
+  "An instance of the type desc names, with these field values."
+  ([desc fields] (cpp/cohost_obj.make desc (:methods desc) fields nil nil))
+  ([desc fields extmap] (cpp/cohost_obj.make desc (:methods desc) fields extmap nil))
+  ([desc fields extmap m] (cpp/cohost_obj.make desc (:methods desc) fields extmap m)))
+
+(defn with-inst-meta [x m]
+  (if-let [f (:with-meta-fn (instance-desc x))]
+    (f x m)
+    (new-instance (instance-desc x) (inst-fields x) (inst-extmap x) m)))
+
+;; -- records ----------------------------------------------------------------
+
+(defn- key-index [desc k]
+  (let [ks (:keys desc)]
+    (loop [i 0]
+      (cond (>= i (count ks)) nil
+            (= k (nth ks i)) i
+            :else (recur (inc i))))))
+
+(defn- record-entries [x]
+  (let [d (instance-desc x)]
+    (into (mapv vector (:keys d) (inst-fields x)) (seq (inst-extmap x)))))
+
+(defn- record-get
+  ([x k] (record-get x k nil))
+  ([x k nf]
+   (let [i (key-index (instance-desc x) k)]
+     (if (some? i) (inst-field x i) (get (inst-extmap x) k nf)))))
+
+(defn- record-find [x k]
+  (let [i (key-index (instance-desc x) k)]
+    (cond (some? i) [k (inst-field x i)]
+          (contains? (inst-extmap x) k) [k (get (inst-extmap x) k)]
+          :else nil)))
+
+(defn- record-equiv [x other]
+  (boolean
+   (and (cpp/cohost_obj.is_cohost other)
+        (identical? (instance-desc x) (instance-desc other))
+        (= (inst-fields x) (inst-fields other))
+        (= (inst-extmap x) (inst-extmap other)))))
+
+(defn- record-string [x] (str (:name (instance-desc x)) (into {} (record-entries x))))
+(defn- record-code-string [x] (str "#" (:name (instance-desc x)) (pr-str (into {} (record-entries x)))))
+
+(defn- record-count [x] (+ (count (inst-fields x)) (count (inst-extmap x))))
+
+(defn- record-assoc [x k v]
+  (let [d (instance-desc x) i (key-index d k)]
+    (if (some? i)
+      (new-instance d (assoc (inst-fields x) i v) (inst-extmap x) (inst-meta x))
+      (new-instance d (inst-fields x) (assoc (inst-extmap x) k v) (inst-meta x)))))
+
+(defn- record-dissoc [x k]
+  (let [d (instance-desc x) i (key-index d k)]
+    (cond (some? i) (with-meta (into {} (remove (fn [e] (= k (first e))) (record-entries x))) (inst-meta x))
+          (contains? (inst-extmap x) k) (new-instance d (inst-fields x) (dissoc (inst-extmap x) k) (inst-meta x))
+          :else x)))
+
+(defn- record-conj [x e]
+  (cond (nil? e) x
+        (vector? e) (record-assoc x (nth e 0) (nth e 1))
+        (map? e) (reduce (fn [s kv] (record-assoc s (first kv) (second kv))) x e)
+        :else (throw (adapter/ex* 'java.lang.ClassCastException
+                                  (str "class " (name (type e)) " cannot be cast to class java.util.Map$Entry")))))
+
+(defn- record-nth [x & _]
+  (throw (adapter/ex* 'java.lang.UnsupportedOperationException
+                      (str "nth not supported on this type: " (:name (instance-desc x))))))
+
+(defn- record-empty [x]
+  (throw (adapter/ex* 'java.lang.UnsupportedOperationException
+                      (str "Can't create empty: " (:name (instance-desc x))))))
+
+(defn- record-seq [x] (seq (record-entries x)))
+
+(defn- record-invoke
+  ([x k] (record-get x k))
+  ([x k nf] (record-get x k nf)))
+
+;; -- type construction ------------------------------------------------------
+
+(def ^:private iface-tokens
+  "Spec heads as written -> the canonical class token, for :heads."
+  {'Object 'java.lang.Object 'IDeref 'clojure.lang.IDeref 'IBlockingDeref 'clojure.lang.IBlockingDeref
+   'IFn 'clojure.lang.IFn 'ILookup 'clojure.lang.ILookup 'Counted 'clojure.lang.Counted
+   'Seqable 'clojure.lang.Seqable 'Associative 'clojure.lang.Associative 'Indexed 'clojure.lang.Indexed
+   'IMeta 'clojure.lang.IMeta 'IObj 'clojure.lang.IObj 'IReduce 'clojure.lang.IReduce
+   'IReduceInit 'clojure.lang.IReduceInit 'IKVReduce 'clojure.lang.IKVReduce
+   'IPersistentCollection 'clojure.lang.IPersistentCollection 'IPersistentMap 'clojure.lang.IPersistentMap
+   'IPersistentVector 'clojure.lang.IPersistentVector 'IPersistentStack 'clojure.lang.IPersistentStack
+   'ISeq 'clojure.lang.ISeq 'Comparable 'java.lang.Comparable 'Iterable 'java.lang.Iterable
+   'IPending 'clojure.lang.IPending 'IDrop 'clojure.lang.IDrop 'IChunkedSeq 'clojure.lang.IChunkedSeq
+   'Sorted 'clojure.lang.Sorted 'Reversible 'clojure.lang.Reversible 'Fn 'clojure.lang.Fn})
+
+(defn- simple-name
+  "A spec head's simple name: jank's name of a qualified symbol keeps the
+   qualifier (clojure.lang.Counted), so strip it here."
+  [h]
+  (let [s (str h) i (string/last-index-of s ".")]
+    (if i (symbol (subs s (inc i))) h)))
+
+(defn make-type
+  "Assemble a type descriptor from a deftype/defrecord/reify spec:
+   :name (dotted symbol) :kind :fields, and :groups, a vector of
+   [head {method fn}] pairs whose head is a protocol descriptor or a
+   class token (see resolve-head)."
+  ;; the type's name is tname here: a local called name would shadow
+  ;; clojure.core/name, which the iface grouping below calls
+  [{:keys [kind fields groups] tname :name}]
+  (let [record? (= kind :record)
+        obj (into {} (mapcat (fn [g] (when (contains? #{'java.lang.Object 'Object} (first g)) (second g)))) (or groups []))
+        prot (into {} (mapcat (fn [g] (when (map? (first g)) [[(:var (first g)) (second g)]]))) (or groups []))
+        ifc (into {} (mapcat (fn [g] (let [h (first g)] (when (and (symbol? h) (not (contains? #{'java.lang.Object 'Object} h)))
+                                             [[(simple-name h) (second g)]])))) (or groups []))
+        heads (into [] (mapcat (fn [g] (when (symbol? (first g)) [(first g)]))) (or groups []))
+        mget (fn [iface m] (get-in ifc [iface m]))
+        equiv (cond record? record-equiv
+                    (get obj 'equals) (fn [x other] ((get obj 'equals) x other)))
+        hasheq (cond record? (fn [x] (hash (into {} (record-entries x))))
+                     (get obj 'hashCode) (fn [x] ((get obj 'hashCode) x)))
+        tostring (cond record? record-string
+                       (get obj 'toString) (fn [x] ((get obj 'toString) x))
+                       :else (fn [x] (str tname "@" (hash x))))
+        codestring (cond record? record-code-string
+                         (get obj 'toString) (fn [x] ((get obj 'toString) x))
+                         :else (fn [x] (str "#object[" tname " 0x" (hash x) " \"" (str x) "\"]")))
+        invoke (cond (mget 'IFn 'invoke) (mget 'IFn 'invoke)
+                     record? record-invoke)
+        deref-f (mget 'IDeref 'deref)
+        get-f (cond record? record-get
+                    (mget 'ILookup 'valAt) (mget 'ILookup 'valAt))
+        seq-f (cond record? record-seq
+                    (mget 'Seqable 'seq) (mget 'Seqable 'seq))
+        compare-f (mget 'Comparable 'compareTo)
+        find-f (when record? record-find)
+        methods [equiv hasheq tostring codestring invoke deref-f get-f seq-f compare-f find-f]]
+    (cond-> {:cohost/type true
+             :name tname :kind kind :fields (vec fields) :keys (mapv keyword fields)
+             :methods methods :protocols prot
+             :heads (into #{} (map (fn [h] (get iface-tokens h h))) heads)
+             :object-methods obj :iface-methods ifc}
+      record? (assoc :count record-count :assoc record-assoc :dissoc record-dissoc
+                     :conj record-conj :nth record-nth :empty record-empty
+                     :get record-get :seq record-seq)
+      (some? find-f) (assoc :find find-f)
+      (some? seq-f) (assoc :seq seq-f)
+      (some? get-f) (assoc :get get-f)
+      (some? deref-f) (assoc :deref deref-f)
+      (some? compare-f) (assoc :compare compare-f)
+      (mget 'Counted 'count) (assoc :count (fn [x] ((mget 'Counted 'count) x)))
+      (mget 'Associative 'assoc) (assoc :assoc (fn [x k v] ((mget 'Associative 'assoc) x k v)))
+      (mget 'IPersistentCollection 'cons) (assoc :conj (fn [x e] ((mget 'IPersistentCollection 'cons) x e)))
+      (mget 'IPersistentCollection 'empty) (assoc :empty (fn [x] ((mget 'IPersistentCollection 'empty) x)))
+      (mget 'Indexed 'nth) (assoc :nth (mget 'Indexed 'nth))
+      (mget 'IReduce 'reduce) (assoc :reduce (mget 'IReduce 'reduce))
+      (mget 'IReduceInit 'reduce) (assoc :reduce (mget 'IReduceInit 'reduce))
+      (mget 'IMeta 'meta) (assoc :meta-fn (mget 'IMeta 'meta))
+      (mget 'IObj 'withMeta) (assoc :with-meta-fn (mget 'IObj 'withMeta)))))
+
+;; -- protocols ---------------------------------------------------------------
+
+(defn protocol-desc
+  "The value of a protocol var: its signatures and its impls atom,
+   {type-key {method-sym fn}}; a type-key is a user type's :name, a class
+   token, or nil."
+  [pname pvar sigs]
+  {:cohost/protocol true :name pname :var pvar :sigs sigs :impls (atom {})})
+
+;; the shim's class-of, resolved lazily: the shim requires this adapter
+;; (through cohost.hosts.auto), so this namespace cannot require it back
+(def ^:private shim-class-of (delay (var-get (resolve 'cohost.shim/class-of))))
+(def ^:private shim-string-format (delay (var-get (resolve 'cohost.shim/String-format))))
+
+(defn type-key
+  "The protocol dispatch key of a value."
+  [x]
+  (cond (nil? x) nil
+        (cpp/cohost_obj.is_cohost x) (:name (instance-desc x))
+        ;; jank's map entries are vectors, and its map-entry? says so of a
+        ;; 2-vector: the shim's class-of would call [1 2] a MapEntry
+        (vector? x) 'clojure.lang.PersistentVector
+        :else (@shim-class-of x)))
+
+(defn protocol-impl
+  "The impl fn of method msym of protocol p for x, or nil."
+  [p msym x]
+  (let [impls @(:impls p)]
+    (or (when (cpp/cohost_obj.is_cohost x)
+          (or (get-in (instance-desc x) [:protocols (:var p) msym])
+              (get (get impls (:name (instance-desc x))) msym)))
+        (get (get impls (type-key x)) msym)
+        (get (get impls 'java.lang.Object) msym))))
+
+(defn protocol-dispatch [p msym args]
+  (let [f (protocol-impl p msym (first args))]
+    (if f
+      (apply f args)
+      (throw (adapter/ex* 'java.lang.IllegalArgumentException
+                          (str "No implementation of method: :" (name msym)
+                               " of protocol: #'" (:name p)
+                               " found for class: " (type-key (first args))))))))
+
+(defn register-impl!
+  "extend's work: record mmap {method-sym fn} as type t's impl of protocol p.
+   t is a type descriptor, a class token, or nil."
+  [p t mmap]
+  (let [k (cond (nil? t) nil
+                (map? t) (:name t)
+                :else t)]
+    (swap! (:impls p) update k (fn [old] (merge old mmap)))
+    p))
+
+;; -- the macros ---------------------------------------------------------------
+;; A cohost macro fn takes [&form &env & args]; jank hands a macro ((args))
+;; as &form and its name as &env, and the codemod's wrapped call passes the
+;; same shape, so these read their arguments from & args only. Which spec
+;; heads are protocols is decided at run time (resolve-head), not here:
+;; a protocol is a var whose root is a protocol descriptor.
+
+(defn resolve-head
+  "A type spec's head at run time: the protocol descriptor when head names
+   a protocol, else the head symbol itself (a class token)."
+  [head]
+  (let [v (try (resolve head) (catch :default _ nil))]
+    (if (and v (map? (var-get v)) (get (var-get v) :cohost/protocol))
+      (var-get v)
+      head)))
+
+(defn- clause-arities
+  "A method clause (m [params] body...) or (m ([params] body...) ...) ->
+   [[params body...] ...]."
+  [[_ & more]]
+  (if (vector? (first more)) [(vec more)] (map vec more)))
+
+(defn- method-fns-form
+  "One method name's clauses -> a (fn [this ...] (let [field (inst-field
+   this i) ...] body...)) form holding every arity the clauses declare.
+   fields are the type's field symbols (none for extend / reify)."
+  [fields clauses]
+  (apply list 'fn
+         (mapcat (fn [clause]
+                   (map (fn [arity]
+                          (let [params (first arity) body (rest arity)
+                                this (first params)
+                                binds (vec (mapcat (fn [i f] [f (list 'cohost.hosts.jank/inst-field this i)])
+                                                   (range) fields))]
+                            (apply list params
+                                   (if (empty? binds) body [(apply list 'let binds body)]))))
+                        (clause-arities clause)))
+                 clauses)))
+
+(defn- groups-form
+  "Type specs -> a vector form of [head-form {method fn-form}] pairs, one
+   per spec head, in order. A head before any clause list starts a group;
+   clauses before the first head belong to java.lang.Object."
+  [fields specs]
+  (let [groups (loop [xs (seq specs) head 'java.lang.Object acc []]
+                 (if (empty? xs)
+                   acc
+                   (let [x (first xs)]
+                     (if (symbol? x)
+                       (recur (rest xs) x (conj acc [x []]))
+                       (recur (rest xs) head
+                              (if (empty? acc)
+                                (conj acc [head [x]])
+                                (update acc (dec (count acc)) (fn [g] [(first g) (conj (second g) x)]))))))))]
+    (vec (map (fn [g]
+                [(list 'cohost.hosts.jank/resolve-head (list 'quote (first g)))
+                 (into {} (map (fn [e] [(list 'quote (key e)) (method-fns-form fields (val e))]))
+                       (group-by first (second g)))])
+              groups))))
+
+(defn inst-keys [desc] (:keys desc))
+
+(defn- ctor-forms [tname fields record?]
+  (let [params (vec fields)]
+    (concat
+     [(list 'def (symbol (str "->" (name tname))) (list 'fn params (list 'cohost.hosts.jank/new-instance tname params)))
+      (list 'def (symbol (str (name tname) ".")) (list 'fn params (list 'cohost.hosts.jank/new-instance tname params)))]
+     (when record?
+       [(list 'def (symbol (str "map->" (name tname)))
+              (list 'fn ['m]
+                    (list 'let ['fields (list 'mapv (list 'fn ['k] (list 'get 'm 'k)) (list 'cohost.hosts.jank/inst-keys tname))
+                                'ext (list 'reduce 'dissoc 'm (list 'cohost.hosts.jank/inst-keys tname))]
+                          (list 'cohost.hosts.jank/new-instance tname 'fields (list 'when (list 'seq 'ext) 'ext)))))]))))
+
+(defn- deftype-form [kind tname fields specs]
+  (let [nsym (symbol (str (name (ns-name *ns*)) "." (name tname)))]
+    (apply list 'do
+           (list 'def tname
+                 (list 'cohost.hosts.jank/make-type
+                       {:name (list 'quote nsym) :kind kind :fields (list 'quote (vec fields))
+                        :groups (groups-form fields specs)}))
+           (ctor-forms tname fields (= kind :record)))))
+
+(defn- name-and-fields
+  "deftype's [name doc-or-attr? fields & specs] with the middle dropped."
+  [tname fields specs]
+  (if (vector? fields)
+    [tname fields specs]
+    [tname (first specs) (rest specs)]))
+
+(defn deftype-macro [&form &env tname fields & specs]
+  (let [[tname fields specs] (name-and-fields tname fields specs)]
+    (deftype-form :deftype tname fields specs)))
+
+(defn defrecord-macro [&form &env tname fields & specs]
+  (let [[tname fields specs] (name-and-fields tname fields specs)]
+    (deftype-form :record tname fields specs)))
+
+(defn reify-macro [&form &env & specs]
+  (let [nsym (symbol (str (name (ns-name *ns*)) "." (name (gensym "reify"))))]
+    (list 'cohost.hosts.jank/new-instance
+          (list 'cohost.hosts.jank/make-type
+                {:name (list 'quote nsym) :kind :reify :fields []
+                 :groups (groups-form [] specs)})
+          [])))
+
+(defn defprotocol-macro [&form &env pname & specs]
+  (let [doc (when (string? (first specs)) (first specs))
+        specs (if doc (rest specs) specs)
+        opts (when (map? (first specs)) (first specs))
+        specs (if opts (rest specs) specs)
+        sigs (into {}
+                   (map (fn [sig]
+                          (let [m (first sig) more (rest sig)
+                                arglists (vec (filter vector? more))
+                                mdoc (first (filter string? more))]
+                            [m (cond-> {:arglists arglists} mdoc (assoc :doc mdoc))])))
+                   specs)
+        nsym (symbol (str (name (ns-name *ns*)) "/" (name pname)))]
+    (apply list 'do
+           (list 'def pname
+                 (list 'cohost.hosts.jank/protocol-desc (list 'quote nsym) (list 'var pname) (list 'quote sigs)))
+           (concat
+            (map (fn [e]
+                   (let [m (key e) sig (val e)]
+                     (list 'def (with-meta m {:arglists (list 'quote (:arglists sig))})
+                           (list 'fn '[& args] (list 'cohost.hosts.jank/protocol-dispatch pname (list 'quote m) 'args)))))
+                 sigs)
+            [(when doc (list 'alter-meta! (list 'var pname) 'assoc :doc doc))
+             (list 'quote pname)]
+            ))))
+
+(defn- group-impls
+  "[head clause clause head clause ...] -> [[head [clause ...]] ...]."
+  [xs]
+  (reduce (fn [acc x]
+            (if (seq? x)
+              (update acc (dec (count acc)) (fn [g] [(first g) (conj (second g) x)]))
+              (conj acc [x []])))
+          [] xs))
+
+(defn- impls-map-form [clauses]
+  (into {} (map (fn [e] [(list 'quote (key e)) (method-fns-form [] (val e))])) (group-by first clauses)))
+
+(defn- type-arg-form
+  "An extend target as a form: the descriptor when t names a cohost type,
+   else the quoted class token (nil stays nil)."
+  [t]
+  (cond (nil? t) nil
+        :else (let [v (try (resolve t) (catch :default _ nil))]
+                (if (and v (map? (var-get v)) (get (var-get v) :cohost/type))
+                  (list 'var-get (list 'var t))
+                  (list 'quote t)))))
+
+(defn extend-type-macro [&form &env t & specs]
+  (apply list 'do
+         (map (fn [g]
+                (list 'cohost.hosts.jank/register-impl! (first g) (type-arg-form t) (impls-map-form (second g))))
+              (group-impls specs))))
+
+(defn extend-protocol-macro [&form &env p & specs]
+  (apply list 'do
+         (map (fn [g]
+                (list 'cohost.hosts.jank/register-impl! p (type-arg-form (first g)) (impls-map-form (second g))))
+              (group-impls specs))))
+
+(defn sync-macro [&form &env _flags & body]
+  (list '. 'clojure.lang.LockingTransaction
+        (list 'runInTransaction (apply list 'fn [] body))))
+
+(def ^:private type-core-extras
+  {'deftype deftype-macro
+   'defrecord defrecord-macro
+   'defprotocol defprotocol-macro
+   'reify reify-macro
+   'extend-type extend-type-macro
+   'extend-protocol extend-protocol-macro
+   'extend (fn [t p & {:as mmap}]
+             (register-impl! p t (into {} (map (fn [e] [(symbol (name (key e))) (val e)])) mmap)))
+   'satisfies? (fn [p x] (boolean (when (map? p) (some (fn [msym] (protocol-impl p msym x)) (keys (:sigs p))))))
+   'extends? (fn [p t] (boolean (when (map? p) (or (contains? @(:impls p) (if (map? t) (:name t) t))
+                                                  (and (map? t) (contains? (:protocols t) (:var p)))))))
+   'extenders (fn [p] (when (map? p) (keys @(:impls p))))
+   'record? (fn [x] (boolean (when-let [d (instance-desc x)] (= :record (:kind d)))))
+   'ref (fn [x & _opts] (adapter/atom* x))
+   'format (fn [fmt & args] (apply @shim-string-format fmt args))
+   'sync sync-macro
+   ;; jank's own dosync expands to jank's sync, a TODO stub: this one
+   ;; expands to cohost.core's sync, above
+   'dosync (fn [&form &env & body] (cons 'sync (cons nil body)))})
+
+(def ^:private type-macro-names
+  (into #{} (filter (fn [s] (contains? type-core-extras s))
+                    ['deftype 'defrecord 'defprotocol 'reify 'extend-type 'extend-protocol 'sync 'dosync])))
+
+;; clojure.lang.Eduction: core.clj's own is a deftype the boot skips, so
+;; eduction comes from here: a cohost type whose seq runs the transducer.
+(def ^:private eduction-seq (fn [x] (sequence (inst-field x 0) (inst-field x 1))))
+
+(def ^:private eduction-desc
+  (let [d (make-type {:name 'clojure.lang.Eduction :kind :deftype :fields '[xform coll] :groups []})]
+    (assoc d :seq eduction-seq :methods (assoc (:methods d) 7 eduction-seq))))
+
+(defn- eduction* [& xfs]
+  (new-instance eduction-desc [(apply comp (butlast xfs)) (last xfs)]))
+
 (def adapter
   {:name :jank
    :core-ns 'clojure.core
@@ -67,6 +671,53 @@ namespace cohost_math {
    :refer-from-core! (fn [into-ns sym]
                        (binding [*ns* (the-ns into-ns)]
                          (refer 'clojure.core :only [sym])))
+   ;; the type layer above: deftype & friends are the adapter's own macros
+   ;; and fns, marked as macros when they are interned into cohost.core
+   :type-method-style :cohost-types
+   :core-extras (assoc type-core-extras 'eduction eduction*)
+   :intern! (fn [ns-sym sym val]
+              (let [v (intern ns-sym sym val)]
+                (when (and (= 'cohost.core ns-sym) (contains? type-macro-names sym))
+                  (alter-meta! v assoc :macro true))
+                v))
+   :user-type? (fn [x] (cohost-object? x))
+   :instance-desc instance-desc
+   :instance-field inst-field
+   :new-instance (fn [desc fields] (new-instance desc fields))
+   :with-meta (fn [x m] (if (cohost-object? x) (with-inst-meta x m) (with-meta x m)))
+   :var-ns var-ns-of
+   :var-sym var-sym-of
+   :meta (fn [x] (cond (cohost-object? x)
+                        (if-let [f (:meta-fn (instance-desc x))] (f x) (inst-meta x))
+                        ;; a var's meta on jank has no :ns/:name; supply them
+                        (var? x) (let [m (meta x)]
+                                   (if (and (:name m) (:ns m)) m
+                                     (assoc m :name (var-sym-of x) :ns (var-ns-of x))))
+                        :else (meta x)))
+   :invoke-member (fn [x nm args absent]
+                    (if-let [d (instance-desc x)]
+                      (let [msym (symbol nm)
+                            field (when (empty? args) (key-index d (keyword nm)))]
+                        (cond (some? field) (inst-field x field)
+                              (get (:object-methods d) msym) (apply (get (:object-methods d) msym) x args)
+                              (some (fn [e] (get (val e) msym)) (:protocols d))
+                              (apply (some (fn [e] (get (val e) msym)) (:protocols d)) x args)
+                              (some (fn [e] (get (val e) msym)) (:iface-methods d))
+                              (apply (some (fn [e] (get (val e) msym)) (:iface-methods d)) x args)
+                              :else absent))
+                      absent))
+   :class-instance? (fn [c x] (boolean (and (map? c) (get c :cohost/type)
+                                            (identical? c (instance-desc x)))))
+   :host-instance? (fn [token x]
+                     (boolean (when-let [d (instance-desc x)]
+                                (or (contains? (:heads d) token)
+                                    (and (= token 'clojure.lang.IReduce) (some? (:reduce d)))
+                                    (and (= token 'clojure.lang.IReduceInit) (some? (:reduce d)))
+                                    (and (= token 'clojure.lang.Seqable) (some? (:seq d)))
+                                    (and (= token 'clojure.lang.ILookup) (some? (:get d)))))))
+   :deref? (fn [x] (or (contains? #{"atom" "delay" "volatile_" "var" "future" "promise"} (type x))
+                       (boolean (when-let [d (instance-desc x)] (:deref d)))))
+   :pending? (fn [x] (contains? #{"delay" "future" "promise" "lazy_sequence"} (type x)))
    :resolve-core (fn [sym] (get (ns-publics 'clojure.core) sym))
    :mark-macro! (fn [v] (alter-meta! v assoc :macro true) v)
    :expand-macro expand-macro
@@ -92,11 +743,13 @@ namespace cohost_math {
    :decimal? (fn [x] (type? "big_decimal" x))
    :sorted? (fn [x] (sorted? x))
    ;; (its indexed? is a TODO stub)
-   :indexed? (fn [x] (vector? x))
+   :indexed? (fn [x] (or (vector? x) (boolean (when-let [d (instance-desc x)] (:nth d)))))
    :regex? (fn [x] (type? "re_pattern" x))
    :bigint? (fn [x] (type? "big_integer" x))
-   :counted? (fn [x] (counted? x))
-   :reversible? (fn [x] (reversible? x))
+   :counted? (fn [x] (if-let [d (instance-desc x)] (boolean (:count d)) (counted? x)))
+   ;; (its reversible? and rseq are TODO stubs: vectors and sorted
+   ;; collections are reversible, and the shim's -rseq reverses)
+   :reversible? (fn [x] (or (vector? x) (sorted? x)))
    :reduced? (fn [x] (reduced? x))
    ;; (its push-thread-bindings takes a hash map only, no array map)
    :push-thread-bindings! (fn [m] (push-thread-bindings (apply hash-map (mapcat identity m))))
