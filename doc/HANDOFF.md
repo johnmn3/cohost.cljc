@@ -119,7 +119,7 @@ clojurust facts found so far (put them in REPORT's host section when it lands):
   --src-path <dir> probe.cljrs -- <root>`) that boots a core.clj truncated just past the
   failing form and evals pieces one at a time; `gdb -batch` gives Rust frames (no symbols).
 
-## jank (in progress: src/cohost/hosts/jank.jank)
+## jank (in progress: src/cohost/hosts/jank_host.jank)
 
 Installed from jank's apt repository (`dev/install/jank.sh`): package `0.1-noble`, jank-0.1-alpha.
 Run: `bb boot:jank`. Measured 2026-10-31 ET: 791 forms, stock 542 / host 159 / skipped 90 /

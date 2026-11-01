@@ -8,7 +8,7 @@
 ;;   exception;
 ;; - a macro gets its arguments right, but &form and &env wrong;
 ;; - push-thread-bindings takes a hash map only.
-(ns cohost.hosts.jank
+(ns cohost.hosts.jank-host
   (:require [cohost.adapter :as adapter]
             [cohost.scan :as scan]
             [clojure.string :as string]))
@@ -696,7 +696,7 @@ namespace cohost_obj {
                    (map (fn [arity]
                           (let [params (first arity) body (rest arity)
                                 this (first params)
-                                binds (vec (mapcat (fn [i f] [f (list 'cohost.hosts.jank/inst-field this i)])
+                                binds (vec (mapcat (fn [i f] [f (list 'cohost.hosts.jank-host/inst-field this i)])
                                                    (range) fields))]
                             (apply list params
                                    (if (empty? binds) body [(apply list 'let binds body)]))))
@@ -719,7 +719,7 @@ namespace cohost_obj {
                                 (conj acc [head [x]])
                                 (update acc (dec (count acc)) (fn [g] [(first g) (conj (second g) x)]))))))))]
     (vec (map (fn [g]
-                [(list 'cohost.hosts.jank/resolve-head (list 'quote (first g)))
+                [(list 'cohost.hosts.jank-host/resolve-head (list 'quote (first g)))
                  (into {} (map (fn [e] [(list 'quote (key e)) (method-fns-form fields (val e))]))
                        (group-by first (second g)))])
               groups))))
@@ -729,20 +729,20 @@ namespace cohost_obj {
 (defn- ctor-forms [tname fields record?]
   (let [params (vec fields)]
     (concat
-     [(list 'def (symbol (str "->" (name tname))) (list 'fn params (list 'cohost.hosts.jank/new-instance tname params)))
-      (list 'def (symbol (str (name tname) ".")) (list 'fn params (list 'cohost.hosts.jank/new-instance tname params)))]
+     [(list 'def (symbol (str "->" (name tname))) (list 'fn params (list 'cohost.hosts.jank-host/new-instance tname params)))
+      (list 'def (symbol (str (name tname) ".")) (list 'fn params (list 'cohost.hosts.jank-host/new-instance tname params)))]
      (when record?
        [(list 'def (symbol (str "map->" (name tname)))
               (list 'fn ['m]
-                    (list 'let ['fields (list 'mapv (list 'fn ['k] (list 'get 'm 'k)) (list 'cohost.hosts.jank/inst-keys tname))
-                                'ext (list 'reduce 'dissoc 'm (list 'cohost.hosts.jank/inst-keys tname))]
-                          (list 'cohost.hosts.jank/new-instance tname 'fields (list 'when (list 'seq 'ext) 'ext)))))]))))
+                    (list 'let ['fields (list 'mapv (list 'fn ['k] (list 'get 'm 'k)) (list 'cohost.hosts.jank-host/inst-keys tname))
+                                'ext (list 'reduce 'dissoc 'm (list 'cohost.hosts.jank-host/inst-keys tname))]
+                          (list 'cohost.hosts.jank-host/new-instance tname 'fields (list 'when (list 'seq 'ext) 'ext)))))]))))
 
 (defn- deftype-form [kind tname fields specs]
   (let [nsym (symbol (str (name (ns-name *ns*)) "." (name tname)))]
     (apply list 'do
            (list 'def tname
-                 (list 'cohost.hosts.jank/make-type
+                 (list 'cohost.hosts.jank-host/make-type
                        {:name (list 'quote nsym) :kind kind :fields (list 'quote (vec fields))
                         :groups (groups-form fields specs)}))
            (ctor-forms tname fields (= kind :record)))))
@@ -764,8 +764,8 @@ namespace cohost_obj {
 
 (defn reify-macro [&form &env & specs]
   (let [nsym (symbol (str (name (ns-name *ns*)) "." (name (gensym "reify"))))]
-    (list 'cohost.hosts.jank/new-instance
-          (list 'cohost.hosts.jank/make-type
+    (list 'cohost.hosts.jank-host/new-instance
+          (list 'cohost.hosts.jank-host/make-type
                 {:name (list 'quote nsym) :kind :reify :fields []
                  :groups (groups-form [] specs)})
           [])))
@@ -785,12 +785,12 @@ namespace cohost_obj {
         nsym (symbol (str (name (ns-name *ns*)) "/" (name pname)))]
     (apply list 'do
            (list 'def pname
-                 (list 'cohost.hosts.jank/protocol-desc (list 'quote nsym) (list 'var pname) (list 'quote sigs)))
+                 (list 'cohost.hosts.jank-host/protocol-desc (list 'quote nsym) (list 'var pname) (list 'quote sigs)))
            (concat
             (map (fn [e]
                    (let [m (key e) sig (val e)]
                      (list 'def (with-meta m {:arglists (list 'quote (:arglists sig))})
-                           (list 'fn '[& args] (list 'cohost.hosts.jank/protocol-dispatch pname (list 'quote m) 'args)))))
+                           (list 'fn '[& args] (list 'cohost.hosts.jank-host/protocol-dispatch pname (list 'quote m) 'args)))))
                  sigs)
             [(when doc (list 'alter-meta! (list 'var pname) 'assoc :doc doc))
              (list 'quote pname)]
@@ -821,13 +821,13 @@ namespace cohost_obj {
 (defn extend-type-macro [&form &env t & specs]
   (apply list 'do
          (map (fn [g]
-                (list 'cohost.hosts.jank/register-impl! (first g) (type-arg-form t) (impls-map-form (second g))))
+                (list 'cohost.hosts.jank-host/register-impl! (first g) (type-arg-form t) (impls-map-form (second g))))
               (group-impls specs))))
 
 (defn extend-protocol-macro [&form &env p & specs]
   (apply list 'do
          (map (fn [g]
-                (list 'cohost.hosts.jank/register-impl! p (type-arg-form (first g)) (impls-map-form (second g))))
+                (list 'cohost.hosts.jank-host/register-impl! p (type-arg-form (first g)) (impls-map-form (second g))))
               (group-impls specs))))
 
 (defn sync-macro [&form &env _flags & body]
