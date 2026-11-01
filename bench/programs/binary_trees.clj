@@ -11,7 +11,7 @@
     (+ 1 (check (t 0)) (check (t 1)))))
 
 (defn -run [s]
-  (let [max-d (__long s)]
+  (let [max-d (parse-long s)]
     (loop [d 4 acc (check (build (inc max-d)))]
       (if (> d max-d)
         acc

@@ -1,6 +1,6 @@
 ;; reduce / assoc / update-in over maps. Returns the nested sum.
 (defn -run [s]
-  (let [n (__long s)
+  (let [n (parse-long s)
         m (reduce (fn [m i]
                     (-> m
                         (assoc :n i)

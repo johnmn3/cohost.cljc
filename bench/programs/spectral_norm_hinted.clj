@@ -26,7 +26,7 @@
   (mul-atv (mul-av v)))
 
 (defn -run [s]
-  (let [^long n (__long s)
+  (let [^long n (parse-long s)
         u0 (vec (repeat n 1.0))]
     (loop [k 0 u u0]
       (if (= k 10)
@@ -40,5 +40,5 @@
                      s
                      (let [^double vi (nth v i)]
                        (recur (inc i) (+ s (* vi vi))))))]
-          (__round (* (__sqrt (/ vBv vv)) 1000000.0))))
-        (recur (inc k) (mul-ata (mul-ata u))))))
+          (Math/round (* (Math/sqrt (/ vBv vv)) 1000000.0)))
+        (recur (inc k) (mul-ata (mul-ata u)))))))

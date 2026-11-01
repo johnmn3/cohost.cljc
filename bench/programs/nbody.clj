@@ -62,7 +62,7 @@
                            dx (- (b 0) (c 0))
                            dy (- (b 1) (c 1))
                            dz (- (b 2) (c 2))
-                           dist (__sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
+                           dist (Math/sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
                        (recur (inc j) (- e (/ (* (b 6) (c 6)) dist))))))))))))
 
 (defn advance [bs dt]
@@ -79,7 +79,7 @@
                                   dx (- (b 0) (c 0))
                                   dy (- (b 1) (c 1))
                                   dz (- (b 2) (c 2))
-                                  dist (__sqrt (+ (* dx dx) (* dy dy) (* dz dz)))
+                                  dist (Math/sqrt (+ (* dx dx) (* dy dy) (* dz dz)))
                                   mag (/ dt (* dist dist dist))
                                   b (assoc b
                                            3 (- (b 3) (* dx (c 6) mag))
@@ -98,8 +98,8 @@
           bs)))
 
 (defn -run [s]
-  (let [n (__long s)]
+  (let [n (parse-long s)]
     (loop [i 0 bs (offset (bodies))]
       (if (= i n)
-        (__round (* (energy bs) 1000000.0))
+        (Math/round (* (energy bs) 1000000.0))
         (recur (inc i) (advance bs 0.01))))))

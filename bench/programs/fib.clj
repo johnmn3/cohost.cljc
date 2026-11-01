@@ -4,4 +4,4 @@
     n
     (+ (fib (dec n)) (fib (- n 2)))))
 (defn -run [s]
-  (fib (Long/parseLong s)))
+  (fib (parse-long s)))

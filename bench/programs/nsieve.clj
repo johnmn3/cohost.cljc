@@ -1,6 +1,6 @@
 ;; Count of primes below 2^m, the sieve of Eratosthenes over a vector of flags.
 (defn -run [s]
-  (let [m (__long s)
+  (let [m (parse-long s)
         n (bit-shift-left 1 m)
         flags (transient (vec (repeat n true)))]
     (loop [i 2 cnt 0 flags flags]

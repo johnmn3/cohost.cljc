@@ -11,11 +11,11 @@
     (+ 1 (check (t 0)) (check (t 1)))))
 
 (defn -run [s]
-  (let [^long max-d (__long s)]
+  (let [^long max-d (parse-long s)]
     (loop [d 4 acc (check (build (+ max-d 1)))]
       (if (> d max-d)
         acc
-        (let [^long n (bit-shift-left 1 (+ (- max-d d) 2))]
+        (let [n (bit-shift-left 1 (+ (- max-d d) 2))]
           (recur (+ d 2)
                  (+ acc
                     (loop [i 0 s 0]

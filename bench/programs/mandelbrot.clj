@@ -8,7 +8,7 @@
         (recur (inc i) (+ (- zr2 zi2) cr) (+ (* 2.0 zr zi) ci))))))
 
 (defn -run [s]
-  (let [n (__long s)
+  (let [n (parse-long s)
         scale (/ 2.0 n)]
     (loop [y 0 acc 0]
       (if (= y n)

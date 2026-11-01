@@ -12,7 +12,7 @@
 (defmethod kind :default [x] 0)
 
 (defn -run [s]
-  (let [n (__long s)
+  (let [n (parse-long s)
         sq (->Sq 3)]
     (loop [i 0 acc 0]
       (if (= i n)

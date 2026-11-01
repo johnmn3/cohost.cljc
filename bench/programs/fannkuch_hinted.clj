@@ -19,7 +19,7 @@
             xs)))
 
 (defn -run [s]
-  (let [^long n (__long s)]
+  (let [^long n (parse-long s)]
     (loop [ps (perms (range n)) sign 1 acc 0]
       (if (nil? ps)
         acc
