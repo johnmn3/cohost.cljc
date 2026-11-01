@@ -443,7 +443,7 @@ jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Prog
 
 Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`, binary-trees `8`, fannkuch `7`, nsieve `12`, k-nucleotide `2000`, pipeline `2000`, dispatch `20000`, json `20`.
 
-Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core). A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` has no AOT, cohost, or clojurust runner yet (`NOT-TIMED`).
+Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core). A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` is timed for jvm, jank-jit, jank-aot, cohost on jank, and clojurust.
 
 | program | jvm median | jvm cold | jit median | jit cold | jit/jvm | aot median | aot cold | aot/jvm | result |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -467,13 +467,13 @@ Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`,
 | pipeline | 2.510401 | 9.299799 | 4.264566 | 368.019931 | 1.698759 | 3.360476 | 2.776184 | 1.338621 | 5995001 |
 | dispatch | 2.168401 | 10.863573 | ABSENT | | | ABSENT | | | 200183333 |
 | json | 0.145791 | 0.566916 | 0.073902 | 790.121021 | 0.506904 | 0.033901 | 0.106072 | 0.232532 | 580 |
-| first-output | 385.120548 | 377.261128 | 362.395388 | 373.893489 | 0.940992 | NOT-TIMED | | | ok |
+| first-output | 385.120548 | 377.261128 | 362.395388 | 373.893489 | 0.940992 | 384.276232 | 662.439066 | 0.997808 | ok |
 
 Times are milliseconds. jit is `jank-jit` (jank's own core, `jank run`). aot is `jank-aot` (jank's own core, `-O3`).
 
 ABSENT on both jank-jit and jank-aot: nbody and nbody-hinted, `The symbol Math/sqrt could not be resolved`. spectral-norm and spectral-norm-hinted, `The symbol Math/round could not be resolved`. mandelbrot and mandelbrot-hinted, `use of undeclared identifier 's35'`. fannkuch and fannkuch-hinted, `use of undeclared identifier 's28'`. nsieve and nsieve-hinted, `use of undeclared identifier 's56'`. dispatch, `The symbol defprotocol could not be resolved`.
 
-Geometric mean of the jank-jit / JVM median ratios: `2.425829` over the ten programs that ran (including first-output). Geometric mean of the jank-aot / JVM median ratios: `0.678659` over the nine programs that ran. Ratio of every JVM median to itself is 1, geometric mean `1`.
+Geometric mean of the jank-jit / JVM median ratios: `2.425829` over the ten programs that ran (including first-output). Geometric mean of the jank-aot / JVM median ratios: `0.705328` over the ten programs that ran (including first-output). Ratio of every JVM median to itself is 1, geometric mean `1`.
 
 Hinted median / unhinted median on the JVM: fib `0.835942`, tak `0.825711`, nbody `0.794294`, spectral-norm `2.525504`, mandelbrot `0.480776`, binary-trees `2.462350`, fannkuch `0.961496`, nsieve `1.223965`. Geometric mean of those eight ratios: `1.085595`.
 
@@ -503,11 +503,11 @@ On jank-jit, where both forms ran: fib `0.984637`, tak `1.580872`, binary-trees 
 | pipeline | 5.749218 | 1079.960877 | 2.290159 | 5995001 |
 | dispatch | 24.320671 | 921.303304 | 11.215947 | 200183333 |
 | json | 0.262185 | 1639.843371 | 1.798362 | 580 |
-| first-output | NOT-TIMED | | | ok |
+| first-output | 10009.518983 | 10145.458176 | 25.990613 | ok |
 
 Cohost ABSENT reasons: nbody and nbody-hinted, `use of undeclared identifier 's34'`. mandelbrot and mandelbrot-hinted, `use of undeclared identifier 's36'`. fannkuch and fannkuch-hinted, `use of undeclared identifier 's28'`. nsieve and nsieve-hinted, `use of undeclared identifier 's61'`.
 
-Geometric mean of the twelve cohost / JVM median ratios: `9.575854`.
+Geometric mean of the thirteen cohost / JVM median ratios: `10.340329`.
 
 Hinted median / unhinted median on cohost, where both ran: fib `3.499112`, tak `3.093695`, spectral-norm `1.523013`, binary-trees `1.228823`.
 
@@ -535,11 +535,11 @@ Hinted median / unhinted median on cohost, where both ran: fib `3.499112`, tak `
 | pipeline | 292.63828 | 340.102924 | 116.570333 | 5995001 |
 | dispatch | 74.356264 | 77.886771 | 34.290827 | 200183333 |
 | json | 18.164097 | 27.988001 | 124.589975 | 580 |
-| first-output | NOT-TIMED | | | ok |
+| first-output | 11.607159 | 17.149073 | 0.030139 | ok |
 
 clojurust ABSENT reasons, as printed by the suite: nbody and nbody-hinted, `not callable: <nil> is not`. fannkuch and fannkuch-hinted, `vector index out of bounds: 0`.
 
-Geometric mean of the sixteen cljrs / JVM median ratios: `77.742866`.
+Geometric mean of the seventeen cljrs / JVM median ratios: `48.975879`.
 
 Hinted median / unhinted median on cljrs, where both ran: fib `0.942893`, tak `0.996116`, spectral-norm `1.155589`, mandelbrot `1.161425`, binary-trees `1.017149`, nsieve `1.099566`.
 

@@ -177,20 +177,49 @@
     "cljrs-cohost" (fn [id src arg cold?] (run-cljrs-cohost src arg cold?))
     nil))
 
+(defn wall-aot-cmd []
+  (let [root "target/bench-programs/aot-wall"
+        file (str root "/src/bench/wall.jank")
+        body "(ns bench.wall)\n(defn -main [& _]\n  (println \"ok\"))\n"
+        stamp (str root "/stamp")]
+    (when-not (and (fs/exists? stamp) (= (slurp stamp) body)
+                   (seq (fs/glob root "**/bench/wall.o")))
+      (fs/create-dirs (str root "/src/bench"))
+      (spit file body)
+      (let [c (run! ["jank" "--module-path" (str root "/src") "compile-module" "bench.wall"
+                     "-O3" "--target-dir" root])]
+        (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/wall.o")))
+          (throw (ex-info "aot-wall" {:err (str (:err c) "\n" (:out c))}))))
+      (spit stamp body))
+    (let [cache (str (first (fs/glob root "_cache/*")))]
+      ["jank" "--module-path" (str cache ":" root "/src") "run-main" "bench.wall"])))
+
+(defn wall-cljrs-cmd []
+  (fs/create-dirs "target/bench-programs")
+  (spit "target/bench-programs/wall.clj" "(defn -main [& _]\n  (println \"ok\"))\n")
+  ["cljrs" "run" "target/bench-programs/wall.clj"])
+
+(defn wall-cmd [id file]
+  (case id
+    "jvm" ["clojure" "-M" file]
+    "jank-jit" ["jank" "run" file]
+    "jank-aot" (wall-aot-cmd)
+    "jank" (let [dir (load-file "dev/perf/jank_aot_ensure.clj")]
+             ["jank" "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
+              "--eval" "(println \"ok\")"])
+    "cljrs" (wall-cljrs-cmd)
+    nil))
+
 (defn wall-run [id file]
-  (let [cmd (case id
-              "jvm" ["clojure" "-M" file]
-              "jank-jit" ["jank" "run" file]
-              nil)]
-    (if-not cmd
-      nil
-      (try
-        (let [t0 (System/nanoTime)
-              proc (run! cmd)
-              ms (double (/ (- (System/nanoTime) t0) 1000000.0))]
-          {:exit (:exit proc) :ms ms :out (or (:out proc) "") :err (or (:err proc) "")})
-        (catch Exception e
-          {:exit 1 :ms nil :out "" :err (.getMessage e)})))))
+  (try
+    (if-let [cmd (wall-cmd id file)]
+      (let [t0 (System/nanoTime)
+            proc (run! cmd)
+            ms (double (/ (- (System/nanoTime) t0) 1000000.0))]
+        {:exit (:exit proc) :ms ms :out (or (:out proc) "") :err (or (:err proc) "")})
+      nil)
+    (catch Exception e
+      {:exit 1 :ms nil :out "" :err (or (some-> e ex-data :err) (.getMessage e))})))
 
 (defn report-wall [t p]
   (let [id (:id t)
