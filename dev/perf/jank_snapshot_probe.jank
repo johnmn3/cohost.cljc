@@ -1,0 +1,5 @@
+;; jank-FAST Step 6 stage 2 probe. Does not change the boot.
+;; The forms are dumped by a temporary local hook (not committed) into
+;; target/jank-snapshot/, then this file's neighbors compile and load them.
+;; Status: scaffold. Dump, compile, and checks follow.
+(println "jank-snapshot-probe scaffold")
