@@ -86,6 +86,10 @@
   ;; clojurust's require (its only refer) can refer it (doc/REPORT.md)
   boot:cljrs {:doc "clojurust (Rust): the cargo-installed `cljrs` on PATH (0.2.32)"
               :task (shell {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}} "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns" "src/cohost/run.cljc")}
+  ;; G-12: boot:jank will load the compiled modules. This task stays the
+  ;; source path.
+  boot:jank-jit {:doc "jank from source only (no AOT objects)"
+                 :task (shell "jank" "--module-path" "src" "run-main" "cohost.run")}
   boot:jank {:doc "jank (C++/LLVM): the apt-installed `jank` on PATH"
              :task (shell "jank" "--module-path" "src" "run-main" "cohost.run")}
   ;; jank-FAST Step 2. Phase timers inside boot! ({:profile? true} only) plus
