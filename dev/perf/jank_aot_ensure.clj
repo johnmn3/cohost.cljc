@@ -52,8 +52,12 @@
 (defn- host-object? [cache]
   (fs/regular-file? (fs/path cache "cohost/hosts/jank_host.o")))
 
+(defn- shim-object? [cache]
+  (fs/regular-file? (fs/path cache "cohost/shim.o")))
+
 (defn- fresh? [cache hash version]
   (and (host-object? cache)
+       (shim-object? cache)
        (= [hash version] (read-stamp cache))))
 
 (defn- recompile! [hash version]
@@ -70,6 +74,8 @@
     (let [cache (cache-of-run (first runs))]
       (when-not (host-object? cache)
         (throw (ex-info "compile finished without cohost/hosts/jank_host.o" {:cache cache})))
+      (when-not (shim-object? cache)
+        (throw (ex-info "compile finished without cohost/shim.o" {:cache cache})))
       (spit (stamp-file cache) (str hash "\n" version "\n"))
       (println "AOT-DIR" cache)
       cache)))
