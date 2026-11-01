@@ -88,6 +88,10 @@
               :task (shell {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}} "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns" "src/cohost/run.cljc")}
   boot:jank {:doc "jank (C++/LLVM): the apt-installed `jank` on PATH"
              :task (shell "jank" "--module-path" "src" "run-main" "cohost.run")}
+  ;; jank-FAST Step 2. Phase timers inside boot! ({:profile? true} only) plus
+  ;; the twelve libraries. One run. Median of three: dev/perf/jank_boot_profile.sh
+  boot:jank-profile {:doc "jank boot with phase timers (doc/perf/jank.md, Boot profile). One run."
+                     :task (shell "jank" "--module-path" "src" "run" "dev/perf/jank_boot_profile.jank")}
   ;; jank-FAST Step 6 stage 1. Compiles cohost's namespaces to object files
   ;; and boots with that directory ahead of src, so a newer object is loaded
   ;; and the source stays on the path (jank refuses an object with no source).

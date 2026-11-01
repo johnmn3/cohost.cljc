@@ -23,6 +23,52 @@
 
 (defn ctx [] (:ctx @state))
 
+;; Phase timers for the boot profile. Off unless boot! is called with
+;; {:profile? true}: the off path does not call :nano-time and does not
+;; record forms. Every host's boot report stays the numbers it prints today.
+(defn- profile? [] (some? (:profile @state)))
+
+(defn- profile-add! [k dt]
+  (when (and (profile?) dt)
+    (let [bucket (or (:profile-bucket @state) :core)]
+      (swap! (:profile @state) update-in [:phases bucket k] (fnil + 0) dt))))
+
+(defn- profile-form! [ns-sym form name dt]
+  (when (and (profile?) dt (pos? dt))
+    (let [h (when (seq? form) (first form))]
+      (swap! (:profile @state) update :forms conj
+             {:ns (str ns-sym)
+              :head (if (symbol? h) (name h) "-")
+              :name (str (or name "-"))
+              :eval dt
+              :bucket (or (:profile-bucket @state) :core)}))))
+
+(defn- prof
+  "Call thunk. When profiling, add its :nano-time to phase key k."
+  [k thunk]
+  (if-not (profile?)
+    (thunk)
+    (let [t0 (host/nano-time)
+          v (thunk)
+          t1 (host/nano-time)]
+      (profile-add! k (- t1 t0))
+      v)))
+
+(defn- read-prof
+  "read-forms. When profiling, the time between forms (the read) is :read;
+   the callback's time is not."
+  [src cb]
+  (if-not (profile?)
+    (host/read-forms src cb)
+    (let [mark (volatile! (host/nano-time))]
+      (host/read-forms src
+                       (fn [form]
+                         (let [now (host/nano-time)]
+                           (profile-add! :read (- now @mark))
+                           (cb form)
+                           (vreset! mark (host/nano-time)))))
+      (profile-add! :read (- (host/nano-time) @mark)))))
+
 (defn- short-form [form]
   (let [s (pr-str form)]
     (if (> (count s) 200) (str (subs s 0 200) " ...") s)))
@@ -98,14 +144,16 @@
    not-yet-wrapped macro of ns-sym so its output goes through the codemod."
   ([ctx] (scan-macros! ctx core-ns))
   ([ctx ns-sym]
-   (doseq [[_sym v] (host/ns-interns-map ns-sym)]
-     (let [m (host/var-meta v)]
-       (when (and (:macro m) (not (host/macro-var? v)))
-         (host/mark-macro! v))
-       (when (and (host/macro-var? v) (not (:cohost/wrapped m)))
-         (when (= :root (host/macro-wrap-style))
-           (host/set-var-root! v (fn [f] (wrap-macro ctx f))))
-         (host/alter-var-meta! v assoc :cohost/wrapped true))))))
+   (prof :scan
+     (fn []
+       (doseq [[_sym v] (host/ns-interns-map ns-sym)]
+         (let [m (host/var-meta v)]
+           (when (and (:macro m) (not (host/macro-var? v)))
+             (host/mark-macro! v))
+           (when (and (host/macro-var? v) (not (:cohost/wrapped m)))
+             (when (= :root (host/macro-wrap-style))
+               (host/set-var-root! v (fn [f] (wrap-macro ctx f))))
+             (host/alter-var-meta! v assoc :cohost/wrapped true))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; eval
@@ -272,7 +320,17 @@
     (fn [] (if-let [d (directive form)]
              (directive! d)
              (let [form' (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
-                   v (host/eval-form (rw/rewrite c form'))]
+                   v (if-not (profile?)
+                       (host/eval-form (rw/rewrite c form'))
+                       (let [t0 (host/nano-time)
+                             rewritten (rw/rewrite c form')
+                             t1 (host/nano-time)
+                             v (host/eval-form rewritten)
+                             t2 (host/nano-time)]
+                         (profile-add! :rewrite (- t1 t0))
+                         (profile-add! :eval (- t2 t1))
+                         (profile-form! ns-sym form' (or (policy/form-name form) (when (seq? form) (first form))) (- t2 t1))
+                         v))]
                (host/after-eval form' ns-sym)
                (when (or (not lib?) (may-make-macro? form))
                  (scan-macros! c ns-sym))
@@ -431,7 +489,17 @@
 (defn- eval-form! [ctx report form name status]
   (host/try-all
    (fn []
-     (host/eval-form (rw/rewrite ctx (prepare form)))
+     (if-not (profile?)
+       (host/eval-form (rw/rewrite ctx (prepare form)))
+       (let [t0 (host/nano-time)
+             prepared (prepare form)
+             rewritten (rw/rewrite ctx prepared)
+             t1 (host/nano-time)
+             _ (host/eval-form rewritten)
+             t2 (host/nano-time)]
+         (profile-add! :rewrite (- t1 t0))
+         (profile-add! :eval (- t2 t1))
+         (profile-form! core-ns form name (- t2 t1))))
      (host/after-eval form core-ns)
      (capture-inline! ctx form)
      (record! report status {:name name}))
@@ -561,9 +629,11 @@
 (defn boot-file!
   "Boot one source file (a path) into cohost.core."
   [ctx report path]
-  (let [src (strip-string-tags (host/slurp-file path))]
+  (let [src (if (profile?)
+              (prof :read #(strip-string-tags (host/slurp-file path)))
+              (strip-string-tags (host/slurp-file path)))]
     (host/with-ns core-ns
-      (fn [] (host/read-forms src (fn [form] (process-form! ctx report form)))
+      (fn [] (read-prof src (fn [form] (process-form! ctx report form)))
         (scan-macros! ctx)))))
 
 (defn- companion-forms
@@ -571,20 +641,26 @@
    at path, read once (the file's other forms are not evaluated)."
   [path names]
   (let [found (atom {})]
-    (host/try-all (fn [] (host/read-forms (strip-string-tags (host/slurp-file path))
-                                          (fn [form] (let [nm (policy/form-name form)]
+    (host/try-all (fn [] (let [src (if (profile?)
+                                      (prof :read #(strip-string-tags (host/slurp-file path)))
+                                      (strip-string-tags (host/slurp-file path)))]
+                           (read-prof src (fn [form] (let [nm (policy/form-name form)]
                                                        (when (and (contains? names nm) (not (contains? @found nm)))
-                                                         (swap! found assoc nm form)))))))
+                                                         (swap! found assoc nm form))))))))
     @found))
 
 (defn boot!
   "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
    (default resources/cohost/clojure-1.12.0); :files -- paths under it."
   ([] (boot! {}))
-  ([{:keys [root files verbose] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
+  ([{:keys [root files verbose profile?] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
+   (if profile?
+     (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
+     (swap! state dissoc :profile :profile-bucket))
+   (let [t-boot (when (profile?) (host/nano-time))]
    (host/ensure-bare-ns! core-ns)
-   (let [ctx (make-ctx)
+   (let [ctx (if (profile?) (prof :setup #(make-ctx)) (make-ctx))
          report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
      (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks))))
      (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
@@ -604,19 +680,29 @@
      ;; Clojure, else the host's, when it has them
      (host/with-ns core-ns
        (fn []
-         (let [stock (into {} (mapcat (fn [[file nms]] (seq (companion-forms (str root "/" file) (set nms))))
-                                      (group-by #(get policy/companion-stock %)
-                                                (filter #(contains? policy/companion-stock %) policy/companion-names))))]
-           (doseq [nm (sort policy/companion-names)]
-             (if (contains? policy/companion-stock nm)
-               (if-let [form (get stock nm)]
-                 (process-form! ctx report form)
-                 (record! report :skipped {:name nm :reason :no-host-equivalent}))
-               (when-not (take-from-host! report nm)
-                 (if-let [v (get (host/core-extras) nm)]
-                   (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil))
-                   (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
-         (scan-macros! ctx)))
+         (let [run-companions
+               (fn []
+                 (let [stock (into {} (mapcat (fn [[file nms]] (seq (companion-forms (str root "/" file) (set nms))))
+                                              (group-by #(get policy/companion-stock %)
+                                                        (filter #(contains? policy/companion-stock %) policy/companion-names))))]
+                   (doseq [nm (sort policy/companion-names)]
+                     (if (contains? policy/companion-stock nm)
+                       (if-let [form (get stock nm)]
+                         (process-form! ctx report form)
+                         (record! report :skipped {:name nm :reason :no-host-equivalent}))
+                       (when-not (take-from-host! report nm)
+                         (if-let [v (get (host/core-extras) nm)]
+                           (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil))
+                           (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
+                 (scan-macros! ctx))]
+           (if-not (profile?)
+             (run-companions)
+             (let [prev (:profile-bucket @state)
+                   t0 (host/nano-time)]
+               (swap! state assoc :profile-bucket :companion)
+               (run-companions)
+               (swap! (:profile @state) assoc-in [:walls :companion] (- (host/nano-time) t0))
+               (swap! state assoc :profile-bucket prev))))))
      ;; reduce with core's + or * hands the host its own (shim/host-reducers)
      (shim/set-host-reducers!
       (into {} (keep (fn [nm]
@@ -629,8 +715,57 @@
      (let [r (assoc @report
                     :rewrite-misses (rw/misses ctx)
                     :host-name (host/host-name))]
+       (when t-boot
+         (swap! (:profile @state) assoc :boot-wall (- (host/nano-time) t-boot)))
        (swap! state assoc :report r)
-       r))))
+       r)))))
+
+(defn profile-section!
+  "Run thunk in profile bucket k and record its wall time. A no-op addition
+   when profiling is off: thunk still runs."
+  [k thunk]
+  (if-not (profile?)
+    (thunk)
+    (let [prev (:profile-bucket @state)]
+      (swap! state assoc :profile-bucket k)
+      (let [t0 (host/nano-time)
+            v (thunk)
+            dt (- (host/nano-time) t0)]
+        (swap! (:profile @state) assoc-in [:walls k] dt)
+        (swap! state assoc :profile-bucket (or prev :core))
+        v))))
+
+(defn- profile-top [forms n]
+  (take n (sort-by :eval (fn [a b] (compare b a)) forms)))
+
+(defn print-profile!
+  "Print the boot profile. Phases partition the measured total: core reading,
+   codemod, eval, scan-macros!, setup (make-ctx), the companion-file wall,
+   the library-phase wall, and the unaccounted remainder."
+  []
+  (when-let [a (:profile @state)]
+    (let [p @a
+          core (get-in p [:phases :core])
+          read (get core :read 0)
+          rewrite (get core :rewrite 0)
+          ev (get core :eval 0)
+          scan (get core :scan 0)
+          setup (get core :setup 0)
+          companion (get-in p [:walls :companion] 0)
+          library (get-in p [:walls :library] 0)
+          boot-wall (or (:boot-wall p) 0)
+          total (+ boot-wall library)
+          named (+ read rewrite ev scan setup companion library)
+          other (- total named)
+          rows [["reading" read] ["codemod" rewrite] ["eval" ev] ["scan-macros" scan]
+                ["setup" setup] ["companion" companion] ["library" library] ["other" other]]
+          pct (fn [n] (if (pos? total) (/ (* 100.0 n) total) 0.0))]
+      (println (str "PROFILE-TOTAL " total))
+      (doseq [[k n] rows]
+        (println (str "PROFILE-PHASE " k " " n " " (pct n))))
+      (println (str "PROFILE-SUM " (+ named other)))
+      (doseq [[i f] (map-indexed vector (profile-top (:forms p) 20))]
+        (println (str "PROFILE-TOP " (inc i) " " (:bucket f) " " (:ns f) " " (:head f) " " (:name f) " " (:eval f)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; using it
@@ -861,8 +996,8 @@
        (fn []
          (host/with-ns (or from-ns core-ns)
            (fn []
-             (host/read-forms
-              (strip-string-tags src)
+             (read-prof
+              (if (profile?) (prof :read #(strip-string-tags src)) (strip-string-tags src))
               (fn [form]
                 (let [cur (host/current-ns)
                       {:keys [action replacement] nm :name} (policy/decide-lib form lib)]

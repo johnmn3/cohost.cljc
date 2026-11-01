@@ -1,0 +1,16 @@
+;; jank-FAST Step 2. Boot with phase timers, then the twelve libraries.
+;; Timers are on only because boot! is called with {:profile? true}.
+;;
+;;   jank --module-path src run dev/perf/jank_boot_profile.jank
+(require 'cohost.hosts.jank)
+(require 'cohost.boot)
+
+(def libs
+  '[clojure.walk clojure.set clojure.string clojure.zip clojure.data clojure.edn
+    clojure.template clojure.test clojure.math clojure.stacktrace clojure.repl
+    clojure.spec.alpha])
+
+(cohost.boot/boot! {:profile? true})
+(cohost.boot/profile-section! :library
+  (fn [] (doseq [lib libs] (cohost.boot/load-lib! lib))))
+(cohost.boot/print-profile!)
