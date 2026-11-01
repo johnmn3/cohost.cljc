@@ -443,7 +443,7 @@ jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Prog
 
 Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`, binary-trees `8`, fannkuch `7`, nsieve `12`, k-nucleotide `2000`, pipeline `2000`, dispatch `20000`, json `20`.
 
-Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`). A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` has no AOT or cohost runner yet (`NOT-TIMED`).
+Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core). A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` has no AOT, cohost, or clojurust runner yet (`NOT-TIMED`).
 
 | program | jvm median | jvm cold | jit median | jit cold | jit/jvm | aot median | aot cold | aot/jvm | result |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -511,6 +511,38 @@ Geometric mean of the twelve cohost / JVM median ratios: `9.575854`.
 
 Hinted median / unhinted median on cohost, where both ran: fib `3.499112`, tak `3.093695`, spectral-norm `1.523013`, binary-trees `1.228823`.
 
-Not measured yet on this box: `jvm-cohost`, `cljrs`, `cljrs-cohost`.
+`cljrs` is clojurust's own core. Times are milliseconds.
+
+| program | cljrs median | cljrs cold | cljrs/jvm | result |
+|---|---:|---:|---:|---|
+| fib | 1432.576098 | 1452.711787 | 270.632297 | 832040 |
+| fib-hinted | 1350.766075 | 1319.948278 | 305.257111 | 832040 |
+| tak | 30.360394 | 34.486952 | 22.198658 | 7 |
+| tak-hinted | 30.24246 | 31.79012 | 26.779876 | 7 |
+| nbody | ABSENT | | | -169027 |
+| nbody-hinted | ABSENT | | | -169027 |
+| spectral-norm | 364.45816 | 415.780843 | 549.614487 | 784826 |
+| spectral-norm-hinted | 421.163685 | 473.198959 | 251.485748 | 784826 |
+| mandelbrot | 5.973609 | 16.83927 | 13.430843 | 608 |
+| mandelbrot-hinted | 6.937899 | 17.972488 | 32.445257 | 608 |
+| binary-trees | 10.920277 | 13.61334 | 21.056860 | 7083 |
+| binary-trees-hinted | 11.107553 | 12.140018 | 8.698183 | 7083 |
+| fannkuch | ABSENT | | | -502 |
+| fannkuch-hinted | ABSENT | | | -502 |
+| nsieve | 705.783142 | 703.566645 | 844.348297 | 564 |
+| nsieve-hinted | 776.055012 | 768.159621 | 758.532161 | 564 |
+| k-nucleotide | 11.595415 | 11.994055 | 10.303748 | 500 |
+| pipeline | 292.63828 | 340.102924 | 116.570333 | 5995001 |
+| dispatch | 74.356264 | 77.886771 | 34.290827 | 200183333 |
+| json | 18.164097 | 27.988001 | 124.589975 | 580 |
+| first-output | NOT-TIMED | | | ok |
+
+clojurust ABSENT reasons, as printed by the suite: nbody and nbody-hinted, `not callable: <nil> is not`. fannkuch and fannkuch-hinted, `vector index out of bounds: 0`.
+
+Geometric mean of the sixteen cljrs / JVM median ratios: `77.742866`.
+
+Hinted median / unhinted median on cljrs, where both ran: fib `0.942893`, tak `0.996116`, spectral-norm `1.155589`, mandelbrot `1.161425`, binary-trees `1.017149`, nsieve `1.099566`.
+
+Not measured yet on this box: `jvm-cohost`, `cljrs-cohost`.
 
 Absent on this box: `jolt` and `jolt-cohost` (no `jolt` on PATH), `lpy` and `lpy-cohost` (no `basilisp`), `cljw` and `cljw-cohost` (no `cljw`), `phel` and `phel-cohost` (no `phel`), `lg` and `lg-cohost` (no `lg`). `cljs`, `cljs-cohost`, `browser`, and `browser-cohost` have `node` but no ClojureScript jar in the local Maven repo, so the build cannot be compiled here.

@@ -904,4 +904,4 @@ Reading:
   compile-heavy split, and it is what AOT (Step 6) removes by compiling
   ahead of time.
 
-Step 8's program suite (fib, tak, nbody, and the rest) is `bb bench:programs`. The table is "Programs against JVM Clojure" in `doc/PERF.md` (JVM, jank-jit, jank-aot, and cohost on jank).
+Step 8's program suite (fib, tak, nbody, and the rest) is `bb bench:programs`. The table is "Programs against JVM Clojure" in `doc/PERF.md` (JVM, jank-jit, jank-aot, cohost on jank, and clojurust).
