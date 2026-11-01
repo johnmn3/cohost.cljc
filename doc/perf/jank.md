@@ -1068,6 +1068,8 @@ JIT after the shortcut. Codemod ns `21480690231`, `18429822657`, `22047010669` (
 
 `let/plain` and `loop/plain` are absent from the after expand list. `let/vector` remains (31 calls). `dev/perf/jank_let_eq.jank` compared rewrite to macroexpand after boot and printed DIFF with the rewrite still headed by `let`: that call resolved a `let` the codemod does not expand, so it did not take the shortcut. The boot profiles are the evidence the shortcut ran.
 
+The shortcut is off on basilisp (`#?(:lpy false ...)`). Emitting `let*` there fails `clojure.spec.alpha` "registry and keys". The `timed` wrappers are gone: they expanded to their body, and a macro defined in `rewrite.cljc` does not expand under self-hosted ClojureScript. The jank medians above were measured with the shortcut on and the wrappers expanding to `do`.
+
 ### Dropped: plain defn
 
 `defn-expansion` matched the booted macro for 407 core defns (87 left on the macro: pre/post or `:inline`). The name's `:tag` is dropped by the booted `defn`; `:rettag` is not on the fn form. JIT codemod median rose, so the clause was removed. First three `bb boot:jank-profile` runs: codemod `22618071864`, `25457352534`, `25004987907` (median `25004987907`). Second three, still on disk: codemod `22631906979`, `24654046293`, `22906084294` (median `22906084294`), totals `58832418566`, `64446882505`, `60141846272` (median `60141846272`). Both medians are above the let/loop codemod median `21480690231`. Building the expansion in the codemod is slower on jank's JIT than calling the macro.
