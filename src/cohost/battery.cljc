@@ -154,7 +154,9 @@
    ["a ^long parameter truncates a double" "(let [f (fn [^long x] x)] [(f 1.9) (f -1.9)])" [1 -1]]
    ["a ^double parameter widens a long" "(let [f (fn [^double x] x)] [(f 2) (f 1.5)])" [2.0 1.5]]
    ["a ^long parameter rejects a non-number" "(let [f (fn [^long x] x)] (try (f \"a\") (catch ClassCastException e :cce)))" :cce]
-   ["a ^long fn recurred from its loop truncates" "(let [f (fn [^long n] (loop [i n a 0] (if (pos? i) (recur (dec i) (+ a i)) a)))] [(f 3.9) (f 4)])" [6 10]]])
+   ["a ^long fn recurred from its loop truncates" "(let [f (fn [^long n] (loop [i n a 0] (if (pos? i) (recur (dec i) (+ a i)) a)))] [(f 3.9) (f 4)])" [6 10]]
+   ["a ^long fn keeps its :pre" "(try ((fn [^long x] {:pre [(pos? x)]} x) -1) (catch AssertionError e :pre))" :pre]
+   ["a ^long fn destructures its other parameter" "((fn [^long x [a b]] (+ x a b)) 1 [2 3])" 6]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."

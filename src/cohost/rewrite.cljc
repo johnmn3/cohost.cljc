@@ -14,7 +14,8 @@
 ;; like `lazy-seq`, `..`, `with-open` or `definline` emit interop into their
 ;; callers' code.
 (ns cohost.rewrite
-  (:require [cohost.adapter :as host])
+  (:require [cohost.adapter :as host]
+            [cohost.policy :as policy])
   ;; names defined here that let-go's core also has (it warns of each)
   #?(:lg (:refer-clojure :exclude [starts-with? ends-with?])))
 
@@ -771,18 +772,41 @@
                   (list 'throw (list (shim-fn "new-ClassCastException")
                                      "class java.lang.Object cannot be cast to class java.lang.Number")))))))
 
-(defn- fn-form-primitive?
-  "Does this fn form carry a primitive hint on a parameter? Asked only when
-   the host will not expand fn before the codemod (cljrs: fn is a special
-   form, so the stock macro never runs and a ^long would be ignored)."
+(defn- fn-special?
+  "True when this host's `fn` is a special form the stock macro cannot
+   replace (policy host-overrides :special). cljrs is that host. Every other
+   host leaves `fn` for the stock macro, which is what keeps :pre/:post and
+   a destructured parameter."
+  []
+  (boolean (when (host/installed?)
+             (let [special (:special (get policy/host-overrides (host/host-name)))]
+               (and special (contains? special 'fn))))))
+
+(defn- fn-form-arities
+  "The arities of an `fn` form: ([params] body...) or ([params] body...)+
+   after an optional name."
   [form]
   (let [more (rest form)
-        more (if (symbol? (first more)) (rest more) more)
-        arities (if (vector? (first more)) [more] more)]
-    (boolean (some (fn [[params]]
-                     (and (vector? params)
-                          (some #(and (symbol? %) (primitive-hint (:tag (meta %)))) params)))
-                   arities))))
+        more (if (symbol? (first more)) (rest more) more)]
+    (if (vector? (first more)) [more] more)))
+
+(defn- fn-form-coercible?
+  "Safe to rewrite this `fn` as `fn*` on a host whose `fn` is a special form:
+   a primitive hint is present, every parameter of every arity is a plain
+   symbol, and no arity opens with a condition map (the same test the stock
+   `fn` macro uses: a map followed by more body). A destructuring parameter
+   or a :pre/:post map stays as written."
+  [form]
+  (let [arities (fn-form-arities form)]
+    (and (seq arities)
+         (every? (fn [[params & body]]
+                   (and (vector? params)
+                        (every? symbol? params)
+                        (not (and (next body) (map? (first body))))))
+                 arities)
+         (boolean (some (fn [[params]]
+                          (some #(and (symbol? %) (primitive-hint (:tag (meta %)))) params))
+                        arities)))))
 
 (defn- bare-sym
   "The parameter's name with no metadata. The hint stays on the parameter
@@ -1361,11 +1385,13 @@
                            (apply list 'new c (rw-all ctx (nnext form)))))
             (= h 'try) (rw-try ctx form)
             (= h 'fn*) (rw-fn* ctx form)
-            ;; cljrs's fn is a special form, so the stock macro never expands
-            ;; it and a ^long parameter would be ignored. Coerce those here.
-            ;; A host that expands fn (jank's :expand-macro) keeps that path.
-            (and (nil? (:expand-macro ctx)) (symbol? h) (= "fn" (name (*plain* h)))
-                 (not (contains? *locals* (*plain* h))) (fn-form-primitive? form))
+            ;; cljrs's fn is a special form (policy :special), so the stock
+            ;; macro never runs and a ^long on a plain parameter would be
+            ;; ignored. Coerce only that shape. A :pre/:post map or a
+            ;; destructured parameter stays as written, and every other host
+            ;; leaves fn for the stock macro.
+            (and (fn-special?) (symbol? h) (= "fn" (name (*plain* h)))
+                 (not (contains? *locals* (*plain* h))) (fn-form-coercible? form))
             (rw-fn* ctx (cons 'fn* (rest form)))
             (or (= h 'let*) (= h 'loop*) (= h 'letfn*)) (rw-let* ctx form)
             (or (= h 'deftype*) (= h 'reify*)) form

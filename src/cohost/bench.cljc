@@ -18,6 +18,9 @@
     "(loop [i 0 acc 0] (if (< i %N) (recur (inc i) (bench-inc acc)) acc))"]
    [:loop-arith "loop/recur arithmetic" 200000 nil
     "(loop [i 0 acc 0] (if (< i %N) (recur (inc i) (+ acc (* i 2))) acc))"]
+   [:hinted-loop "a ^long fn whose loop compares against the parameter" 1
+    "(defn f [^long n] (loop [i 0 a 0] (if (< i n) (recur (inc i) (+ a i)) a)))"
+    "(f 200000)"]
    [:reduce-range "reduce + over a range" 200000 nil
     "(reduce + (range %N))"]
    [:lazy-pipeline "count, filter, map over a range" 100000 nil
