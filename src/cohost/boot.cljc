@@ -804,7 +804,7 @@
       (print-split! forms :library :eval 20)
       (when-let [m @rw/profile-branches]
         (let [rows (sort-by val (fn [a b] (compare b a)) m)
-              tot (reduce (fn [a [_ n]] (+' a n)) 0 rows)]
+              tot (reduce (fn [a [_ n]] (prof+ a n)) 0 rows)]
           (println (str "PROFILE-BRANCH-SUM " tot))
           (doseq [[k n] rows]
             (println (str "PROFILE-BRANCH " (name k) " " n " "

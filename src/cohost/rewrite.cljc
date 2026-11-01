@@ -30,6 +30,10 @@
 ;; Exclusive: a timed call subtracts the time its nested timed calls recorded.
 (def profile-branches (volatile! nil))
 (def profile-child (volatile! 0))
+
+(def ^:private prof+
+  ;; same sum as boot's prof+: jank's + wraps at 32 bits; basilisp has no +'
+  #?(:lpy + :default +'))
 ;; macro name -> expand ns, and macro name -> call count. Profiling on only.
 (def profile-macro-ns (volatile! nil))
 (def profile-macro-n (volatile! nil))
@@ -43,8 +47,8 @@
              v# (do ~@body)
              dt# (- (host/nano-time) t0#)
              kids# (- @profile-child c0#)]
-         (vswap! profile-branches update ~k (fn [n#] (+' (or n# 0) (- dt# kids#))))
-         (vreset! profile-child (+' c0# dt#))
+         (vswap! profile-branches update ~k (fn [n#] (prof+ (or n# 0) (- dt# kids#))))
+         (vreset! profile-child (prof+ c0# dt#))
          v#))))
 
 ;; ---------------------------------------------------------------------------
@@ -965,15 +969,6 @@
   #{"let" "loop" "for" "doseq" "if-let" "when-let" "if-some" "when-some" "with-open" "dotimes"
     "with-local-vars" "fn" "defn" "defn-" "defmacro" "defmethod" "letfn" "as->"})
 
-(defn- plain-bindings?
-  "A let/loop binding vector the stock macro does not destructure: even
-   length and every binding form a symbol. Those expand to (let* bindings
-   body...) / (loop* bindings body...) with the vector unchanged."
-  [b]
-  (and (vector? b)
-       (even? (count b))
-       (every? symbol? (take-nth 2 b))))
-
 (defn- bound-names [hn args]
   (case hn
     ("let" "loop" "for" "doseq" "if-let" "when-let" "if-some" "when-some" "with-open" "dotimes" "with-local-vars")
@@ -1373,13 +1368,6 @@
   [ctx h]
   (when-let [v (head-var ctx h)] ((:rewritten-macro? ctx) v)))
 
-(defn- codemod-expands?
-  "True when rewrite itself applies h's macro. A clojure.core macro is left
-   for the host (expand-macro returns the call unchanged)."
-  [ctx h]
-  (when-let [v (and (rewritten-macro? ctx h) (head-var ctx h))]
-    (not= "clojure.core" (str (:ns (meta v))))))
-
 (defn- inline-expansion
   "On a host whose compiler ignores :inline, the codemod applies it as the JVM
    compiler does: (h args) with h naming a core fn whose :inline covers this
@@ -1499,16 +1487,6 @@
                              (if (and (empty? args) (contains? static-fields m))
                                (or (emit-static-value ctx c m) (apply list h args))
                                (rw-static ctx c m args))))
-            ;; (let [sym init ...] body) and (loop [sym init ...] body) expand to
-            ;; let* / loop* with the same vector. Skip the macro when this
-            ;; codemod is the thing that would expand it (not a clojure.core
-            ;; macro the host expands itself): assert-args, the destructure
-            ;; scan and the syntax-quote are the whole cost, and the vector
-            ;; is already the expansion.
-            (and (= hn "let") (plain-bindings? (first args)) (codemod-expands? ctx h))
-            (timed :let-plain (rw-let* ctx (apply list 'let* args)))
-            (and (= hn "loop") (plain-bindings? (first args)) (codemod-expands? ctx h))
-            (timed :loop-plain (rw-let* ctx (apply list 'loop* args)))
             ;; a macro whose expansion the codemod rewrites (a stock or user
             ;; macro, not the host's): its arguments stay as written, and are
             ;; rewritten once, in the expansion, as the JVM compiler sees them
@@ -1525,8 +1503,8 @@
                       _ (when acc
                           (let [dt (- (host/nano-time) t0)
                                 nm (str h)]
-                            (vswap! profile-macro-ns update nm (fn [n] (+' (or n 0) dt)))
-                            (vswap! profile-macro-n update nm (fn [n] (+' (or n 0) 1)))))]
+                            (vswap! profile-macro-ns update nm (fn [n] (prof+ (or n 0) dt)))
+                            (vswap! profile-macro-n update nm (fn [n] (prof+ (or n 0) 1)))))]
                   (if (identical? x form) (apply list (macro-head ctx h) args) (rw ctx x)))
                 (apply list (macro-head ctx h) args)))
             ;; a binding form before it expands: what it binds are locals
