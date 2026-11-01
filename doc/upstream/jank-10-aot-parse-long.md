@@ -53,4 +53,4 @@ The source run prints `parse -1295`. The AOT run throws `NumberFormatException` 
 
 ## Cohost today
 
-This tree evaluates `cohost.shim` from source, where the call returns -1295. Nothing rewrites `parse-radix` for AOT.
+The throw is the range check against `Long/MIN_VALUE`, which AOT loads as a garbage double. The minimal program, with no cohost, is [jank-10-aot-long-min-literal.md](jank-10-aot-long-min-literal.md). `src/cohost/shim.cljc` builds that bound as `(- -9223372036854775807 1)` so the object keeps the long.

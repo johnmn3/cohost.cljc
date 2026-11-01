@@ -13,6 +13,7 @@ Drafts only. Nothing here has been filed. Each file is one bug, with the command
 | [jank-08-unknown-type-panic.md](jank-08-unknown-type-panic.md) | REPRODUCED. `count`, `conj`, `assoc`, `meta` abort on an unknown object type |
 | [jank-09-aot-namespace-named-jank.md](jank-09-aot-namespace-named-jank.md) | REPRODUCED. `compile-module repro.jank` : `jank::runtime` resolves inward |
 | [jank-10-aot-parse-long.md](jank-10-aot-parse-long.md) | REPRODUCED. Source `Long-parseLong` of `"-zz"` base 36 is `-1295`; the AOT object throws |
+| [jank-10-aot-long-min-literal.md](jank-10-aot-long-min-literal.md) | REPRODUCED. The literal `-9223372036854775808` is a different garbage double on every AOT run; `(- -9223372036854775807 1)` stays the long |
 | [cljrs-11-ir-identical.md](cljrs-11-ir-identical.md) | REPRODUCED. With `CLJRS_IR_THRESHOLD=1`, `true?` / `false?` / `identical?` are false from the third call |
 | [cljrs-12-vec-string-gc.md](cljrs-12-vec-string-gc.md) | REPRODUCED. `vec` of `core.clj` pauses 364.402s under a 32 MB soft limit, 302 ms with no collection |
 | [cljrs-13-ir-closure-crash.md](cljrs-13-ir-closure-crash.md) | NOT REPRODUCED. Four full boots under gdb exited normally (`No stack.`) |

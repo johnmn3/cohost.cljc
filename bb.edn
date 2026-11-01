@@ -4,11 +4,15 @@
 ;; (src/cohost/battery.cljc) in a namespace that sees only the booted core.
 {:tasks
  {;; the source a bench ran: git HEAD, -dirty when the tree had changes
-  :init (defn git-rev []
-          (try (let [h (clojure.string/trim (:out (babashka.process/shell {:out :string} "git" "rev-parse" "--short" "HEAD")))
-                     dirty (seq (clojure.string/trim (:out (babashka.process/shell {:out :string} "git" "status" "--porcelain" "--" "src" "bb.edn"))))]
-                 (str "--git=" h (when dirty "-dirty")))
-               (catch Exception _ "--git=unknown")))
+  :init (do (defn git-rev []
+            (try (let [h (clojure.string/trim (:out (babashka.process/shell {:out :string} "git" "rev-parse" "--short" "HEAD")))
+                       dirty (seq (clojure.string/trim (:out (babashka.process/shell {:out :string} "git" "status" "--porcelain" "--" "src" "bb.edn"))))]
+                   (str "--git=" h (when dirty "-dirty")))
+                 (catch Exception _ "--git=unknown")))
+          ;; Cache dir of cohost's objects. Recompiles when src/cohost or the
+          ;; jank binary changed (dev/perf/jank_aot_ensure.clj).
+          (defn jank-aot-dir []
+            (load-file "dev/perf/jank_aot_ensure.clj")))
   boot:jolt {:doc "jolt (Chez Scheme): the `jolt` binary on PATH"
              :task (shell "jolt" "-Scp" "src" "-m" "cohost.run")}
   boot:lpy  {:doc "basilisp (Python): the uv/pip-installed `basilisp` on PATH"
@@ -86,36 +90,24 @@
   ;; clojurust's require (its only refer) can refer it (doc/REPORT.md)
   boot:cljrs {:doc "clojurust (Rust): the cargo-installed `cljrs` on PATH (0.2.32)"
               :task (shell {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}} "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns" "src/cohost/run.cljc")}
-  boot:jank {:doc "jank (C++/LLVM): the apt-installed `jank` on PATH"
-             :task (shell "jank" "--module-path" "src" "run-main" "cohost.run")}
+  ;; Source only. boot:jank loads the compiled modules.
+  boot:jank-jit {:doc "jank from source only (no AOT objects)"
+                 :task (shell "jank" "--module-path" "src" "run-main" "cohost.run")}
+  boot:jank {:doc "jank (C++/LLVM): cohost's AOT modules, recompiled when src/cohost or the jank binary is stale. Source path: boot:jank-jit."
+             :task (shell "jank" "--module-path" (str (jank-aot-dir) ":src") "run-main" "cohost.run")}
   ;; jank-FAST Step 2. Phase timers inside boot! ({:profile? true} only) plus
   ;; the twelve libraries. One run. Median of three: dev/perf/jank_boot_profile.sh
   boot:jank-profile {:doc "jank boot with phase timers (doc/perf/jank.md, Boot profile). One run."
                      :task (shell "jank" "--module-path" "src" "run" "dev/perf/jank_boot_profile.jank")}
-  ;; jank-FAST Step 6 stage 1. Compiles cohost's namespaces to object files
-  ;; and boots with that directory ahead of src, so a newer object is loaded
-  ;; and the source stays on the path (jank refuses an object with no source).
+  ;; jank-FAST Step 6 stage 1. Same objects as boot:jank, then the load stamp
+  ;; immediately before cohost.run/-main (dev/perf/jank_aot_load.jank).
   ;; The adapter is cohost.hosts.jank-host (not cohost.hosts.jank): the C++
   ;; namespace is no longer named jank, so jank::runtime does not resolve
   ;; inward and the module can be compiled with the rest of cohost.run.
   ;; Load-time medians: dev/perf/jank_aot_time.sh
-  boot:jank-aot {:doc "jank: AOT cohost's namespaces (-O3, including cohost.hosts.jank-host) and boot. cohost.shim stays source: its object throws on Long/parseLong \"-zz\" 36 at -O0 through -O3. See dev/perf/jank_aot_time.sh."
-                 :task (do
-                         (babashka.fs/create-dirs "target")
-                         (when (empty? (babashka.fs/glob "target/jank-aot" "**/cohost/run.o"))
-                           (shell "jank" "--module-path" "src" "compile-module" "cohost.run"
-                                  "-O3" "--target-dir" "target/jank-aot"))
-                         ;; parse-radix in shim.o throws NumberFormatException
-                         ;; for (Long/parseLong "-zz" 36) at -O0, -O1, -O2 and
-                         ;; -O3. The source returns -1295. Drop shim.o so that
-                         ;; one module loads from source. A separate
-                         ;; compile-module of shim writes a different _cache
-                         ;; directory; this task does not do that.
-                         (doseq [o (babashka.fs/glob "target/jank-aot" "**/cohost/shim.o")]
-                           (babashka.fs/delete o))
-                         (let [aot (str (first (babashka.fs/list-dir "target/jank-aot/_cache")))]
-                           (apply shell "jank" "--module-path" (str aot ":src")
-                                  "run" "dev/perf/jank_aot_load.jank" "--" *command-line-args*)))}
+  boot:jank-aot {:doc "jank: AOT cohost's namespaces (-O3, including cohost.hosts.jank-host and cohost.shim) and boot through the load stamp. See dev/perf/jank_aot_time.sh."
+                 :task (apply shell "jank" "--module-path" (str (jank-aot-dir) ":src")
+                              "run" "dev/perf/jank_aot_load.jank" "--" *command-line-args*)}
   bench:cljw {:doc "cohost.bench on ClojureWasm (target/bench-cljw.edn)"
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "cljw" "-cp" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
@@ -132,9 +124,9 @@
   bench:cljrs {:doc "cohost.bench on clojurust (target/bench-cljrs.edn)"
                :task (do (babashka.fs/create-dirs "target")
                          (apply shell {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}} "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns" "src/cohost/run.cljc" "--" "--bench" (git-rev) *command-line-args*))}
-  bench:jank {:doc "cohost.bench on jank (target/bench-jank.edn)"
+  bench:jank {:doc "cohost.bench on jank, AOT modules (target/bench-jank.edn). Source path: boot:jank-jit, then the same --bench arguments."
               :task (do (babashka.fs/create-dirs "target")
-                        (apply shell "jank" "--module-path" "src" "run-main" "cohost.run" "--" "--bench" (git-rev) *command-line-args*))}
+                        (apply shell "jank" "--module-path" (str (jank-aot-dir) ":src") "run-main" "cohost.run" "--" "--bench" (git-rev) *command-line-args*))}
   lint:reader-order {:doc "every #? in src: :jolt and :cljw (which also read :clj arms) ahead of :clj, nothing after :default, no unknown feature"
                      :task (load-file "dev/lint_reader_order.clj")}
   boot:all  {:doc "every host that is on PATH"
