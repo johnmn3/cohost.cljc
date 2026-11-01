@@ -1375,75 +1375,6 @@
   (when-let [v (and (rewritten-macro? ctx h) (head-var ctx h))]
     (not= "clojure.core" (str (:ns (meta v))))))
 
-(defn- spec-def-var?
-  "The booted clojure.spec.alpha/def, not clojure.core/def."
-  [ctx h]
-  (when-let [v (head-var ctx h)]
-    (let [ns (str (:ns (meta v)))
-          n (count ns)]
-      (and ((:rewritten-macro? ctx) v)
-           (>= n 10)
-           (= (subs ns (- n 10)) "spec.alpha")))))
-
-(defn- spec-keep [orig built]
-  (if (and (meta orig) (meta-capable? built))
-    (with-meta built (meta orig))
-    built))
-
-(defn- spec-replace [m form]
-  (cond
-    (contains? m form) (get m form)
-    (map? form) (spec-keep form (into (empty form) (map (fn [[k v]] [(spec-replace m k) (spec-replace m v)]) form)))
-    (vector? form) (spec-keep form (into (empty form) (map #(spec-replace m %) form)))
-    (set? form) (spec-keep form (into (empty form) (map #(spec-replace m %) form)))
-    (seq? form) (spec-keep form (apply list (map #(spec-replace m %) form)))
-    :else form))
-
-(defn- spec-unfn
-  "spec's unfn: a one-symbol fn* becomes (fn [%] body) with that symbol
-   replaced by %. Any other fn* is left alone (spec only rewrites that shape)."
-  [expr]
-  (if (and (seq? expr) (symbol? (first expr)) (= "fn*" (name (first expr))))
-    (let [params (second expr)]
-      (if (and (vector? params) (= 1 (count params)) (symbol? (first params)))
-        (cons 'fn (cons ['%] (spec-replace {(first params) '%} (nnext expr))))
-        expr))
-    expr))
-
-(defn- spec-res-sym [form]
-  (let [v (resolve form)]
-    (if (var? v) (symbol v) form)))
-
-(defn- spec-walk [form]
-  (cond
-    (symbol? form) (spec-res-sym form)
-    (map? form) (spec-keep form (into (empty form) (map (fn [[k v]] [(spec-walk k) (spec-walk v)]) form)))
-    (vector? form) (spec-keep form (into (empty form) (map spec-walk form)))
-    (set? form) (spec-keep form (into (empty form) (map spec-walk form)))
-    (seq? form) (spec-keep form (apply list (map spec-walk form)))
-    :else form))
-
-(defn- spec-res [form]
-  (cond
-    (keyword? form) form
-    (symbol? form) (spec-res-sym form)
-    (sequential? form) (spec-walk (spec-unfn form))
-    :else form))
-
-(defn- spec-def-expansion
-  "clojure.spec.alpha/def for a keyword name: (def-impl 'k 'resolved spec).
-   A symbol name needs ns-qualify and stays on the macro. nil if this is
-   not that macro."
-  [ctx h args]
-  (when (and (spec-def-var? ctx h) (= 2 (count args)) (keyword? (first args)))
-    (let [k (first args)
-          spec-form (second args)
-          ns (str (:ns (meta (head-var ctx h))))]
-      (list (symbol ns "def-impl")
-            (list 'quote k)
-            (list 'quote (spec-res spec-form))
-            spec-form))))
-
 (defn- inline-expansion
   "On a host whose compiler ignores :inline, the codemod applies it as the JVM
    compiler does: (h args) with h naming a core fn whose :inline covers this
@@ -1571,11 +1502,6 @@
             (timed :let-plain (rw-let* ctx (apply list 'let* args)))
             (and (= hn "loop") (plain-bindings? (first args)) (codemod-expands? ctx h))
             (timed :loop-plain (rw-let* ctx (apply list 'loop* args)))
-            ;; clojure.spec.alpha/def of a keyword. The stock macro's res
-            ;; postwalk is the slow part of ::kvs->map; the expansion is
-            ;; (def-impl 'k 'resolved spec-form). A symbol name stays on the macro.
-            (and (= 2 (count args)) (keyword? (first args)) (spec-def-var? ctx h))
-            (rw ctx (spec-def-expansion ctx h args))
             ;; a macro whose expansion the codemod rewrites (a stock or user
             ;; macro, not the host's): its arguments stay as written, and are
             ;; rewritten once, in the expansion, as the JVM compiler sees them
