@@ -95,8 +95,9 @@
   ;; jank-FAST Step 6 stage 1. Compiles cohost's namespaces to object files
   ;; and boots with that directory ahead of src, so a newer object is loaded
   ;; and the source stays on the path (jank refuses an object with no source).
-  ;; cohost.hosts.jank produces no object on jank 0.1: its C++ namespace is
-  ;; named jank, so jank::runtime resolves inward. It loads from source.
+  ;; The adapter is cohost.hosts.jank-host (not cohost.hosts.jank): the C++
+  ;; namespace is no longer named jank, so jank::runtime does not resolve
+  ;; inward and the module can be compiled with the rest of cohost.run.
   ;; Load-time medians: dev/perf/jank_aot_time.sh
   boot:jank-aot {:doc "jank: AOT cohost's namespaces (compile-module -O3) and boot. See dev/perf/jank_aot_time.sh for the load-time medians."
                  :task (do
