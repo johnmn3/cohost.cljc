@@ -110,6 +110,7 @@
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
+   :native-hints    [[] "nil (the default), or {hint-symbol host-type-symbol}: primitive fn* parameter hints this host compiles as native types (long, double, int, boolean). nil leaves every other host's rewritten forms without native tags."]
    :chunks          [[] "the host's chunked seqs, or nil: {:chunked-seq? :chunk-first :chunk-rest :chunk-next :chunk-buffer :chunk-append :chunk :chunk-cons}, plus :chunk? and :chunk-reduce when the host's reduce cannot walk one of its chunks (the JVM's ArrayChunk); :chunk-reduce keeps IChunk.reduce's contract: a reduced result returned unopened. The stock chunked branches (map, filter, concat, doseq, for, reduce1) then run over the host's own chunks; with nil, no host seq is chunked to stock code. Default: the host core's fns of those names, when it has them all"]
    :host-data?      [['x] "a cheap test, asked at every (.m x args) before the type is looked up: true only when x is certainly the host's own data, never a user type (jolt: its transients, atoms, fns, strings, numbers ...); default: never true"]
    :invoke-member   [['x 'name 'args 'absent] "x's member called name (a string, as written in the source): the field when args is empty and name is a field, else the method applied to args; absent when x has no such member"]
@@ -338,6 +339,7 @@ namespace cohost_err {
     :with-meta (fn [x m] (with-meta x m))
     :host-data? (fn [_] false)
     :natives {}
+    :native-hints nil
     :host-aliases? true
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
@@ -570,6 +572,12 @@ namespace cohost_err {
 (defn rewrite-inline? [] (boolean (cap :rewrite-inline?)))
 (defn chunks [] ((cap :chunks)))
 (defn natives [] (or (get @installed :natives) {}))
+(defn native-hints
+  "nil, or {hint-symbol host-type-symbol} of the primitive fn* parameter hints
+   this host compiles as native types. nil (the default, and an uninstalled
+   adapter) emits no native tag."
+  []
+  (when-let [m (current)] (:native-hints m)))
 (defn host-aliases? [] (boolean (cap :host-aliases?)))
 (defn env-locals "The local symbols of a macro's &env." [env]
   (try-all (fn [] (filter symbol? ((cap :env-locals) env)))))

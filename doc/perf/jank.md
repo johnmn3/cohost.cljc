@@ -440,3 +440,148 @@ The boot line and the library line match. The battery does not. The AOT run has 
 ```
 
 That row is `(Long/parseLong "-zz" 36)` through `cohost.shim/parse-radix`, and `shim.o` is one of the objects loaded ahead of `shim.cljc`. The source boot does not print this FAIL. No `src/` file was edited.
+
+## Type hints (H1)
+
+Measured 2026-11-01 ET on jank `0.1-noble`. The commands ran on `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. The branch was then rebased onto `b61bf0e5856c78d06605e6c32682534a61edf32c`; those commits touch `doc/upstream/` and `doc/hosts/jank-FAST.md` only, so the boots were not run again. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.
+
+JVM Clojure 1.12.0, `clojure -M -e` of the four shapes the battery now runs:
+
+```
+:long-double [1 -1]
+:double-long [2.0 1.5]
+:cce java.lang.ClassCastException
+:loop [6 10 0]
+:npe java.lang.NullPointerException
+```
+
+`(fn [^long x] x)` of 1.9 is 1 and of -1.9 is -1. `(fn [^double x] x)` of 2 is 2.0 and of 1.5 is 1.5. `(fn [^long x] x)` of `"a"` is ClassCastException, of nil is NullPointerException. `(fn [^long n] (loop [i n a 0] (if (pos? i) (recur (dec i) (+ a i)) a)))` of 3.9 is 6, of 4 is 10, of -1.2 is 0.
+
+The codemod coerces a primitive `fn*` parameter on every host (`long`, `double`, `int`, `boolean`), so those rows match the JVM. A non-number does not reach jank's `long` or `double`: jank's conversion throws a native error that `catch` of an object does not see, and a real into `^long` or an integer into `^double` throws where the JVM truncates or widens. nil becomes a NullPointerException; anything else that is not a number becomes a ClassCastException. `:native-hints` defaults to nil. jank's map is `{long long, double double, boolean bool, int int}`. The native tag is passed through only when that map names the hint and the arity's body has `loop`, `loop*`, or `recur` outside a nested fn. The outer parameter stays untyped. One `let*` coerces, then one call enters `(fn* [^{:tag (quote long)} n] ...)`. A leaf stays coerced and untagged: H0's called-leaf ratios are above 1.
+
+`bb boot:jvm` before:
+
+```
+cohost.boot on clj: 791 top-level forms
+  booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0
+battery: 138/139 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The one failure is the pre-existing row "reduce over an eduction; a :tag that is data". After the four rows:
+
+```
+cohost.boot on clj: 791 top-level forms
+  booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0
+battery: 142/143 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+Same failure, and no other. 138 + 4 = 142 and 139 + 4 = 143.
+
+`bb boot:jank` before and after printed the same boot line. Battery went from 124/139 to 128/143. The fifteen failures are the same rows. Libraries stayed 30/61.
+
+```
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 124/139 stock behaviors pass
+libraries: 30/61 cases pass across 12 clojure.* libraries
+```
+
+```
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 128/143 stock behaviors pass
+libraries: 30/61 cases pass across 12 clojure.* libraries
+```
+
+`bb bench:jank` medians, host then stock. `loop-arith` and `reduce-range` are loops over unhinted `+`, `<`, `inc`, and `range`. H1 does not retag those. Both sides moved between the two runs.
+
+before:
+
+```
+  loop-arith  host 1.45  stock 1.57  x1.08
+  reduce-range  host 7.54  stock 11.14  x1.47
+```
+
+after:
+
+```
+  loop-arith  host 1.36  stock 1.38  x1.01
+  reduce-range  host 5.39  stock 8.34  x1.54
+```
+
+`bb boot:cljrs` (cljrs 0.2.32), this session, after the change. No before line was recorded. The four new rows are not in the failure list. Boot errors stayed 0 and libraries stayed 0/61. cljrs's `fn` is a special form, so the codemod coerces a primitive parameter on the `fn` form itself; `:native-hints` is nil, so the form gets no native tag.
+
+```
+cohost.boot on cljrs: 791 top-level forms
+  booted as stock: 561   from host: 95   skipped: 135   errors: 0
+battery: 99/143 stock behaviors pass
+libraries: 0/61 cases pass across 12 clojure.* libraries
+```
+
+Shared files: `src/cohost/adapter.cljc` (capability `:native-hints`, default nil), `src/cohost/rewrite.cljc` (coerce every primitive `fn*` parameter; native tag only when the arity loops), `src/cohost/battery.cljc` (four rows), `src/cohost/hosts/jank.jank` (one key). `doc/perf/jank.md` section "Type hints (H1)" only.
+
+### Finish
+
+The `fn` to `fn*` clause is gated. It runs only when `policy/host-overrides` `:special` contains `fn` (cljrs), and only when every parameter of every arity is a plain symbol and no arity opens with a condition map (a map followed by more body, the stock `fn` macro's test). A `:pre` / `:post` map or a destructured parameter stays as written, and every other host leaves `fn` for the stock macro. `fn*` coercion is unchanged.
+
+Two more battery rows. `clojure -M -e` on Clojure 1.12.0 printed `:pre` and `6`.
+
+`bb boot:jvm` after the gate and the two rows:
+
+```
+cohost.boot on clj: 791 top-level forms
+  booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0
+battery: 144/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The only failure is still "reduce over an eduction; a :tag that is data" (`class clojure.core.Eduction cannot be cast to class clojure.lang.IReduce`). The two new rows are not in the failure list. On this machine:
+
+```
+$ clojure -Sdescribe
+{:version "1.12.6.1673"
+ :config-files ["/usr/local/lib/clojure/deps.edn" "/home/ubuntu/.clojure/deps.edn" "deps.edn" ]
+ :install-dir "/usr/local/lib/clojure"
+ :config-dir "/home/ubuntu/.clojure"
+ :cache-dir ".cpcache"
+ :force false
+ :repro false
+ :main-aliases ""
+ :repl-aliases ""}
+$ clojure -M -e '(clojure-version)'
+1.12.0
+$ bb --version
+babashka v1.13.229
+```
+
+`bb boot:jank` printed the same boot line (`542` stock, `171` host, `78` skipped, `0` errors). Battery `130/145`. Libraries `30/61`. The two new rows are not in the failure list.
+
+`bb boot:cljrs` printed `561` stock, `95` host, `135` skipped, `0` errors. Battery `101/145`. Libraries `0/61`. The two new rows are not in the failure list.
+
+`hinted-loop` is `(defn f [^long n] (loop [i 0 a 0] (if (< i n) (recur (inc i) (+ a i)) a)))` then `(f 200000)`, timed on both sides by `bb bench:jank`. Five runs with `:native-hints` as shipped (`{long long, double double, boolean bool, int int}`), then five runs with that key set to `nil` for the process and restored afterward (the committed adapter map is the shipped one). Each line is that run's median ms. The median of the five stock medians is the middle value.
+
+shipped:
+
+```
+  hinted-loop  host 1.26  stock 1.26  x0.99
+  hinted-loop  host 1.38  stock 1.44  x1.03
+  hinted-loop  host 1.26  stock 1.27  x1.0
+  hinted-loop  host 1.24  stock 1.25  x1.0
+  hinted-loop  host 1.21  stock 1.24  x1.02
+```
+
+median of the five: host `1.26`, stock `1.26`.
+
+`:native-hints` nil:
+
+```
+  hinted-loop  host 1.26  stock 2.36  x1.87
+  hinted-loop  host 1.27  stock 2.25  x1.77
+  hinted-loop  host 1.26  stock 2.35  x1.86
+  hinted-loop  host 1.27  stock 2.45  x1.93
+  hinted-loop  host 1.26  stock 2.46  x1.95
+```
+
+median of the five: host `1.26`, stock `2.36`. The host side is raw jank either way. The stock side is the rewritten `^long` parameter: with the native tag its median matches the host (`1.26`); without it the median is `2.36`.

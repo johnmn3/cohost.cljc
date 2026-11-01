@@ -764,6 +764,8 @@ namespace cohost_obj {
    :upper-case (fn [s] (string/upper-case (str s)))
    :lower-case (fn [s] (string/lower-case (str s)))
    :index-of (fn [s sub from] (let [i (string/index-of s sub from)] (if (nil? i) -1 i)))
-   :current-time-millis (fn [] (cpp/cohost_time.millis))})
+   :current-time-millis (fn [] (cpp/cohost_time.millis))
+   ;; H0 spellings: ^long ^double ^bool ^int. boolean does not resolve.
+   :native-hints '{long long double double boolean bool int int}})
 
 (adapter/install! adapter)
