@@ -606,7 +606,12 @@
 (def RT-nth #?(:jank (fn ([x i] (if-let [d (host/instance-desc x)]
                                   (if-let [f (:nth d)] (f x i)
                                     (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
-                                  (nth x i)))
+                                  ;; jank's own nth out of range throws a native
+                                  ;; error no class catch can take; the JVM's
+                                  ;; answers IndexOutOfBoundsException
+                                  (do (when (and (or (vector? x) (string? x)) (not (< -1 i (count x))))
+                                        (throw (host/ex* 'java.lang.IndexOutOfBoundsException (str "Index " i " out of bounds for length " (count x)))))
+                                      (nth x i))))
                        ([x i nf] (if-let [d (host/instance-desc x)]
                                    (if-let [f (:nth d)] (f x i nf)
                                      (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
@@ -1126,6 +1131,20 @@
      :phel (fn [x] (and (symbol? x) (php/class_exists (php/str_replace "." "\\" (str x)) false)))
      ;; (let-go: a user type's class is its type, a let-go.lang.Type)
      :lg (fn [x] (= "let-go.lang.Type" (str (type x))))
+     ;; (jank: a user type's class is its descriptor map, or the type's
+     ;; name symbol, whose var's root is the descriptor; jank's own
+     ;; class? is a TODO stub that throws. The name is dotted with no
+     ;; slash -- cohost.user.BtR is one symbol whose namespace is nil --
+     ;; so split it at the last dot and go through the interns map)
+     :jank (fn [x] (boolean (or (and (map? x) (get x :cohost/type))
+                                (and (symbol? x)
+                                     (try (let [s (name x)
+                                                i (host/last-index-of* s ".")]
+                                            (and (<= 0 i)
+                                                 (let [v (get (host/ns-interns-map (symbol (subs s 0 i))) (symbol (subs s (inc i))))
+                                                       d (and v (deref v))]
+                                                   (and (map? d) (get d :cohost/type)))))
+                                          (catch cpp/jank.runtime.object_ref _ false))))))
      :default (host-fn 'class? (constantly false))))
 (defn- h-isa? [h child parent]
   (boolean
@@ -1785,7 +1804,7 @@
                                (h-deref? x) (deref x)
                                :else (throw (host/ex* 'java.lang.ClassCastException
                                                       (str "class " (class-of x) " cannot be cast to class java.util.concurrent.Future"))))))
-(def ^:private h-var-set (host-fn 'var-set nil))
+(def ^:private h-var-set #?(:jank nil :default (host-fn 'var-set nil)))
 ;; Var.set: the thread binding; a host without var-set (ClojureScript) keeps
 ;; a binding frame's value in the var's slot
 (def -set (fn [x v] (cond (h-atom? x) (tx-write! x #(reset! x v))

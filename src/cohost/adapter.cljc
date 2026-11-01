@@ -95,7 +95,7 @@
    :host-instance?  [['token 'x] "is x, an object that is not the host's own data, an instance of the JVM class token on this host? (default: instance? of :host-class)"]
    :class-instance? [['c 'x] "(instance? c x) for a class value c that is no JVM class token: a type user code defined, a host class (default: the host's instance?)"]
    :protocol-impl-style [[] ":clj when extend-protocol / extend-type take (m ([x] ...) ([x y] ...)); :per-arity when they take one clause per arity (basilisp)"]
-   :type-method-style [[] ":jvm when deftype / reify methods overload by arity and take any parameter form; :protocols (ClojureScript) when a JVM interface method is one of the host's protocol methods (:host-method gives [protocol method], and the method moves there); :python (basilisp) when a type's methods are Python methods: one definition per name (several arities of a JVM interface method merge into one variadic member), plain-symbol parameters (a destructuring parameter moves into a let), and a protocol method signature's receiver named this (the host counts the method's arity from it)"]
+   :type-method-style [[] ":jvm when deftype / reify methods overload by arity and take any parameter form; :protocols (ClojureScript) when a JVM interface method is one of the host's protocol methods (:host-method gives [protocol method], and the method moves there); :python (basilisp) when a type's methods are Python methods: one definition per name (several arities of a JVM interface method merge into one variadic member), plain-symbol parameters (a destructuring parameter moves into a let), and a protocol method signature's receiver named this (the host counts the method's arity from it); :cohost-types (jank) when the host has no user types of its own: deftype / defrecord / defprotocol / reify are the adapter's own macros and build descriptor maps the adapter's caps dispatch on (:new-instance, :instance-desc, :instance-field), and a method is a plain fn whose first argument is the instance"]
    :host-method     [['token 'method] "on a :protocols host: [protocol method] implementing method of the JVM interface token, or nil to keep it. On a :python host: the host's name for method of the JVM interface token when a deftype / reify implements it (clojure.lang.ILookup valAt -> val-at; java.lang.Object toString -> __str__, a head-less dunder method), or nil to keep it"]
    :char-code       [['c] "a char's code point ((int \\a) is 97 on the JVM; where chars are one-character strings, the code of that character)"]
    :java-statics    [[] "{'Class/member fn}: the host's own java.lang statics the shim uses in place of its generic definitions (the JVM and jolt: Character/isLetter and friends, exactly)"]
@@ -333,7 +333,7 @@ namespace cohost_err {
     :host-type nil
     :expand-macro nil
     :user-type? (fn [_] false)
-    :new-instance (fn [_ _] (unsupported :new-instance))
+    :new-instance (unsupported :new-instance)
     :instance-desc (fn [_] nil)
     :instance-field (fn [_ _] nil)
     :with-meta (fn [x m] (with-meta x m))

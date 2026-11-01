@@ -661,6 +661,24 @@ arose (measured 2026-10-31 ET):
 - `&env` inside a user macro is ClojureScript's analyzer env, not the JVM's
   locals map. basilisp passes a locals map, but `&env` first: cohost hands a
   stock or user macro `&form` and `&env` in core.clj's order.
+- jank's strings and chars are byte-based, and the C locale decides what a
+  byte above ASCII does. Under the default C locale (LANG/LC_ALL unset):
+  `(char 8195)` throws a native error, and a character above ASCII read out
+  of a string comes back as `?` (`(int (first "\u65e5"))` is 63); the rows
+  "Character/isWhitespace is Java's" (one case is `(char 8195)`, the em
+  space) and "Character outside ASCII" fail. Under LC_ALL=C.UTF-8 the bytes
+  are accepted instead of rejected: the characters are then exact ((int of
+  that char is 26085), `(char 8195)` works and the isWhitespace row passes
+  -- but every byte is a "char", so string counts and indexes are byte
+  counts ((count "h\u00e9llo") is 6, not 5) and the "subs count nth first
+  last butlast" row fails instead. The C locale stays the default: it keeps
+  Java's counts for strings built from `\u` escapes, the portable way
+  non-ASCII text gets into a program. Under either locale "Character
+  outside ASCII" still fails on classification: the shim's generic
+  `Character/isDigit` counts ASCII 0-9 only and `isLetter` uses case
+  distinction (a CJK ideograph has none); glibc's wide classification under
+  C.UTF-8 agrees with Java on letters but is likewise ASCII-only for
+  digits, so no host static closes the row.
 
 ## The design that fell out
 
