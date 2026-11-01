@@ -120,10 +120,11 @@
 
 ;; (to-array nil) is an empty array on the JVM; some hosts reject nil
 (defn- to-array* [coll] (host/host-array (if (nil? coll) [] coll)))
+(declare h-cohost-inst? h-instance-desc)
 (def ^:private host-record?
   ;; on a :cohost-types host a record is a cohost type instance of kind
   ;; :record; the host's own record? (jank's) knows none of them
-  #?(:jank (fn [x] (boolean (when-let [d (host/instance-desc x)] (= :record (:kind d)))))
+  #?(:jank (fn [x] (boolean (when-let [d (and (h-cohost-inst? x) (h-instance-desc x))] (= :record (:kind d)))))
      :default (host-fn 'record? (constantly false))))
 (defn record?* [x] (host-record? x))
 (def ^:private host-map-entry? (host-fn 'map-entry? (fn [x] (and (vector? x) (= 2 (count x))))))
@@ -274,7 +275,7 @@
 ;; type is :struct and every object's :php/object, so its PHP class, as a token
 (defn- type-of [x]
   #?(:phel (if (php/is_object x) (symbol (php/str_replace "\\" "." (php/get_class x))) (type x))
-     :jank (if-let [d (host/instance-desc x)] (:name d) (type x))
+     :jank (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))] (:name d) (type x))
      :default (type x)))
 
 (defn class-of
@@ -604,19 +605,19 @@
 ;; (let-go's conj takes no map onto a map, nor nil, as the JVM's does)
 (def RT-conj #?(:lg (fn [coll x] (if (and (map? coll) (or (nil? x) (map? x))) (into coll x) (conj coll x)))
                 ;; a cohost type instance: jank's conj panics on its type
-                :jank (fn [coll x] (if-let [d (host/instance-desc coll)]
+                :jank (fn [coll x] (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                                      (if-let [f (:conj d)] (f coll x)
                                        (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.IPersistentCollection"))))
                                      (conj coll x)))
                 :default conj))
 ;; on a :cohost-types host, count and nth of an instance are the
 ;; descriptor's (jank's own panic on an unknown type); the JVM's messages
-(def RT-count #?(:jank (fn [x] (if-let [d (host/instance-desc x)]
+(def RT-count #?(:jank (fn [x] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                  (if-let [f (:count d)] (f x)
                                    (throw (host/ex* 'java.lang.UnsupportedOperationException (str "count not supported on this type: " (:name d)))))
                                  (count x)))
                  :default count))
-(def RT-nth #?(:jank (fn ([x i] (if-let [d (host/instance-desc x)]
+(def RT-nth #?(:jank (fn ([x i] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                   (if-let [f (:nth d)] (f x i)
                                     (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
                                   ;; jank's own nth out of range throws a native
@@ -625,7 +626,7 @@
                                   (do (when (and (or (vector? x) (string? x)) (not (< -1 i (count x))))
                                         (throw (host/ex* 'java.lang.IndexOutOfBoundsException (str "Index " i " out of bounds for length " (count x)))))
                                       (nth x i))))
-                       ([x i nf] (if-let [d (host/instance-desc x)]
+                       ([x i nf] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                    (if-let [f (:nth d)] (f x i nf)
                                      (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
                                    (nth x i nf))))
@@ -643,22 +644,22 @@
 (def ^:private assoc*
   #?(:phel (fn [m k v] (if (and (host-record? m) (not (contains? m k))) (assoc (into {} (seq m)) k v) (assoc m k v)))
      ;; a cohost type instance: jank's assoc panics on its type
-     :jank (fn [m k v] (if-let [d (host/instance-desc m)]
+     :jank (fn [m k v] (if-let [d (and (h-cohost-inst? m) (h-instance-desc m))]
                          (if-let [f (:assoc d)] (f m k v)
                            (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.Associative"))))
                          (assoc m k v)))
      :default assoc))
 (def RT-assoc assoc*)
-(def RT-dissoc #?(:jank (fn [m & ks] (if-let [d (host/instance-desc m)]
+(def RT-dissoc #?(:jank (fn [m & ks] (if-let [d (and (h-cohost-inst? m) (h-instance-desc m))]
                                        (if-let [f (:dissoc d)] (reduce f m ks)
                                          (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.IPersistentMap"))))
                                        (apply dissoc m ks)))
                   :default dissoc))
-(def RT-contains #?(:jank (fn [coll k] (if-let [d (host/instance-desc coll)]
+(def RT-contains #?(:jank (fn [coll k] (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                                          (some? (if-let [f (:find d)] (f coll k) (when-let [g (:get d)] (g coll k))))
                                          (contains? coll k)))
                     :default contains?))
-(def RT-find #?(:jank (fn [coll k] (if-let [d (host/instance-desc coll)]
+(def RT-find #?(:jank (fn [coll k] (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                                      (if-let [f (:find d)] (f coll k)
                                        (when-let [g (:get d)] (let [v (g coll k ::absent)] (when (not= ::absent v) [k v]))))
                                      (find coll k)))
@@ -1926,7 +1927,7 @@
 (def -empty (let [h (host-fn 'empty (fn [coll] (cond (vector? coll) [] (map? coll) {} (set? coll) #{} :else ())))]
               ;; defrecord's empty throws (a record without its fields is no record)
               (fn [coll]
-                #?(:jank (if-let [d (host/instance-desc coll)]
+                #?(:jank (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                            (if-let [f (:empty d)] (f coll)
                              (throw (host/ex* 'java.lang.UnsupportedOperationException (str "Can't create empty: " (:name d)))))
                            (h coll))
