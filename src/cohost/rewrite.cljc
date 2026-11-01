@@ -969,6 +969,38 @@
        (even? (count b))
        (every? symbol? (take-nth 2 b))))
 
+(defn- defn-expansion
+  "The stock `defn` expansion for a shape that does not need `sigs`' class-tag
+   walk or the `:inline` name munge. nil -> the caller runs the macro, so a
+   pre/post map, an `:inline`, or a non-symbol name is unchanged. The name's
+   `:tag` is not copied: the booted defn's with-meta drops it."
+  [ctx args]
+  (when (symbol? (first args))
+    (let [name (first args)
+          fdecl (rest args)
+          doc (when (string? (first fdecl)) (first fdecl))
+          fdecl (if doc (rest fdecl) fdecl)
+          attr (when (map? (first fdecl)) (first fdecl))
+          fdecl (if attr (rest fdecl) fdecl)
+          single? (vector? (first fdecl))
+          fdecl (if single? (list fdecl) fdecl)
+          tail (when (and (seq fdecl) (map? (last fdecl))) (last fdecl))
+          fdecl (if tail (butlast fdecl) fdecl)
+          arities? (and (seq fdecl) (every? #(and (seq? %) (vector? (first %))) fdecl))
+          prepost? (some #(map? (fnext %)) fdecl)
+          inline? (or (:inline attr) (:inline tail) (:inline (meta name)))]
+      (when (and arities? (not prepost?) (not inline?))
+        (let [arglists (apply list (map first fdecl))
+              m (conj {:arglists (list 'quote arglists)}
+                      (cond-> {} doc (assoc :doc doc)))
+              m (if attr (conj m attr) m)
+              m (if tail (conj m tail) m)
+              m (conj (or (dissoc (meta name) :tag) {}) m)
+              m (dissoc m :tag)
+              fn-head (symbol (:core-ns ctx) "fn")
+              fn-form (cons fn-head fdecl)]
+          (list 'def (with-meta (with-meta name (dissoc (meta name) :tag)) m) fn-form))))))
+
 (defn- bound-names [hn args]
   (case hn
     ("let" "loop" "for" "doseq" "if-let" "when-let" "if-some" "when-some" "with-open" "dotimes" "with-local-vars")
@@ -1502,6 +1534,16 @@
             (timed :let-plain (rw-let* ctx (apply list 'let* args)))
             (and (= hn "loop") (plain-bindings? (first args)) (codemod-expands? ctx h))
             (timed :loop-plain (rw-let* ctx (apply list 'loop* args)))
+            ;; a plain defn: the expansion above, then the same walk the macro
+            ;; path would give that expansion. Anything defn-expansion declines
+            ;; falls through to the macro.
+            (and (= hn "defn") (codemod-expands? ctx h))
+            (if-let [ex (defn-expansion ctx args)]
+              (rw ctx ex)
+              (if-let [expand (:expand-macro ctx)]
+                (let [x (expand (head-var ctx h) form *locals*)]
+                  (if (identical? x form) (apply list (macro-head ctx h) args) (rw ctx x)))
+                (apply list (macro-head ctx h) args)))
             ;; a macro whose expansion the codemod rewrites (a stock or user
             ;; macro, not the host's): its arguments stay as written, and are
             ;; rewritten once, in the expansion, as the JVM compiler sees them
