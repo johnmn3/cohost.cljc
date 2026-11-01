@@ -439,4 +439,19 @@ bb bench:report --compare doc/perf/before doc/perf/after
 
 ## Programs against JVM Clojure
 
-jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Programs live in `bench/programs/`. The driver is `dev/bench_programs.clj`. A target with no binary on PATH prints `ABSENT` and the missing executable. Times are not in this table yet.
+jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Programs live in `bench/programs/`. The driver is `dev/bench_programs.clj`. `MEDIAN-MS` is the middle of five timed calls after one untimed call in the same process. `COLD-MS` is one call in a fresh process. Both clocks are inside the process (`System/nanoTime` on the JVM, `cpp/jank.runtime.current_time` on jank). The result is checked against JVM Clojure before the time is kept.
+
+Measured 2026-11-01. `bb bench:programs jvm` and `bb bench:programs jank-jit`. fib 30 returned `832040` on both, hinted and unhinted (`SAME`).
+
+| program | jvm median ms | jvm cold ms | jank-jit median ms | jank-jit cold ms | jank-jit / jvm |
+|---|---:|---:|---:|---:|---:|
+| fib | 0.104438 | 4.427374 | 2.25409 | 7.76525 | 21.583044485723587 |
+| fib-hinted | 0.290369 | 0.465622 | 9.808602 | 57.017453 | 33.77978365459123 |
+
+Geometric mean of those two ratios: `27.001306881985567`.
+
+Not timed yet, binary present: `jvm-cohost`, `jank-aot`, `jank` (cohost AOT), `cljrs`, `cljrs-cohost`. The runner for those targets is not written.
+
+Absent on this box: `jolt` and `jolt-cohost` (no `jolt` on PATH), `lpy` and `lpy-cohost` (no `basilisp`), `cljw` and `cljw-cohost` (no `cljw`), `phel` and `phel-cohost` (no `phel`), `lg` and `lg-cohost` (no `lg`). `cljs`, `cljs-cohost`, `browser`, and `browser-cohost` have `node` but no ClojureScript jar in the local Maven repo, so the build cannot be compiled here.
+
+Programs not written yet: tak, nbody, spectral-norm, mandelbrot, binary-trees, fannkuch-redux, nsieve, k-nucleotide, the map pipeline, protocol/multimethod dispatch, the JSON-like printer/reader, and time to first output.
