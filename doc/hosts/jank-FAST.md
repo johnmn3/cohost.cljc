@@ -29,7 +29,7 @@ Today's quick run (one warm call + one timed call per side: noisy, shape only):
 | assoc-map, map-lookup, partition, transduce, lazy-pipeline, multimethod | | | x1.9-x2.6 |
 | fn-call, loop-arith, equality, pr-str, conj-vector, distinct | | | x0.99-x1.3 |
 | sort, sort-by, regex | | — | stock side errors: no `:sort-array!` / `:re-find-at` (step 1) |
-| string-join | 1170.85 | 30.79 | jank's own `clojure.string/join` gives a wrong answer (108,889 vs 58): a host fact |
+| string-join | 1170.85 | 30.79 | the stock side's answer was wrong (58; the right count is 108,889, which jank's own gives): a cohost bug on jank, from the string-builder stand-in (corrected 2026-11-01) |
 
 ## Rules for every step
 
@@ -95,7 +95,7 @@ natives layer"; the other hosts carry 36-66). Start from the cases step 2 ranks 
 `into`, `transient`/`persistent!`/`conj!`/`assoc!`, `frequencies`, `group-by`, `set`,
 `assoc`/`get`, `swap!`/`reset!`, `nth`, `count`, `str`. A name lands only when both batteries
 stay green with it; one that diverges is a host fact, not a native (never `clojure.string/join`,
-whose jank answer is wrong; never `format`, which is C-style). Natives must not see cohost type
+whose stock path on jank returned 58 for 108,889 until the string-builder fix -- re-check it; never `format`, which is C-style). Natives must not see cohost type
 instances (jank's own fns panic on them): a native that can receive one keeps the shim's guard.
 **Done-bar**: no bench case above x1.5 that a native can reach.
 
@@ -152,9 +152,9 @@ unchanged when booted from it; a stale snapshot is detected and rebuilt, never l
 
 Report to jank-lang/jank with minimal repros (each verified on 0.1-noble): a macro's `&form` and
 `&env` (`((args))` and the macro name); the lexer rejecting any non-ASCII character, even in a
-comment; `^Class` read as `:tag (quote Class)`; `class`/`instance?`/`indexed?`/`rseq` TODO stubs;
+comment under the C locale (it reads them under C.UTF-8); `^Class` read as `:tag (quote Class)`; `class`/`instance?`/`indexed?`/`rseq` TODO stubs;
 `(catch :default e)` binding nil; `push-thread-bindings` refusing an array map;
-`clojure.string/join`'s wrong answer; count/conj/assoc/meta panicking on an object type they do
+count/conj/assoc/meta panicking on an object type they do
 not know (each fix upstream removes a shim guard here).
 
 ## Order and what each step is checked by
