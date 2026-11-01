@@ -28,11 +28,15 @@
 ;; record forms. Every host's boot report stays the numbers it prints today.
 (defn- profiling [] (some? (:profile @state)))
 
+(def ^:private prof+
+  ;; jank's + wraps at 32 bits, so the timers sum with +'; basilisp has no +'
+  ;; (its + is Python's unbounded int)
+  #?(:lpy + :default +'))
+
 (defn- profile-add! [k dt]
   (when (and (profiling) dt)
     (let [bucket (or (:profile-bucket @state) :core)]
-      ;; jank's + wraps at 32 bits; +' does not.
-      (swap! (:profile @state) update-in [:phases bucket k] (fn [n] (+' (or n 0) dt))))))
+      (swap! (:profile @state) update-in [:phases bucket k] (fn [n] (prof+ (or n 0) dt))))))
 
 (defn- profile-form! [ns-sym form name dt]
   (when (and (profiling) dt (pos? dt))
@@ -504,7 +508,7 @@
              _ (capture-inline! ctx form)
              t3 (host/nano-time)]
          (profile-add! :rewrite (- t1 t0))
-         (profile-add! :eval (+' (- t2 t1) (- t3 t2)))
+         (profile-add! :eval (prof+ (- t2 t1) (- t3 t2)))
          (profile-form! core-ns form name (- t2 t1))))
      (record! report status {:name name}))
    (fn [e]
@@ -759,7 +763,7 @@
           library (get-in p [:walls :library] 0)
           boot-wall (or (:boot-wall p) 0)
           total (+ boot-wall library)
-          named (+' read rewrite ev scan setup companion library)
+          named (prof+ read rewrite ev scan setup companion library)
           other (- total named)
           rows [["reading" read] ["codemod" rewrite] ["eval" ev] ["scan-macros" scan]
                 ["setup" setup] ["companion" companion] ["library" library] ["other" other]]
@@ -767,7 +771,7 @@
       (println (str "PROFILE-TOTAL " total))
       (doseq [[k n] rows]
         (println (str "PROFILE-PHASE " k " " n " " (pct n))))
-      (println (str "PROFILE-SUM " (+' named other)))
+      (println (str "PROFILE-SUM " (prof+ named other)))
       (doseq [[i f] (map-indexed vector (profile-top (:forms p) 20))]
         (println (str "PROFILE-TOP " (inc i) " " (:bucket f) " " (:ns f) " " (:head f) " " (:name f) " " (:eval f)))))))
 
