@@ -157,9 +157,28 @@ comment under the C locale (it reads them under C.UTF-8); `^Class` read as `:tag
 count/conj/assoc/meta panicking on an object type they do
 not know (each fix upstream removes a shim guard here).
 
+## Step 8. A language benchmark suite against JVM Clojure (added 2026-11-01)
+
+The 30 bench cases measure cohost's overhead (the stock core against the host's own core), and
+the boot measures startup. Neither says how fast a program is against JVM Clojure, which is the
+goal: applications on cohost as fast as on the JVM. A suite under `bench/programs/`, each
+program portable Clojure, run on JVM Clojure 1.12 (the baseline), jank's own core, cohost on
+jank, and every other host:
+- calls and recursion: fib 30, tak; floats: nbody, spectral-norm, mandelbrot; allocation and GC:
+  binary-trees; arrays and mutation: fannkuch-redux, nsieve; maps and strings: k-nucleotide
+  (frequencies over a generated string); persistent collections: a reduce/assoc/update-in data
+  pipeline over maps; dispatch: protocols and multimethods over records; text: a JSON-like
+  printer and reader of nested data; time to first output of a one-line program.
+- each numeric program twice: unhinted, and with the `^long`/`^double` hints a JVM programmer
+  would write (H1 passes them to jank).
+- each run reports the median of 5 after a warm-up, plus a cold single run (JIT hosts differ).
+**Done-bar**: `bb bench:programs <host>` on every host; a table of each program's time against
+JVM Clojure, the geometric mean per host, hinted and unhinted, in doc/PERF.md.
+
 ## Order and what each step is checked by
 
-Step 1 -> 2 -> 3 -> 4 -> 5 (H0 decides whether H1/H2 run) -> 6. Step 7 any time. The reviewer
+Step 1 -> 2 -> 3 -> 4 -> 5 (H0 decides whether H1/H2 run) -> 6. Step 7 any time. Step 8 as soon as
+it can run: it is the measure of the goal. The reviewer
 (this repo's other session) re-runs each step's named commands and compares with its commit
 message: the boot report, both batteries, the bench table, and the regression for shared
 changes.
