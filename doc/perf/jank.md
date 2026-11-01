@@ -441,6 +441,92 @@ The boot line and the library line match. The battery does not. The AOT run has 
 
 That row is `(Long/parseLong "-zz" 36)` through `cohost.shim/parse-radix`, and `shim.o` is one of the objects loaded ahead of `shim.cljc`. The source boot does not print this FAIL. No `src/` file was edited.
 
+## AOT stage 2 probe
+
+Measured 2026-11-01 ET on jank `0.1-noble`. The boot was not changed. A temporary local hook (not committed) appended each rewritten form `boot!` and `load-lib!` actually evaluated. `cohost.core` produced 550 forms (`boot!` printed `BOOT 524 171 78 0`; the file has 791 top-level forms counted by the boot report, and fewer than 2,000 are evaluated, so the module is all 550, not a 2,000-form prefix). `clojure.walk` produced 10 forms in `cohost.walk`.
+
+### Compile
+
+`cohost.walk`, host core referred, `-O3`, three runs. No object was written.
+
+```
+jank --module-path /tmp/jank-snap-src:src compile-module cohost.walk -O3 --target-dir /tmp/jank-snap-aot
+```
+
+`COMPILE_NS` `378779228`, `437787731`, `430674118`. Median `430674118`. Each exited 1:
+
+```
+error: The symbol `cohost.shim/is$clojure_lang_IMapEntry` could not be resolved.
+```
+
+The same command at `-O1` exited 1 with that same error. One run printed `Building pre-compiled header` and `COMPILE_NS` `5410469166`. The next, header already built, was `384029619`.
+
+`cohost.core`, bare ns, `-O3`, three runs. No object was written.
+
+```
+jank --module-path /tmp/jank-snap-src:src compile-module cohost.core -O3 --target-dir /tmp/jank-snap-aot-core
+```
+
+`COMPILE_NS` `385537106`, `427512951`, `388416781`. Median `388416781`. Each exited 1:
+
+```
+error: The symbol `cohost.shim/PersistentList-creator` could not be resolved.
+```
+
+A bare `cohost.walk` (`:refer-clojure :only []`) failed earlier, in `661410276` ns, with `The symbol list? could not be resolved.`
+
+Load time was not measured. `find` over the target dirs printed no `.o` files.
+
+### Eval of the same forms
+
+`jank --module-path src run dev/perf/jank_snapshot_check.jank`, three processes. After `boot!` and `load-lib!` of `clojure.walk`, the dumped files were read and each form except the `ns` form was `eval`'d again. `EVAL-NS` is nanoseconds.
+
+walk, 10 forms: `5821463`, `5843343`, `23841514`. Median `5843343`.
+
+core, 550 forms: `1561941496`, `1559581158`, `1521598600`. Median `1559581158`.
+
+### Checks
+
+The compiled module never loaded, so every check of "after the compiled module" is no. The same checks after a normal boot, from the three runs (the lines matched):
+
+```
+CHECK walk-var true
+CHECK walk-doc "Traverses form, an arbitrary data structure.  inner and outer are\n  functions.  Applies inner to each element of form, building up a\n  data structure of the same type, then applies outer to the result.\n  Recognizes all Clojure data structures. Consumes seqs as with doall."
+CHECK walk-arglists ([inner outer form])
+CHECK mx-macro nil
+CHECK keywordize {:a 1}
+CHECK when-macro true
+CHECK print-method true
+CHECK print-method-keys [:jank/source :cohost/wrapped :cohost/host]
+CHECK type-atom "atom"
+CHECK cpp-cohost false
+CHECK record ERR
+```
+
+| check | normal boot | compiled module |
+|---|---|---|
+| `cohost.walk/walk` is a var | yes, `true` | no, no object loaded |
+| `:doc` | yes, the walk docstring | no |
+| `:arglists` | yes, `([inner outer form])` | no |
+| `:macro` on `macroexpand-all` | yes, the value is `nil` (it is a function) | no |
+| `:macro` on `cohost.core/when` | yes, `true` | no |
+| `keywordize-keys` of `{"a" 1}` | yes, `{:a 1}` | no |
+| `print-method` var | yes, meta keys `[:jank/source :cohost/wrapped :cohost/host]` | no |
+| `type` of an atom | yes, `"atom"` | no |
+| `cpp/cohost_obj.is_cohost` of an atom | yes, the call returned `false` | no |
+| `defrecord` | no, the check printed `ERR` | no |
+
+### Verdict
+
+The Step 6.2 design does not hold on jank 0.1: `compile-module` of the rewritten forms does not produce a module, at `-O3` or `-O1`. Analyze stops before codegen.
+
+What has to change:
+
+- Vars the codemod calls are interned at boot, not defined in source. `cohost.shim/is$clojure_lang_IMapEntry` comes from `install-is!`. `cohost.shim/PersistentList-creator` is the same kind of runtime var. The snapshot has to emit real defs for those, or compile against a shim the compiler can already resolve.
+- Unqualified names in the booted namespace are `cohost.core`'s, and `cohost.core` is not a source module. A bare ns cannot resolve `list?`. Referring the host core would bind jank's `list?`, not `cohost.core/list?`.
+- `scan-macros!`, refers, and `:cohost/host` / `:cohost/wrapped` are not part of the evaluated forms. `print-method`'s meta after a normal boot is that host marking. A module of only the eval'd forms does not redo it.
+- There are 550 evaluated `cohost.core` forms, not 2,000. `clojure.walk` is 10.
+
 ## Type hints (H1)
 
 Measured 2026-11-01 ET on jank `0.1-noble`. The commands ran on `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. The branch was then rebased onto `b61bf0e5856c78d06605e6c32682534a61edf32c`; those commits touch `doc/upstream/` and `doc/hosts/jank-FAST.md` only, so the boots were not run again. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.

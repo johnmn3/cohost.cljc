@@ -1,0 +1,6 @@
+;; jank-FAST Step 6 stage 2 probe.
+;; Checks and eval timing: dev/perf/jank_snapshot_check.jank
+;; The rewritten forms were dumped with a temporary local hook that is not
+;; committed. compile-module of those forms fails in analyze; see
+;; doc/perf/jank.md section "AOT stage 2 probe".
+(println "see doc/perf/jank.md section AOT stage 2 probe")
