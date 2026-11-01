@@ -670,8 +670,11 @@
   ([{:keys [root files verbose profile?] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
    (if profile?
-     (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
-     (swap! state dissoc :profile :profile-bucket))
+     (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
+         (vreset! rw/profile-branches {})
+         (vreset! rw/profile-child 0))
+     (do (swap! state dissoc :profile :profile-bucket)
+         (vreset! rw/profile-branches nil)))
    (let [t-boot (when (profiling) (host/nano-time))]
    (host/ensure-bare-ns! core-ns)
    (let [ctx (if (profiling) (prof :setup #(make-ctx)) (make-ctx))
@@ -794,7 +797,14 @@
       (print-split! forms :core :rewrite 20)
       (print-split! forms :core :eval 20)
       (print-split! forms :library :rewrite 20)
-      (print-split! forms :library :eval 20))))
+      (print-split! forms :library :eval 20)
+      (when-let [m @rw/profile-branches]
+        (let [rows (sort-by val (fn [a b] (compare b a)) m)
+              tot (reduce (fn [a [_ n]] (+' a n)) 0 rows)]
+          (println (str "PROFILE-BRANCH-SUM " tot))
+          (doseq [[k n] rows]
+            (println (str "PROFILE-BRANCH " (name k) " " n " "
+                          (if (pos? tot) (/ (* 100.0 n) tot) 0.0)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; using it
