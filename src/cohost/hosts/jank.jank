@@ -94,7 +94,9 @@ namespace cohost_obj {
   /* methods vector slots: 0 equiv, 1 hasheq, 2 toString, 3 toCodeString,
      4 invoke, 5 deref, 6 get, 7 seq, 8 compare, 9 find */
   struct cohost_object : object {
-    static constexpr object_type obj_type{ static_cast<object_type>(71) };
+    // the first tag past jank's own (object_type::max is its last, 70 on 0.1): derived,
+    // so a jank that adds a type does not collide with it
+    static constexpr object_type obj_type{ static_cast<object_type>(static_cast<unsigned char>(object_type::max) + 1) };
     static constexpr object_behavior obj_behaviors{
       object_behavior::call | object_behavior::get | object_behavior::find
       | object_behavior::compare | object_behavior::seqable | object_behavior::indexable
