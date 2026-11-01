@@ -751,3 +751,58 @@ That profiled run's own phase total was `54037433152` ns. The profiler span is l
 Step 6 stage 2 replaces booting the namespaces with loading a compiled snapshot. On run 2, reading + codemod + eval + scan-macros + companion + library is `49902848708` ns, `93.3080%` of that run's `53481878445` ns. `setup` is `1178320078` ns (`2.2032%`) and `other` is `2400709659` ns (`4.4888%`). The snapshot's load time was not measured.
 
 Step 3's syntax-quote metadata pass is not its own profiler region. Exclusive time of the jit functions whose names contain meta, syntax, or quote is under `0.001%` each (`strip-meta` `492806` ns, `with-meta` `67690` ns, `carry-meta` `238658` ns, of the span `62201025119`). `rt macroexpand1` is `0.521%` exclusive and is every macroexpansion, not only the `:jank/source` maps. Those maps are built inside macroexpansion and then evaluated inside `jit eval_string` and `eval ast node call`, which the profile does not split further. No share is assigned to that pass beyond those measured regions.
+
+## Runtime profile
+
+Measured 2026-11-01 ET by lane M (jank-FAST Step 2, order M-3), on the same full
+`bb bench:jank` run doc/PERF.md records as the jank baseline (muse/jank-step2 @ 573ee4d5).
+The five worst cases of that table, by the stock core's ratio against jank's own core:
+regex (x320.10), format (x49.57), into-vector (x30.32), sort-by (x27.45),
+transduce (x21.68).
+
+Method. A driver boots cohost, evaluates the case's setup once, evaluates the case's
+body wrapped as `(fn [] body)` once -- the bench's own `side` shape, so the timed
+calls are calls of a compiled fn -- and calls it R times at the bench's full size:
+
+```
+jank --profile --profile-output prof-<case>.profile --module-path src run-main probe.prof
+```
+
+The profile is jank's enter/exit scope log. Self time per scope name was aggregated
+with a stack walk, and a boot-only run of the same driver (R = 0) was subtracted
+scope by scope, so what remains is the case loop's share. Loop times under the
+profiler run about 1.6x the bench medians; the shares are of the case-attributed
+self time. One limit shapes every row: the profiler instruments jank's compiler and
+runtime scopes, not the bodies of JIT-compiled functions. A compiled stock fn's
+execution is a single unattributed block, reported here as the root scope
+(`eval user code`) self time. What the profile can and cannot split is itself the
+finding (lane G's boot profile above hit the same wall from the other side).
+
+| case | reps | loop under profiler | execution inside the compiled stock fns | first-use JIT compilation (`jit eval_string`) | everything else |
+|---|---:|---:|---:|---:|---:|
+| regex | 12 | 26,674 ms | 81.8% | 17.3% (30 strings) | 0.9% |
+| format | 60 | 16,962 ms | 71.4% | 27.3% (13 strings) | 1.3% |
+| into-vector | 60 | 13,272 ms | 63.2% | 34.2% (19 strings) | 2.6% |
+| sort-by | 30 | 13,739 ms | 82.8% | 12.5% (31 strings) | 4.7% |
+| transduce | 80 | 15,529 ms | 79.8% | 17.8% (16 strings) | 2.4% |
+
+Reading:
+
+- The interpreter machinery is not the cost. Reader, macroexpansion
+  (`rt macroexpand1`), var lookup (`rt find_var`) and the AST node scopes are
+  under 1% in every case once the boot is subtracted. Nothing in Step 3 or 4
+  should be aimed at eval itself.
+- 63-83% of each case is native execution inside the compiled stock and shim
+  fns: the shim's dispatch and the adapter's capability calls, which is what
+  Step 3's items (type tests by tag, the instance guard as one C++ call, hot
+  capability lookups read once) and Step 4's natives address. This profiler
+  cannot split that block further; the case ratios in doc/PERF.md are the
+  before/after measure for those steps.
+- The rest, 12-34%, is JIT compilation of fns the boot alone never calls:
+  13-31 `jit eval_string` compilations per case, triggered on first use inside
+  the loop (for format, 13 compilations costing 27% -- the format call graph
+  is compiled lazily and the fns are large). The bench's warm-up absorbs this
+  in steady state, but a fresh process pays it on first use of each call
+  graph; it is the runtime-profile counterpart of the boot profile's
+  compile-heavy split, and it is what AOT (Step 6) removes by compiling
+  ahead of time.

@@ -92,7 +92,19 @@
   #?(:cljs (host/with-ns 'cljs.user (fn [] (host/eval-form (list 'ns (symbol (str host-ns "$macros"))))))
      :default nil)
   (host/with-ns #?(:cljs 'cljs.user :default (host/core-ns-sym))
-    (fn [] (host/eval-form (list 'ns host-ns (apply list :require requires))))))
+    (fn [] (host/eval-form (list 'ns host-ns (apply list :require requires)))))
+  ;; A namespace the host's own ns form creates refers the host's core.
+  ;; Where boot displaced the type machinery into cohost.core (defprotocol
+  ;; and its kin on :cohost-types hosts), those names do not resolve here,
+  ;; though they resolve in every namespace boot creates itself. Refer just
+  ;; those names from cohost.core, only where they are missing: everywhere
+  ;; else the host side keeps the host's own, which is what it measures.
+  (host/with-ns host-ns
+    (fn []
+      (when-not (host/eval-form (list 'resolve (list 'quote 'defprotocol)))
+        (host/try-all
+         (fn [] (host/refer! host-ns 'cohost.core
+                             {:only '[defprotocol defrecord deftype]})))))))
 
 (defn- eval-host [src]
   (host/with-ns host-ns (fn [] (host/eval-form (host/host-read-string src)))))
