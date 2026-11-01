@@ -129,8 +129,8 @@
       (spit file (str "(ns bench.prog)\n" body))
       (let [c (run! ["jank" "--module-path" (str root "/src") "compile-module" "bench.prog"
                      "-O3" "--target-dir" root])]
-        (when-not (zero? (:exit c))
-          (throw (ex-info "aot-compile" {:err (:err c)}))))
+        (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/prog.o")))
+          (throw (ex-info "aot-compile" {:err (str (:err c) "\n" (:out c))}))))
       (spit stamp body))
     (let [cache (first (fs/glob root "_cache/*"))]
       {:cache (str cache) :src (str root "/src")})))

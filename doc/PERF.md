@@ -443,36 +443,40 @@ jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Prog
 
 Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`, binary-trees `8`, fannkuch `7`, nsieve `12`, k-nucleotide `2000`, pipeline `2000`, dispatch `20000`, json `20`.
 
-Measured 2026-11-01 with `bb bench:programs jvm`. Every program printed `SAME` and the result in the last column.
+Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`. A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap.
 
-| program | jvm median ms | jvm cold ms | result |
-|---|---:|---:|---:|
-| fib | 5.293441 | 18.17026 | 832040 |
-| fib-hinted | 4.425011 | 17.725987 | 832040 |
-| tak | 1.367668 | 6.945293 | 7 |
-| tak-hinted | 1.129298 | 3.340478 | 7 |
-| nbody | 3.876606 | 13.552441 | -169027 |
-| nbody-hinted | 3.079164 | 14.419944 | -169027 |
-| spectral-norm | 0.663116 | 15.028961 | 784826 |
-| spectral-norm-hinted | 1.674702 | 13.756405 | 784826 |
-| mandelbrot | 0.444768 | 1.998482 | 608 |
-| mandelbrot-hinted | 0.213834 | 1.950147 | 608 |
-| binary-trees | 0.518609 | 3.696582 | 7083 |
-| binary-trees-hinted | 1.276997 | 3.619701 | 7083 |
-| fannkuch | 21.31977 | 60.519953 | -502 |
-| fannkuch-hinted | 20.498867 | 67.888894 | -502 |
-| nsieve | 0.835891 | 3.45517 | 564 |
-| nsieve-hinted | 1.023101 | 2.823484 | 564 |
-| k-nucleotide | 1.125359 | 5.198497 | 500 |
-| pipeline | 2.510401 | 9.299799 | 5995001 |
-| dispatch | 2.168401 | 10.863573 | 200183333 |
-| json | 0.145791 | 0.566916 | 580 |
-| first-output | 385.120548 | 377.261128 | ok |
+| program | jvm median ms | jvm cold ms | jank-jit median ms | jank-jit cold ms | jank-jit / jvm | result |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 5.293441 | 18.17026 | 81.066692 | 313.770143 | 15.314555 | 832040 |
+| fib-hinted | 4.425011 | 17.725987 | 79.821299 | 247.66818 | 18.038667 | 832040 |
+| tak | 1.367668 | 6.945293 | 2.653217 | 253.907528 | 1.939957 | 7 |
+| tak-hinted | 1.129298 | 3.340478 | 4.194396 | 42.517684 | 3.714162 | 7 |
+| nbody | 3.876606 | 13.552441 | ABSENT | | | -169027 |
+| nbody-hinted | 3.079164 | 14.419944 | ABSENT | | | -169027 |
+| spectral-norm | 0.663116 | 15.028961 | ABSENT | | | 784826 |
+| spectral-norm-hinted | 1.674702 | 13.756405 | ABSENT | | | 784826 |
+| mandelbrot | 0.444768 | 1.998482 | ABSENT | | | 608 |
+| mandelbrot-hinted | 0.213834 | 1.950147 | ABSENT | | | 608 |
+| binary-trees | 0.518609 | 3.696582 | 1.736672 | 353.635392 | 3.348712 | 7083 |
+| binary-trees-hinted | 1.276997 | 3.619701 | 1.740416 | 290.493741 | 1.362897 | 7083 |
+| fannkuch | 21.31977 | 60.519953 | ABSENT | | | -502 |
+| fannkuch-hinted | 20.498867 | 67.888894 | ABSENT | | | -502 |
+| nsieve | 0.835891 | 3.45517 | ABSENT | | | 564 |
+| nsieve-hinted | 1.023101 | 2.823484 | ABSENT | | | 564 |
+| k-nucleotide | 1.125359 | 5.198497 | 1.078813 | 113.019317 | 0.958639 | 500 |
+| pipeline | 2.510401 | 9.299799 | 4.264566 | 368.019931 | 1.698759 | 5995001 |
+| dispatch | 2.168401 | 10.863573 | ABSENT | | | 200183333 |
+| json | 0.145791 | 0.566916 | 0.073902 | 790.121021 | 0.506904 | 580 |
+| first-output | 385.120548 | 377.261128 | 362.395388 | 373.893489 | 0.940992 | ok |
 
-Ratio of every JVM median to itself is 1. Geometric mean of those ratios: `1`.
+jank-jit ABSENT reasons: nbody and nbody-hinted, `The symbol Math/sqrt could not be resolved`. spectral-norm and spectral-norm-hinted, `The symbol Math/round could not be resolved`. mandelbrot and mandelbrot-hinted, `use of undeclared identifier 's35'`. fannkuch and fannkuch-hinted, `use of undeclared identifier 's28'`. nsieve and nsieve-hinted, `use of undeclared identifier 's56'`. dispatch, `The symbol defprotocol could not be resolved`.
+
+Geometric mean of the ten jank-jit / JVM median ratios (the programs that ran): `2.425829`. Ratio of every JVM median to itself is 1, geometric mean `1`.
 
 Hinted median / unhinted median on the JVM: fib `0.835942`, tak `0.825711`, nbody `0.794294`, spectral-norm `2.525504`, mandelbrot `0.480776`, binary-trees `2.462350`, fannkuch `0.961496`, nsieve `1.223965`. Geometric mean of those eight ratios: `1.085595`.
 
-Not measured yet on this box: `jank-jit`, `jank-aot`, `jank` (cohost on jank), `jvm-cohost`, `cljrs`, `cljrs-cohost`.
+On jank-jit, where both forms ran: fib `0.984637`, tak `1.580872`, binary-trees `1.002156`.
+
+Not measured yet on this box: `jank-aot`, `jank` (cohost on jank), `jvm-cohost`, `cljrs`, `cljrs-cohost`.
 
 Absent on this box: `jolt` and `jolt-cohost` (no `jolt` on PATH), `lpy` and `lpy-cohost` (no `basilisp`), `cljw` and `cljw-cohost` (no `cljw`), `phel` and `phel-cohost` (no `phel`), `lg` and `lg-cohost` (no `lg`). `cljs`, `cljs-cohost`, `browser`, and `browser-cohost` have `node` but no ClojureScript jar in the local Maven repo, so the build cannot be compiled here.
