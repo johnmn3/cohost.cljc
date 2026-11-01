@@ -1,0 +1,241 @@
+;; jank-FAST Step 5 H0. Raw jank, no cohost.
+;; Time a hot loop with and without native parameter hints.
+;;
+;;   jank run -O3 --eager dev/perf/jank_h0_bench.jank
+;;
+;; current-time is nanoseconds (clojure.core/time divides it by 1000000.0).
+;; Each case is warmed up once, then timed five times. median-ns is the
+;; middle sample. ratio-hinted-over-plain is hinted median / plain median:
+;; below 1.0 the hint is faster.
+;;
+;; down-long / down-i64 with a constant trip count are otherwise folded to
+;; a closed form (a previous run returned in tens of nanoseconds). eat_* is
+;; a volatile store of the accumulator on every iteration so the loop runs.
+
+(cpp/raw "
+namespace h0bench {
+  volatile long long sink_i;
+  volatile double sink_d;
+  inline void eat_i(long long x) { sink_i = x; }
+  inline void eat_d(double x) { sink_d = x; }
+}
+")
+
+(defn f-dbl [^double a ^double b] (+ a b))
+(defn f-dbl-plain [a b] (+ a b))
+(defn f-long [^long a ^long b] (+ a b))
+(defn f-i64 [^jtl.i64 a ^jtl.i64 b] (+ a b))
+(defn f-long-plain [a b] (+ a b))
+(defn lt-dbl [^double a ^double b] (< a b))
+(defn lt-plain [a b] (< a b))
+(defn inc-long [^long a] (inc a))
+(defn inc-plain [a] (inc a))
+
+(defn call-dbl []
+  (loop [i 0.0 acc 0.0]
+    (if (< i 2000000.0)
+      (recur (+ i 1.0) (f-dbl acc 1.25))
+      acc)))
+
+(defn call-dbl-plain []
+  (loop [i 0.0 acc 0.0]
+    (if (< i 2000000.0)
+      (recur (+ i 1.0) (f-dbl-plain acc 1.25))
+      acc)))
+
+(defn call-long []
+  (loop [i 0 acc 0]
+    (if (< i 2000000)
+      (recur (inc i) (f-long acc 3))
+      acc)))
+
+(defn call-i64 []
+  (loop [i 0 acc 0]
+    (if (< i 2000000)
+      (recur (inc i) (f-i64 acc 3))
+      acc)))
+
+(defn call-long-plain []
+  (loop [i 0 acc 0]
+    (if (< i 2000000)
+      (recur (inc i) (f-long-plain acc 3))
+      acc)))
+
+(defn call-lt-dbl []
+  (loop [i 0.0]
+    (if (lt-dbl i 2000000.0)
+      (recur (+ i 1.0))
+      i)))
+
+(defn call-lt-plain []
+  (loop [i 0.0]
+    (if (lt-plain i 2000000.0)
+      (recur (+ i 1.0))
+      i)))
+
+(defn call-inc-long []
+  (loop [i 0 a 0]
+    (if (< i 2000000)
+      (recur (inc i) (inc-long a))
+      a)))
+
+(defn call-inc-plain []
+  (loop [i 0 a 0]
+    (if (< i 2000000)
+      (recur (inc i) (inc-plain a))
+      a)))
+
+;; Loop carried from the hinted parameter. The plain twin carries a boxed n.
+(defn down-dbl [^double n]
+  (loop [i n acc 0.0]
+    (if (< 0.0 i)
+      (let [a (+ acc i)]
+        (cpp/h0bench.eat_d a)
+        (recur (- i 1.0) a))
+      acc)))
+
+(defn down-dbl-plain [n]
+  (loop [i n acc 0.0]
+    (if (< 0.0 i)
+      (let [a (+ acc i)]
+        (cpp/h0bench.eat_d a)
+        (recur (- i 1.0) a))
+      acc)))
+
+(defn down-long [^long n]
+  (loop [i n acc 0]
+    (if (< 0 i)
+      (let [a (+ acc i)]
+        (cpp/h0bench.eat_i a)
+        (recur (- i 1) a))
+      acc)))
+
+(defn down-i64 [^jtl.i64 n]
+  (loop [i n acc 0]
+    (if (< 0 i)
+      (let [a (+ acc i)]
+        (cpp/h0bench.eat_i a)
+        (recur (- i 1) a))
+      acc)))
+
+(defn down-long-plain [n]
+  (loop [i n acc 0]
+    (if (< 0 i)
+      (let [a (+ acc i)]
+        (cpp/h0bench.eat_i a)
+        (recur (- i 1) a))
+      acc)))
+
+;; Locals hinted vs not. The parameter hint is the same on both, so the
+;; only difference is ^long on the loop locals.
+(defn locals-hinted [^long n]
+  (loop [^long i 0 ^long acc 0]
+    (if (< i n)
+      (recur (inc i) (+ acc i))
+      acc)))
+
+(defn locals-plain [^long n]
+  (loop [i 0 acc 0]
+    (if (< i n)
+      (recur (inc i) (+ acc i))
+      acc)))
+
+;; Both loops start from the literal 0.0, so the parameter hint is only
+;; the loop limit.
+(defn sum-dbl [^double n]
+  (loop [i 0.0 acc 0.0]
+    (if (< i n)
+      (recur (+ i 1.0) (+ acc i))
+      acc)))
+
+(defn sum-dbl-plain [n]
+  (loop [i 0.0 acc 0.0]
+    (if (< i n)
+      (recur (+ i 1.0) (+ acc i))
+      acc)))
+
+(defn nanos [f]
+  (let [s (cpp/jank.runtime.current_time)
+        r (f)
+        e (cpp/jank.runtime.current_time)]
+    [(- e s) r]))
+
+(defn five [f]
+  (f)
+  (let [a (nanos f)
+        b (nanos f)
+        c (nanos f)
+        d (nanos f)
+        e (nanos f)
+        t0 (nth a 0)
+        t1 (nth b 0)
+        t2 (nth c 0)
+        t3 (nth d 0)
+        t4 (nth e 0)
+        s (vec (sort [t0 t1 t2 t3 t4]))]
+    {:times [t0 t1 t2 t3 t4]
+     :median (nth s 2)
+     :result (nth a 1)}))
+
+(defn report [label m]
+  (let [t (:times m)]
+    (println label
+             "runs-ns" (nth t 0) (nth t 1) (nth t 2) (nth t 3) (nth t 4)
+             "median-ns" (:median m)
+             "result" (:result m))))
+
+(defn report-ratio [label hinted plain]
+  (println label
+           "hinted-median-ns" (:median hinted)
+           "plain-median-ns" (:median plain)
+           "ratio-hinted-over-plain" (/ (double (:median hinted))
+                                        (double (:median plain)))))
+
+(println "jank-h0-bench")
+(let [a (five call-dbl)
+      b (five call-dbl-plain)]
+  (report "call-double-hinted" a)
+  (report "call-double-plain" b)
+  (report-ratio "call-double" a b))
+(let [a (five call-long)
+      b (five call-i64)
+      c (five call-long-plain)]
+  (report "call-long-hinted" a)
+  (report "call-i64-hinted" b)
+  (report "call-long-plain" c)
+  (report-ratio "call-long" a c)
+  (report-ratio "call-i64" b c))
+(let [a (five call-lt-dbl)
+      b (five call-lt-plain)]
+  (report "call-lt-double-hinted" a)
+  (report "call-lt-double-plain" b)
+  (report-ratio "call-lt-double" a b))
+(let [a (five call-inc-long)
+      b (five call-inc-plain)]
+  (report "call-inc-long-hinted" a)
+  (report "call-inc-long-plain" b)
+  (report-ratio "call-inc-long" a b))
+(let [a (five #(down-dbl 2000000.0))
+      b (five #(down-dbl-plain 2000000.0))]
+  (report "down-double-hinted" a)
+  (report "down-double-plain" b)
+  (report-ratio "down-double" a b))
+(let [a (five #(down-long 2000000))
+      b (five #(down-i64 2000000))
+      c (five #(down-long-plain 2000000))]
+  (report "down-long-hinted" a)
+  (report "down-i64-hinted" b)
+  (report "down-long-plain" c)
+  (report-ratio "down-long" a c)
+  (report-ratio "down-i64" b c))
+(let [a (five #(locals-hinted 200000000))
+      b (five #(locals-plain 200000000))]
+  (report "locals-hinted" a)
+  (report "locals-plain" b)
+  (report-ratio "locals" a b))
+(let [a (five #(sum-dbl 20000000.0))
+      b (five #(sum-dbl-plain 20000000.0))]
+  (report "sum-double-hinted" a)
+  (report "sum-double-plain" b)
+  (report-ratio "sum-double" a b))
+(println "jank-h0-bench-done")

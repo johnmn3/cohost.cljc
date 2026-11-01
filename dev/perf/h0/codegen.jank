@@ -1,0 +1,99 @@
+;; jank-FAST Step 5 H0. Forms compiled to C++ so the reviewer can see
+;; whether a hint becomes convert<T>::from_object and whether +, <, inc
+;; box the result back. Not the timing run.
+;;
+;;   jank compile-module h0.codegen --module-path dev/perf -O3 --output-target cpp --target-dir target/jank-h0
+
+(ns h0.codegen)
+
+(defn f-dbl [^double a ^double b]
+  (+ a b))
+
+(defn f-plain [a b]
+  (+ a b))
+
+(defn f-long [^long a ^long b]
+  (+ a b))
+
+(defn f-i64 [^jtl.i64 a ^jtl.i64 b]
+  (+ a b))
+
+(defn f-jank-i64 [^jank.i64 a ^jank.i64 b]
+  (+ a b))
+
+(defn f-int [^int a ^int b]
+  (+ a b))
+
+(defn f-cpp-dbl [^cpp/double a ^cpp/double b]
+  (+ a b))
+
+(defn f-cpp-long [^cpp/long a ^cpp/long b]
+  (+ a b))
+
+(defn f-bool [^bool a]
+  a)
+
+(defn f-float [^float a ^float b]
+  (+ a b))
+
+(defn lt-dbl [^double a ^double b]
+  (< a b))
+
+(defn lt-plain [a b]
+  (< a b))
+
+(defn inc-long [^long a]
+  (inc a))
+
+(defn inc-plain [a]
+  (inc a))
+
+(defn ret-only ^double [a b]
+  (+ a b))
+
+(defn ret-and-params ^double [^double a ^double b]
+  (+ a b))
+
+(defn let-hint [a]
+  (let [^double x a]
+    (+ x 1.0)))
+
+(defn let-plain [a]
+  (let [x a]
+    (+ x 1.0)))
+
+(defn locals-hinted [^long n]
+  (loop [^long i 0 ^long acc 0]
+    (if (< i n)
+      (recur (inc i) (+ acc i))
+      acc)))
+
+(defn locals-plain [^long n]
+  (loop [i 0 acc 0]
+    (if (< i n)
+      (recur (inc i) (+ acc i))
+      acc)))
+
+(defn down-dbl [^double n]
+  (loop [i n acc 0.0]
+    (if (< 0.0 i)
+      (recur (- i 1.0) (+ acc i))
+      acc)))
+
+(defn down-dbl-plain [n]
+  (loop [i n acc 0.0]
+    (if (< 0.0 i)
+      (recur (- i 1.0) (+ acc i))
+      acc)))
+
+(defn down-long [^long n]
+  (loop [i n acc 0]
+    (if (< 0 i)
+      (recur (- i 1) (+ acc i))
+      acc)))
+
+(defn down-long-plain [n]
+  (loop [i n acc 0]
+    (if (< 0 i)
+      (recur (- i 1) (+ acc i))
+      acc)))
