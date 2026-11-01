@@ -1,4 +1,7 @@
-;; fib 30. Portable Clojure. The value is the last expression.
+;; fib 30. -run parses its argument on every call so the size is not a constant.
 (defn fib [n]
-  (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))
-(fib 30)
+  (if (< n 2)
+    n
+    (+ (fib (dec n)) (fib (- n 2)))))
+(defn -run [s]
+  (fib (Long/parseLong s)))
