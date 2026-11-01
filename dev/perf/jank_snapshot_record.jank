@@ -1,0 +1,14 @@
+;; jank-FAST Step 6 stage 2. Record the forms boot! and load-lib! evaluate,
+;; plus the shim vars and the macro/refer surgery, with record mode on.
+;; Writes target/jank-snapshot/events.edn. Does not compile.
+(require 'cohost.hosts.jank-host)
+(require 'cohost.boot)
+(require 'cohost.adapter)
+
+(cohost.boot/boot! {:record? true})
+(cohost.boot/load-lib! 'clojure.walk)
+(let [ev (cohost.boot/snapshot-events)
+      text (binding [*print-length* nil *print-level* nil *print-meta* true]
+             (pr-str ev))]
+  (cohost.adapter/spit-file "target/jank-snapshot/events.edn" text)
+  (println "SNAPSHOT-EVENTS" (count ev) "bytes" (count text)))

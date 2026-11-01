@@ -81,6 +81,7 @@
    :macro-def-style [[] ":meta when `(def ^:macro x (fn [&form &env ...]))` + mark-macro! makes a macro; :defmacro when only a defmacro form does"]
    :macro-wrap-style [[] ":root when a macro's fn can be replaced after definition (alter-var-root); :source when its body must be wrapped at definition"]
    :code-form       [['form] "nil (the default), or a fn making a macro's expansion code the host's compiler takes back: applied to every expansion the codemod rewrites (ClojureWasm re-analyses no array seq, which is what a fn's & rest args are there)"]
+   :snapshot-emit   [['event] "nil (the default). When boot! runs with {:record? true}, each recorded event is passed to this fn if it is one. Off, and nil, do not call it"]
    :rewrite-output-ref [[] "for :source wrapping: the symbol that names cohost.boot/rewrite-output in evaluated code"]
    :shim-ref        [[] "nil, or a fn from a shim var's name to the symbol evaluated code uses for it"]
    :special-forms   [[] "nil (the default), or {fn* host-name ...}: the host's names for the special forms the codemod's output uses where they are not the JVM's (Phel: {fn* fn, let* let, loop* loop, letfn* phel.core/letfn}); letfn*'s [name fn ...] pairs become letfn's (name arities) specs. A call of a stock macro named like one of the values is written qualified (a special form wins over a var); an entry of a name to itself marks another such special form (Phel's defonce)"]
@@ -377,6 +378,7 @@ namespace cohost_err {
     :macro-wrap-style :root
     :rewrite-output-ref 'cohost.boot/rewrite-output
     :code-form nil
+    :snapshot-emit nil
     :shim-ref nil
     :variadic-recur-style :jvm
     :named-fn*? true
@@ -515,6 +517,11 @@ namespace cohost_err {
 (defn rewrite-output-ref [] (cap :rewrite-output-ref))
 (defn code-form "A macro's rewritten expansion as code the host takes (adapter :code-form)." [form]
   (if-let [f (get @installed :code-form)] (f form) form))
+(defn snapshot-emit
+  "The installed :snapshot-emit fn, or nil. Boot record mode calls it with
+   one event when it is a fn. The default capability is nil."
+  []
+  (get @installed :snapshot-emit))
 (defn shim-ref [] (get @installed :shim-ref))
 (defn loop-variadic-recur? [] (= :repack (cap :variadic-recur-style)))
 (defn named-fn*? [] (boolean (cap :named-fn*?)))
