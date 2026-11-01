@@ -440,3 +440,83 @@ The boot line and the library line match. The battery does not. The AOT run has 
 ```
 
 That row is `(Long/parseLong "-zz" 36)` through `cohost.shim/parse-radix`, and `shim.o` is one of the objects loaded ahead of `shim.cljc`. The source boot does not print this FAIL. No `src/` file was edited.
+
+## Boot profile
+
+Measured 2026-11-01 ET on jank `0.1-noble`. Timers use the adapter's `:nano-time` and run only when `boot!` is called with `{:profile? true}`. `bb boot:jank` and `bb boot:jvm` do not pass that flag.
+
+Three runs:
+
+```
+bash dev/perf/jank_boot_profile.sh
+```
+
+That script runs `bb boot:jank-profile` three times. Each run is `jank --module-path src run dev/perf/jank_boot_profile.jank`: `boot!` of `clojure/core.clj`, then `load-lib!` of the twelve `clojure.*` libraries. The total is the boot wall plus the library wall. Each run's eight phases sum to that run's total (`PROFILE-SUM`).
+
+| phase | run 1 ns | run 2 ns | run 3 ns | median ns | share of median total |
+|---|---:|---:|---:|---:|---:|
+| reading | 2114299405 | 2341475412 | 2286907050 | 2286907050 | 4.2760% |
+| codemod | 20834060807 | 21958852298 | 21993146691 | 21958852298 | 41.0585% |
+| eval | 2314885223 | 2435137201 | 2515380825 | 2435137201 | 4.5532% |
+| scan-macros | 228692736 | 268769340 | 271545356 | 268769340 | 0.5025% |
+| setup | 1138629455 | 1178320078 | 1166652684 | 1166652684 | 2.1814% |
+| companion | 146891167 | 150927407 | 148592623 | 148592623 | 0.2778% |
+| library | 23139633836 | 22747687050 | 22989756563 | 22989756563 | 42.9861% |
+| other | 2290665881 | 2400709659 | 2639081126 | 2400709659 | 4.4888% |
+| total | 52207758510 | 53481878445 | 54011062918 | 53481878445 | |
+
+`reading` is slurping and the reader, core only. `codemod` is `prepare` plus `rewrite`. `eval` is `eval-form` of each core form, including `after-eval` and inline capture. `scan-macros` is `scan-macros!` during the core boot. `setup` is `make-ctx`. `companion` and `library` are wall times of those sections (their own read, rewrite, eval, and scan stay inside the wall, not in the core rows). `other` is the boot wall plus the library wall minus the seven rows above. The sum of the eight median phase values is `53655377418`, which is `1.003244` times the median total `53481878445` (0.324% apart). Each run's own phases sum to its own total.
+
+`other` on the three runs is 4.3876%, 4.4888%, and 4.8862% of that run's total.
+
+Top 20 forms by eval time, from run 2 (its total is the median total). Columns are bucket, namespace, head, name, eval ns.
+
+```
+1  :library cohost.spec.alpha clojure.spec.alpha/def clojure.spec.alpha/def 3561444079
+2  :library cohost.spec.gen.alpha lazy-prims lazy-prims 1846014381
+3  :library cohost.spec.gen.alpha lazy-combinators lazy-combinators 1481867537
+4  :library cohost.data extend-protocol extend-protocol 420050541
+5  :library cohost.data defprotocol EqualityPartition 337970847
+6  :library cohost.spec.alpha defonce registry-ref 278875865
+7  :library cohost.spec.alpha defonce *compile-asserts* 263512475
+8  :library cohost.spec.alpha defn map-spec-impl 258784110
+9  :library cohost.test defmulti report 161065468
+10 :core cohost.core definline booleans 151585604
+11 :library cohost.spec.gen.alpha defonce dynalock 144785116
+12 :library cohost.data extend extend 142631609
+13 :library cohost.test defmethod report 125786955
+14 :core cohost.core defonce *loaded-libs* 115259903
+15 :core cohost.core defn float 110303732
+16 :core cohost.core defn alength 109016083
+17 :core cohost.core defn aclone 103644136
+18 :core cohost.core def system-newline 97299679
+19 :library cohost.test defmulti use-fixtures 96201746
+20 :core cohost.core def not-every? 96044168
+```
+
+jank's profiler, one run of the same script. `perf` was not installed.
+
+```
+jank --profile --profile-output target/jank-boot.profile --module-path src run dev/perf/jank_boot_profile.jank
+```
+
+The file is enter/exit events. Exclusive time (a region's time not inside a nested region) sums to the span `62201025119` ns. Share is exclusive time over that span. Top costs:
+
+| region | exclusive ns | share |
+|---|---:|---:|
+| jit eval_string | 44181125287 | 71.030% |
+| eval ast node call | 12537306824 | 20.156% |
+| rt eval_string | 1527764492 | 2.456% |
+| eval ast node let | 887342863 | 1.427% |
+| rt intern_keyword | 736827844 | 1.185% |
+| rt read_string | 529038219 | 0.851% |
+| rt macroexpand1 | 324251957 | 0.521% |
+| eval ast node def | 203251919 | 0.327% |
+| main | 143594071 | 0.231% |
+| jit ctor | 129005823 | 0.207% |
+
+That profiled run's own phase total was `54037433152` ns. The profiler span is larger because it includes process startup around `boot!`.
+
+Step 6 stage 2 replaces booting the namespaces with loading a compiled snapshot. On run 2, reading + codemod + eval + scan-macros + companion + library is `49902848708` ns, `93.3080%` of that run's `53481878445` ns. `setup` is `1178320078` ns (`2.2032%`) and `other` is `2400709659` ns (`4.4888%`). The snapshot's load time was not measured.
+
+Step 3's syntax-quote metadata pass is not its own profiler region. Exclusive time of the jit functions whose names contain meta, syntax, or quote is under `0.001%` each (`strip-meta` `492806` ns, `with-meta` `67690` ns, `carry-meta` `238658` ns, of the span `62201025119`). `rt macroexpand1` is `0.521%` exclusive and is every macroexpansion, not only the `:jank/source` maps. Those maps are built inside macroexpansion and then evaluated inside `jit eval_string` and `eval ast node call`, which the profile does not split further. No share is assigned to that pass beyond those measured regions.
