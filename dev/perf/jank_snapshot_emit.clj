@@ -67,7 +67,7 @@
 (def snap-src
   (str "(ns cohost.shim.snap\n  (:require [cohost.shim]))\n\n"
        (str/join "\n\n"
-         (for [e (sort-by :name (vals shim-events))]
+         (for [e (sort-by (fn [e] [({:is 0 :dot 1 :cast 2} (:op e)) (:name e)]) (vals shim-events))]
            (case (:op e)
              :is (str "(def " (:name e) "\n"
                       "  (let [n (cohost.shim/install-is! '" (:class e) ")]\n"
@@ -92,17 +92,42 @@
          "\n            [cohost.core :refer :all]")
        "))\n"))
 
+(defn bridge-forms [nm]
+  (when (= (str nm) "cohost.core")
+    ["(def concat* (clojure.core/deref (clojure.core/ns-resolve 'clojure.core 'concat*)))"
+     "(def str (clojure.core/deref (clojure.core/ns-resolve 'clojure.core 'str)))"]))
+
 (defn host-forms [ns-sym]
   (for [e events
         :when (and (= (:op e) :host) (= (str (:ns e)) (str ns-sym)))]
     (str "(def " (:sym e) " (clojure.core/deref (clojure.core/ns-resolve 'clojure.core '" (:sym e) ")))\n"
          "(clojure.core/alter-meta! (var " (:sym e) ") clojure.core/merge '" (pr-src (:meta e)) ")")))
 
+(defn defined-syms [ns-sym]
+  (set (concat
+        (for [e events
+              :when (and (= (:op e) :host) (= (str (:ns e)) (str ns-sym)))]
+          (:sym e))
+        (for [e events
+              :when (and (= (:op e) :form) (= (str (:ns e)) (str ns-sym)))
+              :let [f (:form e)
+                    h (when (seq? f) (first f))
+                    inner (when (and (seq? f) (= 'do h)) (second f))
+                    target (cond
+                             (and (symbol? h) (contains? #{'def 'defn 'defn- 'defmacro} h)) (second f)
+                             (and (seq? inner) (symbol? (first inner))
+                                  (contains? #{'def 'defn 'defn- 'defmacro} (first inner)))
+                             (second inner))]
+              :when (symbol? target)]
+          target))))
+
 (defn macro-forms [ns-sym]
-  (for [e events
-        :when (and (= (:op e) :macro) (= (str (:ns e)) (str ns-sym)) (:wrap? e))]
-    (str "(clojure.core/alter-meta! (var " (:sym e) ") clojure.core/assoc :macro true :cohost/wrapped true)\n"
-         "(clojure.core/alter-var-root (var " (:sym e) ") (fn [f] (cohost.boot/wrap-macro (cohost.boot/ctx) f)))")))
+  (let [defined (defined-syms ns-sym)]
+    (for [e events
+          :when (and (= (:op e) :macro) (= (str (:ns e)) (str ns-sym)) (:wrap? e)
+                     (contains? defined (:sym e)))]
+      (str "(clojure.core/alter-meta! (var " (:sym e) ") clojure.core/assoc :macro true :cohost/wrapped true)\n"
+           "(clojure.core/alter-var-root (var " (:sym e) ") (fn* [f] (cohost.boot/wrap-macro (cohost.boot/ctx) f)))"))))
 
 (defn body-forms [ns-sym]
   (for [e events
@@ -123,15 +148,21 @@
                       (str/replace "." "/"))
                   ".jank")]
     (fs/create-dirs (fs/parent file))
-    (spit file (str (ns-header nm)
+    (spit file                     (str (ns-header nm)
+                    "\n"
+                    (str/join "\n" (or (bridge-forms nm) []))
                     "\n"
                     (str/join "\n" (host-forms nm))
                     "\n"
                     (str/join "\n" (body-forms nm))
-                    "\n"
-                    (str/join "\n" (macro-forms nm))
                     "\n"))
     (println "WROTE" file "forms" (count (filter #(and (= (:op %) :form) (= (str (:ns %)) (str nm))) events)))))
 
+(let [wraps (mapcat macro-forms nses)]
+  (when (seq wraps)
+    (spit "target/jank-snapshot/src/cohost/core_wrap.jank"
+          (str "(ns cohost.core-wrap\n  (:require [cohost.core]\n            [cohost.boot]))\n"
+               (str/join "\n" wraps) "\n"))
+    (println "WROTE core_wrap" (count wraps))))
 (println "SHIM-SNAP" (count shim-snap-names))
 (println "NS" (pr-str nses))
