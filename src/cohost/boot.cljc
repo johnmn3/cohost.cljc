@@ -672,9 +672,13 @@
    (if profile?
      (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
          (vreset! rw/profile-branches {})
-         (vreset! rw/profile-child 0))
+         (vreset! rw/profile-child 0)
+         (vreset! rw/profile-macro-ns {})
+         (vreset! rw/profile-macro-n {}))
      (do (swap! state dissoc :profile :profile-bucket)
-         (vreset! rw/profile-branches nil)))
+         (vreset! rw/profile-branches nil)
+         (vreset! rw/profile-macro-ns nil)
+         (vreset! rw/profile-macro-n nil)))
    (let [t-boot (when (profiling) (host/nano-time))]
    (host/ensure-bare-ns! core-ns)
    (let [ctx (if (profiling) (prof :setup #(make-ctx)) (make-ctx))
@@ -804,7 +808,12 @@
           (println (str "PROFILE-BRANCH-SUM " tot))
           (doseq [[k n] rows]
             (println (str "PROFILE-BRANCH " (name k) " " n " "
-                          (if (pos? tot) (/ (* 100.0 n) tot) 0.0)))))))))
+                          (if (pos? tot) (/ (* 100.0 n) tot) 0.0)))))
+      (when-let [mm @rw/profile-macro-ns]
+        (let [counts (or @rw/profile-macro-n {})
+              rows (take 20 (sort-by val (fn [a b] (compare b a)) mm))]
+          (doseq [[i [nm n]] (map-indexed vector rows)]
+            (println (str "PROFILE-MACRO " (inc i) " " nm " " n " " (get counts nm 0))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; using it
