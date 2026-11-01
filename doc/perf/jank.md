@@ -903,3 +903,7 @@ Reading:
   graph; it is the runtime-profile counterpart of the boot profile's
   compile-heavy split, and it is what AOT (Step 6) removes by compiling
   ahead of time.
+
+## Codemod
+
+WIP. Branch `grok/jank-codemod` is open for jank-FAST Step 3. Measurements have not been run on this branch yet.
