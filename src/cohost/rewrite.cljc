@@ -969,6 +969,15 @@
   #{"let" "loop" "for" "doseq" "if-let" "when-let" "if-some" "when-some" "with-open" "dotimes"
     "with-local-vars" "fn" "defn" "defn-" "defmacro" "defmethod" "letfn" "as->"})
 
+(defn- plain-bindings?
+  "A let/loop binding vector the stock macro does not destructure: even
+   length and every binding form a symbol. Those expand to (let* bindings
+   body...) / (loop* bindings body...) with the vector unchanged."
+  [b]
+  (and (vector? b)
+       (even? (count b))
+       (every? symbol? (take-nth 2 b))))
+
 (defn- bound-names [hn args]
   (case hn
     ("let" "loop" "for" "doseq" "if-let" "when-let" "if-some" "when-some" "with-open" "dotimes" "with-local-vars")
@@ -1368,6 +1377,13 @@
   [ctx h]
   (when-let [v (head-var ctx h)] ((:rewritten-macro? ctx) v)))
 
+(defn- codemod-expands?
+  "True when rewrite itself applies h's macro. A clojure.core macro is left
+   for the host (expand-macro returns the call unchanged)."
+  [ctx h]
+  (when-let [v (and (rewritten-macro? ctx h) (head-var ctx h))]
+    (not= "clojure.core" (str (:ns (meta v))))))
+
 (defn- inline-expansion
   "On a host whose compiler ignores :inline, the codemod applies it as the JVM
    compiler does: (h args) with h naming a core fn whose :inline covers this
@@ -1487,6 +1503,14 @@
                              (if (and (empty? args) (contains? static-fields m))
                                (or (emit-static-value ctx c m) (apply list h args))
                                (rw-static ctx c m args))))
+            ;; (let [sym init ...] body) and (loop [sym init ...] body). The
+            ;; stock macro's expansion is (let* bindings body...) / (loop*
+            ;; bindings body...) with that vector. Destructuring stays on
+            ;; the macro. A clojure.core let is left for the host.
+            (and (= hn "let") (plain-bindings? (first args)) (codemod-expands? ctx h))
+            (timed :let-plain (rw-let* ctx (apply list 'let* args)))
+            (and (= hn "loop") (plain-bindings? (first args)) (codemod-expands? ctx h))
+            (timed :loop-plain (rw-let* ctx (apply list 'loop* args)))
             ;; a macro whose expansion the codemod rewrites (a stock or user
             ;; macro, not the host's): its arguments stay as written, and are
             ;; rewritten once, in the expansion, as the JVM compiler sees them
