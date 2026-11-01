@@ -558,6 +558,17 @@
 
 (defn- rw-all [ctx xs] (doall (map #(rw ctx %) xs)))
 
+(defn- rw-call-list
+  "Rewrite h and args left to right into one list. Same elements, in the
+   same order, as (apply list (rw h) (rw-all args)), without the lazy seq."
+  [ctx h args]
+  (let [v (loop [xs (seq (cons h args)) acc []]
+            (if xs
+              (recur (next xs) (conj acc (rw ctx (first xs))))
+              acc))]
+    (loop [i (dec (count v)) out ()]
+      (if (neg? i) out (recur (dec i) (cons (nth v i) out))))))
+
 (def settable-statics
   "Static fields a program may set!: read through cohost.shim/static-get."
   #{"RT-checkSpecAsserts"})
@@ -1530,8 +1541,8 @@
                       ;; a macro whose expansion the codemod rewrites: its
                       ;; arguments without inlining (the expansion inlines them)
                       (if (and *inline?* (rewritten-macro? ctx h))
-                        (binding [*inline?* false] (apply list (rw ctx h) (doall (rw-all ctx args))))
-                        (apply list (rw ctx h) (rw-all ctx args))))))]
+                        (binding [*inline?* false] (rw-call-list ctx h args))
+                        (rw-call-list ctx h args)))))]
       (carry-meta out form))))
 
 (defn rw [ctx form]
