@@ -154,14 +154,19 @@
   ([ctx ns-sym]
    (prof :scan
      (fn []
-       (doseq [[_sym v] (host/ns-interns-map ns-sym)]
-         (let [m (host/var-meta v)]
-           (when (and (:macro m) (not (host/macro-var? v)))
-             (host/mark-macro! v))
-           (when (and (host/macro-var? v) (not (:cohost/wrapped m)))
+       (doseq [[sym v] (host/ns-interns-map ns-sym)]
+         (let [m (host/var-meta v)
+               mark? (and (:macro m) (not (host/macro-var? v)))
+               wrap? (and (host/macro-var? v) (not (:cohost/wrapped m)))]
+           (when mark? (host/mark-macro! v))
+           (when wrap?
              (when (= :root (host/macro-wrap-style))
                (host/set-var-root! v (fn [f] (wrap-macro ctx f))))
-             (host/alter-var-meta! v assoc :cohost/wrapped true))))))))
+             (host/alter-var-meta! v assoc :cohost/wrapped true))
+           (when (and @snapshot-log (or mark? wrap?))
+             (snap! {:op :macro :ns ns-sym :sym sym
+                     :mark? (boolean mark?)
+                     :wrap? (boolean (and wrap? (= :root (host/macro-wrap-style))))}))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; eval
@@ -268,8 +273,18 @@
                                 (map (fn [c] [(rw/cast-name c) c]) (distinct (vals rw/checked-hints)))))))]
   (rw/make-ctx {:shim-names shim-names
                 :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
-                :instance-fn shim/install-is!
-                :missing-dot shim/install-missing-dot!
+                :instance-fn (if-not @snapshot-log
+                               shim/install-is!
+                               (fn [c]
+                                 (let [d (shim/install-is! c)]
+                                   (snap! {:op :is :class c :name (str d)})
+                                   d)))
+                :missing-dot (if-not @snapshot-log
+                               shim/install-missing-dot!
+                               (fn [m]
+                                 (let [d (shim/install-missing-dot! m)]
+                                   (snap! {:op :dot :name (str d) :method m})
+                                   d)))
                 :resolve-head (head-resolver)
                 :stock-name (stock-name)
                 :rewritten-macro? rewritten-macro?
@@ -330,12 +345,15 @@
              (directive! d)
              (let [form' (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
                    v (if-not (profiling)
-                       (host/eval-form (rw/rewrite c form'))
+                       (let [rewritten (rw/rewrite c form')]
+                         (snap! {:op :form :ns ns-sym :form rewritten})
+                         (host/eval-form rewritten))
                        (let [t0 (host/nano-time)
                              rewritten (rw/rewrite c form')
                              t1 (host/nano-time)
                              v (host/eval-form rewritten)
                              t2 (host/nano-time)]
+                         (snap! {:op :form :ns ns-sym :form rewritten})
                          (profile-add! :rewrite (- t1 t0))
                          (profile-add! :eval (- t2 t1))
                          (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form)))
@@ -444,14 +462,18 @@
           (if (host/dynamic-var? hv)
             (do (host/refer-from-core! core-ns nm)
                 (note-host-dynamic! nm hv)
-                (when-let [c (ctx)] (swap! (:host-referred c) conj nm)))
+                (when-let [c (ctx)] (swap! (:host-referred c) conj nm))
+                (snap! {:op :host-dynamic :ns core-ns :sym nm}))
             (let [v (host/intern! core-ns nm (ns-arg-wrap nm (host/var-root hv)))
                   hm (host/var-meta hv)
                   ;; marked first: ClojureScript moves a macro to its $macros
                   ;; namespace, where the meta must land
-                  v (if (host/macro-var? hv) (host/mark-macro! v) v)]
-              (host/alter-var-meta! v merge (select-keys hm [:doc :arglists :private])
-                                    {:cohost/host true :cohost/wrapped true})))
+                  v (if (host/macro-var? hv) (host/mark-macro! v) v)
+                  kept (merge (select-keys hm [:doc :arglists :private])
+                              {:cohost/host true :cohost/wrapped true})]
+              (host/alter-var-meta! v merge kept)
+              (snap! {:op :host :ns core-ns :sym nm :macro? (boolean (host/macro-var? hv))
+                      :meta kept})))
           (record! report :host {:name nm})
           true)
         (fn [_] false))))))
@@ -500,9 +522,11 @@
   (host/try-all
    (fn []
      (if-not (profiling)
-       (do (host/eval-form (rw/rewrite ctx (prepare form)))
-           (host/after-eval form core-ns)
-           (capture-inline! ctx form))
+       (let [rewritten (rw/rewrite ctx (prepare form))]
+         (snap! {:op :form :ns core-ns :form rewritten})
+         (host/eval-form rewritten)
+         (host/after-eval form core-ns)
+         (capture-inline! ctx form))
        (let [t0 (host/nano-time)
              prepared (prepare form)
              rewritten (rw/rewrite ctx prepared)
@@ -512,6 +536,7 @@
              _ (host/after-eval form core-ns)
              _ (capture-inline! ctx form)
              t3 (host/nano-time)]
+         (snap! {:op :form :ns core-ns :form rewritten})
          (profile-add! :rewrite (- t1 t0))
          (profile-add! :eval (prof+ (- t2 t1) (- t3 t2)))
          (profile-form! core-ns form name (- t1 t0) (- t2 t1))))
@@ -520,6 +545,22 @@
      (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
 
 (def verbose? (atom false))
+
+;; Record mode for the AOT snapshot. nil unless boot! was given {:record? true}.
+;; The off path is this nil check. :snapshot-emit stays nil on every host, so
+;; nothing is called unless a task installs a fn.
+(def snapshot-log (atom nil))
+
+(defn snapshot-events
+  "The vector of events from the current {:record? true} boot, or nil."
+  []
+  @snapshot-log)
+
+(defn- snap! [event]
+  (when @snapshot-log
+    (swap! snapshot-log conj event)
+    (when-let [f (host/snapshot-emit)]
+      (when (fn? f) (f event)))))
 
 (def ^:private native-heads
   "The def forms a native can stand in for: fns (a macro has no native)."
@@ -561,10 +602,12 @@
   [ns-sym nm [v hv] form]
   ;; the name without the form's reader metadata (unevaluated: an :arglists
   ;; of (quote ...) the JVM compiler would read as the arglists)
-  (let [h (host/intern! ns-sym (symbol (name nm)) v)]
-    (host/alter-var-meta! h merge (when hv (select-keys (host/var-meta hv) [:doc :arglists]))
-                          (def-form-meta form)
-                          {:cohost/native true :cohost/wrapped true})
+  (let [h (host/intern! ns-sym (symbol (name nm)) v)
+        meta-map (merge (when hv (select-keys (host/var-meta hv) [:doc :arglists]))
+                        (def-form-meta form)
+                        {:cohost/native true :cohost/wrapped true})]
+    (host/alter-var-meta! h merge meta-map)
+    (snap! {:op :native :ns ns-sym :sym nm :meta (select-keys meta-map [:doc :arglists :cohost/native :cohost/wrapped])})
     h))
 
 (def ^:private policy-lists
@@ -668,8 +711,10 @@
    :profile? -- record phase timers (off unless true; the off path does not
    call :nano-time)."
   ([] (boot! {}))
-  ([{:keys [root files verbose profile?] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
+  ([{:keys [root files verbose profile? record?] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
+   (reset! snapshot-log (when record? []))
+   (when record? (snap! {:op :ns :name core-ns :doc nil :refer-clojure {}}))
    (if profile?
      (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
          (vreset! rw/profile-branches {})
@@ -830,7 +875,14 @@
   (let [skip (set exclude) keep (when only (set only))]
     (doseq [nm (:host-dynamic @state)
             :when (and (not (contains? skip nm)) (or (nil? keep) (contains? keep nm)))]
-      (host/try-all (fn [] (host/refer-from-core! ns-sym nm)))))
+      (host/try-all (fn [] (host/refer-from-core! ns-sym nm))))
+    (when @snapshot-log
+      (snap! {:op :refer-core :ns ns-sym
+              :opts (select-keys opts [:exclude :only :rename])
+              :host-dynamic (vec (filter (fn [nm]
+                                           (and (not (contains? skip nm))
+                                                (or (nil? keep) (contains? keep nm))))
+                                         (:host-dynamic @state)))})))
   ns-sym)
 
 (def ^:private session-ns
@@ -984,6 +1036,7 @@
                   (host/try-all (fn [] (alter-meta! (host/the-ns* target) merge ns-meta)))))
     (swap! (:loader-nses (ctx)) conj (str target))
     (refer-core! target (or rc {}))
+    (snap! {:op :ns :name target :doc doc :refer-clojure (or rc {})})
     (host/set-current-ns! target)
     (doseq [[k & args] clauses]
       (case k
