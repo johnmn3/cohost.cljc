@@ -443,7 +443,7 @@ That row is `(Long/parseLong "-zz" 36)` through `cohost.shim/parse-radix`, and `
 
 ## Type hints (H1)
 
-Measured 2026-11-01 ET on jank `0.1-noble`, base `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.
+Measured 2026-11-01 ET on jank `0.1-noble`. The commands ran on `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. The branch was then rebased onto `b61bf0e5856c78d06605e6c32682534a61edf32c`; those commits touch `doc/upstream/` and `doc/hosts/jank-FAST.md` only, so the boots were not run again. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.
 
 JVM Clojure 1.12.0, `clojure -M -e` of the four shapes the battery now runs:
 
