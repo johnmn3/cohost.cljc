@@ -99,12 +99,20 @@
   ;; namespace is no longer named jank, so jank::runtime does not resolve
   ;; inward and the module can be compiled with the rest of cohost.run.
   ;; Load-time medians: dev/perf/jank_aot_time.sh
-  boot:jank-aot {:doc "jank: AOT cohost's namespaces (compile-module -O3) and boot. See dev/perf/jank_aot_time.sh for the load-time medians."
+  boot:jank-aot {:doc "jank: AOT cohost's namespaces (-O3, including cohost.hosts.jank-host) and boot. cohost.shim stays source: its object throws on Long/parseLong \"-zz\" 36 at -O0 through -O3. See dev/perf/jank_aot_time.sh."
                  :task (do
                          (babashka.fs/create-dirs "target")
                          (when (empty? (babashka.fs/glob "target/jank-aot" "**/cohost/run.o"))
                            (shell "jank" "--module-path" "src" "compile-module" "cohost.run"
                                   "-O3" "--target-dir" "target/jank-aot"))
+                         ;; parse-radix in shim.o throws NumberFormatException
+                         ;; for (Long/parseLong "-zz" 36) at -O0, -O1, -O2 and
+                         ;; -O3. The source returns -1295. Drop shim.o so that
+                         ;; one module loads from source. A separate
+                         ;; compile-module of shim writes a different _cache
+                         ;; directory; this task does not do that.
+                         (doseq [o (babashka.fs/glob "target/jank-aot" "**/cohost/shim.o")]
+                           (babashka.fs/delete o))
                          (let [aot (str (first (babashka.fs/list-dir "target/jank-aot/_cache")))]
                            (apply shell "jank" "--module-path" (str aot ":src")
                                   "run" "dev/perf/jank_aot_load.jank" "--" *command-line-args*)))}

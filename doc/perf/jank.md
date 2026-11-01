@@ -441,6 +441,55 @@ The boot line and the library line match. The battery does not. The AOT run has 
 
 That row is `(Long/parseLong "-zz" 36)` through `cohost.shim/parse-radix`, and `shim.o` is one of the objects loaded ahead of `shim.cljc`. The source boot does not print this FAIL. No `src/` file was edited.
 
+### Remeasure after `cohost.hosts.jank-host`
+
+Measured 2026-11-01 ET on the same jank, base `dcf9afc` (the adapter namespace is `cohost.hosts.jank-host`). `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot` printed `COMPILE:0`. `cohost/hosts/jank_host.o` is `5698472` bytes. Clang did not report the `jank::runtime` error. The other objects in that cache directory are `adapter.o`, `boot.o`, `policy.o`, `rewrite.o`, `run.o`, `scan.o`, `battery.o`, `bench.o`, `lib_battery.o`, and `hosts/auto.o`.
+
+`(Long/parseLong "-zz" 36)` is still wrong in an AOT `shim.o`, and it is not only `-O3`. Each level was compiled with `jank --module-path src compile-module cohost.shim -<level> --target-dir target/jank-aot`, which writes a different `_cache` directory than the `-O3` `cohost.run` build. The parse was run with that directory ahead of `src`:
+
+| shim object | `(Long/parseLong "-zz" 36)` |
+|---|---|
+| source (`shim.o` absent) | `-1295` |
+| `-O3` | `NumberFormatException`, `For input string: "-zz" under radix 36` |
+| `-O2` | same exception |
+| `-O1` | same exception |
+| `-O0` | same exception |
+
+No opt level keeps the source result. `bb boot:jank-aot` deletes `shim.o` after the `-O3` compile so `cohost.shim` loads from source. It does not compile `cohost.shim` on its own (that would add another `_cache` directory).
+
+`bash dev/perf/jank_aot_time.sh` with `jank_host.o` present and `shim.o` absent:
+
+```
+jit run 1 load-ns 6497792680
+jit run 2 load-ns 7128903616
+jit run 3 load-ns 7290241483
+jit run 4 load-ns 6214716137
+jit run 5 load-ns 6240240959
+median-ns 6497792680
+aot run 1 load-ns 3981557519
+aot run 2 load-ns 3952562118
+aot run 3 load-ns 4098704375
+aot run 4 load-ns 3904978481
+aot run 5 load-ns 3804885655
+median-ns 3952562118
+```
+
+| module path | median of 5 `load-ns` |
+|---|---:|
+| `src` | 6497792680 |
+| `<aot-dir>:src` (`jank_host.o` ahead of source, no `shim.o`) | 3952562118 |
+
+`bb boot:jank` and `bb boot:jank-aot` printed the same boot line, the same battery, and the same libraries:
+
+```
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+Both fail the same two rows, `subs count nth first last butlast` (`Unterminated vector.`) and `Character outside ASCII` (`Unexpected end of file.`). The AOT boot does not fail `radix parsing and printing`.
+
 ## AOT stage 2 probe
 
 Measured 2026-11-01 ET on jank `0.1-noble`. The boot was not changed. A temporary local hook (not committed) appended each rewritten form `boot!` and `load-lib!` actually evaluated. `cohost.core` produced 550 forms (`boot!` printed `BOOT 524 171 78 0`; the file has 791 top-level forms counted by the boot report, and fewer than 2,000 are evaluated, so the module is all 550, not a 2,000-form prefix). `clojure.walk` produced 10 forms in `cohost.walk`.
