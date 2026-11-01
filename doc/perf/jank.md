@@ -903,3 +903,207 @@ Reading:
   graph; it is the runtime-profile counterpart of the boot profile's
   compile-heavy split, and it is what AOT (Step 6) removes by compiling
   ahead of time.
+
+## Codemod
+
+Measured 2026-11-01 ET on jank `0.1-noble`, branch `grok/jank-codemod`, after rebase onto `972ecc0`. Timers sum with `prof+` (`#?(:lpy + :default +')`). `bb boot:jank` does not pass `:profile?`. The phase commands are `bb boot:jank-profile` (JIT) and `bb boot:jank-aot-profile` (compile-module `-O3` of `cohost.run` when `cohost/run.o` is missing, then the same script with the AOT cache ahead of `src`). `rewrite.o` is produced. `cohost.hosts.jank` produces no object: its C++ namespace is `jank`, so `jank::runtime` resolves inward. The load path still has `src`.
+
+### AOT vs JIT
+
+Median of three runs. Share is the median phase over the median total. JIT totals were `52932129886`, `55342174973`, `64859700633`. AOT totals were `20507734657`, `20842052679`, `20866967972`.
+
+| phase | JIT median ns | JIT share | AOT median ns | AOT share |
+|---|---:|---:|---:|---:|
+| reading | 2591613764 | 4.6829% | 528120085 | 2.5339% |
+| codemod | 21578079728 | 38.9903% | 9051148855 | 43.4273% |
+| eval | 2501915405 | 4.5208% | 1643867968 | 7.8873% |
+| scan-macros | 254410073 | 0.4597% | 125291138 | 0.6011% |
+| setup | 1295181762 | 2.3403% | 32870035 | 0.1577% |
+| companion | 172866733 | 0.3124% | 92603210 | 0.4443% |
+| library | 24899918816 | 44.9927% | 8908766388 | 42.7442% |
+| other | 2219298611 | 4.0101% | 225563883 | 1.0823% |
+| total | 55342174973 | | 20842052679 | |
+
+The sum of the eight JIT median phases is `55513284892` (`1.003092` times the JIT median total). The sum of the eight AOT median phases is `20608231562` (`0.988781` times the AOT median total).
+
+Compiling `rewrite.cljc` at `-O3` (as part of the `cohost.run` module graph) shrinks the codemod phase from `21578079728` ns to `9051148855` ns. The share does not shrink: the rest of the boot shrinks too, because `boot.o` and `shim.o` are on the same path. The codemod is still about 43% of the AOT boot.
+
+### Per form
+
+Top 20 after the plain let/loop shortcut, the JIT run whose total is the median of those three (`55653558913` ns, `bb boot:jank-profile`). Each line is the namespace, the form, codemod ns, then eval ns.
+
+Core, top 20 by codemod:
+
+```
+1 cohost.core def *print-namespace-maps* 1714840303 35773585
+2 cohost.core defn to-array 1400767107 268051
+3 cohost.core defmacro fn 1237740082 3395154
+4 cohost.core definline booleans 1069178055 162600206
+5 cohost.core declare cat 899966317 137721
+6 cohost.core defn- maybe-min-hash 897345680 1778955
+7 cohost.core defn with-redefs-fn 855561342 1358233
+8 cohost.core defn map 740133245 2729446
+9 cohost.core def cons 607657256 293568
+10 cohost.core def let 603366984 279577
+11 cohost.core defn take 523396551 1078310
+12 cohost.core def seq? 513635876 317677
+13 cohost.core defn nil? 497176582 269009
+14 cohost.core def first 486895047 290611
+15 cohost.core defn distinct? 455449589 789717
+16 cohost.core def list 448274465 140813
+17 cohost.core def assoc 389664356 576069
+18 cohost.core defmacro when 371115255 311739
+19 cohost.core defmacro if-let 344709795 2581254
+20 cohost.core defmacro doseq 334590581 10474808
+```
+
+Core, top 20 by eval:
+
+```
+1 cohost.core defn float 335985 303400353
+2 cohost.core definline booleans 1069178055 162600206
+3 cohost.core defonce *loaded-libs* 94533482 113476324
+4 cohost.core def not-every? 143799 106719277
+5 cohost.core defn unsigned-bit-shift-right 346908 103337204
+6 cohost.core . . 91010 87445926
+7 cohost.core defn bit-and-not 477913 83510638
+8 cohost.core defn abs 421116 81929019
+9 cohost.core defn bit-flip 333936 80054097
+10 cohost.core defn bit-set 334213 79343998
+11 cohost.core defn bit-test 340177 79266189
+12 cohost.core defn bit-clear 285425 78447198
+13 cohost.core add-doc-and-meta add-doc-and-meta 73758973 76303156
+14 cohost.core def max-switch-table-size 60425986 38817487
+15 cohost.core def global-hierarchy 123735 35784415
+16 cohost.core def *print-namespace-maps* 1714840303 35773585
+17 cohost.core defn alength 282619 31066507
+18 cohost.core defn aclone 286557 29315559
+19 cohost.core def system-newline 136754 27801363
+20 cohost.core defmacro for 36954470 20903113
+```
+
+Library, top 20 by codemod:
+
+```
+1 cohost.spec.alpha clojure.spec.alpha/def 4120450907 4281638724
+2 cohost.zip defn up 671250580 959085
+3 cohost.test defmulti report 610331631 181654523
+4 cohost.data defprotocol EqualityPartition 489187819 315969884
+5 cohost.spec.alpha defn spec? 431245748 335572
+6 cohost.spec.alpha defn- ns-qualify 431214313 975648
+7 cohost.string defn replace 353495557 1646645
+8 cohost.test defmethod report 348046648 143843289
+9 cohost.spec.gen.alpha lazy-prims 285213403 2132092791
+10 cohost.spec.gen.alpha lazy-combinators 255110400 1558821972
+11 cohost.spec.alpha defn multi-spec-impl 227712433 6984835
+12 cohost.spec.alpha defmacro every 199542204 6566720
+13 cohost.data extend 181166067 142056749
+14 cohost.spec.alpha defn map-spec-impl 167888596 281152367
+15 cohost.data extend-protocol 148252629 389339154
+16 cohost.test defn testing-vars-str 126977954 627147
+17 cohost.test defn inc-report-counter 114818916 373433
+18 cohost.spec.gen.alpha def quick-check-ref 95545791 62755532
+19 cohost.string defn trimr 74646339 500019
+20 cohost.string defn index-of 74617122 676907
+```
+
+Library, top 20 by eval:
+
+```
+1 cohost.spec.alpha clojure.spec.alpha/def 4120450907 4281638724
+2 cohost.spec.gen.alpha lazy-prims 285213403 2132092791
+3 cohost.spec.gen.alpha lazy-combinators 255110400 1558821972
+4 cohost.data extend-protocol 148252629 389339154
+5 cohost.spec.alpha defonce registry-ref 495782 332776382
+6 cohost.spec.alpha defonce *compile-asserts* 621477 318273958
+7 cohost.data defprotocol EqualityPartition 489187819 315969884
+8 cohost.spec.alpha defn map-spec-impl 167888596 281152367
+9 cohost.test defmulti report 610331631 181654523
+10 cohost.spec.gen.alpha defonce dynalock 483356 173787221
+11 cohost.test defmethod report 348046648 143843289
+12 cohost.data extend 181166067 142056749
+13 cohost.test defmulti use-fixtures 1677551 114525885
+14 cohost.test defmulti assert-expr 2581549 94489387
+15 cohost.spec.gen.alpha let 1400135 88717315
+16 cohost.test defonce *load-tests* 365771 71803816
+17 cohost.spec.gen.alpha def quick-check-ref 95545791 62755532
+18 cohost.spec.alpha defn- re-explain 2911320 17661624
+19 cohost.spec.alpha defn every-impl 40117861 15313499
+20 cohost.spec.alpha defn tuple-impl 7435364 9508252
+```
+
+The one `clojure.spec.alpha/def` is the top-level form at `clojure/spec/alpha.clj` line 1792, `(clojure.spec.alpha/def ::kvs->map (conformer ...))`. On this run its codemod time is `4120450907` ns and its eval time is `4281638724` ns. The other two let/loop JIT runs were `3639273070` / `4183293804` and `2951190326` / `3277039076`. It is both sides: the macro expand (one AOT run timed that expand alone at `931466155` ns) and the eval of the expansion.
+
+The early core defs (`*print-namespace-maps*`, `to-array`) are small forms. Their codemod time drops once `rewrite.o` is loaded: on an AOT run the top core codemod forms are `maybe-min-hash` and `with-redefs-fn`, not the first defs. That early JIT cost is compilation of the codemod, which is the AOT shrink above.
+
+### Hot functions
+
+`jank --profile` on the AOT boot (`--profile-output target/jank-aot-boot.profile`, module path `<aot-cache>:src`) does not name `cohost.rewrite` functions. Exclusive time sums to the span `24744627159` ns (mismatch 0). Top exclusive: `jit eval_string` `13605896260` (54.985%), `eval ast node call` `7316051899` (29.566%), `eval ast node let` `602219661` (2.434%), `rt read_string` `553738592` (2.238%), `rt intern_keyword` `506402492` (2.047%). That run's own phase total was `21868868078` ns. The AOT rewrite time sits inside `jit eval_string`, which is the evaluator calling into the compiled codemod.
+
+Dispatch-branch timers in `rewrite.cljc` (`timed`, off unless `profile-branches` is set) give exclusive shares of one AOT profiled boot. Branch sum `11875764379` ns:
+
+| branch | exclusive ns | share |
+|---|---:|---:|
+| macro | 8553172114 | 72.022% |
+| call | 2211312726 | 18.620% |
+| seq | 382407816 | 3.220% |
+| symbol | 192632306 | 1.622% |
+| head-var | 131909481 | 1.111% |
+
+`macro` is the expand call, not the walk of the expansion (that walk is in the nested branches). One AOT run's expand times, same boot as the shape split: `let/plain` `767743194` ns / 334 calls, `let/vector` `337165901` / 31, `loop/plain` `108051164` / 44, `loop/vector` `365858076` / 9, `for` `852945285` / 2, `defn` `786553947` / 585, `clojure.spec.alpha/def` `931466155` / 1, `definline` `671322169` / 8.
+
+JIT of this instrumented `rw-list` exited 139. The branch shares and the shortcut medians below are AOT runs.
+
+### Plain let and loop
+
+`rw-list` turns `(let [sym init ...] body)` and `(loop [sym init ...] body)` into `let*` / `loop*` without calling the macro, only when `codemod-expands?` is true (the codemod would have applied the macro; a `clojure.core` macro is still left for the host). Destructuring bindings stay on the macro. Functions added: `plain-bindings?`, `codemod-expands?`. The `let` and `loop` clauses of `rw-list` are the only dispatch changes.
+
+Before, three AOT profile runs with the branch timers and no shortcut. Codemod ns `8515313920`, `9170745944`, `9187529144` (median `9170745944`). Totals `18576322213`, `20325561303`, `20562352550` (median `20325561303`).
+
+After, three AOT profile runs. Codemod ns `8147647056`, `8304989494`, `8736504646` (median `8304989494`). Totals `17966559842`, `18305395228`, `18719317550` (median `18305395228`).
+
+JIT, `bb boot:jank-profile`, before the shortcut. Codemod ns `21053071642`, `23456974265`, `21578079728` (median `21578079728`). Totals `52932129886`, `64859700633`, `55342174973` (median `55342174973`).
+
+JIT after the shortcut. Codemod ns `21480690231`, `18429822657`, `22047010669` (median `21480690231`). Totals `55936739309`, `48299516673`, `55653558913` (median `55653558913`). The codemod median did not rise. The total median moved by less than the spread of the before runs. Kept.
+
+`let/plain` and `loop/plain` are absent from the after expand list. `let/vector` remains (31 calls). `dev/perf/jank_let_eq.jank` compared rewrite to macroexpand after boot and printed DIFF with the rewrite still headed by `let`: that call resolved a `let` the codemod does not expand, so it did not take the shortcut. The boot profiles are the evidence the shortcut ran.
+
+The shortcut is off on basilisp (`#?(:lpy false ...)`). Emitting `let*` there fails `clojure.spec.alpha` "registry and keys". The `timed` wrappers are gone: they expanded to their body, and a macro defined in `rewrite.cljc` does not expand under self-hosted ClojureScript. The jank medians above were measured with the shortcut on and the wrappers expanding to `do`.
+
+### Dropped: plain defn
+
+`defn-expansion` matched the booted macro for 407 core defns (87 left on the macro: pre/post or `:inline`). The name's `:tag` is dropped by the booted `defn`; `:rettag` is not on the fn form. JIT codemod median rose, so the clause was removed. First three `bb boot:jank-profile` runs: codemod `22618071864`, `25457352534`, `25004987907` (median `25004987907`). Second three, still on disk: codemod `22631906979`, `24654046293`, `22906084294` (median `22906084294`), totals `58832418566`, `64446882505`, `60141846272` (median `60141846272`). Both medians are above the let/loop codemod median `21480690231`. Building the expansion in the codemod is slower on jank's JIT than calling the macro.
+
+### Dropped: keyword spec def
+
+One form, `clojure.spec.alpha/def` of `::kvs->map`. A local resolve of that expansion deep-equaled the macro's resolved form on the JVM, including metadata. The JIT form did not get faster: the time is resolve plus the rewrite of the expansion, not `clojure.walk/postwalk`. After, three `bb boot:jank-profile` runs. Codemod ns `24097257229`, `23846725192`, `21810810846` (median `23846725192`). Totals `64709167082`, `61164084610`, `59790248185` (median `61164084610`). That form's rewrite ns was `4635287212`, `4009112964`, `4144651309` (median `4144651309`), against `4120450907` on the let/loop median-total run. The codemod median rose from `21480690231`. Removed. Functions removed: `spec-def-var?`, `spec-keep`, `spec-replace`, `spec-unfn`, `spec-res-sym`, `spec-walk`, `spec-res`, `spec-def-expansion`, and the `rw-list` clause.
+
+### Not changed: for
+
+`for` is two calls, `852945285` ns on the AOT expand split. The time is inside `clojure.core/for` in `resources/`. A replacement expansion would change the gensyms (`iter__`, `s__`, `i__`). `resources/` was not edited.
+
+### Dropped: call-list rebuild
+
+The call branch's exclusive share is the else of `rw-list` after nested walks: applying `:inline`, which is a syntax-quote the host has to compile. Replacing inlines would change output. `rw-call-list` built the same list, left to right, as `apply list`. Three `bb boot:jank-profile` runs: codemod `21860368937`, `26290761804`, `29611995727` (median `26290761804`), totals `56618900564`, `70082325538`, `74774599850` (median `70082325538`). The codemod median rose from `21480690231`. Restored `(apply list (rw ctx h) (doall (rw-all ctx args)))`.
+
+The syntax-quote pass was not touched. The only rewrite shortcut kept is plain `let` / `loop`.
+
+The `timed` macro now expands to its body. jank's JIT of the instrumented `rw-list` exited 139 on `run-main cohost.run` with the timers off. The shares above were captured before that expansion was removed.
+
+Timers off, after that change. `bb boot:jvm`:
+
+```
+booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0
+battery: 144/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The one JVM failure is `reduce over an eduction; a :tag that is data` (`Eduction` cannot be cast to `IReduce`). `jank --module-path src run-main cohost.run`:
+
+```
+booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The two jank failures are `subs count nth first last butlast` (`Unterminated vector.`) and `Character outside ASCII` (`Unexpected end of file.`). `bb boot:jank` on the tip, after the defn, spec, and call-list shortcuts were removed, printed the same three lines: `542` / `171` / `78` / `0`, battery `143/145`, libraries `61/61`.

@@ -25,6 +25,17 @@
    namespace of its own); identity elsewhere."
   identity)
 
+;; Dispatch-branch timers used to wrap every rewrite call. The macro was
+;; defined in this namespace, which self-hosted ClojureScript does not expand,
+;; so each call returned nil and the battery was empty. The wrappers are gone.
+;; The atoms stay so a profile run can still print the (now empty) shares.
+(def profile-branches (volatile! nil))
+(def profile-child (volatile! 0))
+
+;; macro name -> expand ns, and macro name -> call count. Profiling on only.
+(def profile-macro-ns (volatile! nil))
+(def profile-macro-n (volatile! nil))
+
 ;; ---------------------------------------------------------------------------
 ;; small string helpers (no clojure.string: keep the host surface minimal)
 
@@ -941,6 +952,15 @@
   #{"let" "loop" "for" "doseq" "if-let" "when-let" "if-some" "when-some" "with-open" "dotimes"
     "with-local-vars" "fn" "defn" "defn-" "defmacro" "defmethod" "letfn" "as->"})
 
+(defn- plain-bindings?
+  "A let/loop binding vector the stock macro does not destructure: even
+   length and every binding form a symbol. Those expand to (let* bindings
+   body...) / (loop* bindings body...) with the vector unchanged."
+  [b]
+  (and (vector? b)
+       (even? (count b))
+       (every? symbol? (take-nth 2 b))))
+
 (defn- bound-names [hn args]
   (case hn
     ("let" "loop" "for" "doseq" "if-let" "when-let" "if-some" "when-some" "with-open" "dotimes" "with-local-vars")
@@ -1320,12 +1340,12 @@
    (also for a local, a special form, or a host without the resolver)."
   [ctx h]
   (when-let [f (and (symbol? h) (not (contains? special-heads h)) (not (contains? *locals* h)) (:resolve-head ctx))]
-    (let [c *heads*]
-      (if-let [e (and c (find @c h))]
-        (val e)
-        (let [v (f (restock ctx h))]
-          (when c (vswap! c assoc h v))
-          v)))))
+      (let [c *heads*]
+        (if-let [e (and c (find @c h))]
+          (val e)
+          (let [v (f (restock ctx h))]
+            (when c (vswap! c assoc h v))
+            v)))))
 
 (defn- stock-name
   "The name of the stock core var h names, or nil (a local, or a namespace's
@@ -1338,6 +1358,13 @@
    macro, not the host's own)?"
   [ctx h]
   (when-let [v (head-var ctx h)] ((:rewritten-macro? ctx) v)))
+
+(defn- codemod-expands?
+  "True when rewrite itself applies h's macro. A clojure.core macro is left
+   for the host (expand-macro returns the call unchanged)."
+  [ctx h]
+  (when-let [v (and (rewritten-macro? ctx h) (head-var ctx h))]
+    (not= "clojure.core" (str (:ns (meta v))))))
 
 (defn- inline-expansion
   "On a host whose compiler ignores :inline, the codemod applies it as the JVM
@@ -1385,12 +1412,12 @@
             ;; rewritten as a value: `(.. clojure.lang.Var create setDynamic)`
             ;; names a class, which the stock `..` would otherwise see quoted.
             (= h '..) (let [[x f & more] args
-                            inner (list '. x f)]
-                        (rw ctx (if (seq more) (apply list '.. inner more) inner)))
+                                           inner (list '. x f)]
+                                       (rw ctx (if (seq more) (apply list '.. inner more) inner)))
             (= h 'new) (let [c (declass (second form))]
-                         (if (class-sym? c)
-                           (rw-new ctx c (nnext form))
-                           (apply list 'new c (rw-all ctx (nnext form)))))
+                                     (if (class-sym? c)
+                                       (rw-new ctx c (nnext form))
+                                       (apply list 'new c (rw-all ctx (nnext form)))))
             (= h 'try) (rw-try ctx form)
             (= h 'fn*) (rw-fn* ctx form)
             ;; cljrs's fn is a special form (policy :special), so the stock
@@ -1420,18 +1447,18 @@
                  (or (nil? (:resolve-head ctx)) (= 'instance? (stock-name ctx h)))
                  (let [c (inst-c)] (and (seq? c) (= 'quote (first c)) (symbol? (second c)))))
             (let [c (inst-c)
-                  nm (when-let [f (:instance-fn ctx)] (f (second c)))]
-              (if nm
-                ;; the class's prebuilt test (cohost.shim/install-is!)
-                (list (shim-fn nm) (rw ctx (nth form 2)))
-                (list (shim-fn "instance-of?") c (rw ctx (nth form 2)))))
+                                         nm (when-let [f (:instance-fn ctx)] (f (second c)))]
+                                     (if nm
+                                       ;; the class's prebuilt test (cohost.shim/install-is!)
+                                       (list (shim-fn nm) (rw ctx (nth form 2)))
+                                       (list (shim-fn "instance-of?") c (rw ctx (nth form 2)))))
             ;; (set! (. Class field) v) / (set! Class/field v) on a settable static
             (and (= h 'set!) (let [t (second form)]
                                (or (and (seq? t) (= '. (first t)) (class-sym? (declass (second t))))
                                    (and (symbol? t) (namespace t) (class-sym? (symbol (namespace t)))))))
             (let [t (second form)
-                  [c f] (if (seq? t) [(declass (second t)) (nth t 2)] [(symbol (namespace t)) (symbol (name t))])]
-              (list (shim-fn "static-set!") (static-name c f) (rw ctx (nth form 2))))
+                              [c f] (if (seq? t) [(declass (second t)) (nth t 2)] [(symbol (namespace t)) (symbol (name t))])]
+                          (list (shim-fn "static-set!") (static-name c f) (rw ctx (nth form 2))))
             (contains? extend-heads (spec-head h))
             (rw-extend ctx (spec-head h) args)
             (spec-head h) (rw-spec-form ctx (cons (spec-head h) args))
@@ -1441,11 +1468,11 @@
             ;; does not name stays the host's own property access
             (and hn (starts-with? hn ".") (> (count hn) 1) (not= hn ".."))
             (if (and (starts-with? hn ".-") (> (count hn) 2) (not (:cohost-types? ctx)))
-              ;; `(.-x o)` is strictly a field on the JVM: the host's own access
-              (apply list h (rw-all ctx args))
-              ;; on a :cohost-types host a field read is a member call like
-              ;; any other: the shim's dispatcher reaches the descriptor
-              (rw-method ctx (symbol (subs hn (if (starts-with? hn ".-") 2 1))) args (fn [xs'] (apply list h xs'))))
+                ;; `(.-x o)` is strictly a field on the JVM: the host's own access
+                (apply list h (rw-all ctx args))
+                ;; on a :cohost-types host a field read is a member call like
+                ;; any other: the shim's dispatcher reaches the descriptor
+                (rw-method ctx (symbol (subs hn (if (starts-with? hn ".-") 2 1))) args (fn [xs'] (apply list h xs'))))
             ;; (Class. args...)
             (and hn (ends-with? hn ".") (> (count hn) 1)
                  (class-sym? (symbol (subs hn 0 (dec (count hn))))))
@@ -1454,9 +1481,21 @@
             ;; (. Integer MAX_VALUE) does
             (and (symbol? h) (namespace h) (class-sym? (symbol (namespace h))))
             (let [c (symbol (namespace h)) m (symbol (name h))]
-              (if (and (empty? args) (contains? static-fields m))
-                (or (emit-static-value ctx c m) (apply list h args))
-                (rw-static ctx c m args)))
+                             (if (and (empty? args) (contains? static-fields m))
+                               (or (emit-static-value ctx c m) (apply list h args))
+                               (rw-static ctx c m args)))
+            ;; (let [sym init ...] body) and (loop [sym init ...] body). The
+            ;; stock macro's expansion is (let* bindings body...) / (loop*
+            ;; bindings body...) with that vector. Destructuring stays on
+            ;; the macro. A clojure.core let is left for the host. Basilisp's
+            ;; let is not that expansion: emitting let* fails clojure.spec's
+            ;; registry row, so :lpy keeps the macro.
+            #?(:lpy false
+               :default (and (= hn "let") (plain-bindings? (first args)) (codemod-expands? ctx h)))
+            (rw-let* ctx (apply list 'let* args))
+            #?(:lpy false
+               :default (and (= hn "loop") (plain-bindings? (first args)) (codemod-expands? ctx h)))
+            (rw-let* ctx (apply list 'loop* args))
             ;; a macro whose expansion the codemod rewrites (a stock or user
             ;; macro, not the host's): its arguments stay as written, and are
             ;; rewritten once, in the expansion, as the JVM compiler sees them
@@ -1465,25 +1504,25 @@
             ;; locals of &env (typed ones through their markers)
             (rewritten-macro? ctx h)
             (if-let [ex (:expand-macro ctx)]
-              (let [x (ex (head-var ctx h) form *locals*)]
-                (if (identical? x form) (apply list (macro-head ctx h) args) (rw ctx x)))
-              (apply list (macro-head ctx h) args))
+                (let [x (ex (head-var ctx h) form *locals*)]
+                  (if (identical? x form) (apply list (macro-head ctx h) args) (rw ctx x)))
+                (apply list (macro-head ctx h) args))
             ;; a binding form before it expands: what it binds are locals
             (and hn (contains? binding-heads hn))
             (let [names (bound-names hn args)]
-              (binding [*locals* (into *locals* names)
-                        *local-tags* (hint-tags *local-tags* names)
-                        *inline?* (and *inline?* (not (rewritten-macro? ctx h)))]
-                (apply list (rw ctx h) (doall (rw-all ctx args)))))
+                (binding [*locals* (into *locals* names)
+                          *local-tags* (hint-tags *local-tags* names)
+                          *inline?* (and *inline?* (not (rewritten-macro? ctx h)))]
+                  (apply list (rw ctx h) (doall (rw-all ctx args)))))
             ;; case: its test constants are read as written by the host's case
             (= hn "case") (rw-case ctx h args)
             :else (if-let [e (inline-expansion ctx h args)]
-                    (rw ctx e)
-                    ;; a macro whose expansion the codemod rewrites: its
-                    ;; arguments without inlining (the expansion inlines them)
-                    (if (and *inline?* (rewritten-macro? ctx h))
-                      (binding [*inline?* false] (apply list (rw ctx h) (doall (rw-all ctx args))))
-                      (apply list (rw ctx h) (rw-all ctx args)))))]
+                      (rw ctx e)
+                      ;; a macro whose expansion the codemod rewrites: its
+                      ;; arguments without inlining (the expansion inlines them)
+                      (if (and *inline?* (rewritten-macro? ctx h))
+                        (binding [*inline?* false] (apply list (rw ctx h) (doall (rw-all ctx args))))
+                        (apply list (rw ctx h) (rw-all ctx args)))))]
       (carry-meta out form))))
 
 (defn rw [ctx form]

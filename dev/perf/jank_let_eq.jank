@@ -1,0 +1,32 @@
+;; One boot, then compare rewrite of a plain let/loop with rewrite of the
+;; host macroexpansion. Prints EQ or DIFF. Not part of the phase table.
+(require 'cohost.hosts.jank)
+(require 'cohost.boot)
+(require 'cohost.rewrite)
+
+(cohost.boot/boot!)
+
+(defn form= [a b]
+  (and (= a b)
+       (= (meta a) (meta b))
+       (cond
+         (and (seq? a) (seq? b)) (and (= (count a) (count b)) (every? true? (map form= a b)))
+         (and (vector? a) (vector? b)) (and (= (count a) (count b)) (every? true? (map form= a b)))
+         (and (symbol? a) (symbol? b)) true
+         :else true)))
+
+(let [ctx (cohost.boot/ctx)
+      check (fn [src]
+              (let [ex (binding [*ns* (find-ns 'cohost.core)] (macroexpand src))
+                    a (cohost.rewrite/rewrite ctx src)
+                    b (cohost.rewrite/rewrite ctx ex)]
+                (println (if (form= a b) "EQ" "DIFF") (pr-str src))
+                (when-not (form= a b)
+                  (println "REWRITE" (pr-str a))
+                  (println "EXPAND" (pr-str b)))))]
+  (check '(let [a 1] (+ a 2)))
+  (check '(let [^long a 1 b 2] (+ a b)))
+  (check '(let [] 1))
+  (check '(loop [i 0 a 0] (if (< i 3) (recur (inc i) (+ a i)) a)))
+  (check '(let [[a b] m] (+ a b)))
+  (check '(let [a 1] (let [[b] a] b))))
