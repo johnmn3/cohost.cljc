@@ -42,9 +42,9 @@
        "       cohost :cljs -Spath"))
 
 (defn run-inherit
-  "Run cmd with inherited stdio in dir; -> its exit code."
-  [dir cmd]
-  (-> (p/process cmd {:dir dir :inherit true}) deref :exit))
+  "Run cmd with inherited stdio in dir (env: extra environment); -> its exit code."
+  [dir cmd & [env]]
+  (-> (p/process cmd {:dir dir :inherit true :extra-env (or env {})}) deref :exit))
 
 ;; --------------------------------------------------------------------------
 ;; arguments, as the Clojure CLI's own script reads them: its options first,
@@ -218,7 +218,7 @@
       "lpy" (run-inherit cwd ["basilisp" "run" "-p" src "-c"
                               (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])
       "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg])
-      "jank" (run-inherit cwd ["jank" "-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg]))))
+      "jank" (run-inherit cwd ["jank" "-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg] (:env jank)))))
 
 ;; --------------------------------------------------------------------------
 
