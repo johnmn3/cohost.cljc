@@ -92,3 +92,37 @@ LC_ALL=POSIX jank run u.jank`.
   recompile).
 - `bash dev/research/upstream/run.sh 12-i32-add`, with and without `JANK_BIN`: byte-identical output.
 - `jank print-binary-version`: apt `...-cf627abb...`, source `...-8c51ef51...`.
+
+## Re-building with patches (U0-2)
+
+```
+JANK_BUILD_LOCK=/home/user/locks/box.lock bash dev/install/jank-src.sh --patches
+# measure a patch before it joins the series:
+JANK_SERIES=/path/to/my/series bash dev/install/jank-src.sh --patches
+```
+
+`--patches` builds the series onto the pinned tree in a scratch git index (`git apply --cached`,
+patch by patch, in `series` order) and rewrites in the clone only the files whose content differs
+from that tree (removing a patch restores its files; a patch's new files are deleted), so unchanged
+files keep their mtimes and ninja rebuilds only what the series changed; then `cmake --install`
+(installs only changed files, ~2 s). It prints the compile time and the lock wait separately.
+
+Price of a one-line change to a runtime `.cpp` (`src/cpp/jank/runtime/obj/nil.cpp`, a code line, not
+a comment), from `.ninja_log`, 24 steps: 26.8 s of compile applying it, 26.5 s reverting it, on this box:
+
+| step | s |
+|---|---:|
+| the changed `.cpp` (0.19, with jank's precompiled header) + `libjank.a` + phase-1 runtime archive + link `jank-phase-1` | 1.5 |
+| `incremental.pch` (phase 2's precompiled header) | 4.9-5.0 |
+| `classes/core-libraries`: phase 1 re-compiles clojure.core, clojure.string, clojure.walk and the nrepl server to C++ | 14.9 |
+| the 16 phase-2 objects from that C++ | 0.01 each (ccache hits: the generated C++ is unchanged), except `clojure/string.cpp.o` 3.9-4.0 |
+| link `jank`, the two runtime archives | 1.2 |
+
+Every change to phase 1 (any compiler or runtime `.cpp`) re-runs `classes/core-libraries`: that
+15 s is the floor of an incremental build. A change that also changes the C++ jank generates for
+clojure.core (codegen, inlined runtime headers) misses ccache on `core.cpp.o` too. Wall clock adds
+the lock wait on a shared box: the first priced run measured 131 s wall and the revert 95 s, of
+which all but about 27 s each was waiting on `box.lock` for u1/u5 timing runs.
+
+ccache: `CMAKE_*_COMPILER_LAUNCHER=ccache`; about half of the calls are uncacheable (the
+precompiled-header compiles), the rest hit once the generated C++ repeats.

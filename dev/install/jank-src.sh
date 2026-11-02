@@ -14,6 +14,8 @@
 #   JANK_LLVM         the LLVM prefix jank builds against (default /opt/jank-llvm/e280c505)
 #   JANK_BUILD_LOCK   a file to flock around the compile (e.g. /home/user/locks/box.lock on a shared box)
 #   JOBS              ninja -j (default nproc)
+#   JANK_SERIES       a series file to apply instead of upstream/jank/patches/series (patch names in it
+#                     resolve against its own directory), e.g. to measure a patch before it joins the series
 #
 # The LLVM: jank needs Clang/LLVM 23 from jank-lang/llvm-project @ e280c505, the one its apt package
 # ships (/usr/local/lib/jank/0.1: clang-23, libLLVM.so.23.1, libclang-cpp.so.23.1, every llvm/ and
@@ -48,8 +50,9 @@ for a in "$@"; do
 done
 
 cohost="$(pwd)"
-series="$cohost/upstream/jank/patches/series"
-[ -f "$series" ] || { echo "run from cohost's root (no upstream/jank/patches/series)" >&2; exit 2; }
+[ -f "$cohost/upstream/jank/patches/series" ] || { echo "run from cohost's root (no upstream/jank/patches/series)" >&2; exit 2; }
+series="$(realpath "${JANK_SERIES:-$cohost/upstream/jank/patches/series}")"
+patchdir="$(dirname "$series")"
 t0=$(date +%s)
 stage() { echo "== jank-src: $* ($(( $(date +%s) - t0 ))s)"; }
 locked() { if [ -n "${JANK_BUILD_LOCK:-}" ]; then flock "$JANK_BUILD_LOCK" "$@"; else "$@"; fi; }
@@ -145,7 +148,7 @@ apply_series() {
     git read-tree "$JANK_SHA"
     while read -r p; do
       p="${p%%#*}"; p="$(echo "$p" | xargs)"; [ -z "$p" ] && continue
-      git apply --cached "$cohost/upstream/jank/patches/$p" || { echo "patch does not apply: $p" >&2; exit 1; }
+      git apply --cached "$patchdir/$p" || { echo "patch does not apply: $patchdir/$p" >&2; exit 1; }
       echo "applied $p" >&2
     done < "$series"
     git write-tree > "$idx.tree"
@@ -177,9 +180,12 @@ configure() {
 
 build_install() {
   stage "build (ninja -j$JOBS${JANK_BUILD_LOCK:+, under flock $JANK_BUILD_LOCK})"
-  local s; s=$(date +%s)
-  locked cmake --build "$JANK_SRC/compiler+runtime/build" -j "$JOBS"
-  stage "build done in $(( $(date +%s) - s ))s"
+  local s c; s=$(date +%s)
+  c="$(mktemp)"
+  locked bash -c 'date +%s > "$1"; shift; exec "$@"' _ "$c" cmake --build "$JANK_SRC/compiler+runtime/build" -j "$JOBS"
+  local e; e=$(date +%s)
+  stage "build done: compile $(( e - $(cat "$c") ))s, lock wait $(( $(cat "$c") - s ))s"
+  rm -f "$c"
   cmake --install "$JANK_SRC/compiler+runtime/build" > "$JANK_SRC/compiler+runtime/build/install.log"
   stage "installed: $JANK_DEV_PREFIX/bin/jank ($("$JANK_DEV_PREFIX/bin/jank" print-binary-version))"
 }
