@@ -240,11 +240,15 @@ The loop itself is cheaper on jank than on the JVM (19.8 vs 27.9 ms for 5e6 boxe
 - **Cost attacked.** The out-of-line runtime call per primitive op and per fn call: P2's
   `call-cpp-objref` (1.6 ns, an inlinable C++ fn) against `call-var-same-ns` (9.3 ns); the
   boxed loop's 4 ns per `inc`+`<` pair. On the JVM every one of these is inlined by C2.
-- **Expected effect.** Unknown until probe P9: compile P1/P2/P5 at `JANK_O=0` and `JANK_O=3`
-  (if `-O3` already changes little, the generated code's time is inside the runtime calls, and
-  inlining them is the lever; if `-O3` changes a lot, LLVM is already working and LTO adds the
-  cross-object part). The ceiling for arithmetic is S1-1's C++ floor.
-- **Probe.** P9 (queued): the `-O0` vs `-O3` matrix with the runner's `JANK_O` knob; then one
+- **Expected effect.** P9 answered the first question: clang's level is worth 7-20x on jank's
+  generated C++ (`JANK_O=0 bash dev/research/run-jank.sh ...`: fib-var 120222878 ns at `-O0`
+  against 13479580 at `-O3` under the JIT, 144432754 against 6101027 under AOT; P2's loop-only
+  146773370 against 19843686), so LLVM is doing the work inside each translation unit and the
+  remaining lever is the cross-object part: the virtual `call`, `get`, the sequence ops and
+  clojure.core's own compiled fns. That part's size is the gap between P2's `call-var-same-ns`
+  (9.3 ns) and `call-cpp-objref` (1.6 ns) per call, and unknown for the collection ops until
+  an LTO build exists. The ceiling for arithmetic is S1-1's C++ floor.
+- **Probe.** P9 (done, above): the `-O0` vs `-O3` matrix with the runner's `JANK_O` knob; then one
   manual link of a probe module with `-flto` against a bitcode build of the runtime. The shipped
   package carries `libjank-static-runtime.a` and `libjank-dynamic-runtime.a` (no bitcode), so
   the LTO leg needs a source build of jank.
