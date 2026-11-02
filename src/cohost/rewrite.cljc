@@ -1008,8 +1008,26 @@
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
              nm)
-        nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)]
-    (apply list 'def nm (rw-all ctx more))))
+        nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)
+        more' (rw-all ctx more)
+        ;; a host whose defn names its fn (jank's own does): carry the
+        ;; def's name onto an unnamed fn* value, so self-recursion is a
+        ;; direct call instead of a var deref and a dynamic call. The
+        ;; semantic price is pinned by a battery row: an in-flight
+        ;; recursion no longer sees a redefinition of the var.
+        more' (if (and (host/defn-fn-name?)
+                       ;; a dotted name is a class or a constructor
+                       ;; pseudo-name (deftype's Box.), not a fn name:
+                       ;; jank's codegen rejects it on a fn*
+                       (not (some #{\.} (str nm)))
+                       (seq more')
+                       (seq? (last more'))
+                       (= 'fn* (first (last more')))
+                       (not (symbol? (second (last more')))))
+                (concat (butlast more')
+                        [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
+                more')]
+    (apply list 'def nm more')))
 
 (defn- rw-map
   "A map literal is data: its keys and values are rewritten, nothing is
