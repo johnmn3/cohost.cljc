@@ -227,10 +227,16 @@
   "jank: the module path (a fresh snapshot of the booted core, else cohost's
    AOT objects), whether cohost.cli boots from the snapshot, and the jank
    process's extra environment (the GC setting): lane D's
-   dev/perf/jank_snapshot_cli.clj, decided in the repo."
-  []
+   dev/perf/jank_snapshot_cli.clj, decided in the repo. With a fresh core
+   snapshot and a main namespace (-m, -X), the project's namespaces come
+   from a per-project snapshot, built when stale (D-8)."
+  [cwd roots run]
   (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
-  ((resolve 'jank-cli-launch) repo))
+  (let [l ((resolve 'jank-cli-launch) repo)
+        main-ns (when (#{:main :exec} (get-in run [:main :type])) (get-in run [:main :ns]))
+        proj (when (:snapshot? l)
+               ((resolve 'jank-project-launch) repo cwd roots main-ns (:module-path l) (:env l)))]
+    (merge l proj)))
 
 (defn launch! [host cwd config & [jank]]
   (let [cfg (str config)
@@ -295,11 +301,11 @@
                       {:inits [] :main (exec-config (:main o) argmap)}
                       (main-config cwd (concat (when (= mode :M) (:main-opts argmap)) (:main o))))
                 cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))
-                jank (when (= host "jank") (jank-launch))]
+                jank (when (= host "jank") (jank-launch cwd roots run))]
             (fs/create-dirs (fs/parent cfg-file))
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
                                                :verbose (boolean (System/getenv "COHOST_VERBOSE"))}
-                                          (when jank {:snapshot? (:snapshot? jank)}))))
+                                          (when jank (select-keys jank [:snapshot? :project-snapshot])))))
             ;; System/exit skips finally: the config goes before it
             (let [code (try (launch! host cwd cfg-file jank) (finally (fs/delete-if-exists cfg-file)))]
               (System/exit code))))))))
