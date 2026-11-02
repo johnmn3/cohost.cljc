@@ -848,3 +848,5 @@ Geometric mean of the 11 phel / JVM median ratios for rows that produced a time:
 | json | running | | | |
 | first-output | running | | | |
 
+
+ClojureScript Node boot finished (`bb boot:cljs`: stock 518, host 87, natives 46, skipped 140, errors 0, battery 143/145, libraries 61/61). `bb bench:programs cljs` is running. Chromium: Playwright and headless Chromium are installed. The browser boot starts after the Node compiler is free.
