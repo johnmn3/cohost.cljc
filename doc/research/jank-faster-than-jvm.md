@@ -75,10 +75,46 @@ wrote for a four-fn probe (the dump is quoted in §8.1):
   the fn's return is boxed (`into_object`); return hints and `let`/`loop` hints are ignored
   (doc/perf/jank.md H0, "What `+`, `<`, and `inc` compile to").
 - `jank --help` lists `-Odirect-call` ("Elides the dereferencing of vars for improved
-  performance. (not yet implemented)"). `jank print-cflags` shows the C++ is built with
-  `-std=gnu++20 -fPIC -ffunction-sections -fdata-sections -fno-semantic-interposition -fwrapv`
-  (and `-O0`/`-O2` among the flags); the optimization level for user modules is the `-O`
-  given to `compile-module`.
+  performance. (not yet implemented)"); the flag is parsed into `opts.direct_call` and nothing
+  reads it (clone `cli.cpp:207`; `grep -rn direct_call src include` finds no other reader).
+  The analyzer records every def's var -> value expression in a map no pass consumes
+  (`analyze/processor.cpp:1260`, `processor.hpp:243`).
+- The optimization level defaults to 0 for both codegen and the JIT (`cli.cpp:205`); `jank run`
+  copies `-O` to the JIT level (`cli.cpp:528`) and the JIT hands it to clang as `-O0..-O3`
+  (`jit/processor_dynamic.cpp:275`), one `ParseAndExecute` per top-level form
+  (`processor_dynamic.cpp:594`). So `bb bench:programs jank-jit`, which runs `jank run` with no
+  `-O`, measures `-O0` machine code; the probes here pass `-O3`. The IR pass that hoists var
+  derefs runs only at `-O3` and gives up on any fn containing a loop (`ir/opt/hoist_var_derefs.cpp:28`);
+  `codegen/optimize.cpp` (an LLVM pass pipeline) has no caller. clojure.core itself is compiled
+  into the runtime library at `-O3` for Release builds (`CMakeLists.txt:144`, `:1123`), and
+  `strings /usr/local/bin/jank` shows `-DJANK_CMAKE_BUILD_TYPE="Release"`.
+- Values: an `object_ref` is one NaN-boxed word; integers in the i32 range and every double are
+  inline, never allocated (`runtime/oref.hpp:64-110`, `core/make_box.hpp:82-100`); a larger
+  integer is a 24-byte pointer-free GC box. So "boxing" in the arithmetic of this section means
+  the two tag tests plus a type switch per operand (`visit.hpp:465-477`), not allocation.
+  `runtime::add(object_ref, object_ref)` is a nested `visit_number_like` on both operands,
+  `always_inline`/`flatten` (`core/math.hpp:70-93`); `add(primitive, primitive)` is an unchecked
+  `l + r` (`math.hpp:172`); `inc` on a primitive is overflow-checked (`math.hpp:1192`).
+- The 32-bit wrap seen in §3 (`(reduce + (range 1000000))` = `1783293664`) has its source here:
+  a tagged small integer's payload is `i32` (`oref.hpp:2250`) and the small+small arm of `add`
+  computes `typed_l->data + typed_r->data` in `int` before `make_box` range-checks it
+  (`math.hpp:86`); a literal that fits i32 is typed C++ `int` (`analyze/cpp_util.cpp:621`) and a
+  loop binding keeps that type (`cpp_util.cpp:1023`).
+- A var deref is an atomic `thread_bound` test then an atomic root load (`runtime/var.cpp:146`,
+  `:279`); `object_ref::call` is two tag tests then a virtual call (`oref.hpp:553`) into
+  `jit_function::call`, which tests the arity pointer and calls through it (`jit_function.cpp:78`).
+  Named self-recursion is lowered to a direct C call only for a fixed arity
+  (`analyze/processor.cpp:476`, `codegen/cpp_processor.cpp:853`), with every argument already an
+  `object_ref` (`processor.cpp:3521`): direct, but boxed.
+- `=` has its `:inline` commented out ("TODO: Add template to support this", core.jank line 659),
+  so every `(= i n)` is a var deref plus a dynamic call, while `+ - < inc dec ==` and keyword
+  calls inline to `cpp/jank.runtime.*` (core.jank lines 1371, 1551, 1645; `processor.cpp:3478`).
+- In the default lazy mode a defn is a `deferred_cpp_function` until first call, and every call
+  through such a value takes a `recursive_mutex` (`obj/deferred_cpp_function.cpp:48`); each
+  evaluation of a `fn` form allocates a fresh `jit_function` or `jit_closure` box
+  (`codegen/api.cpp:428`, `:440`).
+- `JANK_PRINT_CODEGEN=1` and `JANK_PRINT_IR=1|2` dump the generated C++ and the IR
+  (`ir/processor.cpp:1010`): the cheapest probe for all of the above.
 
 The probes (medians of 5 after a 2 s warm-up; the box was shared with the source readers
 during these runs, so absolute numbers carry noise of up to about 1.5x between runs: P1's JIT
@@ -116,14 +152,24 @@ The loop itself is cheaper on jank than on the JVM (19.8 vs 27.9 ms for 5e6 boxe
 
 ### S1-1. Native numeric locals and returns by type propagation (unboxed recursion and loops)
 
-- **Mechanism.** The analyzer already types a `loop` local from an integer literal (as `int`)
-  and a parameter from its `^long`/`^double` tag. Extend that into a real local type inference:
+- **Mechanism.** The analyzer already types a `loop` local from an integer literal (as `int`,
+  `cpp_util.cpp:621`, `:1023`) and a parameter from its `^long`/`^double` tag (the only `:tag`
+  read in the analyzer, `processor.cpp:1642`); a `let` local takes its init's static type
+  (`processor.cpp:2208`), and the inlined `cpp/jank.runtime.add` call carries its C++ return type
+  (`processor.cpp:639`), so natives already flow through arithmetic. What stops them: every arity's
+  tail is forced to `object_ref` (`processor.cpp:1766`, "erasure ... deferred to codegen"),
+  `defn`'s `:rettag` has no consumer (core.jank line 779), `if` forces both branches boxed
+  ("We can't (yet) guarantee that each branch of an if returns the same unboxed type",
+  `processor.cpp:2503`), a `recur` to a fn re-boxes every parameter (`processor.cpp:271`), and
+  the `needs_box` analysis is read once by the IR and never by codegen (`expression.hpp:198`,
+  `ir/processor.cpp:390`). Extend that into a real local type inference:
   a `let`/`loop` local whose init is a literal, a typed parameter, or an arithmetic/comparison
   of typed operands gets the native type (`i64`/`f64`, never `int`); a fn whose every return
   expression is typed gets a native return and a second, native entry point
   (`fib_native(i64) -> i64`) that self-recursion and typed call sites use, with the boxing
   `object_ref` entry kept for dynamic callers. `Math/sqrt`-style calls become the C++ ones.
-- **Cost attacked.** Boxing on every arithmetic result and every return: H0's carried loop is
+- **Cost attacked.** The type dispatch on every arithmetic operand and the convert on every
+  typed entry and return (not allocation: small ints and doubles are inline): H0's carried loop is
   0.105-0.125 of the boxed one (doc/perf/jank.md H0), and P1's C++ recursion runs fib 30 in
   3663884 ns against 6101027 ns for the boxed AOT fn and 17595281 ns for the hinted leaf (the
   hint loses today because the return boxes: H0's ratio 1.24-1.52).
@@ -137,8 +183,10 @@ The loop itself is cheaper on jank than on the JVM (19.8 vs 27.9 ms for 5e6 boxe
   Next: `dev/research/p7_native_entry.jank`, a hand-written C++ native entry for tak and
   nbody's inner `advance` through `cpp/raw`, against the jank versions (an hour).
 - **Semantic risk.** Overflow: Clojure's `+` on longs throws `ArithmeticException`; jank's
-  native path is compiled with `-fwrapv` (wraps). The existing `int` local is already wrong
-  (32-bit). The port has to keep `i64` and either check overflow or document the divergence as
+  `add(primitive, primitive)` is an unchecked `l + r` under `-fwrapv` (`math.hpp:172`; `inc` is
+  checked, `math.hpp:1192`). The existing `int` typing is already wrong (32-bit), and the small+small
+  arm of `add` wraps at 2^31 (`math.hpp:86`, `oref.hpp:2250`): `(reduce + (range 1000000))` is
+  `1783293664` on the installed jank. Any unboxed path must compute in `i64` with the check. The port has to keep `i64` and either check overflow or document the divergence as
   jank already does for `+`. `=` on mixed int/double, `nil` in a typed local (NPE on the JVM).
 - **Owner.** Upstream jank (analyzer `processor.cpp` typing + `cpp_processor.cpp` emission);
   cohost only passes hints through (H1, done).
@@ -147,15 +195,19 @@ The loop itself is cheaper on jank than on the JVM (19.8 vs 27.9 ms for 5e6 boxe
 
 - **Mechanism.** `-Odirect-call`, which the CLI lists as not implemented: when a call's head is
   a var whose root is a compiled fn in the same module graph (not `^:dynamic`, not
-  rebound), emit the direct C++ call `ns$fn_arity(fn_obj, args...)` as self-recursion is
-  emitted today, guarded by a per-var "redefined" flag the var's `bind_root`/`alter-var-root`
+  rebound), emit the direct C++ call `ns$fn_arity(fn_obj, args...)` as fixed-arity
+  self-recursion is emitted today (`cpp_processor.cpp:853`), from the analyzer's unused
+  var -> value map (`processor.cpp:1260`), guarded by a per-var "redefined" flag the var's `bind_root`/`alter-var-root`
   sets (one load + predictable branch instead of deref + dynamic `call`). For variadic arities,
   emit a fixed-arity entry per call-site arity (`[x & ys]` called with two args gets
   `arity_2` that builds the rest seq once, inline) instead of the generic packing path that
   costs 108 ns per call today.
-- **Cost attacked.** P2: 9-11 ns per var call against 1.6 ns direct; 108 ns per variadic call;
-  the JVM is at 0 ns over the loop for all of these (it inlines). Which yardstick programs pay
-  it: json (`parse` calls `skip`, `parse-string`, `parse-num` through vars in its inner loop;
+- **Cost attacked.** P2: 9-11 ns per var call (the atomic `thread_bound` test and root load,
+  `var.cpp:146`/`:279`, then `object_ref::call`'s tag tests and virtual call, `oref.hpp:553`,
+  `jit_function.cpp:78`) against 1.6 ns direct; 108 ns per variadic call; the JVM is at 0 ns
+  over the loop for all of these (it inlines). `=` is such a call too (its `:inline` is
+  commented out, core.jank line 659), so every `(= i n)` loop test in binary-trees,
+  k-nucleotide, json, dispatch and nbody pays it. Which yardstick programs pay the rest: json (`parse` calls `skip`, `parse-string`, `parse-num` through vars in its inner loop;
   `chunks` is self-recursive), pipeline (`assoc`, `update-in`, `assoc-in`, `get-in` are var
   calls into clojure.core; `assoc` and `update-in` are variadic in Clojure), k-nucleotide and
   the numeric programs mostly self-recurse or loop (already direct).
@@ -174,10 +226,13 @@ The loop itself is cheaper on jank than on the JVM (19.8 vs 27.9 ms for 5e6 boxe
 
 ### S1-3. Inline the runtime into generated code: LTO across the module graph, then PGO
 
-- **Mechanism.** Every `lt`/`add`/`get`/`call`/`deref` in generated C++ is a call into the
-  runtime library; `compile-module` builds one object per namespace at `-O3` with
-  `-ffunction-sections -fno-semantic-interposition` but no link-time optimization across
-  objects or into the runtime. Build the runtime's hot entry points as LLVM bitcode (or make
+- **Mechanism.** `add`/`lt`/`inc` are header-inline (`math.hpp`), but `get`, `call` (virtual),
+  `deref`, `truthy`'s `dyn_cast`, the sequence and collection ops and clojure.core's own fns
+  (compiled into `libjank-*-runtime.a` at build time, `CMakeLists.txt:1123`) are calls into the
+  runtime library; `compile-module` builds one object per namespace (the file's forms wrapped in
+  one fn, `context_dynamic.cpp:99`) at the given `-O` with `-ffunction-sections
+  -fno-semantic-interposition` but no link-time optimization across objects or into the runtime,
+  and the LLVM pass pipeline in `codegen/optimize.cpp` is never invoked. Build the runtime's hot entry points as LLVM bitcode (or make
   the small ones header-inline), compile modules with `-flto=thin`, and link the user's
   program as one LTO unit so the type switch inside `add(object_ref, object_ref)` and the
   arity dispatch inside `call` can be inlined and specialized at each site; then profile-guided
@@ -189,9 +244,10 @@ The loop itself is cheaper on jank than on the JVM (19.8 vs 27.9 ms for 5e6 boxe
   (if `-O3` already changes little, the generated code's time is inside the runtime calls, and
   inlining them is the lever; if `-O3` changes a lot, LLVM is already working and LTO adds the
   cross-object part). The ceiling for arithmetic is S1-1's C++ floor.
-- **Probe.** P9 (an hour): the `-O0` vs `-O3` matrix with the runner's `JANK_O` knob; then one
-  manual link of a probe module with `-flto` against a bitcode build of `libjank` if the
-  shipped package carries one (`ls /usr/local/lib/jank/0.1/lib`).
+- **Probe.** P9 (queued): the `-O0` vs `-O3` matrix with the runner's `JANK_O` knob; then one
+  manual link of a probe module with `-flto` against a bitcode build of the runtime. The shipped
+  package carries `libjank-static-runtime.a` and `libjank-dynamic-runtime.a` (no bitcode), so
+  the LTO leg needs a source build of jank.
 - **Semantic risk.** None at the language level (a build-pipeline change); risk is build time
   and binary size, and that the JIT path (`jank run`) cannot use LTO, so the gain is AOT-only.
 - **Owner.** Upstream jank (the AOT driver); cohost would only pass flags.
@@ -280,7 +336,16 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
   AOT driver), keep parallel marking, and use pointer-free allocation (`GC_MALLOC_ATOMIC`)
   for boxes that hold no references (reals, big integers, strings' bytes). (b) The vector:
   a two-element `[a b]` is the yardstick's binary-trees node; its cost today is about 200 ns
-  per vector (pair-alloc 398224591 ns / 2e6) against the JVM's 10 ns. Give jank a small
+  per vector (pair-alloc 398224591 ns / 2e6) against the JVM's 10 ns. What that buys today: the
+  literal is `_jank_vec(2, a, b)` (`cpp_processor.cpp:637`), which builds a stack
+  `transient_vector`, `conj_in_place`s each element and `to_persistent()`s (`codegen/api.cpp:146`);
+  immer's transient owner token is a 1-byte atomic GC allocation (`gc_transience_policy.hpp:50`),
+  the first push copies the static empty tail into a full 32-slot leaf, 256 bytes plus header,
+  whatever the element count (`immer/detail/rbts/rbtree.hpp:262`, `node.hpp:337`), and
+  `to_persistent` allocates the `persistent_vector` box (`transient_vector.cpp:117`): three
+  `GC_malloc`s and about 300 bytes per `[a b]`, every immer node a direct `GC_malloc` with no
+  free-list layer (`immer/heap/gc_heap.hpp:105`, `heap_policy.hpp:26`). A persistent `conj` is a
+  leaf copy plus a new box, two allocations (`persistent_vector.cpp:177`). Give jank a small
   vector representation (inline storage up to the 32-element tail size, one allocation, no
   tree node) and build the larger one from it, as Clojure's `PersistentVector` keeps a tail.
   The split between (a) and (b) is what probe P3b measures.
@@ -289,7 +354,9 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
   that allocates a collection per step: pipeline (a map per `assoc`), json (`conj` per
   character), nbody (a vector per body per step). 408 collections in one P3 run.
 - **Expected effect.** Measured: the environment alone gives bt-14 174828601 -> 122085049 ns
-  (1.43x) with `GC_INITIAL_HEAP_SIZE=1G GC_FREE_SPACE_DIVISOR=1`, and `GC_ENABLE_INCREMENTAL`
+  (1.43x; bdwgc's own doc on the divisor: "Decreasing it will appreciably decrease total
+  collection time at the expense of space", `gc.h:385`; `THREAD_LOCAL_ALLOC` and `PARALLEL_MARK`
+  are compiled into the shipped runtime archive per `nm`) with `GC_INITIAL_HEAP_SIZE=1G GC_FREE_SPACE_DIVISOR=1`, and `GC_ENABLE_INCREMENTAL`
   costs 4-6x (do not). The vector representation's share is unknown until P3b (`[i i]` against
   `(cons i nil)`, `{:a i}`, a `cpp/raw` struct: which allocation is the 200 ns).
 - **Probe.** P3 and the env matrix (done); P3b (queued): the allocation kinds side by side.
@@ -303,7 +370,8 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
   collection to `cpp/jank.runtime.reduce` (core.jank line 1126); `map` and `filter` carry the
   `chunked-seq?` branch from Clojure (lines 2885, 3864) but `range` and vectors do not hand
   out chunked seqs, and `lazy-seq` is `cpp/jank.runtime.lazy_seq` of a fresh fn per element
-  (line 2026). Add 32-element chunks to `range`, vectors and the lazy-seq machinery (the
+  (line 2026; each `fn` form evaluation is a `make_box<jit_closure>`, `codegen/api.cpp:440`), and
+  `integer_range::next()` allocates a new range object per step (`obj/integer_range.cpp:108`). Add 32-element chunks to `range`, vectors and the lazy-seq machinery (the
   `chunk-buffer`/`chunk-cons` plumbing exists), and give `reduce`/`transduce`/`into` an
   internal-reduce dispatch per collection type (an index loop for vectors, a counter loop for
   ranges, a per-chunk loop for chunked seqs) so the seq objects are never allocated.
@@ -332,6 +400,15 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
   - `apply str` over 1e4 strings is 19x (8214179 vs 425450 ns): build into one reserved
     buffer; `string-nth` is 11x (93 ns per `nth` against 8): index bytes directly when the
     string is ASCII or keep a code-point index.
+  - A keyword's hash is recomputed from its symbol's strings on every use
+    (`obj/keyword.cpp:45`, `obj/symbol.cpp:152`, `hash.cpp:129`) although `jtl::immutable_string`
+    already caches its hash (`immutable_string.hpp:648`); persistent hash maps are `immer::map`
+    keyed by `std::hash<object_ref>` -> `to_hash()` (`runtime/detail/type.hpp:53`), so every
+    `get` on a map past the array-map size re-hashes the keyword (P4: get-1000 3.8x,
+    hash-map-grow 3.5x). Array maps compare keyword keys by identity (`native_array_map.hpp:55`).
+  - `truthy` is about six branches and two header loads (`core/truthy.hpp:14-28`): `nil` and
+    `false` are single globals (`obj/nil.cpp:117`, `obj/number.cpp:495`), so two word compares
+    would do.
   - A variadic call costs 108 ns and a multimethod call 61 ns (P2, §2): emit fixed arities
     for the call-site arity and cache the last dispatch value -> method per call site
     (`isa?` re-check only on a hierarchy change).
