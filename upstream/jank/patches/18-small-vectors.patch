@@ -1,4 +1,4 @@
-From 4f3e620e9682618e87bf4563dcbae8c8f264d516 Mon Sep 17 00:00:00 2001
+From dbfc197791f6a5a50c816542b74a1d9cf8723e08 Mon Sep 17 00:00:00 2001
 From: u5 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 15:57:10 +0000
 Subject: [PATCH] jank-18: small vectors, one GC allocation for vectors of up
@@ -24,6 +24,9 @@ leaf (272 bytes) and then the box, three allocations.
   literals) of <= 32 elements without string meta: create_small.
 - persistent_vector::conj below 32 elements: one block holding the old
   elements plus the new one (was: immer's leaf copy plus a separate box).
+- _jank_vec collects its varargs in raw storage (a default object_ref loads
+  jank_nil, 32 of them per literal) and the box is constructed in place over
+  the rbtree (one immer move fewer).
 - persistent_vector::find and transient_vector::find entries: create_small
   (was: the initializer_list path, i.e. owner token + full leaf + box).
 - persistent_vector's meta moves out of line: a `lazy_meta *` allocated only
@@ -41,11 +44,11 @@ leaf: the memory policy does no refcounting and the leaf has no transient
 owner, so a transient or a persistent update copies it.
 ---
  .../jank/runtime/obj/persistent_vector.hpp    |  24 ++-
- compiler+runtime/src/cpp/jank/codegen/api.cpp |  25 +++
+ compiler+runtime/src/cpp/jank/codegen/api.cpp |  30 ++++
  .../jank/runtime/obj/persistent_vector.cpp    | 160 ++++++++++++++++--
  .../cpp/jank/runtime/obj/transient_vector.cpp |   3 +-
  compiler+runtime/third-party/cpptrace         |   2 +-
- 5 files changed, 199 insertions(+), 15 deletions(-)
+ 5 files changed, 204 insertions(+), 15 deletions(-)
 
 diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp
 index 6e69e162..ad8e3237 100644
@@ -101,22 +104,25 @@ index 6e69e162..ad8e3237 100644
    };
  }
 diff --git a/compiler+runtime/src/cpp/jank/codegen/api.cpp b/compiler+runtime/src/cpp/jank/codegen/api.cpp
-index 077f32a2..2cfa567f 100644
+index 077f32a2..2d83a751 100644
 --- a/compiler+runtime/src/cpp/jank/codegen/api.cpp
 +++ b/compiler+runtime/src/cpp/jank/codegen/api.cpp
-@@ -143,6 +143,19 @@ static jank::runtime::obj::persistent_vector_ref
+@@ -143,6 +143,22 @@ static jank::runtime::obj::persistent_vector_ref
  /* NOLINTNEXTLINE(readability-non-const-parameter) */
  _jank_vec_impl(char const * const meta, jank::u64 const elems, va_list args)
  {
 +  using jank::runtime::obj::persistent_vector;
 +  if(!meta && elems <= persistent_vector::small_max)
 +  {
-+    /* One allocation: the box and an exact-size leaf (persistent_vector::create_small). */
-+    jank::runtime::object_ref buf[persistent_vector::small_max];
++    /* One allocation: the box and an exact-size leaf (persistent_vector::create_small).
++     * Raw storage: a default object_ref loads jank_nil, and only `elems` slots are used. */
++    alignas(jank::runtime::object_ref) unsigned char raw[sizeof(jank::runtime::object_ref)
++                                                         * persistent_vector::small_max];
++    auto const buf{ reinterpret_cast<jank::runtime::object_ref *>(raw) };
 +    for(jank::u64 i{}; i < elems; ++i)
 +    {
 +      /* NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg) */
-+      buf[i] = va_arg(args, jank::runtime::object *);
++      ::new(static_cast<void *>(buf + i)) jank::runtime::object_ref{ va_arg(args, jank::runtime::object *) };
 +    }
 +    return persistent_vector::create_small(buf, elems);
 +  }
@@ -124,18 +130,20 @@ index 077f32a2..2cfa567f 100644
    jank::runtime::obj::transient_vector trans;
  
    for(jank::u64 i{}; i < elems; ++i)
-@@ -185,6 +198,18 @@ static jank::runtime::obj::persistent_vector_ref
+@@ -185,6 +201,20 @@ static jank::runtime::obj::persistent_vector_ref
  /* NOLINTNEXTLINE(readability-non-const-parameter) */
  _jank_vec_impl(jank::runtime::object_ref const meta, jank::u64 const elems, va_list args)
  {
 +  using jank::runtime::obj::persistent_vector;
 +  if(elems <= persistent_vector::small_max)
 +  {
-+    jank::runtime::object_ref buf[persistent_vector::small_max];
++    alignas(jank::runtime::object_ref) unsigned char raw[sizeof(jank::runtime::object_ref)
++                                                         * persistent_vector::small_max];
++    auto const buf{ reinterpret_cast<jank::runtime::object_ref *>(raw) };
 +    for(jank::u64 i{}; i < elems; ++i)
 +    {
 +      /* NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg) */
-+      buf[i] = va_arg(args, jank::runtime::object *);
++      ::new(static_cast<void *>(buf + i)) jank::runtime::object_ref{ va_arg(args, jank::runtime::object *) };
 +    }
 +    return persistent_vector::create_small(meta, buf, elems);
 +  }
@@ -144,7 +152,7 @@ index 077f32a2..2cfa567f 100644
  
    for(jank::u64 i{}; i < elems; ++i)
 diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp
-index 4e9aab7d..4b2132ad 100644
+index 4e9aab7d..ac380f25 100644
 --- a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp
 +++ b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp
 @@ -7,9 +7,59 @@
@@ -186,10 +194,10 @@ index 4e9aab7d..4b2132ad 100644
 +      }
 +      auto const leaf{ native_node::make_leaf_n_into(mem + box_size, leaf_size, count) };
 +      fill(leaf->leaf());
-+      native_vector v(
-+        native_rbtree(n, native_node::bits_leaf, native_rbtree::empty_root(), leaf));
-+      auto const ret{ ::new(static_cast<void *>(mem))
-+                        persistent_vector{ std::forward<Args>(args)..., std::move(v) } };
++      auto const ret{ ::new(static_cast<void *>(mem)) persistent_vector{
++        std::forward<Args>(args)...,
++        std::in_place,
++        native_rbtree(n, native_node::bits_leaf, native_rbtree::empty_root(), leaf) } };
 +      return runtime::detail::untagged(ret);
 +    }
 +
