@@ -1,0 +1,808 @@
+From aa677df3fd3e3a4becab22add5b9fde8b78ecc4b Mon Sep 17 00:00:00 2001
+From: cohost u2 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 18:51:22 +0000
+Subject: [PATCH] Inline fixed-arity calls of jit_functions at -O3; inline var
+ deref; one-allocation rest args
+
+Draft: cohost doc/upstream/jank-24-direct-calls.md.
+Repro: bash dev/research/upstream/run.sh 24-direct-calls (in johnmn3/cohost.cljc).
+
+1. -Odirect-call, now real and the default at -O3 (-Ono-direct-call turns it
+   off; off at -O0..2): a dynamic call compiles to jank::runtime::call_fast(f,
+   args...), an always-inline helper in jit_function.hpp that calls a
+   jit_function's fixed arity through its arity pointer (no virtual call, no
+   small-number tag tests) and falls back to object_ref::call for anything else
+   (variadic fns, keywords, maps, a missing arity). The fn object is read at
+   every call, so def again, alter-var-root, with-redefs and binding are seen
+   at once and no per-var redefinition flag is needed.
+2. Compiled var derefs call var::deref_inline(): the root load inline when the
+   var was never thread-bound, else deref().
+3. multi_function calls its dispatch fn and the resolved method through
+   call_fast.
+4. jit_variadic_function builds a call's rest args with
+   native_array_sequence::create_packed: the sequence and its elements in one
+   GC allocation instead of two.
+
+Files: compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp,
+compiler+runtime/include/cpp/jank/runtime/var.hpp,
+compiler+runtime/include/cpp/jank/runtime/obj/native_array_sequence.hpp,
+compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp,
+compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_function.cpp,
+compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp,
+compiler+runtime/src/cpp/jank/util/cli.cpp.
+---
+ .../cpp/jank/runtime/obj/jit_function.hpp     |  41 ++++++
+ .../runtime/obj/native_array_sequence.hpp     |  22 +++
+ .../include/cpp/jank/runtime/var.hpp          |  12 ++
+ .../src/cpp/jank/codegen/cpp_processor.cpp    |  12 +-
+ .../runtime/obj/jit_variadic_function.cpp     | 136 +++++++++---------
+ .../cpp/jank/runtime/obj/multi_function.cpp   |  26 ++--
+ compiler+runtime/src/cpp/jank/util/cli.cpp    |   4 +-
+ 7 files changed, 168 insertions(+), 85 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
+index 04dc6e8af..9a6578697 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
+@@ -139,3 +139,44 @@ namespace jank::runtime::obj
+     lazy_meta meta;
+   };
+ }
++
++namespace jank::runtime
++{
++  /* The call compiled code makes at -Odirect-call (the default at -O3), and multi_function's
++   * dispatch and method calls. A jit_function's fixed arity is called through its arity
++   * pointer, inline, so the call costs no virtual dispatch and no small-number tag tests;
++   * anything else (a variadic fn, a keyword, a map, a missing arity, which throws) takes
++   * object_ref::call as before. The fn object is read at every call, so a redefined var, a
++   * with-redefs or a binding is seen at once: there is nothing to invalidate. */
++  template <typename... Args>
++  [[gnu::always_inline]]
++  inline object_ref call_fast(object_ref const f, Args const &...args)
++  {
++    constexpr auto n{ sizeof...(Args) };
++    if constexpr(n <= 10)
++    {
++      if(detail::is_tagged_pointer(f.raw()) && f.ptr()->type == object_type::jit_function)
++      {
++        auto const fn{ static_cast<obj::jit_function *>(f.ptr()) };
++        auto const arity{ [fn]() {
++          if constexpr(n == 0) { return fn->arity_0; }
++          else if constexpr(n == 1) { return fn->arity_1; }
++          else if constexpr(n == 2) { return fn->arity_2; }
++          else if constexpr(n == 3) { return fn->arity_3; }
++          else if constexpr(n == 4) { return fn->arity_4; }
++          else if constexpr(n == 5) { return fn->arity_5; }
++          else if constexpr(n == 6) { return fn->arity_6; }
++          else if constexpr(n == 7) { return fn->arity_7; }
++          else if constexpr(n == 8) { return fn->arity_8; }
++          else if constexpr(n == 9) { return fn->arity_9; }
++          else { return fn->arity_10; }
++        }() };
++        if(arity)
++        {
++          return arity(f, object_ref{ args }...);
++        }
++      }
++    }
++    return f.call(object_ref{ args }...);
++  }
++}
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/native_array_sequence.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/native_array_sequence.hpp
+index 6f13faef2..cab86237c 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/native_array_sequence.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/native_array_sequence.hpp
+@@ -31,6 +31,28 @@ namespace jank::runtime::obj
+     {
+     }
+ 
++    /* One allocation for the sequence and its elements (the array lives right after the
++     * object; bdwgc runs with interior pointers recognized, so a `next` sharing `arr` keeps it
++     * alive). A variadic call's rest args are built this way: half the allocations of
++     * make_box<native_array_sequence>(...) plus make_array_box. */
++    template <typename... Args>
++    static oref<native_array_sequence> create_packed(object_ref const first, Args const &...rest)
++    {
++      constexpr usize n{ sizeof...(Args) + 1 };
++      static_assert(sizeof(native_array_sequence) % alignof(object_ref) == 0);
++      auto const mem{ static_cast<char *>(
++        GC_malloc(sizeof(native_array_sequence) + n * sizeof(object_ref))) };
++      if(!mem)
++      {
++        throw std::runtime_error{ "Unable to allocate a native_array_sequence" };
++      }
++      auto const storage{ reinterpret_cast<object_ref *>(mem + sizeof(native_array_sequence)) };
++      usize i{};
++      new(storage + i++) object_ref{ first };
++      (new(storage + i++) object_ref{ rest }, ...);
++      return new(mem) native_array_sequence{ storage, n };
++    }
++
+     /* behavior::object_like */
+     bool equal(object const &o) const override;
+     void to_string(jtl::string_builder &buff) const override;
+diff --git a/compiler+runtime/include/cpp/jank/runtime/var.hpp b/compiler+runtime/include/cpp/jank/runtime/var.hpp
+index 4267917ad..b5a111db9 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/var.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/var.hpp
+@@ -125,6 +125,18 @@ namespace jank::runtime
+ 
+     /* behavior::deref */
+     object_ref deref() override;
++    /* The deref compiled code emits: inline and non-virtual. A var with no thread binding
++     * anywhere (thread_bound is set once, by the first push_thread_bindings of it) reads its
++     * root; otherwise this is deref(). */
++    [[gnu::always_inline]]
++    object_ref deref_inline()
++    {
++      if(!thread_bound.load())
++      {
++        return root.load();
++      }
++      return deref();
++    }
+ 
+     /* behavior::metadatable */
+     var_ref with_meta(object_ref m);
+diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+index e46eddf00..67f29775b 100644
+--- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
++++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+@@ -585,7 +585,7 @@ namespace jank::codegen
+   {
+     b.next_instruction();
+     auto const lifted{ lift_var(inst->qualified_var, b) };
+-    util::format_to(b.body_buffer, "auto const {}({}->deref());\n", inst->name, lifted);
++    util::format_to(b.body_buffer, "auto const {}({}->deref_inline());\n", inst->name, lifted);
+     return inst->name;
+   }
+ 
+@@ -612,8 +612,16 @@ namespace jank::codegen
+   jtl::option<identifier> gen(ir::inst::dynamic_call_ref const inst, builder &b)
+   {
+     b.next_instruction();
+-    util::format_to(b.body_buffer, "auto const {}({}.call(", inst->name, inst->fn);
+     bool need_comma{};
++    if(util::cli::opts.direct_call)
++    {
++      util::format_to(b.body_buffer, "auto const {}(jank::runtime::call_fast({}", inst->name, inst->fn);
++      need_comma = true;
++    }
++    else
++    {
++      util::format_to(b.body_buffer, "auto const {}({}.call(", inst->name, inst->fn);
++    }
+     for(auto const &arg : inst->args)
+     {
+       if(need_comma)
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_function.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_function.cpp
+index c202ab83c..fd62b7ae7 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_function.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_function.cpp
+@@ -87,7 +87,7 @@ namespace jank::runtime::obj
+     switch(mask)
+     {
+       case mask_variadic_arity(0):
+-        return do_call(arity_1, this, make_box<obj::native_array_sequence>(a1));
++        return do_call(arity_1, this, obj::native_array_sequence::create_packed(a1));
+       case mask_variadic_arity(1):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -105,9 +105,9 @@ namespace jank::runtime::obj
+     switch(mask)
+     {
+       case mask_variadic_arity(0):
+-        return do_call(arity_1, this, make_box<obj::native_array_sequence>(a1, a2));
++        return do_call(arity_1, this, obj::native_array_sequence::create_packed(a1, a2));
+       case mask_variadic_arity(1):
+-        return do_call(arity_2, this, a1, make_box<obj::native_array_sequence>(a2));
++        return do_call(arity_2, this, a1, obj::native_array_sequence::create_packed(a2));
+       case mask_variadic_arity(2):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -126,11 +126,11 @@ namespace jank::runtime::obj
+     switch(mask)
+     {
+       case mask_variadic_arity(0):
+-        return do_call(arity_1, this, make_box<obj::native_array_sequence>(a1, a2, a3));
++        return do_call(arity_1, this, obj::native_array_sequence::create_packed(a1, a2, a3));
+       case mask_variadic_arity(1):
+-        return do_call(arity_2, this, a1, make_box<obj::native_array_sequence>(a2, a3));
++        return do_call(arity_2, this, a1, obj::native_array_sequence::create_packed(a2, a3));
+       case mask_variadic_arity(2):
+-        return do_call(arity_3, this, a1, a2, make_box<obj::native_array_sequence>(a3));
++        return do_call(arity_3, this, a1, a2, obj::native_array_sequence::create_packed(a3));
+       case mask_variadic_arity(3):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -151,13 +151,13 @@ namespace jank::runtime::obj
+     switch(mask)
+     {
+       case mask_variadic_arity(0):
+-        return do_call(arity_1, this, make_box<obj::native_array_sequence>(a1, a2, a3, a4));
++        return do_call(arity_1, this, obj::native_array_sequence::create_packed(a1, a2, a3, a4));
+       case mask_variadic_arity(1):
+-        return do_call(arity_2, this, a1, make_box<obj::native_array_sequence>(a2, a3, a4));
++        return do_call(arity_2, this, a1, obj::native_array_sequence::create_packed(a2, a3, a4));
+       case mask_variadic_arity(2):
+-        return do_call(arity_3, this, a1, a2, make_box<obj::native_array_sequence>(a3, a4));
++        return do_call(arity_3, this, a1, a2, obj::native_array_sequence::create_packed(a3, a4));
+       case mask_variadic_arity(3):
+-        return do_call(arity_4, this, a1, a2, a3, make_box<obj::native_array_sequence>(a4));
++        return do_call(arity_4, this, a1, a2, a3, obj::native_array_sequence::create_packed(a4));
+       case mask_variadic_arity(4):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -179,15 +179,15 @@ namespace jank::runtime::obj
+     switch(mask)
+     {
+       case mask_variadic_arity(0):
+-        return do_call(arity_1, this, make_box<obj::native_array_sequence>(a1, a2, a3, a4, a5));
++        return do_call(arity_1, this, obj::native_array_sequence::create_packed(a1, a2, a3, a4, a5));
+       case mask_variadic_arity(1):
+-        return do_call(arity_2, this, a1, make_box<obj::native_array_sequence>(a2, a3, a4, a5));
++        return do_call(arity_2, this, a1, obj::native_array_sequence::create_packed(a2, a3, a4, a5));
+       case mask_variadic_arity(2):
+-        return do_call(arity_3, this, a1, a2, make_box<obj::native_array_sequence>(a3, a4, a5));
++        return do_call(arity_3, this, a1, a2, obj::native_array_sequence::create_packed(a3, a4, a5));
+       case mask_variadic_arity(3):
+-        return do_call(arity_4, this, a1, a2, a3, make_box<obj::native_array_sequence>(a4, a5));
++        return do_call(arity_4, this, a1, a2, a3, obj::native_array_sequence::create_packed(a4, a5));
+       case mask_variadic_arity(4):
+-        return do_call(arity_5, this, a1, a2, a3, a4, make_box<obj::native_array_sequence>(a5));
++        return do_call(arity_5, this, a1, a2, a3, a4, obj::native_array_sequence::create_packed(a5));
+       case mask_variadic_arity(5):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -210,17 +210,17 @@ namespace jank::runtime::obj
+     switch(mask)
+     {
+       case mask_variadic_arity(0):
+-        return do_call(arity_1, this, make_box<obj::native_array_sequence>(a1, a2, a3, a4, a5, a6));
++        return do_call(arity_1, this, obj::native_array_sequence::create_packed(a1, a2, a3, a4, a5, a6));
+       case mask_variadic_arity(1):
+-        return do_call(arity_2, this, a1, make_box<obj::native_array_sequence>(a2, a3, a4, a5, a6));
++        return do_call(arity_2, this, a1, obj::native_array_sequence::create_packed(a2, a3, a4, a5, a6));
+       case mask_variadic_arity(2):
+-        return do_call(arity_3, this, a1, a2, make_box<obj::native_array_sequence>(a3, a4, a5, a6));
++        return do_call(arity_3, this, a1, a2, obj::native_array_sequence::create_packed(a3, a4, a5, a6));
+       case mask_variadic_arity(3):
+-        return do_call(arity_4, this, a1, a2, a3, make_box<obj::native_array_sequence>(a4, a5, a6));
++        return do_call(arity_4, this, a1, a2, a3, obj::native_array_sequence::create_packed(a4, a5, a6));
+       case mask_variadic_arity(4):
+-        return do_call(arity_5, this, a1, a2, a3, a4, make_box<obj::native_array_sequence>(a5, a6));
++        return do_call(arity_5, this, a1, a2, a3, a4, obj::native_array_sequence::create_packed(a5, a6));
+       case mask_variadic_arity(5):
+-        return do_call(arity_6, this, a1, a2, a3, a4, a5, make_box<obj::native_array_sequence>(a6));
++        return do_call(arity_6, this, a1, a2, a3, a4, a5, obj::native_array_sequence::create_packed(a6));
+       case mask_variadic_arity(6):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -246,25 +246,25 @@ namespace jank::runtime::obj
+       case mask_variadic_arity(0):
+         return do_call(arity_1,
+                        this,
+-                       make_box<obj::native_array_sequence>(a1, a2, a3, a4, a5, a6, a7));
++                       obj::native_array_sequence::create_packed(a1, a2, a3, a4, a5, a6, a7));
+       case mask_variadic_arity(1):
+         return do_call(arity_2,
+                        this,
+                        a1,
+-                       make_box<obj::native_array_sequence>(a2, a3, a4, a5, a6, a7));
++                       obj::native_array_sequence::create_packed(a2, a3, a4, a5, a6, a7));
+       case mask_variadic_arity(2):
+         return do_call(arity_3,
+                        this,
+                        a1,
+                        a2,
+-                       make_box<obj::native_array_sequence>(a3, a4, a5, a6, a7));
++                       obj::native_array_sequence::create_packed(a3, a4, a5, a6, a7));
+       case mask_variadic_arity(3):
+         return do_call(arity_4,
+                        this,
+                        a1,
+                        a2,
+                        a3,
+-                       make_box<obj::native_array_sequence>(a4, a5, a6, a7));
++                       obj::native_array_sequence::create_packed(a4, a5, a6, a7));
+       case mask_variadic_arity(4):
+         return do_call(arity_5,
+                        this,
+@@ -272,7 +272,7 @@ namespace jank::runtime::obj
+                        a2,
+                        a3,
+                        a4,
+-                       make_box<obj::native_array_sequence>(a5, a6, a7));
++                       obj::native_array_sequence::create_packed(a5, a6, a7));
+       case mask_variadic_arity(5):
+         return do_call(arity_6,
+                        this,
+@@ -281,7 +281,7 @@ namespace jank::runtime::obj
+                        a3,
+                        a4,
+                        a5,
+-                       make_box<obj::native_array_sequence>(a6, a7));
++                       obj::native_array_sequence::create_packed(a6, a7));
+       case mask_variadic_arity(6):
+         return do_call(arity_7,
+                        this,
+@@ -291,7 +291,7 @@ namespace jank::runtime::obj
+                        a4,
+                        a5,
+                        a6,
+-                       make_box<obj::native_array_sequence>(a7));
++                       obj::native_array_sequence::create_packed(a7));
+       case mask_variadic_arity(7):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -318,25 +318,25 @@ namespace jank::runtime::obj
+       case mask_variadic_arity(0):
+         return do_call(arity_1,
+                        this,
+-                       make_box<obj::native_array_sequence>(a1, a2, a3, a4, a5, a6, a7, a8));
++                       obj::native_array_sequence::create_packed(a1, a2, a3, a4, a5, a6, a7, a8));
+       case mask_variadic_arity(1):
+         return do_call(arity_2,
+                        this,
+                        a1,
+-                       make_box<obj::native_array_sequence>(a2, a3, a4, a5, a6, a7, a8));
++                       obj::native_array_sequence::create_packed(a2, a3, a4, a5, a6, a7, a8));
+       case mask_variadic_arity(2):
+         return do_call(arity_3,
+                        this,
+                        a1,
+                        a2,
+-                       make_box<obj::native_array_sequence>(a3, a4, a5, a6, a7, a8));
++                       obj::native_array_sequence::create_packed(a3, a4, a5, a6, a7, a8));
+       case mask_variadic_arity(3):
+         return do_call(arity_4,
+                        this,
+                        a1,
+                        a2,
+                        a3,
+-                       make_box<obj::native_array_sequence>(a4, a5, a6, a7, a8));
++                       obj::native_array_sequence::create_packed(a4, a5, a6, a7, a8));
+       case mask_variadic_arity(4):
+         return do_call(arity_5,
+                        this,
+@@ -344,7 +344,7 @@ namespace jank::runtime::obj
+                        a2,
+                        a3,
+                        a4,
+-                       make_box<obj::native_array_sequence>(a5, a6, a7, a8));
++                       obj::native_array_sequence::create_packed(a5, a6, a7, a8));
+       case mask_variadic_arity(5):
+         return do_call(arity_6,
+                        this,
+@@ -353,7 +353,7 @@ namespace jank::runtime::obj
+                        a3,
+                        a4,
+                        a5,
+-                       make_box<obj::native_array_sequence>(a6, a7, a8));
++                       obj::native_array_sequence::create_packed(a6, a7, a8));
+       case mask_variadic_arity(6):
+         return do_call(arity_7,
+                        this,
+@@ -363,7 +363,7 @@ namespace jank::runtime::obj
+                        a4,
+                        a5,
+                        a6,
+-                       make_box<obj::native_array_sequence>(a7, a8));
++                       obj::native_array_sequence::create_packed(a7, a8));
+       case mask_variadic_arity(7):
+         return do_call(arity_8,
+                        this,
+@@ -374,7 +374,7 @@ namespace jank::runtime::obj
+                        a5,
+                        a6,
+                        a7,
+-                       make_box<obj::native_array_sequence>(a8));
++                       obj::native_array_sequence::create_packed(a8));
+       case mask_variadic_arity(8):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -402,25 +402,25 @@ namespace jank::runtime::obj
+       case mask_variadic_arity(0):
+         return do_call(arity_1,
+                        this,
+-                       make_box<obj::native_array_sequence>(a1, a2, a3, a4, a5, a6, a7, a8, a9));
++                       obj::native_array_sequence::create_packed(a1, a2, a3, a4, a5, a6, a7, a8, a9));
+       case mask_variadic_arity(1):
+         return do_call(arity_2,
+                        this,
+                        a1,
+-                       make_box<obj::native_array_sequence>(a2, a3, a4, a5, a6, a7, a8, a9));
++                       obj::native_array_sequence::create_packed(a2, a3, a4, a5, a6, a7, a8, a9));
+       case mask_variadic_arity(2):
+         return do_call(arity_3,
+                        this,
+                        a1,
+                        a2,
+-                       make_box<obj::native_array_sequence>(a3, a4, a5, a6, a7, a8, a9));
++                       obj::native_array_sequence::create_packed(a3, a4, a5, a6, a7, a8, a9));
+       case mask_variadic_arity(3):
+         return do_call(arity_4,
+                        this,
+                        a1,
+                        a2,
+                        a3,
+-                       make_box<obj::native_array_sequence>(a4, a5, a6, a7, a8, a9));
++                       obj::native_array_sequence::create_packed(a4, a5, a6, a7, a8, a9));
+       case mask_variadic_arity(4):
+         return do_call(arity_5,
+                        this,
+@@ -428,7 +428,7 @@ namespace jank::runtime::obj
+                        a2,
+                        a3,
+                        a4,
+-                       make_box<obj::native_array_sequence>(a5, a6, a7, a8, a9));
++                       obj::native_array_sequence::create_packed(a5, a6, a7, a8, a9));
+       case mask_variadic_arity(5):
+         return do_call(arity_6,
+                        this,
+@@ -437,7 +437,7 @@ namespace jank::runtime::obj
+                        a3,
+                        a4,
+                        a5,
+-                       make_box<obj::native_array_sequence>(a6, a7, a8, a9));
++                       obj::native_array_sequence::create_packed(a6, a7, a8, a9));
+       case mask_variadic_arity(6):
+         return do_call(arity_7,
+                        this,
+@@ -447,7 +447,7 @@ namespace jank::runtime::obj
+                        a4,
+                        a5,
+                        a6,
+-                       make_box<obj::native_array_sequence>(a7, a8, a9));
++                       obj::native_array_sequence::create_packed(a7, a8, a9));
+       case mask_variadic_arity(7):
+         return do_call(arity_8,
+                        this,
+@@ -458,7 +458,7 @@ namespace jank::runtime::obj
+                        a5,
+                        a6,
+                        a7,
+-                       make_box<obj::native_array_sequence>(a8, a9));
++                       obj::native_array_sequence::create_packed(a8, a9));
+       case mask_variadic_arity(8):
+         return do_call(arity_9,
+                        this,
+@@ -470,7 +470,7 @@ namespace jank::runtime::obj
+                        a6,
+                        a7,
+                        a8,
+-                       make_box<obj::native_array_sequence>(a9));
++                       obj::native_array_sequence::create_packed(a9));
+       case mask_variadic_arity(9):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -500,25 +500,25 @@ namespace jank::runtime::obj
+         return do_call(
+           arity_1,
+           this,
+-          make_box<obj::native_array_sequence>(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10));
++          obj::native_array_sequence::create_packed(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10));
+       case mask_variadic_arity(1):
+         return do_call(arity_2,
+                        this,
+                        a1,
+-                       make_box<obj::native_array_sequence>(a2, a3, a4, a5, a6, a7, a8, a9, a10));
++                       obj::native_array_sequence::create_packed(a2, a3, a4, a5, a6, a7, a8, a9, a10));
+       case mask_variadic_arity(2):
+         return do_call(arity_3,
+                        this,
+                        a1,
+                        a2,
+-                       make_box<obj::native_array_sequence>(a3, a4, a5, a6, a7, a8, a9, a10));
++                       obj::native_array_sequence::create_packed(a3, a4, a5, a6, a7, a8, a9, a10));
+       case mask_variadic_arity(3):
+         return do_call(arity_4,
+                        this,
+                        a1,
+                        a2,
+                        a3,
+-                       make_box<obj::native_array_sequence>(a4, a5, a6, a7, a8, a9, a10));
++                       obj::native_array_sequence::create_packed(a4, a5, a6, a7, a8, a9, a10));
+       case mask_variadic_arity(4):
+         return do_call(arity_5,
+                        this,
+@@ -526,7 +526,7 @@ namespace jank::runtime::obj
+                        a2,
+                        a3,
+                        a4,
+-                       make_box<obj::native_array_sequence>(a5, a6, a7, a8, a9, a10));
++                       obj::native_array_sequence::create_packed(a5, a6, a7, a8, a9, a10));
+       case mask_variadic_arity(5):
+         return do_call(arity_6,
+                        this,
+@@ -535,7 +535,7 @@ namespace jank::runtime::obj
+                        a3,
+                        a4,
+                        a5,
+-                       make_box<obj::native_array_sequence>(a6, a7, a8, a9, a10));
++                       obj::native_array_sequence::create_packed(a6, a7, a8, a9, a10));
+       case mask_variadic_arity(6):
+         return do_call(arity_7,
+                        this,
+@@ -545,7 +545,7 @@ namespace jank::runtime::obj
+                        a4,
+                        a5,
+                        a6,
+-                       make_box<obj::native_array_sequence>(a7, a8, a9, a10));
++                       obj::native_array_sequence::create_packed(a7, a8, a9, a10));
+       case mask_variadic_arity(7):
+         return do_call(arity_8,
+                        this,
+@@ -556,7 +556,7 @@ namespace jank::runtime::obj
+                        a5,
+                        a6,
+                        a7,
+-                       make_box<obj::native_array_sequence>(a8, a9, a10));
++                       obj::native_array_sequence::create_packed(a8, a9, a10));
+       case mask_variadic_arity(8):
+         return do_call(arity_9,
+                        this,
+@@ -568,7 +568,7 @@ namespace jank::runtime::obj
+                        a6,
+                        a7,
+                        a8,
+-                       make_box<obj::native_array_sequence>(a9, a10));
++                       obj::native_array_sequence::create_packed(a9, a10));
+       case mask_variadic_arity(9):
+         return do_call(arity_10,
+                        this,
+@@ -581,7 +581,7 @@ namespace jank::runtime::obj
+                        a7,
+                        a8,
+                        a9,
+-                       make_box<obj::native_array_sequence>(a10));
++                       obj::native_array_sequence::create_packed(a10));
+       case mask_variadic_arity(10):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -596,7 +596,7 @@ namespace jank::runtime::obj
+                          a7,
+                          a8,
+                          a9,
+-                         make_box<obj::native_array_sequence>(a10));
++                         obj::native_array_sequence::create_packed(a10));
+         }
+       default:
+         return do_call(arity_10, this, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+@@ -625,14 +625,14 @@ namespace jank::runtime::obj
+         return do_call(
+           arity_1,
+           this,
+-          concat.call(make_box<obj::native_array_sequence>(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10),
++          concat.call(obj::native_array_sequence::create_packed(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10),
+                       more));
+       case mask_variadic_arity(1):
+         return do_call(
+           arity_2,
+           this,
+           a1,
+-          concat.call(make_box<obj::native_array_sequence>(a2, a3, a4, a5, a6, a7, a8, a9, a10),
++          concat.call(obj::native_array_sequence::create_packed(a2, a3, a4, a5, a6, a7, a8, a9, a10),
+                       more));
+       case mask_variadic_arity(2):
+         return do_call(
+@@ -640,7 +640,7 @@ namespace jank::runtime::obj
+           this,
+           a1,
+           a2,
+-          concat.call(make_box<obj::native_array_sequence>(a3, a4, a5, a6, a7, a8, a9, a10), more));
++          concat.call(obj::native_array_sequence::create_packed(a3, a4, a5, a6, a7, a8, a9, a10), more));
+       case mask_variadic_arity(3):
+         return do_call(
+           arity_4,
+@@ -648,7 +648,7 @@ namespace jank::runtime::obj
+           a1,
+           a2,
+           a3,
+-          concat.call(make_box<obj::native_array_sequence>(a4, a5, a6, a7, a8, a9, a10), more));
++          concat.call(obj::native_array_sequence::create_packed(a4, a5, a6, a7, a8, a9, a10), more));
+       case mask_variadic_arity(4):
+         return do_call(
+           arity_5,
+@@ -657,7 +657,7 @@ namespace jank::runtime::obj
+           a2,
+           a3,
+           a4,
+-          concat.call(make_box<obj::native_array_sequence>(a5, a6, a7, a8, a9, a10), more));
++          concat.call(obj::native_array_sequence::create_packed(a5, a6, a7, a8, a9, a10), more));
+       case mask_variadic_arity(5):
+         return do_call(
+           arity_6,
+@@ -667,7 +667,7 @@ namespace jank::runtime::obj
+           a3,
+           a4,
+           a5,
+-          concat.call(make_box<obj::native_array_sequence>(a6, a7, a8, a9, a10), more));
++          concat.call(obj::native_array_sequence::create_packed(a6, a7, a8, a9, a10), more));
+       case mask_variadic_arity(6):
+         return do_call(arity_7,
+                        this,
+@@ -677,7 +677,7 @@ namespace jank::runtime::obj
+                        a4,
+                        a5,
+                        a6,
+-                       concat.call(make_box<obj::native_array_sequence>(a7, a8, a9, a10), more));
++                       concat.call(obj::native_array_sequence::create_packed(a7, a8, a9, a10), more));
+       case mask_variadic_arity(7):
+         return do_call(arity_8,
+                        this,
+@@ -688,7 +688,7 @@ namespace jank::runtime::obj
+                        a5,
+                        a6,
+                        a7,
+-                       concat.call(make_box<obj::native_array_sequence>(a8, a9, a10), more));
++                       concat.call(obj::native_array_sequence::create_packed(a8, a9, a10), more));
+       case mask_variadic_arity(8):
+         return do_call(arity_9,
+                        this,
+@@ -700,7 +700,7 @@ namespace jank::runtime::obj
+                        a6,
+                        a7,
+                        a8,
+-                       concat.call(make_box<obj::native_array_sequence>(a9, a10), more));
++                       concat.call(obj::native_array_sequence::create_packed(a9, a10), more));
+       case mask_variadic_arity(9):
+         return do_call(arity_10,
+                        this,
+@@ -713,7 +713,7 @@ namespace jank::runtime::obj
+                        a7,
+                        a8,
+                        a9,
+-                       concat.call(make_box<obj::native_array_sequence>(a10), more));
++                       concat.call(obj::native_array_sequence::create_packed(a10), more));
+       case mask_variadic_arity(10):
+         if(!is_variadic_ambiguous(arity_flags))
+         {
+@@ -728,7 +728,7 @@ namespace jank::runtime::obj
+                          a7,
+                          a8,
+                          a9,
+-                         concat.call(make_box<obj::native_array_sequence>(a10), more));
++                         concat.call(obj::native_array_sequence::create_packed(a10), more));
+         }
+       default:
+         return do_call(arity_10,
+@@ -742,7 +742,7 @@ namespace jank::runtime::obj
+                        a7,
+                        a8,
+                        a9,
+-                       concat.call(make_box<obj::native_array_sequence>(a10), more));
++                       concat.call(obj::native_array_sequence::create_packed(a10), more));
+     }
+   }
+ }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
+index f734bc081..15d38fe8a 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
+@@ -1,4 +1,5 @@
+ #include <jank/runtime/obj/multi_function.hpp>
++#include <jank/runtime/obj/jit_function.hpp>
+ #include <jank/runtime/obj/persistent_hash_set.hpp>
+ #include <jank/runtime/obj/persistent_vector_sequence.hpp>
+ #include <jank/runtime/obj/persistent_hash_map.hpp>
+@@ -27,23 +28,23 @@ namespace jank::runtime::obj
+ 
+   object_ref multi_function::call() const
+   {
+-    return get_fn(dispatch.call()).call();
++    return call_fast(get_fn(call_fast(dispatch)));
+   }
+ 
+   object_ref multi_function::call(object_ref const a1) const
+   {
+-    return get_fn(dispatch.call(a1)).call(a1);
++    return call_fast(get_fn(call_fast(dispatch, a1)), a1);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1, object_ref const a2) const
+   {
+-    return get_fn(dispatch.call(a1, a2)).call(a1, a2);
++    return call_fast(get_fn(call_fast(dispatch, a1, a2)), a1, a2);
+   }
+ 
+   object_ref
+   multi_function::call(object_ref const a1, object_ref const a2, object_ref const a3) const
+   {
+-    return get_fn(dispatch.call(a1, a2, a3)).call(a1, a2, a3);
++    return call_fast(get_fn(call_fast(dispatch, a1, a2, a3)), a1, a2, a3);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -51,7 +52,7 @@ namespace jank::runtime::obj
+                                   object_ref const a3,
+                                   object_ref const a4) const
+   {
+-    return get_fn(dispatch.call(a1, a2, a3, a4)).call(a1, a2, a3, a4);
++    return call_fast(get_fn(call_fast(dispatch, a1, a2, a3, a4)), a1, a2, a3, a4);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -60,7 +61,7 @@ namespace jank::runtime::obj
+                                   object_ref const a4,
+                                   object_ref const a5) const
+   {
+-    return get_fn(dispatch.call(a1, a2, a3, a4, a5)).call(a1, a2, a3, a4, a5);
++    return call_fast(get_fn(call_fast(dispatch, a1, a2, a3, a4, a5)), a1, a2, a3, a4, a5);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -70,7 +71,7 @@ namespace jank::runtime::obj
+                                   object_ref const a5,
+                                   object_ref const a6) const
+   {
+-    return get_fn(dispatch.call(a1, a2, a3, a4, a5, a6)).call(a1, a2, a3, a4, a5, a6);
++    return call_fast(get_fn(call_fast(dispatch, a1, a2, a3, a4, a5, a6)), a1, a2, a3, a4, a5, a6);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -81,7 +82,7 @@ namespace jank::runtime::obj
+                                   object_ref const a6,
+                                   object_ref const a7) const
+   {
+-    return get_fn(dispatch.call(a1, a2, a3, a4, a5, a6, a7)).call(a1, a2, a3, a4, a5, a6, a7);
++    return call_fast(get_fn(call_fast(dispatch, a1, a2, a3, a4, a5, a6, a7)), a1, a2, a3, a4, a5, a6, a7);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -93,8 +94,7 @@ namespace jank::runtime::obj
+                                   object_ref const a7,
+                                   object_ref const a8) const
+   {
+-    return get_fn(dispatch.call(a1, a2, a3, a4, a5, a6, a7, a8))
+-      .call(a1, a2, a3, a4, a5, a6, a7, a8);
++    return call_fast(get_fn(call_fast(dispatch, a1, a2, a3, a4, a5, a6, a7, a8)), a1, a2, a3, a4, a5, a6, a7, a8);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -107,8 +107,7 @@ namespace jank::runtime::obj
+                                   object_ref const a8,
+                                   object_ref const a9) const
+   {
+-    return get_fn(dispatch.call(a1, a2, a3, a4, a5, a6, a7, a8, a9))
+-      .call(a1, a2, a3, a4, a5, a6, a7, a8, a9);
++    return call_fast(get_fn(call_fast(dispatch, a1, a2, a3, a4, a5, a6, a7, a8, a9)), a1, a2, a3, a4, a5, a6, a7, a8, a9);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -122,8 +121,7 @@ namespace jank::runtime::obj
+                                   object_ref const a9,
+                                   object_ref const a10) const
+   {
+-    return get_fn(dispatch.call(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10))
+-      .call(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
++    return call_fast(get_fn(call_fast(dispatch, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10)), a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+   }
+ 
+   multi_function_ref multi_function::reset()
+diff --git a/compiler+runtime/src/cpp/jank/util/cli.cpp b/compiler+runtime/src/cpp/jank/util/cli.cpp
+index 40f0c8cd9..454b33d4f 100644
+--- a/compiler+runtime/src/cpp/jank/util/cli.cpp
++++ b/compiler+runtime/src/cpp/jank/util/cli.cpp
+@@ -133,7 +133,8 @@ OPTIONS
+           --no-debug          Disable debug source map generation for generated code.
+   -O,     --optimization <0 - 3>
+                               The optimization level to use for AOT compilation.
+-  -Odirect-call               Elides the dereferencing of vars for improved performance. (not yet implemented)
++  -Odirect-call               Calls a fn's fixed arity through its arity pointer, inline (default at -O3;
++                              -Ono-direct-call turns it off).
+           --eager
+                               Eagerly JIT compile functions.
+           --lazy
+@@ -214,6 +215,7 @@ OPTIONS
+     {
+       case 3:
+         opts.hoist_var_derefs = scratch.hoist_var_derefs.unwrap_or(true);
++        opts.direct_call = scratch.direct_call.unwrap_or(true);
+         [[fallthrough]];
+       case 2:
+         [[fallthrough]];
+-- 
+2.43.0
+
