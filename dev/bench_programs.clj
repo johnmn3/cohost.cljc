@@ -82,6 +82,7 @@
    "jolt" "(System/nanoTime)"
    "lpy" "(time/perf_counter_ns)"
    "cljs" "(* (js/performance.now) 1000000.0)"
+   "browser" "(* (js/performance.now) 1000000.0)"
    "cljw" "(System/nanoTime)"
    "phel" "(php/hrtime true)"
    "lg" "(System/nanoTime)"
@@ -257,7 +258,7 @@
 (defn cljs-build
   "Compile body (namespace bench.prog) as a Node program: -t node -O simple,
    the way a cljs user ships one. Cached by body under root. -> main.js path."
-  [root body]
+  [root body & [target]]
   (let [stamp (str root "/stamp")
         js (str root "/main.js")]
     (when-not (and (fs/exists? stamp) (= (slurp stamp) body) (fs/exists? js))
@@ -265,7 +266,7 @@
       (fs/create-dirs (str root "/src/bench"))
       (spit (str root "/src/bench/prog.cljs") body)
       (let [c (run! ["clojure" "-Sdeps" (pr-str {:paths [(str root "/src")]}) "-M:cljs"
-                     "-m" "cljs.main" "-t" "node" "-O" "simple"
+                     "-m" "cljs.main" "-t" (name (or target :node)) "-O" "simple"
                      "-d" (str root "/out") "-o" js "-c" "bench.prog"])]
         (when-not (and (zero? (:exit c)) (fs/exists? js))
           (throw (ex-info "cljs-compile" {:err (str (:err c) "\n" (:out c))}))))
@@ -287,10 +288,53 @@
   (ensure-cljs-node!)
   (run! ["node" "target/cljs-node/main.js" "--eval" (cohost-source src (clock "cljs-cohost") arg)]))
 
-(def browser-why
-  "no runner: cohost.run-browser (src/cohost/run_browser.cljs) runs the battery or ?bench only; the page has no --eval and there is no own-core browser entry")
+(def browser-cohost-why
+  "no runner: cohost.run-browser (src/cohost/run_browser.cljs) runs the battery or ?bench only; the page has no --eval")
 
-(defn run-browser [_ _ _] (throw (ex-info "browser" {:err browser-why})))
+(def chromium-js
+  ;; Load page.html in headless Chromium (Playwright, pre-installed), echo the
+  ;; page's console to stdout, stop at PROGRAM-SINK, a page error, or the timeout.
+  "const {chromium} = require('playwright');
+(async () => {
+  const [page_url, timeout] = [process.argv[2], Number(process.argv[3])];
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  let done;
+  const finished = new Promise(r => done = r);
+  page.on('console', m => { console.log(m.text()); if (m.text().startsWith('PROGRAM-SINK') || m.text() === 'ok') done(0); });
+  page.on('pageerror', e => { console.error('pageerror: ' + e.message); done(1); });
+  const t = setTimeout(() => { console.error('timeout after ' + timeout + ' ms'); done(1); }, timeout);
+  await page.goto(page_url);
+  const code = await finished;
+  clearTimeout(t);
+  await browser.close();
+  process.exit(code);
+})();
+")
+
+(defn chromium-cmd
+  "Build body (-t browser) and its page under root; -> the command that loads
+   the page in headless Chromium. The page sets window.benchArg before main.js."
+  [root body arg]
+  (fs/create-dirs root)
+  (spit (str root "/chromium.js") chromium-js)
+  (let [js (cljs-build root body :browser)]
+    (spit (str root "/page.html")
+          (str "<!doctype html><meta charset=utf-8><script>window.benchArg = " (pr-str (or arg "")) ";</script>"
+               "<script src=\"" (fs/file-name js) "\"></script>"))
+    ["node" (str root "/chromium.js") (str (.toURI (fs/file (fs/absolutize (str root "/page.html")))))
+     (str timeout-ms)]))
+
+(defn run-browser
+  "ClojureScript's own core in headless Chromium: the program compiled
+   -t browser -O simple, console printing on, the size from window.benchArg."
+  [id src arg]
+  (run! (chromium-cmd (str "target/bench-programs/browser-" (name id))
+                      (str "(ns bench.prog)\n(enable-console-print!)\n" (harness src (clock "browser") true)
+                           "(-main (.-benchArg js/window))\n")
+                      arg)))
+
+(defn run-browser-cohost [_ _ _] (throw (ex-info "browser" {:err browser-cohost-why})))
 
 (def runners
   {"jvm" run-jvm "jvm-cohost" run-jvm-cohost
@@ -302,7 +346,7 @@
    "phel" run-phel "phel-cohost" run-phel-cohost
    "lg" run-lg "lg-cohost" run-lg-cohost
    "cljs" run-cljs "cljs-cohost" run-cljs-cohost
-   "browser" run-browser "browser-cohost" run-browser})
+   "browser" run-browser "browser-cohost" run-browser-cohost})
 
 ;; ---- first-output
 
@@ -348,7 +392,9 @@
     "lg-cohost" ["lg" "-source-paths" "src" "dev/lg_main.lg" "--" "--eval" ok-eval]
     "cljs" ["node" (cljs-build "target/bench-programs/cljs-wall" "(ns bench.prog)\n(println \"ok\")\n")]
     "cljs-cohost" (do (ensure-cljs-node!) ["node" "target/cljs-node/main.js" "--eval" ok-eval])
-    (throw (ex-info "browser" {:err browser-why}))))
+    "browser" (chromium-cmd "target/bench-programs/browser-wall"
+                            "(ns bench.prog)\n(enable-console-print!)\n(println \"ok\")\n" nil)
+    (throw (ex-info "browser" {:err browser-cohost-why}))))
 
 (defn wall-run [id file]
   (let [cmd (wall-cmd id file)
@@ -373,6 +419,9 @@
         ;; a C++ compiler diagnostic names the cause cohost's ERR line only summarizes
         diag (some #(when (re-find #":\d+:\d+: error: " %) (str/trim %)) lines)]
     (or (cond (and err diag) (str err " -- " diag) :else (or err diag cli))
+        ;; node: the thrown JS error, not the minified source line it echoes first
+        (some #(when (re-find #"^\s*[A-Za-z]*Error(: |$)" %) (str/trim %)) lines)
+        (some #(when (re-find #"^pageerror: |^timeout after " %) (str/trim %)) lines)
         (some #(when (re-find #"(?i)error|exception|panic|could not|cannot|unable|undeclared|not found|traceback" %)
                  (str/trim %))
               lines)
