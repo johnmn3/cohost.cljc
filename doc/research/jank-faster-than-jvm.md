@@ -387,11 +387,28 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
 ### S2-2. Chunked seqs and reduce fast paths
 
 - **Mechanism.** core.jank's `reduce` says `; TODO: Chunking support.` and hands every
-  collection to `cpp/jank.runtime.reduce` (core.jank line 1126); `map` and `filter` carry the
+  collection to `cpp/jank.runtime.reduce` (core.jank line 1126), which walks
+  `make_sequence_range` and makes a virtual `f.call` per element (`core/seq.cpp:901`); that
+  range advances with the allocating `next()` (`sequence_range.hpp:39`), one new seq object per
+  element, because the `next_in_place` branch is commented out (`sequence_range.hpp:169`;
+  `object.hpp:567`: "Each call to next() allocates a new sequence"). `reduce-kv`, by contrast,
+  loops directly over the immer data (`seq.cpp:926`), and `doseq` already uses
+  `fresh-seq` + `next-in-place` (core.jank line 2742): the fast path exists, `reduce` does not
+  take it. `lazy_sequence` locks a `recursive_mutex` on every `first`/`next`/`seq`
+  (`obj/lazy_sequence.cpp:53`) and has no `next_in_place`; `range` locks one per step
+  (`obj/range.cpp:352`); `integer_range` is not chunkable (`integer_range.hpp:293`, a TODO), so
+  `(map f (range n))` takes the per-element `cons` path; `array_chunk::chunk_next` copies the
+  whole chunk buffer per element consumed (`obj/array_chunk.cpp:41`, "This copying will be
+  slow"); `seq` on a vector allocates a fresh seq and `next()` one per element
+  (`persistent_vector.cpp:158`, `persistent_vector_sequence.cpp:124`). `map` and `filter` carry the
   `chunked-seq?` branch from Clojure (lines 2885, 3864) but `range` and vectors do not hand
   out chunked seqs, and `lazy-seq` is `cpp/jank.runtime.lazy_seq` of a fresh fn per element
   (line 2026; each `fn` form evaluation is a `make_box<jit_closure>`, `codegen/api.cpp:440`), and
-  `integer_range::next()` allocates a new range object per step (`obj/integer_range.cpp:108`). Add 32-element chunks to `range`, vectors and the lazy-seq machinery (the
+  `integer_range::next()` allocates a new range object per step (`obj/integer_range.cpp:108`).
+  First step, cheaper than chunking: finish the `fresh_seq` + `next_in_place` branch of
+  `make_sequence_range` so `reduce`, `str`, `sort`, `vec`, `apply`, `count` and equality walk
+  without allocating; then internal-reduce per collection; then 32-element chunks for `range`,
+  vectors and the lazy-seq machinery (the
   `chunk-buffer`/`chunk-cons` plumbing exists), and give `reduce`/`transduce`/`into` an
   internal-reduce dispatch per collection type (an index loop for vectors, a counter loop for
   ranges, a per-chunk loop for chunked seqs) so the seq objects are never allocated.
@@ -412,20 +429,38 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
 ### S2-3. The pathological leaves: sort, string building, string `nth`, variadic and multimethod calls
 
 - **Mechanism.** Each is a local fix in the runtime or core.jank, not a design:
-  - `sort` is quadratic or worse: 1e3 -> 1e4 is 240x (764014 -> 183016889 ns), 1e4 -> 1e5 is
-    80x; `compare` itself is 14 ns (compare-1e6 13891221 ns). HEAD's `seq.cpp` sorts a
-    `native_vector<object_ref>` with `std::stable_sort` (clone lines 1091-1124), which cannot
-    scale that way, so the installed `0.1-alpha` has an older sort or `make_sequence_range`
-    re-walks the sequence per element; either way: sort into a native vector, once.
-  - `apply str` over 1e4 strings is 19x (8214179 vs 425450 ns): build into one reserved
-    buffer; `string-nth` is 11x (93 ns per `nth` against 8): index bytes directly when the
-    string is ASCII or keep a code-point index.
+  - `sort` looks quadratic: 1e3 -> 1e4 is 240x (764014 -> 183016889 ns), 1e4 -> 1e5 is 80x,
+    while `compare` itself is 14 ns (compare-1e6 13891221 ns). The sort is fine
+    (`std::stable_sort` over a `native_vector<object_ref>`, `core/seq.cpp:1091-1124`); it
+    returns a `native_vector_sequence`, whose `next()` is
+    `make_box<native_vector_sequence>(data, n)` with `data` a `native_vector<object_ref>` held by
+    value (`obj/native_vector_sequence.cpp:98`, header line 58): every step copies the whole
+    vector, so any walk of a sorted result (`nth`, `reduce`, `into`, `seq`) is O(n^2):
+    50000 steps x 1e5 copies for P5's `(nth (sort v) 50000)`. Fix: share the buffer (a
+    `jtl::ref` or the immer vector) between the steps, as `next_in_place` already avoids the
+    copy; P5c (queued) separates `first`/`count`/`nth`/`reduce`/`vec` of a sorted 1e5.
+  - `apply str` over 1e4 strings is 19x (8214179 vs 425450 ns): `apply_to` walks the args
+    twice with the allocating range (`core/call.cpp:18`) and `runtime::str` a third time
+    (`seq.cpp:798`); one `fresh_seq` + `next_in_place` pass into a reserved `string_builder`.
+    `string-nth` is 11x (93 ns per `nth` against 8): `nth` is `to_int`, a `visit_object`
+    switch, then the virtual `nth` that re-checks and re-unboxes the index
+    (`seq.cpp:639-686`, `persistent_string.cpp:145`) and boxes a character object per call;
+    mirror `runtime::get`'s one-virtual-call shape (`seq.hpp:101`) with an `nth(object_ref, i64)`
+    overload. (`nth` and `count` on strings are byte-indexed, `persistent_string.cpp:145`, `:217`:
+    a semantics fact for non-ASCII input, outside this plan.)
   - A keyword's hash is recomputed from its symbol's strings on every use
     (`obj/keyword.cpp:45`, `obj/symbol.cpp:152`, `hash.cpp:129`) although `jtl::immutable_string`
     already caches its hash (`immutable_string.hpp:648`); persistent hash maps are `immer::map`
     keyed by `std::hash<object_ref>` -> `to_hash()` (`runtime/detail/type.hpp:53`), so every
     `get` on a map past the array-map size re-hashes the keyword (P4: get-1000 3.8x,
-    hash-map-grow 3.5x). Array maps compare keyword keys by identity (`native_array_map.hpp:55`).
+    hash-map-grow 3.5x). Array maps compare keyword keys by identity (`native_array_map.hpp:55`)
+    but `assoc` on a full 8-pair array map promotes to a hash map even when the key already
+    exists (`persistent_array_map.cpp:210`, a documented TODO), and every `assoc` on an array
+    map clones the backing array and allocates a new box (`:221`): P4's `assoc-small` is 4.1x
+    and `update-in`/`assoc-in` 5-7x. Vector and map hashes are recomputed on every call
+    (`persistent_vector.cpp:115`, `base_persistent_map.cpp:132`; only `cons` caches,
+    `cons.hpp:128`), and every collection box carries a `folly::Synchronized` lazy-meta word
+    (`lazy_meta.hpp:38`).
   - `truthy` is about six branches and two header loads (`core/truthy.hpp:14-28`): `nil` and
     `false` are single globals (`obj/nil.cpp:117`, `obj/number.cpp:495`), so two word compares
     would do.
