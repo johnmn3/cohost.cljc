@@ -12,7 +12,7 @@ reference state.
 | :syntax-quote-source? | | | | | | | |
 | :cohost-inst? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | :prim-kind-test | | | | | | | |
-| :defn-fn-name? | N/A | ON | (benching) | N/A | N/A | N/A | N/A |
+| :defn-fn-name? | N/A | ON | ON | N/A | N/A | N/A | N/A |
 | :rewrite-inline? | | | | | | | |
 | tag type tests (M-4.1) | | | | | | | |
 | bound RT arms (M-4.2/3) | | | | | | | |
@@ -53,3 +53,11 @@ reference state.
   SLOWER than the var (3,140 ms against 19,830 ms, every pair
   agreeing): let-go's letfn* cell costs more per call than its var
   deref, so the gain does not exist there in any shape.
+
+  Basilisp ON, smaller: the clean interleaved A/B (20 x fib 20,
+  five pairs) totals 227,988 ms through the var against 210,936 ms
+  on the name (x1.08, the name winning four pairs of five) -- its
+  var deref is a smaller share of a Python-level call than of a
+  Chez-compiled one. The bench:programs pair at fib:25 (18,362.9
+  before; 19,788.2 after with a min of 11,674) was contention-tainted
+  past reading and decided nothing; the A/B did.
