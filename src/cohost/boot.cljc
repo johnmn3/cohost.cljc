@@ -1100,7 +1100,11 @@
 (defn- refer-lib! [ns-sym target opts]
   (if (= target core-ns)
     (refer-core! ns-sym opts)
-    (host/refer! ns-sym target (into {} (remove (comp nil? val) opts)))))
+    ;; opts without its nil options, by key: Phel's remove over a map walks
+    ;; its values, not [k v] entries ((into {} (remove (comp nil? val) opts))
+    ;; made {a b} of :refer [a b] there -- no :only, every public name referred)
+    (host/refer! ns-sym target (reduce (fn [m k] (let [v (get opts k)] (if (nil? v) m (assoc m k v))))
+                                       {} (keys opts)))))
 
 (defn- ns! [nm clauses]
   (let [nm (unquote* nm)
