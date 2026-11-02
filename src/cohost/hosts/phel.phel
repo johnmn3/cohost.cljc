@@ -793,6 +793,12 @@
 
 (def adapter
   {:name :phel
+   ;; X3-1: the shim's MultiFn with its one-entry cache (adapter.cljc); bb
+   ;; bench:phel --quick, 9 interleaved rounds on max/main aeac81b: multimethod
+   ;; stock 813.96 [517.76-968.47] -> 391.87 [267.88-522.38] ms (true below nil
+   ;; in 9 of 9 rounds), geomean x4.37 -> x4.36, no case's true median above its
+   ;; nil max; battery 149/149 and libraries 61/61 both ways
+   :multimethod-cache? true
    :core-ns 'phel.core
    :catch-all 'Throwable
    :read-forms read-forms
