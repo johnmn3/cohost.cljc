@@ -653,7 +653,7 @@
   "Intern a native as ns-sym/nm in place of the stock def form, marked
    :cohost/native, with the stock definition's documentation (else the host
    var's, for a :host native)."
-  [ns-sym nm [v hv] form]
+  [ns-sym nm [v hv] form lib]
   ;; the name without the form's reader metadata (unevaluated: an :arglists
   ;; of (quote ...) the JVM compiler would read as the arglists)
   (let [h (host/intern! ns-sym (symbol (name nm)) v)
@@ -661,7 +661,8 @@
                         (def-form-meta form)
                         {:cohost/native true :cohost/wrapped true})]
     (host/alter-var-meta! h merge meta-map)
-    (snap! {:op :native :ns ns-sym :sym nm :meta (select-keys meta-map [:doc :arglists :cohost/native :cohost/wrapped])})
+    (snap! {:op :native :ns ns-sym :sym nm :lib lib
+            :meta (select-keys meta-map [:doc :arglists :cohost/native :cohost/wrapped])})
     h))
 
 (def ^:private policy-lists
@@ -680,7 +681,7 @@
         def-form (if (= :replace action) replacement form)
         native (when (contains? #{:eval :replace} action) (native-of "clojure.core" def-form))
         evaluated (case (if native :native action)
-                    :native (do (intern-native! core-ns nm native def-form) (record! report :native {:name nm}) nil)
+                    :native (do (intern-native! core-ns nm native def-form "clojure.core") (record! report :native {:name nm}) nil)
                     :skip (do (record! report :skipped {:name nm :reason reason}) nil)
                     :host (when-not (take-from-host! report nm)
                             (if (contains? policy/host-only-names nm)
@@ -1181,7 +1182,7 @@
                    (fn []
                      (case (if (and (= :eval action) (native-of (str lib) form)) :native action)
                        :skip (note! :skipped {:name nm})
-                       :native (do (intern-native! cur nm (native-of (str lib) form) form) (note! :native {:name nm}))
+                       :native (do (intern-native! cur nm (native-of (str lib) form) form (str lib)) (note! :native {:name nm}))
                        (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form) true)]
                          (when (not= ns' cur) (host/set-current-ns! ns'))
                          (note! :ok {:name nm}))))
@@ -1344,6 +1345,17 @@
 (defn snap-dot! "The shim's dispatcher for a method it lacks." [m]
   (shim/install-missing-dot! m)
   nil)
+
+(defn snap-native!
+  "A native the boot interned in place of a stock def form: the adapter's
+   :natives entry for lib/nm (the host core's own var root for :host, else
+   the adapter's fn), as intern-native! found it, with the recorded meta."
+  [ns-sym nm lib m]
+  (let [impl (get (host/natives) (symbol lib (name nm)))
+        v (if (= :host impl) (host/var-root (host/resolve-core nm)) impl)
+        h (host/intern! ns-sym (symbol (name nm)) v)]
+    (host/alter-var-meta! h merge m)
+    nil))
 
 (defn snap-inline! "The :inline fn the codemod applies for nm: [f arities]." [nm v]
   (swap! state assoc-in [:inlines nm] v)
