@@ -9,7 +9,7 @@ reference state.
 
 | gain | jvm | jolt | lpy | cljs | cljw | phel | lg |
 |---|---|---|---|---|---|---|---|
-| :syntax-quote-source? | | | | | | | |
+| :syntax-quote-source? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | :cohost-inst? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | :prim-kind-test | | | | | | | |
 | :defn-fn-name? | N/A | ON | ON | N/A | N/A | N/A | N/A |
@@ -61,3 +61,16 @@ reference state.
   Chez-compiled one. The bench:programs pair at fib:25 (18,362.9
   before; 19,788.2 after with a min of 11,674) was contention-tainted
   past reading and decided nothing; the A/B did.
+
+- **:syntax-quote-source?** -- N/A on all six. The capability exists
+  for one reader only: jank's, which wraps a syntax-quoted form in a
+  `(with-meta X {:jank/source ...})` map the codemod must strip or
+  the boot breaks (that breakage is what M-4 item 4 fixed). Probed
+  raw, the other readers answer a plain list for `(type \`(a b))`:
+  jolt a PersistentList, basilisp a Cons, let-go a PersistentList,
+  ClojureWasm a Cons. For the JVM, cljs and phel the evidence is the
+  boot itself: each compiles the full stock core -- syntax-quote in
+  nearly every macro -- with the capability unset and stands green;
+  a source-map wrapper would break that boot the way it broke
+  jank's. The JVM's syntax-quote attaches :line/:column metadata,
+  which the codemod already carries; it is not a wrapper.
