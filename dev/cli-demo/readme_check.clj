@@ -51,7 +51,7 @@
       (when cmd
         (if-let [[_ to] (re-matches #"cd\s+(\S+)" cmd)]
           (recur more (str (fs/path cwd to)))
-          (let [cmd' (if (re-find #"^cohost -Tnew create " cmd) (str cmd " :target " target) cmd)
+          (let [cmd' (if (re-find #"-Tnew create " cmd) (str cmd " :target " target) cmd)
                 proc (p/process ["bash" "-c" cmd'] {:dir cwd :extra-env env :out :string :err :string :in ""})
                 ;; a command that hangs is a FAIL, not a stalled check
                 r (let [x (deref proc 600000 ::timeout)]

@@ -21,16 +21,20 @@ clojure -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
 
 ## A new project
 
-Projects come from [deps-new](https://github.com/seancorfield/deps-new); cohost ships
-the template `cohost/app`:
+Projects come from [deps-new](https://github.com/seancorfield/deps-new), with cohost's
+template `cohost/app`, published from this repository. Plain `clj` makes one; no cohost
+checkout is needed for this step:
 
 ```bash
-cohost -Tnew create :template cohost/app :name acme/myapp
+clojure -Sdeps '{:deps {io.github.johnmn3/cohost.cljc {:git/sha "0888447d5d525a04c016611d77bce2f6674ec045" :deps/root "templates/cohost-app"}}}' -Tnew create :template cohost/app :name acme/myapp
 cd myapp
 ```
 
 That gives `deps.edn`, `src/acme/myapp.cljc`, `test/acme/myapp_test.cljc` and
-`build.clj`.
+`build.clj`; `:target jank` (or any runtime below) at the end of the command writes that
+runtime into `deps.edn`. From a cohost checkout, `cohost -Tnew create :template cohost/app
+:name acme/myapp` is the same template at the checkout's commit. The project's `:build`
+alias names cohost by that commit too, so `-T:build` works with or without a checkout.
 
 ## Run it
 
