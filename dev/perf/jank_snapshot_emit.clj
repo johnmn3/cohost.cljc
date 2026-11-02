@@ -80,7 +80,8 @@
     :lib-end (str "(cohost.boot/snap-lib-end! " (quoted (:lib e)) " " (quoted (:entry e)) " "
                   (quoted (:data e)) " " (quoted (:parent (lib-begins (:lib e)))) ")")
     :declare (str "(def " (:sym e) ")")
-    :native (throw (ex-info "a native in the snapshot: not emitted on jank" e))
+    :native (str "(cohost.boot/snap-native! " (quoted (:ns e)) " " (quoted (:sym e)) " "
+                 (pr-src (:lib e)) " " (quoted (:meta e)) ")")
     (:is :dot :begin :lib-begin :lib-fail) nil))
 
 (defn collapse-scans
