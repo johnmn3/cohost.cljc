@@ -1,0 +1,6 @@
+;; jank-13: = is not inlined (core.jank: ":inline" commented out), == and < are.
+(def n 10000000)
+(timed "loop-with-= 1e7" (fn [] (loop [i 0] (if (= i n) i (recur (inc i))))))
+(timed "loop-with-== 1e7" (fn [] (loop [i 0] (if (== i n) i (recur (inc i))))))
+(timed "loop-with-< 1e7" (fn [] (loop [i 0] (if (< i n) (recur (inc i)) i))))
+(timed "loop-with-identical? 1e7" (fn [] (loop [i 0] (if (identical? i n) i (recur (inc i))))))

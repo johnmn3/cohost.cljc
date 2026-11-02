@@ -1,0 +1,7 @@
+;; jank-15: reduce walks a vector with an allocating next() per element; reduce-kv loops it.
+(def v (vec (range 1000000)))
+(timed "reduce + over 1e6 vector" (fn [] (reduce + v)))
+(timed "reduce-kv over the same vector" (fn [] (reduce-kv (fn [a _ x] (+ a x)) 0 v)))
+(timed "loop nth over the same vector" (fn [] (let [n (count v)] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (nth v i))) s)))))
+(timed "reduce + over (range 1e6)" (fn [] (reduce + (range 1000000))))
+(timed "loop over (range 1e6) with next-in-place" (fn [] (loop [s (fresh-seq (range 1000000)) acc 0] (if s (recur (next-in-place s) (+ acc (first s))) acc))))

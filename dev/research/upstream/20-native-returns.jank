@@ -1,0 +1,16 @@
+;; jank-20: a ^long parameter unboxes on entry, but the return is always boxed, so a hinted
+;; leaf fn is slower than the unhinted one; a return hint is ignored.
+(defn add-plain [a b] (+ a b))
+(defn add-hinted [^long a ^long b] (+ a b))
+(defn ^long add-ret-hinted [^long a ^long b] (+ a b))
+(defn fib-plain [n] (if (< n 2) n (+ (fib-plain (dec n)) (fib-plain (- n 2)))))
+(defn fib-hinted [^long n] (if (< n 2) n (+ (fib-hinted (dec n)) (fib-hinted (- n 2)))))
+(cpp/raw "namespace r20 { inline long fib(long n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); } }")
+(defn fib-cpp [^long n] (cpp/r20.fib n))
+(def n 2000000)
+(timed "2e6 calls add-plain" (fn [] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (add-plain acc 3)) acc))))
+(timed "2e6 calls add-hinted (^long params)" (fn [] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (add-hinted acc 3)) acc))))
+(timed "2e6 calls add-ret-hinted (^long params and return)" (fn [] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (add-ret-hinted acc 3)) acc))))
+(timed "fib 30 plain" #(fib-plain 30))
+(timed "fib 30 ^long param" #(fib-hinted 30))
+(timed "fib 30 in C++ through cpp/raw" #(fib-cpp 30))

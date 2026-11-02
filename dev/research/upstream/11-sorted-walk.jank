@@ -1,0 +1,7 @@
+;; jank-11: walking the result of sort is quadratic.
+(defn nums [n] (vec (map (fn [i] (mod (* i 7919) n)) (range n))))
+(doseq [n [1000 10000 100000]]
+  (let [v (nums n) h (quot n 2)]
+    (timed (str "sort-first n=" n) #(first (sort v)))
+    (timed (str "sort-nth-half n=" n) #(nth (sort v) h))
+    (timed (str "sort-reduce n=" n) #(reduce + (sort v)))))

@@ -1,0 +1,10 @@
+;; jank-16: first/next on a realized lazy seq lock a recursive_mutex on every call.
+(def lz (doall (map inc [1 2 3 4])))
+(def ls (list 2 3 4 5))
+(def cs (cons 2 (list 3 4 5)))
+(println "types" (type lz) (type ls) (type cs))
+(timed "first on a realized lazy seq 1e7" (fn [] (loop [i 0 s 0] (if (< i 10000000) (recur (inc i) (+ s (first lz))) s))))
+(timed "first on a list 1e7" (fn [] (loop [i 0 s 0] (if (< i 10000000) (recur (inc i) (+ s (first ls))) s))))
+(timed "first on a cons 1e7" (fn [] (loop [i 0 s 0] (if (< i 10000000) (recur (inc i) (+ s (first cs))) s))))
+(timed "next on a realized lazy seq 1e7" (fn [] (loop [i 0 s 0] (if (< i 10000000) (recur (inc i) (+ s (count (next lz)))) s))))
+(timed "next on a list 1e7" (fn [] (loop [i 0 s 0] (if (< i 10000000) (recur (inc i) (+ s (count (next ls)))) s))))

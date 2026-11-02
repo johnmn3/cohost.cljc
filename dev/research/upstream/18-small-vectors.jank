@@ -1,0 +1,12 @@
+;; jank-18: a two-element vector literal costs three GC allocations and a 32-slot leaf.
+(cpp/raw "#include <gc.h>
+namespace r18 { inline void* alloc16() { return GC_MALLOC(16); } inline void* alloc272() { return GC_MALLOC(272); } }")
+(def n 2000000)
+(timed "[i i] 2e6" (fn [] (loop [i 0 last nil] (if (< i n) (recur (inc i) [i i]) (count last)))))
+(timed "(cons i nil) 2e6" (fn [] (loop [i 0 last nil] (if (< i n) (recur (inc i) (cons i nil)) (count last)))))
+(timed "{:a i} 2e6" (fn [] (loop [i 0 last nil] (if (< i n) (recur (inc i) {:a i}) (count last)))))
+(timed "GC_MALLOC(16) 2e6" (fn [] (loop [i 0] (if (< i n) (do (cpp/r18.alloc16) (recur (inc i))) i))))
+(timed "GC_MALLOC(272) 2e6" (fn [] (loop [i 0] (if (< i n) (do (cpp/r18.alloc272) (recur (inc i))) i))))
+(defn build [d] (if (zero? d) nil (let [d (dec d)] [(build d) (build d)])))
+(defn check [t] (if (nil? t) 1 (+ 1 (check (t 0)) (check (t 1)))))
+(timed "binary-trees: 16 x (check (build 14))" (fn [] (loop [i 0 s 0] (if (< i 16) (recur (inc i) (+ s (check (build 14)))) s))))

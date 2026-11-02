@@ -1,0 +1,44 @@
+;; P7 (plan item 6): the ceiling of native numeric entries. tak and nbody's inner kernel
+;; written in jank (boxed), with ^long/^double parameters (unboxed on entry, boxed on return),
+;; and in C++ through cpp/raw (what a native entry per typed arity could emit).
+(cpp/raw "#include <cmath>
+namespace r7 {
+  inline long tak(long x, long y, long z) { return y < x ? tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y)) : z; }
+  inline double kernel(long n) {
+    double e = 0.0, bx = 1.0, by = 2.0, bz = 3.0, cx = 4.0, cy = 5.5, cz = 6.25, m = 0.5, dt = 0.01;
+    for(long i = 0; i < n; ++i) {
+      double dx = bx - cx, dy = by - cy, dz = bz - cz;
+      double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+      double mag = dt / (dist * dist * dist);
+      bx -= dx * m * mag; cx += dx * m * mag; e += mag;
+    }
+    return e;
+  }
+}")
+(defn tak [x y z] (if (not (< y x)) z (tak (tak (dec x) y z) (tak (dec y) z x) (tak (dec z) x y))))
+(defn tak-hinted [^long x ^long y ^long z] (if (not (< y x)) z (tak-hinted (tak-hinted (dec x) y z) (tak-hinted (dec y) z x) (tak-hinted (dec z) x y))))
+(defn tak-cpp [^long x ^long y ^long z] (cpp/r7.tak x y z))
+(defn kernel [n]
+  (loop [i 0 e 0.0 bx 1.0 cx 4.0]
+    (if (< i n)
+      (let [dx (- bx cx) dy (- 2.0 5.5) dz (- 3.0 6.25)
+            dist (cpp/std.sqrt (+ (* dx dx) (* dy dy) (* dz dz)))
+            mag (/ 0.01 (* dist dist dist))]
+        (recur (inc i) (+ e mag) (- bx (* dx 0.5 mag)) (+ cx (* dx 0.5 mag))))
+      e)))
+(defn kernel-hinted [^long n]
+  (loop [i 0 e 0.0 bx 1.0 cx 4.0]
+    (if (< i n)
+      (let [dx (- bx cx) dy (- 2.0 5.5) dz (- 3.0 6.25)
+            dist (cpp/std.sqrt (+ (* dx dx) (* dy dy) (* dz dz)))
+            mag (/ 0.01 (* dist dist dist))]
+        (recur (inc i) (+ e mag) (- bx (* dx 0.5 mag)) (+ cx (* dx 0.5 mag))))
+      e)))
+(defn kernel-cpp [^long n] (cpp/r7.kernel n))
+(defn run []
+  (bench "tak-18-12-6 x50 plain" #(loop [i 0 s 0] (if (< i 50) (recur (inc i) (+ s (tak 18 12 6))) s)))
+  (bench "tak-18-12-6 x50 ^long params" #(loop [i 0 s 0] (if (< i 50) (recur (inc i) (+ s (tak-hinted 18 12 6))) s)))
+  (bench "tak-18-12-6 x50 C++" #(loop [i 0 s 0] (if (< i 50) (recur (inc i) (+ s (tak-cpp 18 12 6))) s)))
+  (bench "nbody-kernel 1e6 plain" #(kernel 1000000))
+  (bench "nbody-kernel 1e6 ^long n" #(kernel-hinted 1000000))
+  (bench "nbody-kernel 1e6 C++" #(kernel-cpp 1000000)))
