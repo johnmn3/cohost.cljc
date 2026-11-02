@@ -1,6 +1,6 @@
 # A `^long` parameter unboxes on entry but the return always boxes, so a hinted leaf fn is slower than the unhinted one; return hints are ignored
 
-Status: @@STATUS:20-native-returns@@
+Status: REPRODUCED
 
 Host: jank 0.1-noble (`jank compiler jank-0.1-alpha`, binary `x86_64-unknown-linux-gnu-cf627abb…`), Ubuntu noble, 4 CPUs. Source citations are to jank-lang/jank at `f3d82d65` (2026-11-01); the installed runtime headers and `core.jank` are byte-identical to that commit (`diff -q`), the compiler's `.cpp` files are not shipped.
 
@@ -9,7 +9,14 @@ Host: jank 0.1-noble (`jank compiler jank-0.1-alpha`, binary `x86_64-unknown-lin
 Repro: `dev/research/upstream/20-native-returns.jank` in johnmn3/cohost.cljc (branch `r/research-jank`), run as `bash dev/research/upstream/run.sh 20-native-returns` (prepends a 3-run median timer, then `jank -O3 run`).
 
 ```
-@@OUTPUT:20-native-returns@@
+== jank -O3 run target/research/upstream/20-native-returns.jank
+2e6 calls add-plain ns 29717365 runs 30184824 29388588 29717365
+2e6 calls add-hinted (^long params) ns 47635489 runs 52763627 47635489 47047078
+2e6 calls add-ret-hinted (^long params and return) ns 50576272 runs 50576272 50888253 50012400
+fib 30 plain ns 12343281 runs 12206591 12343281 12464519
+fib 30 ^long param ns 13951691 runs 13924724 14385390 13951691
+fib 30 in C++ through cpp/raw ns 3414837 runs 3427923 3266108 3414837
+EXIT 0
 ```
 
 ## Expected
@@ -18,7 +25,7 @@ A hinted leaf is no slower than the unhinted one, and `fib` with `^long` approac
 
 ## Actual
 
-@@ACTUAL:20-native-returns@@
+2e6 calls of `(+ a b)`: plain 29717365 ns, `^long` parameters 47635489 (1.6x slower), `^long` parameters and return 50576272 (the return hint changes nothing); fib 30: plain 12343281, `^long` 13951691, the C++ recursion 3414837 (3.6x below plain).
 
 ## Where it is in the source
 

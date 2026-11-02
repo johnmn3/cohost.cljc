@@ -358,8 +358,11 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
   the yardstick's depth-8 run hid it (jank-aot 1.75x the JVM, doc/PERF.md). Every program
   that allocates a collection per step: pipeline (a map per `assoc`), json (`conj` per
   character), nbody (a vector per body per step). 408 collections in one P3 run.
-- **Expected effect.** Measured: the environment alone gives bt-14 174828601 -> 122085049 ns
-  (1.43x; bdwgc's own doc on the divisor: "Decreasing it will appreciably decrease total
+- **Expected effect.** The environment knobs are not a reliable gain: one matrix gave bt-14
+  174828601 -> 122085049 ns with `GC_INITIAL_HEAP_SIZE=1G GC_FREE_SPACE_DIVISOR=1`, the repro
+  for jank-19 on the same box gave 119571252 -> 163009842 (slower), and incremental mode is
+  3-6x slower in both; what is certain is the allocation count (110-408 collections per run)
+  and the per-object cost. (The earlier reading, 1.43x; bdwgc's own doc on the divisor: "Decreasing it will appreciably decrease total
   collection time at the expense of space", `gc.h:385`; `THREAD_LOCAL_ALLOC` and `PARALLEL_MARK`
   are compiled into the shipped runtime archive per `nm`) with `GC_INITIAL_HEAP_SIZE=1G GC_FREE_SPACE_DIVISOR=1`, and `GC_ENABLE_INCREMENTAL`
   costs 4-6x (do not). The vector representation's share is unknown until P3b (`[i i]` against
@@ -752,8 +755,16 @@ the six. 7 to 9 are below the line for the reasons in §7.
   55472886 vs 5307562 (10.5x), first-next-range 4.4x, transduce 6.1x, into 3.8x; the sources:
   `sequence_range.hpp:169` (in-place branch commented out), `seq.cpp:901` (reduce), `:926`
   (`reduce-kv`'s direct loop), `lazy_sequence.cpp:53` (mutex per step),
-  `integer_range.hpp:293` (not chunkable). P10 (next): a `cpp/raw` index loop and a
-  hand-chunked `map` against `reduce`/`map` in raw jank, to size the reachable share.
+  `integer_range.hpp:293` (not chunkable). P10 (`run-jank.sh p10_reduce_paths.jank`, 1e6;
+  JIT / AOT medians, ns) sizes the reachable share: `reduce + v` 50341687 / 77188000,
+  `reduce-kv` 34007444 / 29509564, a `loop` with `nth` 33029388 / 27050604, a `cpp/raw` loop over
+  the vector's immer data 3645605 / 4271376 (12-18x below `reduce`; the JVM's `reduce` over the
+  same vector is 5307562); `count (map inc (range n))` 432244831 / 987378737, `mapv` 73319145 /
+  57183655, `transduce` 82034538 / 78835062, a hand-chunked 32-at-a-time loop 6309029 / 4338084
+  (the lazy pipeline is 70-230x the chunked loop; the JVM's lazy `count` of the same shape was
+  25912086 in P5). The upstream drafts jank-15 (`reduce`'s walk: 2.5-6x an in-place loop),
+  jank-16 (a mutex per `first` on a lazy seq: 5x a list) and jank-17 (ranges and vector seqs
+  not chunked: the lazy pipeline 185x the loop) carry the minimal repros.
 - **Implementation sketch.** Upstream: (1) finish `fresh_sequence_range` and use it in
   `reduce`, `str`, `sort`, `vec`, `apply_to`, `sequence_length`, equality; (2) a
   `visit_object` dispatch at the top of `runtime::reduce` with direct loops for vectors,

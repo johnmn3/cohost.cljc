@@ -4,6 +4,7 @@
 (cpp/raw "#include <cmath>
 namespace r7 {
   inline long tak(long x, long y, long z) { return y < x ? tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y)) : z; }
+  inline double sqrt_(double x) { return std::sqrt(x); }
   inline double kernel(long n) {
     double e = 0.0, bx = 1.0, by = 2.0, bz = 3.0, cx = 4.0, cy = 5.5, cz = 6.25, m = 0.5, dt = 0.01;
     for(long i = 0; i < n; ++i) {
@@ -22,7 +23,7 @@ namespace r7 {
   (loop [i 0 e 0.0 bx 1.0 cx 4.0]
     (if (< i n)
       (let [dx (- bx cx) dy (- 2.0 5.5) dz (- 3.0 6.25)
-            dist (cpp/std.sqrt (+ (* dx dx) (* dy dy) (* dz dz)))
+            dist (cpp/r7.sqrt_ (+ (* dx dx) (* dy dy) (* dz dz)))
             mag (/ 0.01 (* dist dist dist))]
         (recur (inc i) (+ e mag) (- bx (* dx 0.5 mag)) (+ cx (* dx 0.5 mag))))
       e)))
@@ -30,7 +31,7 @@ namespace r7 {
   (loop [i 0 e 0.0 bx 1.0 cx 4.0]
     (if (< i n)
       (let [dx (- bx cx) dy (- 2.0 5.5) dz (- 3.0 6.25)
-            dist (cpp/std.sqrt (+ (* dx dx) (* dy dy) (* dz dz)))
+            dist (cpp/r7.sqrt_ (+ (* dx dx) (* dy dy) (* dz dz)))
             mag (/ 0.01 (* dist dist dist))]
         (recur (inc i) (+ e mag) (- bx (* dx 0.5 mag)) (+ cx (* dx 0.5 mag))))
       e)))

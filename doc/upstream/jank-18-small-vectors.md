@@ -1,6 +1,6 @@
 # A two-element vector literal is three GC allocations and a 32-slot leaf
 
-Status: @@STATUS:18-small-vectors@@
+Status: REPRODUCED
 
 Host: jank 0.1-noble (`jank compiler jank-0.1-alpha`, binary `x86_64-unknown-linux-gnu-cf627abb…`), Ubuntu noble, 4 CPUs. Source citations are to jank-lang/jank at `f3d82d65` (2026-11-01); the installed runtime headers and `core.jank` are byte-identical to that commit (`diff -q`), the compiler's `.cpp` files are not shipped.
 
@@ -9,7 +9,14 @@ Host: jank 0.1-noble (`jank compiler jank-0.1-alpha`, binary `x86_64-unknown-lin
 Repro: `dev/research/upstream/18-small-vectors.jank` in johnmn3/cohost.cljc (branch `r/research-jank`), run as `bash dev/research/upstream/run.sh 18-small-vectors` (prepends a 3-run median timer, then `jank -O3 run`).
 
 ```
-@@OUTPUT:18-small-vectors@@
+== jank -O3 run target/research/upstream/18-small-vectors.jank
+[i i] 2e6 ns 489090242 runs 573128075 462364409 489090242
+(cons i nil) 2e6 ns 169420218 runs 199569621 169420218 162350347
+{:a i} 2e6 ns 207313710 runs 194326263 207313710 227701010
+GC_MALLOC(16) 2e6 ns 47075345 runs 47075345 46439868 49052849
+GC_MALLOC(272) 2e6 ns 336898478 runs 318456159 336898478 348350746
+binary-trees: 16 x (check (build 14)) ns 113507840 runs 133924469 113507840 112102539
+EXIT 0
 ```
 
 ## Expected
@@ -18,7 +25,7 @@ A two-element vector costs about one small allocation. The JVM allocates and ini
 
 ## Actual
 
-@@ACTUAL:18-small-vectors@@
+2e6 `[i i]` take 489090242 ns (245 ns each), 2e6 `(cons i nil)` 169420218 (85 ns), 2e6 `{:a i}` 207313710 (104 ns), 2e6 `GC_MALLOC(16)` 47075345 (24 ns), 2e6 `GC_MALLOC(272)` (one 32-slot leaf) 336898478 (168 ns); binary-trees at depth 14 (16 trees) 113507840 ns against the JVM's 8.7 ms for the same program.
 
 ## Where it is in the source
 

@@ -1,6 +1,6 @@
 # A keyword's hash is recomputed from its name on every hash-map lookup
 
-Status: @@STATUS:14-keyword-hash@@
+Status: REPRODUCED
 
 Host: jank 0.1-noble (`jank compiler jank-0.1-alpha`, binary `x86_64-unknown-linux-gnu-cf627abb…`), Ubuntu noble, 4 CPUs. Source citations are to jank-lang/jank at `f3d82d65` (2026-11-01); the installed runtime headers and `core.jank` are byte-identical to that commit (`diff -q`), the compiler's `.cpp` files are not shipped.
 
@@ -9,7 +9,13 @@ Host: jank 0.1-noble (`jank compiler jank-0.1-alpha`, binary `x86_64-unknown-lin
 Repro: `dev/research/upstream/14-keyword-hash.jank` in johnmn3/cohost.cljc (branch `r/research-jank`), run as `bash dev/research/upstream/run.sh 14-keyword-hash` (prepends a 3-run median timer, then `jank -O3 run`).
 
 ```
-@@OUTPUT:14-keyword-hash@@
+== jank -O3 run target/research/upstream/14-keyword-hash.jank
+map types persistent_hash_map persistent_hash_map counts 16 16
+get short-keyword 16-key map 1e6 ns 34656094 runs 35622041 34376510 34656094
+get long-keyword 16-key map 1e6 ns 82059310 runs 81968938 82059310 83155237
+hash short-keyword 1e6 ns 46198028 runs 45948884 46198028 46365085
+hash long-keyword 1e6 ns 72246157 runs 71789171 81174595 72246157
+EXIT 0
 ```
 
 ## Expected
@@ -18,7 +24,7 @@ Repro: `dev/research/upstream/14-keyword-hash.jank` in johnmn3/cohost.cljc (bran
 
 ## Actual
 
-@@ACTUAL:14-keyword-hash@@
+Both maps are `persistent_hash_map` with 16 keys. `get` with the 3-character keyword is 34656094 ns per 1e6, with the 62-character keyword 82059310 (2.4x); `hash` alone is 46198028 against 72246157: the lookup cost grows with the keyword's name length.
 
 ## Where it is in the source
 
