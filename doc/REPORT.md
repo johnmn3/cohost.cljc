@@ -645,6 +645,14 @@ arose (measured 2026-10-31 ET):
   closure-free shape, which is raw jank's own answer for its `defn`,
   and the price of the direct-call shape (M-9).
 
+- Redefining a fn during its own recursion, on Phel: the battery row
+  itself fails there. Probed raw (no cohost), Phel's own `defn`
+  answers `:original` for the row's program: its compiler binds a
+  fn's self-reference to the fn it already holds, not to the var, so
+  the `alter-var-root` mid-recursion is not seen by the in-flight
+  call -- whatever the fn's body holds. Raw Phel's answer, so a host
+  fact, as on jank (M-11).
+
 - `(= 1 1.0)` is `true` on ClojureScript (one number type) and on basilisp
   (Python `1 == 1.0`).
 - `Matcher.start(g)` / `end(g)` on ClojureWasm: its `java.util.regex.Matcher` has
