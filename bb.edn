@@ -13,12 +13,19 @@
           ;; jank binary changed (dev/perf/jank_aot_ensure.clj).
           (defn jank-aot-dir []
             (load-file "dev/perf/jank_aot_ensure.clj"))
+          ;; The jank binary every jank task runs: JANK_BIN, default jank on
+          ;; PATH (a source build: dev/install/jank-src.sh, upstream/jank/README.md)
+          (def jank-bin (let [b (System/getenv "JANK_BIN")]
+                          (if (clojure.string/blank? b) "jank" b)))
           ;; The AOT snapshot's module path when the snapshot is fresh, else
           ;; nil; never builds it (bb boot:jank-snapshot does). Its key:
-          ;; dev/perf/jank_snapshot_key.clj.
+          ;; dev/perf/jank_snapshot_key.clj. Only for the default jank: the key
+          ;; reads `jank print-binary-version`, which a source build's patches do
+          ;; not move, so a JANK_BIN binary boots from its own AOT modules.
           (defn jank-snapshot-path []
-            (load-file "dev/perf/jank_snapshot_key.clj")
-            ((resolve 'fresh-path))))
+            (when (= "jank" jank-bin)
+              (load-file "dev/perf/jank_snapshot_key.clj")
+              ((resolve 'fresh-path)))))
   boot:jolt {:doc "jolt (Chez Scheme): the `jolt` binary on PATH"
              :task (shell "jolt" "-Scp" "src" "-m" "cohost.run")}
   boot:lpy  {:doc "basilisp (Python): the uv/pip-installed `basilisp` on PATH"
@@ -98,21 +105,21 @@
               :task (shell {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}} "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns" "src/cohost/run.cljc")}
   ;; Source only. boot:jank loads the compiled modules.
   boot:jank-jit {:doc "jank from source only (no AOT objects)"
-                 :task (shell "jank" "--module-path" "src" "run-main" "cohost.run")}
+                 :task (shell jank-bin "--module-path" "src" "run-main" "cohost.run")}
   ;; jank-FAST Step 6 stage 2: from the AOT snapshot when it is fresh (it is
   ;; never loaded stale); else cohost's AOT modules booting core.clj.
   boot:jank {:doc "jank (C++/LLVM): the AOT snapshot when fresh (bb boot:jank-snapshot builds it), else cohost's AOT modules, recompiled when src/cohost or the jank binary is stale. Source path: boot:jank-jit."
              :task (if-let [p (jank-snapshot-path)]
                      (shell "jank" "--module-path" p "run" "dev/perf/jank_snapshot_run.jank")
-                     (shell "jank" "--module-path" (str (jank-aot-dir) ":src") "run-main" "cohost.run"))}
+                     (shell jank-bin "--module-path" (str (jank-aot-dir) ":src") "run-main" "cohost.run"))}
   ;; jank-FAST Step 2. Phase timers inside boot! ({:profile? true} only) plus
   ;; the twelve libraries. One run. Median of three: dev/perf/jank_boot_profile.sh
   boot:jank-profile {:doc "jank boot with phase timers (doc/perf/jank.md, Boot profile). One run."
-                     :task (shell "jank" "--module-path" "src" "run" "dev/perf/jank_boot_profile.jank")}
+                     :task (shell jank-bin "--module-path" "src" "run" "dev/perf/jank_boot_profile.jank")}
   ;; Same profile after the AOT modules boot:jank loads. Median of three:
   ;; dev/perf/jank_aot_profile.sh
   boot:jank-aot-profile {:doc "jank boot profile with cohost namespaces AOT'd -O3. One run."
-                         :task (shell "jank" "--module-path" (str (jank-aot-dir) ":src")
+                         :task (shell jank-bin "--module-path" (str (jank-aot-dir) ":src")
                                       "run" "dev/perf/jank_boot_profile.jank")}
   ;; jank-FAST Step 6 stage 1. Same objects as boot:jank, then the load stamp
   ;; immediately before cohost.run/-main (dev/perf/jank_aot_load.jank).
@@ -121,7 +128,7 @@
   ;; inward and the module can be compiled with the rest of cohost.run.
   ;; Load-time medians: dev/perf/jank_aot_time.sh
   boot:jank-aot {:doc "jank: AOT cohost's namespaces (-O3, including cohost.hosts.jank-host and cohost.shim) and boot through the load stamp. See dev/perf/jank_aot_time.sh."
-                 :task (apply shell "jank" "--module-path" (str (jank-aot-dir) ":src")
+                 :task (apply shell jank-bin "--module-path" (str (jank-aot-dir) ":src")
                               "run" "dev/perf/jank_aot_load.jank" "--" *command-line-args*)}
   ;; jank-FAST Step 6 stage 2. Boot from the AOT snapshot of the booted core
   ;; and libraries (target/jank-snapshot/, generated, not committed). The
@@ -153,13 +160,13 @@
               :task (do (babashka.fs/create-dirs "target")
                         (if-let [p (jank-snapshot-path)]
                           (apply shell "jank" "--module-path" p "run" "dev/perf/jank_snapshot_run.jank" "--" "--bench" (git-rev) *command-line-args*)
-                          (apply shell "jank" "--module-path" (str (jank-aot-dir) ":src") "run-main" "cohost.run" "--" "--bench" (git-rev) *command-line-args*)))}
+                          (apply shell jank-bin "--module-path" (str (jank-aot-dir) ":src") "run-main" "cohost.run" "--" "--bench" (git-rev) *command-line-args*)))}
   lint:reader-order {:doc "every #? in src: :jolt and :cljw (which also read :clj arms) ahead of :clj, nothing after :default, no unknown feature"
                      :task (load-file "dev/lint_reader_order.clj")}
   boot:all  {:doc "every host that is on PATH"
              :task (doseq [[t exe] [["boot:jolt" "jolt"] ["boot:lpy" "basilisp"] ["boot:jvm" "clojure"]
                                     ["boot:cljw" "cljw"] ["boot:phel" "phel"] ["boot:lg" "lg"]
-                                    ["boot:cljrs" "cljrs"] ["boot:jank" "jank"]]]
+                                    ["boot:cljrs" "cljrs"] ["boot:jank" jank-bin]]]
                      (if (babashka.fs/which exe)
                        (do (println (str "== " t " ==")) (shell "bb" t))
                        (println (str "== " t " == (skipped: no " exe " on PATH)"))))}}}
