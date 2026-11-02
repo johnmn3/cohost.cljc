@@ -17,7 +17,7 @@ reference state.
 | tag type tests (M-4.1) | | | | | | | |
 | bound RT arms (M-4.2/3) | | | | | | | |
 | :native-hints (H1) | | | | | | | |
-| Numbers-minus as `-` | | | | | | | |
+| Numbers-minus as `-` | ON | ON | ON | ON | ON | ON | ON |
 
 ## The rows
 
@@ -27,3 +27,11 @@ reference state.
   and dispatch keys off descriptors). On every other host a user type
   is a host type and the host's own ops take it; there is no
   descriptor to test for. N/A x6, by the contract, not by probing.
+
+- **Numbers-minus as `-`** -- ON everywhere. The wrapper was a pure
+  forwarder on every host (it checked nothing anywhere; the `-` in
+  its body was already the host's), so the shim static is the twin
+  itself and host-aliases fires on all hosts. Verified by boot on all
+  eight (this tree): jvm 145/146, jolt 146/146, lpy 144/146, cljs
+  144/146, cljw 144/146, phel 145/146, lg 144/146, jank 144/146 --
+  every host at its pre-change standing, libraries 61/61 on all.
