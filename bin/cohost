@@ -34,7 +34,8 @@
 
 (defn usage []
   (die 2
-       "usage: cohost :<host> <clojure CLI args...>"
+       "usage: cohost [:<target>] <clojure CLI args...>"
+       "  the target: :<target> first, else :cohost/target in ./deps.edn, else :jvm (the real CLI)"
        (str "  hosts: :jvm " (str/join " " (map #(str ":" %) wired)) "   (:cljrs not wired yet)")
        "  e.g. cohost :cljs -e \"(+ 1 2)\""
        "       cohost :cljs -M -m demo.main arg1"
@@ -229,14 +230,27 @@
 
 ;; --------------------------------------------------------------------------
 
+(defn default-target
+  "The project's target: :cohost/target in ./deps.edn (a keyword, e.g.
+   :jank), else :jvm -- the real Clojure CLI, as `clj` would run it."
+  []
+  (let [f (fs/file "deps.edn")
+        t (when (fs/exists? f)
+            (:cohost/target (try (edn/read-string {:default tagged-literal} (slurp f))
+                                 (catch Exception e
+                                   (die 1 (str "cohost: cannot read deps.edn: " (.getMessage e)))))))]
+    (if t (str/replace (str t) #"^:" "") "jvm")))
+
 (let [args *command-line-args*]
-  (when (or (empty? args) (#{"-h" "--help" "help"} (first args))) (usage))
-  (let [host (str/replace (first args) #"^:" "")
-        rest-args (vec (rest args))
+  (when (#{"-h" "--help" "help"} (first args)) (usage))
+  ;; `cohost :<host> ...` names the target; `cohost ...` takes the project's
+  (let [explicit? (some-> (first args) (str/starts-with? ":"))
+        host (if explicit? (str/replace (first args) #"^:" "") (default-target))
+        rest-args (vec (if explicit? (rest args) args))
         cwd (str (fs/canonicalize "."))
         {:keys [mode] :as o} (parse-args rest-args)]
     (when-not (hosts host)
-      (die 2 (str "cohost: unknown host " (first args) " (hosts: "
+      (die 2 (str "cohost: unknown host :" host " (hosts: "
                   (str/join " " (map #(str ":" %) (sort hosts))) ")")))
     (cond
       ;; the JVM runs the real CLI, whole; tools are JVM programs, on every host
