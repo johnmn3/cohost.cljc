@@ -1,4 +1,4 @@
-From 0622a4a4c2207221bb45e1bda6a26313676f7c07 Mon Sep 17 00:00:00 2001
+From 87a9c41f3ce53492a7a1f143812a5553c817bf28 Mon Sep 17 00:00:00 2001
 From: cohost u3 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 18:02:33 +0000
 Subject: [PATCH] 15b-17: internal reduce per collection; integer_range and
