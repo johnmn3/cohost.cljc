@@ -1,0 +1,743 @@
+From 61f644c26a89c8405d2a580478ba5145e0e739db Mon Sep 17 00:00:00 2001
+From: cohost u3 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 16:18:11 +0000
+Subject: [PATCH] 15b-17: internal reduce per collection; integer_range and
+ vector seqs chunk; chunked walks; chunk_next shares its buffer
+
+Draft: doc/upstream/jank-15-reduce-walk.md (part two) and jank-17-range-chunks.md in
+johnmn3/cohost.cljc. Applies after 15a-16-in-place-walks.patch. Repros: bash
+dev/research/upstream/run.sh 17-range-chunks (Expected: chunked-seq? true for
+(seq (range 10)) and a vector seq; the lazy pipeline near the chunked loop) and
+run.sh 15-reduce-walk (reduce + v near the nth loop).
+
+- runtime::reduce: a visit_object dispatch with direct loops, as reduce_kv has:
+  persistent_vector and persistent_vector_sequence over immer's leaves
+  (for_each_chunk_p), persistent_list over its data, the three persistent maps
+  over their pairs (map entries as the map seq makes them), integer_range over
+  its count; a lazy seq is realized and its inner seq dispatched; a chunked seq
+  (chunked_cons, range) is reduced a chunk at a time and its chunked_next
+  dispatched again; anything else takes the in-place walk. reduced stops every loop.
+- integer_range: chunked_first (an array_chunk of up to 32 boxed values, made per
+  call: no state, no mutex) and chunked_next, so chunked-seq? is true and
+  core.jank's map/filter/doseq chunk branches fire.
+- persistent_vector_sequence: chunked_first is a view of the immer leaf at the
+  index (no copy; the vector keeps it alive), chunked_next the seq after it.
+- array_chunk: items/size/owner; chunk_next shares the storage instead of copying
+  the buffer (the old TODO).
+- sequence_range: the walk reads a chunked_cons through its array_chunk's storage
+  (no allocation per element), then goes on to its tail; iterator::rest() gives
+  the rest as a seq mid-chunk (apply_to's rest args, skip()).
+
+Files: src/cpp/jank/runtime/core/seq.cpp, src/cpp/jank/runtime/core/call.cpp,
+include/cpp/jank/runtime/sequence_range.hpp, src/cpp/jank/runtime/sequence_range.cpp,
+include/cpp/jank/runtime/obj/integer_range.hpp, src/cpp/jank/runtime/obj/integer_range.cpp,
+include/cpp/jank/runtime/obj/persistent_vector_sequence.hpp,
+src/cpp/jank/runtime/obj/persistent_vector_sequence.cpp,
+include/cpp/jank/runtime/obj/array_chunk.hpp, src/cpp/jank/runtime/obj/array_chunk.cpp.
+---
+ .../cpp/jank/runtime/obj/array_chunk.hpp      |  12 +-
+ .../cpp/jank/runtime/obj/integer_range.hpp    |  15 +-
+ .../obj/persistent_vector_sequence.hpp        |   7 +
+ .../cpp/jank/runtime/sequence_range.hpp       |  55 +++++--
+ .../src/cpp/jank/runtime/core/call.cpp        |   2 +-
+ .../src/cpp/jank/runtime/core/seq.cpp         | 149 +++++++++++++++++-
+ .../src/cpp/jank/runtime/obj/array_chunk.cpp  |  39 +++--
+ .../cpp/jank/runtime/obj/integer_range.cpp    |  22 +++
+ .../obj/persistent_vector_sequence.cpp        |  34 ++++
+ .../src/cpp/jank/runtime/sequence_range.cpp   |  84 ++++++++++
+ 10 files changed, 376 insertions(+), 43 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
+index 19ac3848e..48a4bfa2e 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
+@@ -16,6 +16,9 @@ namespace jank::runtime::obj
+     array_chunk(native_vector<object_ref> const &buffer);
+     array_chunk(native_vector<object_ref> const &buffer, usize offset);
+     array_chunk(native_vector<object_ref> &&buffer, usize offset);
++    /* A view over storage another object keeps alive (a chunk's buffer, a vector's leaf):
++     * items[offset..size) are this chunk's elements. */
++    array_chunk(object_ref const *items, usize size, usize offset, object_ref owner);
+ 
+     /* behavior::chunk_like */
+     array_chunk_ref chunk_next() const;
+@@ -26,8 +29,15 @@ namespace jank::runtime::obj
+     object_ref nth(object_ref const index) const override;
+     object_ref nth(object_ref const index, object_ref const fallback) const override;
+ 
+-    /*** XXX: Everything here is immutable after initialization. ***/
++    /*** XXX: Everything here is immutable after initialization (offset aside, which
++     * chunk_next_in_place() steps in a chunk its caller owns). ***/
++    /* The storage this chunk made, if it made one; empty for a view. */
+     native_vector<object_ref> buffer;
++    /* The elements: buffer.data(), or storage that owner keeps alive. chunk_next() shares
++     * them instead of copying the buffer. */
++    object_ref const *items{};
++    usize size{};
+     usize offset{};
++    object_ref owner{};
+   };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/integer_range.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/integer_range.hpp
+index 00d040534..7ec87e4cc 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/integer_range.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/integer_range.hpp
+@@ -10,6 +10,7 @@ namespace jank::runtime::obj
+   using cons_ref = oref<struct cons>;
+   using integer_range_ref = oref<struct integer_range>;
+   using persistent_list_ref = oref<struct persistent_list>;
++  using array_chunk_ref = oref<struct array_chunk>;
+ 
+   /* An integer range from X to Y, exclusive, incrementing by S. */
+   /* For non-integer values, use the range object */
+@@ -61,10 +62,12 @@ namespace jank::runtime::obj
+     /* behavior::sequence_like_in_place */
+     object_ref next_in_place() override;
+ 
+-    /* TODO: behavior::chunkable */
+-    /* array_chunk_ptr chunked_first() const; */
+-    /* integer_range_ptr chunked_next() const; */
+-    /* void force_chunk() const; */
++    /* behavior::chunkable */
++    static constexpr i64 chunk_size{ 32 };
++    /* The next chunk_size values, boxed; made on each call, no state, so no lock. */
++    obj::array_chunk_ref chunked_first() const;
++    /* The range after that chunk, or nil. */
++    object_ref chunked_next() const;
+ 
+     /* behavior::conjable */
+     cons_ref conj(object_ref const head) const;
+@@ -86,10 +89,6 @@ namespace jank::runtime::obj
+     i64 step{ 1 };
+     bounds_check_t bounds_check{};
+ 
+-    /* TODO: behavior::chunkable */
+-    /* mutable array_chunk_ptr chunk{}; */
+-    /* mutable integer_range_ptr chunk_next{}; */
+-    /* mutable integer_range_ptr cached_next{}; */
+     lazy_meta meta{};
+   };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector_sequence.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector_sequence.hpp
+index a8e5d453f..11bfe0e8d 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector_sequence.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector_sequence.hpp
+@@ -9,6 +9,7 @@ namespace jank::runtime::obj
+   using persistent_list_ref = oref<struct persistent_list>;
+   using persistent_vector_ref = oref<struct persistent_vector>;
+   using persistent_vector_sequence_ref = oref<struct persistent_vector_sequence>;
++  using array_chunk_ref = oref<struct array_chunk>;
+ 
+   struct persistent_vector_sequence : object
+   {
+@@ -57,6 +58,12 @@ namespace jank::runtime::obj
+     /* behavior::sequence_like_in_place */
+     object_ref next_in_place() override;
+ 
++    /* behavior::chunkable */
++    /* The rest of the immer leaf holding index, as a chunk viewing the leaf (no copy). */
++    obj::array_chunk_ref chunked_first() const;
++    /* The seq after that leaf, or nil. */
++    object_ref chunked_next() const;
++
+     /*** XXX: Everything here is immutable after initialization. ***/
+     obj::persistent_vector_ref vec{};
+     usize index{};
+diff --git a/compiler+runtime/include/cpp/jank/runtime/sequence_range.hpp b/compiler+runtime/include/cpp/jank/runtime/sequence_range.hpp
+index 24dbcaf17..8a9c5e05f 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/sequence_range.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/sequence_range.hpp
+@@ -29,6 +29,24 @@ namespace jank::runtime
+     bool steps_in_place(object_ref const s);
+     /* An object reached mid-walk: unwrap lazy seqs, take a fresh seq if it steps in place. */
+     object_ref walk_own(object_ref s, bool &owned);
++
++    /* The walk's position. A chunked_cons whose head is an array_chunk is walked through the
++     * chunk's storage (items[pos..size)), then on to its chunked_next(): no allocation per
++     * element; everything else is a seq in data, stepped as above. */
++    struct walk_cursor
++    {
++      object_ref data;
++      object_ref chunk;
++      object_ref const *items{};
++      usize pos{};
++      usize size{};
++      bool owned{};
++    };
++
++    void walk_cursor_begin(object_ref const s, walk_cursor &c);
++    void walk_cursor_next(walk_cursor &c);
++    /* The rest of the walk as a seq, from the current element on. */
++    object_ref walk_cursor_rest(walk_cursor const &c);
+   }
+ 
+   /* A single-pass walk over any seqable. `T` is kept for the callers that name it; the walk
+@@ -52,67 +70,72 @@ namespace jank::runtime
+       iterator(iterator const &) noexcept = default;
+       iterator(iterator &&) noexcept = default;
+ 
+-      iterator(object_ref const data, bool const owned)
+-        : data{ data }
+-        , owned{ owned }
++      iterator(detail::walk_cursor const &c)
++        : c{ c }
+       {
+       }
+ 
+       value_type operator*() const
+       {
+-        return data.first();
++        return c.items ? c.items[c.pos] : c.data.first();
+       }
+ 
+       pointer operator->() const
+       {
+-        return data.first();
++        return **this;
+       }
+ 
+       iterator &operator++()
+       {
+-        data = detail::walk_next(data, owned);
++        detail::walk_cursor_next(c);
+ 
+         return *this;
+       }
+ 
++      /* Only meaningful against end(): the walk is over when data is nil. */
+       bool operator!=(iterator const &rhs) const
+       {
+-        return data != rhs.data;
++        return c.data != rhs.c.data;
+       }
+ 
+       bool operator==(iterator const &rhs) const
+       {
+-        return data == rhs.data;
++        return c.data == rhs.c.data;
+       }
+ 
+       iterator &operator=(iterator const &) = default;
+ 
+-      object_ref data;
+-      bool owned{};
++      /* The rest of the walk, from the current element on, as a seq to hand out. */
++      object_ref rest() const
++      {
++        return detail::walk_cursor_rest(c);
++      }
++
++      detail::walk_cursor c;
+     };
+ 
+     iterator begin() const
+     {
+-      bool owned{};
+-      auto const data{ detail::walk_begin(s, owned) };
+-      return { data, owned };
++      detail::walk_cursor c;
++      detail::walk_cursor_begin(s, c);
++      return { c };
+     }
+ 
+     iterator end() const
+     {
+-      return { jank_nil, false };
++      return { detail::walk_cursor{} };
+     }
+ 
+     sequence_range skip(usize const n) const
+     {
+       auto it{ begin() };
+-      for(usize i{}; i < n && it.data.is_some(); ++i)
++      for(usize i{}; i < n && it.c.data.is_some(); ++i)
+       {
+         ++it;
+       }
+ 
+       /* The rest is handed out as a plain seq: a later walk of it takes its own fresh seq. */
+-      return { it.data };
++      return { it.rest() };
+     }
+ 
+     /* The seqable to walk; never mutated by the walk. */
+diff --git a/compiler+runtime/src/cpp/jank/runtime/core/call.cpp b/compiler+runtime/src/cpp/jank/runtime/core/call.cpp
+index c5d9ad4b8..c8e4a8e37 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/core/call.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/core/call.cpp
+@@ -150,7 +150,7 @@ namespace jank::runtime
+                                a10,
+                                try_object<obj::persistent_list>(*(++it)));
+           }
+-          return source.call(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, (++it).data);
++          return source.call(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, (++it).rest());
+         }
+     }
+   }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
+index deb63da93..4c178475a 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
+@@ -1,6 +1,8 @@
+ #include <algorithm>
+ #include <random>
+ 
++#include <immer/algorithm.hpp>
++
+ #include <jank/runtime/visit.hpp>
+ #include <jank/runtime/behavior/associatively_writable.hpp>
+ #include <jank/runtime/core/call.hpp>
+@@ -898,19 +900,150 @@ namespace jank::runtime
+     return r_it == r_range.end();
+   }
+ 
+-  object_ref reduce(object_ref const f, object_ref const init, object_ref const s)
++  namespace
+   {
+-    object_ref res{ init };
+-    for(auto const &e : make_sequence_range(s))
++    struct reduce_state
+     {
+-      res = f.call(res, e);
+-      if(res.get_type() == object_type::reduced)
++      object_ref f;
++      object_ref res;
++      bool stopped{};
++
++      /* Applies f; true once f returned a reduced (res is then its value). */
++      bool step(object_ref const e)
++      {
++        res = f.call(res, e);
++        if(res.get_type() == object_type::reduced)
++        {
++          res = expect_object<obj::reduced>(res)->val;
++          stopped = true;
++        }
++        return stopped;
++      }
++
++      /* Elements [first, last) of contiguous storage (a vector leaf, a chunk's buffer). */
++      bool step_all(object_ref const *first, object_ref const *last)
+       {
+-        res = expect_object<obj::reduced>(res)->val;
+-        break;
++        for(; first != last; ++first)
++        {
++          if(step(*first))
++          {
++            return true;
++          }
++        }
++        return false;
+       }
++
++      void walk(object_ref const s)
++      {
++        for(auto const e : make_sequence_range(s))
++        {
++          if(step(e))
++          {
++            return;
++          }
++        }
++      }
++    };
++  }
++
++  /* Direct loops per collection, as reduce_kv has; a chunked seq is reduced a chunk at a
++   * time and its rest is dispatched again; anything else takes the in-place walk. */
++  object_ref reduce(object_ref const f, object_ref const init, object_ref const s)
++  {
++    reduce_state st{ f, init };
++    object_ref cur{ s };
++    while(cur.is_some() && !st.stopped)
++    {
++      cur = visit_object(
++        [&](auto const typed) -> object_ref {
++          using T = typename jtl::decay_t<decltype(typed)>::value_type;
++
++          if constexpr(std::same_as<T, obj::nil>)
++          {
++            return {};
++          }
++          else if constexpr(std::same_as<T, obj::persistent_vector>)
++          {
++            immer::for_each_chunk_p(typed->data, [&](auto const first, auto const last) {
++              return !st.step_all(first, last);
++            });
++            return {};
++          }
++          else if constexpr(std::same_as<T, obj::persistent_vector_sequence>)
++          {
++            auto const &data(typed->vec->data);
++            immer::for_each_chunk_p(
++              data.begin() + static_cast<std::ptrdiff_t>(typed->index),
++              data.end(),
++              [&](auto const first, auto const last) { return !st.step_all(first, last); });
++            return {};
++          }
++          else if constexpr(std::same_as<T, obj::persistent_list>)
++          {
++            for(auto const &e : typed->data)
++            {
++              if(st.step(e))
++              {
++                break;
++              }
++            }
++            return {};
++          }
++          else if constexpr(std::same_as<T, obj::persistent_array_map>
++                            || std::same_as<T, obj::persistent_hash_map>
++                            || std::same_as<T, obj::persistent_sorted_map>)
++          {
++            for(auto const &[k, v] : typed->data)
++            {
++              if(st.step(make_box<obj::persistent_vector>(
++                   runtime::detail::native_persistent_vector{ k, v })))
++              {
++                break;
++              }
++            }
++            return {};
++          }
++          else if constexpr(std::same_as<T, obj::integer_range>)
++          {
++            auto const n{ typed->count() };
++            for(usize i{}; i < n; ++i)
++            {
++              if(st.step(make_box(typed->start + static_cast<i64>(i) * typed->step)))
++              {
++                break;
++              }
++            }
++            return {};
++          }
++          else if constexpr(std::same_as<T, obj::lazy_sequence>)
++          {
++            /* Realized, the inner seq is dispatched on the next turn. */
++            return typed->seq();
++          }
++          else if constexpr(behavior::chunkable<T>)
++          {
++            object_ref const c{ typed->chunked_first() };
++            if(c.get_type() != object_type::array_chunk)
++            {
++              st.walk(typed);
++              return {};
++            }
++            auto const chunk{ expect_object<obj::array_chunk>(c) };
++            if(st.step_all(chunk->items + chunk->offset, chunk->items + chunk->size))
++            {
++              return {};
++            }
++            return typed->chunked_next();
++          }
++          else
++          {
++            st.walk(typed);
++            return {};
++          }
++        },
++        cur);
+     }
+-    return res;
++    return st.res;
+   }
+ 
+   object_ref reduce_kv(object_ref const f, object_ref const init, object_ref const coll)
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
+index 5b5cd823d..121e6561d 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
+@@ -16,6 +16,8 @@ namespace jank::runtime::obj
+     : object{ obj_type, obj_behaviors }
+     , buffer{ buffer }
+   {
++    items = this->buffer.data();
++    size = this->buffer.size();
+   }
+ 
+   array_chunk::array_chunk(native_vector<object_ref> const &buffer, usize const offset)
+@@ -23,28 +25,47 @@ namespace jank::runtime::obj
+     , buffer{ buffer }
+     , offset{ offset }
+   {
++    items = this->buffer.data();
++    size = this->buffer.size();
+   }
+ 
+   array_chunk::array_chunk(native_vector<object_ref> &&buffer, usize const offset)
+     : object{ obj_type, obj_behaviors }
+     , buffer{ std::move(buffer) }
+     , offset{ offset }
++  {
++    items = this->buffer.data();
++    size = this->buffer.size();
++  }
++
++  array_chunk::array_chunk(object_ref const * const items,
++                           usize const size,
++                           usize const offset,
++                           object_ref const owner)
++    : object{ obj_type, obj_behaviors }
++    , items{ items }
++    , size{ size }
++    , offset{ offset }
++    , owner{ owner }
+   {
+   }
+ 
+   array_chunk_ref array_chunk::chunk_next() const
+   {
+-    if(offset == buffer.size())
++    if(offset == size)
+     {
+       throw std::runtime_error{ "There are no more chunks remaining for `chunk-next`." };
+     }
+-    /* TODO: This copying will be slow. Use a persistent_vector? */
+-    return make_box<array_chunk>(buffer, offset + 1);
++    /* Shares the storage: the owner is whoever keeps it alive (this chunk, if it made it). */
++    return make_box<array_chunk>(items,
++                                 size,
++                                 offset + 1,
++                                 owner.is_some() ? owner : object_ref{ runtime::detail::untagged(this) });
+   }
+ 
+   array_chunk_ref array_chunk::chunk_next_in_place()
+   {
+-    if(offset == buffer.size())
++    if(offset == size)
+     {
+       throw std::runtime_error{ "There are no more chunks remaining for `chunk-next`." };
+     }
+@@ -54,7 +75,7 @@ namespace jank::runtime::obj
+ 
+   usize array_chunk::count() const
+   {
+-    return buffer.size() - offset;
++    return size - offset;
+   }
+ 
+   object_ref array_chunk::nth(object_ref const index) const
+@@ -62,13 +83,13 @@ namespace jank::runtime::obj
+     if(is_integral(index))
+     {
+       auto const i(to_i64(index));
+-      if(i < 0 || buffer.size() - offset <= static_cast<size_t>(i))
++      if(i < 0 || size - offset <= static_cast<size_t>(i))
+       {
+         throw std::runtime_error{
+           util::format("The index `{}` is out of bounds for this `array_chunk`.", i)
+         };
+       }
+-      return buffer[offset + i];
++      return items[offset + static_cast<usize>(i)];
+     }
+     else
+     {
+@@ -83,11 +104,11 @@ namespace jank::runtime::obj
+     if(is_integral(index))
+     {
+       auto const i(to_i64(index));
+-      if(i < 0 || buffer.size() - offset <= static_cast<size_t>(i))
++      if(i < 0 || size - offset <= static_cast<size_t>(i))
+       {
+         return fallback;
+       }
+-      return buffer[offset + i];
++      return items[offset + static_cast<usize>(i)];
+     }
+     else
+     {
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp
+index f6ea29374..173137b11 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp
+@@ -1,4 +1,5 @@
+ #include <jank/runtime/obj/integer_range.hpp>
++#include <jank/runtime/obj/array_chunk.hpp>
+ #include <jank/runtime/core/math.hpp>
+ #include <jank/runtime/core/make_box.hpp>
+ #include <jank/runtime/core/seq.hpp>
+@@ -129,6 +130,27 @@ namespace jank::runtime::obj
+     return runtime::detail::untagged(this);
+   }
+ 
++  array_chunk_ref integer_range::chunked_first() const
++  {
++    auto const n{ std::min(count(), static_cast<usize>(chunk_size)) };
++    native_vector<object_ref> arr;
++    arr.reserve(n);
++    for(usize i{}; i < n; ++i)
++    {
++      arr.emplace_back(make_box(start + static_cast<i64>(i) * step));
++    }
++    return make_box<array_chunk>(std::move(arr), static_cast<usize>(0));
++  }
++
++  object_ref integer_range::chunked_next() const
++  {
++    if(count() <= static_cast<usize>(chunk_size))
++    {
++      return {};
++    }
++    return make_box<integer_range>(start + chunk_size * step, end, step, bounds_check);
++  }
++
+   cons_ref integer_range::conj(object_ref const head) const
+   {
+     return make_box<cons>(head, runtime::detail::untagged(this));
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector_sequence.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector_sequence.cpp
+index 3788f06f6..f7fbe9cbd 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector_sequence.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector_sequence.cpp
+@@ -1,6 +1,8 @@
+ #include <jank/runtime/obj/persistent_vector_sequence.hpp>
+ #include <jank/runtime/obj/persistent_list.hpp>
+ #include <jank/runtime/obj/persistent_vector.hpp>
++#include <jank/runtime/obj/array_chunk.hpp>
++#include <immer/algorithm.hpp>
+ #include <jank/runtime/core.hpp>
+ #include <jank/runtime/core/seq_ext.hpp>
+ 
+@@ -155,4 +157,36 @@ namespace jank::runtime::obj
+   {
+     return persistent_list::empty();
+   }
++
++  /* behavior::chunkable */
++  static std::pair<object_ref const *, object_ref const *>
++  leaf_at(runtime::detail::native_persistent_vector const &data, usize const index)
++  {
++    std::pair<object_ref const *, object_ref const *> ret{};
++    immer::for_each_chunk_p(data.begin() + static_cast<std::ptrdiff_t>(index),
++                            data.end(),
++                            [&](auto const first, auto const last) {
++                              ret = { first, last };
++                              return false;
++                            });
++    return ret;
++  }
++
++  array_chunk_ref persistent_vector_sequence::chunked_first() const
++  {
++    auto const [first, last](leaf_at(vec->data, index));
++    /* The vector keeps the leaf alive. */
++    return make_box<array_chunk>(first, static_cast<usize>(last - first), static_cast<usize>(0), vec);
++  }
++
++  object_ref persistent_vector_sequence::chunked_next() const
++  {
++    auto const [first, last](leaf_at(vec->data, index));
++    auto const n{ index + static_cast<usize>(last - first) };
++    if(vec->data.size() <= n)
++    {
++      return {};
++    }
++    return make_box<persistent_vector_sequence>(vec, n);
++  }
+ }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/sequence_range.cpp b/compiler+runtime/src/cpp/jank/runtime/sequence_range.cpp
+index 6f9615965..d1449814b 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/sequence_range.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/sequence_range.cpp
+@@ -1,4 +1,7 @@
+ #include <jank/runtime/sequence_range.hpp>
++#include <jank/runtime/obj/array_chunk.hpp>
++#include <jank/runtime/obj/chunked_cons.hpp>
++#include <jank/runtime/core/make_box.hpp>
+ 
+ namespace jank::runtime
+ {
+@@ -83,6 +86,87 @@ namespace jank::runtime
+     }
+   }
+ 
++  namespace detail
++  {
++    /* Point the cursor at s, an object reached by the walk (not yet owned). */
++    static void cursor_at(walk_cursor &c, object_ref const s)
++    {
++      c.items = nullptr;
++      c.chunk = jank_nil;
++      c.data = walk_own(s, c.owned);
++      if(c.data.is_some() && c.data.get_type() == object_type::chunked_cons)
++      {
++        auto const head{ expect_object<obj::chunked_cons>(c.data)->head };
++        if(head.get_type() == object_type::array_chunk)
++        {
++          auto const chunk{ expect_object<obj::array_chunk>(head) };
++          if(chunk->offset < chunk->size)
++          {
++            c.chunk = head;
++            c.items = chunk->items;
++            c.pos = chunk->offset;
++            c.size = chunk->size;
++          }
++        }
++      }
++    }
++
++    void walk_cursor_begin(object_ref const s, walk_cursor &c)
++    {
++      if(s.is_some() && s.get_type() == object_type::chunked_cons)
++      {
++        /* Read through the chunk: nothing is stepped in place, so no copy is needed. */
++        cursor_at(c, s);
++        return;
++      }
++      c.items = nullptr;
++      c.chunk = jank_nil;
++      c.data = walk_begin(s, c.owned);
++      if(c.data.is_some() && c.data.get_type() == object_type::chunked_cons)
++      {
++        cursor_at(c, c.data);
++      }
++    }
++
++    void walk_cursor_next(walk_cursor &c)
++    {
++      if(c.items)
++      {
++        if(++c.pos < c.size)
++        {
++          return;
++        }
++        cursor_at(c, expect_object<obj::chunked_cons>(c.data)->tail);
++        return;
++      }
++
++      auto const n{ walk_next(c.data, c.owned) };
++      if(n.is_some() && n.get_type() == object_type::chunked_cons)
++      {
++        cursor_at(c, n);
++        return;
++      }
++      c.data = n;
++    }
++
++    object_ref walk_cursor_rest(walk_cursor const &c)
++    {
++      if(!c.items)
++      {
++        return c.data;
++      }
++      auto const typed{ expect_object<obj::chunked_cons>(c.data) };
++      auto const chunk{ expect_object<obj::array_chunk>(c.chunk) };
++      if(c.pos == chunk->offset)
++      {
++        return c.data;
++      }
++      auto const owner{ chunk->owner.is_some() ? chunk->owner : c.chunk };
++      return make_box<obj::chunked_cons>(make_box<obj::array_chunk>(c.items, c.size, c.pos, owner),
++                                         typed->tail);
++    }
++  }
++
+   sequence_range<object_ref> make_sequence_range(object_ref const s)
+   {
+     return sequence_range<object_ref>{ s };
+-- 
+2.43.0
+
