@@ -204,7 +204,45 @@ build_install() {
   stage "build done: compile $(( e - $(cat "$c") ))s, lock wait $(( $(cat "$c") - s ))s"
   rm -f "$c"
   cmake --install "$JANK_SRC/compiler+runtime/build" > "$JANK_SRC/compiler+runtime/build/install.log"
+  wrap_cache
+  wipe_pch
   stage "installed: $JANK_DEV_PREFIX/bin/jank ($("$JANK_DEV_PREFIX/bin/jank" print-binary-version))"
+}
+
+# Builds of different series print the same binary version, and jank keys its
+# PCH cache by that version and the flags only, never by header contents: two
+# prefixes (or two series built into one) shared ~/.cache/jank/<version>/ and
+# the second binary failed "codegen/internal-failure: Parsing failed" on the
+# first one's incremental.pch (u2, u1, u5; coordinator NOTICE 1:30 PM ET).
+# So the installed bin/jank is a wrapper that gives the prefix its own cache
+# ($JANK_DEV_PREFIX/cache, through jank's XDG_CACHE_HOME: util/environment.cpp)
+# and execs the real binary, bin/jank-real (same dir: its $ORIGIN RUNPATH holds).
+wrap_cache() {
+  local bin="$JANK_DEV_PREFIX/bin"
+  # cmake --install wrote a fresh binary over bin/jank (or left the wrapper when unchanged)
+  if ! head -c 2 "$bin/jank" | grep -q '#!'; then mv -f "$bin/jank" "$bin/jank-real"; fi
+  cat > "$bin/jank" <<WRAP
+#!/bin/sh
+# dev/install/jank-src.sh: this prefix's own PCH cache (see wrap_cache there)
+XDG_CACHE_HOME="$JANK_DEV_PREFIX/cache" exec "$bin/jank-real" "\$@"
+WRAP
+  chmod 755 "$bin/jank"
+}
+
+# After a build: drop the prefix's own cache, and (from before the wrapper, or a
+# run of bin/jank-real directly) every entry in the user's cache that names
+# this prefix (u1: -O3 and other flags get entries of their own). Delete each entry whose PCH names
+# "$JANK_DEV_PREFIX/" (with the slash, so jank-dev never matches jank-dev-verify);
+# the next run of that binary rebuilds its PCH. The cache dir is jank's own:
+# $XDG_CACHE_HOME/jank, else ~/.cache/jank (util/environment.cpp).
+wipe_pch() {
+  rm -rf "$JANK_DEV_PREFIX/cache"   # every build: this prefix's headers may have changed
+  local root="${XDG_CACHE_HOME:-$HOME/.cache}/jank" d n=0
+  for d in "$root"/*/; do
+    [ -f "$d/incremental.pch" ] || continue
+    if grep -aqF "$JANK_DEV_PREFIX/" "$d/incremental.pch"; then rm -rf "$d"; n=$((n + 1)); fi
+  done
+  stage "PCH cache: cleared $JANK_DEV_PREFIX/cache; removed $n entries naming $JANK_DEV_PREFIX/ under $root"
 }
 
 if [ "$mode" = full ]; then
