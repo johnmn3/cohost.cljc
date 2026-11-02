@@ -114,8 +114,17 @@ LC_ALL=POSIX jank run u.jank`.
 
 ## Re-building with patches (U0-2)
 
+Every build installs `bin/jank` as a wrapper that sets `XDG_CACHE_HOME=<prefix>/cache` and execs
+`bin/jank-real`, and clears that cache: builds of different series print the same binary version, and
+jank keys its PCH cache (`incremental.pch`) by that version and the flags only, so prefixes sharing
+`~/.cache/jank/<version>/` failed `codegen/internal-failure: Parsing failed` (u2, u1, u5). The build
+also deletes every `~/.cache/jank/*/` whose PCH names `<prefix>/` (entries from before the wrapper, or
+from running `bin/jank-real` directly). Tested on a copy of the prefix: the PCH lands in
+`<prefix>/cache/jank/<version>/`, and a re-wrap keeps `jank-real`. `JANK_BUILD_LOCK` remains as a
+knob but is unused here (no box locks, ruling 2026-11-02 12:57 PM ET).
+
 ```
-JANK_BUILD_LOCK=/home/user/locks/box.lock bash dev/install/jank-src.sh --patches
+bash dev/install/jank-src.sh --patches
 # measure a patch before it joins the series:
 JANK_SERIES=/path/to/my/series bash dev/install/jank-src.sh --patches
 ```

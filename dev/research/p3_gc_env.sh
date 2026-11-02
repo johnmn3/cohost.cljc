@@ -9,7 +9,7 @@
 set -uo pipefail
 root=target/research/p3_gc_alloc
 cache="$(ls -d "$root"/_cache/* | head -1)"
-run() { echo "== env: $*"; env "$@" jank --module-path "$cache:$root/src" run-main research.p3_gc_alloc 2>&1 | grep -v '^$'; }
+run() { echo "== env: $*"; env "$@" "${JANK_BIN:-jank}" --module-path "$cache:$root/src" run-main research.p3_gc_alloc 2>&1 | grep -v '^$'; }
 run GC_PRINT_STATS=1 2>&1 | grep -c "GC #" | sed 's/^/collections during the default run (GC_PRINT_STATS lines): /'
 run NONE=1
 run GC_INITIAL_HEAP_SIZE=1G

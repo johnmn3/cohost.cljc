@@ -7,4 +7,5 @@
 15a-16-in-place-walks.patch
 15b-17-reduce-chunks.patch
 22-multi-cache-truthy.patch
+20-native-returns.patch
 23-chunk-branch.patch

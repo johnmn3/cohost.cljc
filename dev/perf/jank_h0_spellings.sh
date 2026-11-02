@@ -12,7 +12,7 @@ run() {
   local name="$1"
   local src="$2"
   printf '%s\n' "$src" > "$work/$name.jank"
-  jank run -O3 --eager "$work/$name.jank" >"$work/$name.out" 2>"$work/$name.err"
+  "${JANK_BIN:-jank}" run -O3 --eager "$work/$name.jank" >"$work/$name.out" 2>"$work/$name.err"
   local ec=$?
   local headline
   headline=$(awk '
@@ -92,4 +92,4 @@ cat > "$work/read.jank" << 'EOF'
 (let [form (read-string "(loop [^long i 0] i)")]
   (println "loop-long" (pr-str (:tag (meta (nth (nth form 1) 0))))))
 EOF
-jank run -O3 --eager "$work/read.jank"
+"${JANK_BIN:-jank}" run -O3 --eager "$work/read.jank"
