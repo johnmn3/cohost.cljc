@@ -769,30 +769,29 @@ ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0)
 | json | 0.185182 | 0.31923 | 1.270188 |
 | first-output | 7.064883 | 6.858866 | 0.018345 |
 
-`lg-cohost` is still running.
+`lg-cohost` finished. `bb bench:programs lg-cohost`. All rows SAME. Geometric mean of the 21 ratios: `46.889842`.
 
-| program | lg-cohost median | lg-cohost cold | lg-cohost/jvm | note |
-|---|---:|---:|---:|---|
-| fib | 220.115409 | 217.611492 | 41.582670 | SAME |
-| fib-hinted | 2305.34758 | 2333.752483 | 520.981209 | SAME |
-| tak | 9.19794 | 13.32779 | 6.725273 | SAME |
-| tak-hinted | 145.126391 | 159.688673 | 128.510270 | SAME |
-| nbody | 38.613692 | 78.998465 | 9.960696 | SAME |
-| nbody-hinted | 38.735488 | 43.510931 | 12.579872 | SAME |
-| spectral-norm | 280.964109 | 293.895161 | 423.702805 | SAME |
-| spectral-norm-hinted | 396.917051 | 407.634758 | 237.007570 | SAME |
-| mandelbrot | 86.303457 | 104.321966 | 194.041516 | SAME |
-| mandelbrot-hinted | 87.492487 | 112.464563 | 409.160784 | SAME |
-| binary-trees | 7.656029 | 7.471469 | 14.762623 | SAME |
-| binary-trees-hinted | 12.633712 | 12.717552 | 9.893298 | SAME |
-| fannkuch | 645.216733 | 689.460238 | 30.263776 | SAME |
-| fannkuch-hinted | 642.003764 | 683.612019 | 31.318988 | SAME |
-| nsieve | running | | | |
-| nsieve-hinted | running | | | |
-| k-nucleotide | running | | | |
-| pipeline | running | | | |
-| dispatch | running | | | |
-| json | running | | | |
-| first-output | running | | | |
-
-Phel bench is not started. ClojureScript Node and Chromium benches are not started.
+| program | lg-cohost median | lg-cohost cold | lg-cohost/jvm |
+|---|---:|---:|---:|
+| fib | 220.115409 | 217.611492 | 41.582670 |
+| fib-hinted | 2305.34758 | 2333.752483 | 520.981209 |
+| tak | 9.19794 | 13.32779 | 6.725273 |
+| tak-hinted | 145.126391 | 159.688673 | 128.510270 |
+| nbody | 38.613692 | 78.998465 | 9.960696 |
+| nbody-hinted | 38.735488 | 43.510931 | 12.579872 |
+| spectral-norm | 280.964109 | 293.895161 | 423.702805 |
+| spectral-norm-hinted | 396.917051 | 407.634758 | 237.007570 |
+| mandelbrot | 86.303457 | 104.321966 | 194.041516 |
+| mandelbrot-hinted | 87.492487 | 112.464563 | 409.160784 |
+| binary-trees | 7.656029 | 7.471469 | 14.762623 |
+| binary-trees-hinted | 12.633712 | 12.717552 | 9.893298 |
+| fannkuch | 645.216733 | 689.460238 | 30.263776 |
+| fannkuch-hinted | 642.003764 | 683.612019 | 31.318988 |
+| nsieve | 38.244721 | 26.683283 | 45.753239 |
+| nsieve-hinted | 42.087736 | 27.375508 | 41.137420 |
+| k-nucleotide | 53.792721 | 74.169041 | 47.800498 |
+| pipeline | 35.998721 | 39.038946 | 14.339829 |
+| dispatch | 174.926754 | 169.391323 | 80.670851 |
+| json | 2.960087 | 3.116886 | 20.303633 |
+| first-output | 8712.230748 | 8717.079317 | 22.622088 |
+Phel bench is not started. ClojureScript Node boot finished (`bb boot:cljs`: stock 518, host 87, natives 46, skipped 140, errors 0, battery 143/145, libraries 61/61). `bb bench:programs cljs` is running. Chromium: Playwright and headless Chromium installed; the browser boot is not started.
