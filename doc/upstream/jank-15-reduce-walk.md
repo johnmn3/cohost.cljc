@@ -33,3 +33,8 @@ EXIT 0
 ## What would fix it
 
 Finish `fresh_sequence_range` and use it in `reduce`, `str`, `sort`, `vec`, `apply_to`, `sequence_length` and equality; then a `visit_object` dispatch at the top of `reduce` with direct loops per collection (vector, list, maps, `integer_range`, chunked seqs), as `reduce_kv` has.
+
+## Patches and their regression probes
+
+- `upstream/jank/patches/15a-16-in-place-walks.patch` (part one, with jank-16): the in-place walk in every runtime walker. Its regression probe is `dev/research/upstream/15a-walk-proto.jank` (`bash dev/research/upstream/run.sh 15a-walk-proto`): the patch's walk compiled through `cpp/raw` against the installed runtime, checked against `reduce` on 25 seq kinds (the result, a second walk, and the walked object printing the same after: the ownership rule of `object.hpp`), then timed. On apt 0.1-noble (box shared): `walk-proto cases 25 ok 25`; `reduce +` over a 1e6 vector 95884038 ns, the prototype walk 22547564 (`reduce-kv` 22871171).
+- `upstream/jank/patches/15b-17-reduce-chunks.patch` (part two, with jank-17): the per-collection `reduce` and the chunked walk. Probe: `dev/research/upstream/15b-reduce-proto.jank` (`run.sh 15b-reduce-proto`): `walk-proto cases 25 ok 25`, `cursor-proto cases 14 ok 14` (including the rest at every offset mid-chunk); `reduce +` over a 1e6 vector 93846335 ns -> 8750834 (the `nth` loop 21832473).
