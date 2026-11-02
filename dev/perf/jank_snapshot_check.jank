@@ -1,11 +1,19 @@
-;; Checks after a normal boot of clojure.walk, and eval time of the dumped
-;; snapshot forms when /tmp/jank-snap-src is present. The compiled module is
-;; not loaded here: compile-module does not produce one (see the doc).
+;; Checks after a boot and a load of clojure.walk (G-9's list), and eval time
+;; of the dumped snapshot forms when /tmp/jank-snap-src is present.
+;;   jank --module-path src run dev/perf/jank_snapshot_check.jank
+;;   jank --module-path <snapshot path> run dev/perf/jank_snapshot_check.jank -- --snapshot
 (require 'cohost.hosts.jank-host)
 (require 'cohost.boot)
 (require 'cohost.adapter)
 
-(cohost.boot/boot! {})
+;; --snapshot: the checks after a boot from the AOT snapshot (the module path
+;; is the snapshot's: dev/perf/jank_snapshot_ensure.clj), else a normal boot.
+(def snapshot? (= "--snapshot" (first *command-line-args*)))
+(println "CHECK-BOOT" (if snapshot? "snapshot" "normal"))
+(if snapshot?
+  (do (require 'cohost.core)
+      (println "CHECK snapshot-report" (some? (cohost.boot/snapshot-report))))
+  (cohost.boot/boot! {}))
 (cohost.boot/load-lib! 'clojure.walk)
 
 (defn show [label thunk]

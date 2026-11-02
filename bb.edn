@@ -113,11 +113,14 @@
   boot:jank-aot {:doc "jank: AOT cohost's namespaces (-O3, including cohost.hosts.jank-host and cohost.shim) and boot through the load stamp. See dev/perf/jank_aot_time.sh."
                  :task (apply shell "jank" "--module-path" (str (jank-aot-dir) ":src")
                               "run" "dev/perf/jank_aot_load.jank" "--" *command-line-args*)}
-  ;; jank-FAST Step 6 stage 2. Record mode is off unless this task asks.
-  ;; The snapshot under target/jank-snapshot/ is generated and not committed.
-  boot:jank-snapshot {:doc "jank: record cohost.core and cohost.walk for the AOT snapshot (target/jank-snapshot/events.edn)."
-                      :task (do (babashka.fs/create-dirs "target/jank-snapshot")
-                                (shell "jank" "--module-path" "src" "run" "dev/perf/jank_snapshot_record.jank"))}
+  ;; jank-FAST Step 6 stage 2. Boot from the AOT snapshot of the booted core
+  ;; and libraries (target/jank-snapshot/, generated, not committed). The
+  ;; snapshot is keyed by a hash of every input and rebuilt when stale, never
+  ;; loaded stale: dev/perf/jank_snapshot_ensure.clj. Args as boot:jank
+  ;; (--no-libs, --bench [--quick]).
+  boot:jank-snapshot {:doc "jank: boot from the AOT snapshot (rebuilt first when stale), then the batteries or --bench. See dev/perf/jank_snapshot_ensure.clj."
+                      :task (apply shell "jank" "--module-path" (load-file "dev/perf/jank_snapshot_ensure.clj")
+                                   "run" "dev/perf/jank_snapshot_run.jank" "--" *command-line-args*)}
   bench:cljw {:doc "cohost.bench on ClojureWasm (target/bench-cljw.edn)"
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "cljw" "-cp" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
