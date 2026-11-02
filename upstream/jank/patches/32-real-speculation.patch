@@ -44,6 +44,14 @@ Files:
   (count (str r))))): speculated (28), r = -502 became 2^64-502 in the unsigned if and the checked
   add threw "integer overflow". Repro 32's "if signedness" line.
 
+Measured (lane U6-4, box: shared 4 CPUs, no lock; interleaved A/B/A/B/A/B, median of 3; built on the
+series through 28 — 30 and 29 were not in the measured build, the series applies clean with them):
+- down-double-plain (H0 row) 8727341 -> 1052125 ns, hinted 1055614: 1.00x of hinted.
+- nbody step fn with untyped params 29263572 -> 18706351, hinted mins 18474075 vs 18565759: ~1.0x.
+- mandelbrot inner loop 1260986 -> 270587. spectral-norm eval-A unchanged (quot returns an object).
+- bb bench:programs (jvm / jank-aot / cohost, ms, median of 3): mandelbrot, fannkuch and nsieve run
+  on every jank target (ABSENT before, the loop-shadow fix); nbody runs on cohost.
+
 diff --git a/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp b/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
 index c4f63033..a8bf67ee 100644
 --- a/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
