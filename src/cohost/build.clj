@@ -12,7 +12,11 @@
 ;;   :cljs  target/<name>-cljs/: cohost's ClojureScript host, the stock core
 ;;          sources, the project's and its dependencies' source roots, and
 ;;          run.js (node target/<name>-cljs/run.js args... runs -main)
-;;   other  "build: not yet on <target>" (jank: lane D's D-7)
+;;   :jank  target/jank/<name>: one native executable (cohost.build-jank, lane
+;;          D's D-7): the booted core's snapshot plus the project's namespaces,
+;;          compiled -O3, linked by jank's static runtime; rebuilt when stale.
+;;          target/jank/<name> args... runs -main; it needs no cohost checkout
+;;   other  "build: not yet on <target>"
 (ns cohost.build
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -94,6 +98,16 @@ process.exit(r.status === null ? 1 : r.status);
     (println (str "build: " out "/ (node " out "/run.js args...)"))
     (str out)))
 
+(defn- jank-exe [{:keys [main name]}]
+  (let [home (cohost-home)
+        ;; the source roots, resolved as `cohost :jank` resolves them (jars extracted)
+        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jank" "-Spath")) #":")
+        build! (requiring-resolve 'cohost.build-jank/build!)
+        exe (build! {:repo home :project (.getCanonicalPath (io/file ".")) :roots roots
+                     :main main :name name})]
+    (println (str "build: " exe " (" exe " args...)"))
+    exe))
+
 (defn build
   "Build the project for its target. opts: :main (the -main namespace, a
    symbol), :name (default: the directory's name), :target (default:
@@ -105,6 +119,6 @@ process.exit(r.status === null ? 1 : r.status);
     (case t
       :jvm (jvm-uber opts)
       :cljs (cljs-bundle opts)
-      (do (println (str "build: not yet on " t
-                        (when (= t :jank) " (lane D's D-7: an AOT executable)")))
+      :jank (jank-exe opts)
+      (do (println (str "build: not yet on " t))
           (throw (ex-info (str "build: not yet on " t) {:target t}))))))
