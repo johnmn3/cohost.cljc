@@ -87,15 +87,17 @@ cohost -X:test
 
 Builds are [tools.build](https://clojure.org/guides/tools_build): `cohost -T:build <task>`
 runs the project's `build.clj`, as `clojure -T:build` does. cohost adds `cohost.build`,
-whose `build` makes the artifact for the project's runtime (an uberjar by default):
+whose `build` makes the artifact for the project's runtime: a directory `target/<name>/`
+whose `run` starts your `-main`, from any directory:
 
 ```bash
-# targets: jvm
-cohost -T:build build             # => build: target/myapp.jar (java -jar target/myapp.jar -m acme.myapp)
-java -jar target/myapp.jar -m acme.myapp    # => Hello, world!
+# targets: jvm jolt cljs cljw lg lpy phel
+cohost -T:build build                               # => build: target/myapp/run
+(cd /tmp && "$OLDPWD"/target/myapp/run you)         # => Hello, you!
 ```
 
-What each runtime builds is in `doc/CLI.md` ("Building").
+What is inside for each runtime (an uberjar, a native binary, a bundle) is in
+`doc/CLI.md` ("Building").
 
 ## Choosing a runtime
 
