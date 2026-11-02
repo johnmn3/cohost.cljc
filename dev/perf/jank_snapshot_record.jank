@@ -1,0 +1,20 @@
+;; jank-FAST Step 6 stage 2. Boot with record mode on, load the twelve
+;; libraries the batteries and the bench load, and write every recorded event
+;; to target/jank-snapshot/events.edn (dev/perf/jank_snapshot_emit.clj turns
+;; them into modules). Does not compile. Run by dev/perf/jank_snapshot_ensure.clj
+;; when the snapshot is stale.
+;;   jank --module-path <aot-dir>:src run dev/perf/jank_snapshot_record.jank
+(require 'cohost.run)
+(require 'cohost.boot)
+(require 'cohost.adapter)
+(require 'cohost.bench)
+
+(let [r (cohost.boot/boot! {:record? true})]
+  (cohost.boot/print-report r))
+(doseq [lib cohost.bench/libs]
+  (cohost.adapter/try-all (fn [] (cohost.boot/load-lib! lib))
+                          (fn [e] (println "RECORD-LIB-ERROR" lib (cohost.adapter/error-message e)))))
+(let [ev (cohost.boot/snapshot-stop!)
+      text (pr-str ev)]
+  (cohost.adapter/spit-file "target/jank-snapshot/events.edn" text)
+  (println "SNAPSHOT-EVENTS" (count ev) "bytes" (count text)))
