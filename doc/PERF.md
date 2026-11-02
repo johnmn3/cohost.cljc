@@ -1236,7 +1236,7 @@ multimethod case improves and no case's true median lies above its nil maximum.
 | ClojureScript, Chromium, before X2-3 | 3 | 51.39 [49.60-54.89] -> 40.09 [38.29-47.30] | 1.27 -> 1.31 | nil 147/149, 61/61; **true 144/149, 59/61** | incorrect |
 | ClojureScript, Node, on X2-3 (`2f07bfc`) | 9 | 68.57 [28.07-87.89] -> 52.96 [21.49-129.66] (true below nil 7 of 9) | 1.37 -> 1.25 | 147/149, 61/61 | **on** (X3-2, `47d43ca`) |
 | ClojureScript, Chromium, on X2-3 (`2f07bfc`) | 9 | 51.59 [20.84-83.10] -> 38.00 [14.09-55.30] (true below nil 7 of 9) | 1.37 -> 1.30 | 147/149, 61/61 | **on** (X3-2, `47d43ca`) |
-| basilisp 0.5.1 | 2 paired | 21590.20 -> 21098.93, 16245.01 -> 19659.29 (no gain; a third round, ~60 min under this load, not run) | 1.88 -> 1.85, 2.04 -> 1.80 | 148/149 (numeric tower), 61/61 | off: no gain |
+| basilisp 0.5.1 | 3 paired | 21590.20 -> 21098.93, 16245.01 -> 19659.29, 7001.37 -> 6607.08 (round 3, X3-2, load 4.6): paired ratios 0.98, 1.21, 0.94 | 1.88 -> 1.85, 2.04 -> 1.80, 1.98 -> 1.92 | 148/149 (numeric tower), 61/61 | off: no gain |
 | clojurust 0.2.32 | - | not measurable on a 15 GB box | - | `bb boot:cljrs` OOM-killed at 4.7 GB RSS (exit 137) or exit 139; `bb bench:cljrs` fails at key nil 3/3 ("wrong type: expected intercepted, got find-ns sentinel") | off |
 | jank | - | (on since X2-1, with its own `cpp/raw` hit fn, X2-2) | - | - | on |
 
