@@ -9,4 +9,6 @@
 22-multi-cache-truthy.patch
 20-native-returns.patch
 23-chunk-branch.patch
+24-direct-calls.patch
+26-native-inference.patch
 27-string-nth-str.patch
