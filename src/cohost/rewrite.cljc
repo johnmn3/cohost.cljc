@@ -1085,8 +1085,36 @@
    deftest's :test fn, core.clj's :inline fns."
   [:test :inline :inline-arities])
 
+(defn- hinted-fn-init?
+  "An anonymous (fn ...) or (fn* ...) with a primitive hint on a parameter, an
+   arglist or the form (:rettag)."
+  [x]
+  (and (seq? x) (symbol? (first x))
+       (contains? #{"fn" "fn*"} (name (*plain* (first x))))
+       (not (symbol? (second x)))
+       (let [arities (if (vector? (second x)) [(rest x)] (filter seq? (rest x)))]
+         (boolean (or (primitive-hint (:rettag (meta x)))
+                      (some (fn [[params]]
+                              (and (vector? params)
+                                   (or (primitive-hint (:tag (meta params)))
+                                       (some #(and (symbol? %) (primitive-hint (:tag (meta %)))) params))))
+                            arities))))))
+
+(defn- self-named-init
+  "On a host that compiles native hints, a def whose init is a hinted anonymous
+   fn gets the var's name as the fn's own name, as jank's defn does: the hinted
+   arity's self-calls then reach its native entry (emit-arity's inner fn*)
+   instead of re-entering the coercing outer arity through the var."
+  [nm more]
+  (let [init (last more)]
+    (if (and (host/native-hints) (symbol? nm) (hinted-fn-init? init))
+      (concat (butlast more)
+              [(with-meta (apply list (first init) (bare-sym nm) (rest init)) (meta init))])
+      more)))
+
 (defn- rw-def [ctx [_ nm & more]]
-  (let [nm (carry-meta nm nm)
+  (let [more (self-named-init nm more)
+        nm (carry-meta nm nm)
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
              nm)
