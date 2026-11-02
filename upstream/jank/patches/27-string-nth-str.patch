@@ -1,0 +1,191 @@
+From 7cd551e812829315badf5a311ceee3304c4f9739 Mon Sep 17 00:00:00 2001
+From: cohost u3 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 19:35:27 +0000
+Subject: [PATCH] 27: string nth with one check and no allocation; nth with an
+ unboxed index
+
+Draft: doc/upstream/jank-27-string-nth.md in johnmn3/cohost.cljc. Repro: bash
+dev/research/upstream/run.sh 27-string-nth (Expected: string nth near the JVM's
+8406315 ns per 1e6).
+
+- runtime::nth (both arities) reads a string or a vector directly when the index is
+  an integer in range: no visit_object switch, no second is_integral/to_i64 in the
+  virtual nth; everything else (bounds errors, other types, not-found) takes the
+  general path as before.
+- nth(object_ref, i64): the same with an unboxed index.
+- persistent_string: nth returns one shared character box per byte value (256 boxes
+  made once in uncollectable memory; characters are immutable), so string nth
+  allocates nothing. Byte-indexed semantics unchanged.
+
+Files: src/cpp/jank/runtime/core/seq.cpp, include/cpp/jank/runtime/core/seq.hpp,
+include/cpp/jank/runtime/obj/persistent_string.hpp, src/cpp/jank/runtime/obj/persistent_string.cpp.
+---
+ .../include/cpp/jank/runtime/core/seq.hpp     |  3 +
+ .../jank/runtime/obj/persistent_string.hpp    |  4 ++
+ .../src/cpp/jank/runtime/core/seq.cpp         | 62 +++++++++++++++++++
+ .../jank/runtime/obj/persistent_string.cpp    | 24 ++++++-
+ 4 files changed, 92 insertions(+), 1 deletion(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp b/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
+index 6e4cfdf60..b6570f81f 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
+@@ -118,6 +118,9 @@ namespace jank::runtime
+   object_ref subvec(object_ref const o, i64 start, i64 end);
+   object_ref nth(object_ref const o, object_ref const idx);
+   object_ref nth(object_ref const o, object_ref const idx, object_ref const fallback);
++  /* nth with an unboxed index: a string or a vector is read with no visit and no
++   * re-unboxing; anything else takes nth(o, make_box(index)). */
++  object_ref nth(object_ref const o, i64 const index);
+   object_ref peek(object_ref const o);
+   object_ref pop(object_ref const o);
+   object_ref empty(object_ref const o);
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/persistent_string.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/persistent_string.hpp
+index ed9d4a2a6..2923d255e 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/persistent_string.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/persistent_string.hpp
+@@ -52,6 +52,10 @@ namespace jank::runtime::obj
+     /* behavior::indexable */
+     object_ref nth(object_ref const index) const override;
+     object_ref nth(object_ref const index, object_ref const fallback) const override;
++    /* The character at byte index i, unchecked: 0 <= i < count(). One shared box per byte
++     * value (as the JVM's Character.valueOf caches), so string nth allocates nothing. */
++    object_ref nth_byte(usize const i) const;
++    static object_ref byte_char(char const c);
+ 
+     jtl::string_result<persistent_string_ref> substring(i64 start) const;
+     jtl::string_result<persistent_string_ref> substring(i64 start, i64 end) const;
+diff --git a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
+index b8d799bbe..32732ff25 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
+@@ -638,8 +638,62 @@ namespace jank::runtime
+       detail::native_persistent_vector{ v->data.begin() + start, v->data.begin() + end });
+   }
+ 
++  /* The common nth: a string or a vector and an in-range index, read directly into out
++   * (true); false sends the caller down the general path (bounds errors, other types). */
++  static bool nth_fast(object_ref const o, i64 const index, object_ref &out)
++  {
++    if(index < 0)
++    {
++      return false;
++    }
++    auto const t(o.get_type());
++    if(t == object_type::persistent_string)
++    {
++      auto const str(expect_object<obj::persistent_string>(o));
++      if(static_cast<usize>(index) < str->data.size())
++      {
++        out = str->nth_byte(static_cast<usize>(index));
++        return true;
++      }
++    }
++    else if(t == object_type::persistent_vector)
++    {
++      auto const &data(expect_object<obj::persistent_vector>(o)->data);
++      if(static_cast<usize>(index) < data.size())
++      {
++        out = data[static_cast<usize>(index)];
++        return true;
++      }
++    }
++    return false;
++  }
++
++  static bool is_int_index(object_ref const idx)
++  {
++    auto const t(idx.get_type());
++    return t == object_type::small_integer || t == object_type::integer;
++  }
++
++  object_ref nth(object_ref const o, i64 const index)
++  {
++    object_ref out;
++    if(nth_fast(o, index, out))
++    {
++      return out;
++    }
++    return nth(o, make_box(index));
++  }
++
+   object_ref nth(object_ref const o, object_ref const idx)
+   {
++    if(is_int_index(idx))
++    {
++      object_ref out;
++      if(nth_fast(o, to_int(idx), out))
++      {
++        return out;
++      }
++    }
+     auto const index(to_int(idx));
+ 
+     if(o.is_nil())
+@@ -690,6 +744,14 @@ namespace jank::runtime
+ 
+   object_ref nth(object_ref const o, object_ref const idx, object_ref const fallback)
+   {
++    if(is_int_index(idx))
++    {
++      object_ref out;
++      if(nth_fast(o, to_int(idx), out))
++      {
++        return out;
++      }
++    }
+     auto const index(to_int(idx));
+     if(index < 0 || o.is_nil())
+     {
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_string.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_string.cpp
+index 762dbe3a7..694edf8f0 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_string.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_string.cpp
+@@ -7,6 +7,8 @@
+ #include <jank/util/escape.hpp>
+ #include <jank/util/fmt.hpp>
+ 
++#include <gc.h>
++
+ namespace jank::runtime::obj
+ {
+   GC_word persistent_string::gc_descriptor{};
+@@ -115,7 +117,7 @@ namespace jank::runtime::obj
+           util::format("The index `{}` is out of bounds for this `persistent_string`.", i)
+         };
+       }
+-      return make_box<character>(data[i]);
++      return byte_char(data[static_cast<usize>(i)]);
+     }
+     else
+     {
+@@ -125,6 +127,26 @@ namespace jank::runtime::obj
+     }
+   }
+ 
++  object_ref persistent_string::byte_char(char const c)
++  {
++    /* 256 boxes made once, in uncollectable memory the collector scans, so they stay
++     * reachable; characters are immutable, so sharing them is safe. */
++    static object ** const table{ [] {
++      auto const t(static_cast<object **>(GC_MALLOC_UNCOLLECTABLE(256 * sizeof(object *))));
++      for(usize i{}; i < 256; ++i)
++      {
++        t[i] = make_box<character>(static_cast<char>(i)).erase().raw();
++      }
++      return t;
++    }() };
++    return table[static_cast<unsigned char>(c)];
++  }
++
++  object_ref persistent_string::nth_byte(usize const i) const
++  {
++    return byte_char(data[i]);
++  }
++
+   object_ref persistent_string::nth(object_ref const index, object_ref const fallback) const
+   {
+     return get(index, fallback);
+-- 
+2.43.0
+

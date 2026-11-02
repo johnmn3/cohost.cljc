@@ -1,0 +1,11 @@
+;; jank-27: string nth (P5's string-nth-1e6, k-nucleotide's inner loop) and apply str over 1e4 strings.
+;; The JVM twin (dev/research/p5_seqs.clj, cohost's research): string-nth-1e6 8406315 ns, apply-str-1e4 425450 ns.
+(def n 1000000)
+(def s (apply str (map (fn [i] (nth "acgt" (mod i 4))) (range n))))
+(println "count s" (count s) "first" (pr-str (nth s 0)) "last" (pr-str (nth s (dec n))) "nth vector" (nth [1 2 3] 1) "nth not-found" (nth "ab" 5 :nf))
+(println "identical? (nth s 3) (nth s 7)" (identical? (nth s 3) (nth s 7)) "= \\t" (= (nth s 3) \t))
+(timed "string nth 1e6, (= (nth s i) \\t)" (fn [] (loop [i 0 c 0] (if (< i n) (recur (inc i) (if (= (nth s i) \t) (inc c) c)) c))))
+(timed "string count 1e6 loop, no nth" (fn [] (loop [i 0 c 0] (if (< i n) (recur (inc i) (if (= i 3) (inc c) c)) c))))
+(def strs (doall (map str (range 10000))))
+(timed "apply str over 1e4 strings" (fn [] (count (apply str strs))))
+(timed "apply str (map str (range 1e4))" (fn [] (count (apply str (map str (range 10000))))))
