@@ -1623,6 +1623,7 @@ namespace cohost_obj {
    ;; is_integer is exactly a host long (integer and small_integer, not
    ;; big_integer -- a bigint converts, and the cast range-checks it);
    ;; is_real is exactly a host double.
+   :defn-fn-name? true
    :prim-kind-test (fn [hint sym]
                      (case hint
                        long (list 'cpp/jank.runtime.is_integer sym)

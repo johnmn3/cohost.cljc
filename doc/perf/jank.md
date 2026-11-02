@@ -1427,3 +1427,59 @@ those sizes).
 
 No bench program changes: the programs are portable Clojure; the failure is the host's, and the codemod is where
 cohost absorbs it. Upstream: no draft in doc/upstream/ names this codegen bug yet (Step 7).
+
+## Step 5 H1, the inline test (M-6b, 2026-11-02)
+
+The kind test is emitted inline on jank through the `:prim-kind-test`
+capability (default nil; every other host keeps the shim call):
+`jank.runtime.is_integer` for a long hint, `jank.runtime.is_real` for a
+double hint -- jank's own runtime predicates, visible from every module,
+with exactly the kind semantics (a host long, never a bigint; a host
+double, never a decimal). `bb bench:programs jank`, the one quiet run:
+fib 262.26, fib-hinted 326.88 (x1.25; was x2.14 with the shim call);
+tak 19.44, tak-hinted 21.68 (x1.12; was x2.13). The residual is the
+`is_integer` call itself, ~24 ns per entry: it is a runtime-library
+call, not an inlined tag read. The true inline read exists --
+`(cpp/.get_type x)` returns the `object_type` -- but comparing it
+through Clojure measured 4x slower than the call (the tag boxes on the
+way into a Clojure value), and the enum-cast spellings resisted six
+attempts. An emitted cpp call cannot name the adapter's cpp/raw block
+either: a cpp namespace is visible only in its own module.
+
+## Emission gaps (M-9, 2026-11-02)
+
+A def whose value is an unnamed `fn*` carries the def's name onto the
+`fn*` on jank (the `:defn-fn-name?` capability; jank's own `defn` emits
+the same shape), so self-recursion is a direct call instead of a var
+deref and a dynamic call. R's P6 (`JANK_O=3`, medians of 5): fib-stock
+73,445,800 ns -> 19,823,645; fib-stock / fib-fn-def x3.57 -> x1.00.
+Dotted def names are skipped (deftype's `Box.` constructor is not a fn
+name; jank's codegen rejects it on a `fn*`). The semantic price is
+pinned by the battery row "redefining a fn during its own recursion":
+the JVM answers `:redefined` (the recursion goes through the var),
+jank answers `:original` -- raw jank's own `defn` answer -- and the row
+stands as a documented host fact. One codemod lesson from the same
+work: a raw `(.method ...)` form inside rewrite.cljc breaks the boot
+(the file is rewritten by itself); plain fn calls only there.
+
+Of the shim statics, `Numbers-minus` is now the host's `-` on jank:
+the wrapper checked nothing (the host's `-` throws on nil and on a
+non-number, as the JVM's static does), so the static is the twin and
+`host-aliases` fires. The divide family keeps its wrappers -- jank's
+own `quot`/`rem`/`/` die with SIGFPE on a zero divisor where the JVM
+throws `ArithmeticException` -- and max/min keep theirs (jank's
+`(min 1 ##NaN)` answers 1.0; the JVM's static answers NaN).
+
+`bb bench:jank` after all of it (two runs, host ms constant, stock ms
+as printed): transient-vector x5.07 / x5.37 (was x14.07 in Step 4's
+bench), transduce x11.28 / x11.14, into-vector x5.51 / x5.88,
+set-build x4.22 / x4.34, group-by x1.97 / x2.60, frequencies x2.39 /
+x2.25. Read with care: the bench's stock side still carries first-use
+JIT compilation inside its timed loops (Step 3's profile put it at
+12-34% of a case), and which case pays it moves when the emitted shape
+of every stock fn changes -- into-vector's stock ms went 10.26 ->
+~38 while its host ms never moved. The remaining gap in the
+collection cases is the per-element call path through stock
+`reduce`/transducer step fns, which neither the name nor the twins
+reach; a steady-state per-case method (Step 8) is the instrument that
+can price what is left.
