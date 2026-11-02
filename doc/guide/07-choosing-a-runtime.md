@@ -24,7 +24,8 @@ library battery runs twelve `clojure.*` libraries the same way.
 
 ## What differs, in plain words
 
-- **Numbers.** ClojureScript and basilisp have one number type: `(= 1 1.0)` is true there.
+- **Numbers.** ClojureScript and basilisp have one number type: `(= 1 1.0)` is true there,
+  and on ClojureScript `(/ 1 0)` is `##Inf` rather than an error.
   jank 0.1 computes `+` and `*` of two values that both fit in 32 bits in 32 bits, so a sum
   past 2^31 wraps there (the programs `pipeline` and `dispatch` give the JVM's answer modulo
   2^32 on jank).

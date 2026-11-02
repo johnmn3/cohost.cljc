@@ -46,7 +46,7 @@ An uncaught error prints `Execution error (ClassName).` and its message to stand
 exits 1; `(System/exit n)` exits n; a bad option or an unknown target exits 2.
 
 ```bash
-cohost -e '(/ 1 0)' 2>/dev/null; echo "exit $?"              # => exit 1
+cohost -e '(throw (ex-info "boom" {}))' 2>/dev/null; echo "exit $?"     # => exit 1
 cohost -e '(println "before")' -e '(System/exit 3)'; echo "exit $?"   # => before
 # => exit 3
 ```
