@@ -40,6 +40,12 @@
    {:id :mandelbrot-hinted :file "bench/programs/mandelbrot_hinted.clj" :arg "1500" :hinted? true}
    {:id :binary-trees :file "bench/programs/binary_trees.clj" :arg "18"}
    {:id :binary-trees-hinted :file "bench/programs/binary_trees_hinted.clj" :arg "18" :hinted? true}
+   ;; X1: depth 14 as a second size (GC visible); the i32-wrap sentinel; sort then a walk to the middle.
+   {:id :binary-trees-14 :file "bench/programs/binary_trees.clj" :arg "14"}
+   {:id :binary-trees-14-hinted :file "bench/programs/binary_trees_hinted.clj" :arg "14" :hinted? true}
+   {:id :sum-overflow :file "bench/programs/sum_overflow.clj" :arg "1000000"}
+   {:id :sum-overflow-hinted :file "bench/programs/sum_overflow_hinted.clj" :arg "1000000" :hinted? true}
+   {:id :sort :file "bench/programs/sort.clj" :arg "100000"}
    {:id :fannkuch :file "bench/programs/fannkuch.clj" :arg "8"}
    {:id :fannkuch-hinted :file "bench/programs/fannkuch_hinted.clj" :arg "8" :hinted? true}
    {:id :nsieve :file "bench/programs/nsieve.clj" :arg "20"}
