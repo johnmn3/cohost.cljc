@@ -27,6 +27,15 @@
 # package lacks (static component libs, tools: jank links only libLLVM.so and libclang-cpp.so; the
 # stubs are listed in $JANK_LLVM/STUBS.txt). Binutils the exports name (llvm-ar, -nm, -ranlib, ...)
 # point at GNU binutils.
+#
+# The configure passes -Dllvm_dir with -Djank_local_clang=on, so cmake --install copies clang-23,
+# libLLVM and libclang-cpp into $JANK_DEV_PREFIX/lib/jank/0.1 and sets the binary's RUNPATH to
+# $ORIGIN/../lib/jank/0.1/lib: the installed jank needs no LD_LIBRARY_PATH. (Configured with
+# jank_local_clang=on and no llvm_dir, the install looks for build/llvm-install and fails; with it off
+# the binary needs LD_LIBRARY_PATH=$JANK_LLVM/lib.)
+#
+# Running jank (apt or source) also wants a UTF-8 locale: under POSIX its lexer rejects non-ASCII
+# string literals (jank_init's setlocale(LC_CTYPE, ".UTF8") is not a glibc locale name).
 set -euo pipefail
 # jank's lexer reads string literals by the C locale: under POSIX (a bare container) the "…" in
 # jank's own src/jank/jank/nrepl/server/util.jank is "Unterminated string" and phase 2 fails.
@@ -77,8 +86,16 @@ deps() {
 # ---- the LLVM prefix ----
 llvm_prefix_from_apt() {
   [ -f "$JANK_LLVM/lib/cmake/llvm/LLVMConfig.cmake" ] && { stage "LLVM prefix present: $JANK_LLVM"; return; }
-  grep -q "$LLVM_SHA" "$APT_JANK/include/llvm/Config/llvm-config.h" \
-    || { echo "apt jank's LLVM is not $LLVM_SHA; use --llvm-from-source" >&2; exit 1; }
+  # Where the package records the snapshot differs between apt builds of 0.1-noble: some carry
+  # LLVM_REVISION in include/llvm/Support/VCSRevision.h, some in include/llvm/Config/llvm-config.h;
+  # clang-23 --version names it in both.
+  local where=""
+  for h in "$APT_JANK/include/llvm/Support/VCSRevision.h" "$APT_JANK/include/llvm/Config/llvm-config.h"; do
+    if [ -f "$h" ] && grep -q "$LLVM_SHA" "$h"; then where="$h"; break; fi
+  done
+  if [ -z "$where" ] && "$APT_JANK/bin/clang-23" --version | grep -q "$LLVM_SHA"; then where="clang-23 --version"; fi
+  [ -n "$where" ] || { echo "apt jank's LLVM is not $LLVM_SHA (checked VCSRevision.h, llvm-config.h, clang-23 --version); use --llvm-from-source" >&2; exit 1; }
+  stage "apt LLVM is $LLVM_SHA (from $where)"
   stage "LLVM prefix from the apt package -> $JANK_LLVM"
   mkdir -p "$JANK_LLVM"/{bin,include,lib}
   cp -a "$APT_JANK/bin/." "$JANK_LLVM/bin/"

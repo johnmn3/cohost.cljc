@@ -26,8 +26,8 @@ mtime, so a rebuild recompiles cohost's objects and the apt and source binaries 
 
 jank needs Clang/LLVM 23 from jank-lang/llvm-project @ `e280c5056ed110a11411413da2b76da226f3113b`
 (`compiler+runtime/bin/build-clang`). The apt package `jank 0.1-noble` already ships exactly that
-build (`/usr/local/lib/jank/0.1/include/llvm/Config/llvm-config.h`: `LLVM_REVISION e280c505...`,
-23.1.2): `clang-23`, `libLLVM.so.23.1`, `libclang-cpp.so.23.1`, every `llvm/` and `clang/` header,
+build (`/usr/local/lib/jank/0.1/include/llvm/Support/VCSRevision.h`: `LLVM_REVISION e280c505...`;
+`llvm-config.h` has only the version, 23.1.2; `clang-23 --version` names the sha too): `clang-23`, `libLLVM.so.23.1`, `libclang-cpp.so.23.1`, every `llvm/` and `clang/` header,
 libc++ headers and the clang resource dir. It lacks the CMake package (`LLVMConfig.cmake`,
 `ClangConfig.cmake`, `AddLLVM.cmake`, the exports), which jank's `cmake/llvm.cmake` and CppInterOp's
 `add_llvm_library` need. So the script does not build LLVM (bin/build-clang: "an hour or two" per
@@ -66,7 +66,25 @@ LC_ALL=C.UTF-8 cmake --build build -j4
 cmake --install build
 ```
 
-`LC_ALL=C.UTF-8` is required: under the POSIX locale jank's lexer (the apt binary too) reads
+Which apt builds carry the sha where: both boxes measured so far (int-a's and int-b's, `jank
+0.1-noble`) have it in `VCSRevision.h` and not in `llvm-config.h`; the script checks `VCSRevision.h`,
+then `llvm-config.h`, then `clang-23 --version`. (The first version of the script, c85e131, checked
+only `llvm-config.h` and refused both boxes; it was not caught here because this box's LLVM prefix
+already existed when the script first ran.)
+
+The installed binary needs no `LD_LIBRARY_PATH`: the configure passes `-Dllvm_dir` with
+`-Djank_local_clang=on`, so `cmake --install` copies clang-23, libLLVM and libclang-cpp into
+`/usr/local/lib/jank-dev/lib/jank/0.1/` and the binary's RUNPATH is `$ORIGIN/../lib/jank/0.1/lib`
+(`readelf -d`; `env -i ... ldd` resolves both there). A hand configure with `jank_local_clang=on` and
+no `llvm_dir` makes the install look for `build/llvm-install` and fail (u1); with
+`-Djank_install_local_clang=OFF` it installs but then needs `LD_LIBRARY_PATH=/opt/jank-llvm/e280c505/lib`.
+
+`LC_ALL=C.UTF-8` is required for the build, and wanted when running jank (apt or source) on any
+source with non-ASCII string literals: jank_init calls `setlocale(LC_CTYPE, ".UTF8")`
+(`src/cpp/jank/c_api.cpp:1102`, u1's finding), which glibc does not accept, so the lexer's
+`mbrtowc` runs in the POSIX locale when LANG/LC_ALL are unset. The cohost runners do not set it
+(that would change the apt baseline's conditions too); export it in the shell. Under the POSIX
+locale jank's lexer (the apt binary too) reads
 `"…"` as "Unterminated string", and phase 2 fails compiling jank's own
 `src/jank/jank/nrepl/server/util.jank`. Repro on any jank: `printf '(println "a…b")\n' > u.jank;
 LC_ALL=POSIX jank run u.jank`.
