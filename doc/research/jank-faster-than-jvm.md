@@ -442,7 +442,11 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
     vector, so any walk of a sorted result (`nth`, `reduce`, `into`, `seq`) is O(n^2):
     50000 steps x 1e5 copies for P5's `(nth (sort v) 50000)`. Fix: share the buffer (a
     `jtl::ref` or the immer vector) between the steps, as `next_in_place` already avoids the
-    copy; P5c (queued) separates `first`/`count`/`nth`/`reduce`/`vec` of a sorted 1e5.
+    copy. P5c (`run-jank.sh p5c_sort_walk.jank`, 1e5 sorted; JIT / AOT medians, ns) separates
+    the two: `sort-first` 18551515 / 18247162 and `sort-count` 11203190 / 19085335 (the sort
+    itself), against `sort-nth-50k` 15442173129 / 16149965063, `sort-reduce` 30789704126 /
+    33005631393 and `sort-vec-nth` 35417497929 / 35823935482 (the walk); `sort-nth-5k-of-1e4`
+    80663625 / 108267494.
   - `apply str` over 1e4 strings is 19x (8214179 vs 425450 ns): `apply_to` walks the args
     twice with the allocating range (`core/call.cpp:18`) and `runtime::str` a third time
     (`seq.cpp:798`); one `fresh_seq` + `next_in_place` pass into a reserved `string_builder`.
