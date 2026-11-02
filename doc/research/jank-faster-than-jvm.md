@@ -55,7 +55,146 @@ and timings overlap otherwise).
 
 ## 2. Session 1: the compiler and code generation
 
-(pending)
+What jank emits today, read from the C++ `jank compile-module research.cg -O3 --output-target cpp`
+wrote for a four-fn probe (the dump is quoted in §8.1):
+
+- A fn's self-recursion is a direct C++ call: `(fib (dec n))` inside `fib` is
+  `research_cg$fib_16_1(fib, v10)`, no var deref, no dynamic dispatch.
+- A call through any other var is a deref then a dynamic call: `(research.cg/fib x)` is
+  `research_cg_SLASH_fib_35->deref()` followed by `v1.call( x)`.
+- `<`, `+`, `-`, `inc`, `dec` on untyped values are out-of-line runtime calls on boxed objects:
+  `jank::runtime::lt(n, v1)`, `jank::runtime::add(v11, v14)`; the var `+` is never consulted
+  (the compiler resolves core arithmetic to the runtime op). A keyword call `(:a m)` is
+  `jank::runtime::get(m, v1)`.
+- A `loop` local started from an integer literal is typed as C++ `int` (`int v19
+  (static_cast<int>(v18)); s5 = v19;` for `(loop [i 0 ...] (recur (inc i) ...))`), while the
+  accumulator stays an `object_ref`. H0 saw the same `static_cast<int>` and its int32 wrap
+  (`locals` result `-645128448`): the automatic native local is 32-bit, which is a semantics
+  bug (Clojure's `long` is 64-bit) as much as an optimization.
+- A `^long`/`^double` parameter is unboxed once on entry (`convert<long>::from_object`) and
+  the fn's return is boxed (`into_object`); return hints and `let`/`loop` hints are ignored
+  (doc/perf/jank.md H0, "What `+`, `<`, and `inc` compile to").
+- `jank --help` lists `-Odirect-call` ("Elides the dereferencing of vars for improved
+  performance. (not yet implemented)"). `jank print-cflags` shows the C++ is built with
+  `-std=gnu++20 -fPIC -ffunction-sections -fdata-sections -fno-semantic-interposition -fwrapv`
+  (and `-O0`/`-O2` among the flags); the optimization level for user modules is the `-O`
+  given to `compile-module`.
+
+The probes (medians of 5 after a 2 s warm-up; the box was shared with the source readers
+during these runs, so absolute numbers carry noise of up to about 1.5x between runs: P1's JIT
+`fib-var` printed 7581990 ns in one run and 13479580 ns in the queued run; the ratios inside
+one run are the signal, and §8 re-measures the decisive cases alone):
+
+`bash dev/research/run-jank.sh dev/research/p1_fib_floor.jank` (queued run):
+
+| case | JIT median ns | AOT median ns | JVM median ns (`run-jvm.clj p1_fib_floor.clj`) |
+|---|---:|---:|---:|
+| fib-var (plain defn, fib 30) | 13479580 | 6101027 | 9069268 |
+| fib-hinted-leaf (`^long n`, the recursion still boxes its return) | 22959818 | 17595281 | 7056832 (`^long` param and return: unboxed on the JVM) |
+| fib-cpp-native (the same recursion in C++ through `cpp/raw`) | 4056029 | 3663884 | n/a |
+| fib-local-volatile (the fn read from a volatile on every call) | 47574122 | 35482559 | 9473318 |
+
+`bash dev/research/run-jank.sh dev/research/p2_call_path.jank` (5e6 calls of `(defn id1 [x] x)`
+in a boxed loop; per-call cost is (case - loop-only) / 5e6):
+
+| case | JIT median ns | per call, JIT | AOT median ns | JVM median ns |
+|---|---:|---:|---:|---:|
+| loop-only | 19843686 | | 22796641 | 27894623 |
+| call-var-same-ns | 66478603 | 9.3 ns | 80456245 | 26698072 |
+| call-var-other-ns | 76598975 | 11.4 ns | 71362755 | 24086899 |
+| call-local (fn object in a local) | 56214429 | 7.3 ns | 55469488 | 24748202 |
+| call-2 (two parameters) | 71433741 | 10.3 ns | 74444004 | 32771734 |
+| call-variadic (`[x & ys]`) | 560280030 | 108 ns | 585666975 | 27761945 |
+| call-cpp-objref (`cpp/raw` fn taking and returning `object_ref`) | 28029924 | 1.6 ns | 38220466 | n/a |
+| call-multi (one-method defmulti) | 324417633 | 61 ns | 363483677 | 84258705 |
+| call-volatile-fn | 142646782 | 24.6 ns | 147122664 | 29243081 |
+
+Reading: the JVM inlines every plain call (same-ns, other-ns, local, variadic all land on its
+loop's own cost, which is slower than jank's because it allocates `Long`s past the cache); jank
+pays about 9-11 ns per var call, 1.6 ns for a direct C++ call, and 108 ns for a variadic call.
+The loop itself is cheaper on jank than on the JVM (19.8 vs 27.9 ms for 5e6 boxed `inc` + `<`).
+
+### S1-1. Native numeric locals and returns by type propagation (unboxed recursion and loops)
+
+- **Mechanism.** The analyzer already types a `loop` local from an integer literal (as `int`)
+  and a parameter from its `^long`/`^double` tag. Extend that into a real local type inference:
+  a `let`/`loop` local whose init is a literal, a typed parameter, or an arithmetic/comparison
+  of typed operands gets the native type (`i64`/`f64`, never `int`); a fn whose every return
+  expression is typed gets a native return and a second, native entry point
+  (`fib_native(i64) -> i64`) that self-recursion and typed call sites use, with the boxing
+  `object_ref` entry kept for dynamic callers. `Math/sqrt`-style calls become the C++ ones.
+- **Cost attacked.** Boxing on every arithmetic result and every return: H0's carried loop is
+  0.105-0.125 of the boxed one (doc/perf/jank.md H0), and P1's C++ recursion runs fib 30 in
+  3663884 ns against 6101027 ns for the boxed AOT fn and 17595281 ns for the hinted leaf (the
+  hint loses today because the return boxes: H0's ratio 1.24-1.52).
+- **Expected effect.** For fib: up to 6101027 / 3663884 = 1.67x (AOT), the C++ floor measured by
+  P1; for loop-carried numeric code, up to the 8-10x of H0. On the yardstick this is the
+  numeric half (fib, tak, nbody, spectral-norm, mandelbrot, nsieve, fannkuch, and the hinted
+  variants, which H1 passes through for loops): the JVM's own hinted variants gain 0.48-0.84 on
+  mandelbrot, fib, tak, nbody (doc/PERF.md "Hinted median / unhinted median on the JVM"), which
+  is what jank's hinted rows lose today (fib-hinted/fib 1.74 on jank-aot).
+- **Probe.** P1 (done): `fib-cpp-native` is the ceiling, `fib-hinted-leaf` the current loss.
+  Next: `dev/research/p7_native_entry.jank`, a hand-written C++ native entry for tak and
+  nbody's inner `advance` through `cpp/raw`, against the jank versions (an hour).
+- **Semantic risk.** Overflow: Clojure's `+` on longs throws `ArithmeticException`; jank's
+  native path is compiled with `-fwrapv` (wraps). The existing `int` local is already wrong
+  (32-bit). The port has to keep `i64` and either check overflow or document the divergence as
+  jank already does for `+`. `=` on mixed int/double, `nil` in a typed local (NPE on the JVM).
+- **Owner.** Upstream jank (analyzer `processor.cpp` typing + `cpp_processor.cpp` emission);
+  cohost only passes hints through (H1, done).
+
+### S1-2. Direct calls to known vars, and a cheap variadic/arity path
+
+- **Mechanism.** `-Odirect-call`, which the CLI lists as not implemented: when a call's head is
+  a var whose root is a compiled fn in the same module graph (not `^:dynamic`, not
+  rebound), emit the direct C++ call `ns$fn_arity(fn_obj, args...)` as self-recursion is
+  emitted today, guarded by a per-var "redefined" flag the var's `bind_root`/`alter-var-root`
+  sets (one load + predictable branch instead of deref + dynamic `call`). For variadic arities,
+  emit a fixed-arity entry per call-site arity (`[x & ys]` called with two args gets
+  `arity_2` that builds the rest seq once, inline) instead of the generic packing path that
+  costs 108 ns per call today.
+- **Cost attacked.** P2: 9-11 ns per var call against 1.6 ns direct; 108 ns per variadic call;
+  the JVM is at 0 ns over the loop for all of these (it inlines). Which yardstick programs pay
+  it: json (`parse` calls `skip`, `parse-string`, `parse-num` through vars in its inner loop;
+  `chunks` is self-recursive), pipeline (`assoc`, `update-in`, `assoc-in`, `get-in` are var
+  calls into clojure.core; `assoc` and `update-in` are variadic in Clojure), k-nucleotide and
+  the numeric programs mostly self-recurse or loop (already direct).
+- **Expected effect.** Bounded by the per-call figures: (9.3 - 1.6) ns per cross-var call and
+  about 100 ns per variadic call. For json and pipeline the share is unknown until probe P8 (a
+  count of var and variadic calls per iteration times these costs, against the program's
+  median). For fib/tak/binary-trees: none (self-recursion is already direct).
+- **Probe.** P2 (done) gives the per-call costs. P8: pipeline with `assoc`/`update-in` replaced
+  by fixed-arity local copies (`(defn assoc2 [m k v] ...)` over `cpp/raw` or jank's own
+  2-arity), one hour, under `dev/research/`.
+- **Semantic risk.** Redefinition (`def` again, `with-redefs`, `alter-var-root`, REPL reload)
+  must reach every direct call site: the guard flag handles it at one branch per call; a
+  module compiled against an older arity shape must fall back to the dynamic call.
+  `^:dynamic` vars stay dynamic. No change to argument evaluation order or arity errors.
+- **Owner.** Upstream jank (codegen; the flag already exists in the CLI).
+
+### S1-3. Inline the runtime into generated code: LTO across the module graph, then PGO
+
+- **Mechanism.** Every `lt`/`add`/`get`/`call`/`deref` in generated C++ is a call into the
+  runtime library; `compile-module` builds one object per namespace at `-O3` with
+  `-ffunction-sections -fno-semantic-interposition` but no link-time optimization across
+  objects or into the runtime. Build the runtime's hot entry points as LLVM bitcode (or make
+  the small ones header-inline), compile modules with `-flto=thin`, and link the user's
+  program as one LTO unit so the type switch inside `add(object_ref, object_ref)` and the
+  arity dispatch inside `call` can be inlined and specialized at each site; then profile-guided
+  optimization over the yardstick.
+- **Cost attacked.** The out-of-line runtime call per primitive op and per fn call: P2's
+  `call-cpp-objref` (1.6 ns, an inlinable C++ fn) against `call-var-same-ns` (9.3 ns); the
+  boxed loop's 4 ns per `inc`+`<` pair. On the JVM every one of these is inlined by C2.
+- **Expected effect.** Unknown until probe P9: compile P1/P2/P5 at `JANK_O=0` and `JANK_O=3`
+  (if `-O3` already changes little, the generated code's time is inside the runtime calls, and
+  inlining them is the lever; if `-O3` changes a lot, LLVM is already working and LTO adds the
+  cross-object part). The ceiling for arithmetic is S1-1's C++ floor.
+- **Probe.** P9 (an hour): the `-O0` vs `-O3` matrix with the runner's `JANK_O` knob; then one
+  manual link of a probe module with `-flto` against a bitcode build of `libjank` if the
+  shipped package carries one (`ls /usr/local/lib/jank/0.1/lib`).
+- **Semantic risk.** None at the language level (a build-pipeline change); risk is build time
+  and binary size, and that the JIT path (`jank run`) cannot use LTO, so the gain is AOT-only.
+- **Owner.** Upstream jank (the AOT driver); cohost would only pass flags.
 
 ## 3. Session 2: the runtime and data structures
 
