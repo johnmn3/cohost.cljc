@@ -4,11 +4,15 @@
 ;;   (load-file "<repo>/dev/perf/jank_snapshot_cli.clj")
 ;;   (jank-cli-launch "<repo>")
 ;;   ;; -> {:module-path "<abs snapshot objects>:<abs snapshot src>:<abs repo>/src"
-;;   ;;     :snapshot? true}                       ; the snapshot is fresh
+;;   ;;     :snapshot? true                        ; the snapshot is fresh
+;;   ;;     :env {"GC_INITIAL_HEAP_SIZE" "512M"}}  ; the collector's start heap (D-4)
 ;;   ;;    {:module-path "<abs AOT objects>:<abs repo>/src" :snapshot? false}
 ;;   ;;    when it is stale or missing (the AOT boot, as bb boot:jank falls back)
 ;;
-;; bin/cohost then runs, in the project directory,
+;; :env is the jank tasks' GC setting (doc/perf/jank.md "GC"): set for the jank
+;; process unless the caller's environment sets that variable, or none at all
+;; with COHOST_JANK_GC=none. bin/cohost then runs, in the project directory,
+;; with :env added to its environment,
 ;;   jank -O3 --module-path <module-path> run-main cohost.cli <config>
 ;; with :snapshot? copied into the config (cohost.cli/-main then calls
 ;; cohost.boot/boot-from-snapshot! instead of boot!). Neither builds a
@@ -37,4 +41,7 @@
     (when-not line
       (throw (ex-info (str "jank: no module path from dev/perf/jank_snapshot_key.clj: " (:err r)) {})))
     (when stale (binding [*out* *err*] (println (str "cohost: jank: " stale))))
-    {:module-path (abs-path repo path) :snapshot? (= "snapshot" kind)}))
+    {:module-path (abs-path repo path) :snapshot? (= "snapshot" kind)
+     :env (if (= "none" (System/getenv "COHOST_JANK_GC"))
+            {}
+            (into {} (remove (fn [[k _]] (System/getenv k)) {"GC_INITIAL_HEAP_SIZE" "512M"})))}))
