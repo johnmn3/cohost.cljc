@@ -12,7 +12,7 @@ reference state.
 | :syntax-quote-source? | | | | | | | |
 | :cohost-inst? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | :prim-kind-test | | | | | | | |
-| :defn-fn-name? | | | | | | | |
+| :defn-fn-name? | N/A | ON | | | | | |
 | :rewrite-inline? | | | | | | | |
 | tag type tests (M-4.1) | | | | | | | |
 | bound RT arms (M-4.2/3) | | | | | | | |
@@ -35,3 +35,12 @@ reference state.
   eight (this tree): jvm 145/146, jolt 146/146, lpy 144/146, cljs
   144/146, cljw 144/146, phel 145/146, lg 144/146, jank 144/146 --
   every host at its pre-change standing, libraries 61/61 on all.
+
+- **:defn-fn-name?** -- jolt ON: an interleaved in-process A/B
+  (200 x fib 25, seven pairs, one booted process) totals 11,882 ms
+  for var-mediated self-recursion against 4,205 ms on the fn's name
+  (x2.83, every pair agreeing). boot:jolt stays 146/146 with the cap
+  on -- jolt's named fn* still sees a redefinition, so there is no
+  battery price. The JVM is N/A: it is the reference host -- the
+  battery's redefinition expectation IS its semantics, and its JIT
+  makes a var deref on a hot self-call free.

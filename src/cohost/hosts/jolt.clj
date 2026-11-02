@@ -118,10 +118,11 @@
 (adapter/install! (merge java/capabilities
                          adapter
                          {:math (assoc (:math java/capabilities) 'log10 log10)
-                          ;; jolt's fn* takes a name and recurses on it
-                          ;; (probed on the raw host): a def's fn*
-                          ;; carries the def's name, so a stock fn's
-                          ;; self-recursion is a direct call, not a var
-                          ;; deref per call (M-10)
+                          ;; jolt's fn* takes a name, and the name is
+                          ;; worth x2.8 there: an interleaved in-process
+                          ;; A/B (200 x fib 25, 7 pairs) totals 11,882 ms
+                          ;; through the var against 4,205 ms on the
+                          ;; name (M-10). The battery keeps 146/146:
+                          ;; jolt's named fn still sees a redefinition.
                           :defn-fn-name? true
                           :invoke-member invoke-member}))
