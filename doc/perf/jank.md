@@ -776,6 +776,76 @@ MEDIAN snap boot-ms 580.445917 libs-ms 609.4266209998168 sum 1189.8725379998168
 
 The cost moved to the build: about 6 minutes (371,088 ms here) after any change to an input, `src/cohost` included, paid by `bb boot:jank-snapshot`; until then `bb boot:jank` boots as before.
 
+## -O3
+
+Measured 2026-11-02 ET (lane D, D-3), `d/jank-o3` on `9627981`, research plan item 1 (S3-1). Every jank task that evaluates cohost now runs jank's JIT at `-O3`: `boot:jank` (both paths), `boot:jank-jit`, `bench:jank` (both paths), `boot:jank-aot-profile`, `boot:jank-snapshot`, through one helper in `bb.edn` (`jank!`). `COHOST_JANK_O=none` gives the command line without `-O`, as before; any other value (`-O0`, `-O2`) replaces the level. The snapshot's `compile-module` was `-O3` already, so on the default path (a fresh snapshot) the flag reaches only what the JIT compiles while the process runs: the bench's cases, the battery's forms, user code. The cohost CLI has no jank target (`bin/cohost`: `:cljrs :jank not wired yet`). The box is a fresh container since 10:20 AM ET: compare the pairs below with each other, not with earlier sections.
+
+```
+bash dev/perf/jank_snapshot_o3.sh            # bench --quick, {snapshot, AOT boot} x {none, -O3}, 3 each, interleaved
+FULL=1 bash dev/perf/jank_snapshot_o3.sh     # bb bench:jank (the full bench) from the snapshot, {none, -O3}, 3 each
+dev/perf/jank_snapshot_o3_probe.jank         # format and sort-by, 20 timed calls after 3 warm ones, per process
+```
+
+### Batteries
+
+`bb boot:jank` (fresh snapshot, `-O3`): `booted as stock: 542   from host: 171   skipped: 78   errors: 0`, `battery: 143/145`, `libraries: 61/61`, the same eight library load errors. Every bench case returned the same value on all four sides of the matrix.
+
+### boot-ms and libs-ms (median of 3)
+
+| | boot-ms | libs-ms | sum |
+|---|---:|---:|---:|
+| snapshot, no -O (`--quick`) | 586.5 | 668.5 | 1,288.5 |
+| snapshot, -O3 (`--quick`) | 652.3 | 710.9 | 1,363.2 |
+| snapshot, no -O (full bench) | 650.8 | 675.6 | 1,338.9 |
+| snapshot, -O3 (full bench) | 584.8 | 625.5 | 1,210.6 |
+| AOT boot of core.clj, no -O (`--quick`) | 18,728.9 | 11,856.7 | 30,535.3 |
+| AOT boot of core.clj, -O3 (`--quick`) | 33,658.0 | 16,884.3 | 51,695.6 |
+
+From the snapshot the flag does not move startup beyond the run-to-run spread (two sets of three runs disagree in direction). Without a snapshot (the fallback when it is stale) the boot JIT-compiles `core.clj` and the libraries at `-O3`: 21.2 s more, as R's P6b found for the whole process.
+
+### Bench cases (bb bench:jank, the full bench, from the snapshot, stock side, median of 3, ms)
+
+| case | no -O | -O3 | ratio |
+|---|---:|---:|---:|
+| fn-call | 3.4 | 0.9 | 0.26 |
+| loop-arith | 2.1 | 0.0 | 0.00 |
+| hinted-loop | 1.7 | 0.0 | 0.01 |
+| lazy-iterate | 8.9 | 6.0 | 0.67 |
+| destructure | 33.0 | 19.1 | 0.58 |
+| keyword-lookup | 19.6 | 13.4 | 0.69 |
+| protocol | 80.4 | 62.7 | 0.78 |
+| str-build | 77.0 | 63.6 | 0.83 |
+| partition | 254.2 | 218.2 | 0.86 |
+| atom-swap | 23.2 | 20.5 | 0.88 |
+| lazy-pipeline | 221.3 | 196.9 | 0.89 |
+| distinct | 478.2 | 426.6 | 0.89 |
+| multimethod | 40.0 | 36.9 | 0.92 |
+| conj-vector | 36.8 | 35.0 | 0.95 |
+| set-build | 45.1 | 43.8 | 0.97 |
+| regex | 344.7 | 342.2 | 0.99 |
+| equality, pr-str, frequencies, sort, map-lookup, string-join | | | 1.00-1.02 |
+| reduce-range | 19.2 | 20.5 | 1.07 |
+| assoc-map | 56.5 | 60.3 | 1.07 |
+| group-by | 71.8 | 77.8 | 1.08 |
+| format | 159.0 | 176.6 | 1.11 |
+| sort-by | 73.6 | 81.9 | 1.11 |
+| transient-vector | 30.7 | 34.8 | 1.13 |
+| into-vector | 30.5 | 34.8 | 1.14 |
+| transduce | 17.7 | 22.1 | 1.25 |
+
+The cases above 1.05 were checked against the spread of their three runs. `transduce`, `into-vector`, `transient-vector`: each run's value moves by up to 2x on both sides (stock `transduce` 17.7 / 26.7 / 13.9 without, 16.1 / 26.2 / 22.1 with; its host side 8.2 / 15.6 / 6.6 and 7.8 / 15.9 / 15.2): noise. `assoc-map`, `group-by`, `reduce-range`: the ranges overlap. `sort-by` and `format` went to the probe (median of 20 calls per process, three processes per level, ns):
+
+```
+format   none 120489657 122686171 132509020   -O1 140402957 211427235 126905263   -O2 138735614 133599220 140019454   -O3 161952661 151708867 144162371
+sort-by  none  73077888  78821362  88413199   -O1  84080874  79800194  80563051   -O2  84737917  77948967  84492845   -O3  75592014  80963927  80923220
+```
+
+`sort-by` is the same at every level. **`format` is slower at every level, most at `-O3`**: medians 120-133 ms without, 144-162 ms with (+15 to +30%), the fastest calls 102-108 ms against 124-139. The case's code (cohost.shim's `jformat`, the adapter's `format`) is in AOT objects compiled `-O3` either way; what the flag changes for it is the JIT-compiled case fn and whatever the JIT compiles while it runs. The cause is not found.
+
+### What the flag buys
+
+Every call-heavy case: `fn-call` 3.8x, `loop-arith` and `hinted-loop` fold to nothing (the loop is a constant at `-O3`, as R's P6 found), `destructure` 1.7x, `keyword-lookup` 1.5x, `protocol` 1.3x: the user code that the JIT compiles. The library-heavy cases do not move: their code is the snapshot's, `-O3` already. One case, `format`, is slower.
+
 ## Type hints (H1)
 
 Measured 2026-11-01 ET on jank `0.1-noble`. The commands ran on `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. The branch was then rebased onto `b61bf0e5856c78d06605e6c32682534a61edf32c`; those commits touch `doc/upstream/` and `doc/hosts/jank-FAST.md` only, so the boots were not run again. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.
