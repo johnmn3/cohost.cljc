@@ -842,43 +842,88 @@
   (let [s (*plain* p)]
     (if (meta s) (with-meta s nil) s)))
 
+(defn- fn-level-recur?
+  "True when `body` has a recur whose target is the arity itself: one outside
+   any loop, loop*, fn or fn* (and outside a quoted form)."
+  [body]
+  (letfn [(hit? [x]
+            (cond
+              (not (coll? x)) false
+              (seq? x)
+              (let [h (first x)
+                    n (when (symbol? h) (symbol (name (*plain* h))))]
+                (cond
+                  (or (= 'quote h) (= 'clojure.core/syntax-quote h)
+                      (= 'fn* n) (= 'fn n) (= 'loop n) (= 'loop* n)) false
+                  (= 'recur n) true
+                  :else (boolean (some hit? x))))
+              :else (boolean (some hit? x))))]
+    (boolean (some hit? body))))
+
+(defn- return-hint
+  "The primitive return hint of one arity: its params vector's tag (^long [x]),
+   else the fn's (the fn form's :rettag, which defn sets from the name's tag on
+   the JVM and on jank, or the name's own tag)."
+  [fn-hint params]
+  (or (primitive-hint (:tag (meta params))) fn-hint))
+
 (defn- emit-arity
   "One fn* arity. A primitive hint is coerced on every host, so the value
-   matches the JVM. The host's native tag is passed through only when
-   :native-hints names it and this arity loops or recurs: H0 measured a
-   parameter hint paying for a loop that carries it and losing on a leaf.
-   The outer parameter stays untyped; the coerced value is handed to one
-   inner fn* that carries the tag, so jank never converts the original
-   argument itself."
-  [params body']
-  (let [hints (mapv (fn [p] (when (symbol? p) (primitive-hint (:tag (meta p))))) params)]
-    (if-not (some some? hints)
-      (apply list (rw-params params) body')
-      (let [body' (or (seq body') '(nil))
-            binds (into [] (mapcat (fn [p h]
-                                     (when h (let [s (bare-sym p)] [s (coerce-form h s)])))
-                                   params hints))
-            spells (host/native-hints)
-            native? (and spells
-                         (arity-loops? body')
-                         (every? #(and (symbol? %) (not= '& (*plain* %))) params)
-                         (some (fn [h] (when h (get spells h))) hints))
-            forms (if native?
-                    (let [ips (mapv (fn [p h]
-                                      (if-let [sp (and h spells (get spells h))]
-                                        (with-meta (bare-sym p) {:tag (list 'quote sp)})
-                                        (carry-meta p p)))
-                                    params hints)]
-                      [(apply list (apply list 'fn* (cons (carry-meta ips params) body'))
-                              (map bare-sym params))])
-                    body')]
-        (apply list (rw-params params) [(apply list 'let* binds forms)])))))
+   matches the JVM: a parameter's on entry, a return's on exit (the JVM's
+   longCast / doubleCast; with a recur to the arity itself the body runs in a
+   loop* so the coercion stays outside the recur target).
+   When the host compiles native types (:native-hints) and every parameter is
+   a plain symbol, a hinted arity hands the coerced values to one inner fn*
+   whose parameters carry the native tags (every arity: a hinted leaf gains
+   since jank-20's native entries); the outer parameters stay untyped, so the
+   host never converts an argument it has not coerced. A single-arity fn named
+   `nm` names the inner fn* the same, so its self-calls are the host's native
+   named recursion; the return hint becomes the inner fn*'s :rettag."
+  ([params body'] (emit-arity nil false nil params body'))
+  ([nm single? ret-hint params body']
+   (let [hints (mapv (fn [p] (when (symbol? p) (primitive-hint (:tag (meta p))))) params)]
+     (if-not (or (some some? hints) ret-hint)
+       (apply list (rw-params params) body')
+       (let [body' (or (seq body') '(nil))
+             binds (into [] (mapcat (fn [p h]
+                                      (when h (let [s (bare-sym p)] [s (coerce-form h s)])))
+                                    params hints))
+             spells (host/native-hints)
+             names (into [] (comp (filter symbol?) (map bare-sym) (remove #(= '& %))) params)
+             native? (and spells
+                          (every? #(and (symbol? %) (not= '& (*plain* %))) params)
+                          (some (fn [h] (when h (get spells h))) hints))
+             forms (if native?
+                     (let [ips (mapv (fn [p h]
+                                       (if-let [sp (and h (get spells h))]
+                                         (with-meta (bare-sym p) {:tag (list 'quote sp)})
+                                         (carry-meta p p)))
+                                     params hints)
+                           rsp (when ret-hint (get spells ret-hint))
+                           inner (apply list 'fn* (concat (when (and single? nm) [(bare-sym nm)])
+                                                          [(cons (carry-meta ips params) body')]))
+                           inner (if rsp (with-meta inner {:rettag (list 'quote rsp)}) inner)]
+                       [(apply list inner (map bare-sym params))])
+                     body')
+             forms (if-not ret-hint
+                     forms
+                     (let [r (gensym "ret__")
+                           v (if (and (not native?) (fn-level-recur? forms))
+                               (apply list 'loop* (vec (mapcat (fn [n] [n n]) names)) forms)
+                               (if (next forms) (apply list 'do forms) (first forms)))]
+                       [(list 'let* [r v] (coerce-form ret-hint r))]))]
+         (apply list (rw-params params) (if (seq binds) [(apply list 'let* binds forms)] forms)))))))
 
 (defn- rw-fn* [ctx form]
   (let [more (rest form)
         [nm more] (if (symbol? (first more)) [(carry-meta (first more) (first more)) (rest more)] [nil more])
         single? (vector? (first more))
         arities (if single? [more] more)
+        ;; the fn's return hint: defn's :rettag on the form (the name's tag,
+        ;; JVM and jank alike), or the name's own tag
+        fn-ret (or (primitive-hint (:rettag (meta form)))
+                   (when (symbol? (second form)) (primitive-hint (:tag (meta (second form))))))
+        one-arity? (= 1 (count arities))
         names (into (if nm #{nm} #{})
                     (mapcat (fn [[params]] (filter #(and (symbol? %) (not= '& %)) params)) arities))
         arities' (binding [*locals* (into *locals* names)]
@@ -896,7 +941,7 @@
                                        body' (if (and (:vector-rest-args? ctx) (symbol? rest-arg))
                                                [(apply list 'let* [rest-arg (list (shim-fn "RT-seq") rest-arg)] body')]
                                                body')]
-                                   (emit-arity params body')))
+                                   (emit-arity nm one-arity? (return-hint fn-ret params) params body')))
                                arities)))]
     (if (and nm (not (:named-fn*? ctx)))
       (list 'letfn* [nm (apply list (carry-meta 'fn* (first form)) (if single? (first arities') arities'))] nm)
@@ -906,6 +951,44 @@
   (carry-meta (vec (mapcat (fn [[b v]] [(if (symbol? b) (carry-meta b b) (rw ctx b)) (rw ctx v)])
                            (partition 2 bvec)))
               bvec))
+
+(defn- hinted-local-init
+  "A ^long / ^double / ^int / ^boolean let*/loop* local's init: the JVM's
+   coercion of the bound value (coerce-form), through the host's native
+   conversion when it has one (:native-local-casts), so the host types the
+   local natively."
+  [hint sym]
+  (let [c (coerce-form hint sym)]
+    (if-let [cast (get (host/native-local-casts) hint)] (list cast c) c)))
+
+(defn- with-hinted-locals
+  "A rewritten let*/loop* whose source bindings carry primitive hints: each
+   hinted local is bound to its coerced init (hinted-local-init). let*: right
+   after its own binding, as a rebinding of the same name. loop*: the inits run
+   first in a let* (in order, each seeing the ones before), then the loop*
+   binds every local from them (a hinted one coerced), so recur still targets
+   the loop with its own arity."
+  [h bvec0 out]
+  (let [hints (mapv (fn [[b _]] (when (symbol? b) (primitive-hint (:tag (meta b))))) (partition 2 bvec0))]
+    (if-not (and (#{'let* 'loop*} h) (some some? hints))
+      out
+      (let [[_ bvec' & body] out
+            pairs (partition 2 bvec')]
+        (if (= h 'let*)
+          ;; the rewritten vector may hold markers ([b v m nil]): walk it and
+          ;; rebind a hinted local right after its own binding
+          (let [hinted (into {} (keep (fn [[[b _] hint]] (when hint [(*plain* (bare-sym b)) hint]))
+                                      (map vector (partition 2 bvec0) hints)))
+                bvec'' (vec (mapcat (fn [[b v]]
+                                      (if-let [hint (and (symbol? b) (get hinted (*plain* (bare-sym b))))]
+                                        (let [s (bare-sym b)] [b v s (hinted-local-init hint s)])
+                                        [b v]))
+                                    pairs))]
+            (apply list h bvec'' body))
+          (let [syms (map (fn [[b _]] (bare-sym b)) pairs)
+                pre (vec (mapcat (fn [[b v]] [b v]) pairs))
+                lbs (vec (mapcat (fn [s hint] [s (if hint (hinted-local-init hint s) s)]) syms hints))]
+            (list 'let* pre (apply list h lbs body))))))))
 
 (defn- rw-let* [ctx [h bvec & body]]
   (let [syms0 (filter symbol? (take-nth 2 bvec))
@@ -925,8 +1008,8 @@
           (let [ms (into {} (map (fn [[m _]] [(first (marker-info m)) m]) (partition 2 bs)))
                 bvec'' (vec (mapcat (fn [[b v]] (if-let [m (and (symbol? b) (get ms (*plain* b)))] [b v m nil] [b v]))
                                     (partition 2 bvec')))]
-            (apply list h (carry-meta bvec'' bvec') body'))
-          (apply list h bvec' (with-markers bs body')))))))
+            (with-hinted-locals h bvec (apply list h (carry-meta bvec'' bvec') body')))
+          (with-hinted-locals h bvec (apply list h bvec' (with-markers bs body'))))))))
 
 ;; Binding forms before they expand: the names they bind are locals in the
 ;; whole form, so `(let [String "x"] String)` keeps its local.
