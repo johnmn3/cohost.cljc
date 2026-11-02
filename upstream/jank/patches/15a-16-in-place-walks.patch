@@ -1,4 +1,4 @@
-From 01403fe918b7aaa11162576befd1a1e535499e1e Mon Sep 17 00:00:00 2001
+From ac1cbfcad5945089689f0813536f23dcd217c942 Mon Sep 17 00:00:00 2001
 From: cohost u3 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 16:13:06 +0000
 Subject: [PATCH] 15a-16: in-place walks in every runtime walker; no lock on a
@@ -32,10 +32,10 @@ include/cpp/jank/runtime/obj/range.hpp, src/cpp/jank/runtime/obj/range.cpp.
  .../cpp/jank/runtime/obj/lazy_sequence.hpp    |  16 +-
  .../include/cpp/jank/runtime/obj/range.hpp    |   7 +
  .../cpp/jank/runtime/sequence_range.hpp       | 137 ++++++------------
- .../cpp/jank/runtime/obj/lazy_sequence.cpp    |  49 +++++--
+ .../cpp/jank/runtime/obj/lazy_sequence.cpp    |  51 +++++--
  .../src/cpp/jank/runtime/obj/range.cpp        |  47 ++++--
  .../src/cpp/jank/runtime/sequence_range.cpp   |  83 ++++++++++-
- 6 files changed, 220 insertions(+), 119 deletions(-)
+ 6 files changed, 222 insertions(+), 119 deletions(-)
 
 diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp
 index 5abdc07d9..1a66e5caf 100644
@@ -313,7 +313,7 @@ index 7424d8962..24dbcaf17 100644
  
    sequence_range<object_ref> make_sequence_range(object_ref const s);
 diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp
-index cea1b305f..c74110879 100644
+index cea1b305f..639ce26df 100644
 --- a/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp
 +++ b/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp
 @@ -7,12 +7,14 @@
@@ -363,24 +363,26 @@ index cea1b305f..c74110879 100644
    }
  
    object_ref lazy_sequence::first() const
-@@ -58,8 +64,7 @@ namespace jank::runtime::obj
+@@ -58,8 +64,9 @@ namespace jank::runtime::obj
        return ret;
      }
  
 -    std::lock_guard<std::recursive_mutex> const lock{ mutex };
 -    return runtime::first(s);
-+    return runtime::first(ret);
++    /* s is a seq (realize stores ls.seq(); fresh_seq and with_meta store seqs): call it
++     * directly, without runtime::first's behavior checks. */
++    return ret.first();
    }
  
    object_ref lazy_sequence::next() const
-@@ -70,9 +75,24 @@ namespace jank::runtime::obj
+@@ -70,9 +77,24 @@ namespace jank::runtime::obj
        return {};
      }
  
 -    std::lock_guard<std::recursive_mutex> const lock{ mutex };
 -    auto const n(runtime::next(s));
 -    return n;
-+    return runtime::next(ret);
++    return ret.next();
 +  }
 +
 +  object_ref lazy_sequence::next_in_place()
@@ -401,7 +403,7 @@ index cea1b305f..c74110879 100644
    }
  
    bool lazy_sequence::equal(object const &o) const
-@@ -112,6 +132,12 @@ namespace jank::runtime::obj
+@@ -112,6 +134,12 @@ namespace jank::runtime::obj
  
    object_ref lazy_sequence::realize() const
    {
@@ -414,7 +416,7 @@ index cea1b305f..c74110879 100644
      std::lock_guard<std::recursive_mutex> const lock{ mutex };
      force();
      if(sv.is_some())
-@@ -124,6 +150,7 @@ namespace jank::runtime::obj
+@@ -124,6 +152,7 @@ namespace jank::runtime::obj
        }
        s = ls.seq();
      }
@@ -422,7 +424,7 @@ index cea1b305f..c74110879 100644
      return s;
    }
  
-@@ -162,6 +189,10 @@ namespace jank::runtime::obj
+@@ -162,6 +191,10 @@ namespace jank::runtime::obj
  
    bool lazy_sequence::is_realized() const
    {
