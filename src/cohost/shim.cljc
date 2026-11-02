@@ -1109,6 +1109,20 @@
 (def new-Atom host/atom*)
 (def new-Volatile (host-fn 'volatile! (unsupported "volatile!")))
 (def new-Reduced (host-fn 'reduced (unsupported "reduced")))
+
+;; the H1 coercion's fast path (the codemod's coerce-form emits calls to
+;; these): a fn* parameter already of the hinted kind passes on the host's
+;; own kind test, with no stock-core conversion call -- hinted code must
+;; not be slower than unhinted. Bound once, here. A host whose core lacks
+;; the test falls back: for double-kind?, a number that is no integer,
+;; decimal or ratio (the JVM's doubles and floats, by exclusion -- no
+;; class token, which jank cannot resolve in this file); for long-kind?,
+;; false (the conversion then runs, as it did before).
+(def long-kind? (host-fn 'integer? (fn [_] false)))
+(def double-kind? (host-fn 'double? (fn [x] (and (number? x)
+                                                 (not (long-kind? x))
+                                                 (not (h-decimal? x))
+                                                 (not (h-ratio? x))))))
 ;; clojure.lang.Ref on a host without refs (basilisp, ClojureScript): a host
 ;; atom, and a transaction that runs its body once (one thread: nothing to
 ;; retry). A write outside a transaction is the JVM's IllegalStateException,

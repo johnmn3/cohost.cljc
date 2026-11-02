@@ -1109,3 +1109,30 @@ libraries: 61/61 cases pass across 12 clojure.* libraries
 The two jank failures are `subs count nth first last butlast` (`Unterminated vector.`) and `Character outside ASCII` (`Unexpected end of file.`). `bb boot:jank` on the tip, after the defn, spec, and call-list shortcuts were removed, printed the same three lines: `542` / `171` / `78` / `0`, battery `143/145`, libraries `61/61`.
 
 Step 8's program suite (fib, tak, nbody, and the rest) is `bb bench:programs`. The table is "Programs against JVM Clojure" in `doc/PERF.md` (JVM, jank-jit, jank-aot, cohost on jank, and clojurust).
+
+## Step 5 H1: the coercion's fast path, and the :arglists strip (2026-11-02)
+
+The H1 coercion in front of a hinted fn* arity now passes a value already of
+the hinted kind on one host type test -- the shim's `long-kind?`/`double-kind?`,
+bound once to the host core's own `integer?`/`double?` -- with the stock-core
+conversion only otherwise. `bb bench:programs jank` warm medians (box load ~2,
+ratios are the signal; G-13's baselines in parens): fib 258.5, fib-hinted 552.6
+(x2.14; was x3.5); tak 17.95, tak-hinted 38.21 (x2.13; was x3.1). A shape
+isolation through the same AOT boot prices the parts: no check 280 ms, the
+kind test 554, the old (number? + stock long) shape 837, the real ^long fn 561.
+The remaining jank gap is the one cross-module fn call itself (~100 ns per
+entry); parity needs the test inlined as a native tag check in the emitted
+form, which the codemod does not do today.
+
+On the JVM the same work found why every hinted program was ABSENT: a defn's
+var kept `{:tag long}` inside its `:arglists` (in the `(quote ...)` form the
+defn macro emits), so the JVM compiler read the var as a primitive fn and
+emitted checkcasts to `IFn$LO`/`IFn$LLLO` the coerced fn does not implement.
+`strip-arglists` existed for exactly this, but `carry-meta`'s "unchanged"
+test used `=`, which is metadata-blind: a strip whose only change is
+metadata inside a meta value compares equal and was dropped. `carry-meta`
+now tests `identical?`. After it: `bb bench:programs jvm-cohost` has no
+ABSENT rows (six hinted programs were absent), tak-hinted's warm median
+0.60 ms beats tak's 2.39, and fib-hinted runs (86.5 median, unsettled spread,
+vs fib 10.95). `bb boot:jvm` battery 144/145 (the eduction row above fails
+on the base too), libraries 61/61; `bb boot:jank` 143/145, 61/61.

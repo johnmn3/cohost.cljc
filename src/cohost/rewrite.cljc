@@ -536,7 +536,12 @@
   [out orig]
   (if (meta-capable? out)
     (let [m (strip-meta (meta orig))]
-      (cond (= m (meta out)) out
+      ;; identical?, not =: = is metadata-blind, so a strip whose only
+      ;; change is metadata inside a meta value (an :arglists param's
+      ;; :tag) compares equal to the original and would be dropped --
+      ;; the JVM compiler then reads ^long in :arglists as a primitive
+      ;; interface the coerced fn does not have.
+      (cond (identical? m (meta out)) out
             ;; left none: bare (a let-go symbol given any, even none, is a
             ;; wrapper no symbol equals)
             (nil? m) (*plain* (with-meta out {}))
@@ -774,14 +779,23 @@
   [hint sym]
   (if (= 'boolean hint)
     (list 'boolean sym)
-    (let [method (if (= 'double hint) "doubleValue" (if (= 'int hint) "intValue" "longValue"))]
-      (list 'if (list 'number? sym)
-            (list hint sym)
-            (list 'if (list 'nil? sym)
-                  (list 'throw (list (shim-fn "new-NullPointerException")
-                                     (str "Cannot invoke \"java.lang.Number." method "()\" because the argument is null")))
-                  (list 'throw (list (shim-fn "new-ClassCastException")
-                                     "class java.lang.Object cannot be cast to class java.lang.Number")))))))
+    (let [method (if (= 'double hint) "doubleValue" (if (= 'int hint) "intValue" "longValue"))
+          convert (list 'if (list 'number? sym)
+                        (list hint sym)
+                        (list 'if (list 'nil? sym)
+                              (list 'throw (list (shim-fn "new-NullPointerException")
+                                                 (str "Cannot invoke \"java.lang.Number.\" method \"()\" because the argument is null")))
+                              (list 'throw (list (shim-fn "new-ClassCastException")
+                                                 "class java.lang.Object cannot be cast to class java.lang.Number"))))]
+      ;; a value already of the hinted kind passes on the host's own kind
+      ;; test (the shim's, bound once to the host core's integer? /
+      ;; double?), with no stock-core conversion call in front of every
+      ;; call: hinted code must not be slower than unhinted (Step 5 H1)
+      (if (= 'int hint)
+        convert
+        (list 'if (list (shim-fn (if (= 'double hint) "double-kind?" "long-kind?")) sym)
+              sym
+              convert)))))
 
 (defn- fn-special?
   "True when this host's `fn` is a special form the stock macro cannot
