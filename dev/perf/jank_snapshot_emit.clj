@@ -31,9 +31,21 @@
         "--out" (recur more (assoc o :out b))
         "--main" (recur more (assoc o :main b))
         "--project" (recur (next args) (assoc o :project true))
+        "--host" (recur more (assoc o :host b))
         (recur (next args) o))
       o)))
 (def src-root (or (:out cli-opts) "target/jank-snapshot/src"))
+
+;; --host: the module dialect (D-6). jank (the default): .jank files, the
+;; core qualified clojure.core, a bare namespace from its ns form. lpy
+;; (Basilisp): .lpy files, basilisp.core, and an ordinary ns form -- Basilisp
+;; refers its core whatever the ns form says, and the replay's first call
+;; (snap-begin!, or the library's ns directive) runs the adapter's
+;; ensure-bare-ns!, which clears the refers as the boot does.
+(def lang (get {"lpy" {:core "basilisp.core" :ext ".lpy" :bare? false}}
+               (:host cli-opts)
+               {:core "clojure.core" :ext ".jank" :bare? true}))
+(def C (:core lang))
 
 (def events
   (binding [*read-eval* false]
@@ -126,9 +138,9 @@
     ;; cohost.run (the adapter, the boot) is required before the bare ns:
     ;; jank analyzes a required file's ns form in the requiring namespace
     ;; cohost.cli too, so the snapshot's compile makes its object (D-8)
-    (str (when core? "(clojure.core/require (quote cohost.run))\n(clojure.core/require (quote cohost.cli))\n")
-         "(clojure.core/ns " nm "\n"
-         "  (:refer-clojure :only [])"
+    (str (when core? (str "(" C "/require (quote cohost.run))\n(" C "/require (quote cohost.cli))\n"))
+         "(" C "/ns " nm
+         (if (:bare? lang) "\n  (:refer-clojure :only [])" "")
          (if core? ")\n" "\n  (:require [cohost.boot] [cohost.core]))\n")
          (if core?
            (str "(cohost.boot/snap-begin! " (quoted (:opts begin)) " " (quoted libs-map) ")\n")
@@ -138,7 +150,7 @@
          (str/join "\n" (keep event-src (collapse-scans evs))) "\n")))
 
 (defn module-file [nm]
-  (str src-root "/" (-> (str nm) (str/replace "-" "_") (str/replace "." "/")) ".jank"))
+  (str src-root "/" (-> (str nm) (str/replace "-" "_") (str/replace "." "/")) (:ext lang)))
 
 (fs/delete-tree src-root)
 (doseq [m modules]
@@ -156,15 +168,15 @@
 (let [top (keep (fn [m] (when (and (not= 'clojure.core m) (nil? (:parent (lib-begins m)))) (module-ns m))) modules)]
   (when (:project cli-opts)
     (spit (module-file 'cohost.project)
-          (str "(clojure.core/ns cohost.project\n  (:require [cohost.boot]))\n"
+          (str "(" C "/ns cohost.project\n  (:require [cohost.boot]))\n"
                "(cohost.boot/register-snapshot-libs! " (quoted libs-map) ")\n"))
     (spit (module-file 'cohost.project-build)
-          (str "(clojure.core/ns cohost.project-build\n  (:require [cohost.core] [cohost.project]"
+          (str "(" C "/ns cohost.project-build\n  (:require [cohost.core] [cohost.project]"
                (apply str (map #(str " [" % "]") top)) "))\n"))
     (println "MODULE cohost.project" (module-file 'cohost.project) (count libs-map)))
   (when-not (:project cli-opts)
   (spit (module-file 'cohost.snapshot)
-        (str "(clojure.core/ns cohost.snapshot\n  (:require [cohost.core]"
+        (str "(" C "/ns cohost.snapshot\n  (:require [cohost.core]"
              (apply str (map #(str " [" % "]") top)) "))\n"))
   (println "MODULE cohost.snapshot" (module-file 'cohost.snapshot) (count top))))
 
@@ -174,9 +186,9 @@
     (when-not (lib-begins lib)
       (throw (ex-info (str "the app's namespace " app " was not recorded (or failed to load)") {:failed failed})))
     (spit (module-file 'cohost.app-main)
-          (str "(clojure.core/ns cohost.app-main\n  (:require [cohost.core] [" m "]))\n"
-               "(clojure.core/defn -main [& args]\n"
+          (str "(" C "/ns cohost.app-main\n  (:require [cohost.core] [" m "]))\n"
+               "(" C "/defn -main [& args]\n"
                "  (cohost.boot/boot-from-snapshot! {})\n"
                "  (cohost.boot/make-user-ns!)\n"
-               "  (clojure.core/apply " m "/-main args))\n"))
+               "  (" C "/apply " m "/-main args))\n"))
     (println "MODULE cohost.app-main" (module-file 'cohost.app-main) "main" (str m "/-main"))))
