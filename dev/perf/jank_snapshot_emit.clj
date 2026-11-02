@@ -66,9 +66,31 @@
     (seq? x) (apply list (map decode x))
     :else x))
 
+(defn lpy-fix
+  "Basilisp's reader takes no ns-qualified / (cohost.core//, the stock
+   division fn, quoted in syntax-quote expansions): (quote ns//) is written
+   (basilisp.core/symbol \"ns\" \"/\"), the same value. Its reader's own
+   position keys (:basilisp.lang.reader/...) are dropped from metadata."
+  [x]
+  (let [strip (fn [m] (not-empty (into {} (remove (fn [[k _]] (and (keyword? k) (= "basilisp.lang.reader" (namespace k)))) m))))
+        walk (fn walk [x]
+               (let [y (cond
+                         (and (seq? x) (= 'quote (first x)) (symbol? (second x))
+                              (= "/" (name (second x))) (namespace (second x)))
+                         (list 'basilisp.core/symbol (namespace (second x)) "/")
+                         (map? x) (into (empty x) (map (fn [[k v]] [(walk k) (walk v)]) x))
+                         (vector? x) (mapv walk x)
+                         (set? x) (set (map walk x))
+                         (seq? x) (apply list (map walk x))
+                         :else x)]
+                 (if (and (instance? clojure.lang.IObj y) (meta x))
+                   (with-meta y (strip (meta x)))
+                   y)))]
+    (walk x)))
+
 (defn pr-src [form]
   (binding [*print-length* nil *print-level* nil *print-meta* true *print-namespace-maps* false]
-    (pr-str form)))
+    (pr-str (if (= "lpy" (:host cli-opts)) (lpy-fix form) form))))
 
 (defn quoted [x] (str "(quote " (pr-src x) ")"))
 
