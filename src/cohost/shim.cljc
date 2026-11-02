@@ -1117,10 +1117,18 @@
 ;; the test falls back: for double-kind?, a number that is no integer,
 ;; decimal or ratio (the JVM's doubles and floats, by exclusion -- no
 ;; class token, which jank cannot resolve in this file); for long-kind?,
-;; false (the conversion then runs, as it did before).
-(def long-kind? (host-fn 'integer? (fn [_] false)))
+;; the host's integer? with bigints excluded (below).
+(def long-kind?
+  ;; integer? alone is not the test: it is true of a bigint too, and a
+  ;; bigint out of long range must reach the conversion, whose cast
+  ;; range-checks it (IllegalArgumentException) -- the corpus row "a
+  ;; ^long parameter range-checks like the long cast". A value passes
+  ;; only when it already IS a host long.
+  (let [host-integer? (host-fn 'integer? (fn [_] false))]
+    (fn [x] (and (host-integer? x) (not (h-bigint? x))))))
 (def double-kind? (host-fn 'double? (fn [x] (and (number? x)
                                                  (not (long-kind? x))
+                                                 (not (h-bigint? x))
                                                  (not (h-decimal? x))
                                                  (not (h-ratio? x))))))
 ;; clojure.lang.Ref on a host without refs (basilisp, ClojureScript): a host

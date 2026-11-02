@@ -784,7 +784,7 @@
                         (list hint sym)
                         (list 'if (list 'nil? sym)
                               (list 'throw (list (shim-fn "new-NullPointerException")
-                                                 (str "Cannot invoke \"java.lang.Number.\" method \"()\" because the argument is null")))
+                                                 (str "Cannot invoke \"java.lang.Number." method "()\" because the argument is null")))
                               (list 'throw (list (shim-fn "new-ClassCastException")
                                                  "class java.lang.Object cannot be cast to class java.lang.Number"))))]
       ;; a value already of the hinted kind passes on the host's own kind
