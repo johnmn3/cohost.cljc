@@ -15,20 +15,20 @@ All figures are geometric means over the 29 cases.
 **Speed-up of the stock core, before over after:**
 
 | JVM | jolt | basilisp (1/20 size) | ClojureScript, Node | ClojureScript, Chromium |
-|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | **×4.4** | **×12.3** | **×2.6** | **×10.3** | **×9.6** |
 
 **cohost's stock core against JVM Clojure's own core, at the same size:**
 
 | | JVM | jolt | basilisp (1/20 size) | ClojureScript, Node | ClojureScript, Chromium |
-|---|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | before | ×5.0 | ×46.4 | ×7149 | ×44.3 | ×33.1 |
 | after | **×1.1** | **×3.7** | **×2778** | **×4.2** | **×3.4** |
 
 **cohost's stock core against each host's own core, on that host:**
 
 | | JVM | jolt | basilisp (1/20 size) | ClojureScript, Node | ClojureScript, Chromium |
-|---|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | before | ×5.0 | ×17.4 | ×5.3 | ×16.2 | ×14.2 |
 | after | **×1.1** | **×1.4** | **×2.0** | **×1.4** | **×1.3** |
 
@@ -39,20 +39,20 @@ core is the one that measures cohost.
 **Boot of core.clj:**
 
 | JVM | jolt | basilisp | ClojureScript, Node | ClojureScript, Chromium |
-|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | 1.7 s → 1.3 s | 3.4 s → 2.5 s | 178.8 s → 66.4 s | 6.7 s → 6.3 s | 5.7 s → 4.5 s |
 
 **Natives:** a host can opt a stock fn into its own implementation (pass 2, below). Where it
 has, the stock core's time for that fn is the host's own. Natives in clojure.core:
 
 | JVM | jolt | basilisp | ClojureScript (Node and Chromium) |
-|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | 66 | 63 | 36 | 46 |
 
 **Largest single moves, cohost on that host against JVM Clojure:**
 
 | case | host | before | after |
-|---|---|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | `clojure.string/join` | JVM | ×533.5 | ×1.0 |
 | `clojure.string/join` | jolt | ×1772.1 | ×4.8 |
 | loop/recur arithmetic | ClojureScript, Node | ×512.8 | ×1.6 |
@@ -71,7 +71,7 @@ What caused them:
 **Largest gaps left, the stock core against the host's own core:**
 
 | case | where | after |
-|---|---|---:|
+|---|---|---:|---:|---:|---:|---:|
 | `conj!` into a transient vector | ClojureScript, Node; Chromium | ×16.9; ×11.6 |
 | a multimethod call | JVM; Node; Chromium; basilisp | ×5.0; ×4.2; ×3.8; ×3.7 |
 | `transduce` | Node; jolt; Chromium | ×4.0; ×3.2; ×3.0 |
@@ -91,7 +91,7 @@ with like. Phel was measured on the same box 2026-10-31 between 5:37 and 5:41 AM
 prints the full tables.
 
 | | ClojureWasm v1.15.4 | Phel v0.54.0 (PHP 8.5) | let-go v1.13.0 (Go) |
-|---|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | the stock core against JVM Clojure's own core | ×47.3 | ×137.9 | ×84.9 |
 | the stock core against the host's own core | **×5.1** | **×4.3** | **×6.9** |
 | the host's own core against JVM Clojure | ×9.2 | ×35.6 | ×12.3 |
@@ -102,7 +102,7 @@ prints the full tables.
 **ClojureWasm's largest gaps, the stock core against its own:**
 
 | case | ratio |
-|---|---:|
+|---|---|---:|---:|---:|---:|---:|
 | `sort-by` a key of maps | ×129.0 |
 | `sort` numbers | ×101.4 |
 | `count`, `filter`, `map` over a range | ×69.2 |
@@ -124,7 +124,7 @@ and the codemod. Its share of the time has not been measured.
 **Phel's largest gaps, the stock core against its own:**
 
 | case | ratio |
-|---|---:|
+|---|---|---:|---:|---:|---:|---:|
 | `re-seq` | ×216.1 |
 | `sort-by` a key of maps | ×76.8 |
 | `clojure.string/join` | ×72.8 |
@@ -148,7 +148,7 @@ stack and segfault; `bb bench:phel` runs Phel with a 64 MB stack (`ulimit -s 655
 **let-go's largest gaps, the stock core against its own:**
 
 | case | ratio |
-|---|---:|
+|---|---|---:|---:|---:|---:|---:|
 | `format` | ×148.1 |
 | `re-seq` | ×110.5 |
 | `apply str` | ×89.4 |
@@ -180,38 +180,56 @@ Geometric mean of the ratio over the 30 cases: x4.09. This is the baseline colum
 jank-FAST Steps 3 and 4 are measured against; the five worst cases are profiled in
 doc/perf/jank.md, "Runtime profile".
 
-| case | what it does | host (jank's own core) | baseline (the stock core) | ratio |
-|---|---|---:|---:|---:|
-| fn-call | a defn called in a loop | 9.26 | 9.49 | 1.03 |
-| loop-arith | loop/recur arithmetic | 3.33 | 3.35 | 1.01 |
-| hinted-loop | a ^long fn whose loop compares against the parameter | 2.90 | 2.90 | 1.00 |
-| reduce-range | reduce + over a range | 11.41 | 15.69 | 1.38 |
-| lazy-pipeline | count, filter, map over a range | 151.40 | 494.19 | 3.26 |
-| transduce | transduce (comp (map inc) (filter odd?)) | 6.94 | 150.51 | 21.68 |
-| into-vector | into [] with a map transducer | 6.51 | 197.52 | 30.32 |
-| conj-vector | reduce conj [] (persistent vector) | 44.16 | 99.34 | 2.25 |
-| transient-vector | conj! into a transient vector | 8.63 | 161.03 | 18.66 |
-| assoc-map | assoc into a map | 78.68 | 110.42 | 1.40 |
-| map-lookup | get from a 1,000-key map | 23.98 | 51.12 | 2.13 |
-| keyword-lookup | keyword lookup on small maps | 26.47 | 20.80 | 0.79 |
-| destructure | map destructuring in fn args | 29.45 | 185.24 | 6.29 |
-| frequencies | frequencies | 88.70 | 492.15 | 5.55 |
-| group-by | group-by into 31 groups | 34.28 | 360.95 | 10.53 |
-| sort | sort numbers | 22.09 | 336.35 | 15.23 |
-| sort-by | sort-by a key of maps | 15.60 | 428.28 | 27.46 |
-| set-build | build a set | 18.91 | 209.42 | 11.08 |
-| distinct | distinct over mapcat | 406.58 | 851.23 | 2.09 |
-| partition | partition 3 | 133.07 | 367.66 | 2.76 |
-| lazy-iterate | nth of a lazy iterate | 7.86 | 42.26 | 5.38 |
-| atom-swap | swap! an atom | 14.81 | 97.89 | 6.61 |
-| protocol | protocol call on a record | 163.10 | 166.05 | 1.02 |
-| multimethod | multimethod call | 40.87 | 95.66 | 2.34 |
-| equality | = of two equal vectors | 1.29 | 1.27 | 0.99 |
-| str-build | apply str over numbers | 9.89 | 152.86 | 15.46 |
-| string-join | clojure.string/join | 2701.27 | 110.34 | 0.04 |
-| regex | re-seq over a string of numbers | 4.35 | 1392.67 | 320.11 |
-| format | format | 4.77 | 236.31 | 49.58 |
-| pr-str | pr-str of small maps | 1.45 | 1.45 | 1.00 |
+| case | what it does | host (jank's own core) | baseline (the stock core) | ratio | after Step 4 natives (stock) | ratio |
+|---|---|---:|---:|---:|---:|---:|
+| fn-call | a defn called in a loop | 9.26 | 9.49 | 1.03 | 5.24 | 0.99 |
+| loop-arith | loop/recur arithmetic | 3.33 | 3.35 | 1.01 | 3.28 | 0.99 |
+| hinted-loop | a ^long fn whose loop compares against the parameter | 2.90 | 2.90 | 1.00 | 2.98 | 1.02 |
+| reduce-range | reduce + over a range | 11.41 | 15.69 | 1.38 | 15.21 | 1.62 |
+| lazy-pipeline | count, filter, map over a range | 151.40 | 494.19 | 3.26 | 304.33 | 2.71 |
+| transduce | transduce (comp (map inc) (filter odd?)) | 6.94 | 150.51 | 21.68 | 78.91 | 11.78 |
+| into-vector | into [] with a map transducer | 6.51 | 197.52 | 30.32 | 10.26 | 1.57 |
+| conj-vector | reduce conj [] (persistent vector) | 44.16 | 99.34 | 2.25 | 21.63 | 1.18 |
+| transient-vector | conj! into a transient vector | 8.63 | 161.03 | 18.66 | 75.62 | 14.07 |
+| assoc-map | assoc into a map | 78.68 | 110.42 | 1.40 | 70.78 | 0.99 |
+| map-lookup | get from a 1,000-key map | 23.98 | 51.12 | 2.13 | 52.6 | 2.18 |
+| keyword-lookup | keyword lookup on small maps | 26.47 | 20.80 | 0.79 | 20.89 | 0.95 |
+| destructure | map destructuring in fn args | 29.45 | 185.24 | 6.29 | 45.63 | 0.79 |
+| frequencies | frequencies | 88.70 | 492.15 | 5.55 | 176.88 | 2.08 |
+| group-by | group-by into 31 groups | 34.28 | 360.95 | 10.53 | 65.27 | 1.19 |
+| sort | sort numbers | 22.09 | 336.35 | 15.23 | 90.52 | 2.17 |
+| sort-by | sort-by a key of maps | 15.60 | 428.28 | 27.46 | 14.89 | 1.01 |
+| set-build | build a set | 18.91 | 209.42 | 11.08 | 43.98 | 2.4 |
+| distinct | distinct over mapcat | 406.58 | 851.23 | 2.09 | 529.77 | 1.68 |
+| partition | partition 3 | 133.07 | 367.66 | 2.76 | 251.83 | 1.92 |
+| lazy-iterate | nth of a lazy iterate | 7.86 | 42.26 | 5.38 | 15.04 | 1.8 |
+| atom-swap | swap! an atom | 14.81 | 97.89 | 6.61 | 17.64 | 1.55 |
+| protocol | protocol call on a record | 163.10 | 166.05 | 1.02 | 101.82 | 0.88 |
+| multimethod | multimethod call | 40.87 | 95.66 | 2.34 | 42.91 | 0.76 |
+| equality | = of two equal vectors | 1.29 | 1.27 | 0.99 | 1.26 | 1.0 |
+| str-build | apply str over numbers | 9.89 | 152.86 | 15.46 | 90.38 | 9.11 |
+| string-join | clojure.string/join | 2701.27 | 110.34 | 0.04 | 86.19 | 0.03 |
+| regex | re-seq over a string of numbers | 4.35 | 1392.67 | 320.11 | 4.11 | 1.0 |
+| format | format | 4.77 | 236.31 | 49.58 | 156.48 | 35.12 |
+| pr-str | pr-str of small maps | 1.45 | 1.45 | 1.00 | 1.44 | 1.0 |
+
+Step 4 natives (the last two columns): a full `bb bench:jank` on
+muse/jank-step4, 2026-11-02, alone on the box -- boot line "booted as
+stock: 521, from host: 171, natives: 21, errors: 0", battery 143/145,
+libraries 61/61 in the same tree's `bb boot:jank`. Geometric mean of the
+ratio over the 30 cases: x1.61 (baseline x4.09). The cases a native
+reaches are at or near x1: regex x1.0 (was x320.11), assoc-map x0.99,
+sort-by x1.01, group-by x1.19, into-vector x1.57, atom-swap x1.55. The
+cases still above x1.5 are not reached by any name on Step 4's list:
+transduce (x11.78) and transient-vector (x14.07) now spend their time in
+stock `reduce` and in the transducer's own step fn, neither of which is
+a native; str-build (x9.11) is policy's `str`, kept off the natives list
+on purpose (an exception's str is the shim's); format (x35.12) has no
+jank implementation to opt in -- jank's own format is a stub (see
+doc/REPORT.md, host facts); the lazy/seq cases (lazy-pipeline,
+map-lookup, sort, set-build, frequencies, partition, lazy-iterate,
+distinct, reduce-range) sit at the stock call path's floor, which is
+Step 5/8 territory, not a missing native.
 
 ## Method
 
@@ -284,7 +302,7 @@ flags. The Chromium run used the same `3e59a25` worktree.
 Median ms per call before → after on each host, and the speed-up (before over after).
 
 | case | JVM Clojure 1.12.0 | jolt v0.8.23 | basilisp 0.5.1 (at 1/20 size) | ClojureScript, Node | ClojureScript, Chromium |
-|---|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | a defn called in a loop | 0.43 → 0.44 ×0.98 | 11.8 → 1.33 ×8.9 | 277 → 219 ×1.3 | 17.1 → 0.98 ×17.5 | 9.70 → 0.70 ×13.9 |
 | loop/recur arithmetic | 0.09 → 0.09 ×1.0 | 27.9 → 0.51 ×55.0 | 625 → 449 ×1.4 | 45.0 → 0.14 ×324.6 | 28.1 → 0.10 ×281.0 |
 | reduce + over a range | 1.68 → 1.74 ×0.96 | 9.32 → 4.51 ×2.1 | 531 → 505 ×1.1 | 9.59 → 3.96 ×2.4 | 7.10 → 3.50 ×2.0 |
@@ -297,7 +315,7 @@ Median ms per call before → after on each host, and the speed-up (before over 
 | get from a 1,000-key map | 3.55 → 3.81 ×0.93 | 32.4 → 21.2 ×1.5 | 1249 → 1078 ×1.2 | 45.4 → 17.2 ×2.6 | 28.2 → 14.7 ×1.9 |
 | keyword lookup on small maps | 2.30 → 2.36 ×0.98 | 368 → 4.53 ×81.2 | 3112 → 301 ×10.4 | 448 → 7.21 ×62.2 | 316 → 7.05 ×44.8 |
 | map destructuring in fn args | 25.3 → 3.35 ×7.5 | 620 → 19.3 ×32.2 | 4257 → 410 ×10.4 | 624 → 20.8 ×30.0 | 514 → 18.2 ×28.3 |
-| frequencies | 112 → 6.14 ×18.3 | 1218 → 37.2 ×32.7 | 7735 → 1487 ×5.2 | 1142 → 32.9 ×34.7 | 973 → 28.6 ×34.0 |
+| frequencies | 112 → 6.14 ×18.3 | 1218 → 37.2 ×32.7 | 7735 → 1487 ×5.2 | 1142 → 32.9 ×34.7 | 973 → 28.6 ×34.0 | 176.88 | 2.08 |
 | group-by into 31 groups | 62.3 → 6.62 ×9.4 | 821 → 32.4 ×25.4 | 5359 → 1476 ×3.6 | 667 → 29.3 ×22.8 | 511 → 24.7 ×20.7 |
 | sort numbers | 52.3 → 12.3 ×4.3 | 282 → 34.1 ×8.3 | 2130 → 667 ×3.2 | 271 → 30.4 ×8.9 | 226 → 23.2 ×9.7 |
 | sort-by a key of maps | 46.2 → 4.84 ×9.6 | 3761 → 23.8 ×157.7 | 489 → 119 ×4.1 | 233 → 39.5 ×5.9 | 162 → 30.4 ×5.3 |
@@ -312,7 +330,7 @@ Median ms per call before → after on each host, and the speed-up (before over 
 | apply str over numbers | 9.70 → 1.08 ×9.0 | 82.8 → 2.74 ×30.2 | 599 → 84.7 ×7.1 | 116 → 3.52 ×32.8 | 86.4 → 3.10 ×27.9 |
 | clojure.string/join | 365 → 0.67 ×545.6 | 1213 → 3.18 ×382.0 | 191 → 82.7 ×2.3 | 43.3 → 1.86 ×23.3 | 37.8 → 1.70 ×22.2 |
 | re-seq over a string of numbers | 56.5 → 0.38 ×147.3 | 58.4 → 1.39 ×41.9 | 262 → 214 ×1.2 | 39.4 → 0.74 ×53.0 | 29.8 → 0.60 ×49.7 |
-| format | 5.13 → 2.49 ×2.1 | 26.2 → 4.89 ×5.4 | 1029 → 867 ×1.2 | 104 → 73.5 ×1.4 | 95.2 → 49.3 ×1.9 |
+| format | 5.13 → 2.49 ×2.1 | 26.2 → 4.89 ×5.4 | 1029 → 867 ×1.2 | 104 → 73.5 ×1.4 | 95.2 → 49.3 ×1.9 | 156.48 | 35.12 |
 | pr-str of small maps | 3.56 → 3.63 ×0.98 | 5.89 → 5.67 ×1.0 | 2.06 → 2.06 ×1.0 | 7.93 → 7.99 ×0.99 | 6.50 → 6.90 ×0.94 |
 | **geometric mean speed-up** | ×4.4 | ×12.3 | ×2.6 | ×10.3 | ×9.6 |
 | boot | 1.7 s → 1.3 s | 3.4 s → 2.5 s | 178.8 s → 66.4 s | 6.7 s → 6.3 s | 5.7 s → 4.5 s |
@@ -322,7 +340,7 @@ Median ms per call before → after on each host, and the speed-up (before over 
 Median ms per call; × is the stock core's time over JVM Clojure's own at the same size.
 
 | case | JVM Clojure | cohost on JVM Clojure 1.12.0 | cohost on jolt v0.8.23 | cohost on basilisp 0.5.1 (at 1/20 size) | cohost on ClojureScript, Node | cohost on ClojureScript, Chromium |
-|---|---:|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | a defn called in a loop | 0.44 | 0.44 ×1.0 | 1.33 ×3.0 | 219 ×9483.5 | 0.98 ×2.2 | 0.70 ×1.6 |
 | loop/recur arithmetic | 0.09 | 0.09 ×1.0 | 0.51 ×5.8 | 449 ×99259.5 | 0.14 ×1.6 | 0.10 ×1.1 |
 | reduce + over a range | 1.70 | 1.74 ×1.0 | 4.51 ×2.7 | 505 ×6242.8 | 3.96 ×2.3 | 3.50 ×2.1 |
@@ -335,7 +353,7 @@ Median ms per call; × is the stock core's time over JVM Clojure's own at the sa
 | get from a 1,000-key map | 3.73 | 3.81 ×1.0 | 21.2 ×5.7 | 1078 ×6565.0 | 17.2 ×4.6 | 14.7 ×4.0 |
 | keyword lookup on small maps | 2.28 | 2.36 ×1.0 | 4.53 ×2.0 | 301 ×3158.6 | 7.21 ×3.2 | 7.05 ×3.1 |
 | map destructuring in fn args | 2.30 | 3.35 ×1.5 | 19.3 ×8.4 | 410 ×4275.0 | 20.8 ×9.0 | 18.2 ×7.9 |
-| frequencies | 6.26 | 6.14 ×0.98 | 37.2 ×5.9 | 1487 ×4675.1 | 32.9 ×5.3 | 28.6 ×4.6 |
+| frequencies | 6.26 | 6.14 ×0.98 | 37.2 ×5.9 | 1487 ×4675.1 | 32.9 ×5.3 | 28.6 ×4.6 | 176.88 | 2.08 |
 | group-by into 31 groups | 6.41 | 6.62 ×1.0 | 32.4 ×5.1 | 1476 ×4303.6 | 29.3 ×4.6 | 24.7 ×3.9 |
 | sort numbers | 12.3 | 12.3 ×1.0 | 34.1 ×2.8 | 667 ×2032.3 | 30.4 ×2.5 | 23.2 ×1.9 |
 | sort-by a key of maps | 5.47 | 4.84 ×0.88 | 23.8 ×4.4 | 119 ×671.5 | 39.5 ×7.2 | 30.4 ×5.6 |
@@ -350,7 +368,7 @@ Median ms per call; × is the stock core's time over JVM Clojure's own at the sa
 | apply str over numbers | 0.90 | 1.08 ×1.2 | 2.74 ×3.0 | 84.7 ×2162.0 | 3.52 ×3.9 | 3.10 ×3.4 |
 | clojure.string/join | 0.66 | 0.67 ×1.0 | 3.18 ×4.8 | 82.7 ×2708.1 | 1.86 ×2.8 | 1.70 ×2.6 |
 | re-seq over a string of numbers | 0.38 | 0.38 ×1.0 | 1.39 ×3.6 | 214 ×11831.7 | 0.74 ×1.9 | 0.60 ×1.6 |
-| format | 2.49 | 2.49 ×1.0 | 4.89 ×2.0 | 867 ×7239.5 | 73.5 ×29.5 | 49.3 ×19.8 |
+| format | 2.49 | 2.49 ×1.0 | 4.89 ×2.0 | 867 ×7239.5 | 73.5 ×29.5 | 49.3 ×19.8 | 156.48 | 35.12 |
 | pr-str of small maps | 3.67 | 3.63 ×0.99 | 5.67 ×1.5 | 2.06 ×11.7 | 7.99 ×2.2 | 6.90 ×1.9 |
 | **geometric mean** | | ×1.1 | ×3.7 | ×2778.2 | ×4.2 | ×3.4 |
 
@@ -359,7 +377,7 @@ Median ms per call; × is the stock core's time over JVM Clojure's own at the sa
 Median ms per call: the host's own core / the stock core, and the stock core's time over the own core's.
 
 | case | JVM Clojure 1.12.0 | jolt v0.8.23 | basilisp 0.5.1 (at 1/20 size) | ClojureScript, Node | ClojureScript, Chromium |
-|---|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | a defn called in a loop | 0.44 / 0.44 ×1.0 | 1.63 / 1.33 ×0.82 | 129 / 219 ×1.7 | 1.32 / 0.98 ×0.74 | 0.70 / 0.70 ×1.0 |
 | loop/recur arithmetic | 0.09 / 0.09 ×1.0 | 0.51 / 0.51 ×1.0 | 275 / 449 ×1.6 | 0.14 / 0.14 ×1.0 | 0.10 / 0.10 ×1.0 |
 | reduce + over a range | 1.70 / 1.74 ×1.0 | 3.85 / 4.51 ×1.2 | 442 / 505 ×1.1 | 3.78 / 3.96 ×1.0 | 3.30 / 3.50 ×1.1 |
@@ -372,7 +390,7 @@ Median ms per call: the host's own core / the stock core, and the stock core's t
 | get from a 1,000-key map | 3.73 / 3.81 ×1.0 | 11.2 / 21.2 ×1.9 | - / - - | 11.6 / 17.2 ×1.5 | 10.3 / 14.7 ×1.4 |
 | keyword lookup on small maps | 2.28 / 2.36 ×1.0 | 4.53 / 4.53 ×1.0 | 413 / 301 ×0.73 | 7.40 / 7.21 ×0.97 | 6.60 / 7.05 ×1.1 |
 | map destructuring in fn args | 2.30 / 3.35 ×1.5 | 7.09 / 19.3 ×2.7 | 402 / 410 ×1.0 | 13.3 / 20.8 ×1.6 | 13.7 / 18.2 ×1.3 |
-| frequencies | 6.26 / 6.14 ×0.98 | 27.2 / 37.2 ×1.4 | 748 / 1487 ×2.0 | 26.8 / 32.9 ×1.2 | 26.2 / 28.6 ×1.1 |
+| frequencies | 6.26 / 6.14 ×0.98 | 27.2 / 37.2 ×1.4 | 748 / 1487 ×2.0 | 26.8 / 32.9 ×1.2 | 26.2 / 28.6 ×1.1 | 176.88 | 2.08 |
 | group-by into 31 groups | 6.41 / 6.62 ×1.0 | 22.2 / 32.4 ×1.5 | 704 / 1476 ×2.1 | 24.3 / 29.3 ×1.2 | 22.7 / 24.7 ×1.1 |
 | sort numbers | 12.3 / 12.3 ×1.0 | 29.2 / 34.1 ×1.2 | 175 / 667 ×3.8 | 26.1 / 30.4 ×1.2 | 20.9 / 23.2 ×1.1 |
 | sort-by a key of maps | 5.47 / 4.84 ×0.88 | 24.2 / 23.8 ×0.98 | 11.4 / 119 ×10.5 | 43.8 / 39.5 ×0.90 | 31.3 / 30.4 ×0.97 |
@@ -387,7 +405,7 @@ Median ms per call: the host's own core / the stock core, and the stock core's t
 | apply str over numbers | 0.90 / 1.08 ×1.2 | 2.66 / 2.74 ×1.0 | 83.1 / 84.7 ×1.0 | 3.41 / 3.52 ×1.0 | 3.20 / 3.10 ×0.97 |
 | clojure.string/join | 0.66 / 0.67 ×1.0 | 3.04 / 3.18 ×1.0 | 59.9 / 82.7 ×1.4 | 1.92 / 1.86 ×0.97 | 1.80 / 1.70 ×0.94 |
 | re-seq over a string of numbers | 0.38 / 0.38 ×1.0 | 1.41 / 1.39 ×0.99 | 5.71 / 214 ×37.4 | 0.73 / 0.74 ×1.0 | 0.60 / 0.60 ×1.0 |
-| format | 2.49 / 2.49 ×1.0 | 5.25 / 4.89 ×0.93 | 37.4 / 867 ×23.2 | - / - - | - / - - |
+| format | 2.49 / 2.49 ×1.0 | 5.25 / 4.89 ×0.93 | 37.4 / 867 ×23.2 | - / - - | - / - - | 156.48 | 35.12 |
 | pr-str of small maps | 3.67 / 3.63 ×0.99 | 5.75 / 5.67 ×0.99 | 2.07 / 2.06 ×1.0 | 7.93 / 7.99 ×1.0 | 6.80 / 6.90 ×1.0 |
 | **geometric mean** | ×1.1 | ×1.4 | ×2.0 | ×1.4 | ×1.3 |
 | own core vs JVM Clojure (geo. mean) | ×1.0 | ×2.7 | ×1346.7 | ×2.9 | ×2.4 |
@@ -395,7 +413,7 @@ Median ms per call: the host's own core / the stock core, and the stock core's t
 ### Boot
 
 | host | core.clj boot (791 forms) | the twelve libraries |
-|---|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | JVM Clojure 1.12.0 | 1.3 s | 1.5 s |
 | jolt v0.8.23 | 2.5 s | 2.5 s |
 | basilisp 0.5.1 | 66.4 s | 47.6 s |
@@ -446,7 +464,7 @@ Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`
 Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core), then `bb bench:programs jvm-cohost` (`clojure -M -m cohost.run -- --eval`), then `bb bench:programs cljrs-cohost`. A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` is timed for jvm, jank-jit, jank-aot, cohost on jank, clojurust, jvm-cohost, and cljrs-cohost.
 
 | program | jvm median | jvm cold | jit median | jit cold | jit/jvm | aot median | aot cold | aot/jvm | result |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 5.293441 | 18.17026 | 81.066692 | 313.770143 | 15.314555 | 4.228778 | 4.22679 | 0.798871 | 832040 |
 | fib-hinted | 4.425011 | 17.725987 | 79.821299 | 247.66818 | 18.038667 | 7.362588 | 7.320614 | 1.663858 | 832040 |
 | tak | 1.367668 | 6.945293 | 2.653217 | 253.907528 | 1.939957 | 0.324893 | 0.370587 | 0.237553 | 7 |
@@ -482,7 +500,7 @@ On jank-jit, where both forms ran: fib `0.984637`, tak `1.580872`, binary-trees 
 `jank` is cohost on jank. Times are milliseconds.
 
 | program | cohost median | cohost cold | cohost/jvm | result |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 126.469398 | 401.822922 | 23.891718 | 832040 |
 | fib-hinted | 442.530535 | 732.72114 | 100.006652 | 832040 |
 | tak | 10.118948 | 284.221359 | 7.398687 | 7 |
@@ -514,7 +532,7 @@ Hinted median / unhinted median on cohost, where both ran: fib `3.499112`, tak `
 `cljrs` is clojurust's own core. Times are milliseconds.
 
 | program | cljrs median | cljrs cold | cljrs/jvm | result |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 1432.576098 | 1452.711787 | 270.632297 | 832040 |
 | fib-hinted | 1350.766075 | 1319.948278 | 305.257111 | 832040 |
 | tak | 30.360394 | 34.486952 | 22.198658 | 7 |
@@ -546,7 +564,7 @@ Hinted median / unhinted median on cljrs, where both ran: fib `0.942893`, tak `0
 `jvm-cohost` is `bb boot:jvm`'s entry, `clojure -M -m cohost.run`, with the program source passed to `--eval`. `bb bench:programs jvm-cohost`. Times are milliseconds.
 
 | program | jvm-cohost median | jvm-cohost cold | jvm-cohost/jvm | result |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 6.925279 | 100.765007 | 1.308275 | 832040 |
 | fib-hinted | ABSENT cohost.user$fib cannot be cast to clojure.lang.IFn$LO | | | 832040 |
 | tak | 1.493625 | 2.279273 | 1.092096 | 7 |
@@ -576,7 +594,7 @@ Hinted median / unhinted median on jvm-cohost, where both ran: fannkuch `0.80423
 `cljrs-cohost` is `bb boot:cljrs`'s command (`CLJRS_IR_THRESHOLD=1`, `CLJRS_NO_JIT=1`, `cljrs run` of `src/cohost/run.cljc`) with the program source passed to `--eval`. `bb bench:programs cljrs-cohost`. Times are milliseconds. The harness's `volatile!` fails on this host, so every program that uses it is ABSENT with that cast. `dispatch` fails first, inside the program. `first-output` does not use a volatile.
 
 | program | cljrs-cohost median | cljrs-cohost cold | cljrs-cohost/jvm | result |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | ABSENT Volatile cannot be cast to Future | | | 832040 |
 | fib-hinted | ABSENT Volatile cannot be cast to Future | | | 832040 |
 | tak | ABSENT Volatile cannot be cast to Future | | | 7 |
@@ -608,7 +626,7 @@ The driver's line for the volatile failures is `class clojure.lang.Volatile cann
 `jolt` is jolt 0.8.23's own core (`jolt run`). `jolt-cohost` is `bb boot:jolt` (`jolt -Scp src -m cohost.run --eval`). Boot: stock 466, host 199, natives 63, skipped 63, errors 0, battery 145/145, libraries 61/61. `bb bench:programs jolt` and `bb bench:programs jolt-cohost`. Every row printed SAME. Times are milliseconds.
 
 | program | jolt median | jolt cold | jolt/jvm | cohost median | cohost cold | cohost/jvm | result |
-|---|---:|---:|---:|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 9.332578 | 9.417227 | 1.763046 | 39.499601 | 39.743152 | 7.461989 | 832040 |
 | fib-hinted | 8.90545 | 9.138106 | 2.012526 | 251.79843 | 251.064143 | 56.903459 | 832040 |
 | tak | 0.246605 | 0.259483 | 0.180311 | 1.349508 | 1.343892 | 0.986722 | 7 |
@@ -642,7 +660,7 @@ ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0)
 `lpy` is basilisp 0.5.1's own core. The finished `bb bench:programs lpy` could not resolve `System/nanoTime` (the suite line was `raise ctx.AnalyzerException(`; a direct rerun of that wrap reported `unable to resolve symbol 'System/nanoTime'`). `first-output` does not use that call.
 
 | program | lpy median | lpy cold | lpy/jvm | note |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
 | fib-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
 | tak | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
@@ -668,7 +686,7 @@ ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0)
 `lpy-cohost` is still running. Finished rows are from `bb bench:programs lpy-cohost`.
 
 | program | lpy-cohost median | lpy-cohost cold | lpy-cohost/jvm | note |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 68668.971933 | 69068.767795 | 12972.463835 | SAME |
 | fib-hinted | running | | | |
 | tak | running | | | |
@@ -694,7 +712,7 @@ ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0)
 `cljw` own core, `bb bench:programs cljw`, finished. All rows SAME. Geometric mean of the 21 ratios: `5.521527`.
 
 | program | cljw median | cljw cold | cljw/jvm |
-|---|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 258.791722 | 250.40352 | 48.889129 |
 | fib-hinted | 213.504856 | 218.850296 | 48.249565 |
 | tak | 11.303418 | 11.833819 | 8.264738 |
@@ -720,7 +738,7 @@ ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0)
 `cljw-cohost` is still running.
 
 | program | cljw-cohost median | cljw-cohost cold | cljw-cohost/jvm | note |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 313.386024 | 315.267143 | 59.202705 | SAME |
 | fib-hinted | 1628.666196 | 1596.058136 | 368.059242 | SAME |
 | tak | 11.18252 | 11.024245 | 8.176341 | SAME |
@@ -746,7 +764,7 @@ ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0)
 `lg` own core, `bb bench:programs lg`, finished. All rows SAME. Geometric mean of the 21 ratios: `5.378788`.
 
 | program | lg median | lg cold | lg/jvm |
-|---|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 202.471613 | 214.399309 | 38.249527 |
 | fib-hinted | 206.750547 | 214.214823 | 46.723171 |
 | tak | 6.812086 | 9.509864 | 4.980804 |
@@ -772,7 +790,7 @@ ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0)
 `lg-cohost` finished. `bb bench:programs lg-cohost`. All rows SAME. Geometric mean of the 21 ratios: `46.889842`.
 
 | program | lg-cohost median | lg-cohost cold | lg-cohost/jvm |
-|---|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 220.115409 | 217.611492 | 41.582670 |
 | fib-hinted | 2305.34758 | 2333.752483 | 520.981209 |
 | tak | 9.19794 | 13.32779 | 6.725273 |
@@ -797,7 +815,7 @@ ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0)
 `phel` own core finished, `bb bench:programs phel`. `phel-cohost` fib median is in the next table; the rest of that run is still going.
 
 | program | phel median | phel cold | phel/jvm | note |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 220.706048 | 290.279168 | 41.694249 | SAME |
 | fib-hinted | ABSENT | | | [PHEL402] Phel\Lang\AbstractFn@anonymous(): Argument #1 ($n) must be of type long, int given, called in /tmp/phel/tmp/__phel_82352_c384c51a33c8d4892ade73239071d2c8_7a770e2acd188541 |
 | tak | 2.781952 | 7.024128 | 2.034084 | SAME |
@@ -825,7 +843,7 @@ Geometric mean of the 11 phel / JVM median ratios for rows that produced a time:
 `phel-cohost` is still running where a row says running.
 
 | program | phel-cohost median | phel-cohost cold | phel-cohost/jvm | note |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 316.849166 | 512.81058 | 59.856937 | SAME |
 | fib-hinted | running | | | |
 | tak | running | | | |
@@ -854,7 +872,7 @@ Geometric mean of the 11 phel / JVM median ratios for rows that produced a time:
 `bb boot:cljs`: stock 518, host 87, natives 46, skipped 140, errors 0, battery 143/145, libraries 61/61. `bb bench:programs cljs` is the host's own core (`cljs.main -re node`). `js/Date.now` is millisecond resolution, so a median of 0 is a sub-millisecond run. `cljs-cohost` (`node target/cljs-node/main.js --eval`) is running.
 
 | program | cljs median | cljs cold | cljs/jvm | note |
-|---|---:|---:|---:|---|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 6.000128 | 19.000064 | 1.133502 | SAME |
 | fib-hinted | 5.999872 | 6.999808 | 1.355900 | SAME |
 | tak | ABSENT | | | ABSENT undeclared Var cljs.user/read-string; TypeError Cannot read properties of undefined (reading call) |
@@ -883,7 +901,7 @@ Geometric mean of the 15 non-zero cljs / JVM median ratios: `3.663063`. Zero med
 `cljs-cohost` finished. `node target/cljs-node/main.js --eval`. All rows SAME. Geometric mean of the 21 ratios: `3.568417`.
 
 | program | cljs-cohost median | cljs-cohost cold | cljs-cohost/jvm |
-|---|---:|---:|---:|
+|---|---|---:|---:|---:|---:|---:|
 | fib | 16.511291 | 34.985732 | 3.119198 |
 | fib-hinted | 124.01835 | 166.855207 | 28.026676 |
 | tak | 0.962271 | 2.08558 | 0.703585 |
