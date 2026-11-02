@@ -1,0 +1,26 @@
+;; jank-26: native numerics without hints. A loop local initialized from a literal is native
+;; (12-21); it must stay native only while every recur argument for it is native of the same
+;; kind, and be boxed otherwise (Clojure auto-boxes the loop arg). Expected (Clojure):
+;;   recur widening: 4.5 3.5 [3 2 1] 6 x3 nil 2.5
+;;   native loops: 499999500000 1999.0 2000000 15 120.0
+(defn ovf [f] (try (f) (catch :default e "throws")))
+(println "recur widening:"
+         (ovf #(loop [s 0 n 0] (if (< n 3) (recur (+ s 1.5) (inc n)) s)))
+         (ovf #(loop [acc 0 xs [1.5 2]] (if (seq xs) (recur (+ acc (first xs)) (rest xs)) acc)))
+         (ovf #(loop [acc [] i 3] (if (pos? i) (recur (conj acc i) (dec i)) acc)))
+         (ovf #(loop [acc 0 xs (list 1 2 3)] (if (seq xs) (recur (+ acc (first xs)) (next xs)) acc)))
+         (ovf #(loop [x 0 n 0] (if (< n 3) (recur (str "x" (inc n)) (inc n)) x)))
+         (ovf #(loop [x 0 n 0] (if (< n 1) (recur nil (inc n)) x)))
+         (ovf #(loop [x 0.5 n 0] (if (< n 2) (recur (+ x 1) (inc n)) x))))
+(defn sum-range [n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (+ acc i)) acc)))
+(defn sum-dbl [n] (loop [i 0.0 acc 0.0] (if (< i n) (recur (+ i 1.0) (+ acc 1.0)) (- acc 1.0))))
+(defn count-up [n] (loop [i 0] (if (< i n) (recur (inc i)) i)))
+(defn vsum [v] (loop [i 0 acc 0] (if (< i (count v)) (recur (inc i) (+ acc (nth v i))) acc)))
+(defn fact [n] (loop [i 1 acc 1.0] (if (<= i n) (recur (inc i) (* acc i)) acc)))
+(println "native loops:" (sum-range 1000000) (sum-dbl 2000.0) (count-up 2000000) (vsum [1 2 3 4 5]) (fact 5))
+(def nn 5000000)
+(def v (vec (range 1000)))
+(timed "loop-only (P2: (< i n) against a var)" #(loop [i 0] (if (< i nn) (recur (inc i)) i)))
+(timed "sum-range 5e6 (unhinted fn, native loop)" #(sum-range 5000000))
+(timed "sum-dbl 5e6 (unhinted fn, double loop)" #(sum-dbl 5000000.0))
+(timed "vsum 1000-vector x1000 (boxed elements)" #(loop [k 0 s 0] (if (< k 1000) (recur (inc k) (+ s (vsum v))) s)))
