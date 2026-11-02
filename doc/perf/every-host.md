@@ -11,7 +11,7 @@ reference state.
 |---|---|---|---|---|---|---|---|
 | :syntax-quote-source? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | :cohost-inst? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| :prim-kind-test | | | | | | | |
+| :prim-kind-test | N/A | N/A | | N/A | | | |
 | :defn-fn-name? | N/A | ON | ON | N/A | N/A | N/A | N/A |
 | :rewrite-inline? | N/A | ON | ON | ON | ON | ON | ON |
 | tag type tests (M-4.1) | | | | | | | |
@@ -99,3 +99,14 @@ reference state.
   in-process A/B through the stock-compiled eval path read the
   class test x4.16 slower still; that path is not the one the cap
   takes, so the bench isolation is the number that counts.)
+
+  Cljs N/A, by the same isolation: with the long arm wired as
+  `(.isInteger js/Number sym)` -- a subset of cljs's long-kind?,
+  which is cljs.core/integer? itself there (the host sets no
+  :bigint?) -- bench:programs fib-hinted reads 370.5 ms against
+  366.5 ms with the shim test, the ranges overlapping. On both
+  hosts the bound shim test is already cheap; the hinted programs'
+  remaining gap to unhinted lives in the coercion's shape, not in
+  this test. Noted on cljs: tak-hinted is ABSENT there today --
+  the program fails with a TypeError before it times -- a
+  correctness fact about the hinted path on cljs, not a speed row.
