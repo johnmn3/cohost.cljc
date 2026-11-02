@@ -633,4 +633,166 @@ The driver's line for the volatile failures is `class clojure.lang.Volatile cann
 
 Geometric mean of the twenty-one jolt / JVM median ratios: `0.683374`. Geometric mean of the twenty-one jolt-cohost / JVM median ratios: `2.404439`.
 
-Installed, not measured yet: basilisp (`lpy`), ClojureWasm (`cljw`), Phel, let-go (`lg`), ClojureScript on Node, ClojureScript in Chromium.
+## Basilisp, ClojureWasm, Phel, let-go
+
+Boots, 2026-11-02. basilisp `bb boot:lpy`: stock 529, host 130, natives 36, skipped 96, errors 0, battery 143/145, libraries 61/61. ClojureWasm `bb boot:cljw`: stock 555, host 145, skipped 91, errors 0, battery 143/145, libraries 61/61. Phel `bb boot:phel`: stock 591, host 73, skipped 127, errors 0, battery 145/145, libraries 61/61. let-go `bb boot:lg`: stock 569, host 105, skipped 117, errors 0, battery 143/145, libraries 61/61.
+
+ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0). Node and Chromium benches are not started. They stay on the list.
+
+`lpy` is basilisp 0.5.1's own core. The finished `bb bench:programs lpy` could not resolve `System/nanoTime` (the suite line was `raise ctx.AnalyzerException(`; a direct rerun of that wrap reported `unable to resolve symbol 'System/nanoTime'`). `first-output` does not use that call.
+
+| program | lpy median | lpy cold | lpy/jvm | note |
+|---|---:|---:|---:|---|
+| fib | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| fib-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| tak | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| tak-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| nbody | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| nbody-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| spectral-norm | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| spectral-norm-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| mandelbrot | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| mandelbrot-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| binary-trees | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| binary-trees-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| fannkuch | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| fannkuch-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| nsieve | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| nsieve-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| k-nucleotide | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| pipeline | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| dispatch | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| json | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| first-output | 349.786772 | 345.477217 | 0.908253 | SAME |
+
+`lpy-cohost` is still running. Finished rows are from `bb bench:programs lpy-cohost`.
+
+| program | lpy-cohost median | lpy-cohost cold | lpy-cohost/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 68668.971933 | 69068.767795 | 12972.463835 | SAME |
+| fib-hinted | running | | | |
+| tak | running | | | |
+| tak-hinted | running | | | |
+| nbody | running | | | |
+| nbody-hinted | running | | | |
+| spectral-norm | running | | | |
+| spectral-norm-hinted | running | | | |
+| mandelbrot | running | | | |
+| mandelbrot-hinted | running | | | |
+| binary-trees | running | | | |
+| binary-trees-hinted | running | | | |
+| fannkuch | running | | | |
+| fannkuch-hinted | running | | | |
+| nsieve | running | | | |
+| nsieve-hinted | running | | | |
+| k-nucleotide | running | | | |
+| pipeline | running | | | |
+| dispatch | running | | | |
+| json | running | | | |
+| first-output | running | | | |
+
+`cljw` own core, `bb bench:programs cljw`, finished. All rows SAME. Geometric mean of the 21 ratios: `5.521527`.
+
+| program | cljw median | cljw cold | cljw/jvm |
+|---|---:|---:|---:|
+| fib | 258.791722 | 250.40352 | 48.889129 |
+| fib-hinted | 213.504856 | 218.850296 | 48.249565 |
+| tak | 11.303418 | 11.833819 | 8.264738 |
+| tak-hinted | 9.797178 | 9.715001 | 8.675459 |
+| nbody | 7.543047 | 12.497634 | 1.945786 |
+| nbody-hinted | 7.214054 | 9.352476 | 2.342861 |
+| spectral-norm | 31.679446 | 31.754872 | 47.773611 |
+| spectral-norm-hinted | 32.942604 | 33.127416 | 19.670726 |
+| mandelbrot | 11.940398 | 12.024766 | 26.846351 |
+| mandelbrot-hinted | 11.909486 | 11.927925 | 55.695006 |
+| binary-trees | 3.024328 | 2.915662 | 5.831615 |
+| binary-trees-hinted | 2.883956 | 2.85393 | 2.258389 |
+| fannkuch | 162.470282 | 228.416185 | 7.620640 |
+| fannkuch-hinted | 167.610682 | 205.18267 | 8.176583 |
+| nsieve | 4.156203 | 4.059614 | 4.972183 |
+| nsieve-hinted | 4.140753 | 3.936173 | 4.047257 |
+| k-nucleotide | 1.321186 | 1.334856 | 1.174013 |
+| pipeline | 6.357257 | 7.393957 | 2.532367 |
+| dispatch | 7.764501 | 7.777447 | 3.580750 |
+| json | 0.10543 | 0.14497 | 0.723158 |
+| first-output | 10.710144 | 11.3251 | 0.027810 |
+
+`cljw-cohost` is still running.
+
+| program | cljw-cohost median | cljw-cohost cold | cljw-cohost/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 313.386024 | 315.267143 | 59.202705 | SAME |
+| fib-hinted | 1628.666196 | 1596.058136 | 368.059242 | SAME |
+| tak | 11.18252 | 11.024245 | 8.176341 | SAME |
+| tak-hinted | running | | | |
+| nbody | running | | | |
+| nbody-hinted | running | | | |
+| spectral-norm | running | | | |
+| spectral-norm-hinted | running | | | |
+| mandelbrot | running | | | |
+| mandelbrot-hinted | running | | | |
+| binary-trees | running | | | |
+| binary-trees-hinted | running | | | |
+| fannkuch | running | | | |
+| fannkuch-hinted | running | | | |
+| nsieve | running | | | |
+| nsieve-hinted | running | | | |
+| k-nucleotide | running | | | |
+| pipeline | running | | | |
+| dispatch | running | | | |
+| json | running | | | |
+| first-output | running | | | |
+
+`lg` own core, `bb bench:programs lg`, finished. All rows SAME. Geometric mean of the 21 ratios: `5.378788`.
+
+| program | lg median | lg cold | lg/jvm |
+|---|---:|---:|---:|
+| fib | 202.471613 | 214.399309 | 38.249527 |
+| fib-hinted | 206.750547 | 214.214823 | 46.723171 |
+| tak | 6.812086 | 9.509864 | 4.980804 |
+| tak-hinted | 6.650945 | 19.368971 | 5.889451 |
+| nbody | 11.951767 | 9.009027 | 3.083049 |
+| nbody-hinted | 11.661802 | 13.97779 | 3.787327 |
+| spectral-norm | 37.54895 | 43.079839 | 56.625010 |
+| spectral-norm-hinted | 30.511873 | 38.449635 | 18.219285 |
+| mandelbrot | 6.996983 | 10.110264 | 15.731759 |
+| mandelbrot-hinted | 11.109 | 9.557957 | 51.951514 |
+| binary-trees | 2.685263 | 6.936737 | 5.177818 |
+| binary-trees-hinted | 2.717584 | 3.20049 | 2.128105 |
+| fannkuch | 202.899667 | 200.943873 | 9.516973 |
+| fannkuch-hinted | 195.101098 | 186.708334 | 9.517653 |
+| nsieve | 1.311874 | 3.954379 | 1.569432 |
+| nsieve-hinted | 1.211636 | 3.649268 | 1.184278 |
+| k-nucleotide | 1.671194 | 1.40621 | 1.485032 |
+| pipeline | 28.093177 | 38.515226 | 11.190713 |
+| dispatch | 12.924592 | 14.916383 | 5.960425 |
+| json | 0.185182 | 0.31923 | 1.270188 |
+| first-output | 7.064883 | 6.858866 | 0.018345 |
+
+`lg-cohost` is still running.
+
+| program | lg-cohost median | lg-cohost cold | lg-cohost/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 220.115409 | 217.611492 | 41.582670 | SAME |
+| fib-hinted | 2305.34758 | 2333.752483 | 520.981209 | SAME |
+| tak | 9.19794 | 13.32779 | 6.725273 | SAME |
+| tak-hinted | 145.126391 | 159.688673 | 128.510270 | SAME |
+| nbody | 38.613692 | 78.998465 | 9.960696 | SAME |
+| nbody-hinted | 38.735488 | 43.510931 | 12.579872 | SAME |
+| spectral-norm | 280.964109 | 293.895161 | 423.702805 | SAME |
+| spectral-norm-hinted | 396.917051 | 407.634758 | 237.007570 | SAME |
+| mandelbrot | 86.303457 | 104.321966 | 194.041516 | SAME |
+| mandelbrot-hinted | 87.492487 | 112.464563 | 409.160784 | SAME |
+| binary-trees | 7.656029 | 7.471469 | 14.762623 | SAME |
+| binary-trees-hinted | 12.633712 | 12.717552 | 9.893298 | SAME |
+| fannkuch | 645.216733 | 689.460238 | 30.263776 | SAME |
+| fannkuch-hinted | 642.003764 | 683.612019 | 31.318988 | SAME |
+| nsieve | running | | | |
+| nsieve-hinted | running | | | |
+| k-nucleotide | running | | | |
+| pipeline | running | | | |
+| dispatch | running | | | |
+| json | running | | | |
+| first-output | running | | | |
+
+Phel bench is not started. ClojureScript Node and Chromium benches are not started.

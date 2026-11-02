@@ -194,7 +194,9 @@
 
 (defn run-lpy [src arg cold?]
   (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
+  ;; Basilisp has no System/nanoTime. time/time_ns is Python's time.time_ns.
+  (spit "target/bench-programs/wrap.clj"
+        (str "(import time)\n" (harness src "(time/time_ns)" true)))
   (run! ["basilisp" "run" "target/bench-programs/wrap.clj" "--" arg (if cold? "cold" "warm")]))
 
 (defn run-lpy-cohost [src arg cold?]
@@ -214,8 +216,13 @@
 
 (defn run-phel [src arg cold?]
   (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
-  (run! ["phel" "run" "target/bench-programs/wrap.clj" "--" arg (if cold? "cold" "warm")]))
+  ;; Phel needs a leading ns, passes args as *argv*, and has no System class.
+  ;; php/microtime is seconds; scale it so the harness's / 1e6 yields milliseconds.
+  (spit "target/bench-programs/wrap.phel"
+        (str "(ns bench.prog)\n"
+             (harness src "(* (php/microtime true) 1000000000.0)" false)
+             "(apply -main *argv*)\n"))
+  (run! ["phel" "run" "target/bench-programs/wrap.phel" arg (if cold? "cold" "warm")]))
 
 (defn run-phel-cohost [src arg cold?]
   (run! ["phel" "run" "dev/phel_main.phel" "--" "--eval"
