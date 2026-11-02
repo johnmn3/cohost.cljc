@@ -1,7 +1,8 @@
 # jank faster than the JVM: the research plan (lane R, order R-1)
 
-Status: IN PROGRESS (2026-11-02 ET). Branch `r/research-jank`, base `b286ba1`. Nothing under
-`src/` changes here; probes live under `dev/research/`.
+Status: DONE for order R-1 (2026-11-02 ET; every probe named here ran on this box and its
+output is quoted). Branch `r/research-jank`, base `b286ba1`. Nothing under `src/` changes
+here; probes live under `dev/research/`.
 
 The question: how can Clojure programs run faster on jank than on the JVM, both the stock core
 cohost boots on jank and the programs people write on it. The yardstick is `bench/programs/`
@@ -574,8 +575,13 @@ jank, `defn` names the fn (core.jank line 778), so raw jank already has the dire
   (`CMakeLists.txt:144`, `:951`). The suite's `jank-jit` column is `-O0` too.
 - **Expected effect.** Measured on fib: 6.4x (P6). On the rest: unknown until `bb bench:programs
   jank` and `bb bench:jank` are re-run with the flag (about an hour; lane C's suite re-measure
-  should carry it). The boot: unknown until `bb boot:jank` is timed with the flag (P6b, queued).
-- **Probe.** P6 (done, above); P6b: `boot-ms`/`libs-ms` with and without `-O3`.
+  should carry it). The boot pays for it: P6b (`bash dev/research/p6b_boot_O.sh`, the whole
+  `run-main cohost.run` process, boot + battery + libraries, wall seconds, three runs each)
+  printed `none` 130.09 / 136.68 / 136.40 and `-O3` 191.39 / 199.13 / 204.01, so the JIT at
+  `-O3` adds about 60 s to a 135 s process on this box. That is the cost the snapshot (lane
+  D) removes; until it lands, the flag belongs on the bench and program runs, and on the boot
+  only once `boot-ms` is measured with it.
+- **Probe.** P6 (done, above); P6b (done, above).
 - **Semantic risk.** None: the same C++, a different clang level. (`-O3` also turns on jank's
   `hoist_var_derefs`, which skips dynamic vars, `hoist_var_derefs.cpp:42`.)
 - **Owner.** cohost: lane C (the bench commands) and lane D (the boot command and the snapshot).
@@ -635,10 +641,24 @@ jank, `defn` names the fn (core.jank line 778), so raw jank already has the dire
 - **Expected effect.** The protocol call falls from a variadic call + `apply` + 4-6 lookups
   to a fixed-arity call + one `cpp/raw` read + one `identical?`: the order of P2's
   `call-var-same-ns` (9-11 ns) plus the impl's own call, against today's microseconds; the
-  exact figure is unknown until P11.
-- **Probe.** P11 (an hour): under cohost on jank, a protocol method called 1e6 times as
-  shipped, against a hand-written fixed-arity fn that reads the descriptor through
-  `cpp/cohost_obj.descriptor_of` and calls the impl from a cached pair.
+  exact figure is unknown until the shape is built; P11 gives today's per-call costs.
+- **Probe.** P11 (`dev/research/p11_protocol.clj` under `run-cohost-jank.sh`, 1e6 calls;
+  medians, ns):
+
+  | case | cohost on jank, no `-O` | cohost on jank, `-O3` | JVM |
+  |---|---:|---:|---:|
+  | proto-call (a protocol method on a record) | 1296386721 | 1161732915 | 9291131 |
+  | fn-call (a plain defn doing the same arithmetic) | 249982815 | 181314418 | 13222948 |
+  | multi-call (a defmulti) | 1269133764 | 732051377 | 32221410 |
+  | kw-on-record (`(:w sq)`) | 213870004 | 131930185 | 8864685 |
+
+  A protocol call is 1.16 us at `-O3` against the JVM's 9 ns (125x); `-O3` barely moves it,
+  which says the time is in the dispatch shape (the variadic entry, `apply`, the lookups), not
+  in compiled code; a multimethod call is 732 ns against 32 (23x); even a keyword lookup on a
+  record is 132 ns against 9, because the record is a cohost object whose `get` goes through
+  the shim's descriptor route. (The multimethod result printed `-836891211` on jank and
+  `166666833333` on the JVM: the i32 `add` arm of §3 again.) The next step is the fixed-arity
+  shape with a cached impl, measured against this table.
 - **Semantic risk.** `extend`/`extend-type` after the cache is filled must invalidate it
   (bump a protocol generation counter the cache compares); `satisfies?`, `extends?`, the
   `Object`/`nil` fallbacks and supers order stay in the slow path.
@@ -934,3 +954,33 @@ cohost_user$fib_fn_def_9_1(jank::runtime::object_ref const fib_fn_def, jank::run
 
 `v11` is the var `fib-stock` (deref'd once, called twice); `v14` is the `cohost.shim/Numbers-minus`
 wrapper. `<`, `dec`, `+` reached jank's inlined runtime ops in both shapes.
+
+### 8.4 P1 and P2 re-run alone on the box
+
+The §2 tables were taken while eight source readers shared the box. The same commands, with
+nothing else running (medians, ns):
+
+| P1 case | JIT | AOT | JVM |
+|---|---:|---:|---:|
+| fib-var | 13555675 | 5964553 | 8402808 |
+| fib-hinted-leaf | 15616388 | 11126215 | 5383795 |
+| fib-cpp-native | 3223672 | 3908531 | |
+| fib-local-volatile | 43971548 | 42047499 | 9496759 |
+
+| P2 case | JIT | AOT | JVM |
+|---|---:|---:|---:|
+| loop-only | 18659124 | 18998115 | 25232341 |
+| call-var-same-ns | 69405812 | 66836151 | 21789221 |
+| call-var-other-ns | 88370175 | 74983183 | 20532049 |
+| call-local | 58525225 | 43588455 | 26033022 |
+| call-2 | 76602160 | 62312233 | 20614509 |
+| call-variadic | 548263125 | 508990221 | 31483526 |
+| call-cpp-objref | 36687578 | 27669569 | |
+| call-multi | 329160673 | 288826275 | 126483978 |
+| call-volatile-fn | 119082368 | 111095780 | 29712328 |
+
+The ratios the sessions use hold: the C++ fib floor is 1.5x below the AOT fn (5964553 /
+3908531) and 4.2x below the JIT fn; a var call is about 10 ns over the loop, a variadic call
+about 100 ns, a multimethod call about 55 ns, a `cpp/raw` call about 2-4 ns; the JVM's
+fib-var (8402808) sits between jank's AOT (5964553) and JIT (13555675) fn.
+
