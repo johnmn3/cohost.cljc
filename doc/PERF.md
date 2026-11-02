@@ -629,6 +629,52 @@ ABSENT and DIFFER, as printed:
   (nbody): inside the box's noise; fib 0.62, tak 0.43, spectral-norm 0.50.
 
 
+### Sentinels: binary-trees at depth 14, sum-overflow, sort (jank-MAX X1-1)
+
+Three rows that make the upstream lanes' changes visible on the suite (jank-MAX §2 X1). They are fixed by what they
+catch, not by the 100-1000 ms size rule above: a warm JVM call of each takes 0.6-37 ms.
+
+- `binary-trees-14` (and `-hinted`): `binary_trees.clj` at depth 14, a second size beside 18, so the collector's
+  share is visible at a small heap (U5's vectors and collector defaults).
+- `sum-overflow` (and `-hinted`, a `^long` loop): `(reduce + (range 1000000))`, 499999500000 on the JVM, past
+  2^31, so a host that wraps at 32 bits prints `DIFFER` (U1's i64 arms; jank-12, jank-21).
+- `sort`: 100000 numbers from an LCG kept under 2^23 (no host wraps), sorted, then `nth` of the middle element of
+  the sorted seq (U2's sorted walk, jank-11). No hinted twin: there is no primitive arm to hint.
+
+Measured 2026-11-02, 11:01 AM to 11:17 AM ET, one 4-CPU box shared with two other lanes (every timing run serialized
+through one lock), apt jank 0.1-noble, cohost `max/x1` (c/bench-programs 6ba26ac with max/main 1475973). `bb
+bench:programs jvm|jank-aot|jank binary-trees-14,binary-trees-14-hinted,sum-overflow,sum-overflow-hinted,sort`, then
+`bb bench:programs table jvm jank-aot jank` (rows for these five; the 21 rows above are C-1's run).
+
+Median ms of 10 timed calls (xJVM: median / JVM median).
+
+| program | size | jvm | jank-aot | jank |
+|---|---:|---:|---:|---:|
+| binary-trees-14 | 14 | 9.268 | 152.684 (x16.47) | 153.955 (x16.61) |
+| binary-trees-14-hinted | 14 | 14.790 | 153.942 (x10.41) | 211.597 (x14.31) |
+| sum-overflow | 1000000 | 8.891 | 99.390 DIFFER | 80.905 DIFFER |
+| sum-overflow-hinted | 1000000 | 0.579 | 11.398 DIFFER | 10.501 DIFFER |
+| sort | 100000 | 36.551 | 15782.846 (x431.80) | 105.723 (x2.89) |
+
+min-max of the 10 timed calls / the cold call (the first call in a fresh process), ms.
+
+| program | jvm | jank-aot | jank |
+|---|---:|---:|---:|
+| binary-trees-14 | 8.410-128.627 / 39.751 | 126.567-189.042 / 177.659 | 137.662-178.511 / 3384.105 |
+| binary-trees-14-hinted | 8.863-126.885 / 50.075 | 121.648-170.560 / 187.343 | 192.200-241.764 / 3085.089 |
+| sum-overflow | 8.220-223.141 / 38.494 | 93.486-135.052 / 124.876 | 72.047-97.288 / 366.215 |
+| sum-overflow-hinted | 0.569-0.591 / 11.295 | 10.168-11.924 / 16.451 | 10.013-11.204 / 287.616 |
+| sort | 31.767-126.055 / 126.310 | 10068.304-18151.171 / 10558.572 | 86.180-116.144 / 1613.717 |
+
+- `sum-overflow`, both forms, jank-aot and cohost on jank: `DIFFER: 1783293664, JVM 499999500000`
+  (499999500000 mod 2^32). This row turns `SAME` on U1's build (not yet built: U0-1).
+- `sort` on jank's own core takes 15.8 s per call, x432 the JVM; its warm-up stopped at 1 call (the 10 s limit).
+  Cohost on jank runs the same program in 106 ms (x2.89): cohost's `sort` and `nth` are the shim's, not jank's.
+  The gap is jank's own `sort`/`nth` over the sorted seq (lane R's jank-11 names the sorted walk).
+- binary-trees: jank-aot is x16.47 at depth 14 here and x14.41 at depth 18 in C-1's table above; cohost on jank
+  x16.61 and x25.85. On the JVM one call of the 10 at depth 14 took 128.6 ms (median 9.3 ms), a collector pause
+  inside the timed calls; the min-max columns show it.
+
 ## Cohost AOT optimization level
 
 `bb boot:jank` calls `jank-aot-dir` (`bb.edn` lines 14-15), which loads `dev/perf/jank_aot_ensure.clj`. The recompile is one command, `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot`, at `dev/perf/jank_aot_ensure.clj:68-69`. That `-O3` covers `cohost.run` and the namespaces it depends on, including `cohost.shim` and `cohost.hosts.jank-host`. The script requires `cohost/shim.o` and `cohost/hosts/jank_host.o` in that same cache. There is no environment variable for the level. jank's own flag is `-O` / `--optimization`, values 0 through 3. The boot does not read it from the environment. The level is the literal `-O3` on that line, so the default is already `-O3`. `bb bench:programs jank` loads those objects. A second target would repeat the same compile. Default and `-O3` are that run: fib median `126.469398` ms, and the geometric mean of cohost `-O3` / default is `1`.
