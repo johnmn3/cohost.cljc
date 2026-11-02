@@ -13,7 +13,7 @@ mkdir -p "$root/src/research"
 [ -d "dev/research/$name.d" ] && cp -r "dev/research/$name.d/." "$root/src/"
 # a probe whose first lines say ";; requires: a.b c.d" gets those namespaces
 # required (the ns form's :require for AOT; a require call for JIT)
-reqs="$(grep -m1 '^;; requires:' "$probe" | sed 's/^;; requires://')"
+reqs="$(grep -m1 '^;; requires:' "$probe" | sed 's/^;; requires://' || true)"
 nsreq=""; jitreq=""
 for r in $reqs; do nsreq="$nsreq [$r]"; jitreq="$jitreq '$r"; done
 [ -n "$nsreq" ] && nsreq=" (:require$nsreq)"
