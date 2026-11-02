@@ -1,0 +1,88 @@
+From f33d20498d206dcbfc210656b8c14a1043cb2fa4 Mon Sep 17 00:00:00 2001
+From: u5 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 17:34:42 +0000
+Subject: [PATCH] jank-19: measured collector defaults (128 MiB initial heap),
+ env knobs still honored
+
+Draft: cohost.cljc doc/upstream/jank-19-gc-defaults.md
+Files: compiler+runtime/src/cpp/jank/c_api.cpp
+Repro: GC_PRINT_STATS=1 bash dev/research/upstream/run.sh 18-small-vectors | grep -c "GC #"
+       (Expected: the collection count falls; binary-trees does not rise; resident
+       memory of cohost's bb boot:jank within 2x)
+
+jank_init_base, after GC_init: when GC_INITIAL_HEAP_SIZE is unset, grow the heap to
+128 MiB (GC_expand_hp); when GC_FREE_SPACE_DIVISOR is unset, keep bdwgc's divisor
+(the constant is 0 = keep; measured, a divisor of 1 cost 9% boot RSS for no steadier
+time than the heap). GC_init has already read both variables, so setting either one
+overrides the default. Parallel marking stays as built (enable_parallel_mark=ON);
+incremental mode stays opt-in (--gc-incremental), measured 3-6x slower in the draft.
+
+Chosen from an env matrix on the 18-small-vectors build (medians of 3: [i i] 2e6,
+bt 16 x depth 14, 4 x depth 16, 1 x depth 18; collections; boot RSS):
+  none   119953030 42956295 53165612 66107454  1139  1411328 KB
+  32M     83291881 43253689 48283351 53160974   402
+  64M     83076925 38507194 51954334 59929252   136  1419400 KB
+  128M    81623829 41684298 48092889 52397532    53  1419564 KB
+  div 1   76807861 36585886 53731940 53007507   275  1544076 KB
+
+Typed GC descriptors for persistent_vector and cons were built and dropped: no
+measured win to claim (the hot vectors are create_small's untyped blocks), and the
+build with them failed every JIT compile ("Parsing failed" / codegen
+internal-failure), not investigated further.
+---
+ compiler+runtime/src/cpp/jank/c_api.cpp | 27 +++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/compiler+runtime/src/cpp/jank/c_api.cpp b/compiler+runtime/src/cpp/jank/c_api.cpp
+index 28b95e97..313bf778 100644
+--- a/compiler+runtime/src/cpp/jank/c_api.cpp
++++ b/compiler+runtime/src/cpp/jank/c_api.cpp
+@@ -1,4 +1,5 @@
+ #include <cstdarg>
++#include <cstdlib>
+ #include <utility>
+ 
+ #ifdef JANK_WINDOWS_LIKE
+@@ -48,6 +49,12 @@ struct make_function_arity<std::index_sequence<>>
+ template <usize N>
+ using function_arity = typename make_function_arity<std::make_index_sequence<N>>::type;
+ 
++/* jank-19: the collector defaults jank_init applies when the environment does not set them.
++ * Measured with cohost.cljc's dev/research/upstream/run.sh 18-small-vectors and binary-trees at
++ * depths 14, 16 and 18 (doc/upstream/jank-19-gc-defaults.md). 0 keeps bdwgc's divisor. */
++static constexpr size_t jank_gc_default_initial_heap{ 128 * 1024 * 1024 };
++static constexpr GC_word jank_gc_default_free_space_divisor{ 0 };
++
+ extern "C"
+ {
+   jank_object_ref jank_eval(jank_object_ref const o)
+@@ -1122,6 +1129,26 @@ extern "C"
+     GC_init();
+     GC_allow_register_threads();
+ 
++    /* jank-19: measured collector defaults (cohost.cljc doc/upstream/jank-19-gc-defaults.md).
++     * bdwgc's own defaults start from a tiny heap and collect it hundreds of times in an
++     * allocation-heavy program. Each default applies only when its environment variable is
++     * unset, so GC_INITIAL_HEAP_SIZE and GC_FREE_SPACE_DIVISOR keep working (GC_init has
++     * already read them). Parallel marking stays as built; incremental mode stays opt-in
++     * (--gc-incremental), measured 3-6x slower. */
++    if(!std::getenv("GC_FREE_SPACE_DIVISOR") && jank_gc_default_free_space_divisor != 0)
++    {
++      GC_set_free_space_divisor(jank_gc_default_free_space_divisor);
++    }
++    if(!std::getenv("GC_INITIAL_HEAP_SIZE"))
++    {
++      auto const heap{ GC_get_heap_size() };
++      if(heap < jank_gc_default_initial_heap)
++      {
++        GC_expand_hp(jank_gc_default_initial_heap - heap);
++      }
++    }
++
++
+     {
+       GC_word bm[GC_BITMAP_SIZE(jank::runtime::obj::persistent_string)]{ 0 };
+       GC_set_bit(bm, GC_OFFSETOF_IN_PTRS(jank::runtime::obj::persistent_string, data));
+-- 
+2.43.0
+
