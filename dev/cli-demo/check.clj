@@ -57,16 +57,18 @@
       (let [ref (run (into ["clojure"] args))
             got (run (into [cohost (str ":" t)] args))
             same? (and (= (:exit ref) (:exit got))
-                       (if (= label "-Spath")
+                       ;; :jvm runs the real CLI: its classpath is the classpath
+                       (if (and (= label "-Spath") (not= t "jvm"))
                          (spath-same? (:out ref) (:out got))
                          (= (:out ref) (:out got))))]
         (println
          (if same?
            (format "%-6s %-8s SAME" t label)
-           (format "%-6s %-8s DIFF clojure: exit %s, %s -- cohost: exit %s, %s%s" t label
-                   (:exit ref) (pr-str (one-line (:out ref)))
-                   (:exit got) (pr-str (one-line (:out got)))
-                   (if (str/blank? (:err got)) "" (str ", stderr " (pr-str (subs (one-line (:err got)) 0 (min 300 (count (one-line (:err got))))))))))))
+           (let [e (one-line (:err got))]
+             (format "%-6s %-8s DIFF clojure: exit %s, %s -- cohost: exit %s, %s%s" t label
+                     (:exit ref) (pr-str (one-line (:out ref)))
+                     (:exit got) (pr-str (one-line (:out got)))
+                     (if (str/blank? e) "" (str ", stderr " (pr-str (subs e 0 (min 300 (count e))))))))))
         (flush)))))
 
 (let [want (set *command-line-args*)]
