@@ -1,6 +1,6 @@
 ;; Sieve, indexes hinted ^long.
 (defn -run [s]
-  (let [^long m (parse-long s)
+  (let [m (long (parse-long s))
         n (bit-shift-left 1 m)
         flags (transient (vec (repeat n true)))]
     (loop [i 2 cnt 0 flags flags]

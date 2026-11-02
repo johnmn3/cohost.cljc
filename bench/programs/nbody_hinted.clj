@@ -53,16 +53,16 @@
       (if (= i n)
         e
         (let [b (bs i)
-              ^double vx (b 3) ^double vy (b 4) ^double vz (b 5) ^double m (b 6)
+              vx (double (b 3)) vy (double (b 4)) vz (double (b 5)) m (double (b 6))
               e (+ e (* 0.5 m (+ (* vx vx) (* vy vy) (* vz vz))))]
           (recur (inc i)
                  (loop [j (inc i) e e]
                    (if (= j n)
                      e
                      (let [c (bs j)
-                           ^double dx (- (b 0) (c 0))
-                           ^double dy (- (b 1) (c 1))
-                           ^double dz (- (b 2) (c 2))
+                           dx (double (- (b 0) (c 0)))
+                           dy (double (- (b 1) (c 1)))
+                           dz (double (- (b 2) (c 2)))
                            dist (Math/sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
                        (recur (inc j) (- e (/ (* m (c 6)) dist))))))))))))
 
@@ -77,9 +77,9 @@
                           (if (= j n)
                             (assoc bs i b)
                             (let [c (bs j)
-                                  ^double dx (- (b 0) (c 0))
-                                  ^double dy (- (b 1) (c 1))
-                                  ^double dz (- (b 2) (c 2))
+                                  dx (double (- (b 0) (c 0)))
+                                  dy (double (- (b 1) (c 1)))
+                                  dz (double (- (b 2) (c 2)))
                                   dist (Math/sqrt (+ (* dx dx) (* dy dy) (* dz dz)))
                                   mag (/ dt (* dist dist dist))
                                   bm (b 6)
@@ -101,7 +101,7 @@
           bs)))
 
 (defn -run [s]
-  (let [^long n (parse-long s)]
+  (let [n (long (parse-long s))]
     (loop [i 0 bs (offset (bodies))]
       (if (= i n)
         (Math/round (* (energy bs) 1000000.0))
