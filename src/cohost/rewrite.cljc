@@ -872,10 +872,10 @@
    matches the JVM: a parameter's on entry, a return's on exit (the JVM's
    longCast / doubleCast; with a recur to the arity itself the body runs in a
    loop* so the coercion stays outside the recur target).
-   When the host compiles native types (:native-hints) and every parameter is
-   a plain symbol, a hinted arity hands the coerced values to one inner fn*
-   whose parameters carry the native tags (every arity: a hinted leaf gains
-   since jank-20's native entries); the outer parameters stay untyped, so the
+   When the host compiles native types (:native-hints), every parameter is a
+   plain symbol and the arity loops or calls itself, a hinted arity hands the
+   coerced values to one inner fn* whose parameters carry the native tags; the
+   outer parameters stay untyped, so the
    host never converts an argument it has not coerced. A single-arity fn named
    `nm` names the inner fn* the same, so its self-calls are the host's native
    named recursion; the return hint becomes the inner fn*'s :rettag."
@@ -890,7 +890,17 @@
                                     params hints))
              spells (host/native-hints)
              names (into [] (comp (filter symbol?) (map bare-sym) (remove #(= '& %))) params)
+             ;; H0 (apt 0.1-noble, U6-5): a hinted leaf called from elsewhere
+             ;; loses (call-long 1.39-1.42x, call-double 1.24-1.26x: the
+             ;; typed entry converts), and under cohost the inner fn* per
+             ;; call costs more (2e6 calls of a hinted leaf on the series:
+             ;; 415 ms through it, 75 ms without); a loop over the hinted
+             ;; value wins (0.12-0.13x), and so does a fn that calls itself,
+             ;; whose self-calls stay inside the typed inner fn* (fib 32 in
+             ;; this shape 24-25 ms vs 27-28 on apt; 9 vs 25 on the series)
+             self-calls? (and single? nm (mentions? (bare-sym nm) body'))
              native? (and spells
+                          (or (arity-loops? body') self-calls?)
                           (every? #(and (symbol? %) (not= '& (*plain* %))) params)
                           (some (fn [h] (when h (get spells h))) hints))
              forms (if native?
