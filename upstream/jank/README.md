@@ -120,8 +120,8 @@ jank keys its PCH cache (`incremental.pch`) by that version and the flags only, 
 `~/.cache/jank/<version>/` failed `codegen/internal-failure: Parsing failed` (u2, u1, u5). The build
 also deletes every `~/.cache/jank/*/` whose PCH names `<prefix>/` (entries from before the wrapper, or
 from running `bin/jank-real` directly). Tested on a copy of the prefix: the PCH lands in
-`<prefix>/cache/jank/<version>/`, and a re-wrap keeps `jank-real`. `JANK_BUILD_LOCK` remains as a
-knob but is unused here (no box locks, ruling 2026-11-02 12:57 PM ET).
+`<prefix>/cache/jank/<version>/`, and a re-wrap keeps `jank-real`. The `JANK_BUILD_LOCK` knob is
+gone (X3-2: no box locks, ruling 2026-11-02 12:57 PM ET).
 
 ```
 bash dev/install/jank-src.sh --patches
@@ -133,7 +133,26 @@ JANK_SERIES=/path/to/my/series bash dev/install/jank-src.sh --patches
 patch by patch, in `series` order) and rewrites in the clone only the files whose content differs
 from that tree (removing a patch restores its files; a patch's new files are deleted), so unchanged
 files keep their mtimes and ninja rebuilds only what the series changed; then `cmake --install`
-(installs only changed files, ~2 s). It prints the compile time and the lock wait separately.
+(installs only changed files, ~2 s). It prints the compile time.
+
+**Fresh phase 1 (X3-2).** When the series rewrote any file, `--patches` deletes, before the compile,
+`build/core-libs`, `build/classes/core-libraries`, `build/incremental.pch` and the prefix's PCH cache
+entries. jank's phase 1 reuses `build/core-libs/_cache/0/clojure/core.o` whenever it is newer than
+`core.jank`, whatever the headers say, so an object-layout change ran the old `core.o` and segfaulted in
+`jit_closure::call` (u5); int-a and u1 deleted these by hand. Shown on this box (2026-11-02, load ~15,
+`JANK_SERIES` files in a scratch dir): step A, the empty series -> 11, 13, 14: 12 files rewritten,
+compile 1032 s; step B, + 12-21, 18-small-vectors (a layout change in a header, no change to
+`core.jank`), 19: 9 files rewritten, compile 1091 s, `core.o` rebuilt (22:41:58 UTC), then
+`JANK_BIN=/usr/local/lib/jank-dev/bin/jank bb boot:jank`: 542/171/78/0, battery 147/149 (subs count nth
+first last butlast; Character outside ASCII: max/main's two), libraries 61/61, no segfault, no hand
+deletion. A `--patches` run that rewrote nothing deletes nothing.
+
+**ThinLTO (u5, U5-4; reviewed X3-2).** `JANK_LTO=thin` (off by default; `JANK_PGO=generate|<profdata>`)
+builds lld, llvm-ar, llvm-profdata and a minimal llvm-tblgen against the prefix's libLLVM once and
+configures `-flto=thin` through the `*_RELEASE` flags (so jank's `JANK_AOT_FLAGS` stay bitcode-free); use
+its own `JANK_SRC`/`JANK_DEV_PREFIX`. A plain run on a build dir an LTO run configured now reconfigures it
+plain (and drops `core-libs`): before, the plain path's cache check looked only at `llvm_dir` and the
+prefix, and the build stayed LTO. The LTO configure does not pass the ccache launchers.
 
 Price of a one-line change to a runtime `.cpp` (`src/cpp/jank/runtime/obj/nil.cpp`, a code line, not
 a comment), from `.ninja_log`, 24 steps: 26.8 s of compile applying it, 26.5 s reverting it, on this box:
