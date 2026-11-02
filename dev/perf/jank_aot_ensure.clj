@@ -11,15 +11,11 @@
 (require '[babashka.fs :as fs]
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_inputs.clj"))
 
 (def ^:private aot-root "target/jank-aot")
 
-(defn- cohost-files []
-  (->> (fs/glob "src/cohost" "**")
-       (filter fs/regular-file?)
-       (map str)
-       sort
-       vec))
+(defn- cohost-files [] (source-files "src/cohost"))
 
 (defn source-hash []
   (let [files (cohost-files)
