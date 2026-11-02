@@ -644,3 +644,112 @@ what separates them.
 ## 7. The other three
 
 (pending)
+
+## 8. Appendix: the generated C++ the sessions cite
+
+### 8.1 Raw jank, `jank compile-module research.cg -O3 --output-target cpp`
+
+Source: `(defn fib [n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))`,
+`(defn sum-to [n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (+ acc i)) acc)))`,
+`(defn kw [m] (:a m))`, `(defn call-other [x] (research.cg/fib x))`. The bodies (the `#line`
+directives removed):
+
+```
+extern "C" jank::runtime::object_ref research_cg$fib_16_1(jank::runtime::object_ref const fib, jank::runtime::object_ref n) {
+auto v1(const_32);
+auto &&v2(jank::runtime::lt(n, v1));
+jank::runtime::oref<jank::runtime::object> v6{ };
+if(v2){ v6 = std::move(n); } else {
+auto &&v10(jank::runtime::dec(n));
+auto const v11(research_cg$fib_16_1(fib, v10));
+auto v12(const_32);
+auto &&v13(jank::runtime::sub(n, v12));
+auto const v14(research_cg$fib_16_1(fib, v13));
+auto &&v15(jank::runtime::add(v11, v14));
+v6 = std::move(v15); }
+return v6; }
+
+extern "C" jank::runtime::object_ref research_cg$sum_to_17_1(jank::runtime::object_ref const sum_to, jank::runtime::object_ref n) {
+{ auto v2(const_33); auto v3(const_33);
+jank::runtime::object_ref v4{ };
+auto s5(v2); auto s6(v3);
+while(true){
+auto v10(s5); auto v11(s6);
+auto &&v12(jank::runtime::lt(v10, n));
+jank::runtime::object_ref v16{ };
+if(v12){
+auto &&v18(jank::runtime::inc(v10));
+int v19 (static_cast<int>(v18));
+auto &&v20(jank::runtime::add(v11, v10));
+s5 = v19; s6 = v20; continue;
+} else {
+auto const v24(jank::runtime::convert<int>::into_object(v11));
+v16 = std::move(v24); }
+return v16; break; } } }
+
+extern "C" jank::runtime::object_ref research_cg$kw_20_1(jank::runtime::object_ref const kw, jank::runtime::object_ref m) {
+auto const v1(const_34);
+auto &&v2(jank::runtime::get(m, v1));
+return v2; }
+
+extern "C" jank::runtime::object_ref research_cg$call_other_21_1(jank::runtime::object_ref const call_other, jank::runtime::object_ref x) {
+auto const v1(research_cg_SLASH_fib_35->deref());
+auto const v2(v1.call( x));
+return v2; }
+```
+
+### 8.2 The probe commands
+
+```
+bash dev/research/run-jank.sh dev/research/p1_fib_floor.jank        # P1, JIT -O3 and AOT -O3
+JANK_O=0 bash dev/research/run-jank.sh dev/research/p1_fib_floor.jank   # P9
+clojure -M dev/research/run-jvm.clj dev/research/p1_fib_floor.clj
+bash dev/research/queue.sh p1_fib_floor p2_call_path p3_gc_alloc p4_maps p5_seqs p5b_sort p5c_sort_walk p3b_alloc_kinds
+bash dev/research/p3_gc_env.sh
+bash dev/research/run-cohost-jank.sh dev/research/p6_cohost_fib.clj     # cohost on jank, no -O
+JANK_O=3 bash dev/research/run-cohost-jank.sh dev/research/p6_cohost_fib.clj
+bash dev/research/p6b_boot_O.sh
+JANK_O=3 bash dev/research/run-cohost-jank.sh dev/research/p11_protocol.clj
+```
+
+### 8.3 Cohost on jank, `JANK_PRINT_CODEGEN=1`, the two fib shapes at `-O3`
+
+`(defn fib-stock [n] ...)` through the stock core:
+
+```
+extern "C" jank::runtime::object_ref
+cohost_user$fn_1_1(jank::runtime::object_ref const cohost_user$fn_1, jank::runtime::object_ref n)
+{
+  auto v1(2);
+  auto &&v2(jank::runtime::lt(n, v1));
+  jank::runtime::oref<jank::runtime::object> v6{};
+  if(v2) { v6 = std::move(n); }
+  else
+  {
+    auto &&v10(jank::runtime::dec(n));
+    auto const v11(jank::runtime::var_ref{ reinterpret_cast<jank::runtime::var *>(0x7fad6131c600) }->deref());
+    auto const v12(v11.call(v10));
+    auto const v13(jank::runtime::obj::small_integer_ref{ 2 });
+    auto const v14(jank::runtime::var_ref{ reinterpret_cast<jank::runtime::var *>(0x7fad68801680) }->deref());
+    auto const v15(v14.call(n, v13));
+    auto const v17(v11.call(v15));
+    auto &&v18(jank::runtime::add(v12, v17));
+    v6 = std::move(v18);
+  }
+  return v6;
+}
+```
+
+`(def fib-fn-def (fn fib-fn-def [n] ...))` through the stock core:
+
+```
+extern "C" jank::runtime::object_ref
+cohost_user$fib_fn_def_9_1(jank::runtime::object_ref const fib_fn_def, jank::runtime::object_ref n)
+{ ...
+    auto const v11(cohost_user$fib_fn_def_9_1(fib_fn_def, v10));
+  ...
+    auto const v15(cohost_user$fib_fn_def_9_1(fib_fn_def, v14));
+```
+
+`v11` is the var `fib-stock` (deref'd once, called twice); `v14` is the `cohost.shim/Numbers-minus`
+wrapper. `<`, `dec`, `+` reached jank's inlined runtime ops in both shapes.
