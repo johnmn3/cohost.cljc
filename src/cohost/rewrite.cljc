@@ -1003,6 +1003,20 @@
    deftest's :test fn, core.clj's :inline fns."
   [:test :inline :inline-arities])
 
+(defn- fn*-inside?
+  "True when a rewritten fn* body holds a nested fn/fn* form (a closure)
+   anywhere outside a quote. jank's compile-module codegen mishandles a
+   self-named fn* whose body holds closures: the generated C++ calls the
+   fn with an undeclared capture (cohost.spec.alpha's op-explain and
+   re-gen, found by the snapshot build; the JIT path never hits it). A
+   named fn* with no closure inside compiles on both paths."
+  [form]
+  (cond (seq? form) (and (not= 'quote (first form))
+                         (or (#{'fn 'fn*} (first form))
+                             (boolean (some fn*-inside? form))))
+        (coll? form) (boolean (some fn*-inside? form))
+        :else false))
+
 (defn- rw-def [ctx [_ nm & more]]
   (let [nm (carry-meta nm nm)
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
@@ -1023,7 +1037,11 @@
                        (seq more')
                        (seq? (last more'))
                        (= 'fn* (first (last more')))
-                       (not (symbol? (second (last more')))))
+                       (not (symbol? (second (last more'))))
+                       ;; and no closure inside: a self-named fn*
+                       ;; holding closures breaks jank's compile-module
+                       ;; codegen (see fn*-inside?)
+                       (not (some fn*-inside? (rest (last more')))))
                 (concat (butlast more')
                         [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
                 more')]
