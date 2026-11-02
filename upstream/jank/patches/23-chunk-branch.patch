@@ -1,0 +1,387 @@
+From 2100332154b4d7d1fef48afc464fa19ce1eea676 Mon Sep 17 00:00:00 2001
+From: u5 <u5@cohost-max>
+Date: Mon, 2 Nov 2026 18:17:20 +0000
+Subject: [PATCH] u5: 23-chunk-branch: map/filter chunk branches run one
+ runtime loop per chunk
+
+- runtime chunk_map / chunk_filter: one loop over the array_chunk's storage, f (pred) called
+  once per element in order, results written into a new chunk; filter stages its kept elements
+  on the stack and allocates exactly their size; boolean results compared by identity first
+- array_chunk::create(n): the box and its n slots in one block (as persistent_vector's
+  create_small); used by chunk_map, chunk_filter and integer_range::chunked_first
+- core.jank: map and filter chunk branches call them; chunk-buffer, chunk-append, chunk,
+  chunk-first, chunk-next, chunk-rest, chunk-cons, chunked-seq? :inline
+- runtime chunk_cons skips an empty chunk, as Clojure's chunk-cons does
+
+Applies on f3d82d65 + 11, 13, 14, 18, 19, 15a-16, 15b-17 (array_chunk taken from 15b).
+---
+ .../include/cpp/jank/runtime/core/seq.hpp     |   4 +
+ .../cpp/jank/runtime/obj/array_chunk.hpp      |   5 +
+ .../src/cpp/jank/runtime/core/seq.cpp         | 114 ++++++++++++++++++
+ .../src/cpp/jank/runtime/obj/array_chunk.cpp  |  23 ++++
+ .../cpp/jank/runtime/obj/integer_range.cpp    |  10 +-
+ compiler+runtime/src/jank/clojure/core.jank   | 104 +++++++++-------
+ 6 files changed, 212 insertions(+), 48 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp b/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
+index 343a423f..6e4cfdf6 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
+@@ -145,6 +145,10 @@ namespace jank::runtime
+   object_ref chunk_rest(object_ref const o);
+   object_ref chunk_cons(object_ref const chunk, object_ref const rest);
+   bool is_chunked_seq(object_ref const o);
++  /* core.jank's map and filter chunk branches: one call per chunk, f (or pred) called once per
++   * element in order, the results written straight into a new chunk. */
++  object_ref chunk_map(object_ref const f, object_ref const chunk);
++  object_ref chunk_filter(object_ref const pred, object_ref const chunk);
+ 
+   object_ref iterate(object_ref const fn, object_ref const o);
+ 
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
+index 48a4bfa2..21959ec8 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
+@@ -20,6 +20,11 @@ namespace jank::runtime::obj
+      * items[offset..size) are this chunk's elements. */
+     array_chunk(object_ref const *items, usize size, usize offset, object_ref owner);
+ 
++    /* One allocation: the box with room for capacity elements right after it. items points
++     * there and size starts at 0; the caller writes storage()[0..n) and then sets size. */
++    static array_chunk_ref create(usize capacity);
++    object_ref *storage();
++
+     /* behavior::chunk_like */
+     array_chunk_ref chunk_next() const;
+     array_chunk_ref chunk_next_in_place();
+diff --git a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
+index 0fdc24f1..4015cfac 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
+@@ -1193,6 +1193,19 @@ namespace jank::runtime
+ 
+   object_ref chunk_cons(object_ref const chunk, object_ref const rest)
+   {
++    /* As Clojure's chunk-cons: an empty chunk is skipped. */
++    if(chunk.get_type() == object_type::array_chunk)
++    {
++      auto const c(expect_object<obj::array_chunk>(chunk));
++      if(c->offset == c->size)
++      {
++        return rest;
++      }
++    }
++    else if(sequence_length(chunk) == 0)
++    {
++      return rest;
++    }
+     /* The rest stays unrealized, as Clojure's ChunkedCons keeps `more`: realizing it here
+      * made a chunked lazy pipeline realize its whole chain recursively at the first seq call
+      * (a segfault at about 1e6 elements on the unpatched tree with (range 0.0 1e6)). The
+@@ -1200,6 +1213,107 @@ namespace jank::runtime
+     return make_box<obj::chunked_cons>(chunk, rest);
+   }
+ 
++  /* Calls fn on each element of a chunk, in order: straight over an array_chunk's storage, by
++   * nth otherwise. */
++  template <typename F>
++  static void each_chunk_item(object_ref const chunk, F &&fn)
++  {
++    if(chunk.get_type() == object_type::array_chunk)
++    {
++      auto const c(expect_object<obj::array_chunk>(chunk));
++      for(usize i{ c->offset }; i < c->size; ++i)
++      {
++        fn(c->items[i]);
++      }
++      return;
++    }
++    auto const n(sequence_length(chunk));
++    for(usize i{}; i < n; ++i)
++    {
++      fn(nth(chunk, make_box(static_cast<i64>(i))));
++    }
++  }
++
++  object_ref chunk_map(object_ref const f, object_ref const chunk)
++  {
++    if(chunk.get_type() == object_type::array_chunk)
++    {
++      /* The common case: one block for the new chunk, f's results written straight into it. */
++      auto const c(expect_object<obj::array_chunk>(chunk));
++      auto const n{ c->size - c->offset };
++      auto const in{ c->items + c->offset };
++      auto ret{ obj::array_chunk::create(n) };
++      auto const out{ ret->storage() };
++      for(usize i{}; i < n; ++i)
++      {
++        out[i] = f.call(in[i]);
++      }
++      ret->size = n;
++      return ret;
++    }
++    native_vector<object_ref> out;
++    out.reserve(sequence_length(chunk));
++    each_chunk_item(chunk, [&](object_ref const e) { out.emplace_back(f.call(e)); });
++    return make_box<obj::array_chunk>(std::move(out), static_cast<usize>(0));
++  }
++
++  /* pred's result as a condition: the booleans by identity first (odd?, even?, pos? and the
++   * like return the two singletons), then the general rule. */
++  static bool keeps(object_ref const r)
++  {
++    if(r == jank_true)
++    {
++      return true;
++    }
++    if(r == jank_false)
++    {
++      return false;
++    }
++    return truthy(r);
++  }
++
++  object_ref chunk_filter(object_ref const pred, object_ref const chunk)
++  {
++    constexpr usize staged_max{ 64 };
++    if(chunk.get_type() == object_type::array_chunk)
++    {
++      auto const c(expect_object<obj::array_chunk>(chunk));
++      auto const n{ c->size - c->offset };
++      if(n <= staged_max)
++      {
++        /* The kept elements are staged on the stack (the source chunk keeps them alive), then
++         * copied into one block of exactly their size. */
++        auto const in{ c->items + c->offset };
++        object_ref const *kept[staged_max];
++        usize k{};
++        for(usize i{}; i < n; ++i)
++        {
++          if(keeps(pred.call(in[i])))
++          {
++            kept[k++] = in + i;
++          }
++        }
++        auto ret{ obj::array_chunk::create(k) };
++        auto const out{ ret->storage() };
++        for(usize i{}; i < k; ++i)
++        {
++          out[i] = *kept[i];
++        }
++        ret->size = k;
++        return ret;
++      }
++    }
++    native_vector<object_ref> out;
++    out.reserve(sequence_length(chunk));
++    each_chunk_item(chunk, [&](object_ref const e) {
++      if(keeps(pred.call(e)))
++      {
++        out.emplace_back(e);
++      }
++    });
++    return make_box<obj::array_chunk>(std::move(out), static_cast<usize>(0));
++  }
++
+   bool is_chunked_seq(object_ref const o)
+   {
+     /* TODO: Port visit_object: chunkable. */
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
+index 121e6561..9d936c0c 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
+@@ -4,6 +4,7 @@
+ #include <jank/runtime/core/math.hpp>
+ #include <jank/runtime/rtti.hpp>
+ #include <jank/util/fmt.hpp>
++#include <jank/gc.hpp>
+ 
+ namespace jank::runtime::obj
+ {
+@@ -50,6 +51,28 @@ namespace jank::runtime::obj
+   {
+   }
+ 
++  array_chunk_ref array_chunk::create(usize const capacity)
++  {
++    constexpr usize align{ alignof(object_ref) };
++    constexpr usize box_size{ (sizeof(array_chunk) + align - 1) / align * align };
++    static_assert(alignof(array_chunk) <= alignof(std::max_align_t));
++    auto const mem{ static_cast<char *>(GC_malloc(box_size + capacity * sizeof(object_ref))) };
++    if(!mem)
++    {
++      throw std::bad_alloc{};
++    }
++    auto const ret{ ::new(static_cast<void *>(mem)) array_chunk{} };
++    /* The elements live in the same block: the box keeps them alive, and chunk_next()'s views
++     * name this chunk as their owner. */
++    ret->items = reinterpret_cast<object_ref const *>(mem + box_size);
++    return runtime::detail::untagged(ret);
++  }
++
++  object_ref *array_chunk::storage()
++  {
++    return const_cast<object_ref *>(items);
++  }
++
+   array_chunk_ref array_chunk::chunk_next() const
+   {
+     if(offset == size)
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp
+index 173137b1..94ecce30 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp
+@@ -133,13 +133,15 @@ namespace jank::runtime::obj
+   array_chunk_ref integer_range::chunked_first() const
+   {
+     auto const n{ std::min(count(), static_cast<usize>(chunk_size)) };
+-    native_vector<object_ref> arr;
+-    arr.reserve(n);
++    /* One block for the box and its elements. */
++    auto ret{ array_chunk::create(n) };
++    auto const out{ ret->storage() };
+     for(usize i{}; i < n; ++i)
+     {
+-      arr.emplace_back(make_box(start + static_cast<i64>(i) * step));
++      out[i] = make_box(start + static_cast<i64>(i) * step);
+     }
+-    return make_box<array_chunk>(std::move(arr), static_cast<usize>(0));
++    ret->size = n;
++    return ret;
+   }
+ 
+   object_ref integer_range::chunked_next() const
+diff --git a/compiler+runtime/src/jank/clojure/core.jank b/compiler+runtime/src/jank/clojure/core.jank
+index f74c959d..475024dd 100644
+--- a/compiler+runtime/src/jank/clojure/core.jank
++++ b/compiler+runtime/src/jank/clojure/core.jank
+@@ -2029,38 +2029,62 @@
+   [& body]
+   (list `cpp/jank.runtime.lazy_seq (list* `fn `lazy-seq# [] body)))
+ 
+-(defn chunk-buffer
+-  [capacity]
+-  (cpp/jank.runtime.chunk_buffer capacity))
+-
+-(defn chunk-append
+-  [b x]
+-  (cpp/jank.runtime.chunk_append b x))
+-
+-(defn chunk
+-  [b]
+-  (cpp/jank.runtime.chunk b))
+-
+-(defn chunk-first
+-  [s]
+-  (cpp/jank.runtime.chunk_first s))
+-
+-(defn chunk-next
+-  [s]
+-  (cpp/jank.runtime.chunk_next s))
+-
+-(defn chunk-rest
+-  [s]
+-  (cpp/jank.runtime.chunk_rest s))
+-
+-(defn chunk-cons [chunk rest]
+-  (if (empty? chunk)
+-    rest
++(def ^{:arglists '([capacity])
++       :inline (fn* [capacity]
++                 (list 'cpp/jank.runtime.chunk_buffer capacity))}
++  chunk-buffer
++  (fn* chunk-buffer [capacity]
++    (cpp/jank.runtime.chunk_buffer capacity)))
++
++(def ^{:arglists '([b x])
++       :inline (fn* [b x]
++                 (list 'cpp/jank.runtime.chunk_append b x))}
++  chunk-append
++  (fn* chunk-append [b x]
++    (cpp/jank.runtime.chunk_append b x)))
++
++(def ^{:arglists '([b])
++       :inline (fn* [b]
++                 (list 'cpp/jank.runtime.chunk b))}
++  chunk
++  (fn* chunk [b]
++    (cpp/jank.runtime.chunk b)))
++
++(def ^{:arglists '([s])
++       :inline (fn* [s]
++                 (list 'cpp/jank.runtime.chunk_first s))}
++  chunk-first
++  (fn* chunk-first [s]
++    (cpp/jank.runtime.chunk_first s)))
++
++(def ^{:arglists '([s])
++       :inline (fn* [s]
++                 (list 'cpp/jank.runtime.chunk_next s))}
++  chunk-next
++  (fn* chunk-next [s]
++    (cpp/jank.runtime.chunk_next s)))
++
++(def ^{:arglists '([s])
++       :inline (fn* [s]
++                 (list 'cpp/jank.runtime.chunk_rest s))}
++  chunk-rest
++  (fn* chunk-rest [s]
++    (cpp/jank.runtime.chunk_rest s)))
++
++;; chunk_cons skips an empty chunk, as Clojure's chunk-cons does.
++(def ^{:arglists '([chunk rest])
++       :inline (fn* [chunk rest]
++                 (list 'cpp/jank.runtime.chunk_cons chunk rest))}
++  chunk-cons
++  (fn* chunk-cons [chunk rest]
+     (cpp/jank.runtime.chunk_cons chunk rest)))
+ 
+-(defn chunked-seq?
+-  [s]
+-  (cpp/jank.runtime.is_chunked_seq s))
++(def ^{:arglists '([s])
++       :inline (fn* [s]
++                 (list 'cpp/jank.runtime.is_chunked_seq s))}
++  chunked-seq?
++  (fn* chunked-seq? [s]
++    (cpp/jank.runtime.is_chunked_seq s)))
+ 
+ (defn concat
+   "Returns a lazy seq representing the concatenation of the elements in the supplied colls."
+@@ -2900,12 +2924,9 @@
+    (lazy-seq
+      (when-let [s (seq coll)]
+        (if (chunked-seq? s)
+-         (let [c (chunk-first s)
+-               size (int (count c))
+-               b (chunk-buffer size)]
+-           (dotimes [i size]
+-             (chunk-append b (f (nth c i))))
+-           (chunk-cons (chunk b) (map f (chunk-rest s))))
++         ;; One runtime loop per chunk: f once per element, straight into the new chunk.
++         (chunk-cons (cpp/jank.runtime.chunk_map f (chunk-first s))
++                     (map f (chunk-rest s)))
+          (cons (f (first s)) (map f (rest s)))))))
+   ([f c1 c2]
+    (lazy-seq
+@@ -3876,14 +3897,9 @@
+    (lazy-seq
+      (when-let [s (seq coll)]
+        (if (chunked-seq? s)
+-         (let [c (chunk-first s)
+-               size (count c)
+-               b (chunk-buffer size)]
+-           (dotimes [i size]
+-             (let [v (nth c i)]
+-               (when (pred v)
+-                 (chunk-append b v))))
+-           (chunk-cons (chunk b) (filter pred (chunk-rest s))))
++         ;; One runtime loop per chunk: pred once per element, kept elements into the new chunk.
++         (chunk-cons (cpp/jank.runtime.chunk_filter pred (chunk-first s))
++                     (filter pred (chunk-rest s)))
+          (let [f (first s) r (rest s)]
+            (if (pred f)
+              (cons f (filter pred r))
+-- 
+2.43.0
+
