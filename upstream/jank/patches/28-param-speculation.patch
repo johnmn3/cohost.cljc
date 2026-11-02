@@ -50,6 +50,7 @@ process), so the per-round values are given where it matters):
   the other rows unchanged within noise.
 - run.sh 20-native-returns, 26-native-inference, 24-direct-calls, 12-i32-add, 21-int32-loop-local:
   every Expected line on the patched build.
+- bb boot:jank on the patched build: 542/171/78/0, battery 147/149, libraries 61/61 (the control's).
 
 diff --git a/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp b/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
 index ed74c265..c4f63033 100644
