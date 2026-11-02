@@ -439,167 +439,276 @@ bb bench:report --compare doc/perf/before doc/perf/after
 
 ## Programs against JVM Clojure
 
-jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Programs live in `bench/programs/`. The driver is `dev/bench_programs.clj`. `MEDIAN-MS` is the middle of five timed calls after one untimed call in the same process. `COLD-MS` is one call in a fresh process. The clock is inside the process (`System/nanoTime` on the JVM, `cpp/jank.runtime.current_time` on jank). Each timed call reads its size argument at runtime and adds the result into a volatile. A program's printed result is compared with the JVM result. `first-output` is process wall time until stdout contains `ok` (one cold process, one discarded warmup process, then five).
+jank-FAST Step 8. Programs in `bench/programs/`, driver `dev/bench_programs.clj`:
 
-Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`, binary-trees `8`, fannkuch `7`, nsieve `12`, k-nucleotide `2000`, pipeline `2000`, dispatch `20000`, json `20`.
+- `bb bench:programs <target> [program[:size],...]` measures one target (all programs, or the listed ones, at
+  their default size or the given one) and records each row in `target/bench-programs/results/<target>.edn`.
+- `bb bench:programs all [program,...]` runs every target in order.
+- `bb bench:programs table [target ...]` prints the tables below from those records.
 
-Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core), then `bb bench:programs jvm-cohost` (`clojure -M -m cohost.run -- --eval`), then `bb bench:programs cljrs-cohost`. A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` is timed for jvm, jank-jit, jank-aot, cohost on jank, clojurust, jvm-cohost, and cljrs-cohost.
+### Method (C-1, 2026-11-02)
 
-| program | jvm median | jvm cold | jit median | jit cold | jit/jvm | aot median | aot cold | aot/jvm | result |
+- One process per program and target. The first call of `-run` is `cold` (the first call in a fresh process).
+  Warm-up continues until the median of the last 5 calls moves under 2% from the median before the newest call, or
+  20 calls, or 10 s of warm-up, whichever comes first (the cold call counts). Then 10 timed calls: `median` (mean of
+  the middle two), `min`, `max`.
+- Sizes: one warm JVM call takes 100-1000 ms (`bb bench:programs jvm`: 87-370 ms per call, below). The size is a
+  string argument parsed inside `-run` on every call.
+- The clock is each core's own, in nanoseconds: `System/nanoTime` on the JVM; on every cohost target the program's
+  `(System/nanoTime)`, which cohost rewrites to the shim's `System-nanoTime`, the adapter's `:nano-time`; jank's own
+  core `cpp/jank.runtime.current_time`; cljs and Chromium `js/performance.now` (Chromium rounds it to 0.1 ms);
+  basilisp `time/perf_counter_ns`; Phel `php/hrtime`.
+- No volatile or atom in the harness: the result of every call is folded into a sink carried by the loop and
+  printed at the end, and every timed call's result is checked against the first call's. The harness's inner loop
+  binds no name of its outer loop (jank 0.1 fails C++ codegen on that, below).
+- A result is compared with the JVM's at the same size: `DIFFER` is a different answer. `ABSENT` is the host's
+  error, printed in full below the tables.
+- `first-output` is process wall time until stdout has `ok`: one cold process, one discarded, then 10 (median,
+  min-max).
+- cljs own core is compiled as shipped (`cljs.main -t node -O simple`, run by `node`); `browser` is the same
+  program compiled `-t browser -O simple` and loaded in headless Chromium (Playwright), console printing on.
+  `browser-cohost` has no runner: `src/cohost/run_browser.cljs` runs the battery or `?bench` only and has no
+  `--eval`.
+- jank optimization level, per column (C-1 addendum): `jank-jit` is `jank -O3 run`; `jank-aot` is
+  `jank compile-module -O3`, then `run-main`; `jank` (cohost on jank) is `jank -O3 --module-path <cohost's -O3 AOT
+  modules>:src run-main cohost.run -- --eval <program>`, so the boot's JIT and the program's forms compile at -O3.
+  first-output uses the same commands.
+- Hinted programs carry the hints a JVM programmer writes for primitive math: `^long`/`^double` on parameters,
+  `^long` on the return of `fib` and `tak`, and `(double x)`/`(long x)` coercion of locals (a `^double` tag on a
+  local bound to an Object makes no primitive local on the JVM). `json` round-trips its sample `n` times.
+
+Measured 2026-11-02, 8:48 AM to 11:24 AM ET (jank-jit and cohost on jank at -O3: 10:54-11:24 AM), one 4-CPU box, one target at a time, nothing else running, cohost
+`c/bench-programs` (base `b286ba1`). The sections after this one ("Basilisp, ClojureWasm, Phel, let-go",
+"ClojureScript Node", "Chromium", "Still running at close") are G-13's runs with the old method (one warm-up, five
+calls of 0.03-80 ms); the coordinator's all-host rerun with this driver replaces them. Hosts this box lacks (jolt,
+basilisp, ClojureWasm, Phel, let-go, clojurust) are not in these tables.
+
+### Tables
+
+`bb bench:programs table jvm jvm-cohost jank-jit jank-aot jank cljs cljs-cohost browser`. `jank` is cohost on jank (AOT boot, G-12); `jank-jit` and `jank-aot` are jank's own core (`jank run`; `compile-module -O3`, then `run-main`). `browser` is cljs's own core in headless Chromium.
+
+Median ms of 10 timed calls (xJVM: median / JVM median).
+
+| program | size | jvm | jvm-cohost | jank-jit | jank-aot | jank | cljs | cljs-cohost | browser |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| fib | 5.293441 | 18.17026 | 81.066692 | 313.770143 | 15.314555 | 4.228778 | 4.22679 | 0.798871 | 832040 |
-| fib-hinted | 4.425011 | 17.725987 | 79.821299 | 247.66818 | 18.038667 | 7.362588 | 7.320614 | 1.663858 | 832040 |
-| tak | 1.367668 | 6.945293 | 2.653217 | 253.907528 | 1.939957 | 0.324893 | 0.370587 | 0.237553 | 7 |
-| tak-hinted | 1.129298 | 3.340478 | 4.194396 | 42.517684 | 3.714162 | 0.617815 | 0.705569 | 0.547079 | 7 |
-| nbody | 3.876606 | 13.552441 | ABSENT Math/sqrt | | | ABSENT Math/sqrt | | | -169027 |
-| nbody-hinted | 3.079164 | 14.419944 | ABSENT Math/sqrt | | | ABSENT Math/sqrt | | | -169027 |
-| spectral-norm | 0.663116 | 15.028961 | ABSENT Math/round | | | ABSENT Math/round | | | 784826 |
-| spectral-norm-hinted | 1.674702 | 13.756405 | ABSENT Math/round | | | ABSENT Math/round | | | 784826 |
-| mandelbrot | 0.444768 | 1.998482 | ABSENT s35 | | | ABSENT s35 | | | 608 |
-| mandelbrot-hinted | 0.213834 | 1.950147 | ABSENT s35 | | | ABSENT s35 | | | 608 |
-| binary-trees | 0.518609 | 3.696582 | 1.736672 | 353.635392 | 3.348712 | 0.905763 | 0.556616 | 1.746524 | 7083 |
-| binary-trees-hinted | 1.276997 | 3.619701 | 1.740416 | 290.493741 | 1.362897 | 0.951506 | 1.972727 | 0.745112 | 7083 |
-| fannkuch | 21.31977 | 60.519953 | ABSENT s28 | | | ABSENT s28 | | | -502 |
-| fannkuch-hinted | 20.498867 | 67.888894 | ABSENT s28 | | | ABSENT s28 | | | -502 |
-| nsieve | 0.835891 | 3.45517 | ABSENT s56 | | | ABSENT s56 | | | 564 |
-| nsieve-hinted | 1.023101 | 2.823484 | ABSENT s56 | | | ABSENT s56 | | | 564 |
-| k-nucleotide | 1.125359 | 5.198497 | 1.078813 | 113.019317 | 0.958639 | 0.491155 | 0.596223 | 0.436443 | 500 |
-| pipeline | 2.510401 | 9.299799 | 4.264566 | 368.019931 | 1.698759 | 3.360476 | 2.776184 | 1.338621 | 5995001 |
-| dispatch | 2.168401 | 10.863573 | ABSENT defprotocol | | | ABSENT defprotocol | | | 200183333 |
-| json | 0.145791 | 0.566916 | 0.073902 | 790.121021 | 0.506904 | 0.033901 | 0.106072 | 0.232532 | 580 |
-| first-output | 385.120548 | 377.261128 | 362.395388 | 373.893489 | 0.940992 | 384.276232 | 662.439066 | 0.997808 | ok |
+| fib | 36 | 139.164 | 155.234 (x1.12) | 109.448 (x0.79) | 136.690 (x0.98) | 459.506 (x3.30) | 239.783 (x1.72) | 261.039 (x1.88) | 181.100 (x1.30) |
+| fib-hinted | 36 | 86.788 | ABSENT | 275.183 (x3.17) | 164.436 (x1.89) | 3436.371 (x39.60) | 253.498 (x2.92) | 3022.310 (x34.82) | 150.150 (x1.73) |
+| tak | 30 20 10 | 370.015 | 305.499 (x0.83) | 758.011 (x2.05) | 568.600 (x1.54) | 1488.983 (x4.02) | ABSENT | 1222.172 (x3.30) | ABSENT |
+| tak-hinted | 30 20 10 | 160.435 | ABSENT | 1296.105 (x8.08) | 1075.946 (x6.71) | 18396.719 (x114.67) | ABSENT | 17801.744 (x110.96) | ABSENT |
+| nbody | 50000 | 201.169 | 299.999 (x1.49) | ABSENT | ABSENT | ABSENT | 879.060 (x4.37) | 1568.248 (x7.80) | 526.800 (x2.62) |
+| nbody-hinted | 50000 | 199.261 | ABSENT | ABSENT | ABSENT | ABSENT | 834.527 (x4.19) | 1653.455 (x8.30) | 517.100 (x2.60) |
+| spectral-norm | 600 | 234.551 | 322.950 (x1.38) | ABSENT | ABSENT | 3290.174 (x14.03) | 1740.105 (x7.42) | 2812.995 (x11.99) | 1090.450 (x4.65) |
+| spectral-norm-hinted | 600 | 118.189 | ABSENT | ABSENT | ABSENT | 5252.280 (x44.44) | 1790.396 (x15.15) | 4490.841 (x38.00) | 952.600 (x8.06) |
+| mandelbrot | 1500 | 171.545 | 177.148 (x1.03) | ABSENT | ABSENT | ABSENT | 2504.099 (x14.60) | 4701.288 (x27.41) | 1986.250 (x11.58) |
+| mandelbrot-hinted | 1500 | 172.394 | ABSENT | ABSENT | ABSENT | ABSENT | 2435.867 (x14.13) | 4487.109 (x26.03) | 1923.250 (x11.16) |
+| binary-trees | 18 | 279.690 | 258.124 (x0.92) | 4016.127 (x14.36) | 4030.292 (x14.41) | 3439.206 (x12.30) | 912.235 (x3.26) | 1388.831 (x4.97) | 481.200 (x1.72) |
+| binary-trees-hinted | 18 | 249.042 | ABSENT | 3781.694 (x15.18) | 3781.119 (x15.18) | 4594.999 (x18.45) | 854.270 (x3.43) | 2917.456 (x11.71) | 513.700 (x2.06) |
+| fannkuch | 8 | 188.514 | 167.783 (x0.89) | ABSENT | ABSENT | ABSENT | 692.804 (x3.68) | 864.746 (x4.59) | 477.550 (x2.53) |
+| fannkuch-hinted | 8 | 150.001 | 178.316 (x1.19) | ABSENT | ABSENT | ABSENT | 738.551 (x4.92) | 920.872 (x6.14) | 471.350 (x3.14) |
+| nsieve | 20 | 237.117 | 369.284 (x1.56) | ABSENT | ABSENT | ABSENT | 821.985 (x3.47) | 1714.090 (x7.23) | 428.800 (x1.81) |
+| nsieve-hinted | 20 | 243.300 | 373.298 (x1.53) | ABSENT | ABSENT | ABSENT | 749.941 (x3.08) | 1799.450 (x7.40) | 443.900 (x1.82) |
+| k-nucleotide | 2000000 | 154.312 | 135.902 (x0.88) | 717.094 (x4.65) | 699.293 (x4.53) | 1652.495 (x10.71) | 836.140 (x5.42) | 1449.917 (x9.40) | 525.500 (x3.41) |
+| pipeline | 500000 | 159.547 | 161.266 (x1.01) | 1235.519 DIFFER | 1280.717 DIFFER | 1568.218 DIFFER | 705.978 (x4.42) | 869.912 (x5.45) | 421.800 (x2.64) |
+| dispatch | 5000000 | 158.637 | 710.070 (x4.48) | ABSENT | ABSENT | 8413.152 DIFFER | 683.848 (x4.31) | 3502.906 (x22.08) | 448.850 (x2.83) |
+| json | 30000 | 218.450 | 257.687 (x1.18) | 2189.466 (x10.02) | 1974.701 (x9.04) | 6433.241 (x29.45) | 514.319 DIFFER | 2026.651 (x9.28) | 291.200 DIFFER |
+| first-output | - | 708.823 | 4616.659 (x6.51) | 678.953 (x0.96) | 650.275 (x0.92) | 20101.329 (x28.36) | 116.127 (x0.16) | 7335.602 (x10.35) | 717.774 (x1.01) |
 
-Times are milliseconds. jit is `jank-jit` (jank's own core, `jank run`). aot is `jank-aot` (jank's own core, `-O3`).
+min-max of the 10 timed calls / the cold call (the first call in a fresh process), ms.
 
-ABSENT on both jank-jit and jank-aot: nbody and nbody-hinted, `The symbol Math/sqrt could not be resolved`. spectral-norm and spectral-norm-hinted, `The symbol Math/round could not be resolved`. mandelbrot and mandelbrot-hinted, `use of undeclared identifier 's35'`. fannkuch and fannkuch-hinted, `use of undeclared identifier 's28'`. nsieve and nsieve-hinted, `use of undeclared identifier 's56'`. dispatch, `The symbol defprotocol could not be resolved`.
+| program | jvm | jvm-cohost | jank-jit | jank-aot | jank | cljs | cljs-cohost | browser |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| fib | 121.893-173.004 / 233.909 | 134.460-175.644 / 242.638 | 109.003-175.848 / 2037.889 | 91.708-148.784 / 95.254 | 432.536-567.998 / 2145.138 | 217.159-295.926 / 229.979 | 248.599-324.140 / 283.481 | 148.000-254.800 / 164.400 |
+| fib-hinted | 73.411-106.860 / 84.710 |  | 234.601-328.591 / 1757.686 | 158.890-175.891 / 168.631 | 3357.095-3598.962 / 4934.339 | 222.023-302.680 / 241.763 | 2883.344-3108.095 / 2832.468 | 138.900-271.800 / 204.500 |
+| tak | 349.317-449.223 / 409.261 | 257.935-367.386 / 497.106 | 588.823-840.599 / 2422.257 | 552.627-615.240 / 584.227 | 1393.540-1532.935 / 2987.238 |  | 1182.877-1416.299 / 1190.151 |  |
+| tak-hinted | 145.241-193.638 / 204.114 |  | 1208.900-1426.532 / 1420.880 | 954.089-1289.832 / 1083.634 | 17867.856-18757.106 / 19717.923 |  | 17523.027-18595.653 / 17385.173 |  |
+| nbody | 189.382-228.212 / 443.707 | 288.089-317.808 / 729.456 |  |  |  | 759.902-965.781 / 713.572 | 1466.478-1904.077 / 1629.451 | 521.600-683.000 / 735.700 |
+| nbody-hinted | 192.349-238.456 / 365.860 |  |  |  |  | 640.057-972.742 / 592.664 | 1513.893-1771.034 / 1774.427 | 491.700-627.700 / 621.900 |
+| spectral-norm | 218.567-260.318 / 408.983 | 314.728-415.629 / 606.467 |  |  | 3055.631-3725.200 / 11902.784 | 1631.269-1874.363 / 1488.645 | 2642.144-3133.513 / 2649.015 | 917.700-1239.000 / 1124.400 |
+| spectral-norm-hinted | 113.866-123.326 / 180.562 |  |  |  | 5023.124-5461.202 / 13629.194 | 1508.544-2007.471 / 1427.908 | 4238.068-4783.363 / 4657.268 | 883.400-1103.300 / 963.000 |
+| mandelbrot | 164.407-188.132 / 225.656 | 170.093-213.945 / 341.477 |  |  |  | 2345.535-2718.797 / 2343.588 | 4118.100-4883.892 / 4499.872 | 1805.900-2574.000 / 2195.000 |
+| mandelbrot-hinted | 169.392-194.851 / 208.608 |  |  |  |  | 2250.830-2898.689 / 2143.212 | 4096.782-4890.160 / 4484.662 | 1804.400-2175.900 / 1898.500 |
+| binary-trees | 248.818-360.795 / 404.257 | 225.865-310.096 / 395.313 | 3743.478-4406.921 / 6964.655 | 3830.185-4288.654 / 3999.799 | 3135.028-3635.705 / 8295.135 | 861.994-1028.158 / 1099.092 | 1248.214-1543.078 / 1853.716 | 443.400-496.400 / 572.200 |
+| binary-trees-hinted | 227.488-305.945 / 368.497 |  | 3594.718-4196.401 / 5610.184 | 3680.953-4232.837 / 4055.209 | 4311.672-5045.489 / 8956.335 | 815.488-1033.283 / 1101.454 | 2745.428-3024.936 / 3141.776 | 446.900-586.900 / 549.300 |
+| fannkuch | 169.603-2159.668 / 443.924 | 152.306-330.297 / 348.516 |  |  |  | 659.441-817.213 / 902.760 | 829.870-1031.310 / 1047.781 | 438.800-515.600 / 571.200 |
+| fannkuch-hinted | 141.871-181.190 / 477.881 | 162.338-420.674 / 487.901 |  |  |  | 689.928-858.307 / 950.861 | 834.170-978.794 / 975.421 | 437.600-547.800 / 585.600 |
+| nsieve | 165.181-345.449 / 327.814 | 258.366-512.643 / 620.980 |  |  |  | 675.585-879.620 / 821.358 | 1554.773-1880.519 / 1948.007 | 373.400-597.200 / 478.700 |
+| nsieve-hinted | 154.964-453.000 / 277.746 | 232.154-456.271 / 487.100 |  |  |  | 708.951-1021.247 / 940.211 | 1557.190-2236.151 / 2035.877 | 388.100-646.100 / 457.400 |
+| k-nucleotide | 133.901-234.418 / 280.684 | 128.940-148.615 / 313.342 | 624.057-791.882 / 1249.509 | 632.507-769.656 / 851.177 | 1505.480-1920.007 / 5004.154 | 772.332-938.589 / 897.334 | 1292.041-1518.269 / 1310.404 | 463.200-618.200 / 542.100 |
+| pipeline | 140.442-187.292 / 331.187 | 149.109-242.927 / 271.219 | 1155.889-1496.229 / 3199.306 | 1203.132-1331.695 / 1195.588 | 1447.958-1660.159 / 7665.890 | 596.955-871.403 / 640.547 | 796.085-977.524 / 942.784 | 385.800-530.500 / 466.100 |
+| dispatch | 149.159-231.840 / 302.659 | 632.955-726.764 / 787.209 |  |  | 8238.488-8682.587 / 14029.796 | 592.807-864.816 / 809.393 | 3261.834-3691.508 / 3649.045 | 443.000-641.600 / 608.300 |
+| json | 210.395-292.018 / 554.421 | 236.281-310.498 / 793.939 | 2102.671-2292.437 / 6517.639 | 1904.445-2061.242 / 2119.903 | 6207.318-7309.046 / 14644.056 | 465.062-599.325 / 460.360 | 1909.693-2193.864 / 2066.897 | 284.400-345.100 / 527.900 |
+| first-output | 651.416-1118.000 / 652.451 | 4168.637-6703.454 / 4110.573 | 630.919-753.876 / 649.077 | 598.728-749.510 / 673.279 | 18653.374-22290.783 / 20154.912 | 107.709-194.537 / 108.283 | 6951.264-7670.996 / 7531.770 | 673.702-800.678 / 670.673 |
 
-Geometric mean of the jank-jit / JVM median ratios: `2.425829` over the ten programs that ran (including first-output). Geometric mean of the jank-aot / JVM median ratios: `0.705328` over the ten programs that ran (including first-output). Ratio of every JVM median to itself is 1, geometric mean `1`.
+- jvm-cohost: geomean xJVM 1.390 over 15 programs (unhinted 1.396 over 13, hinted 1.351 over 2)
+- jank-jit: geomean xJVM 4.194 over 9 programs (unhinted 3.179 over 6, hinted 7.300 over 3)
+- jank-aot: geomean xJVM 3.780 over 9 programs (unhinted 3.058 over 6, hinted 5.778 over 3)
+- jank: geomean xJVM 18.283 over 11 programs (unhinted 11.080 over 7, hinted 43.926 over 4)
+- cljs: geomean xJVM 4.029 over 18 programs (unhinted 3.338 over 11, hinted 5.414 over 7)
+- cljs-cohost: geomean xJVM 10.774 over 21 programs (unhinted 7.604 over 13, hinted 18.984 over 8)
+- browser: geomean xJVM 2.873 over 18 programs (unhinted 2.604 over 11, hinted 3.354 over 7)
+- hinted/unhinted median on jvm: fib 0.624, tak 0.434, nbody 0.991, spectral-norm 0.504, mandelbrot 1.005, binary-trees 0.890, fannkuch 0.796, nsieve 1.026
+- hinted/unhinted median on jvm-cohost: fannkuch 1.063, nsieve 1.011
+- hinted/unhinted median on jank-jit: fib 2.514, tak 1.710, binary-trees 0.942
+- hinted/unhinted median on jank-aot: fib 1.203, tak 1.892, binary-trees 0.938
+- hinted/unhinted median on jank: fib 7.478, tak 12.355, spectral-norm 1.596, binary-trees 1.336
+- hinted/unhinted median on cljs: fib 1.057, nbody 0.949, spectral-norm 1.029, mandelbrot 0.973, binary-trees 0.936, fannkuch 1.066, nsieve 0.912
+- hinted/unhinted median on cljs-cohost: fib 11.578, tak 14.566, nbody 1.054, spectral-norm 1.596, mandelbrot 0.954, binary-trees 2.101, fannkuch 1.065, nsieve 1.050
+- hinted/unhinted median on browser: fib 0.829, nbody 0.982, spectral-norm 0.874, mandelbrot 0.968, binary-trees 1.068, fannkuch 0.987, nsieve 1.035
 
-Hinted median / unhinted median on the JVM: fib `0.835942`, tak `0.825711`, nbody `0.794294`, spectral-norm `2.525504`, mandelbrot `0.480776`, binary-trees `2.462350`, fannkuch `0.961496`, nsieve `1.223965`. Geometric mean of those eight ratios: `1.085595`.
+ABSENT and DIFFER, as printed:
 
-On jank-jit, where both forms ran: fib `0.984637`, tak `1.580872`, binary-trees `1.002156`. On jank-aot: fib `1.741068`, tak `1.901595`, binary-trees `1.050502`.
+- jvm-cohost fib-hinted: `class cohost.user$fib cannot be cast to class clojure.lang.IFn$LL (cohost.user$fib is in unnamed module of loader clojure.lang.DynamicClassLoader @1aee6983; clojure.lang.IFn$LL is in unnamed module of ...`
+- jvm-cohost tak-hinted: `class cohost.user$tak cannot be cast to class clojure.lang.IFn$LLLL (cohost.user$tak is in unnamed module of loader clojure.lang.DynamicClassLoader @1aee6983; clojure.lang.IFn$LLLL is in unnamed modul ...`
+- jvm-cohost nbody-hinted: `class cohost.user$advance cannot be cast to class clojure.lang.IFn$ODO (cohost.user$advance is in unnamed module of loader clojure.lang.DynamicClassLoader @1a390b8c; clojure.lang.IFn$ODO is in unnamed ...`
+- jvm-cohost spectral-norm-hinted: `class cohost.user$eval_a cannot be cast to class clojure.lang.IFn$LLO (cohost.user$eval_a is in unnamed module of loader clojure.lang.DynamicClassLoader @1aee6983; clojure.lang.IFn$LLO is in unnamed m ...`
+- jvm-cohost mandelbrot-hinted: `class cohost.user$inside_QMARK_ cannot be cast to class clojure.lang.IFn$DDO (cohost.user$inside_QMARK_ is in unnamed module of loader clojure.lang.DynamicClassLoader @3adeca1f; clojure.lang.IFn$DDO i ...`
+- jvm-cohost binary-trees-hinted: `class cohost.user$build cannot be cast to class clojure.lang.IFn$LO (cohost.user$build is in unnamed module of loader clojure.lang.DynamicClassLoader @1aee6983; clojure.lang.IFn$LO is in unnamed modul ...`
+- jank-jit nbody: `error: The symbol 'Math/sqrt' could not be resolved.`
+- jank-jit nbody-hinted: `error: The symbol 'Math/sqrt' could not be resolved.`
+- jank-jit spectral-norm: `error: The symbol 'Math/round' could not be resolved.`
+- jank-jit spectral-norm-hinted: `error: The symbol 'Math/round' could not be resolved.`
+- jank-jit mandelbrot: `target/bench-programs/23404/mandelbrot.jank:16:1: error: use of undeclared identifier 's35'`
+- jank-jit mandelbrot-hinted: `target/bench-programs/23404/mandelbrot-hinted.jank:16:1: error: use of undeclared identifier 's37'`
+- jank-jit fannkuch: `target/bench-programs/23404/fannkuch.jank:9:1: error: use of undeclared identifier 's28'`
+- jank-jit fannkuch-hinted: `target/bench-programs/23404/fannkuch-hinted.jank:7:1: error: use of undeclared identifier 's30'`
+- jank-jit nsieve: `target/bench-programs/23404/nsieve.jank:11:1: error: use of undeclared identifier 's56'; did you mean 's16'?`
+- jank-jit nsieve-hinted: `target/bench-programs/23404/nsieve-hinted.jank:11:1: error: use of undeclared identifier 's58'; did you mean 's18'?`
+- jank-jit pipeline: DIFFER: 1336595249, JVM 374998750001
+- jank-jit dispatch: `error: The symbol 'defprotocol' could not be resolved.`
+- jank-aot nbody: `error: The symbol 'Math/sqrt' could not be resolved.`
+- jank-aot nbody-hinted: `error: The symbol 'Math/sqrt' could not be resolved.`
+- jank-aot spectral-norm: `error: The symbol 'Math/round' could not be resolved.`
+- jank-aot spectral-norm-hinted: `error: The symbol 'Math/round' could not be resolved.`
+- jank-aot mandelbrot: `/home/user/cohost/target/bench-programs/aot-mandelbrot/src/bench/prog.jank:17:1: error: use of undeclared identifier 's35'`
+- jank-aot mandelbrot-hinted: `/home/user/cohost/target/bench-programs/aot-mandelbrot-hinted/src/bench/prog.jank:17:1: error: use of undeclared identifier 's37'`
+- jank-aot fannkuch: `/home/user/cohost/target/bench-programs/aot-fannkuch/src/bench/prog.jank:10:1: error: use of undeclared identifier 's28'`
+- jank-aot fannkuch-hinted: `/home/user/cohost/target/bench-programs/aot-fannkuch-hinted/src/bench/prog.jank:8:1: error: use of undeclared identifier 's30'`
+- jank-aot nsieve: `/home/user/cohost/target/bench-programs/aot-nsieve/src/bench/prog.jank:12:1: error: use of undeclared identifier 's56'; did you mean 's16'?`
+- jank-aot nsieve-hinted: `/home/user/cohost/target/bench-programs/aot-nsieve-hinted/src/bench/prog.jank:12:1: error: use of undeclared identifier 's58'; did you mean 's18'?`
+- jank-aot pipeline: DIFFER: 1336595249, JVM 374998750001
+- jank-aot dispatch: `error: The symbol 'defprotocol' could not be resolved.`
+- jank nbody: `Unable to compile C++ source. -- nil:7:1: error: use of undeclared identifier 's34'`
+- jank nbody-hinted: `Unable to compile C++ source. -- nil:7:1: error: use of undeclared identifier 's34'`
+- jank mandelbrot: `Unable to compile C++ source. -- nil:7:1: error: use of undeclared identifier 's36'`
+- jank mandelbrot-hinted: `Unable to compile C++ source. -- nil:7:1: error: use of undeclared identifier 's38'`
+- jank fannkuch: `Unable to compile C++ source. -- nil:6:1: error: use of undeclared identifier 's28'`
+- jank fannkuch-hinted: `Unable to compile C++ source. -- nil:6:1: error: use of undeclared identifier 's30'`
+- jank nsieve: `Unable to compile C++ source. -- nil:10:1: error: use of undeclared identifier 's61'`
+- jank nsieve-hinted: `Unable to compile C++ source. -- nil:10:1: error: use of undeclared identifier 's63'`
+- jank pipeline: DIFFER: 1336595249, JVM 374998750001
+- jank dispatch: DIFFER: 1691001973, JVM 12500045833333
+- cljs tak: `TypeError: Cannot read properties of undefined (reading 'call')`
+- cljs tak-hinted: `TypeError: Cannot read properties of undefined (reading 'call')`
+- cljs json: DIFFER: 0, JVM 870000
+- browser tak: `pageerror: Cannot read properties of undefined (reading 'call')`
+- browser tak-hinted: `pageerror: Cannot read properties of undefined (reading 'call')`
+- browser json: DIFFER: 0, JVM 870000
 
-`jank` is cohost on jank. Times are milliseconds.
+### What the ABSENT and DIFFER rows are
 
-| program | cohost median | cohost cold | cohost/jvm | result |
-|---|---:|---:|---:|---|
-| fib | 126.469398 | 401.822922 | 23.891718 | 832040 |
-| fib-hinted | 442.530535 | 732.72114 | 100.006652 | 832040 |
-| tak | 10.118948 | 284.221359 | 7.398687 | 7 |
-| tak-hinted | 31.30494 | 314.73165 | 27.720708 | 7 |
-| nbody | ABSENT s34 | | | -169027 |
-| nbody-hinted | ABSENT s34 | | | -169027 |
-| spectral-norm | 31.55363 | 1532.564494 | 47.583877 | 784826 |
-| spectral-norm-hinted | 48.056577 | 1614.759454 | 28.695599 | 784826 |
-| mandelbrot | ABSENT s36 | | | 608 |
-| mandelbrot-hinted | ABSENT s36 | | | 608 |
-| binary-trees | 2.152043 | 575.325684 | 4.149645 | 7083 |
-| binary-trees-hinted | 2.644479 | 592.012082 | 2.070858 | 7083 |
-| fannkuch | ABSENT s28 | | | -502 |
-| fannkuch-hinted | ABSENT s28 | | | -502 |
-| nsieve | ABSENT s61 | | | 564 |
-| nsieve-hinted | ABSENT s61 | | | 564 |
-| k-nucleotide | 2.518669 | 365.33767 | 2.238103 | 500 |
-| pipeline | 5.749218 | 1079.960877 | 2.290159 | 5995001 |
-| dispatch | 24.320671 | 921.303304 | 11.215947 | 200183333 |
-| json | 0.262185 | 1639.843371 | 1.798362 | 580 |
-| first-output | 10009.518983 | 10145.458176 | 25.990613 | ok |
+- **jank 0.1 codegen, an inner `loop` binding a name of an enclosing `loop`** (jank-jit, jank-aot, and cohost on
+  jank: nbody, mandelbrot, fannkuch, nsieve, both forms): `error: use of undeclared identifier 'sNN'`. Repro in raw
+  jank (`jank run`):
+  `(defn h [n] (loop [a 0] (if (> a 0) (loop [a a] (if (> a 5) a (recur (inc a)))) (recur (inc a)))))` fails;
+  renaming the inner `a` compiles and returns 6. The init expression does not matter (`(loop [a (inc a)] ...)` and
+  `(loop [b 0 a a] ...)` fail too); `let` shadowing and a `loop` rebinding a fn parameter compile. The programs'
+  inner loops: nbody `(loop [j (inc i) bs bs b b] ...)` and `(loop [j (inc i) e e] ...)`, mandelbrot
+  `(loop [x 0 acc acc] ...)`, fannkuch `(loop [p p i 0 j k] ...)`, nsieve `(loop [j (+ i i) flags flags] ...)`.
+  No upstream draft names it yet (doc/upstream/ at c499930). C-2 (doc/perf/jank.md) has the cohost side.
+- **jank 0.1 integer arithmetic wraps at 32 bits when both operands fit in int32** (jank-jit, jank-aot, cohost on
+  jank: pipeline and dispatch `DIFFER`, each the JVM value mod 2^32). Raw jank: `(+ 2147483647 1)` -> `-2147483648`,
+  `(* 65536 65536)` -> `0`, `(* 100000 100000)` -> `1410065408`, `(reduce + (range 100000))` -> `704982704`; with
+  a wider operand the result is 64-bit: `(+ 4000000000 1000000000)` -> `5000000000`. The cause and the source
+  lines are lane R's drafts doc/upstream/jank-12-i32-add.md and jank-21-int32-loop-local.md (an integer literal
+  that fits in i32 is a C++ `int`).
+- jank's own core: `Math/sqrt` (nbody), `Math/round` (spectral-norm) and `defprotocol` (dispatch) do not resolve.
+- cljs's own core: `read-string` is not in `cljs.core` (tak: `TypeError: Cannot read properties of undefined
+  (reading 'call')`); `(int ch)` of a one-character string is 0, so json's parser reads nothing (`DIFFER`, 0).
+  These are the programs' JVM-isms on a host whose own core differs; cohost runs both on cljs.
+- jvm-cohost, every program with a primitive-hinted fn: `class cohost.user$fib cannot be cast to class
+  clojure.lang.IFn$LL` (tak `IFn$LLLL`, advance `IFn$ODO`, eval_a `IFn$LLO`, inside? `IFn$DDO`, build `IFn$LO`).
+- Hinted slower than unhinted, where both run: cohost on jank (-O3) fib 7.48, tak 12.36, spectral-norm 1.60,
+  binary-trees 1.34; cljs-cohost fib 11.58, tak 14.57, binary-trees 2.10; jank's own core fib 2.51 and tak 1.71
+  (JIT -O3), fib 1.20 and tak 1.89 (AOT). On the
+  JVM, hinted/unhinted is at most 1.026 (nsieve, min-max 155-453 vs 165-345 ms), 1.005 (mandelbrot) and 0.991
+  (nbody): inside the box's noise; fib 0.62, tak 0.43, spectral-norm 0.50.
 
-Cohost ABSENT reasons: nbody and nbody-hinted, `use of undeclared identifier 's34'`. mandelbrot and mandelbrot-hinted, `use of undeclared identifier 's36'`. fannkuch and fannkuch-hinted, `use of undeclared identifier 's28'`. nsieve and nsieve-hinted, `use of undeclared identifier 's61'`.
+### jank without -O against -O3
 
-Geometric mean of the thirteen cohost / JVM median ratios: `10.340329`.
+The same driver, the same box, jank-jit and cohost on jank before the addendum
+(no `-O`: 8:54-9:54 AM) and after (`-O3`: 10:54-11:24 AM). Median ms; pipeline and dispatch are DIFFER rows (the
+i32 wrap above), timed anyway.
 
-Hinted median / unhinted median on cohost, where both ran: fib `3.499112`, tak `3.093695`, spectral-norm `1.523013`, binary-trees `1.228823`.
+| program | jank-jit no -O | jank-jit -O3 | cohost on jank no -O | cohost on jank -O3 |
+|---|---:|---:|---:|---:|
+| fib | 2068.851 | 109.448 | 2593.866 | 459.506 |
+| fib-hinted | 1991.294 | 275.183 | 9652.053 | 3436.371 |
+| tak | 5865.958 | 758.011 | 20005.129 | 1488.983 |
+| tak-hinted | 8223.789 | 1296.105 | 62008.624 | 18396.719 |
+| nbody | ABSENT | ABSENT | ABSENT | ABSENT |
+| nbody-hinted | ABSENT | ABSENT | ABSENT | ABSENT |
+| spectral-norm | ABSENT | ABSENT | 8649.375 | 3290.174 |
+| spectral-norm-hinted | ABSENT | ABSENT | 13401.452 | 5252.280 |
+| mandelbrot | ABSENT | ABSENT | ABSENT | ABSENT |
+| mandelbrot-hinted | ABSENT | ABSENT | ABSENT | ABSENT |
+| binary-trees | 6765.922 | 4016.127 | 7230.156 | 3439.206 |
+| binary-trees-hinted | 6601.447 | 3781.694 | 9871.674 | 4594.999 |
+| fannkuch | ABSENT | ABSENT | ABSENT | ABSENT |
+| fannkuch-hinted | ABSENT | ABSENT | ABSENT | ABSENT |
+| nsieve | ABSENT | ABSENT | ABSENT | ABSENT |
+| nsieve-hinted | ABSENT | ABSENT | ABSENT | ABSENT |
+| k-nucleotide | 1419.795 | 717.094 | 3032.476 | 1652.495 |
+| pipeline | 1599.987 | 1235.519 | 2181.297 | 1568.218 |
+| dispatch | ABSENT | ABSENT | 11665.907 | 8413.152 |
+| json | 3107.481 | 2189.466 | 8699.881 | 6433.241 |
+| first-output | 672.119 | 678.953 | 13872.158 | 20101.329 |
 
-`cljrs` is clojurust's own core. Times are milliseconds.
 
-| program | cljrs median | cljrs cold | cljrs/jvm | result |
-|---|---:|---:|---:|---|
-| fib | 1432.576098 | 1452.711787 | 270.632297 | 832040 |
-| fib-hinted | 1350.766075 | 1319.948278 | 305.257111 | 832040 |
-| tak | 30.360394 | 34.486952 | 22.198658 | 7 |
-| tak-hinted | 30.24246 | 31.79012 | 26.779876 | 7 |
-| nbody | ABSENT not callable: <nil> is not | | | -169027 |
-| nbody-hinted | ABSENT not callable: <nil> is not | | | -169027 |
-| spectral-norm | 364.45816 | 415.780843 | 549.614487 | 784826 |
-| spectral-norm-hinted | 421.163685 | 473.198959 | 251.485748 | 784826 |
-| mandelbrot | 5.973609 | 16.83927 | 13.430843 | 608 |
-| mandelbrot-hinted | 6.937899 | 17.972488 | 32.445257 | 608 |
-| binary-trees | 10.920277 | 13.61334 | 21.056860 | 7083 |
-| binary-trees-hinted | 11.107553 | 12.140018 | 8.698183 | 7083 |
-| fannkuch | ABSENT vector index out of bounds: 0 | | | -502 |
-| fannkuch-hinted | ABSENT vector index out of bounds: 0 | | | -502 |
-| nsieve | 705.783142 | 703.566645 | 844.348297 | 564 |
-| nsieve-hinted | 776.055012 | 768.159621 | 758.532161 | 564 |
-| k-nucleotide | 11.595415 | 11.994055 | 10.303748 | 500 |
-| pipeline | 292.63828 | 340.102924 | 116.570333 | 5995001 |
-| dispatch | 74.356264 | 77.886771 | 34.290827 | 200183333 |
-| json | 18.164097 | 27.988001 | 124.589975 | 580 |
-| first-output | 11.607159 | 17.149073 | 0.030139 | ok |
+### Sentinels: binary-trees at depth 14, sum-overflow, sort (jank-MAX X1-1)
 
-clojurust ABSENT reasons, as printed by `bb bench:programs cljrs`: nbody and nbody-hinted, `not callable: <nil> is not`. fannkuch and fannkuch-hinted, `vector index out of bounds: 0`.
+Three rows that make the upstream lanes' changes visible on the suite (jank-MAX §2 X1). They are fixed by what they
+catch, not by the 100-1000 ms size rule above: a warm JVM call of each takes 0.6-37 ms.
 
-Geometric mean of the seventeen cljrs / JVM median ratios: `48.975879`.
+- `binary-trees-14` (and `-hinted`): `binary_trees.clj` at depth 14, a second size beside 18, so the collector's
+  share is visible at a small heap (U5's vectors and collector defaults).
+- `sum-overflow` (and `-hinted`, a `^long` loop): `(reduce + (range 1000000))`, 499999500000 on the JVM, past
+  2^31, so a host that wraps at 32 bits prints `DIFFER` (U1's i64 arms; jank-12, jank-21).
+- `sort`: 100000 numbers from an LCG kept under 2^23 (no host wraps), sorted, then `nth` of the middle element of
+  the sorted seq (U2's sorted walk, jank-11). No hinted twin: there is no primitive arm to hint.
 
-Hinted median / unhinted median on cljrs, where both ran: fib `0.942893`, tak `0.996116`, spectral-norm `1.155589`, mandelbrot `1.161425`, binary-trees `1.017149`, nsieve `1.099566`.
+Measured 2026-11-02, 11:01 AM to 11:17 AM ET, one 4-CPU box shared with two other lanes (every timing run serialized
+through one lock), apt jank 0.1-noble, cohost `max/x1` (c/bench-programs 6ba26ac with max/main 1475973). `bb
+bench:programs jvm|jank-aot|jank binary-trees-14,binary-trees-14-hinted,sum-overflow,sum-overflow-hinted,sort`, then
+`bb bench:programs table jvm jank-aot jank` (rows for these five; the 21 rows above are C-1's run).
 
-`jvm-cohost` is `bb boot:jvm`'s entry, `clojure -M -m cohost.run`, with the program source passed to `--eval`. `bb bench:programs jvm-cohost`. Times are milliseconds.
+Median ms of 10 timed calls (xJVM: median / JVM median).
 
-| program | jvm-cohost median | jvm-cohost cold | jvm-cohost/jvm | result |
-|---|---:|---:|---:|---|
-| fib | 6.925279 | 100.765007 | 1.308275 | 832040 |
-| fib-hinted | ABSENT cohost.user$fib cannot be cast to clojure.lang.IFn$LO | | | 832040 |
-| tak | 1.493625 | 2.279273 | 1.092096 | 7 |
-| tak-hinted | ABSENT cohost.user$tak cannot be cast to clojure.lang.IFn$LLLO | | | 7 |
-| nbody | 5.881155 | 11.028646 | 1.517089 | -169027 |
-| nbody-hinted | ABSENT cohost.user$advance cannot be cast to clojure.lang.IFn$ODO | | | -169027 |
-| spectral-norm | 2.972595 | 11.769845 | 4.482768 | 784826 |
-| spectral-norm-hinted | ABSENT cohost.user$eval_a cannot be cast to clojure.lang.IFn$LLO | | | 784826 |
-| mandelbrot | 0.739784 | 4.120885 | 1.663303 | 608 |
-| mandelbrot-hinted | ABSENT cohost.user$inside_QMARK_ cannot be cast to clojure.lang.IFn$DDO | | | 608 |
-| binary-trees | 0.407226 | 2.500697 | 0.785227 | 7083 |
-| binary-trees-hinted | ABSENT cohost.user$build cannot be cast to clojure.lang.IFn$LO | | | 7083 |
-| fannkuch | 31.943536 | 50.202803 | 1.498306 | -502 |
-| fannkuch-hinted | 25.690042 | 41.558123 | 1.253242 | -502 |
-| nsieve | 2.396237 | 7.064721 | 2.866686 | 564 |
-| nsieve-hinted | 2.447969 | 9.586698 | 2.392695 | 564 |
-| k-nucleotide | 1.311027 | 2.932697 | 1.164986 | 500 |
-| pipeline | 1.270138 | 5.243058 | 0.505950 | 5995001 |
-| dispatch | 10.115538 | 13.574763 | 4.664976 | 200183333 |
-| json | 0.121365 | 0.742074 | 0.832459 | 580 |
-| first-output | 2763.332345 | 2787.681567 | 7.175240 | ok |
+| program | size | jvm | jank-aot | jank |
+|---|---:|---:|---:|---:|
+| binary-trees-14 | 14 | 9.268 | 152.684 (x16.47) | 153.955 (x16.61) |
+| binary-trees-14-hinted | 14 | 14.790 | 153.942 (x10.41) | 211.597 (x14.31) |
+| sum-overflow | 1000000 | 8.891 | 99.390 DIFFER | 80.905 DIFFER |
+| sum-overflow-hinted | 1000000 | 0.579 | 11.398 DIFFER | 10.501 DIFFER |
+| sort | 100000 | 36.551 | 15782.846 (x431.80) | 105.723 (x2.89) |
 
-Geometric mean of the fifteen jvm-cohost / JVM median ratios: `1.692743`.
+min-max of the 10 timed calls / the cold call (the first call in a fresh process), ms.
 
-Hinted median / unhinted median on jvm-cohost, where both ran: fannkuch `0.804232`, nsieve `1.021588`.
+| program | jvm | jank-aot | jank |
+|---|---:|---:|---:|
+| binary-trees-14 | 8.410-128.627 / 39.751 | 126.567-189.042 / 177.659 | 137.662-178.511 / 3384.105 |
+| binary-trees-14-hinted | 8.863-126.885 / 50.075 | 121.648-170.560 / 187.343 | 192.200-241.764 / 3085.089 |
+| sum-overflow | 8.220-223.141 / 38.494 | 93.486-135.052 / 124.876 | 72.047-97.288 / 366.215 |
+| sum-overflow-hinted | 0.569-0.591 / 11.295 | 10.168-11.924 / 16.451 | 10.013-11.204 / 287.616 |
+| sort | 31.767-126.055 / 126.310 | 10068.304-18151.171 / 10558.572 | 86.180-116.144 / 1613.717 |
 
-`cljrs-cohost` is `bb boot:cljrs`'s command (`CLJRS_IR_THRESHOLD=1`, `CLJRS_NO_JIT=1`, `cljrs run` of `src/cohost/run.cljc`) with the program source passed to `--eval`. `bb bench:programs cljrs-cohost`. Times are milliseconds. The harness's `volatile!` fails on this host, so every program that uses it is ABSENT with that cast. `dispatch` fails first, inside the program. `first-output` does not use a volatile.
-
-| program | cljrs-cohost median | cljrs-cohost cold | cljrs-cohost/jvm | result |
-|---|---:|---:|---:|---|
-| fib | ABSENT Volatile cannot be cast to Future | | | 832040 |
-| fib-hinted | ABSENT Volatile cannot be cast to Future | | | 832040 |
-| tak | ABSENT Volatile cannot be cast to Future | | | 7 |
-| tak-hinted | ABSENT Volatile cannot be cast to Future | | | 7 |
-| nbody | ABSENT Volatile cannot be cast to Future | | | -169027 |
-| nbody-hinted | ABSENT Volatile cannot be cast to Future | | | -169027 |
-| spectral-norm | ABSENT Volatile cannot be cast to Future | | | 784826 |
-| spectral-norm-hinted | ABSENT Volatile cannot be cast to Future | | | 784826 |
-| mandelbrot | ABSENT Volatile cannot be cast to Future | | | 608 |
-| mandelbrot-hinted | ABSENT Volatile cannot be cast to Future | | | 608 |
-| binary-trees | ABSENT Volatile cannot be cast to Future | | | 7083 |
-| binary-trees-hinted | ABSENT Volatile cannot be cast to Future | | | 7083 |
-| fannkuch | ABSENT Volatile cannot be cast to Future | | | -502 |
-| fannkuch-hinted | ABSENT Volatile cannot be cast to Future | | | -502 |
-| nsieve | ABSENT Volatile cannot be cast to Future | | | 564 |
-| nsieve-hinted | ABSENT Volatile cannot be cast to Future | | | 564 |
-| k-nucleotide | ABSENT Volatile cannot be cast to Future | | | 500 |
-| pipeline | ABSENT Volatile cannot be cast to Future | | | 5995001 |
-| dispatch | ABSENT unbound symbol: protocol-fn | | | 200183333 |
-| json | ABSENT Volatile cannot be cast to Future | | | 580 |
-| first-output | 42555.86778 | 46280.039108 | 110.500123 | ok |
-
-The driver's line for the volatile failures is `class clojure.lang.Volatile cannot be cast to class java.util.concurrent.Future`. Geometric mean of the one cljrs-cohost / JVM median ratio (`first-output`): `110.500123`.
+- `sum-overflow`, both forms, jank-aot and cohost on jank: `DIFFER: 1783293664, JVM 499999500000`
+  (499999500000 mod 2^32). This row turns `SAME` on U1's build (not yet built: U0-1).
+- `sort` on jank's own core takes 15.8 s per call, x432 the JVM; its warm-up stopped at 1 call (the 10 s limit).
+  Cohost on jank runs the same program in 106 ms (x2.89): cohost's `sort` and `nth` are the shim's, not jank's.
+  The gap is jank's own `sort`/`nth` over the sorted seq (lane R's jank-11 names the sorted walk).
+- binary-trees: jank-aot is x16.47 at depth 14 here and x14.41 at depth 18 in C-1's table above; cohost on jank
+  x16.61 and x25.85. On the JVM one call of the 10 at depth 14 took 128.6 ms (median 9.3 ms), a collector pause
+  inside the timed calls; the min-max columns show it.
 
 ## Cohost AOT optimization level
 

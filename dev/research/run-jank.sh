@@ -6,6 +6,8 @@
 # research.<probe> under target/research/<probe>/.
 set -euo pipefail
 # JANK_O=<0-3> picks the optimization level (default 3)
+# JANK_BIN=<path> picks the jank binary (default: jank on PATH)
+JANK="${JANK_BIN:-jank}"
 probe="$1"; mode="${2:-both}"
 name="$(basename "$probe" .jank)"
 root="target/research/$name"
@@ -22,12 +24,12 @@ for r in $reqs; do nsreq="$nsreq [$r]"; jitreq="$jitreq '$r"; done
 { [ -n "$jitreq" ] && echo "(require$jitreq)"; cat dev/research/harness.jank "$probe"; echo '(run)'; } > "$root/jit.jank"
 if [ "$mode" = jit ] || [ "$mode" = both ]; then
   echo "== $name JIT (jank run -O3 --eager)"
-  jank --module-path "$root/src" run -O"${JANK_O:-3}" --eager "$root/jit.jank"
+  "$JANK" --module-path "$root/src" run -O"${JANK_O:-3}" --eager "$root/jit.jank"
 fi
 if [ "$mode" = aot ] || [ "$mode" = both ]; then
   echo "== $name AOT (compile-module -O3; run-main)"
   rm -rf "$root/_cache"
-  jank --module-path "$root/src" compile-module "research.$name" -O"${JANK_O:-3}" --target-dir "$root" >"$root/compile.log" 2>&1 || { echo "COMPILE FAILED"; tail -20 "$root/compile.log"; exit 1; }
+  "$JANK" --module-path "$root/src" compile-module "research.$name" -O"${JANK_O:-3}" --target-dir "$root" >"$root/compile.log" 2>&1 || { echo "COMPILE FAILED"; tail -20 "$root/compile.log"; exit 1; }
   cache="$(ls -d "$root"/_cache/* | head -1)"
-  jank --module-path "$cache:$root/src" run-main "research.$name"
+  "$JANK" --module-path "$cache:$root/src" run-main "research.$name"
 fi

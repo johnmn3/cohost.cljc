@@ -103,6 +103,8 @@
    "b" {"c" 4 "d" [false 8]}})
 
 (defn -run [s]
-  (let [n (parse-long s)
-        one (checksum (first (parse (print-json sample) 0)))]
-    (* one n)))
+  (let [n (parse-long s)]
+    (loop [i 0 acc 0]
+      (if (= i n)
+        acc
+        (recur (inc i) (+ acc (checksum (first (parse (print-json sample) 0)))))))))

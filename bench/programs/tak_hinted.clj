@@ -1,5 +1,5 @@
-;; (tak 18 12 6) is 7, parameters hinted ^long.
-(defn tak [^long x ^long y ^long z]
+;; (tak 18 12 6) is 7, parameters and return hinted ^long.
+(defn tak ^long [^long x ^long y ^long z]
   (if (not (< y x))
     z
     (tak (tak (- x 1) y z)

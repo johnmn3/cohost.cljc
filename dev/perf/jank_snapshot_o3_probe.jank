@@ -1,0 +1,20 @@
+;; D-3: two bench cases (format, sort-by) timed 20 times each after a boot
+;; from the snapshot, on the stock side (cohost.user), to tell a -O3 effect
+;; from noise. Prints PROBE <case> <median ns> <min ns> <max ns>.
+;;   jank [-O3] --module-path <snapshot path> run dev/perf/jank_snapshot_o3_probe.jank
+(require 'cohost.run)
+(require 'cohost.adapter)
+(require 'cohost.boot)
+(require 'cohost.core)
+(cohost.boot/make-user-ns!)
+(def cases
+  [["format" nil "(count (apply str (map (fn [i] (format \"%05d|%s\" i \"x\")) (range 5000))))"]
+   ["sort-by" "(def bench-recs (mapv (fn [i] {:k (mod (* i 7919) 10007) :i i}) (range 20000)))"
+    "(:i (first (sort-by :k bench-recs)))"]])
+(doseq [[nm setup expr] cases]
+  (when setup (cohost.boot/eval-str setup))
+  (let [f (cohost.boot/eval-str (str "(fn [] " expr ")"))
+        _ (dotimes [_ 3] (f))
+        ts (vec (sort (for [_ (range 20)]
+                        (let [t0 (cohost.adapter/nano-time)] (f) (- (cohost.adapter/nano-time) t0)))))]
+    (println "PROBE" nm (nth ts 10) (first ts) (last ts))))
