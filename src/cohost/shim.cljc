@@ -854,9 +854,15 @@
 
 ;; the host's reduce over coll: Phel's over a map walks its values, so a map's
 ;; entries, its seq, are walked there
+#?(:jank (def ^:private jank-reduce-init
+           ;; X4-1: the jank adapter's reduce over a range or a vector without
+           ;; jank's seq walk (removed when upstream jank-15 lands); resolved by
+           ;; name, as the adapter resolves shim vars, after both are loaded
+           (delay (or (some-> (resolve 'cohost.hosts.jank-host/reduce-init) var-get) reduce))))
 (defn- host-reduce
   ([f coll] (reduce f #?(:phel (if (map? coll) (seq coll) coll) :default coll)))
-  ([f init coll] (reduce f init #?(:phel (if (map? coll) (seq coll) coll) :default coll))))
+  ([f init coll] #?(:jank (@jank-reduce-init f init coll)
+                    :default (reduce f init #?(:phel (if (map? coll) (seq coll) coll) :default coll)))))
 (def protocols-coll-reduce (fn ([coll f] (host-reduce (host-reducer f) coll)) ([coll f init] (host-reduce (host-reducer f) init coll))))
 (declare -kvreduce)
 (def protocols-kv-reduce (fn [coll f init] (-kvreduce coll f init)))
@@ -1548,7 +1554,25 @@
         (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.util.Comparator cmp)))
         r))))
 (defn- as-comparator [cmp] (fn [a b] (compare-with cmp a b)))
-(def Arrays-sort (fn ([a] (host/sort-array! a compare)) ([a cmp] (host/sort-array! a (as-comparator cmp)))))
+;; jank (X4-1): the stock core's compare, once the boot has defined it. Its
+;; body is (Util/compare x y) and Util-compare is the host's compare, so a
+;; comparator that is that fn gives the host's compare's answers: sort and
+;; (. comp (compare a b)) call the host's directly instead of a stock fn per
+;; comparison. A redefined compare is another fn and takes the general path.
+#?(:jank (def ^:private stock-compare-fn (volatile! nil)))
+#?(:jank (defn- stock-compare []
+           (or @stock-compare-fn
+               (when-let [n (find-ns 'cohost.core)]
+                 (when-let [v (ns-resolve n 'compare)]
+                   (vreset! stock-compare-fn @v))))))
+(def Arrays-sort (fn ([a] (host/sort-array! a compare))
+                   ;; jank (X4-1): the host's compare for the stock one; any other
+                   ;; fn unwrapped (the adapter reads its answer as compare-with
+                   ;; does); a Comparator that is no fn through compare-with
+                   ([a cmp] (host/sort-array! a #?(:jank (cond (identical? cmp (stock-compare)) compare
+                                                               (fn? cmp) cmp
+                                                               :else (as-comparator cmp))
+                                                   :default (as-comparator cmp))))))
 (def Collections-shuffle (unsupported "Collections/shuffle"))
 ;; Collections.reverseOrder(): the host's own where it has java.util, else a
 ;; comparator fn that reverses compare (or the comparator given)
@@ -1794,7 +1818,8 @@
 (def -size -count)
 (def -clear (fn [x] (reset! (:state x) []) nil))
 (def -toArray (fn [x] (to-array* (if (host/mlist? x) @(:state x) x))))
-(def -compare compare-with)
+(def -compare #?(:jank (fn [cmp a b] (if (identical? cmp (stock-compare)) (compare a b) (compare-with cmp a b)))
+                :default compare-with))
 (def -comparator (fn [coll] (host/sorted-comparator coll)))
 ;; Sorted.entryKey: a tree map's entry key, a tree set's element itself
 (def -entryKey (fn [coll e] (if (map? coll) (key e) e)))
