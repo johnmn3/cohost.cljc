@@ -849,4 +849,35 @@ Geometric mean of the 11 phel / JVM median ratios for rows that produced a time:
 | first-output | running | | | |
 
 
-ClojureScript Node boot finished (`bb boot:cljs`: stock 518, host 87, natives 46, skipped 140, errors 0, battery 143/145, libraries 61/61). `bb bench:programs cljs` is running. Chromium: Playwright and headless Chromium are installed. The browser boot starts after the Node compiler is free.
+## ClojureScript Node
+
+`bb boot:cljs`: stock 518, host 87, natives 46, skipped 140, errors 0, battery 143/145, libraries 61/61. `bb bench:programs cljs` is the host's own core (`cljs.main -re node`). `js/Date.now` is millisecond resolution, so a median of 0 is a sub-millisecond run. `cljs-cohost` (`node target/cljs-node/main.js --eval`) is running.
+
+| program | cljs median | cljs cold | cljs/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 6.000128 | 19.000064 | 1.133502 | SAME |
+| fib-hinted | 5.999872 | 6.999808 | 1.355900 | SAME |
+| tak | ABSENT | | | ABSENT undeclared Var cljs.user/read-string; TypeError Cannot read properties of undefined (reading call) |
+| tak-hinted | ABSENT | | | ABSENT undeclared Var cljs.user/read-string; TypeError Cannot read properties of undefined (reading call) |
+| nbody | 13.999872 | 37.999872 | 3.611373 | SAME |
+| nbody-hinted | 12.0 | 41.000192 | 3.897162 | SAME |
+| spectral-norm | 3.999744 | 32.0 | 6.031741 | SAME |
+| spectral-norm-hinted | 8.0 | 36.999936 | 4.776969 | SAME |
+| mandelbrot | 0.999936 | 8.0 | 2.248219 | SAME |
+| mandelbrot-hinted | 0.999936 | 8.0 | 4.676225 | SAME |
+| binary-trees | 0.0 | 2.999808 | | SAME, median 0 excluded from the geometric mean |
+| binary-trees-hinted | 0.0 | 4.999936 | | SAME, median 0 excluded from the geometric mean |
+| fannkuch | 88.999936 | 272.999936 | 4.174526 | SAME |
+| fannkuch-hinted | 85.999872 | 248.999936 | 4.195348 | SAME |
+| nsieve | 0.999936 | 16.999936 | 1.196252 | SAME |
+| nsieve-hinted | 5.999872 | 16.999936 | 5.864399 | SAME |
+| k-nucleotide | 5.000192 | 8.999936 | 4.443197 | SAME |
+| pipeline | 8.999936 | 40.0 | 3.585059 | SAME |
+| dispatch | ABSENT | | | ABSENT Can't change/establish root binding of: *unchecked-if* with set |
+| json | 0.0 | 0.999936 | | DIFFER expected 580 got 0; median 0 excluded from the geometric mean |
+| first-output | 8614.866417 | 8293.703139 | 22.369272 | SAME |
+
+Geometric mean of the 15 non-zero cljs / JVM median ratios: `3.663063`. Zero medians excluded: binary-trees, binary-trees-hinted, json.
+
+Chromium: Playwright and headless Chromium are installed. The browser boot starts after `bb bench:programs cljs-cohost` releases the machine.
+
