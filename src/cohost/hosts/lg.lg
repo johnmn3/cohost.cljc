@@ -1025,6 +1025,10 @@
    :plain-symbol plain
    ;; fn* takes no name: the codemod binds it with letfn* (see letfn-code)
    :named-fn*? false
+   ;; core.clj's :inline expansions at rewrite time: let-go's compiler
+   ;; has no :inline of its own, so the codemod applies them, as on the
+   ;; other non-JVM hosts (M-10)
+   :rewrite-inline? true
    :expand-macro expand-macro
    :read-string (fn ([s] (read-string* s {})) ([s opts] (read-string* s opts)))
    :host-read-string (fn [s] (read-string s))
