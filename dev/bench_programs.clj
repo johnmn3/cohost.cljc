@@ -316,9 +316,9 @@
   "Build body (-t browser) and its page under root; -> the command that loads
    the page in headless Chromium. The page sets window.benchArg before main.js."
   [root body arg]
-  (fs/create-dirs root)
-  (spit (str root "/chromium.js") chromium-js)
   (let [js (cljs-build root body :browser)]
+    ;; after the build: a fresh build empties root
+    (spit (str root "/chromium.js") chromium-js)
     (spit (str root "/page.html")
           (str "<!doctype html><meta charset=utf-8><script>window.benchArg = " (pr-str (or arg "")) ";</script>"
                "<script src=\"" (fs/file-name js) "\"></script>"))
