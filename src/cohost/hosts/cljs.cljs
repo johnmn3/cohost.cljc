@@ -652,6 +652,11 @@
 
 (def adapter
   {:name :cljs
+   ;; X3-2: the shim's MultiFn with its one-entry cache, after X2-3 (max/main 2f07bfc) made it
+   ;; correct here; 9 interleaved --quick rounds each, stock median [spread]: Node multimethod
+   ;; 68.57 [28.07-87.89] -> 52.96 [21.49-129.66] ms, Chromium 51.59 [20.84-83.10] -> 38.00
+   ;; [14.09-55.30]; no case's true median above its nil max; battery and libraries the same
+   :multimethod-cache? true
    :core-ns 'cljs.core
    ;; cljs.core's own fns standing in for the stock ones (adapter :natives),
    ;; one opt-in each, gated by the battery and the bench's JVM check
