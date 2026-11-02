@@ -1107,3 +1107,7 @@ libraries: 61/61 cases pass across 12 clojure.* libraries
 ```
 
 The two jank failures are `subs count nth first last butlast` (`Unterminated vector.`) and `Character outside ASCII` (`Unexpected end of file.`). `bb boot:jank` on the tip, after the defn, spec, and call-list shortcuts were removed, printed the same three lines: `542` / `171` / `78` / `0`, battery `143/145`, libraries `61/61`.
+
+## Type hints (H1)
+
+Work in progress on `grok/jank-hints-h1`, base `ad85b3f`. G-13 measured fib 30 on cohost-on-jank at median 126.469398 ms unhinted and 442.530535 ms hinted (3.5x), and on jolt-cohost at 39.499601 ms unhinted and 251.79843 ms hinted. The coercion in `coerce-form` runs `(long x)` / `(double x)` on every call, including a value that is already that kind. The next change is one shim call that returns an already-long or already-double after the host's own `integer?` / `double?`, and only then does the JVM conversion. jvm-cohost hinted fib failed with `cohost.user$fib cannot be cast to clojure.lang.IFn$LO`; that cast is the `^long` left on the outer parameter.
