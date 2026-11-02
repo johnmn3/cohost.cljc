@@ -918,7 +918,7 @@
 
 (declare rw-let*')
 
-(defn- rw-let* [ctx [h bvec & body :as form]]
+(defn- rw-let* [ctx [h bvec & body]]
   (if-let [form' (and (= h 'loop*) (:loop-rebind-shadow? ctx) (loop-rebind bvec body))]
     (rw-let* ctx form')
     (rw-let*' ctx h bvec body)))
