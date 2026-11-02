@@ -50,6 +50,7 @@
 (def ^:private h-reduced? (host/capability :reduced?))
 (def ^:private h-pending? (host/capability :pending?))
 (def ^:private h-multifn? (host/capability :multifn?))
+(def ^:private h-mm-cache? (host/capability :multimethod-cache?))
 (def ^:private h-delay? (host/capability :delay?))
 (def ^:private h-decimal? (host/capability :decimal?))
 (def ^:private h-uuid? (host/capability :uuid?))
@@ -1246,18 +1247,47 @@
         (swap! state assoc :cache {:methods (:methods st) :prefers (:prefers st) :h h :table (if m {dv m} {})})
         m))))
 
+(defn- mf-fast-method
+  "mf-method behind a one-entry cache (adapter :multimethod-cache?): mc holds
+   [state-value hierarchy-value {dv method}], good while the multimethod's
+   state (methods, prefers, default) and its hierarchy's value are the very
+   ones it was filled under; a dv it lacks is found with mf-find-method and
+   added. No atom swap on a hit or a miss."
+  [state mc dv]
+  (let [e @mc st @state h (deref (:hierarchy st))]
+    (if (and e (identical? (nth e 0) st) (identical? (nth e 1) h))
+      (let [m (get (nth e 2) dv ::miss)]
+        (if (identical? m ::miss)
+          (let [m (mf-find-method st dv)]
+            ;; a miss is not cached, as the JVM's findAndCacheBestMethod
+            (when m (reset! mc [st h (assoc (nth e 2) dv m)]))
+            m)
+          m))
+      (let [m (mf-find-method st dv)]
+        (reset! mc [st h (if m {dv m} {})])
+        m))))
+
 (def new-MultiFn
   (fn [name dispatch-fn default hierarchy]
     (let [state (atom {:name name :dispatch-fn dispatch-fn :default default :hierarchy hierarchy :methods {} :prefers {}})
-          no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))]
+          no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))
+          mc (when h-mm-cache? (atom nil))]
       ((fn [f] (if fn-meta? (with-meta f {::multifn state}) (do (swap! mf-states assoc f state) f)))
-        (fn
-          ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
-          ([a] (let [dv (dispatch-fn a) m (mf-method state dv)] (if m (m a) (no-method dv))))
-          ([a b] (let [dv (dispatch-fn a b) m (mf-method state dv)] (if m (m a b) (no-method dv))))
-          ([a b c] (let [dv (dispatch-fn a b c) m (mf-method state dv)] (if m (m a b c) (no-method dv))))
-          ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
-                            (if m (apply m a b c more) (no-method dv)))))))))
+        (if h-mm-cache?
+          (fn
+            ([] (let [dv (dispatch-fn) m (mf-fast-method state mc dv)] (if m (m) (no-method dv))))
+            ([a] (let [dv (dispatch-fn a) m (mf-fast-method state mc dv)] (if m (m a) (no-method dv))))
+            ([a b] (let [dv (dispatch-fn a b) m (mf-fast-method state mc dv)] (if m (m a b) (no-method dv))))
+            ([a b c] (let [dv (dispatch-fn a b c) m (mf-fast-method state mc dv)] (if m (m a b c) (no-method dv))))
+            ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-fast-method state mc dv)]
+                              (if m (apply m a b c more) (no-method dv)))))
+          (fn
+            ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
+            ([a] (let [dv (dispatch-fn a) m (mf-method state dv)] (if m (m a) (no-method dv))))
+            ([a b] (let [dv (dispatch-fn a b) m (mf-method state dv)] (if m (m a b) (no-method dv))))
+            ([a b c] (let [dv (dispatch-fn a b c) m (mf-method state dv)] (if m (m a b c) (no-method dv))))
+            ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
+                              (if m (apply m a b c more) (no-method dv))))))))))
 (def new-Object (fn [] (atom ::object)))
 (def new-ExceptionInfo host/ex-info*)
 ;; (Exception.) (Exception. msg) (Exception. cause) (Exception. msg cause)

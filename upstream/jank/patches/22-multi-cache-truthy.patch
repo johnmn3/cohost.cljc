@@ -1,0 +1,165 @@
+From 65fab376004a0e43269b89b1a37040ed87199a4d Mon Sep 17 00:00:00 2001
+From: cohost u2 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 17:49:26 +0000
+Subject: [PATCH] One-entry multimethod method cache; truthy as two word
+ compares
+
+Draft: cohost doc/upstream/jank-22-multi-cache-truthy.md.
+Repro: bash dev/research/upstream/run.sh 22-multi-truthy (in johnmn3/cohost.cljc);
+Expected: a one-method multimethod call within 2x of a plain fn call; the
+truthy loops not slower.
+
+multi_function::get_method did a persistent_hash_map get (hash of the dispatch
+value, a HAMT walk, an equality test) on every call. It now checks a one-entry
+cache first: the last (method_cache, dispatch value, method) triple, held in
+one GC-allocated immutable entry behind a std::atomic pointer (no torn reads).
+The entry is valid only while method_cache is the same map it was resolved
+against; reset, reset_cache (taken on every hierarchy change by the existing
+deref compare), add_method, remove_method and prefer_method all install a new
+map, so a stale entry never matches. A map hit refills the entry only when it
+is missing or stale, so two alternating dispatch values allocate nothing per
+call; find_and_cache_best_method fills it.
+
+truthy(object_ref) tested for tagged small ints and reals, loaded the type
+(is_nil) and dyn_cast to boolean. nil and false are singletons (every nil
+object_ref is the tagged address of _jank_nil; make_box<obj::boolean> only
+returns jank_true / jank_false; no other obj::nil or obj::boolean is
+constructed anywhere in the tree), so it is now two word compares.
+
+Files: compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp,
+compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp,
+compiler+runtime/include/cpp/jank/runtime/core/truthy.hpp.
+---
+ .../include/cpp/jank/runtime/core/truthy.hpp  | 27 +++++--------------
+ .../cpp/jank/runtime/obj/multi_function.hpp   | 19 +++++++++++++
+ .../cpp/jank/runtime/obj/multi_function.cpp   | 25 ++++++++++++++++-
+ 3 files changed, 49 insertions(+), 22 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core/truthy.hpp b/compiler+runtime/include/cpp/jank/runtime/core/truthy.hpp
+index 10fe37139..e8bf663da 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core/truthy.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core/truthy.hpp
+@@ -11,27 +11,12 @@ namespace jank::runtime
+   {
+     if constexpr(std::same_as<T, object_ref>)
+     {
+-      if(d.is_nil())
+-      {
+-        return false;
+-      }
+-
+-      if(detail::is_tagged_small_int(d.raw()))
+-      {
+-        return true;
+-      }
+-      if(detail::is_tagged_small_real(d.raw()))
+-      {
+-        return true;
+-      }
+-
+-      auto const b{ dyn_cast<obj::boolean>(d) };
+-      if(b.is_some())
+-      {
+-        return b->data;
+-      }
+-
+-      return true;
++      /* nil and false are singletons: every nil object_ref holds the tagged address of
++       * `_jank_nil` (the default value of object_ref), and `make_box<obj::boolean>` only ever
++       * returns `jank_true` or `jank_false`; no other obj::nil or obj::boolean is constructed.
++       * So truthiness is two word compares, with no type load and no small-number tests. */
++      auto const raw{ d.raw() };
++      return raw != object_ref{}.raw() && raw != object_ref{ jank_false }.raw();
+     }
+     if constexpr(std::same_as<T, obj::nil_ref>)
+     {
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp
+index 9fb7a609c..5a96f159e 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <atomic>
+ #include <mutex>
+ 
+ #include <jank/runtime/object.hpp>
+@@ -101,5 +102,23 @@ namespace jank::runtime::obj
+     mutable persistent_hash_map_ref method_cache{};
+     persistent_hash_map_ref method_table{};
+     persistent_hash_map_ref prefer_table{};
++
++    /* A one-entry cache ahead of the `method_cache` lookup: the last dispatch value resolved
++     * and its method, valid only while `method_cache` is the map it was resolved against. Every
++     * hierarchy change (reset_cache on the deref compare), add/remove/prefer and reset gives
++     * `method_cache` a new map, so a stale entry never matches. The entry is GC-allocated and
++     * immutable; readers load it with one atomic load, so a racing store never tears it. */
++    struct last_method_entry
++    {
++      persistent_hash_map_ref cache;
++      object_ref dispatch_val;
++      object_ref method;
++    };
++
++    void remember_method(persistent_hash_map_ref const cache,
++                         object_ref const dispatch_val,
++                         object_ref const method) const;
++
++    mutable std::atomic<last_method_entry *> last_method{};
+   };
+ }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
+index 776d488c9..f734bc081 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
+@@ -244,6 +244,14 @@ namespace jank::runtime::obj
+     return target;
+   }
+ 
++  void multi_function::remember_method(persistent_hash_map_ref const cache,
++                                       object_ref const dispatch_val,
++                                       object_ref const method) const
++  {
++    last_method.store(new(UseGC) last_method_entry{ cache, dispatch_val, method },
++                      std::memory_order_release);
++  }
++
+   object_ref multi_function::get_method(object_ref const dispatch_val) const
+   {
+     if(cached_hierarchy != hierarchy.deref())
+@@ -251,9 +259,23 @@ namespace jank::runtime::obj
+       const_cast<multi_function *>(this)->reset_cache();
+     }
+ 
+-    auto target(method_cache->get(dispatch_val));
++    auto const cache(method_cache);
++    auto const last(last_method.load(std::memory_order_acquire));
++    if(last && last->cache == cache
++       && (last->dispatch_val == dispatch_val || runtime::equal(last->dispatch_val, dispatch_val)))
++    {
++      return last->method;
++    }
++
++    auto target(cache->get(dispatch_val));
+     if(target.is_some())
+     {
++      /* Only refill a missing or stale entry: two values alternating then keep one of them
++       * in the entry, and the other on the map lookup, with no allocation per call. */
++      if(!last || last->cache != cache)
++      {
++        remember_method(cache, dispatch_val, target);
++      }
+       return target;
+     }
+ 
+@@ -306,6 +328,7 @@ namespace jank::runtime::obj
+     }
+ 
+     method_cache = method_cache->assoc(dispatch_val, best_value);
++    remember_method(method_cache, dispatch_val, best_value);
+ 
+     return best_value;
+   }
+-- 
+2.43.0
+
