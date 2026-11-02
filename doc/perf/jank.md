@@ -846,6 +846,105 @@ sort-by  none  73077888  78821362  88413199   -O1  84080874  79800194  80563051 
 
 Every call-heavy case: `fn-call` 3.8x, `loop-arith` and `hinted-loop` fold to nothing (the loop is a constant at `-O3`, as R's P6 found), `destructure` 1.7x, `keyword-lookup` 1.5x, `protocol` 1.3x: the user code that the JIT compiles. The library-heavy cases do not move: their code is the snapshot's, `-O3` already. One case, `format`, is slower.
 
+## GC
+
+Measured 2026-11-02 ET (lane D, D-4), `d/jank-gc`, research plan item 4 (cohost's part). jank's collector is bdwgc, which reads its settings from the environment (R's P3: `GC_INITIAL_HEAP_SIZE=1G GC_FREE_SPACE_DIVISOR=1` took bt-14 174828601 -> 122085049 ns once and slowed a repro of it another time; `GC_ENABLE_INCREMENTAL` 3-6x slower, not tried). The jank tasks (the `jank!` helper in `bb.edn`) and the CLI's jank launch (`jank-cli-launch`'s `:env`) now start jank with `GC_INITIAL_HEAP_SIZE=512M`. A `GC_*` variable already set wins; `COHOST_JANK_GC=none` sets nothing. Lane C's program runner starts jank itself: it needs the same variable to get the same heap.
+
+```
+PROGRAMS_DIR=<checkout of c/bench-programs> bash dev/perf/jank_gc_scan.sh   # one run per setting
+PROGRAMS_DIR=<checkout of c/bench-programs> bash dev/perf/jank_gc_time.sh   # before/after, 3 each, interleaved
+```
+
+BOOT is `bb boot:jank`'s command (fresh snapshot, `-O3`, both batteries): the peak resident set of the jank process (`getrusage` of the children, `dev/perf/jank_gc_rss.py`) and the wall seconds. The programs are lane C's runner at `c/bench-programs` @ `cf1046e` (`bb bench:programs jank binary-trees,pipeline,json`: cohost on jank, one process per program, warm-up, then 10 timed calls; MEDIAN-MS).
+
+### Scan (one run each)
+
+```
+SETTING default []
+  BOOT MAXRSS-KB 769064 WALL-S 31.44 EXIT 0
+    PROGRAM binary-trees SIZE 18 COLD-MS 6819.689 WARMUP 2 MEDIAN-MS 3317.914 MIN-MS 3150.378 MAX-MS 3472.151 RESULT 17738411
+    PROGRAM pipeline SIZE 500000 COLD-MS 6795.905 WARMUP 3 MEDIAN-MS 1544.033 MIN-MS 1463.413 MAX-MS 1574.075 RESULT 1336595249
+    PROGRAM json SIZE 30000 COLD-MS 13506.842 WARMUP 1 MEDIAN-MS 6884.761 MIN-MS 6584.514 MAX-MS 7476.835 RESULT 870000
+SETTING h256 [GC_INITIAL_HEAP_SIZE=256M]
+  BOOT MAXRSS-KB 1009272 WALL-S 30.62 EXIT 0
+    PROGRAM binary-trees SIZE 18 COLD-MS 7317.283 WARMUP 2 MEDIAN-MS 3559.097 MIN-MS 3293.113 MAX-MS 3936.536 RESULT 17738411
+    PROGRAM pipeline SIZE 500000 COLD-MS 5928.440 WARMUP 4 MEDIAN-MS 1283.261 MIN-MS 1205.888 MAX-MS 1488.302 RESULT 1336595249
+    PROGRAM json SIZE 30000 COLD-MS 13609.467 WARMUP 1 MEDIAN-MS 6098.425 MIN-MS 5821.713 MAX-MS 6362.373 RESULT 870000
+SETTING h512 [GC_INITIAL_HEAP_SIZE=512M]
+  BOOT MAXRSS-KB 1293496 WALL-S 29.07 EXIT 0
+    PROGRAM binary-trees SIZE 18 COLD-MS 6439.465 WARMUP 2 MEDIAN-MS 3526.909 MIN-MS 3304.702 MAX-MS 3789.632 RESULT 17738411
+    PROGRAM pipeline SIZE 500000 COLD-MS 6059.583 WARMUP 4 MEDIAN-MS 1226.429 MIN-MS 1158.786 MAX-MS 1290.692 RESULT 1336595249
+    PROGRAM json SIZE 30000 COLD-MS 13135.182 WARMUP 1 MEDIAN-MS 5872.471 MIN-MS 5639.761 MAX-MS 6437.852 RESULT 870000
+SETTING h1g [GC_INITIAL_HEAP_SIZE=1G]
+  BOOT MAXRSS-KB 1861676 WALL-S 32.16 EXIT 0
+    PROGRAM binary-trees SIZE 18 COLD-MS 6763.312 WARMUP 2 MEDIAN-MS 3267.093 MIN-MS 3110.474 MAX-MS 3400.164 RESULT 17738411
+    PROGRAM pipeline SIZE 500000 COLD-MS 6155.284 WARMUP 4 MEDIAN-MS 1166.026 MIN-MS 1102.573 MAX-MS 1257.677 RESULT 1336595249
+    PROGRAM json SIZE 30000 COLD-MS 12416.894 WARMUP 1 MEDIAN-MS 5611.745 MIN-MS 5453.659 MAX-MS 5788.771 RESULT 870000
+SETTING h512d2 [GC_INITIAL_HEAP_SIZE=512M GC_FREE_SPACE_DIVISOR=2]
+  BOOT MAXRSS-KB 1293504 WALL-S 29.34 EXIT 0
+    PROGRAM binary-trees SIZE 18 COLD-MS 6719.927 WARMUP 2 MEDIAN-MS 3404.100 MIN-MS 3200.316 MAX-MS 3626.347 RESULT 17738411
+    PROGRAM pipeline SIZE 500000 COLD-MS 5840.391 WARMUP 4 MEDIAN-MS 1257.546 MIN-MS 1159.064 MAX-MS 1326.166 RESULT 1336595249
+    PROGRAM json SIZE 30000 COLD-MS 12056.891 WARMUP 1 MEDIAN-MS 5906.732 MIN-MS 5756.360 MAX-MS 6261.216 RESULT 870000
+SETTING h512d1 [GC_INITIAL_HEAP_SIZE=512M GC_FREE_SPACE_DIVISOR=1]
+  BOOT MAXRSS-KB 1293336 WALL-S 28.82 EXIT 0
+SETTING h512d1 [GC_INITIAL_HEAP_SIZE=512M GC_FREE_SPACE_DIVISOR=1]
+  BOOT MAXRSS-KB 1293436 WALL-S 30.89 EXIT 0
+    PROGRAM binary-trees SIZE 18 COLD-MS 6960.214 WARMUP 2 MEDIAN-MS 3530.701 MIN-MS 3377.187 MAX-MS 3924.618 RESULT 17738411
+    PROGRAM pipeline SIZE 500000 COLD-MS 6193.849 WARMUP 3 MEDIAN-MS 1251.980 MIN-MS 1172.097 MAX-MS 1263.513 RESULT 1336595249
+    PROGRAM json SIZE 30000 COLD-MS 12541.728 WARMUP 1 MEDIAN-MS 5799.132 MIN-MS 5623.621 MAX-MS 7060.151 RESULT 870000
+```
+
+1G is 2.42x the default boot's resident set, over the order's 2x; its two divisor rows were not run. The heap size moves pipeline and json; binary-trees moves less than its run-to-run spread at every size under the cap; the free-space divisor adds nothing measurable at 512M. The setting is 512M alone.
+
+### Before and after (median of 3)
+
+```
+RUN before 1 BOOT MAXRSS-KB 768944 WALL-S 29.79 EXIT 0 battery: 143/145 stock behaviors pass libraries: 61/61 cases pass across 12 clojure.* libraries
+RUN before 1 QUICK 574.110358 673.1539309993386 1247.2642889993385
+RUN before 1 PROGRAM binary-trees SIZE 18 COLD-MS 7128.760 WARMUP 2 MEDIAN-MS 3293.988 MIN-MS 3122.090 MAX-MS 3503.414 RESULT 17738411
+RUN before 1 PROGRAM pipeline SIZE 500000 COLD-MS 6445.461 WARMUP 3 MEDIAN-MS 1512.853 MIN-MS 1437.630 MAX-MS 1557.172 RESULT 1336595249
+RUN before 1 PROGRAM json SIZE 30000 COLD-MS 14360.481 WARMUP 1 MEDIAN-MS 6759.892 MIN-MS 6522.106 MAX-MS 7335.509 RESULT 870000
+RUN after 1 BOOT MAXRSS-KB 1293488 WALL-S 28.86 EXIT 0 battery: 143/145 stock behaviors pass libraries: 61/61 cases pass across 12 clojure.* libraries
+RUN after 1 QUICK 595.561987 425.9660660000518 1021.5280530000518
+RUN after 1 PROGRAM binary-trees SIZE 18 COLD-MS 6343.846 WARMUP 2 MEDIAN-MS 3320.624 MIN-MS 3177.359 MAX-MS 3385.837 RESULT 17738411
+RUN after 1 PROGRAM pipeline SIZE 500000 COLD-MS 5965.685 WARMUP 4 MEDIAN-MS 1233.438 MIN-MS 1161.104 MAX-MS 1422.092 RESULT 1336595249
+RUN after 1 PROGRAM json SIZE 30000 COLD-MS 12657.163 WARMUP 1 MEDIAN-MS 5813.902 MIN-MS 5515.435 MAX-MS 6156.224 RESULT 870000
+RUN before 2 BOOT MAXRSS-KB 769252 WALL-S 29.81 EXIT 0 battery: 143/145 stock behaviors pass libraries: 61/61 cases pass across 12 clojure.* libraries
+RUN before 2 QUICK 593.590143 616.0505860000849 1209.6407290000848
+RUN before 2 PROGRAM binary-trees SIZE 18 COLD-MS 7335.441 WARMUP 2 MEDIAN-MS 3749.350 MIN-MS 3567.949 MAX-MS 3837.967 RESULT 17738411
+RUN before 2 PROGRAM pipeline SIZE 500000 COLD-MS 6953.279 WARMUP 3 MEDIAN-MS 1514.319 MIN-MS 1426.691 MAX-MS 1570.475 RESULT 1336595249
+RUN before 2 PROGRAM json SIZE 30000 COLD-MS 13554.986 WARMUP 1 MEDIAN-MS 6838.369 MIN-MS 6416.129 MAX-MS 7562.129 RESULT 870000
+RUN after 2 BOOT MAXRSS-KB 1293408 WALL-S 30.24 EXIT 0 battery: 143/145 stock behaviors pass libraries: 61/61 cases pass across 12 clojure.* libraries
+RUN after 2 QUICK 662.734291 443.6298020007089 1106.3640930007089
+RUN after 2 PROGRAM binary-trees SIZE 18 COLD-MS 6472.442 WARMUP 2 MEDIAN-MS 3466.132 MIN-MS 3315.626 MAX-MS 3694.021 RESULT 17738411
+RUN after 2 PROGRAM pipeline SIZE 500000 COLD-MS 5843.583 WARMUP 4 MEDIAN-MS 1218.645 MIN-MS 1159.191 MAX-MS 1311.914 RESULT 1336595249
+RUN after 2 PROGRAM json SIZE 30000 COLD-MS 12988.657 WARMUP 1 MEDIAN-MS 5888.595 MIN-MS 5633.012 MAX-MS 6060.410 RESULT 870000
+RUN before 3 BOOT MAXRSS-KB 769268 WALL-S 30.62 EXIT 0 battery: 143/145 stock behaviors pass libraries: 61/61 cases pass across 12 clojure.* libraries
+RUN before 3 QUICK 543.427047 559.0019530002028 1102.429000000203
+RUN before 3 PROGRAM binary-trees SIZE 18 COLD-MS 6855.871 WARMUP 2 MEDIAN-MS 3351.175 MIN-MS 3199.686 MAX-MS 3436.332 RESULT 17738411
+RUN before 3 PROGRAM pipeline SIZE 500000 COLD-MS 6339.540 WARMUP 3 MEDIAN-MS 1492.853 MIN-MS 1448.551 MAX-MS 1591.517 RESULT 1336595249
+RUN before 3 PROGRAM json SIZE 30000 COLD-MS 13280.840 WARMUP 1 MEDIAN-MS 6756.321 MIN-MS 6613.004 MAX-MS 6970.013 RESULT 870000
+RUN after 3 BOOT MAXRSS-KB 1293328 WALL-S 28.62 EXIT 0 battery: 143/145 stock behaviors pass libraries: 61/61 cases pass across 12 clojure.* libraries
+RUN after 3 QUICK 538.298229 393.0699289999902 931.3681579999902
+RUN after 3 PROGRAM binary-trees SIZE 18 COLD-MS 6336.622 WARMUP 2 MEDIAN-MS 3389.488 MIN-MS 3309.209 MAX-MS 3514.216 RESULT 17738411
+RUN after 3 PROGRAM pipeline SIZE 500000 COLD-MS 5840.491 WARMUP 4 MEDIAN-MS 1263.660 MIN-MS 1190.038 MAX-MS 1432.875 RESULT 1336595249
+RUN after 3 PROGRAM json SIZE 30000 COLD-MS 12734.921 WARMUP 1 MEDIAN-MS 5980.495 MIN-MS 5613.395 MAX-MS 6865.306 RESULT 870000
+```
+
+| median of 3 | no setting | `GC_INITIAL_HEAP_SIZE=512M` | |
+|---|---:|---:|---:|
+| `bb boot:jank` peak RSS | 769,252 KB | 1,293,408 KB | 1.68x |
+| `bb boot:jank` wall | 29.81 s | 28.86 s | |
+| battery, libraries | 143/145, 61/61 | 143/145, 61/61 | every run |
+| `bench --quick` boot-ms | 574.1 | 595.6 | |
+| `bench --quick` libs-ms | 616.1 | 426.0 | 0.69 |
+| `bench --quick` sum | 1,209.6 | 1,021.5 | 0.84 |
+| binary-trees (ms) | 3,351.2 | 3,389.5 | 1.01 (its runs: 3,294-3,749 before) |
+| pipeline (ms) | 1,512.9 | 1,233.4 | 0.82 |
+| json (ms) | 6,759.9 | 5,888.6 | 0.87 |
+
+The cost is memory: the start heap is reserved and touched, so a jank process of cohost's is 1.68x larger from the start. The library load (allocation-heavy: the snapshot's library modules) and the allocating programs gain; binary-trees, whose cost R's P3b put in the per-object allocation, does not.
+
 ## Type hints (H1)
 
 Measured 2026-11-01 ET on jank `0.1-noble`. The commands ran on `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. The branch was then rebased onto `b61bf0e5856c78d06605e6c32682534a61edf32c`; those commits touch `doc/upstream/` and `doc/hosts/jank-FAST.md` only, so the boots were not run again. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.
