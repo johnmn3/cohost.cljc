@@ -51,6 +51,9 @@
 (def ^:private h-pending? (host/capability :pending?))
 (def ^:private h-multifn? (host/capability :multifn?))
 (def ^:private h-mm-cache? (host/capability :multimethod-cache?))
+;; adapter :sort-host-compare? (X3-2): sort and a sorted coll's compare take the host's compare for
+;; the stock one off jank too (jank's arms below do it unconditionally, X4-1)
+(def ^:private h-sort-host-compare? (host/capability :sort-host-compare?))
 ;; a host's own hit check of the cache cell, when :multimethod-cache? is a fn (jank's
 ;; is one C++ call); nil from it, or no fn, means mf-fast-method decides
 (def ^:private h-mm-hit (when (fn? h-mm-cache?) h-mm-cache?))
@@ -1633,12 +1636,15 @@
 ;; comparator that is that fn gives the host's compare's answers: sort and
 ;; (. comp (compare a b)) call the host's directly instead of a stock fn per
 ;; comparison. A redefined compare is another fn and takes the general path.
-#?(:jank (def ^:private stock-compare-fn (volatile! nil)))
-#?(:jank (defn- stock-compare []
-           (or @stock-compare-fn
-               (when-let [n (find-ns 'cohost.core)]
+(def ^:private stock-compare-fn (volatile! nil))
+(defn- stock-compare []
+  (or @stock-compare-fn
+      #?(:jank (when-let [n (find-ns 'cohost.core)]
                  (when-let [v (ns-resolve n 'compare)]
-                   (vreset! stock-compare-fn @v))))))
+                   (vreset! stock-compare-fn @v)))
+         ;; Phel has no ns-resolve: the adapter's own lookup
+         :default (when-let [h (host/interned-var 'cohost.core 'compare)]
+                    (vreset! stock-compare-fn (host/var-root h))))))
 (def Arrays-sort (fn ([a] (host/sort-array! a compare))
                    ;; jank (X4-1): the host's compare for the stock one; any other
                    ;; fn unwrapped (the adapter reads its answer as compare-with
@@ -1646,7 +1652,9 @@
                    ([a cmp] (host/sort-array! a #?(:jank (cond (identical? cmp (stock-compare)) compare
                                                                (fn? cmp) cmp
                                                                :else (as-comparator cmp))
-                                                   :default (as-comparator cmp))))))
+                                                   :default (if (and h-sort-host-compare? (identical? cmp (stock-compare)))
+                                                              compare
+                                                              (as-comparator cmp)))))))
 (def Collections-shuffle (unsupported "Collections/shuffle"))
 ;; Collections.reverseOrder(): the host's own where it has java.util, else a
 ;; comparator fn that reverses compare (or the comparator given)
@@ -1893,7 +1901,9 @@
 (def -clear (fn [x] (reset! (:state x) []) nil))
 (def -toArray (fn [x] (to-array* (if (host/mlist? x) @(:state x) x))))
 (def -compare #?(:jank (fn [cmp a b] (if (identical? cmp (stock-compare)) (compare a b) (compare-with cmp a b)))
-                :default compare-with))
+                :default (if h-sort-host-compare?
+                           (fn [cmp a b] (if (identical? cmp (stock-compare)) (compare a b) (compare-with cmp a b)))
+                           compare-with)))
 (def -comparator (fn [coll] (host/sorted-comparator coll)))
 ;; Sorted.entryKey: a tree map's entry key, a tree set's element itself
 (def -entryKey (fn [coll e] (if (map? coll) (key e) e)))
