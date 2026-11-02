@@ -1232,25 +1232,57 @@ multimethod case improves and no case's true median lies above its nil maximum.
 | ClojureWasm 1.15.4 | 8 | 155.22 [96.68-191.55] -> 108.44 [80.94-141.07] | 4.85 -> 4.77 | 147/149, 61/61 | **on** |
 | Phel 0.54.0 | 9 | 813.96 [517.76-968.47] -> 391.87 [267.88-522.38] (true below nil 9 of 9) | 4.37 -> 4.36 | 149/149, 61/61 | **on** |
 | let-go 1.13.0 | 9 | 287.95 [211.03-509.99] -> 280.29 [202.36-412.69] (true below nil 6 of 9) | 6.28 -> 5.96 | 147/149, 61/61 | off: inside the noise |
-| ClojureScript, Node | 3 | 26.26 [24.61-76.55] -> 55.58 [49.48-69.24] | 1.27 -> 1.41 | nil 147/149, 61/61; **true 144/149, 59/61** | off: incorrect (X2-3) |
-| ClojureScript, Chromium | 3 | 51.39 [49.60-54.89] -> 40.09 [38.29-47.30] | 1.27 -> 1.31 | nil 147/149, 61/61; **true 144/149, 59/61** | off: incorrect (X2-3) |
-| basilisp 0.5.1 | 2 paired | 21590.20 -> 21098.93, 16245.01 -> 19659.29 (no gain; a third round, ~60 min under this load, not run) | 1.88 -> 1.85, 2.04 -> 1.80 | 148/149 (numeric tower), 61/61 | off: no gain |
+| ClojureScript, Node, before X2-3 | 3 | 26.26 [24.61-76.55] -> 55.58 [49.48-69.24] | 1.27 -> 1.41 | nil 147/149, 61/61; **true 144/149, 59/61** | incorrect |
+| ClojureScript, Chromium, before X2-3 | 3 | 51.39 [49.60-54.89] -> 40.09 [38.29-47.30] | 1.27 -> 1.31 | nil 147/149, 61/61; **true 144/149, 59/61** | incorrect |
+| ClojureScript, Node, on X2-3 (`2f07bfc`) | 9 | 68.57 [28.07-87.89] -> 52.96 [21.49-129.66] (true below nil 7 of 9) | 1.37 -> 1.25 | 147/149, 61/61 | **on** (X3-2, `47d43ca`) |
+| ClojureScript, Chromium, on X2-3 (`2f07bfc`) | 9 | 51.59 [20.84-83.10] -> 38.00 [14.09-55.30] (true below nil 7 of 9) | 1.37 -> 1.30 | 147/149, 61/61 | **on** (X3-2, `47d43ca`) |
+| basilisp 0.5.1 | 3 paired | 21590.20 -> 21098.93, 16245.01 -> 19659.29, 7001.37 -> 6607.08 (round 3, X3-2, load 4.6): paired ratios 0.98, 1.21, 0.94 | 1.88 -> 1.85, 2.04 -> 1.80, 1.98 -> 1.92 | 148/149 (numeric tower), 61/61 | off: no gain |
 | clojurust 0.2.32 | - | not measurable on a 15 GB box | - | `bb boot:cljrs` OOM-killed at 4.7 GB RSS (exit 137) or exit 139; `bb bench:cljrs` fails at key nil 3/3 ("wrong type: expected intercepted, got find-ns sentinel") | off |
 | jank | - | (on since X2-1, with its own `cpp/raw` hit fn, X2-2) | - | - | on |
 
 Notes:
 
-- cljs/Chromium with the key: battery rows "a class multimethod reaches user types", "multimethod: a miss is not
-  cached", "multimethod: defmethod after a call is seen", libraries clojure.test "a failing is reports FAIL",
-  "thrown? are testing" fail. The cache is incorrect on that adapter (shared layer, X2-3).
+- cljs/Chromium with the key before X2-3: battery rows "a class multimethod reaches user types", "multimethod: a
+  miss is not cached", "multimethod: defmethod after a call is seen", libraries clojure.test "a failing is reports
+  FAIL", "thrown? are testing" failed (a `::miss` sentinel that ClojureScript does not intern). X2-3 fixed it; the
+  rows above "on X2-3" are measured on its merge, nil = a clean `2f07bfc` tree.
 - X2-2's hit fn: on a non-jank host with the key true the shim's `new-MultiFn` calls a no-op `h-mm-hit` per
   dispatch; on the JVM the true side's multimethod was 3.23-3.40 ms at `5fd3e3e` (before X2-2) and 7.13-7.35 ms
   at `aeac81b`. Choosing the arity fns at construction would give it back (shared layer, X2-3).
 - The JVM battery row "reduce over an eduction; a :tag that is data" fails with `LC_ALL=C.UTF-8` exported
   (`clojure.core.Eduction cannot be cast to clojure.lang.IReduce`, 7 of 7 boots) and passes with LANG/LC_ALL
   unset (4 of 4), the same tree; not the key's.
-- The reduce and sort arms of X4-1 (`doc/research/jank-workarounds.md`) are `#?(:jank ...)` arms by
-  construction. Two could become capability keys: the stock `compare` recognised and sorted with the host's own
-  compare (any host whose `Arrays/sort` adapter has a native comparator), and reduce over a vector or range by an
-  indexed/counted loop (any host whose seq walk costs more than `nth`). Neither has been measured off jank.
+- The reduce and sort arms of X4-1 (`doc/research/jank-workarounds.md`): swept in X3-2, below.
 - Next keys as they merge: the fn name on defn (M-9).
+
+### `:sort-host-compare?` (X3-2): X4-1's sort arm on every host
+
+X4-1 made jank's sort take the host's compare when the comparator is the stock core's `compare` (whose body is
+the host's compare), instead of the shim's comparator wrapper around a stock fn call per comparison. X3-2 made it
+the adapter key `:sort-host-compare?` (default nil; `shim.cljc` `stock-compare`, `Arrays-sort`, `-compare`;
+`81259d2`) and measured it per host with X3-1's method (base `max/main` @ `4698b55`; key nil = that tree, key
+true = the same with the key; `bb bench:<host> --quick`, the JVM's full `bb bench:jvm`; load 13-18, box shared
+with u1 and u5, no lock). The first pass turned on both X4 arms together (this key and a counted `nth` loop for
+the shim's reduce over a host vector); the reduce key paid nowhere (transduce, into-vector, group-by worse on lg,
+cljw, phel, jolt) and is not committed. Hosts where the pair showed a sort gain were re-measured with the sort key
+alone.
+
+| host | rounds | sort nil -> true, ms | sort-by nil -> true | geomean x | battery / libraries (both sides) | key |
+|---|---:|---|---|---|---|---|
+| JVM | 3 full, both keys | 21.78 [21.08-23.89] -> 23.69 [21.91-24.69] | 12.47 -> 11.02 | 1.28 -> 1.24 | 149/149, 61/61 (LANG/LC_ALL unset) | off: no gain |
+| jolt | 3, both keys | 61.36 [51.05-81.73] -> 60.37 [56.99-75.50] | 36.22 -> 44.10 | 1.43 -> 1.27 | 149/149, 61/61 | off: no gain |
+| ClojureScript, Node | 3, both keys | 52.95 [52.93-55.54] -> 54.00 [41.84-65.90] | 70.33 -> 80.63 | 1.18 -> 1.26 | 147/149, 61/61 | off: no gain |
+| ClojureScript, Chromium | 3, both keys | 23.20 [19.15-32.79] -> 46.19 [43.69-66.70] | 22.89 -> 79.30 | 1.31 -> 1.34 | 147/149, 61/61 | off: slower |
+| ClojureWasm | 3 both keys, then 6 sort key alone | both: 4755.30 -> 3979.81; alone: 4257.44 [2310.55-5461.05] -> 4041.50 [1946.94-5434.06] (true below nil 4 of 6) | alone: 2236.85 -> 2219.78 | alone: 4.67 -> 5.11 | 147/149, 61/61 | off: inside the noise alone |
+| let-go | 9 sort key alone, then 6 with the order reversed | 1988.31 [1022.21-2573.78] -> 1238.85 [642.76-2082.75] (8 of 9); reversed 1854.82 [962.74-2412.19] -> 912.30 [568.96-1283.22] (6 of 6) | 1661.50 -> 1688.61; 1630.72 -> 1587.01 | 5.90 -> 5.88; 5.99 -> 5.95 | 147/149, 61/61 | **on** (`04733e3`) |
+| Phel | 6 sort key alone | 1200.53 [1010.93-1753.69] -> 807.75 [746.68-928.35] (6 of 6) | 1570.43 -> 1542.78 | 4.31 -> 4.17 | 149/149, 61/61 | **on** (`b1899fc`) |
+| basilisp | - | not run (a quick bench is ~25-60 min a side here) | - | - | - | off |
+| clojurust | - | not measurable (X3-1) | - | - | - | off |
+| jank | - | always on (X4-1's `#?(:jank ...)` arm) | - | - | - | on |
+
+- let-go's first 9 rounds (nil always first) flagged the multimethod case 415.92 -> 516.42 ms; the key has no path
+  there, and with the order reversed it went 450.25 -> 393.35: order bias, not the key.
+- Phel's first run with the key failed: Phel has no `ns-resolve`; off jank `stock-compare` now finds the stock
+  compare through the adapter's own `:interned-var` / `:var-get`.
+- On Chromium the host's compare through JS `Array.prototype.sort` was slower than the shim's wrapper.
+

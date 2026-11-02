@@ -12,7 +12,6 @@
 #   JANK_SRC          the jank clone (default /usr/local/src/jank)
 #   JANK_DEV_PREFIX   install prefix (default /usr/local/lib/jank-dev)
 #   JANK_LLVM         the LLVM prefix jank builds against (default /opt/jank-llvm/e280c505)
-#   JANK_BUILD_LOCK   a file to flock around the compile (e.g. /home/user/locks/box.lock on a shared box)
 #   JOBS              ninja -j (default nproc)
 #   JANK_SERIES       a series file to apply instead of upstream/jank/patches/series (patch names in it
 #                     resolve against its own directory), e.g. to measure a patch before it joins the series
@@ -64,7 +63,6 @@ series="$(realpath "${JANK_SERIES:-$cohost/upstream/jank/patches/series}")"
 patchdir="$(dirname "$series")"
 t0=$(date +%s)
 stage() { echo "== jank-src: $* ($(( $(date +%s) - t0 ))s)"; }
-locked() { if [ -n "${JANK_BUILD_LOCK:-}" ]; then flock "$JANK_BUILD_LOCK" "$@"; else "$@"; fi; }
 
 # ---- dependencies (book: compiler+runtime/doc/build.md, Debian list; libstdc++ 14 is enough) ----
 deps() {
@@ -179,30 +177,55 @@ apply_series() {
   done
   git read-tree "$tree"
   cd "$cohost"
+  rewritten=$n
   stage "series applied: tree $tree, $n file(s) rewritten"
 }
 
 configure() {
   local b="$JANK_SRC/compiler+runtime/build"
+  # A build dir configured by a JANK_LTO run carries -flto in its *_RELEASE flags: reconfigure it
+  # plain (and drop its core-libs, built as bitcode-era objects), or the default build stays LTO.
   if [ -f "$b/CMakeCache.txt" ] && grep -q "^llvm_dir:.*=$JANK_LLVM\$" "$b/CMakeCache.txt" \
-     && grep -q "^CMAKE_INSTALL_PREFIX:.*=$JANK_DEV_PREFIX\$" "$b/CMakeCache.txt"; then
+     && grep -q "^CMAKE_INSTALL_PREFIX:.*=$JANK_DEV_PREFIX\$" "$b/CMakeCache.txt" \
+     && ! grep -q "^CMAKE_CXX_FLAGS_RELEASE:.*-flto" "$b/CMakeCache.txt"; then
     return
+  fi
+  local extra
+  if [ -f "$b/CMakeCache.txt" ] && grep -q "^CMAKE_CXX_FLAGS_RELEASE:.*-flto" "$b/CMakeCache.txt"; then
+    rm -rf "$b/core-libs"
+    extra=(-DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG"
+           -DCMAKE_EXE_LINKER_FLAGS_RELEASE= -DCMAKE_SHARED_LINKER_FLAGS_RELEASE=
+           -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib)
+  else
+    extra=()
   fi
   stage "configure jank (Release, llvm_dir=$JANK_LLVM, prefix $JANK_DEV_PREFIX, ccache)"
   (cd "$JANK_SRC/compiler+runtime" && CC="$JANK_LLVM/bin/clang" CXX="$JANK_LLVM/bin/clang++" ./bin/configure -GNinja \
      -DCMAKE_BUILD_TYPE=Release -Dllvm_dir="$JANK_LLVM" -Djank_local_clang=on \
      -DCMAKE_INSTALL_PREFIX="$JANK_DEV_PREFIX" \
-     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache "${extra[@]}")
+}
+
+# Before phase 1 of a --patches build that rewrote any file: jank's phase 1 reuses
+# build/core-libs/_cache/0/clojure/core.o whenever it is newer than core.jank, whatever the
+# headers say, so an object-layout change ran the old core.o and segfaulted (u5, jit_closure::call);
+# and the build-tree PCH (build/incremental.pch) and this prefix's cache entries are keyed by the
+# binary version and flags, never by header contents (u1). Delete all three; phase 1 rebuilds them.
+# A --patches run that rewrote nothing deletes nothing (ninja has nothing to do).
+fresh_phase_1() {
+  [ "$mode" = patches ] && [ "${rewritten:-0}" -gt 0 ] || return 0
+  local b="$JANK_SRC/compiler+runtime/build"
+  rm -rf "$b/core-libs" "$b/classes/core-libraries" "$b/incremental.pch"
+  wipe_pch
+  stage "fresh phase 1: removed $b/core-libs, classes/core-libraries, incremental.pch"
 }
 
 build_install() {
-  stage "build (ninja -j$JOBS${JANK_BUILD_LOCK:+, under flock $JANK_BUILD_LOCK})"
-  local s c; s=$(date +%s)
-  c="$(mktemp)"
-  locked bash -c 'date +%s > "$1"; shift; exec "$@"' _ "$c" cmake --build "$JANK_SRC/compiler+runtime/build" -j "$JOBS"
-  local e; e=$(date +%s)
-  stage "build done: compile $(( e - $(cat "$c") ))s, lock wait $(( $(cat "$c") - s ))s"
-  rm -f "$c"
+  fresh_phase_1
+  stage "build (ninja -j$JOBS)"
+  local s; s=$(date +%s)
+  cmake --build "$JANK_SRC/compiler+runtime/build" -j "$JOBS"
+  stage "build done: compile $(( $(date +%s) - s ))s"
   cmake --install "$JANK_SRC/compiler+runtime/build" > "$JANK_SRC/compiler+runtime/build/install.log"
   wrap_cache
   wipe_pch
@@ -250,13 +273,81 @@ if [ "$mode" = full ]; then
   if [ "$llvm_src" = 1 ]; then
     clone
     stage "build jank's LLVM snapshot from source (compiler+runtime/bin/build-clang)"
-    (cd "$JANK_SRC/compiler+runtime" && CC="$APT_JANK/bin/clang" CXX="$APT_JANK/bin/clang++" locked ./bin/build-clang -j "$JOBS")
+    (cd "$JANK_SRC/compiler+runtime" && CC="$APT_JANK/bin/clang" CXX="$APT_JANK/bin/clang++" ./bin/build-clang -j "$JOBS")
     JANK_LLVM="$JANK_SRC/compiler+runtime/build/llvm-install/usr/local"
   else
     llvm_prefix_from_apt
     clone
   fi
 fi
+# ---- optional: ThinLTO build of jank (JANK_LTO=thin; off by default) -- u5, U5-4 ----
+# jank's CMakeLists sets CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE, and the apt-derived $JANK_LLVM has no LTO linker
+# (no lld, no LLVMgold.so; llvm-ar is GNU ar, which cannot index bitcode; llvm-tblgen and llvm-profdata are stubs).
+# lto_tools builds them once from jank-lang/llvm-project @ $LLVM_SHA (sparse checkout) against $JANK_LLVM's real
+# libLLVM.so into $JANK_LLVM.lto/bin: a minimal llvm-tblgen (the option-parser backend + lib/TableGen, which libLLVM.so
+# lacks), llvm-ar, llvm-profdata (two Debuginfod symbols stubbed: profile merging never uses them) and lld (standalone
+# CMake build). Then configure passes -flto=thin to every C/C++ TU and links with that lld. JANK_PGO=<profdata> adds
+# -fprofile-use (train with an -fprofile-generate build: JANK_PGO=generate). Use its own JANK_SRC/JANK_DEV_PREFIX; the
+# generate and use builds share one JANK_SRC (PGO names internal-linkage functions by their source path).
+# The flags go in the *_RELEASE variables: jank copies CMAKE_CXX_FLAGS and CMAKE_SHARED_LINKER_FLAGS into the runtime's
+# JANK_AOT_FLAGS (compiler+runtime/CMakeLists.txt:713), and -flto there makes phase 1 emit core.o as bitcode it cannot
+# load. The build dir must be compiler+runtime/build: jank treats only that as an in-tree build (environment_dynamic.cpp).
+if [ -n "${JANK_LTO:-}" ]; then
+  LTO_TOOLS="$JANK_LLVM.lto"
+  lto_tools() {
+    [ -x "$LTO_TOOLS/bin/ld.lld" ] && [ -x "$LTO_TOOLS/bin/llvm-ar" ] && return
+    stage "LTO tools: llvm-tblgen, llvm-ar, llvm-profdata, lld from llvm-project @ $LLVM_SHA against $JANK_LLVM/lib/libLLVM.so"
+    local src="$LTO_TOOLS/src" bin="$LTO_TOOLS/bin" cxx="$JANK_LLVM/bin/clang++" inc="$LTO_TOOLS/inc"
+    mkdir -p "$bin" "$inc/llvm/Config"
+    if [ ! -d "$src/lld" ]; then
+      git init -q "$src" && git -C "$src" remote add origin https://github.com/jank-lang/llvm-project.git
+      git -C "$src" config core.sparseCheckout true
+      printf 'lld/\ncmake/\nlibunwind/include/\nllvm/utils/TableGen/\nllvm/lib/TableGen/\nllvm/tools/llvm-ar/\nllvm/tools/llvm-profdata/\n' \
+        > "$src/.git/info/sparse-checkout"
+      git -C "$src" fetch -q --filter=blob:none --depth 1 origin "$LLVM_SHA" && git -C "$src" checkout -q FETCH_HEAD
+    fi
+    echo '#include "llvm/Config/llvm-config.h"' > "$inc/llvm/Config/config.h"
+    printf '%s\n' '#include "llvm/Support/LLVMDriver.h"' 'int TOOL_MAIN(int, char **, const llvm::ToolContext &);' \
+      'int main(int argc, char **argv) { return TOOL_MAIN(argc, argv, {argv[0], nullptr, false}); }' > "$inc/driver_main.cpp"
+    printf '%s\n' '#include "llvm/Debuginfod/BuildIDFetcher.h"' '#include "llvm/HTTP/HTTPClient.h"' \
+      'void llvm::HTTPClient::initialize() {}' \
+      'llvm::Expected<std::string> llvm::DebuginfodFetcher::fetch(llvm::object::BuildIDRef) const {' \
+      '  return llvm::createStringError("debuginfod is not available in this llvm-profdata"); }' > "$inc/debuginfod_stub.cpp"
+    local f=(-std=c++17 -O2 -fno-rtti -I"$inc" -I"$JANK_LLVM/include") l=(-L"$JANK_LLVM/lib" -lLLVM -Wl,-rpath,"$JANK_LLVM/lib")
+    (cd "$src/llvm/utils/TableGen" && "$cxx" "${f[@]}" -I. -IBasic -ICommon llvm-min-tblgen.cpp Basic/TableGen.cpp \
+       OptionParserEmitter.cpp Common/OptEmitter.cpp ../../lib/TableGen/*.cpp "${l[@]}" -o "$bin/llvm-tblgen")
+    "$cxx" "${f[@]}" -DTOOL_MAIN=llvm_ar_main "$src/llvm/tools/llvm-ar/llvm-ar.cpp" "$inc/driver_main.cpp" "${l[@]}" -o "$bin/llvm-ar"
+    ln -sfn llvm-ar "$bin/llvm-ranlib"
+    "$cxx" "${f[@]}" "$src/llvm/tools/llvm-profdata/llvm-profdata.cpp" "$inc/debuginfod_stub.cpp" "${l[@]}" -o "$bin/llvm-profdata"
+    cmake -S "$src/lld" -B "$LTO_TOOLS/lld-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR="$JANK_LLVM/lib/cmake/llvm" \
+      -DCMAKE_C_COMPILER="$JANK_LLVM/bin/clang" -DCMAKE_CXX_COMPILER="$cxx" -DLLVM_INCLUDE_TESTS=OFF \
+      -DLLVM_TABLEGEN_EXE="$bin/llvm-tblgen" > "$LTO_TOOLS/lld-configure.log"
+    cmake --build "$LTO_TOOLS/lld-build" -j "$JOBS" --target lld > "$LTO_TOOLS/lld-build.log"
+    ln -sfn "$LTO_TOOLS/lld-build/bin/lld" "$bin/ld.lld"
+  }
+  configure() {
+    local b="$JANK_SRC/compiler+runtime/build" fl="-flto=thin"
+    case "${JANK_PGO:-}" in
+      "") ;;
+      generate) fl="$fl -fprofile-generate" ;;
+      *) fl="$fl -fprofile-use=$JANK_PGO -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date" ;;
+    esac
+    if [ -f "$b/CMakeCache.txt" ] && grep -qF "CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG $fl" "$b/CMakeCache.txt" \
+       && grep -q "^CMAKE_INSTALL_PREFIX:.*=$JANK_DEV_PREFIX\$" "$b/CMakeCache.txt"; then
+      return
+    fi
+    lto_tools
+    local ld="-fuse-ld=lld --ld-path=$LTO_TOOLS/bin/ld.lld -Wl,--thinlto-jobs=$JOBS"
+    stage "configure jank with $fl (prefix $JANK_DEV_PREFIX)"
+    rm -rf "$b/core-libs"
+    (cd "$JANK_SRC/compiler+runtime" && CC="$JANK_LLVM/bin/clang" CXX="$JANK_LLVM/bin/clang++" ./bin/configure -GNinja \
+       -DCMAKE_BUILD_TYPE=Release -Dllvm_dir="$JANK_LLVM" -Djank_local_clang=on -DCMAKE_INSTALL_PREFIX="$JANK_DEV_PREFIX" \
+       -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG $fl" -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG $fl" \
+       -DCMAKE_EXE_LINKER_FLAGS_RELEASE="$fl $ld" -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="$fl $ld" \
+       -DCMAKE_AR="$LTO_TOOLS/bin/llvm-ar" -DCMAKE_RANLIB="$LTO_TOOLS/bin/llvm-ranlib")
+  }
+fi
+# ---- end ThinLTO ----
 [ -d "$JANK_SRC/.git" ] || { echo "no clone at $JANK_SRC: run without --patches first" >&2; exit 1; }
 apply_series
 configure
