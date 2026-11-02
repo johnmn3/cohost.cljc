@@ -53,7 +53,7 @@
 (def ^:private h-mm-cache? (host/capability :multimethod-cache?))
 ;; a host's own hit check of the cache cell, when :multimethod-cache? is a fn (jank's
 ;; is one C++ call); nil from it, or no fn, means mf-fast-method decides
-(def ^:private h-mm-hit (if (fn? h-mm-cache?) h-mm-cache? (fn [_ _ _] nil)))
+(def ^:private h-mm-hit (when (fn? h-mm-cache?) h-mm-cache?))
 (def ^:private h-delay? (host/capability :delay?))
 (def ^:private h-decimal? (host/capability :decimal?))
 (def ^:private h-uuid? (host/capability :uuid?))
@@ -1269,12 +1269,14 @@
   [state mc dv]
   (let [e @mc st @state href (:hierarchy st) h (deref href)]
     (if (and e (identical? (nth e 0) st) (identical? (nth e 2) h))
-      (let [m (get (nth e 3) dv ::miss)]
-        (if (identical? m ::miss)
-          (let [m (mf-find-method st dv)]
-            ;; a miss is not cached, as the JVM's findAndCacheBestMethod
-            (when m (reset! mc [st href h (assoc (nth e 3) dv m)]))
-            m)
+      ;; find, not a ::miss sentinel compared with identical?: ClojureScript does not
+      ;; intern keywords, so (identical? m ::miss) was false and the sentinel came back
+      ;; as the method (X2-3: cljs and Chromium failed every first call of a new dv)
+      (if-let [hit (find (nth e 3) dv)]
+        (val hit)
+        (let [m (mf-find-method st dv)]
+          ;; a miss is not cached, as the JVM's findAndCacheBestMethod
+          (when m (reset! mc [st href h (assoc (nth e 3) dv m)]))
           m))
       (let [m (mf-find-method st dv)]
         (reset! mc [st href h (if m {dv m} {})])
@@ -1286,7 +1288,11 @@
           no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))
           mc (when h-mm-cache? (atom nil))]
       ((fn [f] (if fn-meta? (with-meta f {::multifn state}) (do (swap! mf-states assoc f state) f)))
-        (if h-mm-cache?
+        ;; the arity fns are chosen here, once: a host with a hit fn (jank's cpp/raw call)
+        ;; tries it first; a host with the cache on and no hit fn goes straight to
+        ;; mf-fast-method; with the cache off, mf-method; no host pays a no-op per call
+        (cond
+          h-mm-hit
           (fn
             ([] (let [dv (dispatch-fn) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m) (no-method dv))))
             ([a] (let [dv (dispatch-fn a) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a) (no-method dv))))
@@ -1294,6 +1300,15 @@
             ([a b c] (let [dv (dispatch-fn a b c) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a b c) (no-method dv))))
             ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))]
                               (if m (apply m a b c more) (no-method dv)))))
+          h-mm-cache?
+          (fn
+            ([] (let [dv (dispatch-fn) m (mf-fast-method state mc dv)] (if m (m) (no-method dv))))
+            ([a] (let [dv (dispatch-fn a) m (mf-fast-method state mc dv)] (if m (m a) (no-method dv))))
+            ([a b] (let [dv (dispatch-fn a b) m (mf-fast-method state mc dv)] (if m (m a b) (no-method dv))))
+            ([a b c] (let [dv (dispatch-fn a b c) m (mf-fast-method state mc dv)] (if m (m a b c) (no-method dv))))
+            ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-fast-method state mc dv)]
+                              (if m (apply m a b c more) (no-method dv)))))
+          :else
           (fn
             ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
             ([a] (let [dv (dispatch-fn a) m (mf-method state dv)] (if m (m a) (no-method dv))))

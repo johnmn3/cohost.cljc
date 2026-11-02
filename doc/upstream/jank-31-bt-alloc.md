@@ -4,7 +4,7 @@ Status: REPRODUCED; patch `upstream/jank/patches/31-bt-alloc.patch`
 
 Host: jank built from jank-lang/jank at `f3d82d65` plus cohost's series 11, 13, 14, 12-21, 18, 19, 15a-16, 15b-17, 22,
 20, 23, 24, 26, 25, 27 (max/main f8a32df; u5's prefix), Ubuntu noble, 4 CPUs, shared with two other lanes (load 5-15
-during the timings below). The patch also applies after 28, 30 and 29 (max/main 09dcbf5). Source citations are to that tree.
+during the timings below). The patch also applies after 28, 30, 29 and 32 (max/main 06dd80a). Source citations are to that tree.
 
 ## Repro
 

@@ -21,7 +21,7 @@ Subject: [PATCH] u5: 31-bt-alloc: vector literals without va_list; small
 - persistent_vector::call and nth(index): a tagged small integer in range is read in place
   (no is_integral/to_i64 calls); everything else takes the old path, same errors.
 
-Applies on f3d82d65 + 11, 13, 14, 12-21, 18, 19, 15a-16, 15b-17, 22, 20, 23, 24, 26, 25, 27, 28, 30, 29.
+Applies on f3d82d65 + 11, 13, 14, 12-21, 18, 19, 15a-16, 15b-17, 22, 20, 23, 24, 26, 25, 27, 28, 30, 29, 32.
 ---
  .../include/cpp/jank/codegen/api.hpp          | 16 +++++
  .../jank/runtime/obj/persistent_vector.hpp    |  6 +-
