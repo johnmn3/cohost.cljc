@@ -1,3 +1,4 @@
 11-sorted-walk.patch
 13-eq-inline.patch
 14-keyword-hash.patch
+18-small-vectors.patch

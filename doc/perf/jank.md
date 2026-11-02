@@ -624,6 +624,228 @@ What has to change:
 - `scan-macros!`, refers, and `:cohost/host` / `:cohost/wrapped` are not part of the evaluated forms. `print-method`'s meta after a normal boot is that host marking. A module of only the eval'd forms does not redo it.
 - There are 550 evaluated `cohost.core` forms, not 2,000. `clojure.walk` is 10.
 
+## AOT stage 2
+
+Measured 2026-11-02 ET on jank `0.1-noble` (lane D, D-1), branch `d/jank-snapshot`. A boot from the snapshot loads compiled objects of the booted core and the twelve libraries instead of booting `core.clj`.
+
+```
+bb boot:jank-snapshot                    # batteries; builds the snapshot first when stale
+bb boot:jank-snapshot --bench --quick    # the bench, its boot-ms and libs-ms from the snapshot
+bash dev/perf/jank_snapshot_time.sh      # the medians below
+```
+
+### How it works
+
+The probe's verdict named three gaps: shim vars interned only at boot, a namespace that must see `cohost.core` rather than jank's core, and var surgery that is not in the evaluated forms. The build closes them with replay, not by re-emitting shim source:
+
+- **Record** (`boot!` with `{:record? true}`, off by default on every host; `dev/perf/jank_snapshot_record.jank`). Every effect the boot has, in order: each rewritten form after it evaluated, `take-from-host!`, the companion names from the adapter's core extras, each `scan-macros!` that marked or wrapped a macro, the shim's instance tests (`install-is!`) and missing-method dispatchers, the codemod's `:inline` captures, the loader's directives (`ns`, `require`, `alias` ...), each library's begin and end, a failed form's leftover var, and the boot's state at the end (the report, the codemod ctx's imports, renames, user types, referred host names, loader namespaces). jank's printer ignores `*print-meta*`, so a form's metadata is recorded as data and the emitter turns it back into reader metadata.
+- **Emit** (`dev/perf/jank_snapshot_emit.clj`): one module per booted namespace under `target/jank-snapshot/src/`: `cohost.core`, `cohost.walk`, ... `cohost.spec.gen.alpha`. Each is the recorded forms with calls of `cohost.boot/snap-*` between them; those calls redo what the boot did through the adapter (the same functions the boot calls), so the module's object redoes it when it loads. Each module is a bare namespace (`clojure.core/ns`, `(:refer-clojure :only [])`), as the boot's namespaces are; a library's replayed `ns` directive refers `cohost.core` into it.
+- **Compile**: `jank compile-module cohost.snapshot -O3`, an entry module requiring the core and the top-level libraries, compiles all of them (and cohost's own namespaces) into `target/jank-snapshot/aot/`.
+- **Load**: `dev/perf/jank_snapshot_run.jank` requires `cohost.core` (the snapshot's), then does what `cohost.run/-main` does after `boot!`. `load-lib!` requires a library's snapshot module when the snapshot registered one, which replays that library's load; the registry is nil unless a snapshot is loaded.
+- **Key**: sha256 over the stock sources (`resources/cohost/clojure-1.12.0`), `src/cohost`, `dev/perf/jank_snapshot_*`, and `jank print-binary-version`, in `target/jank-snapshot/stamp` (`dev/perf/jank_snapshot_ensure.clj`). No stamp, another key, or a missing object is stale: the snapshot is deleted and built again before anything loads it.
+
+jank facts found on the way (0.1-noble):
+- `compile-module` evaluates each top-level form before it analyzes the next, so a var a call interns resolves in the forms after it; its codegen pass analyzes the module's `ns` form inside the new namespace, so a bare namespace's header must be written `clojure.core/ns`.
+- A required file's `ns` form is analyzed in the requiring namespace: the core module requires `cohost.run` before its own bare `ns` form.
+- An object is not loaded without its source on the module path (`runtime/module-binary-without-source`): the emitted sources stay beside the objects.
+
+### Checks (cohost.walk end to end)
+
+`jank --module-path <snapshot> run dev/perf/jank_snapshot_check.jank -- --snapshot`, the probe's check script after a snapshot boot and `load-lib! 'clojure.walk`:
+
+```
+CHECK-BOOT snapshot
+CHECK snapshot-report true
+CHECK walk-var true
+CHECK walk-doc "Traverses form, an arbitrary data structure.  inner and outer are\n  functions.  Applies inner to each element of form, building up a\n  data structure of the same type, then applies outer to the result.\n  Recognizes all Clojure data structures. Consumes seqs as with doall."
+CHECK walk-arglists ([inner outer form])
+CHECK mx-macro nil
+CHECK keywordize {:a 1}
+CHECK when-macro true
+CHECK print-method true
+CHECK print-method-keys [:cohost/host :cohost/wrapped]
+CHECK type-atom "atom"
+CHECK cpp-cohost ERR
+CHECK record ERR
+```
+
+Every row matches the normal boot's (probe section) except two. `print-method`'s meta has no `:jank/source`, which is reader position data. `cpp-cohost` (a fresh `eval` of `cpp/cohost_obj.is_cohost`) is ERR where the probe's JIT boot printed `false`; it is ERR too after a normal boot on the stage 1 objects (`jank --module-path target/jank-aot/_cache/<triple>:src run dev/perf/jank_snapshot_check.jank`, which printed every other row as the probe did, `print-method-keys [:jank/source :cohost/host :cohost/wrapped]`), so it comes from `cohost.hosts.jank-host` loaded as an object (its `cpp/raw` declarations are not seen by a later `eval`), not from the snapshot. The batteries do not depend on it. `record` is ERR on both.
+
+### Batteries from the snapshot
+
+`bb boot:jank-snapshot` (stale: no stamp; rebuilt, then booted from it):
+
+```
+SNAPSHOT-STALE no stamp
+SNAPSHOT-BUILT a4fe66750c3bbf7f46c090fb3627bfd01e9b8215b176620194fefa076aec9714 in 552634 ms
+SNAPSHOT-BOOT-MS 743.59331
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+   FAIL Character/isWhitespace is Java's
+   FAIL Character outside ASCII
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The same as `bb boot:jank` on this box (542/171/78/0, 143/145, 61/61), the two failures the documented Character host facts, and the same eight library load errors listed under the libraries (restored from the recorded report). The build: record 1452 events (930 forms, 13 library namespaces, none failed), emit, compile -O3; 552,634 ms in all, about 9.2 minutes, paid once per input change.
+
+### boot-ms and libs-ms
+
+`bash dev/perf/jank_snapshot_time.sh`: three runs each, alternating, `--quick`, the box otherwise idle. `bench:jank` is the stage 1 default (cohost's namespaces AOT, `core.clj` booted).
+
+```
+RUN aot 1 boot-ms libs-ms sum: 9502.696091 8248.29765299987 17750.99374399987
+RUN snapshot 1 boot-ms libs-ms sum: 795.273757 752.1922149998136 1547.4659719998135
+RUN aot 2 boot-ms libs-ms sum: 10609.258105 9980.032635000069 20589.29074000007
+RUN snapshot 2 boot-ms libs-ms sum: 530.175672 578.077767000068 1108.2534390000678
+RUN aot 3 boot-ms libs-ms sum: 9590.933535 9225.588032000232 18816.521567000233
+RUN snapshot 3 boot-ms libs-ms sum: 597.172844 696.111727999989 1293.284571999989
+MEDIAN aot boot-ms 9590.933535 libs-ms 9225.588032000232 sum 18816.521567000233
+MEDIAN snap boot-ms 597.172844 libs-ms 696.111727999989 sum 1293.284571999989
+```
+
+| median of 3 | boot-ms | libs-ms | sum |
+|---|---:|---:|---:|
+| `bb bench:jank --quick` (no snapshot) | 9,590.9 | 9,225.6 | 18,816.5 |
+| `bb boot:jank-snapshot --bench --quick` | 597.2 | 696.1 | 1,293.3 |
+
+The sum is 14.5 times smaller. For scale (jank-FAST): JVM Clojure 1.3 s, jolt 2.5 s boot. All 30 bench cases ran on both sides of the snapshot run with the same values.
+
+### A stale snapshot
+
+After a change to one input (a comment in `dev/perf/jank_snapshot_record.jank`), `bb boot:jank-snapshot` twice:
+
+```
+== run 1
+SNAPSHOT-STALE key c39cdd2962cea5d0f7f12773c98761b7611b04a354fcb1323d343f044ef21d31 is not 9aaafc662f7efcf1a060f60bb41f46630ae62d5242d966f27f8f8b0769ac8c60
+AOT-FRESH
+SNAPSHOT-EVENTS 1452 bytes 748576
+SNAPSHOT-BUILT 9aaafc662f7efcf1a060f60bb41f46630ae62d5242d966f27f8f8b0769ac8c60 in 364831 ms
+SNAPSHOT-BOOT-MS 582.00829
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+== run 2
+SNAPSHOT-FRESH 9aaafc662f7efcf1a060f60bb41f46630ae62d5242d966f27f8f8b0769ac8c60
+SNAPSHOT-BOOT-MS 558.419392
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+The stale key was detected before anything loaded, the snapshot was rebuilt (364,831 ms with the stage 1 objects already fresh), and the next run loaded it.
+
+### The default (D-2)
+
+`bb boot:jank` and `bb bench:jank` boot from the snapshot when it is fresh (`fresh-path` in `dev/perf/jank_snapshot_key.clj`: the same key) and otherwise print why and run the AOT boot of `core.clj` as before. Neither builds nor loads a stale snapshot; `bb boot:jank-snapshot` builds it. Measured 2026-11-02 ET, `d/jank-snapshot-default`, one chain on an idle box:
+
+```
+== boot:jank (stale)
+SNAPSHOT-STALE key 9aaafc662f7efcf1a060f60bb41f46630ae62d5242d966f27f8f8b0769ac8c60 is not 525ad8536f6cf76d237374a707d96d812345e5fbd84276f47767f6431ce8e6c7 (bb boot:jank-snapshot builds it)
+AOT-FRESH
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+== boot:jank-snapshot (build)
+SNAPSHOT-BUILT 525ad8536f6cf76d237374a707d96d812345e5fbd84276f47767f6431ce8e6c7 in 371088 ms
+== boot:jank (fresh)
+SNAPSHOT-FRESH 525ad8536f6cf76d237374a707d96d812345e5fbd84276f47767f6431ce8e6c7
+SNAPSHOT-BOOT-MS 580.373918
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+`bash dev/perf/jank_snapshot_time.sh` (its no-snapshot side runs the AOT boot directly, `run-main cohost.run -- --bench --quick`, what `bench:jank` ran before; the other side is `bb bench:jank --quick`, checked to print `SNAPSHOT-FRESH`). Each column's median is taken on its own:
+
+```
+RUN aot 1 boot-ms libs-ms sum: 10364.375912 9378.710642000195 19743.086554000194
+RUN snapshot 1 boot-ms libs-ms sum: 501.703839 530.5053889998235 1032.2092279998235
+RUN aot 2 boot-ms libs-ms sum: 9716.03025 8700.08130600024 18416.11155600024
+RUN snapshot 2 boot-ms libs-ms sum: 733.175061 710.0212499997579 1443.1963109997578
+RUN aot 3 boot-ms libs-ms sum: 11083.572973 9098.975416000001 20182.548389000003
+RUN snapshot 3 boot-ms libs-ms sum: 580.445917 609.4266209998168 1189.8725379998168
+MEDIAN aot boot-ms 10364.375912 libs-ms 9098.975416000001 sum 19743.086554000194
+MEDIAN snap boot-ms 580.445917 libs-ms 609.4266209998168 sum 1189.8725379998168
+```
+
+| `bb bench:jank --quick`, median of 3 | boot-ms | libs-ms | sum |
+|---|---:|---:|---:|
+| before (AOT boot of core.clj) | 10,364.4 | 9,099.0 | 19,743.1 |
+| after (fresh snapshot, the default) | 580.4 | 609.4 | 1,189.9 |
+
+The cost moved to the build: about 6 minutes (371,088 ms here) after any change to an input, `src/cohost` included, paid by `bb boot:jank-snapshot`; until then `bb boot:jank` boots as before.
+
+## -O3
+
+Measured 2026-11-02 ET (lane D, D-3), `d/jank-o3` on `9627981`, research plan item 1 (S3-1). Every jank task that evaluates cohost now runs jank's JIT at `-O3`: `boot:jank` (both paths), `boot:jank-jit`, `bench:jank` (both paths), `boot:jank-aot-profile`, `boot:jank-snapshot`, through one helper in `bb.edn` (`jank!`). `COHOST_JANK_O=none` gives the command line without `-O`, as before; any other value (`-O0`, `-O2`) replaces the level. The snapshot's `compile-module` was `-O3` already, so on the default path (a fresh snapshot) the flag reaches only what the JIT compiles while the process runs: the bench's cases, the battery's forms, user code. The cohost CLI has no jank target (`bin/cohost`: `:cljrs :jank not wired yet`). The box is a fresh container since 10:20 AM ET: compare the pairs below with each other, not with earlier sections.
+
+```
+bash dev/perf/jank_snapshot_o3.sh            # bench --quick, {snapshot, AOT boot} x {none, -O3}, 3 each, interleaved
+FULL=1 bash dev/perf/jank_snapshot_o3.sh     # bb bench:jank (the full bench) from the snapshot, {none, -O3}, 3 each
+dev/perf/jank_snapshot_o3_probe.jank         # format and sort-by, 20 timed calls after 3 warm ones, per process
+```
+
+### Batteries
+
+`bb boot:jank` (fresh snapshot, `-O3`): `booted as stock: 542   from host: 171   skipped: 78   errors: 0`, `battery: 143/145`, `libraries: 61/61`, the same eight library load errors. Every bench case returned the same value on all four sides of the matrix.
+
+### boot-ms and libs-ms (median of 3)
+
+| | boot-ms | libs-ms | sum |
+|---|---:|---:|---:|
+| snapshot, no -O (`--quick`) | 586.5 | 668.5 | 1,288.5 |
+| snapshot, -O3 (`--quick`) | 652.3 | 710.9 | 1,363.2 |
+| snapshot, no -O (full bench) | 650.8 | 675.6 | 1,338.9 |
+| snapshot, -O3 (full bench) | 584.8 | 625.5 | 1,210.6 |
+| AOT boot of core.clj, no -O (`--quick`) | 18,728.9 | 11,856.7 | 30,535.3 |
+| AOT boot of core.clj, -O3 (`--quick`) | 33,658.0 | 16,884.3 | 51,695.6 |
+
+From the snapshot the flag does not move startup beyond the run-to-run spread (two sets of three runs disagree in direction). Without a snapshot (the fallback when it is stale) the boot JIT-compiles `core.clj` and the libraries at `-O3`: 21.2 s more, as R's P6b found for the whole process.
+
+### Bench cases (bb bench:jank, the full bench, from the snapshot, stock side, median of 3, ms)
+
+| case | no -O | -O3 | ratio |
+|---|---:|---:|---:|
+| fn-call | 3.4 | 0.9 | 0.26 |
+| loop-arith | 2.1 | 0.0 | 0.00 |
+| hinted-loop | 1.7 | 0.0 | 0.01 |
+| lazy-iterate | 8.9 | 6.0 | 0.67 |
+| destructure | 33.0 | 19.1 | 0.58 |
+| keyword-lookup | 19.6 | 13.4 | 0.69 |
+| protocol | 80.4 | 62.7 | 0.78 |
+| str-build | 77.0 | 63.6 | 0.83 |
+| partition | 254.2 | 218.2 | 0.86 |
+| atom-swap | 23.2 | 20.5 | 0.88 |
+| lazy-pipeline | 221.3 | 196.9 | 0.89 |
+| distinct | 478.2 | 426.6 | 0.89 |
+| multimethod | 40.0 | 36.9 | 0.92 |
+| conj-vector | 36.8 | 35.0 | 0.95 |
+| set-build | 45.1 | 43.8 | 0.97 |
+| regex | 344.7 | 342.2 | 0.99 |
+| equality, pr-str, frequencies, sort, map-lookup, string-join | | | 1.00-1.02 |
+| reduce-range | 19.2 | 20.5 | 1.07 |
+| assoc-map | 56.5 | 60.3 | 1.07 |
+| group-by | 71.8 | 77.8 | 1.08 |
+| format | 159.0 | 176.6 | 1.11 |
+| sort-by | 73.6 | 81.9 | 1.11 |
+| transient-vector | 30.7 | 34.8 | 1.13 |
+| into-vector | 30.5 | 34.8 | 1.14 |
+| transduce | 17.7 | 22.1 | 1.25 |
+
+The cases above 1.05 were checked against the spread of their three runs. `transduce`, `into-vector`, `transient-vector`: each run's value moves by up to 2x on both sides (stock `transduce` 17.7 / 26.7 / 13.9 without, 16.1 / 26.2 / 22.1 with; its host side 8.2 / 15.6 / 6.6 and 7.8 / 15.9 / 15.2): noise. `assoc-map`, `group-by`, `reduce-range`: the ranges overlap. `sort-by` and `format` went to the probe (median of 20 calls per process, three processes per level, ns):
+
+```
+format   none 120489657 122686171 132509020   -O1 140402957 211427235 126905263   -O2 138735614 133599220 140019454   -O3 161952661 151708867 144162371
+sort-by  none  73077888  78821362  88413199   -O1  84080874  79800194  80563051   -O2  84737917  77948967  84492845   -O3  75592014  80963927  80923220
+```
+
+`sort-by` is the same at every level. **`format` is slower at every level, most at `-O3`**: medians 120-133 ms without, 144-162 ms with (+15 to +30%), the fastest calls 102-108 ms against 124-139. The case's code (cohost.shim's `jformat`, the adapter's `format`) is in AOT objects compiled `-O3` either way; what the flag changes for it is the JIT-compiled case fn and whatever the JIT compiles while it runs. The cause is not found.
+
+### What the flag buys
+
+Every call-heavy case: `fn-call` 3.8x, `loop-arith` and `hinted-loop` fold to nothing (the loop is a constant at `-O3`, as R's P6 found), `destructure` 1.7x, `keyword-lookup` 1.5x, `protocol` 1.3x: the user code that the JIT compiles. The library-heavy cases do not move: their code is the snapshot's, `-O3` already. One case, `format`, is slower.
+
 ## Type hints (H1)
 
 Measured 2026-11-01 ET on jank `0.1-noble`. The commands ran on `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. The branch was then rebased onto `b61bf0e5856c78d06605e6c32682534a61edf32c`; those commits touch `doc/upstream/` and `doc/hosts/jank-FAST.md` only, so the boots were not run again. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.
@@ -1109,3 +1331,30 @@ libraries: 61/61 cases pass across 12 clojure.* libraries
 The two jank failures are `subs count nth first last butlast` (`Unterminated vector.`) and `Character outside ASCII` (`Unexpected end of file.`). `bb boot:jank` on the tip, after the defn, spec, and call-list shortcuts were removed, printed the same three lines: `542` / `171` / `78` / `0`, battery `143/145`, libraries `61/61`.
 
 Step 8's program suite (fib, tak, nbody, and the rest) is `bb bench:programs`. The table is "Programs against JVM Clojure" in `doc/PERF.md` (JVM, jank-jit, jank-aot, cohost on jank, and clojurust).
+
+## Step 5 H1: the coercion's fast path, and the :arglists strip (2026-11-02)
+
+The H1 coercion in front of a hinted fn* arity now passes a value already of
+the hinted kind on one host type test -- the shim's `long-kind?`/`double-kind?`,
+bound once to the host core's own `integer?`/`double?` -- with the stock-core
+conversion only otherwise. `bb bench:programs jank` warm medians (box load ~2,
+ratios are the signal; G-13's baselines in parens): fib 258.5, fib-hinted 552.6
+(x2.14; was x3.5); tak 17.95, tak-hinted 38.21 (x2.13; was x3.1). A shape
+isolation through the same AOT boot prices the parts: no check 280 ms, the
+kind test 554, the old (number? + stock long) shape 837, the real ^long fn 561.
+The remaining jank gap is the one cross-module fn call itself (~100 ns per
+entry); parity needs the test inlined as a native tag check in the emitted
+form, which the codemod does not do today.
+
+On the JVM the same work found why every hinted program was ABSENT: a defn's
+var kept `{:tag long}` inside its `:arglists` (in the `(quote ...)` form the
+defn macro emits), so the JVM compiler read the var as a primitive fn and
+emitted checkcasts to `IFn$LO`/`IFn$LLLO` the coerced fn does not implement.
+`strip-arglists` existed for exactly this, but `carry-meta`'s "unchanged"
+test used `=`, which is metadata-blind: a strip whose only change is
+metadata inside a meta value compares equal and was dropped. `carry-meta`
+now tests `identical?`. After it: `bb bench:programs jvm-cohost` has no
+ABSENT rows (six hinted programs were absent), tak-hinted's warm median
+0.60 ms beats tak's 2.39, and fib-hinted runs (86.5 median, unsettled spread,
+vs fib 10.95). `bb boot:jvm` battery 144/145 (the eduction row above fails
+on the base too), libraries 61/61; `bb boot:jank` 143/145, 61/61.
