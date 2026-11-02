@@ -1,0 +1,209 @@
+From ba32453453359d20649ed1d4553dbbdbc089904b Mon Sep 17 00:00:00 2001
+From: u5 <u5@cohost-max>
+Date: Mon, 2 Nov 2026 21:47:33 +0000
+Subject: [PATCH] u5: 31-bt-alloc: vector literals without va_list; small
+ vectors without immer's move and 8 bytes smaller; (v i) in place
+
+- codegen/api.hpp: _jank_vec(u64, object_ref const &...) for 1-32 elements without meta, always
+  inline, an exact match for codegen's _jank_vec(n, a.erase(), ...) so it wins over the C
+  variadic overload (which stays for meta, string meta, 0 or >32 elements); a stack array to
+  persistent_vector::create_small. No va_list, no 32-slot staging buffer.
+- persistent_vector.cpp make_small: the box's immer vector is copy-constructed from a shared
+  empty vector (four stores) and given its size and tail; immer's move constructor (rbtree():
+  two function-local statics, then a swap) is gone from every small vector.
+- make_small's block overlaps box and leaf by one word: the leaf's 8-byte header (immer's ownee,
+  a transient's owner token) is the box's last member, meta. immer writes a node's ownee only
+  after can_mutate(e), i.e. when it already equals a live transient's token (a fresh
+  allocation); this word is null or the vector's own lazy_meta, so transients still copy the
+  leaf and no immer write reaches meta. Static asserts pin meta as the last word and the leaf
+  header as one word. [i i]: 72 bytes asked, bdwgc's 80-byte class (was 80 + its extra byte:
+  the 96-byte class).
+- persistent_vector::call and nth(index): a tagged small integer in range is read in place
+  (no is_integral/to_i64 calls); everything else takes the old path, same errors.
+
+Applies on f3d82d65 + 11, 13, 14, 12-21, 18, 19, 15a-16, 15b-17, 22, 20, 23, 24, 26, 25, 27, 28, 30, 29.
+---
+ .../include/cpp/jank/codegen/api.hpp          | 16 +++++
+ .../jank/runtime/obj/persistent_vector.hpp    |  6 +-
+ .../jank/runtime/obj/persistent_vector.cpp    | 70 ++++++++++++++++---
+ 3 files changed, 83 insertions(+), 9 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/codegen/api.hpp b/compiler+runtime/include/cpp/jank/codegen/api.hpp
+index 1b836661..7745e981 100644
+--- a/compiler+runtime/include/cpp/jank/codegen/api.hpp
++++ b/compiler+runtime/include/cpp/jank/codegen/api.hpp
+@@ -7,6 +7,7 @@
+ #include <jank/runtime/obj/persistent_string.hpp>
+ #include <jank/runtime/obj/persistent_list.hpp>
+ #include <jank/runtime/obj/persistent_hash_set.hpp>
++#include <jank/runtime/obj/persistent_vector.hpp>
+ #include <jank/runtime/obj/jit_function.hpp>
+ #include <jank/runtime/obj/jit_variadic_function.hpp>
+ #include <jank/runtime/obj/jit_closure.hpp>
+@@ -43,6 +44,21 @@ _jank_vec(char const * const meta, jank::u64 const elems, ...);
+ jank::runtime::obj::persistent_vector_ref
+ _jank_vec(jank::runtime::object_ref const meta, jank::u64 const elems, ...);
+ 
++/* A vector literal of 1 to 32 elements without meta, as codegen emits it
++ * (`_jank_vec(2, a.erase(), b.erase())`): an exact match, so it is chosen over the C variadic
++ * overload above. No va_list and no 32-slot staging buffer: the elements go from the caller's
++ * frame straight to persistent_vector::create_small (one GC allocation). */
++template <typename... Args>
++requires(sizeof...(Args) >= 1
++         && sizeof...(Args) <= jank::runtime::obj::persistent_vector::small_max
++         && (jtl::is_same<Args, jank::runtime::object_ref> && ...))
++[[gnu::always_inline]]
++inline jank::runtime::obj::persistent_vector_ref _jank_vec(jank::u64 const, Args const &...args)
++{
++  jank::runtime::object_ref const elems[]{ args... };
++  return jank::runtime::obj::persistent_vector::create_small(elems, sizeof...(Args));
++}
++
+ jank::runtime::obj::persistent_hash_set_ref _jank_hset(jank::u64 const elems, ...);
+ jank::runtime::obj::persistent_hash_set_ref
+ _jank_hset(char const * const meta, jank::u64 const elems, ...);
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp
+index ad8e3237..82009394 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp
+@@ -121,6 +121,8 @@ namespace jank::runtime::obj
+ 
+     /*** XXX: Everything here is thread-safe. ***/
+   private:
++    friend struct persistent_vector_layout;
++
+     static lazy_meta *make_meta(object_ref const m);
+     static lazy_meta *copy_meta(lazy_meta const *m);
+     lazy_meta *load_meta() const;
+@@ -128,7 +130,9 @@ namespace jank::runtime::obj
+     /* Out of line, allocated only for a vector that carries meta: an inline lazy_meta is 48
+      * bytes of a 104-byte box, and almost no vector has meta. Each vector owns its own
+      * lazy_meta (derived vectors copy it), so set_meta never reaches another vector. Read and
+-     * published atomically (std::atomic_ref); the lazy_meta itself synchronizes its state. */
++     * published atomically (std::atomic_ref); the lazy_meta itself synchronizes its state.
++     * Last member: a small vector's immer leaf starts here, its 8-byte header (immer's ownee)
++     * being this word (persistent_vector.cpp, make_small). */
+     mutable lazy_meta *meta{};
+   };
+ }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp
+index ac380f25..38f4b32e 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp
+@@ -13,6 +13,21 @@
+ 
+ namespace jank::runtime::obj
+ {
++  /* Where a small vector's leaf starts: at the box's last word, `meta`. */
++  struct persistent_vector_layout
++  {
++    static constexpr usize leaf_offset()
++    {
++#pragma clang diagnostic push
++#pragma clang diagnostic ignored "-Winvalid-offsetof"
++      constexpr usize off{ offsetof(persistent_vector, meta) };
++#pragma clang diagnostic pop
++      static_assert(off + sizeof(lazy_meta *) == sizeof(persistent_vector));
++      static_assert(off % alignof(lazy_meta *) == 0);
++      return off;
++    }
++  };
++
+   namespace
+   {
+     using native_vector = runtime::detail::native_persistent_vector;
+@@ -20,18 +35,36 @@ namespace jank::runtime::obj
+       = std::remove_cvref_t<decltype(std::declval<native_vector const &>().impl())>;
+     using native_node = native_rbtree::node_t;
+ 
++    /* make_small's starting point: root = immer's empty root, shift = bits_leaf. A function
++     * local, so a vector built during another TU's static initialization still sees it. */
++    native_vector const &empty_native()
++    {
++      static native_vector const v{};
++      return v;
++    }
++
+     /* One GC allocation laid out as [persistent_vector | leaf of n elements]; the leaf is the
+      * vector's tail and its root is immer's shared empty root. The block is a plain GC_malloc
+      * (scanned conservatively, never a typed descriptor), so the elements in the leaf are traced.
+      * jank runs bdwgc with all interior pointers recognized, so the tail pointer alone keeps the
+      * block alive when the immer value outlives its box. immer never frees or mutates the leaf:
+      * the memory policy does no refcounting, and the leaf has no transient owner, so a transient
+-     * or a persistent update copies it. `fill` writes the n elements. */
++     * or a persistent update copies it. `fill` writes the n elements.
++     *
++     * The leaf overlaps the box by one word: its 8-byte header (immer's ownee, the transient
++     * owner token) is the box's last member, `meta`. immer writes a node's ownee only after
++     * can_mutate(e), i.e. when it already equals a live transient's token (a fresh allocation);
++     * this word is null or the vector's own lazy_meta, never such a token, so every transient
++     * still copies the leaf, and no immer write reaches meta. ownee().owned() only picks a
++     * deallocation size, and the GC heap never deallocates. [i i]: 72 bytes asked, bdwgc's
++     * 80-byte class (80 + its extra byte was the 96-byte class). */
+     template <typename Fill, typename... Args>
+     persistent_vector_ref make_small(usize const n, Fill &&fill, Args &&...args)
+     {
+-      constexpr usize align{ alignof(native_node) };
+-      constexpr usize box_size{ (sizeof(persistent_vector) + align - 1) / align * align };
++      constexpr usize box_size{ persistent_vector_layout::leaf_offset() };
++      static_assert(box_size % alignof(native_node) == 0);
++      /* The leaf's header is exactly one word, the one it shares with meta. */
++      static_assert(native_node::sizeof_leaf_n(0) == sizeof(void *));
+       static_assert(alignof(persistent_vector) <= alignof(std::max_align_t));
+       auto const count{ static_cast<immer::detail::rbts::count_t>(n) };
+       auto const leaf_size{ native_node::sizeof_leaf_n(count) };
+@@ -42,10 +75,14 @@ namespace jank::runtime::obj
+       }
+       auto const leaf{ native_node::make_leaf_n_into(mem + box_size, leaf_size, count) };
+       fill(leaf->leaf());
+-      auto const ret{ ::new(static_cast<void *>(mem)) persistent_vector{
+-        std::forward<Args>(args)...,
+-        std::in_place,
+-        native_rbtree(n, native_node::bits_leaf, native_rbtree::empty_root(), leaf) } };
++      /* The box's vector is a copy of a shared empty vector (immer's copy constructor is four
++       * stores; its move constructor default-constructs, through two function-local statics,
++       * and swaps), then given its size and tail. Root and shift are the empty vector's. */
++      auto const ret{ ::new(static_cast<void *>(mem))
++                        persistent_vector{ std::forward<Args>(args)..., std::in_place, empty_native() } };
++      auto &impl{ const_cast<native_rbtree &>(ret->data.impl()) };
++      impl.size = n;
++      impl.tail = leaf;
+       return runtime::detail::untagged(ret);
+     }
+ 
+@@ -305,7 +342,16 @@ namespace jank::runtime::obj
+ 
+   object_ref persistent_vector::call(object_ref const o) const
+   {
+-    return nth(o);
++    /* (v i) with a small integer in range: index directly (no is_integral/to_i64 calls). */
++    if(runtime::detail::is_tagged_small_int(o.raw())) [[likely]]
++    {
++      auto const i{ runtime::detail::as_integer(o.raw()) };
++      if(i >= 0 && static_cast<usize>(i) < data.size()) [[likely]]
++      {
++        return data[static_cast<usize>(i)];
++      }
++    }
++    return persistent_vector::nth(o);
+   }
+ 
+   transient_vector_ref persistent_vector::to_transient() const
+@@ -461,6 +507,14 @@ namespace jank::runtime::obj
+ 
+   object_ref persistent_vector::nth(object_ref const index) const
+   {
++    if(runtime::detail::is_tagged_small_int(index.raw())) [[likely]]
++    {
++      auto const i{ runtime::detail::as_integer(index.raw()) };
++      if(i >= 0 && static_cast<usize>(i) < data.size()) [[likely]]
++      {
++        return data[static_cast<usize>(i)];
++      }
++    }
+     if(is_integral(index))
+     {
+       auto const i(to_i64(index));
+-- 
+2.43.0
+

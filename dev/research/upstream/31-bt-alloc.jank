@@ -1,0 +1,37 @@
+;; jank-31: a vector literal of 1-32 elements without va_list or a staging buffer, the small vector built without
+;; immer's move (default construct + swap) and in 8 fewer bytes (the leaf header shares the box's meta word), and
+;; (v i) / (nth v i) with a small integer index read in place.
+(cpp/raw "#include <gc.h>
+namespace r31 {
+inline void* alloc16() { return GC_MALLOC(16); }
+inline long gc_size(jank::runtime::object_ref o)
+{ void * const p{ jank::runtime::expect_object<jank::runtime::obj::persistent_vector>(o).get() };
+  return GC_base(p) ? static_cast<long>(GC_size(GC_base(p))) : -1L; } }")
+(def n 2000000)
+(timed "[i i] 2e6" (fn [] (loop [i 0 last nil] (if (< i n) (recur (inc i) [i i]) (count last)))))
+(timed "GC_MALLOC(16) 2e6" (fn [] (loop [i 0] (if (< i n) (do (cpp/r31.alloc16) (recur (inc i))) i))))
+(def pair [1 2])
+(timed "(pair 1) 2e6" (fn [] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (pair 1))) s))))
+(timed "(nth pair 1) 2e6" (fn [] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (nth pair 1))) s))))
+(defn build [d] (if (zero? d) nil (let [d (dec d)] [(build d) (build d)])))
+(defn check [t] (if (nil? t) 1 (+ 1 (check (t 0)) (check (t 1)))))
+(timed "binary-trees: 16 x (check (build 14))" (fn [] (loop [i 0 s 0] (if (< i 16) (recur (inc i) (+ s (check (build 14)))) s))))
+(timed "binary-trees: 1 x (check (build 18))" (fn [] (check (build 18))))
+;; behavior: every literal size 1..33, meta, conj, assoc, transients, equality, hash, seq, out-of-range and non-int keys
+(defn mk [i] [i (inc i)])
+(println "GC_size of a runtime [i i]" (cpp/r31.gc_size (mk 1)) "[i i i]" (cpp/r31.gc_size (let [i (rand-int 9)] [i i i])))
+(println "literals"
+         (let [a (rand-int 9)]
+           (mapv count [[a] [a a] [a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a]
+                        [a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a]])))
+(let [v (mk 1)]
+  (println "ops" v (v 0) (v 1) (nth v 1) (nth v 5 :nf) (get v 7 :nf) (get v :k :nf) (conj v 3) (assoc v 0 :a) (pop v)
+           (= v [1 2]) (= (hash v) (hash [1 2])) (seq v) (meta (with-meta v {:m 1})) (persistent! (conj! (transient v) 9))
+           (try (v 2) (catch :default e :oob)) (try (v -1) (catch :default e :oob)) (try (nth v 2) (catch :default e :oob))
+           (into (mk 1) (range 40))))
+;; the small vector's meta word is also its leaf's header: meta through conj/assoc/transients, the source unchanged
+(let [v (with-meta (mk 1) {:m 2}) t (transient v) _ (conj! t 9) _ (assoc! t 0 :z) w (persistent! t)]
+  (println "meta" (meta v) v (meta (conj v 3)) (meta (assoc v 1 :b)) (meta (pop v)) w (meta w) v (= v (mk 1))
+           (let [u (vary-meta (mk 5) assoc :k 1)] [u (meta u) (meta (conj u 7)) (persistent! (conj! (transient u) 8))])))
+(let [c (conj (with-meta (mk 1) {:m 4}) 3) t (transient c) _ (conj! t 9) _ (assoc! t 0 :z) w (persistent! t)]
+  (println "meta-in-header" c (meta c) w (meta w) c (meta (conj c 5)) (meta (assoc c 0 :q)) (into c (range 35)) (meta (into c (range 35)))))
