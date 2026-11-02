@@ -544,8 +544,13 @@ Reading: `-O3` on the JIT is 6.4x on cohost's fib (245827372 -> 38481897 ns), 7.
 2.9x the JVM's and 2.9x raw jank JIT's; written as `(def f (fn ...))` it is 1.56x the JVM's.
 The stock `defn` shape costs 1.84x over `def`+`fn` (38481897 vs 20871741) and the stock ops
 1.3x over jank's own inside a `defn` (38481897 vs 29816492) but nothing inside a `def`+`fn`
-(20871741 vs 20571980); the generated C++ of the two shapes (`JANK_PRINT_CODEGEN=1`, §8.3) is
-what separates them.
+(20871741 vs 20571980). The generated C++ (`JANK_PRINT_CODEGEN=1 jank ... -O3 run-main
+cohost.run -- --eval ...`, §8.3) says why: the stock `defn` reaches jank as an unnamed fn
+(`cohost_user$fn_1_1`), so each recursive `(fib-stock ...)` is a var deref plus a dynamic
+`.call` (`v11 = var->deref(); v11.call(v10)`, twice per invocation), and `(- n 2)` is a third
+var deref and dynamic call (the `Numbers-minus` wrapper); the `(def f (fn f ...))` shape keeps
+its name and recurses by direct call (`cohost_user$fib_fn_def_9_1(fib_fn_def, v10)`). On raw
+jank, `defn` names the fn (core.jank line 778), so raw jank already has the direct shape.
 
 ### S3-1. Compile what cohost evaluates at `-O3`: the JIT flag now, the snapshot next
 
@@ -582,10 +587,11 @@ what separates them.
   `:rewrite-inline?`). (b) The cohost-instance guard as an inline tag check in the emitted
   form (`cpp/cohost_obj.is_cohost x` is a 1.6 ns `cpp/raw` call, P2; the guard today is a var
   call into the adapter namespace, 9-11 ns, plus the descriptor lookup) and `host-object?`
-  keyed by object type integer instead of the `(type x)` string. (c) Whatever the stock `defn`
-  adds over `def`+`fn` (P6: 1.84x; the C++ dump in §8.3 names it) emitted away by the
-  codemod's `defn` handling (the dropped "plain defn" shortcut of doc/perf/jank.md "Codemod" was
-  about boot time; this is about the emitted fn's shape).
+  keyed by object type integer instead of the `(type x)` string. (c) The fn's name: emit
+  `(def name (fn* name ...))` for a `defn` on jank, as jank's own `defn` does, so
+  self-recursion is a direct call instead of a var deref and dynamic call per recursive call
+  (the C++ in §8.3; P6: 1.84x on fib). The dropped "plain defn" shortcut of doc/perf/jank.md
+  "Codemod" was about boot time; this is about the emitted fn's shape.
 - **Cost attacked.** fib-stock 38481897 against fib-fn-def 20871741 and fib-host-ops 29816492
   at `-O3` (P6); lane M's ~100 ns per entry (M-6); the collection-op guards on every
   `RT-count`/`RT-nth`/`RT-conj` (`shim.cljc:606-615`), i.e. the transient-vector, into,
@@ -594,12 +600,15 @@ what separates them.
 - **Expected effect.** fib: up to 1.84x (P6, the `def`+`fn` shape); the collection cases:
   unknown until the guard is emitted inline and `bb bench:jank` re-run (lane M's Step 3 items
   measured by the bench's `xN` column).
-- **Probe.** P6 (done); the codegen dump of the two fib shapes (`JANK_PRINT_CODEGEN=1`, §8.3);
+- **Probe.** P6 (done); the codegen dump of the two fib shapes (done, §8.3);
   P12 (an hour): `RT-nth` with the guard inline as `cpp/cohost_obj.is_cohost` against the
   shipped shape, 5e6 calls.
 - **Semantic risk.** The statics must keep the JVM's semantics where jank's op differs
   (`-` on a non-number, `/` on integers has no ratios on jank: keep the shim for those arms);
-  the guard must still route cohost instances to their descriptor.
+  the guard must still route cohost instances to their descriptor. Naming the fn makes an
+  in-flight recursion ignore a redefinition of the var (`with-redefs` of `fib` while `fib`
+  runs): the JVM goes through the var, raw jank already does not; a battery row should pin
+  which one cohost on jank promises.
 - **Owner.** cohost, lane M (shim and adapter, Step 3/4 territory).
 
 ### S3-3. Dispatch on jank: fixed-arity protocol methods with an inline cache, record fields by index, a multimethod cache
