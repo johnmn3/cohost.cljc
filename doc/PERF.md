@@ -633,6 +633,16 @@ ABSENT and DIFFER, as printed:
   JVM, hinted/unhinted is at most 1.026 (nsieve, min-max 155-453 vs 165-345 ms), 1.005 (mandelbrot) and 0.991
   (nbody): inside the box's noise; fib 0.62, tak 0.43, spectral-norm 0.50.
 
+### cohost on jank from the snapshot (C-3 addendum)
+
+With lane D's D-5 entry in the tree (`dev/perf/jank_snapshot_cli.clj`), `bb bench:programs jank` boots from the
+snapshot when it is fresh (else from the AOT objects, as that entry decides) and records `:boot` per row. Measured
+2026-11-02 1:34 PM ET on `c/bench-programs` merged with `d/jank-cli` (`bb boot:jank-snapshot`: built in 559016 ms,
+`SNAPSHOT-BOOT-MS 633.302331`), `bb bench:programs jank "fib,tak,first-output"`, `:boot :snapshot` on every row:
+first-output median 4293.496 ms (min-max 4051.667-4444.732; the AOT -O3 boot above: 20101.329), fib 484.177 ms,
+tak 1402.188 ms (the program's own time: the same as from the AOT boot, 459.506 and 1488.983). The table above is
+the AOT boot; the coordinator's rerun on a tree with D-5 merged gives the snapshot's.
+
 ### jank without -O against -O3
 
 The same driver, the same box, jank-jit and cohost on jank before the addendum
