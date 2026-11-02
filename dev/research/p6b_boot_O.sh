@@ -7,7 +7,7 @@ dir="$(bb -e '(print (load-file "dev/perf/jank_aot_ensure.clj"))' 2>/dev/null | 
 for o in "" "-O3"; do
   for i in 1 2 3; do
     s=$(date +%s.%N)
-    jank --module-path "$dir:src" $o run-main cohost.run > /dev/null 2>&1
+    "${JANK_BIN:-jank}" --module-path "$dir:src" $o run-main cohost.run > /dev/null 2>&1
     e=$(date +%s.%N)
     echo "boot opt='${o:-none}' run $i wall-s $(echo "$e - $s" | bc)"
   done

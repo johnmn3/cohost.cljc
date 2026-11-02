@@ -18,11 +18,11 @@ echo "aot-dir $aot"
 one() {
   local mp="$1"
   python3 - "$mp" "$root" << 'PY'
-import subprocess, sys, time
+import os, subprocess, sys, time
 mp, root = sys.argv[1], sys.argv[2]
 start = time.time_ns()
 p = subprocess.run(
-    ["jank", "--module-path", mp, "run", "dev/perf/jank_aot_load.jank", "--", "--load-only"],
+    [os.environ.get("JANK_BIN", "jank"), "--module-path", mp, "run", "dev/perf/jank_aot_load.jank", "--", "--load-only"],
     cwd=root, capture_output=True, text=True)
 stamp = None
 for line in p.stdout.splitlines():
