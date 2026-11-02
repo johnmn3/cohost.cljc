@@ -1,4 +1,4 @@
-From 493dea3e3282ec41cd80eecad8f51718d0513428 Mon Sep 17 00:00:00 2001
+From 68d36f4beb7c71486d68bf696a1299856103979c Mon Sep 17 00:00:00 2001
 From: cohost u2 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 20:18:56 +0000
 Subject: [PATCH] Rest args on the caller's stack when they cannot escape;
@@ -26,7 +26,8 @@ Repro: bash dev/research/upstream/run.sh 29-variadic-multi (in johnmn3/cohost.cl
    find_and_cache_best_method handed the var to is_preferred, whose parents
    walk expects the map. reset_cache now stores hierarchy.deref(), and is_a
    (no longer dereffing) and is_preferred both take the map, as Clojure's
-   MultiFn does. This is most of the multimethod gap U7-2 named.
+   MultiFn does; get_method reads #'global-hierarchy's root with
+   var::deref_inline. This is most of the multimethod gap U7-2 named.
 3. A keyword dispatch fn ((defmulti area :shape)) is computed inline as a get
    on the first argument; other dispatch fns and the method go through
    call_fast.
@@ -36,7 +37,8 @@ Repro: bash dev/research/upstream/run.sh 29-variadic-multi (in johnmn3/cohost.cl
    every call, compiled or not. realize() now returns on an atomic
    `realized` flag (set with release once compiled_fn is set), and call_fast
    calls a realized deferred fn's compiled fn directly (through its arity
-   pointer when it is a jit_function).
+   pointer when it is a jit_function); call_fast reads the object type once
+   and tests jit_function first.
 
 The rest_noescape bit is computed in ir::arity_flags, so both the module
 root fn (what def creates, lazily or eagerly) and nested fn expressions get
@@ -53,13 +55,13 @@ compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp.
 ---
  .../include/cpp/jank/runtime/core/call.hpp    |  10 +
  .../runtime/obj/deferred_cpp_function.hpp     |   6 +
- .../cpp/jank/runtime/obj/jit_function.hpp     |  24 ++-
+ .../cpp/jank/runtime/obj/jit_function.hpp     |  56 ++++--
  .../src/cpp/jank/ir/processor.cpp             | 111 ++++++++++-
  .../runtime/obj/deferred_cpp_function.cpp     |   5 +
  .../jank/runtime/obj/jit_variadic_closure.cpp |   2 +-
  .../runtime/obj/jit_variadic_function.cpp     | 176 +++++++++++-------
- .../cpp/jank/runtime/obj/multi_function.cpp   |  46 +++--
- 8 files changed, 292 insertions(+), 88 deletions(-)
+ .../cpp/jank/runtime/obj/multi_function.cpp   |  53 ++++--
+ 8 files changed, 316 insertions(+), 103 deletions(-)
 
 diff --git a/compiler+runtime/include/cpp/jank/runtime/core/call.hpp b/compiler+runtime/include/cpp/jank/runtime/core/call.hpp
 index a479e2c61..44bece6a3 100644
@@ -106,7 +108,7 @@ index 3b2940a72..e68cc06c4 100644
      mutable callable_arity_flags arity_flags{};
      mutable jtl::immutable_string base_name;
 diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
-index df643c21d..1bdb65761 100644
+index df643c21d..a6ade4160 100644
 --- a/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
 +++ b/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
 @@ -2,6 +2,7 @@
@@ -117,46 +119,71 @@ index df643c21d..1bdb65761 100644
  
  namespace jank::runtime::obj
  {
-@@ -160,9 +161,22 @@ namespace jank::runtime
+@@ -160,26 +161,47 @@ namespace jank::runtime
      constexpr auto n{ sizeof...(Args) };
      if constexpr(n <= 10)
      {
 -      if(detail::is_tagged_pointer(f.raw()) && f.ptr()->type == object_type::jit_function)
 +      auto target{ f };
-+      /* A lazily compiled fn (jank run's default) that has been compiled: call what it
-+       * compiled to. Before that, its own call compiles it. */
-+      if(detail::is_tagged_pointer(target.raw())
-+         && target.ptr()->type == object_type::deferred_cpp_function)
++      if(detail::is_tagged_pointer(target.raw()))
        {
 -        auto const fn{ static_cast<obj::jit_function *>(f.ptr()) };
-+        auto const deferred{ static_cast<obj::deferred_cpp_function *>(target.ptr()) };
-+        if(deferred->realized.load(std::memory_order_acquire))
-+        {
-+          target = deferred->compiled_fn;
-+        }
-+      }
-+      if(detail::is_tagged_pointer(target.raw())
-+         && target.ptr()->type == object_type::jit_function)
-+      {
-+        auto const fn{ static_cast<obj::jit_function *>(target.ptr()) };
-         auto const arity{ [fn]() {
-           if constexpr(n == 0) { return fn->arity_0; }
-           else if constexpr(n == 1) { return fn->arity_1; }
-@@ -178,9 +192,13 @@ namespace jank::runtime
-         }() };
-         if(arity)
+-        auto const arity{ [fn]() {
+-          if constexpr(n == 0) { return fn->arity_0; }
+-          else if constexpr(n == 1) { return fn->arity_1; }
+-          else if constexpr(n == 2) { return fn->arity_2; }
+-          else if constexpr(n == 3) { return fn->arity_3; }
+-          else if constexpr(n == 4) { return fn->arity_4; }
+-          else if constexpr(n == 5) { return fn->arity_5; }
+-          else if constexpr(n == 6) { return fn->arity_6; }
+-          else if constexpr(n == 7) { return fn->arity_7; }
+-          else if constexpr(n == 8) { return fn->arity_8; }
+-          else if constexpr(n == 9) { return fn->arity_9; }
+-          else { return fn->arity_10; }
+-        }() };
+-        if(arity)
++        auto t{ target.ptr()->type };
++        /* A lazily compiled fn (jank run's default) that has been compiled: call what it
++         * compiled to. Before that, its own call compiles it. Tested after jit_function, so
++         * the common case pays one compare. */
++        if(t != object_type::jit_function && t == object_type::deferred_cpp_function)
          {
 -          return arity(f, object_ref{ args }...);
-+          return arity(target, object_ref{ args }...);
++          auto const deferred{ static_cast<obj::deferred_cpp_function *>(target.ptr()) };
++          if(deferred->realized.load(std::memory_order_acquire))
++          {
++            target = deferred->compiled_fn;
++            t = detail::is_tagged_pointer(target.raw()) ? target.ptr()->type : object_type::nil;
++          }
          }
-       }
++        if(t == object_type::jit_function)
++        {
++          auto const fn{ static_cast<obj::jit_function *>(target.ptr()) };
++          auto const arity{ [fn]() {
++            if constexpr(n == 0) { return fn->arity_0; }
++            else if constexpr(n == 1) { return fn->arity_1; }
++            else if constexpr(n == 2) { return fn->arity_2; }
++            else if constexpr(n == 3) { return fn->arity_3; }
++            else if constexpr(n == 4) { return fn->arity_4; }
++            else if constexpr(n == 5) { return fn->arity_5; }
++            else if constexpr(n == 6) { return fn->arity_6; }
++            else if constexpr(n == 7) { return fn->arity_7; }
++            else if constexpr(n == 8) { return fn->arity_8; }
++            else if constexpr(n == 9) { return fn->arity_9; }
++            else { return fn->arity_10; }
++          }() };
++          if(arity)
++          {
++            return arity(target, object_ref{ args }...);
++          }
++        }
++      }
 +      if(target != f)
 +      {
 +        return target.call(object_ref{ args }...);
-+      }
+       }
      }
      return f.call(object_ref{ args }...);
-   }
 diff --git a/compiler+runtime/src/cpp/jank/ir/processor.cpp b/compiler+runtime/src/cpp/jank/ir/processor.cpp
 index e5b4881ef..1aff48c28 100644
 --- a/compiler+runtime/src/cpp/jank/ir/processor.cpp
@@ -878,10 +905,17 @@ index fd62b7ae7..02a4af292 100644
    }
  }
 diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
-index 15d38fe8a..e53996b98 100644
+index 15d38fe8a..116dcca5f 100644
 --- a/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
 +++ b/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
-@@ -26,6 +26,24 @@ namespace jank::runtime::obj
+@@ -1,5 +1,6 @@
+ #include <jank/runtime/obj/multi_function.hpp>
+ #include <jank/runtime/obj/jit_function.hpp>
++#include <jank/runtime/var.hpp>
+ #include <jank/runtime/obj/persistent_hash_set.hpp>
+ #include <jank/runtime/obj/persistent_vector_sequence.hpp>
+ #include <jank/runtime/obj/persistent_hash_map.hpp>
+@@ -26,6 +27,24 @@ namespace jank::runtime::obj
    {
    }
  
@@ -906,7 +940,7 @@ index 15d38fe8a..e53996b98 100644
    object_ref multi_function::call() const
    {
      return call_fast(get_fn(call_fast(dispatch)));
-@@ -33,18 +51,18 @@ namespace jank::runtime::obj
+@@ -33,18 +52,18 @@ namespace jank::runtime::obj
  
    object_ref multi_function::call(object_ref const a1) const
    {
@@ -928,7 +962,7 @@ index 15d38fe8a..e53996b98 100644
    }
  
    object_ref multi_function::call(object_ref const a1,
-@@ -52,7 +70,7 @@ namespace jank::runtime::obj
+@@ -52,7 +71,7 @@ namespace jank::runtime::obj
                                    object_ref const a3,
                                    object_ref const a4) const
    {
@@ -937,7 +971,7 @@ index 15d38fe8a..e53996b98 100644
    }
  
    object_ref multi_function::call(object_ref const a1,
-@@ -61,7 +79,7 @@ namespace jank::runtime::obj
+@@ -61,7 +80,7 @@ namespace jank::runtime::obj
                                    object_ref const a4,
                                    object_ref const a5) const
    {
@@ -946,7 +980,7 @@ index 15d38fe8a..e53996b98 100644
    }
  
    object_ref multi_function::call(object_ref const a1,
-@@ -71,7 +89,7 @@ namespace jank::runtime::obj
+@@ -71,7 +90,7 @@ namespace jank::runtime::obj
                                    object_ref const a5,
                                    object_ref const a6) const
    {
@@ -955,7 +989,7 @@ index 15d38fe8a..e53996b98 100644
    }
  
    object_ref multi_function::call(object_ref const a1,
-@@ -82,7 +100,7 @@ namespace jank::runtime::obj
+@@ -82,7 +101,7 @@ namespace jank::runtime::obj
                                    object_ref const a6,
                                    object_ref const a7) const
    {
@@ -964,7 +998,7 @@ index 15d38fe8a..e53996b98 100644
    }
  
    object_ref multi_function::call(object_ref const a1,
-@@ -94,7 +112,7 @@ namespace jank::runtime::obj
+@@ -94,7 +113,7 @@ namespace jank::runtime::obj
                                    object_ref const a7,
                                    object_ref const a8) const
    {
@@ -973,7 +1007,7 @@ index 15d38fe8a..e53996b98 100644
    }
  
    object_ref multi_function::call(object_ref const a1,
-@@ -107,7 +125,7 @@ namespace jank::runtime::obj
+@@ -107,7 +126,7 @@ namespace jank::runtime::obj
                                    object_ref const a8,
                                    object_ref const a9) const
    {
@@ -982,7 +1016,7 @@ index 15d38fe8a..e53996b98 100644
    }
  
    object_ref multi_function::call(object_ref const a1,
-@@ -121,7 +139,7 @@ namespace jank::runtime::obj
+@@ -121,7 +140,7 @@ namespace jank::runtime::obj
                                    object_ref const a9,
                                    object_ref const a10) const
    {
@@ -991,7 +1025,7 @@ index 15d38fe8a..e53996b98 100644
    }
  
    multi_function_ref multi_function::reset()
-@@ -135,7 +153,10 @@ namespace jank::runtime::obj
+@@ -135,7 +154,10 @@ namespace jank::runtime::obj
    persistent_hash_map_ref multi_function::reset_cache()
    {
      std::lock_guard<std::recursive_mutex> const lock{ mutex };
@@ -1003,7 +1037,7 @@ index 15d38fe8a..e53996b98 100644
      method_cache = method_table;
      return method_cache;
    }
-@@ -219,7 +240,8 @@ namespace jank::runtime::obj
+@@ -219,7 +241,8 @@ namespace jank::runtime::obj
      static object_ref const isa{
        __rt_ctx->intern_var("clojure.core", "isa?").expect_ok()->deref()
      };
@@ -1013,6 +1047,19 @@ index 15d38fe8a..e53996b98 100644
    }
  
    bool multi_function::is_dominant(object_ref const hierarchy,
+@@ -252,7 +275,11 @@ namespace jank::runtime::obj
+ 
+   object_ref multi_function::get_method(object_ref const dispatch_val) const
+   {
+-    if(cached_hierarchy != hierarchy.deref())
++    /* The default hierarchy is a var (#'global-hierarchy): read its root inline. */
++    auto const current_hierarchy{ hierarchy.get_type() == object_type::var
++                                    ? expect_object<var>(hierarchy)->deref_inline()
++                                    : hierarchy.deref() };
++    if(cached_hierarchy != current_hierarchy)
+     {
+       const_cast<multi_function *>(this)->reset_cache();
+     }
 -- 
 2.43.0
 
