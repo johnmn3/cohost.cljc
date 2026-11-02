@@ -1,6 +1,6 @@
 # Building and deploying
 
-*2026-11-02. Measured with `bb readme:check` on jvm, jolt, cljs, cljw and lg.*
+*2026-11-02. Measured with `bb docs:check` on every runtime in the table but clojurust.*
 
 Builds are [tools.build](https://clojure.org/guides/tools_build): `cohost -T:build build` runs
 the project's `build.clj` as `clojure -T:build build` does. The template's `build.clj` calls
@@ -9,7 +9,7 @@ task's arguments, else `:cohost/target`, else `:jvm`). Every artifact is a direc
 `target/<name>/` whose `run` starts the project's `-main` from any directory:
 
 ```bash
-# targets: jvm jolt cljs cljw lg lpy phel
+# targets: jvm jolt jank cljs cljw lg lpy phel
 cohost -T:build build                               # => build: target/myapp/run
 (cd /tmp && "$OLDPWD"/target/myapp/run you)         # => Hello, you!
 ```
@@ -23,7 +23,7 @@ template came from, so `-T:build` needs no cohost checkout.
 | `:cljs` | cohost's ClojureScript build, Clojure's sources, the project's source roots, `run.js`, `run` | Node |
 | `:jolt` | `bin/cohost-jolt` (cohost compiled by `jolt build` into one native binary, 36 MB), Clojure's sources, the source roots, `run` | nothing else |
 | `:cljw`, `:lg`, `:lpy`, `:phel` | cohost's sources, Clojure's sources, the source roots, `run` (a script bundle) | that runtime installed |
-| `:jank` | an executable from jank's AOT compiler (in progress) | |
+| `:jank` | `run` itself: one native executable, the booted core's snapshot and the project's namespaces compiled `-O3` with jank's static runtime | nothing else |
 | `:cljrs` | not yet | |
 
 ClojureWasm and let-go have native packagers of their own; on cohost they stop with
