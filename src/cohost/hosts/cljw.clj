@@ -308,6 +308,11 @@
 
 (def adapter
   {:name :cljw
+   ;; X3-1: the shim's MultiFn with its one-entry cache (adapter.cljc); bb
+   ;; bench:cljw --quick, 8 interleaved rounds on max/main aeac81b: multimethod
+   ;; stock 155.22 [96.68-191.55] -> 108.44 [80.94-141.07] ms, geomean x4.85 ->
+   ;; x4.77, no case's true median above its nil max; boot the same both ways
+   :multimethod-cache? true
    :core-ns 'clojure.core
    :catch-all 'Throwable
    :read-forms read-forms
