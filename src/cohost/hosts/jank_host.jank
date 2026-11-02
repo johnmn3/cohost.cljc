@@ -1469,6 +1469,17 @@ namespace cohost_obj {
    :sb-string (fn [sb] (apply str @(inst-field sb 0)))
    ;; H0 spellings: ^long ^double ^bool ^int. boolean does not resolve.
    :native-hints '{long long double double boolean bool int int}
+   ;; M-6b: the H1 kind test inline -- jank's own runtime predicates,
+   ;; which every module can name (the adapter's cohost_tag block cannot
+   ;; be: a cpp/raw namespace is visible only in its own module).
+   ;; is_integer is exactly a host long (integer and small_integer, not
+   ;; big_integer -- a bigint converts, and the cast range-checks it);
+   ;; is_real is exactly a host double.
+   :prim-kind-test (fn [hint sym]
+                     (case hint
+                       long (list 'cpp/jank.runtime.is_integer sym)
+                       double (list 'cpp/jank.runtime.is_real sym)
+                       nil))
 })
 
 

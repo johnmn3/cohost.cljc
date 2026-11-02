@@ -38,12 +38,26 @@ tools.build, as for `clojure`: `cohost -T:build build` runs the project's `build
 which calls `cohost.build/build` (`src/cohost/build.clj`, JVM-side). The target is
 `:target` in the task's arguments, else `:cohost/target`, else `:jvm`:
 
-| target | artifact | runs as |
-|---|---|---|
-| `:jvm` | `target/<name>.jar`, an uberjar with `clojure.main` as its main | `java -jar target/<name>.jar -m <main> args...` |
-| `:cljs` | `target/<name>-cljs/`: cohost's ClojureScript host build, the stock sources, the project's and its dependencies' source roots, `run.js` | `node target/<name>-cljs/run.js args...` (2026-11-02: `Hello, you!` from another directory) |
-| `:jank` | `target/jank/<name>`: one native executable (`cohost.build-jank`, D-7): the booted core's snapshot and the project's namespaces compiled `-O3`, jank's static runtime; rebuilt when stale | `target/jank/<name> args...`, from any directory, no cohost checkout (2026-11-02: `Hello, you!` in 0.926 s, median of 3, from a deps-new `cohost/app` project; built in 464958 ms) |
-| `:jolt` `:lpy` `:cljw` `:phel` `:lg` `:cljrs` | not yet: the task prints `build: not yet on <target>` and fails | `cohost -M -m <main>` in the project |
+Every artifact is a directory `target/<name>/` whose `run args...` calls the main's `-main` from any
+directory; the task prints `build: target/<name>/run`. Measured 2026-11-02 on `cohost/app` projects
+(`run you` from `/tmp` -> `Hello, you!`):
+
+| target | `target/<name>/` holds | needs at run time | measured (bb readme:check, 2026-11-02 2:06-2:27 PM ET) |
+|---|---|---|---|
+| `:jvm` | `<name>.jar` (tools.build uberjar, `clojure.main` as its main; no `:gen-class` in code every target reads), `run` (`java -jar ... -m <main>`) | java | yes |
+| `:cljs` | cohost's ClojureScript host build (`target/cljs-cli`), the stock sources, the source roots, `run.js`, `run` | node | yes |
+| `:jolt` | `bin/cohost-jolt` (`jolt build -m cohost.cli`, 36 MB, 36 s), the stock sources, the source roots, `run` | nothing: ran with jolt off `PATH` | yes |
+| `:cljw` | a script bundle: cohost's sources, the stock sources, the source roots, `run` (`cljw -cp ... -m cohost.cli`) | cljw | yes (an argument with spaces and quotes too) |
+| `:lg` | a script bundle, `run` (`lg -source-paths ... lg_cli.lg`) | lg | yes (the same argument) |
+| `:lpy` | a script bundle, `run` (`basilisp run -p ... -c ...`) | basilisp | not on this box: the coordinator's |
+| `:phel` | a script bundle with `phel-config.php`, `run` (`phel run dev/phel_cli.phel` in the bundle's `cohost/`) | php + phel | not on this box: the coordinator's |
+| `:jank` | `run` itself: one native executable (`cohost.build-jank`, D-7): the booted core's snapshot and the project's namespaces compiled `-O3`, jank's static runtime; rebuilt when stale (state in `cohost-build/`) | nothing: it links only libc, libstdc++, libgcc_s, libm | yes (D-7: `Hello, you!` in 0.926 s, median of 3, from another directory) |
+| `:cljrs` | not yet: cohost's clojurust boot is parked and the CLI does not run it (`bin/cohost`: not wired) | | |
+
+Why cljw and lg ship a script bundle and not their own native packaging (measured on cohost.cli): `cljw build -m
+cohost.cli -o out -cp src` stops with `build failed: UnsupportedValueTag`; `lg -source-paths src -b out entry.lg`
+stops with `unsupported value type for serialization: *vm.Ratio` (and with `-entry-frame-entry`: `-entry-frame-entry
+requires -c and a namespace/main or namespace/-main value`).
 
 `bb readme:check [target ...]` runs README.md's command blocks, as written, against a fresh
 `cohost/app` project per target.
@@ -114,39 +128,6 @@ files from the process's directory): `cohost.cli` moves to the project directory
 the config names. `:jank` runs `jank -O3 --module-path <cohost's -O3 AOT objects>:src
 run-main cohost.cli -- <config>`; the objects are `dev/perf/jank_aot_ensure.clj`'s, rebuilt
 when `src/cohost` or the jank binary changed (the first run after a change compiles them).
-
-## A native executable on jank (D-7)
-
-`cohost.build-jank/build!` (src/cohost/build_jank.clj) makes one native executable of a project's app on jank: the booted core's snapshot plus the app's namespaces, compiled `-O3` and linked by `jank compile --runtime static`, with the app's `-main` as its entry. Lane C's `cohost.build` (tools.build: `cohost -T:build jank-exe`) calls it; in this repo, `bb build:jank <project-dir> <main-ns> [name]` does (the roots are what `bin/cohost :jank -Spath` prints).
-
-1. cohost's own namespaces as `-O3` AOT objects;
-2. a boot with record mode on: the project's source roots added, the twelve libraries and the app's main namespace loaded through cohost's loader (so the app, its `:local/root` libraries and its Maven jars are rewritten as every other namespace is);
-3. one module per booted namespace, and `cohost.app-main`, whose `-main` boots from the snapshot and calls the app's;
-4. `jank -O3 compile cohost.app-main --runtime static --name <name>`: `<project>/target/jank/<name>`.
-
-Every input (the stock sources, `src/cohost`, the snapshot scripts, jank's binary version, every file under the app's roots, the main and the name) goes into one sha256 stamped beside the executable: a fresh one is not built again (`JANK-EXE-FRESH`), a stale one always is.
-
-Measured 2026-11-02 ET on `dev/cli-demo` (jank `0.1-noble`):
-
-```
-bb build:jank dev/cli-demo demo.main demo
-JANK-EXE-BUILD .../dev/cli-demo/target/jank/demo (new)
-SNAPSHOT-EVENTS 1508 bytes 805029
-MODULE cohost.app-main .../cohost/app_main.jank main demo.main/-main
-JANK-EXE-BUILT .../dev/cli-demo/target/jank/demo in 428694 ms
-bb build:jank dev/cli-demo demo.main demo       # again
-JANK-EXE-FRESH .../dev/cli-demo/target/jank/demo   (0.161 s)
-```
-
-The executable is 38,921,656 bytes and links only the system's libc, libstdc++, libgcc_s and libm. A copy run from `/tmp` prints `hello, jank-USER!`; under `strace` it opens `/etc/ld.so.cache`, those four libraries and `/proc` files, nothing in the checkout, the project or jank's install. It cannot `eval` or load a namespace that was not in the build: the static runtime has no JIT.
-
-Startup, wall seconds to the greeting, three runs each, interleaved, in `dev/cli-demo`:
-
-| | runs | median |
-|---|---|---:|
-| `target/jank/demo jank-user` | 0.930 / 0.876 / 0.911 | 0.911 |
-| `cohost :jank -M -m demo.main jank-user` (fresh snapshot) | 6.797 / 5.925 / 5.870 | 5.925 |
-| `clojure -M -m demo.main jank-user` (JVM) | 1.400 / 1.259 / 1.363 | 1.363 |
 
 ## Verified (2026-11-02 ET)
 
