@@ -14,7 +14,8 @@
   (:require [cohost.adapter :as host]
             [cohost.rewrite :as rw]
             [cohost.shim :as shim]
-            [cohost.policy :as policy]))
+            [cohost.policy :as policy]
+            [cohost.scan :as scan]))
 
 (def core-ns "The namespace the stock core.clj boots into." 'cohost.core)
 (def user-ns 'cohost.user)
@@ -65,17 +66,19 @@
 (defn- read-prof
   "read-forms. When profiling, the time between forms (the read) is :read;
    the callback's time is not."
-  [src cb]
-  (if-not (profiling)
-    (host/read-forms src cb)
-    (let [mark (volatile! (host/nano-time))]
-      (host/read-forms src
-                       (fn [form]
-                         (let [now (host/nano-time)]
-                           (profile-add! :read (- now @mark))
-                           (cb form)
-                           (vreset! mark (host/nano-time)))))
-      (profile-add! :read (- (host/nano-time) @mark)))))
+  ([src cb] (read-prof src cb nil))
+  ([src cb path]
+   (if-not (profiling)
+     (host/read-forms src cb path)
+     (let [mark (volatile! (host/nano-time))]
+       (host/read-forms src
+                        (fn [form]
+                          (let [now (host/nano-time)]
+                            (profile-add! :read (- now @mark))
+                            (cb form)
+                            (vreset! mark (host/nano-time))))
+                        path)
+       (profile-add! :read (- (host/nano-time) @mark))))))
 
 (defn- short-form [form]
   (let [s (pr-str form)]
@@ -990,12 +993,17 @@
 (defn- try-slurp [path]
   (host/try-all (fn [] (host/slurp-file path))))
 
-(defn- find-source [lib]
-  (some (fn [root]
-          (some (fn [ext] (let [p (str root "/" (lib-path lib) ext)]
-                            (when-let [src (try-slurp p)] [p src])))
-                [".clj" ".cljc"]))
-        (source-roots)))
+(defn- find-source
+  "[path src] of lib's file: in each source root in turn, the extension whose
+   reader-conditional key this target ranks first (cohost.scan/source-exts:
+   .clj, then .cljc, on every target today -- as the JVM loads)."
+  [lib]
+  (let [exts (scan/source-exts (scan/ranking (:name (host/current))))]
+    (some (fn [root]
+            (some (fn [ext] (let [p (str root "/" (lib-path lib) ext)]
+                              (when-let [src (try-slurp p)] [p src])))
+                  exts))
+          (source-roots))))
 
 (defn stock-ns-name
   "The namespace a stock library boots into. clojure.X becomes cohost.X,
@@ -1164,8 +1172,9 @@
   "Every top-level form of a library, read and evaluated one at a time in the
    namespace its (ns ...) form makes current; a form that fails is recorded
    and the load goes on, as the core boot does."
-  ([lib src] (load-source! lib src nil))
-  ([lib src from-ns]
+  ([lib src] (load-source! lib src nil nil))
+  ([lib src from-ns] (load-source! lib src from-ns nil))
+  ([lib src from-ns path]
    (let [c (ctx)]
      (with-load-bindings
        (fn []
@@ -1187,7 +1196,8 @@
                          (note! :ok {:name nm}))))
                    (fn [e]
                      (snap-declare! cur nm)
-                     (note! :error {:name nm :error (error-message e) :form (short-form form)}))))))
+                     (note! :error {:name nm :error (error-message e) :form (short-form form)})))))
+              path)
              ;; a macro some form made by a side effect is wrapped now
              (scan-macros! c (host/current-ns)))))))))
 
@@ -1213,7 +1223,7 @@
            (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
            (swap! (:renames (ctx)) assoc (str lib) (str target))
            (swap! state assoc :loading lib)
-           (try (host/try-all (fn [] (load-source! lib src from-ns))
+           (try (host/try-all (fn [] (load-source! lib src from-ns path))
                               (fn [e] (forget!) (snap! {:op :lib-fail :lib lib}) (throw e)))
                 (finally (swap! state assoc :loading outer)))
            (when-not (contains? @(:loader-nses (ctx)) (str target))

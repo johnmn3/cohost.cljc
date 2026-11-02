@@ -11,4 +11,5 @@
   [user]
   (let [[host more] (str/split user #"-" 2)]
     (str (get host-names host host)
-         (when more (str "-" (str/upper-case more))))))
+         ;; a reader conditional in a dependency's .cljc (D-11): the :clj branch
+         (when more (str #?(:cljs "~" :clj "-" :default "+") (str/upper-case more))))))
