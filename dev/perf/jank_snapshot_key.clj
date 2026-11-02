@@ -3,7 +3,8 @@
 ;;
 ;; The key is one sha256 over every input of the snapshot: the stock sources
 ;; (resources/cohost/clojure-1.12.0), cohost's sources (src/cohost), the
-;; snapshot's own scripts (dev/perf/jank_snapshot_*), and
+;; scripts that make and load it (dev/perf/jank_snapshot_{record,emit,key,
+;; ensure,run}.*; not the timing scripts), and
 ;; `jank print-binary-version`. It is written to target/jank-snapshot/stamp
 ;; after a build. A missing stamp, a different key, or a missing object is
 ;; stale: the snapshot is deleted and built again (record, emit, compile)
@@ -23,7 +24,7 @@
 (defn- input-files []
   (->> (concat (fs/glob "resources/cohost/clojure-1.12.0" "**")
                (fs/glob "src/cohost" "**")
-               (fs/glob "dev/perf" "jank_snapshot_*"))
+               (fs/glob "dev/perf" "jank_snapshot_{record.jank,emit.clj,key.clj,ensure.clj,run.jank}"))
        (filter fs/regular-file?)
        (map str)
        sort
