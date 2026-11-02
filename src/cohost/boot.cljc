@@ -182,6 +182,16 @@
         v (enc x)]
     (if m {:cohost.snap/meta (snap-encode m) :cohost.snap/val v} v)))
 
+(declare snap!)
+(defn- snap-declare!
+  "A form that failed may still have interned its name (jank's analyzer
+   interns a def's var before the body fails): later forms refer to that
+   var, so the snapshot declares it too."
+  [ns-sym nm]
+  (when (and @snapshot-log (symbol? nm) (nil? (namespace nm))
+             (host/try-all (fn [] (some? (host/interned-var ns-sym nm))) (fn [_] false)))
+    (snap! {:op :declare :ns ns-sym :sym nm})))
+
 (defn- snap-module
   "The namespace of the snapshot module an event belongs to: the library
    being loaded, else the core."
@@ -598,6 +608,7 @@
          (profile-form! core-ns form name (- t1 t0) (- t2 t1))))
      (record! report status {:name name}))
    (fn [e]
+     (snap-declare! core-ns name)
      (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
 
 (def verbose? (atom false))
@@ -1172,6 +1183,7 @@
                          (when (not= ns' cur) (host/set-current-ns! ns'))
                          (note! :ok {:name nm}))))
                    (fn [e]
+                     (snap-declare! cur nm)
                      (note! :error {:name nm :error (error-message e) :form (short-form form)}))))))
              ;; a macro some form made by a side effect is wrapped now
              (scan-macros! c (host/current-ns)))))))))

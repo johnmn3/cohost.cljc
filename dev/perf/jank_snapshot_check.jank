@@ -42,9 +42,9 @@
           (swap! n inc))))
     (println "EVAL-NS" path (- (cohost.adapter/nano-time) t0) "forms" @n)))
 
-(when (cohost.adapter/slurp-file "/tmp/jank-snap-src/cohost/walk.jank")
+(when (try (cohost.adapter/slurp-file "/tmp/jank-snap-src/cohost/walk.jank") (catch :default e nil))
   (cohost.adapter/with-ns 'cohost.walk
     (fn [] (time-file "/tmp/jank-snap-src/cohost/walk.jank"))))
-(when (cohost.adapter/slurp-file "/tmp/jank-snap-src/cohost/core.jank")
+(when (try (cohost.adapter/slurp-file "/tmp/jank-snap-src/cohost/core.jank") (catch :default e nil))
   (cohost.adapter/with-ns 'cohost.core
     (fn [] (time-file "/tmp/jank-snap-src/cohost/core.jank"))))

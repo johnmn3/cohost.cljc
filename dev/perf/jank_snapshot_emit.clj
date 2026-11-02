@@ -79,6 +79,7 @@
     :end (str "(cohost.boot/snap-end! " (quoted (:data e)) ")")
     :lib-end (str "(cohost.boot/snap-lib-end! " (quoted (:lib e)) " " (quoted (:entry e)) " "
                   (quoted (:data e)) " " (quoted (:parent (lib-begins (:lib e)))) ")")
+    :declare (str "(def " (:sym e) ")")
     :native (throw (ex-info "a native in the snapshot: not emitted on jank" e))
     (:is :dot :begin :lib-begin :lib-fail) nil))
 
