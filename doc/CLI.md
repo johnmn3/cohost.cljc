@@ -41,7 +41,7 @@ which calls `cohost.build/build` (`src/cohost/build.clj`, JVM-side). The target 
 | target | artifact | runs as |
 |---|---|---|
 | `:jvm` | `target/<name>.jar`, an uberjar with `clojure.main` as its main | `java -jar target/<name>.jar -m <main> args...` |
-| `:cljs` | `target/<name>-cljs/`: cohost's ClojureScript host build, the stock sources, the project's and its dependencies' source roots, `run.js` | `node target/<name>-cljs/run.js args...` (untested, 2026-11-02 1:40 PM ET) |
+| `:cljs` | `target/<name>-cljs/`: cohost's ClojureScript host build, the stock sources, the project's and its dependencies' source roots, `run.js` | `node target/<name>-cljs/run.js args...` (2026-11-02: `Hello, you!` from another directory) |
 | `:jank` | not yet: lane D's D-7 (an AOT executable) | |
 | `:jolt` `:lpy` `:cljw` `:phel` `:lg` `:cljrs` | not yet: the task prints `build: not yet on <target>` and fails | `cohost -M -m <main>` in the project |
 
