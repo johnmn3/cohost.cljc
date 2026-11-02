@@ -1091,3 +1091,52 @@ These three `bb bench:programs` processes were still running when G-13 closed. R
 
 `phel-cohost` had printed through dispatch median 234.659488 SAME. spectral-norm and spectral-norm-hinted ABSENT `Seq::range` end must be int|float, BigInt given. fannkuch and fannkuch-hinted ABSENT the same `Seq::range` BigInt error. nsieve and nsieve-hinted ABSENT `Unsupported operand types: int << BigInt`. pipeline ABSENT the same `Seq::range` BigInt error.
 
+
+## Cross-host: capability keys per host (jank-MAX X3-1)
+
+Each capability-gated gain is a key in a host's adapter map (`src/cohost/hosts/*`), default off; X3 turns it
+on per host where that host's own bench says it pays. First key: `:multimethod-cache?` (X2-1/X2-2), the shim's
+`MultiFn` with a one-entry dispatch cache.
+
+**Which hosts run the shim's MultiFn: all of them.** `rewrite.cljc`'s `rw-new` sends
+`(new clojure.lang.MultiFn ...)` to the shim's `new-MultiFn` on every host (only `java.util` collections pass
+through to the host); probed on jolt and the JVM: `(:cohost.shim/multifn (meta f))` is true. So the key
+reaches the multimethod case on the JVM too (an earlier `(class f)` probe that printed `clojure.lang.MultiFn`
+was the shim's class mapping, not the JVM's class).
+
+Method: base `max/main` @ `aeac81b`; key nil is a clean tree, key true is the same tree with the key in each
+host's map; `bb bench:<host> --quick` (the JVM: the full `bb bench:jvm`, since `--quick` has no warmup there:
+4.93-86.32 ms on one case), the two sides alternated A B A B ..., median and [spread] of the stock side;
+lpy's two sides ran at the same time in each round (about 60 minutes a round at this load); `bb boot:<host>` on both sides. Box: 4 CPUs,
+15 GB, shared with lanes u1 and u5, no lock, load 6-15; 2026-11-02, 2:30-5 PM ET. A host is flipped when the
+multimethod case improves and no case's true median lies above its nil maximum.
+
+| host | rounds | multimethod nil -> true, ms | geomean x nil -> true | battery / libraries (both sides) | key |
+|---|---:|---|---|---|---|
+| JVM (Clojure 1.12.0, Java 21) | 5 full | 8.49 [4.61-8.76] -> 7.24 [7.13-7.35] | 1.28 -> 1.25 | 149/149, 61/61 (148/149 under `LC_ALL=C.UTF-8`, both sides: below) | **on** |
+| jolt 0.8.23 | 9 | 20.19 [15.19-30.48] -> 18.29 [15.02-26.39] | 1.36 -> 1.25 | 149/149, 61/61 | **on** |
+| ClojureWasm 1.15.4 | 8 | 155.22 [96.68-191.55] -> 108.44 [80.94-141.07] | 4.85 -> 4.77 | 147/149, 61/61 | **on** |
+| Phel 0.54.0 | 9 | 813.96 [517.76-968.47] -> 391.87 [267.88-522.38] (true below nil 9 of 9) | 4.37 -> 4.36 | 149/149, 61/61 | **on** |
+| let-go 1.13.0 | 9 | 287.95 [211.03-509.99] -> 280.29 [202.36-412.69] (true below nil 6 of 9) | 6.28 -> 5.96 | 147/149, 61/61 | off: inside the noise |
+| ClojureScript, Node | 3 | 26.26 [24.61-76.55] -> 55.58 [49.48-69.24] | 1.27 -> 1.41 | nil 147/149, 61/61; **true 144/149, 59/61** | off: incorrect (X2-3) |
+| ClojureScript, Chromium | 3 | 51.39 [49.60-54.89] -> 40.09 [38.29-47.30] | 1.27 -> 1.31 | nil 147/149, 61/61; **true 144/149, 59/61** | off: incorrect (X2-3) |
+| basilisp 0.5.1 | 2 paired | 21590.20 -> 21098.93, 16245.01 -> 19659.29 (no gain; a third round, ~60 min under this load, not run) | 1.88 -> 1.85, 2.04 -> 1.80 | 148/149 (numeric tower), 61/61 | off: no gain |
+| clojurust 0.2.32 | - | not measurable on a 15 GB box | - | `bb boot:cljrs` OOM-killed at 4.7 GB RSS (exit 137) or exit 139; `bb bench:cljrs` fails at key nil 3/3 ("wrong type: expected intercepted, got find-ns sentinel") | off |
+| jank | - | (on since X2-1, with its own `cpp/raw` hit fn, X2-2) | - | - | on |
+
+Notes:
+
+- cljs/Chromium with the key: battery rows "a class multimethod reaches user types", "multimethod: a miss is not
+  cached", "multimethod: defmethod after a call is seen", libraries clojure.test "a failing is reports FAIL",
+  "thrown? are testing" fail. The cache is incorrect on that adapter (shared layer, X2-3).
+- X2-2's hit fn: on a non-jank host with the key true the shim's `new-MultiFn` calls a no-op `h-mm-hit` per
+  dispatch; on the JVM the true side's multimethod was 3.23-3.40 ms at `5fd3e3e` (before X2-2) and 7.13-7.35 ms
+  at `aeac81b`. Choosing the arity fns at construction would give it back (shared layer, X2-3).
+- The JVM battery row "reduce over an eduction; a :tag that is data" fails with `LC_ALL=C.UTF-8` exported
+  (`clojure.core.Eduction cannot be cast to clojure.lang.IReduce`, 7 of 7 boots) and passes with LANG/LC_ALL
+  unset (4 of 4), the same tree; not the key's.
+- The reduce and sort arms of X4-1 (`doc/research/jank-workarounds.md`) are `#?(:jank ...)` arms by
+  construction. Two could become capability keys: the stock `compare` recognised and sorted with the host's own
+  compare (any host whose `Arrays/sort` adapter has a native comparator), and reduce over a vector or range by an
+  indexed/counted loop (any host whose seq walk costs more than `nth`). Neither has been measured off jank.
+- Next keys as they merge: the fn name on defn (M-9).
