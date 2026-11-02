@@ -17,3 +17,4 @@
 30-inline-int-width.patch
 29-variadic-multi.patch
 32-real-speculation.patch
+31-bt-alloc.patch
