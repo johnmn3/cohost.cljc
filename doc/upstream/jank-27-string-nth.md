@@ -14,7 +14,16 @@ String `nth` costs about what the JVM's `String.charAt` plus `Character.valueOf`
 
 ## Actual
 
-Numbers are in the U2-4 report blocks of `coord/cohost-max/reports/u3.md` (base and patched, interleaved). `apply str` over 1e4 strings already beats the JVM twin on the series with 15a (in-place walks): 197745 ns against 425450, so `str` needs no change here.
+Base (the series to 23) then patched (+27), three interleaved rounds, each binary with its own `XDG_CACHE_HOME`, box shared with other lanes:
+
+```
+string nth 1e6, (= (nth s i) \t)   61605819 / 49796178 / 51231615  ->  21253650 / 21448242 / 20510852 ns
+string count 1e6 loop, no nth       8912671 /  7405674 /  8307830  ->   7291667 /  7370437 /  7325568
+apply str over 1e4 strings           147983 /   133700 /   123856  ->    186074 /   180710 /   178094
+identical? (nth s 3) (nth s 7)        false                         ->   true
+```
+
+On the unpatched f3d82d65 (`jank-dev`) the same nth loop takes 1770725751 ns (the `=` against a character literal is jank-13's). String `nth` with 27 is 2.5x the JVM twin's 8406315. `apply str` over 1e4 strings already beats the JVM twin's 425450 ns on the series with 15a (in-place walks), so `str` needed no change; its base/patched spread is noise (four more interleaved rounds of a str-only probe: base 190806 / 251490 / 179650 / 349449, patched 360342 / 198962 / 175914 / 198788).
 
 ## Where it is in the source
 
@@ -22,4 +31,4 @@ Numbers are in the U2-4 report blocks of `coord/cohost-max/reports/u3.md` (base 
 
 ## What would fix it
 
-What the patch does: `runtime::nth` (both arities, and a new `nth(object_ref, i64)`) reads a string or a vector directly when the index is an in-range integer, and falls to the general path otherwise (bounds errors, other types, not-found unchanged); a string's `nth` returns one of 256 shared character boxes (made once in uncollectable memory; characters are immutable, so sharing them is safe, as the JVM's `Character.valueOf` caches). Byte-indexed semantics (`count` and `nth` on bytes) are unchanged: that is a separate host fact.
+What the patch does: `runtime::nth` (both arities, and a new `nth_i64(object_ref, i64)`: a separate name, since an `nth` overload on `i64` makes core.jank's `:inline` `cpp/jank.runtime.nth` call ambiguous under jank's automatic trait conversions) reads a string or a vector directly when the index is an in-range integer, and falls to the general path otherwise (bounds errors, other types, not-found unchanged); a string's `nth` returns one of 256 shared character boxes (made once in uncollectable memory; characters are immutable, so sharing them is safe, as the JVM's `Character.valueOf` caches). Byte-indexed semantics (`count` and `nth` on bytes) are unchanged: that is a separate host fact.

@@ -1,4 +1,4 @@
-From 7cd551e812829315badf5a311ceee3304c4f9739 Mon Sep 17 00:00:00 2001
+From c7a8d9917d164bb224b9c9cad6c252b27936e902 Mon Sep 17 00:00:00 2001
 From: cohost u3 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 19:35:27 +0000
 Subject: [PATCH] 27: string nth with one check and no allocation; nth with an
@@ -12,7 +12,8 @@ dev/research/upstream/run.sh 27-string-nth (Expected: string nth near the JVM's
   an integer in range: no visit_object switch, no second is_integral/to_i64 in the
   virtual nth; everything else (bounds errors, other types, not-found) takes the
   general path as before.
-- nth(object_ref, i64): the same with an unboxed index.
+- nth_i64(object_ref, i64): the same with an unboxed index (a separate name: an
+  nth overload on i64 makes core.jank's :inline cpp/jank.runtime.nth ambiguous).
 - persistent_string: nth returns one shared character box per byte value (256 boxes
   made once in uncollectable memory; characters are immutable), so string nth
   allocates nothing. Byte-indexed semantics unchanged.
@@ -20,23 +21,25 @@ dev/research/upstream/run.sh 27-string-nth (Expected: string nth near the JVM's
 Files: src/cpp/jank/runtime/core/seq.cpp, include/cpp/jank/runtime/core/seq.hpp,
 include/cpp/jank/runtime/obj/persistent_string.hpp, src/cpp/jank/runtime/obj/persistent_string.cpp.
 ---
- .../include/cpp/jank/runtime/core/seq.hpp     |  3 +
+ .../include/cpp/jank/runtime/core/seq.hpp     |  5 ++
  .../jank/runtime/obj/persistent_string.hpp    |  4 ++
  .../src/cpp/jank/runtime/core/seq.cpp         | 62 +++++++++++++++++++
  .../jank/runtime/obj/persistent_string.cpp    | 24 ++++++-
- 4 files changed, 92 insertions(+), 1 deletion(-)
+ 4 files changed, 94 insertions(+), 1 deletion(-)
 
 diff --git a/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp b/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
-index 6e4cfdf60..b6570f81f 100644
+index 6e4cfdf60..32de0029e 100644
 --- a/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
 +++ b/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
-@@ -118,6 +118,9 @@ namespace jank::runtime
+@@ -118,6 +118,11 @@ namespace jank::runtime
    object_ref subvec(object_ref const o, i64 start, i64 end);
    object_ref nth(object_ref const o, object_ref const idx);
    object_ref nth(object_ref const o, object_ref const idx, object_ref const fallback);
 +  /* nth with an unboxed index: a string or a vector is read with no visit and no
-+   * re-unboxing; anything else takes nth(o, make_box(index)). */
-+  object_ref nth(object_ref const o, i64 const index);
++   * re-unboxing; anything else takes nth(o, make_box(index)). A separate name, not an
++   * nth overload: one on i64 makes core.jank's :inline cpp/jank.runtime.nth call
++   * ambiguous under jank's automatic trait conversions. */
++  object_ref nth_i64(object_ref const o, i64 const index);
    object_ref peek(object_ref const o);
    object_ref pop(object_ref const o);
    object_ref empty(object_ref const o);
@@ -56,7 +59,7 @@ index ed9d4a2a6..2923d255e 100644
      jtl::string_result<persistent_string_ref> substring(i64 start) const;
      jtl::string_result<persistent_string_ref> substring(i64 start, i64 end) const;
 diff --git a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
-index b8d799bbe..32732ff25 100644
+index b8d799bbe..654b47bc6 100644
 --- a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
 +++ b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
 @@ -638,8 +638,62 @@ namespace jank::runtime
@@ -99,7 +102,7 @@ index b8d799bbe..32732ff25 100644
 +    return t == object_type::small_integer || t == object_type::integer;
 +  }
 +
-+  object_ref nth(object_ref const o, i64 const index)
++  object_ref nth_i64(object_ref const o, i64 const index)
 +  {
 +    object_ref out;
 +    if(nth_fast(o, index, out))
