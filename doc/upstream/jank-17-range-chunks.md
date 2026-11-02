@@ -36,3 +36,7 @@ EXIT 0
 ## What would fix it
 
 Implement `chunkable` on `integer_range` (fill an `array_chunk` of 32 boxed ints, no mutex) and expose immer leaves as chunks for vector seqs; make `chunk_next` share the buffer.
+
+## A segfault the chunking exposes (fixed in 15b-17-reduce-chunks.patch)
+
+`chunk_cons` (`runtime/core/seq.cpp`) built its `chunked_cons` with `seq(rest)`, so a chunked lazy pipeline realized its whole chain recursively at the first `seq` call and overflowed the stack at about 1e6 elements: `(count (map inc (range 0.0 1000000.0)))` exits 139 on the unpatched source build (`/usr/local/lib/jank-dev`, f3d82d65), and with `integer_range` chunked `(count (map inc (range 1000000)))` did too. 15b keeps the rest unrealized, as Clojure's `ChunkedCons` keeps `more`; `chunked_cons::next` and its in-place step realize the tail when they step past the chunk, and `chunk_next` returns a seq (`obj/chunked_cons.cpp`, outside U4-1's owns list; accepted by the coordinator's 12:43 PM ET NOTICE).
