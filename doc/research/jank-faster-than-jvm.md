@@ -1,7 +1,8 @@
 # jank faster than the JVM: the research plan (lane R, order R-1)
 
-Status: DONE for order R-1 (2026-11-02 ET; every probe named here ran on this box and its
-output is quoted). Branch `r/research-jank`, base `b286ba1`. Nothing under `src/` changes
+Status: DONE for orders R-1 and R-2 (2026-11-02 ET; every probe named here ran on this box
+and its output is quoted; the upstream drafts for the jank-side items are
+doc/upstream/jank-11..21 with their repro scripts under `dev/research/upstream/`). Branch `r/research-jank`, base `b286ba1`. Nothing under `src/` changes
 here; probes live under `dev/research/`.
 
 The question: how can Clojure programs run faster on jank than on the JVM, both the stock core
@@ -611,8 +612,10 @@ jank, `defn` names the fn (core.jank line 778), so raw jank already has the dire
   group-by, frequencies, set-build cases (x11-x19 stock vs own, doc/PERF.md "jank baseline")
   and json/k-nucleotide/pipeline in the yardstick.
 - **Expected effect.** fib: up to 1.84x (P6, the `def`+`fn` shape); the collection cases:
-  unknown until the guard is emitted inline and `bb bench:jank` re-run (lane M's Step 3 items
-  measured by the bench's `xN` column).
+  P12 found the guard itself unmeasurable on `nth` under `-O3`, so the remaining gap in the
+  bench's collection cases (x11-x19) sits elsewhere in the shim's arms (the descriptor route,
+  `host-object?`'s `(type x)` string, the stock `mod`/`rem` and friends) and is measured by
+  `bb bench:jank`'s `xN` column after each change (lane M's Step 3 items).
 - **Probe.** P6 (done); the codegen dump of the two fib shapes (done, §8.3);
   P12 (an hour): `RT-nth` with the guard inline as `cpp/cohost_obj.is_cohost` against the
   shipped shape, 5e6 calls.
@@ -803,8 +806,17 @@ the six. 7 to 9 are below the line for the reasons in §7.
   has a direct one: an unnamed `defn` (recursion through the var), wrapper statics
   (`Numbers-minus`), and the cohost-instance guard as a cross-namespace call.
 - **Probe and result so far.** P6 at `-O3`: fib-stock 38481897, fib-fn-def 20871741 (1.84x),
-  fib-host-ops 29816492; the C++ in §8.3 shows the var derefs. P12 (next): `RT-nth` with the
-  guard inline, 5e6 calls.
+  fib-host-ops 29816492; the C++ in §8.3 shows the var derefs. P12 (`JANK_O=3
+  run-cohost-jank.sh p12_rt_nth_guard.clj`, 5e6 `(nth v (mod i 1000))` under cohost on jank,
+  medians, ns): the stock `nth` 1263912614, jank's own `clojure.core/nth` 1339299682, the guard
+  inline as `cpp/cohost_obj.is_cohost` then jank's `nth` 1375362285; `count` 209816675 stock,
+  209800582 host. The three `nth` shapes are within noise of each other, so the
+  cohost-instance guard is not a measurable cost in this shape (the stock `mod` and the loop
+  dominate); part (b) of this item is therefore the smallest, and part (c), the fn's name, the
+  measured one. Two facts for the implementer: the adapter's `cpp/raw` namespace is not
+  visible from JIT-compiled user code (the first run printed "Unable to find `cohost_obj`
+  within the global namespace"; a declaration of the external symbol in the user's code
+  links), and the result wrapped to `-1797467296` (jank-12 again).
 - **Implementation sketch.** In `rewrite.cljc`'s `defn`/`def`+`fn*` handling on jank, carry
   the name onto the `fn*`; in `shim.cljc`, make every static whose jank twin has the JVM's
   semantics the twin itself (`Numbers-minus` -> `-`, and the rest of the arithmetic family)
@@ -826,8 +838,15 @@ the six. 7 to 9 are below the line for the reasons in §7.
 - **Probe and result so far.** P1: fib-cpp-native 3663884 vs fib-var 6101027 (AOT) vs
   fib-hinted-leaf 17595281; H0: 0.105-0.125 for carried loops, 1.24-1.52 for hinted leaves;
   the analyzer facts in §2 (tail forced boxed, `:rettag` unread, `if` forces boxing,
-  `needs_box` unread by codegen). P7 (next): hand-written native entries for tak and nbody's
-  `advance` through `cpp/raw`, the ceiling for those two programs.
+  `needs_box` unread by codegen). P7 (`run-jank.sh p7_native_entry.jank`; JIT / AOT medians,
+  ns): tak 18 12 6 fifty times, plain 32834184 / 23278126, `^long` parameters 57960279 /
+  46843532 (slower, the H0 leaf loss), the same recursion in C++ through `cpp/raw` 7886439 /
+  6835992 (3.4-4.2x below plain); nbody's inner kernel (dx dy dz, sqrt, mag, 1e6 steps) in
+  jank with boxed doubles 542334250 / 476633001, with `^long n` 554731218 / 521288324 (the
+  locals are not native: no change), in C++ 21589084 / 23848009 (20-25x below). The numeric
+  ceiling is large: a native entry per typed arity, with native locals, is worth 3-4x on
+  call-heavy integer code and 20x on double-arithmetic loops. The upstream drafts jank-20
+  (native returns) and jank-21/jank-12 (the 32-bit typing and arm) are the repros.
 - **Implementation sketch.** Upstream, in order: type integer literals `i64` (not `int`)
   and compute the small+small arm in `i64`; let `if` keep a native type when both branches
   have it; honor `:rettag`/infer the tail type and emit a second native entry per typed
@@ -922,6 +941,11 @@ bash dev/research/run-cohost-jank.sh dev/research/p6_cohost_fib.clj     # cohost
 JANK_O=3 bash dev/research/run-cohost-jank.sh dev/research/p6_cohost_fib.clj
 bash dev/research/p6b_boot_O.sh
 JANK_O=3 bash dev/research/run-cohost-jank.sh dev/research/p11_protocol.clj
+bash dev/research/run-jank.sh dev/research/p7_native_entry.jank
+bash dev/research/run-jank.sh dev/research/p10_reduce_paths.jank
+JANK_O=3 bash dev/research/run-cohost-jank.sh dev/research/p12_rt_nth_guard.clj
+bash dev/research/upstream/run.sh 11-sorted-walk      # the jank-11..21 repros, one each
+bash dev/research/upstream/19-gc-defaults.sh
 ```
 
 ### 8.3 Cohost on jank, `JANK_PRINT_CODEGEN=1`, the two fib shapes at `-O3`
