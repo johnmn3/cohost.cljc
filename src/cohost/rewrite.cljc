@@ -381,7 +381,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? cohost-types? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro]
+           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:plain-symbol (or plain-symbol identity)
    :shim-names shim-names
@@ -444,6 +444,7 @@
    ;; a host whose types are cohost's own (:cohost-types): a (.-f x) field
    ;; read is a member call the shim dispatches, not the host's own access
    :cohost-types? (boolean cohost-types?)
+   :syntax-quote-source? (boolean syntax-quote-source?)
    :host-method host-method
    ;; record?: is a form a record instance (a reader literal); protocol-var?:
    ;; (fn [ns-sym name-sym]) is that var a protocol; interned?: (fn [sym]) is
@@ -1363,6 +1364,18 @@
       (rw ctx h))
     (rw ctx h)))
 
+(defn- sq-source-wrapper?
+  "(clojure.core/with-meta x (clojure.core/hash-map :jank/source m)),
+   the shape jank's reader gives a syntax-quoted form, when the meta
+   map it builds holds :jank/source alone."
+  [form]
+  (and (seq? form) (= 3 (count form))
+       (= 'clojure.core/with-meta (first form))
+       (let [m (nth form 2)]
+         (and (seq? m) (= 3 (count m))
+              (= 'clojure.core/hash-map (first m))
+              (= :jank/source (second m))))))
+
 (defn- rw-list [ctx form]
   (if (empty? form)
     form
@@ -1380,6 +1393,12 @@
             ;; jolt's reader keeps ` as a marker the analyzer expands in *ns*;
             ;; the template is data -- the macro's output gets rewritten instead.
             (= h 'clojure.core/syntax-quote) form
+            ;; a host whose reader wraps every syntax-quoted form in a
+            ;; :jank/source with-meta (the cap says so): the wrapper is
+            ;; source bookkeeping, not program -- drop it and rewrite
+            ;; what it wrapped. &form metadata the stock macros copy is
+            ;; real meta on the form itself, never this shape.
+            (and (:syntax-quote-source? ctx) (sq-source-wrapper? form)) (rw ctx (second form))
             (= h '.) (rw-dot ctx form)
             ;; (.. x f more...) is expanded here, before its first argument can be
             ;; rewritten as a value: `(.. clojure.lang.Var create setDynamic)`
