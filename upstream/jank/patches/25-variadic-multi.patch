@@ -1,4 +1,4 @@
-From e78c267add5fd4490e378391cbdbb3ff6b93bb08 Mon Sep 17 00:00:00 2001
+From 978205e6a0f3716ab4838824ad1d0b2cd252f9fc Mon Sep 17 00:00:00 2001
 From: cohost u2 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 20:18:56 +0000
 Subject: [PATCH] Rest args on the caller's stack when they cannot escape;
@@ -27,18 +27,36 @@ Repro: bash dev/research/upstream/run.sh 25-variadic-multi (in johnmn3/cohost.cl
    ((defmulti area :shape)) is computed inline as a get on the first
    argument; other dispatch fns and the method go through call_fast.
 
+3. Lazily compiled fns (jank run's default). A deferred_cpp_function that is
+   called through a captured value (a defmethod's method, a defmulti's
+   dispatch fn, any fn held outside its var) took its recursive mutex on
+   every call, compiled or not. realize() now returns on an atomic
+   `realized` flag (set with release once compiled_fn is set), and call_fast
+   calls a realized deferred fn's compiled fn directly (through its arity
+   pointer when it is a jit_function).
+
+The rest_noescape bit is computed in ir::arity_flags, so both the module
+root fn (what def creates, lazily or eagerly) and nested fn expressions get
+it.
+
 Files: compiler+runtime/include/cpp/jank/runtime/core/call.hpp,
+compiler+runtime/include/cpp/jank/runtime/obj/deferred_cpp_function.hpp,
+compiler+runtime/src/cpp/jank/runtime/obj/deferred_cpp_function.cpp,
+compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp,
 compiler+runtime/src/cpp/jank/ir/processor.cpp,
 compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_function.cpp,
 compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_closure.cpp,
 compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp.
 ---
  .../include/cpp/jank/runtime/core/call.hpp    |  10 +
- .../src/cpp/jank/ir/processor.cpp             | 110 ++++++++++-
+ .../runtime/obj/deferred_cpp_function.hpp     |   6 +
+ .../cpp/jank/runtime/obj/jit_function.hpp     |  24 ++-
+ .../src/cpp/jank/ir/processor.cpp             | 111 ++++++++++-
+ .../runtime/obj/deferred_cpp_function.cpp     |   5 +
  .../jank/runtime/obj/jit_variadic_closure.cpp |   2 +-
  .../runtime/obj/jit_variadic_function.cpp     | 176 +++++++++++-------
  .../cpp/jank/runtime/obj/multi_function.cpp   |  46 +++--
- 5 files changed, 261 insertions(+), 83 deletions(-)
+ 8 files changed, 292 insertions(+), 88 deletions(-)
 
 diff --git a/compiler+runtime/include/cpp/jank/runtime/core/call.hpp b/compiler+runtime/include/cpp/jank/runtime/core/call.hpp
 index a479e2c61..44bece6a3 100644
@@ -61,12 +79,87 @@ index a479e2c61..44bece6a3 100644
    static constexpr callable_arity_flags build_arity_flags(u8 const highest_fixed_arity,
                                                            bool const is_variadic,
                                                            bool const is_variadic_ambiguous)
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/deferred_cpp_function.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/deferred_cpp_function.hpp
+index 3b2940a72..e68cc06c4 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/deferred_cpp_function.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/deferred_cpp_function.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <atomic>
+ #include <mutex>
+ 
+ #include <jank/runtime/object.hpp>
+@@ -120,6 +121,11 @@ namespace jank::runtime::obj
+     lazy_meta meta;
+     mutable std::recursive_mutex compilation_mutex;
+     mutable object_ref compiled_fn;
++    /* Set (release) once compiled_fn holds the compiled fn; read (acquire) by realize's fast
++     * path and by call_fast, so a realized deferred fn costs no mutex per call. A fn captured
++     * by value (a defmethod's method, a defmulti's dispatch fn, a fn in a map) keeps calling
++     * through this object for its whole life. */
++    mutable std::atomic_bool realized{ false };
+     mutable jtl::immutable_string declaration_code;
+     mutable callable_arity_flags arity_flags{};
+     mutable jtl::immutable_string base_name;
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
+index df643c21d..1bdb65761 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
+@@ -2,6 +2,7 @@
+ 
+ #include <jank/runtime/object.hpp>
+ #include <jank/runtime/lazy_meta.hpp>
++#include <jank/runtime/obj/deferred_cpp_function.hpp>
+ 
+ namespace jank::runtime::obj
+ {
+@@ -160,9 +161,22 @@ namespace jank::runtime
+     constexpr auto n{ sizeof...(Args) };
+     if constexpr(n <= 10)
+     {
+-      if(detail::is_tagged_pointer(f.raw()) && f.ptr()->type == object_type::jit_function)
++      auto target{ f };
++      /* A lazily compiled fn (jank run's default) that has been compiled: call what it
++       * compiled to. Before that, its own call compiles it. */
++      if(detail::is_tagged_pointer(target.raw())
++         && target.ptr()->type == object_type::deferred_cpp_function)
+       {
+-        auto const fn{ static_cast<obj::jit_function *>(f.ptr()) };
++        auto const deferred{ static_cast<obj::deferred_cpp_function *>(target.ptr()) };
++        if(deferred->realized.load(std::memory_order_acquire))
++        {
++          target = deferred->compiled_fn;
++        }
++      }
++      if(detail::is_tagged_pointer(target.raw())
++         && target.ptr()->type == object_type::jit_function)
++      {
++        auto const fn{ static_cast<obj::jit_function *>(target.ptr()) };
+         auto const arity{ [fn]() {
+           if constexpr(n == 0) { return fn->arity_0; }
+           else if constexpr(n == 1) { return fn->arity_1; }
+@@ -178,9 +192,13 @@ namespace jank::runtime
+         }() };
+         if(arity)
+         {
+-          return arity(f, object_ref{ args }...);
++          return arity(target, object_ref{ args }...);
+         }
+       }
++      if(target != f)
++      {
++        return target.call(object_ref{ args }...);
++      }
+     }
+     return f.call(object_ref{ args }...);
+   }
 diff --git a/compiler+runtime/src/cpp/jank/ir/processor.cpp b/compiler+runtime/src/cpp/jank/ir/processor.cpp
-index e5b4881ef..94bf37cfb 100644
+index e5b4881ef..1aff48c28 100644
 --- a/compiler+runtime/src/cpp/jank/ir/processor.cpp
 +++ b/compiler+runtime/src/cpp/jank/ir/processor.cpp
-@@ -378,10 +378,118 @@ namespace jank::ir
-     return runtime::build_arity_flags(highest_fixed_arity->fn_ctx->param_count, false, false);
+@@ -346,6 +346,104 @@ namespace jank::ir
+     return name;
    }
  
 +  /* Whether the rest param of a variadic arity can escape its body. It provably does not
@@ -167,24 +260,52 @@ index e5b4881ef..94bf37cfb 100644
 +    return unknown || allowed != total;
 +  }
 +
-   jtl::option<identifier> gen(analyze::expr::function_ref const expr, builder &b)
+   static runtime::callable_arity_flags
+   arity_flags(native_vector<analyze::expr::function_arity> const &arities)
    {
-     native_unordered_map<u8, jtl::immutable_string> arities;
--    auto const flags{ arity_flags(expr->arities) };
-+    auto flags{ arity_flags(expr->arities) };
-+    if(util::cli::opts.direct_call && expr->is_variadic && expr->captures().empty())
-+    {
-+      for(auto const &arity : expr->arities)
+@@ -370,9 +468,16 @@ namespace jank::ir
+                                      && highest_fixed_arity->fn_ctx->param_count
+                                        == variadic_arity->fn_ctx->param_count - 1 };
+ 
+-      return runtime::build_arity_flags(variadic_arity->fn_ctx->param_count - 1,
+-                                        true,
+-                                        variadic_ambiguous);
++      auto const flags{ runtime::build_arity_flags(variadic_arity->fn_ctx->param_count - 1,
++                                                   true,
++                                                   variadic_ambiguous) };
++      /* -Odirect-call: a rest param that cannot escape lets a call pass the rest args on
++       * the caller's stack (jit_variadic_function::call). */
++      if(util::cli::opts.direct_call && !rest_param_can_escape(*variadic_arity))
 +      {
-+        if(arity.fn_ctx->is_variadic && !rest_param_can_escape(arity))
-+        {
-+          flags |= runtime::rest_noescape_flag;
-+        }
++        return flags | runtime::rest_noescape_flag;
 +      }
++      return flags;
+     }
+     jank_assert(highest_fixed_arity != nullptr);
+     return runtime::build_arity_flags(highest_fixed_arity->fn_ctx->param_count, false, false);
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/deferred_cpp_function.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/deferred_cpp_function.cpp
+index e5a5b2555..0d7400744 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/deferred_cpp_function.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/deferred_cpp_function.cpp
+@@ -45,6 +45,10 @@ namespace jank::runtime::obj
+ 
+   void deferred_cpp_function::realize() const
+   {
++    if(realized.load(std::memory_order_acquire))
++    {
++      return;
 +    }
-     for(auto const &arity : expr->arities)
+     std::lock_guard<std::recursive_mutex> const lock{ compilation_mutex };
+     /* It's possible that we're called again, even after we've compiled our actual function.
+      * This can happen if the value of this function is captured, rather than used directly
+@@ -64,6 +68,7 @@ namespace jank::runtime::obj
+     __rt_ctx->jit_prc.eval_string(declaration_code);
+     compiled_fn = __rt_ctx->jit_prc.create_function(arity_flags, base_name, arities, is_variadic);
+     reset_meta(compiled_fn, meta.get());
++    realized.store(true, std::memory_order_release);
+ 
+     if(var.is_some())
      {
-       arities[arity.params.size()] = gen_arity(*b.mod, expr, arity);
 diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_closure.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_closure.cpp
 index bf36df484..5b56384ef 100644
 --- a/compiler+runtime/src/cpp/jank/runtime/obj/jit_variadic_closure.cpp
