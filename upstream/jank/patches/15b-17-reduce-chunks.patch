@@ -1,4 +1,4 @@
-From 61f644c26a89c8405d2a580478ba5145e0e739db Mon Sep 17 00:00:00 2001
+From 967aa83cc0fc9b9679d62f9f1fe2900c0d9e3d43 Mon Sep 17 00:00:00 2001
 From: cohost u3 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 16:18:11 +0000
 Subject: [PATCH] 15b-17: internal reduce per collection; integer_range and
@@ -27,8 +27,16 @@ run.sh 15-reduce-walk (reduce + v near the nth loop).
 - sequence_range: the walk reads a chunked_cons through its array_chunk's storage
   (no allocation per element), then goes on to its tail; iterator::rest() gives
   the rest as a seq mid-chunk (apply_to's rest args, skip()).
+- chunk-cons keeps its rest unrealized (Clojure's ChunkedCons keeps `more`);
+  chunked_cons::next and its in-place step realize the tail when they step past
+  the chunk, and chunk_next returns a seq. Before, chunk_cons called seq(rest),
+  so a chunked lazy pipeline realized its whole chain recursively: (count (map
+  inc (range 0.0 1000000.0))) segfaults on the unpatched tree, and with
+  integer_range chunked (count (map inc (range 1e6))) did too.
+- chunked_cons::first reads an array_chunk head directly.
 
 Files: src/cpp/jank/runtime/core/seq.cpp, src/cpp/jank/runtime/core/call.cpp,
+src/cpp/jank/runtime/obj/chunked_cons.cpp,
 include/cpp/jank/runtime/sequence_range.hpp, src/cpp/jank/runtime/sequence_range.cpp,
 include/cpp/jank/runtime/obj/integer_range.hpp, src/cpp/jank/runtime/obj/integer_range.cpp,
 include/cpp/jank/runtime/obj/persistent_vector_sequence.hpp,
@@ -38,14 +46,15 @@ include/cpp/jank/runtime/obj/array_chunk.hpp, src/cpp/jank/runtime/obj/array_chu
  .../cpp/jank/runtime/obj/array_chunk.hpp      |  12 +-
  .../cpp/jank/runtime/obj/integer_range.hpp    |  15 +-
  .../obj/persistent_vector_sequence.hpp        |   7 +
- .../cpp/jank/runtime/sequence_range.hpp       |  55 +++++--
+ .../cpp/jank/runtime/sequence_range.hpp       |  55 ++++--
  .../src/cpp/jank/runtime/core/call.cpp        |   2 +-
- .../src/cpp/jank/runtime/core/seq.cpp         | 149 +++++++++++++++++-
- .../src/cpp/jank/runtime/obj/array_chunk.cpp  |  39 +++--
+ .../src/cpp/jank/runtime/core/seq.cpp         | 159 ++++++++++++++++--
+ .../src/cpp/jank/runtime/obj/array_chunk.cpp  |  39 ++++-
+ .../src/cpp/jank/runtime/obj/chunked_cons.cpp |  12 +-
  .../cpp/jank/runtime/obj/integer_range.cpp    |  22 +++
  .../obj/persistent_vector_sequence.cpp        |  34 ++++
- .../src/cpp/jank/runtime/sequence_range.cpp   |  84 ++++++++++
- 10 files changed, 376 insertions(+), 43 deletions(-)
+ .../src/cpp/jank/runtime/sequence_range.cpp   |  84 +++++++++
+ 11 files changed, 394 insertions(+), 47 deletions(-)
 
 diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
 index 19ac3848e..48a4bfa2e 100644
@@ -275,7 +284,7 @@ index c5d9ad4b8..c8e4a8e37 100644
      }
    }
 diff --git a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
-index deb63da93..4c178475a 100644
+index deb63da93..0fdc24f18 100644
 --- a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
 +++ b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
 @@ -1,6 +1,8 @@
@@ -446,6 +455,30 @@ index deb63da93..4c178475a 100644
    }
  
    object_ref reduce_kv(object_ref const f, object_ref const init, object_ref const coll)
+@@ -1022,7 +1155,9 @@ namespace jank::runtime
+ 
+         if constexpr(behavior::chunkable<T>)
+         {
+-          return typed_o->chunked_next();
++          /* A seq or nil: a chunked_cons's chunked_next is its unrealized rest. */
++          object_ref const ret{ typed_o->chunked_next() };
++          return ret.is_nil() ? ret : ret.seq();
+         }
+         {
+           throw std::runtime_error{ util::format("Objects of type `{}` are not chunkable.",
+@@ -1058,7 +1193,11 @@ namespace jank::runtime
+ 
+   object_ref chunk_cons(object_ref const chunk, object_ref const rest)
+   {
+-    return make_box<obj::chunked_cons>(chunk, seq(rest));
++    /* The rest stays unrealized, as Clojure's ChunkedCons keeps `more`: realizing it here
++     * made a chunked lazy pipeline realize its whole chain recursively at the first seq call
++     * (a segfault at about 1e6 elements on the unpatched tree with (range 0.0 1e6)). The
++     * chunked_cons realizes its tail when it is stepped past the chunk. */
++    return make_box<obj::chunked_cons>(chunk, rest);
+   }
+ 
+   bool is_chunked_seq(object_ref const o)
 diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
 index 5b5cd823d..121e6561d 100644
 --- a/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
@@ -550,6 +583,48 @@ index 5b5cd823d..121e6561d 100644
      }
      else
      {
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/chunked_cons.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/chunked_cons.cpp
+index b00b85a0b..40bc49291 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/chunked_cons.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/chunked_cons.cpp
+@@ -1,4 +1,5 @@
+ #include <jank/runtime/obj/chunked_cons.hpp>
++#include <jank/runtime/obj/array_chunk.hpp>
+ #include <jank/runtime/visit.hpp>
+ #include <jank/runtime/core/make_box.hpp>
+ #include <jank/runtime/core/seq.hpp>
+@@ -42,6 +43,12 @@ namespace jank::runtime::obj
+ 
+   object_ref chunked_cons::first() const
+   {
++    /* The common head, read directly (no visit, no boxed index). */
++    if(head.get_type() == object_type::array_chunk)
++    {
++      auto const chunk{ expect_object<array_chunk>(head) };
++      return chunk->items[chunk->offset];
++    }
+     /* TODO: Port visit_object: chunk_like. */
+     return visit_object(
+       [&](auto const typed_head) -> object_ref {
+@@ -74,7 +81,8 @@ namespace jank::runtime::obj
+           {
+             return make_box<chunked_cons>(typed_head->chunk_next(), tail);
+           }
+-          return tail;
++          /* The tail can be an unrealized rest (chunk-cons keeps it so): next is its seq. */
++          return tail.is_nil() ? tail : tail.seq();
+         }
+         else
+         {
+@@ -88,7 +96,7 @@ namespace jank::runtime::obj
+ 
+   static chunked_cons_ref next_in_place_non_chunked(chunked_cons_ref const o)
+   {
+-    auto const tail{ o->tail };
++    auto const tail{ o->tail.is_nil() ? o->tail : o->tail.seq() };
+     if(tail.is_nil())
+     {
+       return {};
 diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp
 index f6ea29374..173137b11 100644
 --- a/compiler+runtime/src/cpp/jank/runtime/obj/integer_range.cpp
