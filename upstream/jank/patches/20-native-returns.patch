@@ -1,0 +1,862 @@
+jank-20: a native entry per typed arity; native returns, if and loop results; n-ary inline arithmetic
+(cohost doc/upstream/jank-20-native-returns.md; lane U6, order U6-1)
+
+Base: jank-lang/jank f3d82d65499920f81216e9235bd5d3a34a968e3f with the series before it in
+upstream/jank/patches/series (11, 13, 14, 12-21, 18, 19). Apply from the clone's root: git apply <this file>.
+
+Files:
+- compiler+runtime/src/cpp/jank/analyze/processor.cpp:
+  - analyze_fn_arity: an arity of a fn with no variadic arity, whose typed parameters are all
+    native numbers (long, long long, double), gets a native entry when something asks for one: a
+    :rettag (defn puts the name's :tag there) that names a native number, or a parameter hinted as
+    one. The return type is the hint, or inferred: the body is analyzed assuming i64 (named
+    self-recursion typed with it, tail unboxed); if the tail is a native integer, kept; if it is a
+    native real, analyzed again assuming that real; anything else (an object tail, a fn-level recur,
+    an error under the assumption) analyzes the body again exactly as before (boxed).
+  - analyze_fn: :rettag read; native entries only when no arity is variadic.
+  - analyze_call: named recursion into the arity being analyzed, when it has a native entry,
+    converts its arguments to the parameter types and is typed with the native return type.
+  - analyze_if: a branch that ends in recur yields no value, so the if takes the other branch's
+    type when it is a native number (a loop carrying native locals keeps a native result).
+- compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp: an arity with a native return type is
+  emitted as <name>_<n>_native (typed parameters taken natively, native return) plus the boxing
+  entry <name>_<n> every dynamic caller uses (unboxes the typed arguments, calls the native entry,
+  boxes the result); named recursion into it calls the native entry directly.
+- compiler+runtime/src/cpp/jank/ir/{builder,instruction,processor}.cpp, include .../ir/*.hpp,
+  analyze/expr/{function,named_recursion}.hpp, named_recursion.cpp: the native types carried from
+  the analyzer to codegen.
+- compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp, .hpp: is_native_number.
+- compiler+runtime/include/cpp/jank/runtime/convert/builtin.hpp: convert<integral>/convert<floating>
+  into_object/from_object always_inline (the boxing entry's unboxing was two out-of-line calls).
+- compiler+runtime/include/cpp/jank/runtime/core.hpp: not_(bool) for exactly bool, so (not (< a b))
+  stays native; (not 0) still goes through the object overload (false).
+- compiler+runtime/src/jank/clojure/core.jank: + - * / inline every arity 2-8, folded left as the
+  variadic arity folds (Clojure's nary-inline); before, (* a b c) was a dynamic var call.
+
+diff --git a/compiler+runtime/include/cpp/jank/analyze/cpp_util.hpp b/compiler+runtime/include/cpp/jank/analyze/cpp_util.hpp
+index 44e809eb..a1b27247 100644
+--- a/compiler+runtime/include/cpp/jank/analyze/cpp_util.hpp
++++ b/compiler+runtime/include/cpp/jank/analyze/cpp_util.hpp
+@@ -75,6 +75,9 @@ namespace jank::analyze::cpp_util
+   bool is_non_static_member_function(jtl::ptr<void> scope);
+   bool is_nullptr(jtl::ptr<void> type);
+   bool is_bool(jtl::ptr<void> type);
++  /* A 64-bit integer (long, long long) or a double: the types a native fn entry takes and
++   * returns. */
++  bool is_native_number(jtl::ptr<void> type);
+   bool is_implicitly_convertible(jtl::ptr<void> from, jtl::ptr<void> to);
+   bool is_pointer_to_void_conversion(jtl::ptr<void> from, jtl::ptr<void> to);
+ 
+diff --git a/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp b/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
+index 5ccf94e3..ed74c265 100644
+--- a/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
++++ b/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
+@@ -28,6 +28,13 @@ namespace jank::analyze::expr
+     /* Is there any named recrusion within this function (tail or otherwise)?
+      * This counts any named recursion reference, not just calls. */
+     bool is_named_recursive{};
++    /* When set, this arity has a native entry returning this type (a primitive arithmetic
++     * type), alongside the boxing entry every dynamic caller uses. Named recursion into this
++     * same arity calls the native entry with natively typed arguments. While the arity's body
++     * is being analyzed, this holds the hypothesis being tried. */
++    jtl::ptr<void> native_return_type{};
++    /* The parameter types of this arity, for the native entry. */
++    native_vector<jtl::ptr<void>> param_types;
+     /* TODO: is_pure */
+   };
+ 
+diff --git a/compiler+runtime/include/cpp/jank/analyze/expr/named_recursion.hpp b/compiler+runtime/include/cpp/jank/analyze/expr/named_recursion.hpp
+index da15609f..42ffa663 100644
+--- a/compiler+runtime/include/cpp/jank/analyze/expr/named_recursion.hpp
++++ b/compiler+runtime/include/cpp/jank/analyze/expr/named_recursion.hpp
+@@ -25,8 +25,12 @@ namespace jank::analyze::expr
+ 
+     runtime::object_ref to_runtime_data() const override;
+     void walk(std::function<void(jtl::ref<expression>)> const &f) override;
++    jtl::ptr<void> get_type() const override;
+ 
+     recursion_reference recursion_ref;
++    /* Set when this calls the native entry of the arity it's in (see
++     * function_context::native_return_type): the call returns this type. */
++    jtl::ptr<void> native_return_type{};
+     runtime::obj::persistent_list_ref args{};
+     native_vector<expression_ref> arg_exprs;
+   };
+diff --git a/compiler+runtime/include/cpp/jank/analyze/processor.hpp b/compiler+runtime/include/cpp/jank/analyze/processor.hpp
+index d6c554e4..d447bb94 100644
+--- a/compiler+runtime/include/cpp/jank/analyze/processor.hpp
++++ b/compiler+runtime/include/cpp/jank/analyze/processor.hpp
+@@ -99,7 +99,9 @@ namespace jank::analyze
+     jtl::result<expr::function_arity, error_ref>
+     analyze_fn_arity(runtime::obj::persistent_list_ref const,
+                      jtl::immutable_string const &name,
+-                     local_frame_ptr);
++                     local_frame_ptr,
++                     jtl::ptr<void> native_return_hint = {},
++                     bool allow_native = false);
+     expression_result analyze_let(runtime::obj::persistent_list_ref const,
+                                   local_frame_ptr,
+                                   expression_position,
+diff --git a/compiler+runtime/include/cpp/jank/ir/builder.hpp b/compiler+runtime/include/cpp/jank/ir/builder.hpp
+index e0c55229..b44c97a8 100644
+--- a/compiler+runtime/include/cpp/jank/ir/builder.hpp
++++ b/compiler+runtime/include/cpp/jank/ir/builder.hpp
+@@ -99,7 +99,9 @@ namespace jank::ir
+                                identifier const &fn,
+                                jtl::immutable_string const &fn_base_name,
+                                native_vector<identifier> &&args,
+-                               bool const needs_dynamic_call);
++                               bool const needs_dynamic_call,
++                               jtl::ptr<void> const native_return_type = {},
++                               native_vector<jtl::ptr<void>> &&native_param_types = {});
+     identifier recursion_reference(analyze::expression_position const pos);
+     identifier truthy(identifier const &value);
+     identifier jump(usize const index);
+diff --git a/compiler+runtime/include/cpp/jank/ir/instruction.hpp b/compiler+runtime/include/cpp/jank/ir/instruction.hpp
+index cf8af644..d410895a 100644
+--- a/compiler+runtime/include/cpp/jank/ir/instruction.hpp
++++ b/compiler+runtime/include/cpp/jank/ir/instruction.hpp
+@@ -399,7 +399,8 @@ namespace jank::ir
+                       identifier const &fn,
+                       jtl::immutable_string const &fn_base_name,
+                       native_vector<identifier> &&args,
+-                      bool const needs_dynamic_call);
++                      bool const needs_dynamic_call,
++                      native_vector<jtl::ptr<void>> &&native_param_types = {});
+ 
+       void print(jtl::string_builder &sb, usize indent) const override;
+ 
+@@ -407,6 +408,9 @@ namespace jank::ir
+       jtl::immutable_string fn_base_name;
+       native_vector<identifier> args;
+       bool needs_dynamic_call{ true };
++      /* Non-empty: call the arity's native entry (`<base>_<n>_native`), whose parameters
++       * have these types and whose return type is this instruction's type. */
++      native_vector<jtl::ptr<void>> native_param_types;
+     };
+ 
+     using named_recursion_ref = jtl::ref<named_recursion>;
+diff --git a/compiler+runtime/include/cpp/jank/runtime/convert/builtin.hpp b/compiler+runtime/include/cpp/jank/runtime/convert/builtin.hpp
+index 796b3925..0d2475d5 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/convert/builtin.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/convert/builtin.hpp
+@@ -224,11 +224,14 @@ namespace jank::runtime
+            && !jtl::is_any_same<T, bool, char, char8_t, char16_t, char32_t, wchar_t>)
+   struct convert<T>
+   {
++    [[gnu::always_inline]]
+     static object_ref into_object(T const o)
+     {
+       return make_box(static_cast<i64>(o));
+     }
+ 
++    /* Inlined: a native fn entry's boxing wrapper unboxes every argument with this. */
++    [[gnu::always_inline]]
+     static T from_object(object_ref const o)
+     {
+       if(detail::is_tagged_small_int(o.raw()))
+@@ -274,11 +277,13 @@ namespace jank::runtime
+   requires(std::is_floating_point_v<T>)
+   struct convert<T>
+   {
++    [[gnu::always_inline]]
+     static obj::small_real_ref into_object(T const o)
+     {
+       return make_box(static_cast<f64>(o));
+     }
+ 
++    [[gnu::always_inline]]
+     static T from_object(object_ref const o)
+     {
+       if(detail::is_tagged_small_real(o.raw()))
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core.hpp b/compiler+runtime/include/cpp/jank/runtime/core.hpp
+index bcfbbf6f..fb4e5521 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <concepts>
+ #include <regex>
+ 
+ /* TODO: Remove these so that people include only what they need. */
+@@ -29,6 +30,17 @@ namespace jank::runtime
+ 
+   bool not_(object_ref const o);
+ 
++  /* `(not <native bool>)` stays native instead of boxing the bool for the object overload.
++   * Exactly bool: any other native (a number) still goes through the object overload, since
++   * Clojure's (not 0) is false. */
++  template <typename T>
++  requires std::same_as<T, bool>
++  [[gnu::always_inline]]
++  inline bool not_(T const o)
++  {
++    return !o;
++  }
++
+   jtl::immutable_string type(object_ref const o);
+   bool is_nil(object_ref const o);
+   bool is_true(object_ref const o);
+diff --git a/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp b/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp
+index cd829c6b..865dd77d 100644
+--- a/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp
++++ b/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp
+@@ -919,6 +919,19 @@ namespace jank::analyze::cpp_util
+     return can_type == bool_type();
+   }
+ 
++  bool is_native_number(jtl::ptr<void> const type)
++  {
++    if(!type)
++    {
++      return false;
++    }
++    static auto const long_long{ cppinterop::get_canonical_type(cppinterop::get_type("long long")) };
++    auto const can_type{ cppinterop::get_canonical_type(
++      cppinterop::get_type_without_cv(cppinterop::get_non_reference_type(type))) };
++    return can_type == cppinterop::get_canonical_type(long_long_type()) || can_type == long_long
++      || can_type == cppinterop::get_canonical_type(double_type());
++  }
++
+   bool is_implicitly_convertible(jtl::ptr<void> const from, jtl::ptr<void> const to)
+   {
+     auto const from_no_ref{ cppinterop::get_canonical_type(
+diff --git a/compiler+runtime/src/cpp/jank/analyze/expr/named_recursion.cpp b/compiler+runtime/src/cpp/jank/analyze/expr/named_recursion.cpp
+index 9111ab80..e9a8daf1 100644
+--- a/compiler+runtime/src/cpp/jank/analyze/expr/named_recursion.cpp
++++ b/compiler+runtime/src/cpp/jank/analyze/expr/named_recursion.cpp
+@@ -19,6 +19,15 @@ namespace jank::analyze::expr
+   {
+   }
+ 
++  jtl::ptr<void> named_recursion::get_type() const
++  {
++    if(native_return_type)
++    {
++      return native_return_type;
++    }
++    return expression::get_type();
++  }
++
+   object_ref named_recursion::to_runtime_data() const
+   {
+     auto arg_expr_maps(make_box<obj::persistent_vector>());
+diff --git a/compiler+runtime/src/cpp/jank/analyze/processor.cpp b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
+index 99e8b896..35792333 100644
+--- a/compiler+runtime/src/cpp/jank/analyze/processor.cpp
++++ b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
+@@ -1561,7 +1561,9 @@ namespace jank::analyze
+   jtl::result<expr::function_arity, error_ref>
+   processor::analyze_fn_arity(runtime::obj::persistent_list_ref const list,
+                               jtl::immutable_string const &name,
+-                              local_frame_ptr const current_frame)
++                              local_frame_ptr const current_frame,
++                              jtl::ptr<void> const native_return_hint,
++                              bool const allow_native)
+   {
+     auto const first_form(list->data.first());
+     if(first_form.is_none())
+@@ -1720,23 +1722,110 @@ namespace jank::analyze
+     fn_ctx->name = name;
+     fn_ctx->is_variadic = is_variadic;
+     fn_ctx->param_count = param_symbols.size();
++    for(auto const &param : param_symbols)
++    {
++      fn_ctx->param_types.emplace_back(param.type);
++    }
+     frame->fn_ctx = fn_ctx;
+-    auto const body_do{ jtl::make_ref<expr::do_>(expression_position::tail, frame, true, list) };
+-    usize const form_count{ list->count() - 1 };
+-    usize i{};
+-    for(auto const &item : list->data.rest())
++
++    /* Analyzes the body. With a hypothesized native return type, named recursion into this
++     * arity is typed with it (see analyze_call) and the tail is left unboxed. */
++    auto const analyze_body{
++      [&](jtl::ptr<void> const hypothesis) -> jtl::result<expr::do_ref, error_ref> {
++        fn_ctx->native_return_type = hypothesis;
++        auto const body{ jtl::make_ref<expr::do_>(expression_position::tail, frame, true, list) };
++        usize const form_count{ list->count() - 1 };
++        usize i{};
++        for(auto const &item : list->data.rest())
++        {
++          auto const last_item{ (++i == form_count) };
++          auto const position(last_item ? expression_position::tail
++                                        : expression_position::statement);
++          auto const needs_box{ position != expression_position::statement && !hypothesis };
++          auto const form(analyze(item, frame, position, fn_ctx, needs_box));
++          if(form.is_err())
++          {
++            return form.expect_err();
++          }
++          body->values.emplace_back(form.expect_ok());
++        }
++        return body;
++      }
++    };
++
++    /* A native entry is tried when the arity can have one (fixed arity, no variadic arity in
++     * the fn, every typed parameter a native number) and something asks for it: a native
++     * return hint, or a parameter hinted as a native number. The return type is the hint, or
++     * inferred: assume a 64-bit integer, analyze, and keep it if the tail is a native integer;
++     * if the tail is a native real instead, try once more assuming that. Anything else (an
++     * object tail, a fn-level recur, an analysis error under the assumption) analyzes the body
++     * again as it always was: boxed. */
++    jtl::ptr<void> native_return_type{};
++    jtl::option<expr::do_ref> native_body;
++    bool has_native_param{};
++    bool params_allow_native{ allow_native && !is_variadic };
++    for(auto const &param : param_symbols)
++    {
++      if(cpp_util::is_untyped_object(param.type))
++      {
++        continue;
++      }
++      if(cpp_util::is_native_number(param.type))
++      {
++        has_native_param = true;
++      }
++      else
++      {
++        params_allow_native = false;
++      }
++    }
++    if(params_allow_native && !list->data.rest().empty()
++       && (native_return_hint || has_native_param))
+     {
+-      auto const last_item{ (++i == form_count) };
+-      auto const position(last_item ? expression_position::tail : expression_position::statement);
+-      auto const needs_box{ position != expression_position::statement };
+-      auto const form(analyze(item, frame, position, fn_ctx, needs_box));
+-      if(form.is_err())
++      auto hypothesis{ native_return_hint ? native_return_hint : cpp_util::long_long_type() };
++      for(u8 attempt{}; attempt < 2; ++attempt)
+       {
+-        return form.expect_err();
++        auto const res{ analyze_body(hypothesis) };
++        if(res.is_err() || fn_ctx->is_recur_recursive)
++        {
++          break;
++        }
++        auto const body{ res.expect_ok() };
++        auto const tail_type{ cpp_util::expression_type(body->values.back()) };
++        if(!cpp_util::is_native_number(tail_type))
++        {
++          break;
++        }
++        auto const tail_integral{ cppinterop::is_integral(tail_type) };
++        auto const hypothesis_integral{ cppinterop::is_integral(hypothesis) };
++        if(native_return_hint || tail_integral == hypothesis_integral)
++        {
++          native_return_type = hypothesis;
++          native_body = body;
++          break;
++        }
++        if(hypothesis_integral)
++        {
++          /* The tail is a real: try again assuming a real return. */
++          hypothesis = cppinterop::get_canonical_type(tail_type);
++          continue;
++        }
++        break;
+       }
+-      body_do->values.emplace_back(form.expect_ok());
+     }
+ 
++    if(native_body.is_none())
++    {
++      auto const res{ analyze_body(nullptr) };
++      if(res.is_err())
++      {
++        return res.expect_err();
++      }
++      native_body = res.expect_ok();
++    }
++    auto const body_do{ native_body.unwrap() };
++    fn_ctx->native_return_type = native_return_type;
++
+     /* If it turns out this function uses recur, we need to ensure that its tail expression
+      * is boxed. This is because unboxed values may use IIFE for initialization, which will
+      * not work with the generated while/continue we use for recursion. */
+@@ -1763,10 +1852,11 @@ namespace jank::analyze
+           latest_expansion(macro_expansions));
+       }
+ 
+-      auto const new_last_expression{ apply_implicit_conversion(last_expression,
+-                                                                last_expression_type,
+-                                                                cpp_util::untyped_object_ref_type(),
+-                                                                macro_expansions) };
++      auto const new_last_expression{ apply_implicit_conversion(
++        last_expression,
++        last_expression_type,
++        native_return_type ? native_return_type : cpp_util::untyped_object_ref_type(),
++        macro_expansions) };
+       if(new_last_expression.is_err())
+       {
+         return new_last_expression.expect_err();
+@@ -1822,11 +1912,78 @@ namespace jank::analyze
+ 
+     native_vector<expr::function_arity> arities;
+ 
++    /* Native entries (see analyze_fn_arity) need every arity to be fixed: a variadic arity
++     * means named recursion may go through a dynamic call. */
++    bool allow_native{ true };
++    {
++      auto const is_variadic_params{ [](runtime::object_ref const params) {
++        if(params.get_type() != runtime::object_type::persistent_vector)
++        {
++          return true;
++        }
++        for(auto const &p : runtime::expect_object<runtime::obj::persistent_vector>(params)->data)
++        {
++          if(p.get_type() == runtime::object_type::symbol
++             && runtime::expect_object<runtime::obj::symbol>(p)->name == "&")
++          {
++            return true;
++          }
++        }
++        return false;
++      } };
++      if(first_elem.get_type() == runtime::object_type::persistent_vector)
++      {
++        allow_native = !is_variadic_params(first_elem);
++      }
++      else
++      {
++        for(auto it(list->data.rest()); !it.empty() && allow_native; it = it.rest())
++        {
++          auto const arity_obj(it.first().unwrap());
++          if(!arity_obj.has_behavior(object_behavior::sequence_like))
++          {
++            allow_native = false;
++            break;
++          }
++          allow_native = !is_variadic_params(runtime::first(arity_obj));
++        }
++      }
++    }
++
++    /* A native return hint: `defn` puts the name's :tag on the fn form as :rettag. Only a
++     * native number counts; anything else (a class hint, an unknown type) is ignored. */
++    jtl::ptr<void> native_return_hint{};
++    if(allow_native)
++    {
++      static auto const rettag_kw(__rt_ctx->intern_keyword("", "rettag").expect_ok());
++      auto const meta{ full_list->get_meta() };
++      if(meta.is_some())
++      {
++        auto rettag{ runtime::get(meta, rettag_kw) };
++        /* The tag may come quoted. */
++        if(rettag.get_type() == runtime::object_type::persistent_list
++           && runtime::equal(runtime::first(rettag), make_box<obj::symbol>("quote")))
++        {
++          rettag = runtime::second(rettag);
++        }
++        if(rettag.get_type() == runtime::object_type::symbol)
++        {
++          auto const type_expr(analyze_type(rettag, current_frame, none));
++          if(type_expr.is_ok() && cpp_util::is_native_number(type_expr.expect_ok()))
++          {
++            native_return_hint = type_expr.expect_ok();
++          }
++        }
++      }
++    }
++
+     if(first_elem.get_type() == runtime::object_type::persistent_vector)
+     {
+       auto const result(analyze_fn_arity(make_box<runtime::obj::persistent_list>(list->data.rest()),
+                                          name,
+-                                         current_frame));
++                                         current_frame,
++                                         native_return_hint,
++                                         allow_native));
+       if(result.is_err())
+       {
+         return result.expect_err()->add_fallback_usage(object_source(list->data.first().unwrap()));
+@@ -1843,7 +2000,8 @@ namespace jank::analyze
+         {
+           auto const arity_list(runtime::obj::persistent_list::create(arity_list_obj));
+ 
+-          auto result(analyze_fn_arity(arity_list, name, current_frame));
++          auto result(
++            analyze_fn_arity(arity_list, name, current_frame, native_return_hint, allow_native));
+           if(result.is_err())
+           {
+             return result.expect_err()->add_fallback_usage(
+@@ -2589,6 +2747,32 @@ namespace jank::analyze
+       else_expr_opt = else_expr.expect_ok();
+     }
+ 
++    /* A branch that recurs never produces a value, so the if has the other branch's type
++     * when that is a native number: a loop carrying native locals keeps a native result. */
++    if(else_expr_opt.is_some())
++    {
++      auto const then_recurs{ resolve_tail_expression(then_expr.expect_ok())->kind
++                              == expression_kind::recur };
++      auto const else_recurs{ resolve_tail_expression(else_expr_opt.unwrap())->kind
++                              == expression_kind::recur };
++      if(then_recurs != else_recurs)
++      {
++        auto const value_type{ cpp_util::expression_type(
++          then_recurs ? else_expr_opt.unwrap() : then_expr.expect_ok()) };
++        if(cpp_util::is_native_number(value_type))
++        {
++          return jtl::make_ref<expr::if_>(position,
++                                          current_frame,
++                                          needs_box,
++                                          o,
++                                          value_type,
++                                          condition_expr.expect_ok(),
++                                          then_expr.expect_ok(),
++                                          else_expr_opt);
++        }
++      }
++    }
++
+     auto const else_type{ else_expr_opt.is_some()
+                             ? cpp_util::expression_type(else_expr_opt.unwrap())
+                             : cpp_util::untyped_object_ref_type() };
+@@ -3515,6 +3699,20 @@ namespace jank::analyze
+       }
+     }
+ 
++    /* Named recursion into the very arity being analyzed, when that arity has (or is being
++     * tried with) a native entry (see analyze_fn_arity): the arguments convert to the
++     * parameter types and the call returns the native type. */
++    jtl::ptr<expr::function_context> native_target{};
++    {
++      auto const rr(llvm::dyn_cast<expr::recursion_reference>(source.data));
++      if(rr && fn_ctx.is_some() && rr->fn_ctx.data == fn_ctx.unwrap().data
++         && rr->fn_ctx->native_return_type && !rr->fn_ctx->is_variadic
++         && rr->fn_ctx->param_count == arg_count && rr->fn_ctx->param_types.size() == arg_count)
++      {
++        native_target = rr->fn_ctx.data;
++      }
++    }
++
+     native_vector<expression_ref> arg_exprs;
+     arg_exprs.reserve(std::min(arg_count, runtime::max_params + 1));
+ 
+@@ -3525,13 +3723,14 @@ namespace jank::analyze
+                             current_frame,
+                             expression_position::value,
+                             fn_ctx,
+-                            needs_arg_box));
++                            native_target ? false : needs_arg_box));
+       if(arg_expr.is_err())
+       {
+         return arg_expr.expect_err()->add_usage(read::parse::reparse_nth(o, i + 1));
+       }
+       arg_expr = apply_implicit_conversion(arg_expr.expect_ok(),
+-                                           cpp_util::untyped_object_ref_type(),
++                                           native_target ? native_target->param_types[i]
++                                                         : cpp_util::untyped_object_ref_type(),
+                                            macro_expansions);
+       if(arg_expr.is_err())
+       {
+@@ -3582,14 +3781,19 @@ namespace jank::analyze
+     auto const recursion_ref(llvm::dyn_cast<expr::recursion_reference>(source.data));
+     if(recursion_ref)
+     {
+-      return jtl::make_ref<expr::named_recursion>(
++      auto const ret(jtl::make_ref<expr::named_recursion>(
+         position,
+         current_frame,
+         needs_ret_box,
+         o,
+         std::move(*recursion_ref),
+         make_box<runtime::obj::persistent_list>(o->data.rest()),
+-        std::move(arg_exprs));
++        std::move(arg_exprs)));
++      if(native_target)
++      {
++        ret->native_return_type = native_target->native_return_type;
++      }
++      return ret;
+     }
+     else
+     {
+diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+index e46eddf0..2bac6469 100644
+--- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
++++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+@@ -866,7 +866,24 @@ namespace jank::codegen
+     b.next_instruction();
+ 
+     bool needs_comma{};
+-    if(inst->needs_dynamic_call)
++    if(!inst->native_param_types.empty())
++    {
++      /* The arity's native entry: native arguments in, native result out. */
++      auto const fn_name{ util::format("{}_{}_native", inst->fn_base_name, inst->args.size()) };
++      util::format_to(b.body_buffer, "auto const {}({}({}", inst->name, fn_name, inst->fn);
++      needs_comma = true;
++
++      util::format_to(b.deps_buffer,
++                      "extern \"C\" {} {}(jank::runtime::object_ref const",
++                      get_qualified_type_name(inst->type),
++                      fn_name);
++      for(auto const type : inst->native_param_types)
++      {
++        util::format_to(b.deps_buffer, ", {}", get_qualified_type_name(type));
++      }
++      util::format_to(b.deps_buffer, ");\n");
++    }
++    else if(inst->needs_dynamic_call)
+     {
+       util::format_to(b.body_buffer, "auto const {}({}.call(", inst->name, inst->fn);
+     }
+@@ -1972,12 +1989,29 @@ namespace jank::codegen
+       param_shadows_fn |= param.name->name == fn.arity->fn_ctx->fn->name;
+     }
+ 
+-    util::format_to(
+-      b.body_buffer,
+-      "\nextern \"C\" jank::runtime::object_ref {}_{}(jank::runtime::object_ref const {}",
+-      munged_linkage_name,
+-      fn.arity->params.size(),
+-      param_shadows_fn ? "" : munged_fn_name);
++    /* An arity with a native return type gets two entries: `<name>_<n>_native`, which holds
++     * the body and takes its typed parameters natively, and `<name>_<n>`, the boxing entry
++     * every dynamic caller uses, which converts the arguments, calls the native entry and
++     * boxes its result. */
++    auto const native_return_type{ fn.arity->fn_ctx->native_return_type };
++    if(native_return_type)
++    {
++      util::format_to(b.body_buffer,
++                      "\nextern \"C\" {} {}_{}_native(jank::runtime::object_ref const {}",
++                      get_qualified_type_name(native_return_type),
++                      munged_linkage_name,
++                      fn.arity->params.size(),
++                      param_shadows_fn ? "" : munged_fn_name);
++    }
++    else
++    {
++      util::format_to(
++        b.body_buffer,
++        "\nextern \"C\" jank::runtime::object_ref {}_{}(jank::runtime::object_ref const {}",
++        munged_linkage_name,
++        fn.arity->params.size(),
++        param_shadows_fn ? "" : munged_fn_name);
++    }
+ 
+     /* If parameters have type hints, we'll generate the actual param with a hidden name and
+      * then introduce a local with the param name, along with whatever conversion is necessary
+@@ -1986,7 +2020,16 @@ namespace jank::codegen
+ 
+     for(auto const &param : fn.arity->params)
+     {
+-      if(is_untyped_object(param.type))
++      if(native_return_type && !is_untyped_object(param.type))
++      {
++        auto const munged{ munge(param.name->name) };
++        util::format_to(b.body_buffer,
++                        ", {} {}",
++                        get_qualified_type_name(param.type),
++                        munged);
++        param_names.emplace_back(munged);
++      }
++      else if(is_untyped_object(param.type))
+       {
+         auto const munged{ munge(param.name->name) };
+         util::format_to(b.body_buffer, ", jank::runtime::object_ref {}", munged);
+@@ -2034,8 +2077,8 @@ namespace jank::codegen
+           param_names[param_index],
+           util::escape(param.name->get_meta().to_code_string()));
+       }
+-      /* Any other non-object_ref uses trait conversion. */
+-      else if(!is_untyped_object(param.type))
++      /* Any other non-object_ref uses trait conversion (the native entry takes them as is). */
++      else if(!is_untyped_object(param.type) && !native_return_type)
+       {
+         auto const munged{ munge(param.name->name) };
+         util::format_to(b.body_buffer,
+@@ -2060,6 +2103,41 @@ namespace jank::codegen
+     }
+ 
+     util::format_to(b.body_buffer, "}\n");
++
++    if(native_return_type)
++    {
++      /* The boxing entry. */
++      util::format_to(b.body_buffer,
++                      "\nextern \"C\" jank::runtime::object_ref {}_{}(jank::runtime::object_ref "
++                      "const jank_fn_self",
++                      munged_linkage_name,
++                      fn.arity->params.size());
++      for(usize i{}; i < fn.arity->params.size(); ++i)
++      {
++        util::format_to(b.body_buffer, ", jank::runtime::object_ref const jank_arg_{}", i);
++      }
++      util::format_to(b.body_buffer,
++                      ") {\nreturn jank::runtime::convert<{}>::into_object({}_{}_native(jank_fn_self",
++                      get_qualified_type_name(native_return_type),
++                      munged_linkage_name,
++                      fn.arity->params.size());
++      for(usize i{}; i < fn.arity->params.size(); ++i)
++      {
++        auto const &param{ fn.arity->params[i] };
++        if(is_untyped_object(param.type))
++        {
++          util::format_to(b.body_buffer, ", jank_arg_{}", i);
++        }
++        else
++        {
++          util::format_to(b.body_buffer,
++                          ", jank::runtime::convert<{}>::from_object(jank_arg_{})",
++                          get_qualified_type_name(param.type),
++                          i);
++        }
++      }
++      util::format_to(b.body_buffer, "));\n}\n");
++    }
+   }
+ 
+   generated_cpp gen_cpp(ir::module const &mod)
+diff --git a/compiler+runtime/src/cpp/jank/ir/builder.cpp b/compiler+runtime/src/cpp/jank/ir/builder.cpp
+index f8318786..daf1475a 100644
+--- a/compiler+runtime/src/cpp/jank/ir/builder.cpp
++++ b/compiler+runtime/src/cpp/jank/ir/builder.cpp
+@@ -350,10 +350,12 @@ namespace jank::ir
+                                       identifier const &fn,
+                                       jtl::immutable_string const &fn_base_name,
+                                       native_vector<identifier> &&args,
+-                                      bool const needs_dynamic_call)
++                                      bool const needs_dynamic_call,
++                                      jtl::ptr<void> const native_return_type,
++                                      native_vector<jtl::ptr<void>> &&native_param_types)
+   {
+     auto name{ next_ident() };
+-    auto const type{ untyped_object_ref_type() };
++    auto const type{ native_return_type ? native_return_type : untyped_object_ref_type() };
+     current_function()->blocks[block_index].instructions.emplace_back(
+       jtl::make_ref<inst::named_recursion>(name,
+                                            type,
+@@ -361,7 +363,8 @@ namespace jank::ir
+                                            fn,
+                                            fn_base_name,
+                                            jtl::move(args),
+-                                           needs_dynamic_call));
++                                           needs_dynamic_call,
++                                           jtl::move(native_param_types)));
+     if(pos == analyze::expression_position::tail)
+     {
+       return ret(name, type);
+diff --git a/compiler+runtime/src/cpp/jank/ir/instruction.cpp b/compiler+runtime/src/cpp/jank/ir/instruction.cpp
+index f243471f..abe69a93 100644
+--- a/compiler+runtime/src/cpp/jank/ir/instruction.cpp
++++ b/compiler+runtime/src/cpp/jank/ir/instruction.cpp
+@@ -242,12 +242,14 @@ namespace jank::ir::inst
+                                    identifier const &fn,
+                                    jtl::immutable_string const &fn_base_name,
+                                    native_vector<identifier> &&args,
+-                                   bool const needs_dynamic_call)
++                                   bool const needs_dynamic_call,
++                                   native_vector<jtl::ptr<void>> &&native_param_types)
+     : instruction{ instruction_kind::named_recursion, name, type, location }
+     , fn{ fn }
+     , fn_base_name{ fn_base_name }
+     , args{ jtl::move(args) }
+     , needs_dynamic_call{ needs_dynamic_call }
++    , native_param_types{ jtl::move(native_param_types) }
+   {
+   }
+ 
+diff --git a/compiler+runtime/src/cpp/jank/ir/processor.cpp b/compiler+runtime/src/cpp/jank/ir/processor.cpp
+index 6c98364e..f5a6fd29 100644
+--- a/compiler+runtime/src/cpp/jank/ir/processor.cpp
++++ b/compiler+runtime/src/cpp/jank/ir/processor.cpp
+@@ -500,6 +500,19 @@ namespace jank::ir
+       fn = runtime::munge(expr->recursion_ref.fn_ctx->name);
+     }
+ 
++    /* A call into this arity's own native entry: native arguments, native result. */
++    if(expr->native_return_type && !needs_dynamic_call)
++    {
++      auto param_types{ expr->recursion_ref.fn_ctx->param_types };
++      return b.named_recursion(expr->position,
++                               fn,
++                               runtime::munge(expr->recursion_ref.fn_ctx->fn->unique_name),
++                               jtl::move(arg_idents),
++                               false,
++                               expr->native_return_type,
++                               jtl::move(param_types));
++    }
++
+     return b.named_recursion(expr->position,
+                              fn,
+                              runtime::munge(expr->recursion_ref.fn_ctx->fn->unique_name),
+diff --git a/compiler+runtime/src/jank/clojure/core.jank b/compiler+runtime/src/jank/clojure/core.jank
+index f74c959d..f8e61a4d 100644
+--- a/compiler+runtime/src/jank/clojure/core.jank
++++ b/compiler+runtime/src/jank/clojure/core.jank
+@@ -1367,9 +1367,13 @@
+ ;; Primitives.
+ ;;; Arithmetic.
+ (defn
+-  ^{:inline (fn* [l r]
+-              (list 'cpp/jank.runtime.add l r))
+-    :inline-arities #{2}}
++  ^{:inline (fn* [l r & more]
++              ;; Every arity past one inlines, folded left as the variadic arity is.
++              (loop* [acc (list 'cpp/jank.runtime.add l r) more more]
++                (if more
++                  (recur (list 'cpp/jank.runtime.add acc (first more)) (next more))
++                  acc)))
++    :inline-arities #{2 3 4 5 6 7 8}}
+   +
+   ([]
+    0)
+@@ -1384,9 +1388,13 @@
+        (recur res (first args) (next args))))))
+ 
+ (defn
+-  ^{:inline (fn* [l r]
+-              (list 'cpp/jank.runtime.sub l r))
+-    :inline-arities #{2}}
++  ^{:inline (fn* [l r & more]
++              ;; Every arity past one inlines, folded left as the variadic arity is.
++              (loop* [acc (list 'cpp/jank.runtime.sub l r) more more]
++                (if more
++                  (recur (list 'cpp/jank.runtime.sub acc (first more)) (next more))
++                  acc)))
++    :inline-arities #{2 3 4 5 6 7 8}}
+   -
+   ([x]
+    (- 0 x))
+@@ -1399,9 +1407,13 @@
+        (recur res (first args) (next args))))))
+ 
+ (defn
+-  ^{:inline (fn* [l r]
+-              (list 'cpp/jank.runtime.mul l r))
+-    :inline-arities #{2}}
++  ^{:inline (fn* [l r & more]
++              ;; Every arity past one inlines, folded left as the variadic arity is.
++              (loop* [acc (list 'cpp/jank.runtime.mul l r) more more]
++                (if more
++                  (recur (list 'cpp/jank.runtime.mul acc (first more)) (next more))
++                  acc)))
++    :inline-arities #{2 3 4 5 6 7 8}}
+   *
+   ([]
+    1)
+@@ -1416,9 +1428,13 @@
+        (recur res (first args) (next args))))))
+ 
+ (defn
+-  ^{:inline (fn* [l r]
+-              (list 'cpp/jank.runtime.div l r))
+-    :inline-arities #{2}}
++  ^{:inline (fn* [l r & more]
++              ;; Every arity past one inlines, folded left as the variadic arity is.
++              (loop* [acc (list 'cpp/jank.runtime.div l r) more more]
++                (if more
++                  (recur (list 'cpp/jank.runtime.div acc (first more)) (next more))
++                  acc)))
++    :inline-arities #{2 3 4 5 6 7 8}}
+   /
+   ([x]
+    (/ 1 x))

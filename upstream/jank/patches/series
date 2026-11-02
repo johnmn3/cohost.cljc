@@ -4,3 +4,4 @@
 12-21-i64-arithmetic.patch
 18-small-vectors.patch
 19-gc-defaults.patch
+20-native-returns.patch
