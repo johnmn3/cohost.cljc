@@ -125,4 +125,4 @@
                           ;; name (M-10). The battery keeps 146/146:
                           ;; jolt's named fn still sees a redefinition.
                           :defn-fn-name? true
-                          :invoke-member invoke-member}))
+:invoke-member invoke-member}))

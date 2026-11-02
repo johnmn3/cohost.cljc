@@ -13,7 +13,7 @@ reference state.
 | :cohost-inst? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | :prim-kind-test | | | | | | | |
 | :defn-fn-name? | N/A | ON | ON | N/A | N/A | N/A | N/A |
-| :rewrite-inline? | | | | | | | |
+| :rewrite-inline? | N/A | ON | ON | ON | ON | ON | ON |
 | tag type tests (M-4.1) | | | | | | | |
 | bound RT arms (M-4.2/3) | | | | | | | |
 | :native-hints (H1) | | | | | | | |
@@ -74,3 +74,28 @@ reference state.
   a source-map wrapper would break that boot the way it broke
   jank's. The JVM's syntax-quote attaches :line/:column metadata,
   which the codemod already carries; it is not a wrapper.
+
+- **:rewrite-inline?** -- ON on all six, N/A on the JVM. The
+  capability exists for hosts whose compiler ignores a var's :inline
+  fn: the codemod then applies core.clj's own inline expansions at
+  rewrite time, as the JVM compiler does on its own (adapter
+  contract) -- which is exactly why the JVM needs nothing: its
+  compiler honours :inline natively. Five hosts already carried it
+  (jolt, basilisk, cljs, ClojureWasm, phel -- the adapter inventory,
+  verified by grep); let-go was the only host missing it. Turned on
+  there (M-10): bb boot:lg -> battery 144/146, libraries 61/61,
+  EXIT=0, let-go's standing unchanged.
+
+- **:prim-kind-test** -- jolt N/A, measured by isolation. Wired as
+  `(instance? java.lang.Long sym)` / `(instance? java.lang.Double
+  sym)`, the battery stayed 146/146 (the class test's extension is
+  a subset of the shim test's, so no value that needs converting
+  passes). But with :defn-fn-name? held on and the box quiet, the
+  hinted programs read fib-hinted 219.5 ms with the shim test
+  against 248.6 ms with the class test (tak-hinted 556.3 against
+  562.1): jolt's instance? is a class check through its JVM
+  emulation, not a tag read like jank's is_integer, and it costs
+  what the shim's bound call costs. The cap stays off. (An earlier
+  in-process A/B through the stock-compiled eval path read the
+  class test x4.16 slower still; that path is not the one the cap
+  takes, so the bench isolation is the number that counts.)
