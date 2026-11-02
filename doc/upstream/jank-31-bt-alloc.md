@@ -133,8 +133,8 @@ Interleaved plain (the fifteen-patch series) / after (+ 31), 6 rounds of `run.sh
 | `(pair 1) 2e6` | 13.01 ms | 7.93 ms | |
 
 callgrind, per `[i i]`: 488 -> 349 instructions with the first three changes (`_jank_vec`, `_jank_vec_impl`,
-`rbtree()` gone; `make_small` 77 -> 62); per binary-trees vector 912 -> 741. The overlap then moves `[i i]` from the
-96-byte to the 80-byte block.
+`rbtree()` gone; `make_small` 77 -> 62), 318 with the overlap (the 80-byte block: memset 101 -> 83, `GC_allochblk*`
+55 -> 45); per binary-trees vector 912 -> 741 with the first three.
 
 What remains of `[i i]`'s 3x: bytes. An 80-byte block against `GC_MALLOC(16)`'s 32-byte one is 2.5x the memory to
 clear, sweep and collect (in steady state, one collection per 2e6 `[i i]` at the 256 MiB default heap, none per 2e6
