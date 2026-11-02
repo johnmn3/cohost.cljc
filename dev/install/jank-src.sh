@@ -287,7 +287,8 @@ fi
 # libLLVM.so into $JANK_LLVM.lto/bin: a minimal llvm-tblgen (the option-parser backend + lib/TableGen, which libLLVM.so
 # lacks), llvm-ar, llvm-profdata (two Debuginfod symbols stubbed: profile merging never uses them) and lld (standalone
 # CMake build). Then configure passes -flto=thin to every C/C++ TU and links with that lld. JANK_PGO=<profdata> adds
-# -fprofile-use (train with an -fprofile-generate build: JANK_PGO=generate). Use its own JANK_SRC/JANK_DEV_PREFIX.
+# -fprofile-use (train with an -fprofile-generate build: JANK_PGO=generate). Use its own JANK_SRC/JANK_DEV_PREFIX; the
+# generate and use builds share one JANK_SRC (PGO names internal-linkage functions by their source path).
 # The flags go in the *_RELEASE variables: jank copies CMAKE_CXX_FLAGS and CMAKE_SHARED_LINKER_FLAGS into the runtime's
 # JANK_AOT_FLAGS (compiler+runtime/CMakeLists.txt:713), and -flto there makes phase 1 emit core.o as bitcode it cannot
 # load. The build dir must be compiler+runtime/build: jank treats only that as an in-tree build (environment_dynamic.cpp).
