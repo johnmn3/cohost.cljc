@@ -11,12 +11,12 @@ reference state.
 |---|---|---|---|---|---|---|---|
 | :syntax-quote-source? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | :cohost-inst? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| :prim-kind-test | N/A | N/A | | N/A | | | |
+| :prim-kind-test | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | :defn-fn-name? | N/A | ON | ON | N/A | N/A | N/A | N/A |
 | :rewrite-inline? | N/A | ON | ON | ON | ON | ON | ON |
 | tag type tests (M-4.1) | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | bound RT arms (M-4.2/3) | ON | ON | ON | ON | ON | ON | ON |
-| :native-hints (H1) | | | | | | | |
+| :native-hints (H1) | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | Numbers-minus as `-` | ON | ON | ON | ON | ON | ON | ON |
 
 ## The rows
@@ -107,9 +107,11 @@ reference state.
   366.5 ms with the shim test, the ranges overlapping. On both
   hosts the bound shim test is already cheap; the hinted programs'
   remaining gap to unhinted lives in the coercion's shape, not in
-  this test. Noted on cljs: tak-hinted is ABSENT there today --
-  the program fails with a TypeError before it times -- a
-  correctness fact about the hinted path on cljs, not a speed row.
+  this test. Noted on cljs: the raw tak-hinted bench program is
+  ABSENT there -- cljs's own compiler fails it with a TypeError
+  before it times. That is a fact about the bench program through
+  the host's own compiler; cohost's hinted path (codemod plus
+  coercion) passes the battery's H1 rows on cljs.
 
 - **Tag type tests (M-4 item 1)** -- N/A on all six, same root as
   :cohost-inst?. The tag test exists because on jank a cohost type
@@ -126,3 +128,42 @@ reference state.
   host; there is nothing per-host to wire. Item 2's one-call
   instance guard binds the :cohost-inst? capability, which only
   jank has -- the guard itself is the :cohost-inst? row above.
+
+  The remaining hosts, decided: the JVM is the reference -- its
+  compiler consumes the hints themselves (the :native-hints row)
+  and JIT-inlines the shim test. ClojureWasm has no gap to close:
+  bench:programs reads fib 9,764.9 ms against fib-hinted 8,526.9 ms
+  -- hinted already beats unhinted through the coercion there. On
+  phel the bench vehicle cannot isolate a hinted program at all:
+  phel's own compiler takes ^long as a native PHP parameter type
+  and the raw fib-hinted program dies with "Argument #1 ($n) must
+  be of type long, int given" (cohost's own hinted path passes the
+  H1 rows; it never presents a raw hint to phel's compiler). On
+  let-go and basilisp there is no cheaper exact-kind op to emit:
+  each shim test already binds the host core's own integer test
+  (let-go has no class/tag op; basilisp's integer? is the one
+  isinstance its core has), and the two hosts where an inline form
+  existed both measured it a wash -- the test is not where the
+  hinted cost lives.
+
+- **:native-hints (H1)** -- N/A on all six, three of them measured
+  by trial. The capability keeps a primitive tag on the emitted
+  fn* parameter for a compiler that compiles tags as native types,
+  instead of stripping the tag and coercing at entry. Trialled on
+  the three compiler hosts that take tags at all -- each battery
+  stayed at its standing (the tag's semantics are the JVM's cast
+  semantics, which is what the coercion implements) and none was
+  faster than the coercion on bench:programs fib-hinted: JVM
+  100.2 ms native against 96.6 ms coerced (boot:jvm 145/146);
+  jolt 385.3 against 219.5 (boot:jolt 146/146; even the native
+  run's 256.2 ms minimum does not beat the coercion median);
+  ClojureWasm 8,868.2 against 8,526.9 (boot:cljw 144/146). The
+  coercion's fast path -- one kind test, then the value passes --
+  is already at the floor these compilers reach; the programs'
+  remaining cost is their body arithmetic. The other three hosts
+  (cljs, basilisp, phel, let-go) have no native scalar type for a
+  fn* parameter to carry: their compilers are dynamic, and phel
+  shows the shape of forcing one (its compiler's own ^long type
+  rejects an int argument). Jank remains the one host where the
+  tags are the machine's own types and the coercion would be the
+  foreign path.
