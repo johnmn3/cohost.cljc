@@ -11,8 +11,8 @@ cohost :lg -X:run :n 2               # an alias's :exec-fn, its :exec-args merge
 cohost :cljs -Spath                  # the source roots, in tools.deps order
 ```
 
-Wired: `:cljs :jolt :lpy :cljw :phel :lg`. `:jvm` runs the real Clojure CLI.
-`:cljrs` and `:jank` are wired when their boots land (doc/hosts/PLAN.md).
+Wired: `:cljs :jolt :lpy :cljw :phel :lg :jank`. `:jvm` runs the real Clojure CLI.
+`:cljrs` is wired when its boot lands (doc/hosts/PLAN.md).
 
 ## Shape
 
@@ -77,7 +77,42 @@ runs `dev/phel_cli.phel` from the repo (its `phel-config.php` names the source
 directories) and `:cljs` the build in `cljs-cli.edn` (`:main cohost.cli`, rebuilt
 when `src/` or the edn changes) from the repo (the nodejs bootstrap finds its
 files from the process's directory): `cohost.cli` moves to the project directory
-the config names.
+the config names. `:jank` runs `jank -O3 --module-path <cohost's -O3 AOT objects>:src
+run-main cohost.cli -- <config>`; the objects are `dev/perf/jank_aot_ensure.clj`'s, rebuilt
+when `src/cohost` or the jank binary changed (the first run after a change compiles them).
+
+## Verified (2026-11-02 ET)
+
+The demo is committed: `dev/cli-demo/` (`deps.edn` with `org.clojure/tools.cli 1.2.245` from Maven, the
+`:local/root` library `greeter/`, stock `clojure.string`; aliases `:main` (`:main-opts`) and `:run`
+(`:exec-fn`/`:exec-args`); `script.clj`). `bb cli:check [target ...]` runs six cases in it with `clojure` and with
+`bin/cohost :<target>` and prints one line per target x case: SAME when stdout and the exit code match (`-Spath`:
+when cohost's roots are clojure's classpath with each jar replaced by its extraction and the clojure jar left out).
+
+```
+cohost :jank -M -m demo.main jank-user        # hello, jank-USER!
+cohost :cljw -M:main -g hi -n 2 cljw-user     # hi, ClojureWasm-USER! (twice)
+cohost :lg -X:run :user '"lg-user"'           # hello, let-go-USER!
+cohost :cljs -e "(require 'greeter.core)" -e '(greeter.core/name-of "cljs-user")'   # "ClojureScript-USER"
+cohost :jolt script.clj jolt-user jvm-x       # jolt-USER JVM-X
+cohost :jank -Spath                           # the source roots
+```
+
+`bb cli:check`, 2026-11-02 12:07-12:18 PM ET, cohost `c/cli-every-target`:
+
+| target | -M -m | -M:main | -X:run | -e | script | -Spath |
+|---|---|---|---|---|---|---|
+| jvm | SAME | SAME | SAME | SAME | SAME | SAME |
+| jolt | SAME | SAME | SAME | SAME | SAME | SAME |
+| cljs | SAME | SAME | SAME | SAME | SAME | SAME |
+| cljw | SAME | SAME | SAME | SAME | SAME | SAME |
+| lg | SAME | SAME | SAME | SAME | SAME | SAME |
+| jank | SAME | SAME | SAME | SAME | SAME | SAME |
+| lpy, phel, cljrs | not on the box that ran this | | | | | |
+
+jank before this change: `cohost: :jank is not wired into the CLI yet` on every case. Wiring it took the launch
+above and one host arm in `cohost.cli/exit!`: jank 0.1's `flush` throws `TODO: port flesh`, so jank exits through
+`std::exit`, which flushes standard output. `:cljrs` is not wired: cohost's clojurust boot is parked (doc/PERF.md).
 
 ## Verified (2026-10-31 ET)
 
