@@ -1060,7 +1060,7 @@
         ;; direct call instead of a var deref and a dynamic call. The
         ;; semantic price is pinned by a battery row: an in-flight
         ;; recursion no longer sees a redefinition of the var.
-        more' (if (and (host/defn-fn-name?)
+        nameable? (and (host/defn-fn-name?)
                        ;; a dotted name is a class or a constructor
                        ;; pseudo-name (deftype's Box.), not a fn name:
                        ;; jank's codegen rejects it on a fn*
@@ -1068,14 +1068,26 @@
                        (seq more')
                        (seq? (last more'))
                        (= 'fn* (first (last more')))
-                       (not (symbol? (second (last more'))))
-                       ;; and no closure inside: a self-named fn*
-                       ;; holding closures breaks jank's compile-module
-                       ;; codegen (see fn*-inside?)
-                       (not (some fn*-inside? (rest (last more')))))
-                (concat (butlast more')
-                        [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
-                more')]
+                       (not (symbol? (second (last more')))))
+        more' (cond (not nameable?) more'
+                    ;; the host's fn* takes the name itself -- except
+                    ;; on the :cohost-types host (jank), where a
+                    ;; self-named fn* holding closures breaks its
+                    ;; compile-module codegen (see fn*-inside?) and
+                    ;; the name is withheld there
+                    (host/named-fn*?)
+                    (if (and (= :cohost-types (host/type-method-style))
+                             (some fn*-inside? (rest (last more'))))
+                      more'
+                      (concat (butlast more')
+                              [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))]))
+                    ;; the host's fn* takes no name (ClojureWasm,
+                    ;; let-go): bind it with letfn*, the shape rw-fn*
+                    ;; already emits for a named source fn there; the
+                    ;; local binding is the direct-call target
+                    :else
+                    (concat (butlast more')
+                            [(list 'letfn* [(vary-meta nm (constantly nil)) (last more')] nm)]))]
     (apply list 'def nm more')))
 
 (defn- rw-map

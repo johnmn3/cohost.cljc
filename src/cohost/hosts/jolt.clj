@@ -118,4 +118,10 @@
 (adapter/install! (merge java/capabilities
                          adapter
                          {:math (assoc (:math java/capabilities) 'log10 log10)
+                          ;; jolt's fn* takes a name and recurses on it
+                          ;; (probed on the raw host): a def's fn*
+                          ;; carries the def's name, so a stock fn's
+                          ;; self-recursion is a direct call, not a var
+                          ;; deref per call (M-10)
+                          :defn-fn-name? true
                           :invoke-member invoke-member}))
