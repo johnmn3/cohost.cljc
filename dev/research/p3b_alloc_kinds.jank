@@ -1,0 +1,30 @@
+;; P3b (session 2): which allocation is the ~200 ns of pair-alloc (P3).
+;; 2e6 iterations each, the loop keeps the last value: a two-element vector
+;; literal, (vector i i), a one-key map, a cons cell, a list, a lazy fn
+;; object ((fn [] i)), a cpp/raw GC_MALLOC of 16 bytes, and the same of 48.
+(cpp/raw "#include <gc.h>
+namespace r3b {
+  inline void* alloc16() { return GC_MALLOC(16); }
+  inline void* alloc48() { return GC_MALLOC(48); }
+  inline void* alloc16_atomic() { return GC_MALLOC_ATOMIC(16); }
+}")
+(def n 2000000)
+(defn vec-literal [] (loop [i 0 last nil] (if (< i n) (recur (inc i) [i i]) (count last))))
+(defn vec-call [] (loop [i 0 last nil] (if (< i n) (recur (inc i) (vector i i)) (count last))))
+(defn map-1 [] (loop [i 0 last nil] (if (< i n) (recur (inc i) {:a i}) (count last))))
+(defn cons-1 [] (loop [i 0 last nil] (if (< i n) (recur (inc i) (cons i nil)) (count last))))
+(defn list-2 [] (loop [i 0 last nil] (if (< i n) (recur (inc i) (list i i)) (count last))))
+(defn fn-obj [] (loop [i 0 last nil] (if (< i n) (recur (inc i) (fn [] i)) (if last 1 0))))
+(defn raw-16 [] (loop [i 0] (if (< i n) (do (cpp/r3b.alloc16) (recur (inc i))) i)))
+(defn raw-48 [] (loop [i 0] (if (< i n) (do (cpp/r3b.alloc48) (recur (inc i))) i)))
+(defn raw-16-atomic [] (loop [i 0] (if (< i n) (do (cpp/r3b.alloc16_atomic) (recur (inc i))) i)))
+(defn run []
+  (bench "vec-literal-2e6" vec-literal)
+  (bench "vec-call-2e6" vec-call)
+  (bench "map-1-2e6" map-1)
+  (bench "cons-2e6" cons-1)
+  (bench "list-2-2e6" list-2)
+  (bench "fn-obj-2e6" fn-obj)
+  (bench "raw-gc-malloc-16-2e6" raw-16)
+  (bench "raw-gc-malloc-48-2e6" raw-48)
+  (bench "raw-gc-malloc-atomic-16-2e6" raw-16-atomic))
