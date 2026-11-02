@@ -111,8 +111,14 @@ source root:
   `:exec-args`, then the command line's `key value` pairs (a vector key is a
   path) and an optional trailing map. Its value is not printed.
 - **Namespace**: `user`, seeing the stock core.
-- **Reader conditionals** in a dependency's `.cljc` (and in `-e` text) read as the
-  JVM reads them, on every host: the first `:clj` branch, else `:default`.
+- **Reader conditionals** in your code and your dependencies' (`.cljc` files,
+  `-e` text, scripts) are chosen by cohost, the same way on every host: each
+  target ranks the platform keys, and the branch whose key ranks highest is
+  taken, wherever it stands in the `#?` (not the first match in source order).
+  Today every target ranks `:clj` first, then `:default`. A branch whose key is
+  not ranked is never taken; a `#?` with no ranked branch reads as nothing.
+  `#?@` splices the chosen branch the same way. The same ranking picks the file
+  when a namespace has several: `foo.clj` before `foo.cljc`.
 - **An error** prints `Execution error (Class).` and its message to stderr and
   ends the run with exit code 1; `-X` of a missing fn prints tools.deps'
   `Namespace x loaded but function not found: f`. Exit codes propagate.

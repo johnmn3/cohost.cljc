@@ -157,7 +157,17 @@
    ["a ^long parameter rejects a non-number" "(let [f (fn [^long x] x)] (try (f \"a\") (catch ClassCastException e :cce)))" :cce]
    ["a ^long fn recurred from its loop truncates" "(let [f (fn [^long n] (loop [i n a 0] (if (pos? i) (recur (dec i) (+ a i)) a)))] [(f 3.9) (f 4)])" [6 10]]
    ["a ^long fn keeps its :pre" "(try ((fn [^long x] {:pre [(pos? x)]} x) -1) (catch AssertionError e :pre))" :pre]
-   ["a ^long fn destructures its other parameter" "((fn [^long x [a b]] (+ x a b)) 1 [2 3])" 6]])
+   ["a ^long fn destructures its other parameter" "((fn [^long x [a b]] (+ x a b)) 1 [2 3])" 6]
+   ;; D-11: cohost picks each #? branch by the target's ranking of the keys
+   ;; (:clj, then :default, on every target today), not by source order
+   ["#? the :clj branch over :cljs and :default" "#?(:cljs 1 :clj 2 :default 3)" 2]
+   ["#? a key the ranking lacks falls to :default" "#?(:lpy 1 :default 3)" 3]
+   ["#? the ranking decides, not source order" "#?(:default 3 :clj 2)" 2]
+   ["#?@ splices the :clj branch into a vector" "[0 #?@(:clj [1 2]) 3 #?@(:cljs [4])]" [0 1 2 3]]
+   ["a branch's literal keeps the JVM's meta" "[(meta #?(:clj ^:k [1] :default [])) (meta #?(:clj {:a 1})) (meta #?(:cljs ^:x [] :default ^{:d 1} #{2}))]" [{:k true} nil {:d 1}]]
+   ;; cohost's own: the codemod's provenance of a form (cohost.scan/provenance)
+   ["(cohost) a :clj branch's forms are Java's" "(defmacro bt-prov [] (list 'quote (cohost.scan/provenance &form))) #?(:clj (bt-prov) :default :none)" :java]
+   ["(cohost) text outside a branch has no provenance" "(bt-prov)" nil]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."
