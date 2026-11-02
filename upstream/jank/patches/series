@@ -3,3 +3,4 @@
 14-keyword-hash.patch
 18-small-vectors.patch
 19-gc-defaults.patch
+22-multi-cache-truthy.patch
