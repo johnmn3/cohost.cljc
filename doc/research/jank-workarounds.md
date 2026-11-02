@@ -121,6 +121,9 @@ without X4 (a separate A/B of the case alone, -O0: 372 vs 339 ms medians), not t
 | json (3e4) | 4851.99 [4357.01-5032.40] | 4244.64 [4207.83-4910.68] |
 
 `bb boot:jank` on x4: 542/171/78/0, battery 143/145, libraries 61/61.
+After merging `max/main` @ faa50c4 (X2-1 adds four battery cases): x4 @ ae60daa and faa50c4 both
+542/171/78/0, battery 147/149 (the same two FAILs as before: `subs count nth first last butlast`,
+`Character outside ASCII`), libraries 61/61; the edge forms print the same as before the merge.
 
 Commands: `/home/user/lanes/u0/x4-measure.sh` alternates, per round and side, `bash
 dev/research/run-cohost-jank.sh dev/research/x4_parts.clj`, `bb bench:jank`, `bb bench:programs jank
@@ -128,8 +131,8 @@ sort,pipeline,json`; then `bb boot:jank` and the edge forms through `cohost.run 
 
 ## Removal
 
-- (b) `cohost_reduce`, `reduce-init`, `reduce-noinit` and the two `host-reduce` arms go when jank-15
-  (`dev/research/upstream/15-reduce-walk.jank`, U3) is in the series and `bb bench:jank`'s reduce-range,
+- (b) `cohost_reduce`, `reduce-init`, `reduce-noinit` and the two `host-reduce` arms go when the jank cohost
+  runs on carries jank-15 (15a-16 and 15b-17 joined the series at faa50c4; apt does not carry them), and `bb bench:jank`'s reduce-range,
   transduce and into-vector on the patched build without the arms are within their spread of these numbers.
 - (a) The comparator shortcut removes cohost's own cost (a stock fn call per comparison, ~42 ns on apt), not
   an upstream defect; no upstream patch retires it. Re-measure it when U7 (direct calls) lands and drop it if
