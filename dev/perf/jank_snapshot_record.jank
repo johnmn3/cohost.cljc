@@ -1,7 +1,8 @@
 ;; jank-FAST Step 6 stage 2. Boot with record mode on, load the twelve
 ;; libraries the batteries and the bench load, and write every recorded event
 ;; to target/jank-snapshot/events.edn (dev/perf/jank_snapshot_emit.clj turns
-;; them into modules). Does not compile.
+;; them into modules). Does not compile. Run by dev/perf/jank_snapshot_ensure.clj
+;; when the snapshot is stale.
 ;;   jank --module-path <aot-dir>:src run dev/perf/jank_snapshot_record.jank
 (require 'cohost.run)
 (require 'cohost.boot)
