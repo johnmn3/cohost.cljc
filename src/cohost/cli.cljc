@@ -8,6 +8,7 @@
 ;;   {:stock-root "/abs/resources/cohost/clojure-1.12.0"
 ;;    :roots      ["/abs/project/src" "/abs/cache/jar-dir" ...]  ; tools.deps order
 ;;    :cwd        "/abs/project"
+;;    :snapshot?  true      ; jank: boot from the fresh snapshot on the module path
 ;;    :inits      [[:e "(src)"] [:i "/abs/init.clj"] ...]       ; in the order given
 ;;    :main       {:type :main :ns "demo.main" :args ["a"]}     ; -m
 ;;              | {:type :script :path "/abs/s.clj" :args [...]}
@@ -38,6 +39,8 @@
      :lpy (python/exit code)
      :phel (php/exit code)
      :lg (os/exit code)
+     ;; jank 0.1's flush is a stub that throws; exit flushes stdout
+     :jank (cpp/exit code)
      :default (do (flush) (System/exit code))))
 
 (defn- read-stdin
@@ -123,7 +126,11 @@
     #?(:cljs (when (:cwd cfg) (js/process.chdir (:cwd cfg)))
        :phel (when (:cwd cfg) (php/chdir (:cwd cfg)))
        :default nil)
-    (let [report (boot/boot! {:root (:stock-root cfg) :verbose (boolean (:verbose cfg))})]
+    ;; :snapshot? -- the launcher found a fresh snapshot of the booted core on
+    ;; the module path (jank: bin/cohost through dev/perf/jank_snapshot_cli.clj)
+    (let [report (if (:snapshot? cfg)
+                   (boot/boot-from-snapshot! {:root (:stock-root cfg)})
+                   (boot/boot! {:root (:stock-root cfg) :verbose (boolean (:verbose cfg))}))]
       (when (:verbose cfg) (boot/print-report report)))
     (doseq [r (:roots cfg)] (boot/add-source-root! r))
     ;; clojure.main's namespace: user, seeing the stock core (a session
