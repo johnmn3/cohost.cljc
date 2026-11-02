@@ -174,6 +174,13 @@ namespace cohost_math {
 
 (cpp/raw "
 #include <jank/runtime/obj/array.hpp>
+#include <jank/runtime/core/equal.hpp>
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/core/math.hpp>
+#include <jank/runtime/core/truthy.hpp>
+#include <jank/runtime/obj/integer_range.hpp>
+#include <jank/runtime/obj/persistent_vector.hpp>
+#include <jank/runtime/obj/reduced.hpp>
 #include <jank/runtime/obj/persistent_string.hpp>
 #include <jank/runtime/var.hpp>
 #include <regex>
@@ -267,13 +274,102 @@ namespace cohost_regex {
 }
 namespace cohost_sort {
   using namespace jank::runtime;
+  // cmp is a Clojure fn; its answer is read as the shim's compare-with reads
+  // a fn's (AFunction.compare): a number orders by its integer value, any
+  // other value puts x first when truthy (false/nil: not first, whatever the
+  // reverse call would say). X4-1: the shim hands a fn comparator here
+  // unwrapped on jank, saving its two wrapper calls per comparison.
   inline object_ref sort_array(object_ref arr, object_ref cmp) {
     auto *a = static_cast<obj::array<object_ref> *>(arr.ptr());
     std::stable_sort(a->data.data, a->data.data + a->size,
                      [&](object_ref const &x, object_ref const &y) {
-                       return cmp.call(x, y).to_integer() < 0;
+                       auto const r(cmp.call(x, y));
+                       if(is_number(r)) { return r.to_integer() < 0; }
+                       return truthy(r);
                      });
     return arr;
+  }
+  // X4-1: the comparator is the host's compare (the shim's Arrays/sort with
+  // no comparator, or with the stock core's compare, whose body is
+  // (Util/compare x y) = the host's compare): call it here, no fn call.
+  // The cost it removes is cohost's own (a stock fn call per comparison),
+  // not an upstream defect, so no upstream patch retires it.
+  inline object_ref sort_array_compare(object_ref arr) {
+    auto *a = static_cast<obj::array<object_ref> *>(arr.ptr());
+    std::stable_sort(a->data.data, a->data.data + a->size,
+                     [](object_ref const &x, object_ref const &y) {
+                       return jank::runtime::compare(x, y) < 0;
+                     });
+    return arr;
+  }
+}
+// X4-1: reduce with an init over a range or a vector without jank's
+// sequence walk (runtime::reduce allocates a seq step per element: draft
+// jank-15). The same elements in the same order, the same reduced handling;
+// any other coll goes to runtime::reduce itself. Removed when jank-15 lands.
+namespace cohost_reduce {
+  using namespace jank::runtime;
+  inline object_ref reduce_init(object_ref f, object_ref init, object_ref coll) {
+    object_ref res{ init };
+    switch(coll.get_type()) {
+      case object_type::integer_range: {
+        auto const *r = static_cast<obj::integer_range const *>(coll.ptr());
+        jank::usize const n{ r->count() };
+        for(jank::usize k{}; k < n; ++k) {
+          res = f.call(res, make_box(r->start + static_cast<jank::i64>(k) * r->step));
+          if(res.get_type() == object_type::reduced) {
+            return expect_object<obj::reduced>(res)->val;
+          }
+        }
+        return res;
+      }
+      case object_type::persistent_vector: {
+        auto const *v = static_cast<obj::persistent_vector const *>(coll.ptr());
+        for(auto const &e : v->data) {
+          res = f.call(res, e);
+          if(res.get_type() == object_type::reduced) {
+            return expect_object<obj::reduced>(res)->val;
+          }
+        }
+        return res;
+      }
+      default:
+        return jank::runtime::reduce(f, init, coll);
+    }
+  }
+  // reduce without an init, for the colls reduce_init walks: (f) when empty,
+  // else the first element is the init (the one-element coll returns it, f
+  // uncalled). jank has no two-argument runtime::reduce: the caller sends any
+  // other coll to jank's own reduce.
+  inline bool reduce_fast(object_ref coll) {
+    auto const t(coll.get_type());
+    return t == object_type::integer_range || t == object_type::persistent_vector;
+  }
+  inline object_ref reduce_noinit(object_ref f, object_ref coll) {
+    if(coll.get_type() == object_type::integer_range) {
+      auto const *r = static_cast<obj::integer_range const *>(coll.ptr());
+      jank::usize const n{ r->count() };
+      if(n == 0) { return f.call(); }
+      object_ref res{ make_box(r->start) };
+      for(jank::usize k{ 1 }; k < n; ++k) {
+        res = f.call(res, make_box(r->start + static_cast<jank::i64>(k) * r->step));
+        if(res.get_type() == object_type::reduced) {
+          return expect_object<obj::reduced>(res)->val;
+        }
+      }
+      return res;
+    }
+    auto const *v = static_cast<obj::persistent_vector const *>(coll.ptr());
+    jank::usize const n{ v->data.size() };
+    if(n == 0) { return f.call(); }
+    object_ref res{ v->data[0] };
+    for(jank::usize k{ 1 }; k < n; ++k) {
+      res = f.call(res, v->data[k]);
+      if(res.get_type() == object_type::reduced) {
+        return expect_object<obj::reduced>(res)->val;
+      }
+    }
+    return res;
   }
 }
 namespace cohost_var {
@@ -293,6 +389,13 @@ namespace cohost_var {
   }
 }
 ")
+
+;; X4-1: the shim's reduce with and without an init (the stock reduce's IReduceInit and
+;; coll-reduce paths, so transduce and into too) over a range or a vector,
+;; without jank's per-element seq step; cohost.shim resolves it by name.
+(defn reduce-init [f init coll] (cpp/cohost_reduce.reduce_init f init coll))
+(defn reduce-noinit [f coll]
+  (if (cpp/cohost_reduce.reduce_fast coll) (cpp/cohost_reduce.reduce_noinit f coll) (reduce f coll)))
 
 ;; a macro's fn takes [&form &env & args], but jank's expander hands it the
 ;; arguments with &form and &env wrong (&form ((args)), &env the macro's name):
@@ -505,6 +608,18 @@ namespace cohost_obj {
     return impl;
   }
   jank::i64 generation() { return proto_generation.load(); }
+
+  // the stock multimethod's hit (X2-2): cell is the shim's cache atom holding
+  // [state-value hierarchy-ref hierarchy-value {dv method}]; a hit is the state
+  // atom's value and the hierarchy's value both identical to the cell's, and dv in
+  // the table. nil on any miss: the shim's mf-fast-method (the slow path) runs
+  object_ref mm_hit(object_ref cell, object_ref state, object_ref dv) {
+    auto const e = cell.deref();
+    if (e.get_type() != object_type::persistent_vector) { return make_box<obj::nil>(); }
+    auto const &d = expect_object<obj::persistent_vector>(e)->data;
+    if (d.size() != 4 || d[0] != state.deref() || d[2] != d[1].deref()) { return make_box<obj::nil>(); }
+    return get(d[3], dv);
+  }
 }
 ")
 
@@ -779,6 +894,8 @@ namespace cohost_obj {
 ;; the adapter is not visible from JIT-compiled user code (P12).
 
 (defn method-cache [] (volatile! nil))
+;; the shim's multimethod hit path (adapter :multimethod-cache?, X2-2)
+(defn mm-hit [cell state dv] (cpp/cohost_obj.mm_hit cell state dv))
 (defn cached-impl [c x] (cpp/cohost_obj.cached_impl c x))
 
 (defn- no-impl [p msym x]
@@ -1375,7 +1492,7 @@ namespace cohost_obj {
 (def adapter
   {:name :jank
    ;; the shim's stock multimethod behind a one-entry cache (X2-1, doc/research/jank-dispatch.md)
-   :multimethod-cache? true
+   :multimethod-cache? mm-hit
    :core-ns 'clojure.core
    :catch-all 'cpp/jank.runtime.object_ref
    :read-forms read-forms
@@ -1541,7 +1658,9 @@ namespace cohost_obj {
                               (if (neg? gc) (regex-throw pat) gc)))
    ;; in-place sort of a host array by a comparator fn (the shim's
    ;; Arrays/sort wraps every comparator into one)
-   :sort-array! (fn [arr cmp] (cpp/cohost_sort.sort_array arr cmp))
+   :sort-array! (fn [arr cmp] (if (identical? cmp compare)
+                                (cpp/cohost_sort.sort_array_compare arr)
+                                (cpp/cohost_sort.sort_array arr cmp)))
    :edn-read-string (fn [opts s] (edn-read-string* opts s))
    ;; with-local-vars binds through the shim's Var, whose create marks the
    ;; var dynamic here: alter-meta!'s :dynamic alone does not flip jank's

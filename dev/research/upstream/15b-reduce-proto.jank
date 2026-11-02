@@ -1,0 +1,317 @@
+;; u3 (U4-1): the 15b reduce dispatch and chunk cursor (seq.cpp and sequence_range.cpp of upstream/jank/patches/15b-17-reduce-chunks.patch,
+;; copied; array_chunk read through its apt buffer) compiled through cpp/raw against the installed jank runtime: checks both against
+;; reduce/vec on 25 + 14 seq kinds (results, repeat walks, rest at every offset, the walked object unchanged) and times the reduce.
+;; bash dev/research/upstream/run.sh 15b-reduce-proto
+(cpp/raw "
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/obj/reduced.hpp>
+#include <jank/runtime/obj/chunked_cons.hpp>
+#include <jank/runtime/obj/array_chunk.hpp>
+#include <jank/runtime/obj/transient_vector.hpp>
+namespace u3w {
+  using namespace jank::runtime;
+  static bool steps_in_place(object_ref const s)
+  { return s.has_behavior(object_behavior::sequence_like_in_place) && s.get_type() != object_type::chunked_cons; }
+  static object_ref walk_own(object_ref s, bool &owned)
+  {
+    owned = false;
+    while(s.is_some() && s.get_type() == object_type::lazy_sequence) { s = s.seq(); }
+    if(s.is_nil()) { return {}; }
+    if(steps_in_place(s)) { auto const f{ s.fresh_seq() }; if(f.is_nil()) { return {}; } owned = true; return f; }
+    return s;
+  }
+  static object_ref walk_begin(object_ref const s, bool &owned)
+  {
+    owned = false;
+    if(s.is_nil()) { return {}; }
+    if(s.get_type() == object_type::lazy_sequence) { return walk_own(s.seq(), owned); }
+    auto const f{ s.fresh_seq() };
+    if(f.is_nil()) { return {}; }
+    if(f.get_type() == object_type::lazy_sequence) { return walk_own(f.seq(), owned); }
+    owned = steps_in_place(f);
+    return f;
+  }
+  static object_ref walk_next(object_ref const s, bool &owned)
+  {
+    if(owned) { auto n{ s.next_in_place() }; if(n.is_nil()) { return {}; } if(n == s) { return n; } return walk_own(n, owned); }
+    return walk_own(s.next(), owned);
+  }
+
+  struct walk_cursor { object_ref data; object_ref chunk; object_ref const *items{}; jank::usize pos{}; jank::usize size{}; bool owned{}; };
+  static void cursor_at(walk_cursor &c, object_ref const s)
+  {
+    c.items = nullptr; c.chunk = jank_nil; c.data = walk_own(s, c.owned);
+    if(c.data.is_some() && c.data.get_type() == object_type::chunked_cons)
+    {
+      auto const head{ expect_object<obj::chunked_cons>(c.data)->head };
+      if(head.get_type() == object_type::array_chunk)
+      {
+        auto const chunk{ expect_object<obj::array_chunk>(head) };
+        if(chunk->offset < chunk->buffer.size()) { c.chunk = head; c.items = chunk->buffer.data(); c.pos = chunk->offset; c.size = chunk->buffer.size(); }
+      }
+    }
+  }
+  static void cbegin(object_ref const s, walk_cursor &c)
+  {
+    if(s.is_some() && s.get_type() == object_type::chunked_cons) { cursor_at(c, s); return; }
+    c.items = nullptr; c.chunk = jank_nil; c.data = walk_begin(s, c.owned);
+    if(c.data.is_some() && c.data.get_type() == object_type::chunked_cons) { cursor_at(c, c.data); }
+  }
+  static void cnext(walk_cursor &c)
+  {
+    if(c.items) { if(++c.pos < c.size) { return; } cursor_at(c, expect_object<obj::chunked_cons>(c.data)->tail); return; }
+    auto const n{ walk_next(c.data, c.owned) };
+    if(n.is_some() && n.get_type() == object_type::chunked_cons) { cursor_at(c, n); return; }
+    c.data = n;
+  }
+  static object_ref crest(walk_cursor const &c)
+  {
+    if(!c.items) { return c.data; }
+    auto const typed{ expect_object<obj::chunked_cons>(c.data) };
+    auto const chunk{ expect_object<obj::array_chunk>(c.chunk) };
+    if(c.pos == chunk->offset) { return c.data; }
+    return make_box<obj::chunked_cons>(make_box<obj::array_chunk>(chunk->buffer, c.pos), typed->tail);
+  }
+  object_ref cvec(object_ref const s)
+  {
+    auto t{ make_box<obj::transient_vector>() };
+    walk_cursor c; cbegin(s, c);
+    for(; c.data.is_some(); cnext(c)) { t->conj_in_place(c.items ? c.items[c.pos] : c.data.first()); }
+    return t->to_persistent();
+  }
+  object_ref crest_after(object_ref const s, object_ref const k)
+  {
+    walk_cursor c; cbegin(s, c);
+    for(jank::i64 i{}; i < to_int(k) && c.data.is_some(); ++i) { cnext(c); }
+    return crest(c);
+  }
+  object_ref ccount(object_ref const s)
+  {
+    jank::i64 n{}; walk_cursor c; cbegin(s, c);
+    for(; c.data.is_some(); cnext(c)) { ++n; }
+    return make_box(n);
+  }
+  object_ref reduce(object_ref const f, object_ref const init, object_ref const s)
+  {
+    object_ref res{ init };
+    bool owned{};
+    for(auto d{ walk_begin(s, owned) }; d.is_some(); d = walk_next(d, owned))
+    {
+      res = f.call(res, d.first());
+      if(res.get_type() == object_type::reduced) { return expect_object<obj::reduced>(res)->val; }
+    }
+    return res;
+  }
+}
+")
+(defn wvec [c] (cpp/u3w.cvec c))
+(defn wrest [c k] (cpp/u3w.crest_after c k))
+(defn wcount [c] (cpp/u3w.ccount c))
+(defn wreduce [f init coll] (cpp/u3w.reduce f init coll))
+(cpp/raw "
+#include <immer/algorithm.hpp>
+#include <jank/runtime/visit.hpp>
+#include <jank/runtime/behavior/chunkable.hpp>
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/sequence_range.hpp>
+#include <jank/runtime/obj/reduced.hpp>
+namespace jank::runtime::u3p {
+  namespace
+  {
+    struct reduce_state
+    {
+      object_ref f;
+      object_ref res;
+      bool stopped{};
+
+      /* Applies f; true once f returned a reduced (res is then its value). */
+      bool step(object_ref const e)
+      {
+        res = f.call(res, e);
+        if(res.get_type() == object_type::reduced)
+        {
+          res = expect_object<obj::reduced>(res)->val;
+          stopped = true;
+        }
+        return stopped;
+      }
+
+      /* Elements [first, last) of contiguous storage (a vector leaf, a chunk's buffer). */
+      bool step_all(object_ref const *first, object_ref const *last)
+      {
+        for(; first != last; ++first)
+        {
+          if(step(*first))
+          {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      void walk(object_ref const s)
+      {
+        for(auto const e : make_sequence_range(s))
+        {
+          if(step(e))
+          {
+            return;
+          }
+        }
+      }
+    };
+  }
+
+  /* Direct loops per collection, as reduce_kv has; a chunked seq is reduced a chunk at a
+   * time and its rest is dispatched again; anything else takes the in-place walk. */
+  object_ref reduce2(object_ref const f, object_ref const init, object_ref const s)
+  {
+    reduce_state st{ f, init };
+    object_ref cur{ s };
+    while(cur.is_some() && !st.stopped)
+    {
+      cur = visit_object(
+        [&](auto const typed) -> object_ref {
+          using T = typename jtl::decay_t<decltype(typed)>::value_type;
+
+          if constexpr(std::same_as<T, obj::nil>)
+          {
+            return {};
+          }
+          else if constexpr(std::same_as<T, obj::persistent_vector>)
+          {
+            immer::for_each_chunk_p(typed->data, [&](auto const first, auto const last) {
+              return !st.step_all(first, last);
+            });
+            return {};
+          }
+          else if constexpr(std::same_as<T, obj::persistent_vector_sequence>)
+          {
+            auto const &data(typed->vec->data);
+            immer::for_each_chunk_p(
+              data.begin() + static_cast<std::ptrdiff_t>(typed->index),
+              data.end(),
+              [&](auto const first, auto const last) { return !st.step_all(first, last); });
+            return {};
+          }
+          else if constexpr(std::same_as<T, obj::persistent_list>)
+          {
+            for(auto const &e : typed->data)
+            {
+              if(st.step(e))
+              {
+                break;
+              }
+            }
+            return {};
+          }
+          else if constexpr(std::same_as<T, obj::persistent_array_map>
+                            || std::same_as<T, obj::persistent_hash_map>
+                            || std::same_as<T, obj::persistent_sorted_map>)
+          {
+            for(auto const &[k, v] : typed->data)
+            {
+              if(st.step(make_box<obj::persistent_vector>(
+                   runtime::detail::native_persistent_vector{ k, v })))
+              {
+                break;
+              }
+            }
+            return {};
+          }
+          else if constexpr(std::same_as<T, obj::integer_range>)
+          {
+            auto const n{ typed->count() };
+            for(usize i{}; i < n; ++i)
+            {
+              if(st.step(make_box(typed->start + static_cast<i64>(i) * typed->step)))
+              {
+                break;
+              }
+            }
+            return {};
+          }
+          else if constexpr(std::same_as<T, obj::lazy_sequence>)
+          {
+            /* Realized, the inner seq is dispatched on the next turn. */
+            return typed->seq();
+          }
+          else if constexpr(behavior::chunkable<T>)
+          {
+            object_ref const c{ typed->chunked_first() };
+            if(c.get_type() != object_type::array_chunk)
+            {
+              st.walk(typed);
+              return {};
+            }
+            auto const chunk{ expect_object<obj::array_chunk>(c) };
+            if(st.step_all(chunk->buffer.data() + chunk->offset, chunk->buffer.data() + chunk->buffer.size()))
+            {
+              return {};
+            }
+            return typed->chunked_next();
+          }
+          else
+          {
+            st.walk(typed);
+            return {};
+          }
+        },
+        cur);
+    }
+    return st.res;
+  }
+
+}
+")
+(defn wreduce2 [f init coll] (cpp/jank.runtime.u3p.reduce2 f init coll))
+(def cases
+  {:vector [1 2 3 4 5] :empty-vector [] :list '(1 2 3) :cons-list (cons 0 '(1 2 3))
+   :cons-vec (cons 0 [1 2]) :lazy-map (map inc [1 2 3]) :lazy-empty (map inc [])
+   :range (range 100) :range-step (range 0 1000 7) :range-real (range 0.5 70.5 1.0)
+   :iterate (take 50 (iterate inc 0)) :concat (concat [1 2] '(3 4) (range 5 40))
+   :string "hello" :map {:a 1 :b 2} :set #{1 2 3} :sorted (sorted-map 1 2 3 4)
+   :nil nil :lazy-of-lazy (lazy-seq (lazy-seq [1 2 3])) :cons-lazy (cons 0 (lazy-seq [1 2 3]))
+   :mapcat (mapcat (fn [x] [x x]) (range 70)) :repeat (repeat 40 1) :filter (filter odd? (range 100))
+   :chunked (map inc (range 100)) :seq-of-vec (seq [1 2 3]) :keys (keys {:a 1 :b 2})})
+(def ok (volatile! 0))
+(doseq [[k c] cases]
+  (let [before (pr-str c)
+        a (reduce conj [] c)
+        b (wreduce2 conj [] c)
+        b2 (wreduce2 conj [] c)
+        after (pr-str c)]
+    (if (and (= a b b2) (= before after))
+      (vswap! ok inc)
+      (println "MISMATCH" k a b b2 before after))))
+(println "walk-proto cases" (count cases) "ok" @ok)
+(println "reduced" (wreduce2 (fn [a x] (if (= x 5) (reduced a) (+ a x))) 0 (range 100)))
+(def cases
+  {:vector [1 2 3 4 5] :empty-vector [] :list '(1 2 3) :cons-list (cons 0 '(1 2 3))
+   :lazy-map (map inc [1 2 3]) :range-real (range 0.5 70.5 1.0) :map-real (map inc (range 0.5 100.5 1.0))
+   :filter-real (filter odd? (map int (range 0.0 200.0 1.0))) :chunk-cons (chunk-cons (let [b (chunk-buffer 3)] (chunk-append b 1) (chunk-append b 2) (chunk-append b 3) (chunk b)) (list 4 5))
+   :concat (concat [1 2] (range 0.0 40.0 1.0)) :string "hello" :map {:a 1 :b 2} :nil nil :iterate (take 50 (iterate inc 0))})
+(def ok (volatile! 0))
+(doseq [[k c] cases]
+  (let [before (pr-str c)
+        a (vec c)
+        b (wvec c) b2 (wvec c)
+        n (wcount c)
+        rests (every? true? (for [i (range (inc (count a)))] (= (seq (drop i a)) (seq (wrest c i)))))
+        after (pr-str c)]
+    (if (and (= a b b2) (= n (count a)) rests (= before after))
+      (vswap! ok inc)
+      (println "MISMATCH" k a b b2 n rests before after))))
+(println "cursor-proto cases" (count cases) "ok" @ok)
+(def v (vec (range 1000000)))
+(timed "reduce + over 1e6 vector" (fn [] (reduce + v)))
+(timed "proto 15b reduce + over 1e6 vector" (fn [] (wreduce2 + 0 v)))
+(timed "loop nth over the same vector" (fn [] (let [n (count v)] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (nth v i))) s)))))
+(timed "reduce + over (range 1e6)" (fn [] (reduce + (range 1000000))))
+(timed "proto 15b reduce + over (range 1e6)" (fn [] (wreduce2 + 0 (range 1000000))))
+(def l (apply list (range 1000000)))
+(timed "reduce + over a 1e6 list" (fn [] (reduce + l)))
+(timed "proto 15b reduce + over a 1e6 list" (fn [] (wreduce2 + 0 l)))
+(def m (zipmap (range 100000) (range 100000)))
+(timed "reduce over a 1e5 hash-map" (fn [] (reduce (fn [a e] (+ a (val e))) 0 m)))
+(timed "proto 15b reduce over a 1e5 hash-map" (fn [] (wreduce2 (fn [a e] (+ a (val e))) 0 m)))

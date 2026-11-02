@@ -1,4 +1,4 @@
-From aa677df3fd3e3a4becab22add5b9fde8b78ecc4b Mon Sep 17 00:00:00 2001
+From f8370960f32a8861e1d0fea7be09e79eade33a4a Mon Sep 17 00:00:00 2001
 From: cohost u2 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 18:51:22 +0000
 Subject: [PATCH] Inline fixed-arity calls of jit_functions at -O3; inline var
@@ -41,10 +41,10 @@ compiler+runtime/src/cpp/jank/util/cli.cpp.
  7 files changed, 168 insertions(+), 85 deletions(-)
 
 diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
-index 04dc6e8af..9a6578697 100644
+index 3b0733c61..df643c21d 100644
 --- a/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
 +++ b/compiler+runtime/include/cpp/jank/runtime/obj/jit_function.hpp
-@@ -139,3 +139,44 @@ namespace jank::runtime::obj
+@@ -144,3 +144,44 @@ namespace jank::runtime::obj
      lazy_meta meta;
    };
  }
@@ -146,10 +146,10 @@ index 4267917ad..b5a111db9 100644
      /* behavior::metadatable */
      var_ref with_meta(object_ref m);
 diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
-index e46eddf00..67f29775b 100644
+index 84df129f7..1c2b2b6fe 100644
 --- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
 +++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
-@@ -585,7 +585,7 @@ namespace jank::codegen
+@@ -599,7 +599,7 @@ namespace jank::codegen
    {
      b.next_instruction();
      auto const lifted{ lift_var(inst->qualified_var, b) };
@@ -158,10 +158,10 @@ index e46eddf00..67f29775b 100644
      return inst->name;
    }
  
-@@ -612,8 +612,16 @@ namespace jank::codegen
-   jtl::option<identifier> gen(ir::inst::dynamic_call_ref const inst, builder &b)
-   {
-     b.next_instruction();
+@@ -687,8 +687,16 @@ namespace jank::codegen
+       util::format_to(b.body_buffer, "));\n}\n");
+       return inst->name;
+     }
 -    util::format_to(b.body_buffer, "auto const {}({}.call(", inst->name, inst->fn);
      bool need_comma{};
 +    if(util::cli::opts.direct_call)
