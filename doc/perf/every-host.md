@@ -14,8 +14,8 @@ reference state.
 | :prim-kind-test | N/A | N/A | | N/A | | | |
 | :defn-fn-name? | N/A | ON | ON | N/A | N/A | N/A | N/A |
 | :rewrite-inline? | N/A | ON | ON | ON | ON | ON | ON |
-| tag type tests (M-4.1) | | | | | | | |
-| bound RT arms (M-4.2/3) | | | | | | | |
+| tag type tests (M-4.1) | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| bound RT arms (M-4.2/3) | ON | ON | ON | ON | ON | ON | ON |
 | :native-hints (H1) | | | | | | | |
 | Numbers-minus as `-` | ON | ON | ON | ON | ON | ON | ON |
 
@@ -110,3 +110,19 @@ reference state.
   this test. Noted on cljs: tak-hinted is ABSENT there today --
   the program fails with a TypeError before it times -- a
   correctness fact about the hinted path on cljs, not a speed row.
+
+- **Tag type tests (M-4 item 1)** -- N/A on all six, same root as
+  :cohost-inst?. The tag test exists because on jank a cohost type
+  instance otherwise pays a descriptor walk for every stock type
+  predicate; the object_type tag answers in one C++ call. On the
+  other hosts the shim's type predicates bind straight to the host
+  core's own (vector? is the host's vector?), which is already the
+  native test -- there is no second layer for a tag to shortcut.
+
+- **Bound RT arms (M-4 items 2-3)** -- ON on all six, inherited.
+  Item 3 (the hot capability lookups bound once at shim load) is a
+  shared-layer change: cohost.shim binds h-cohost-inst? and the
+  other hot caps once (shim.cljc, via host/capability) for every
+  host; there is nothing per-host to wire. Item 2's one-call
+  instance guard binds the :cohost-inst? capability, which only
+  jank has -- the guard itself is the :cohost-inst? row above.
