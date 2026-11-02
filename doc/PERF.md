@@ -906,5 +906,17 @@ Geometric mean of the 15 non-zero cljs / JVM median ratios: `3.663063`. Zero med
 | json | 0.258467 | 0.570729 | 1.772860 |
 | first-output | 7620.182209 | 7562.899564 | 19.786486 |
 
-Chromium: Playwright and headless Chromium are installed. The browser boot starts after `bb bench:programs cljs-cohost` releases the machine.
+## Chromium
+
+`bb boot:browser` exited 0. stock 518, host 87, natives 46, skipped 140, errors 0, battery 143/145, libraries 61/61, elapsed 11041 ms. The page in `src/cohost/run_browser.cljs` runs the battery or `?bench` only. It has no `--eval`, so `bb bench:programs browser` and `browser-cohost` stay ABSENT: no program hook.
+
+## Still running at close
+
+These three `bb bench:programs` processes were still running when G-13 closed. Rows below are the lines already printed.
+
+`lpy-cohost` fib 68668.971933, fib-hinted 146340.083443, tak 2006.472601, tak-hinted 5346.053021, nbody 1152.967872, nbody-hinted 1148.295367, all SAME. The rest of that suite had not printed.
+
+`cljw-cohost` had printed through binary-trees median 4.066756 SAME. The rest had not printed.
+
+`phel-cohost` had printed through dispatch median 234.659488 SAME. spectral-norm and spectral-norm-hinted ABSENT `Seq::range` end must be int|float, BigInt given. fannkuch and fannkuch-hinted ABSENT the same `Seq::range` BigInt error. nsieve and nsieve-hinted ABSENT `Unsupported operand types: int << BigInt`. pipeline ABSENT the same `Seq::range` BigInt error.
 
