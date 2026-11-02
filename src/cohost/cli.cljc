@@ -9,6 +9,7 @@
 ;;    :roots      ["/abs/project/src" "/abs/cache/jar-dir" ...]  ; tools.deps order
 ;;    :cwd        "/abs/project"
 ;;    :snapshot?  true      ; jank: boot from the fresh snapshot on the module path
+;;    :project-snapshot "cohost.project"  ; jank: the project's snapshot entry, when fresh
 ;;    :inits      [[:e "(src)"] [:i "/abs/init.clj"] ...]       ; in the order given
 ;;    :main       {:type :main :ns "demo.main" :args ["a"]}     ; -m
 ;;              | {:type :script :path "/abs/s.clj" :args [...]}
@@ -133,6 +134,10 @@
                    (boot/boot! {:root (:stock-root cfg) :verbose (boolean (:verbose cfg))}))]
       (when (:verbose cfg) (boot/print-report report)))
     (doseq [r (:roots cfg)] (boot/add-source-root! r))
+    ;; :project-snapshot -- the module of a fresh per-project snapshot (the
+    ;; project's namespaces compiled ahead, bin/cohost's jank launch): its
+    ;; libraries load from their modules
+    (when-let [m (:project-snapshot cfg)] (host/require-host! (symbol m)))
     ;; clojure.main's namespace: user, seeing the stock core (a session
     ;; starts in cohost.user, and moves there)
     (boot/make-user-ns!)

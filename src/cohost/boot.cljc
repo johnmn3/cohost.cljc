@@ -163,6 +163,12 @@
   []
   (let [ev @snapshot-log] (reset! snapshot-log nil) ev))
 
+(defn snapshot-start!
+  "Record mode from here on, after a boot (a project's snapshot records what
+   it loads on top of a booted, or snapshot-booted, core)."
+  []
+  (reset! snapshot-log []))
+
 (def ^:private snap-drop-meta
   "Reader metadata the host adds again when it reads the snapshot's source."
   #{:line :column :end-line :end-column :file :source-span :jank/source})
@@ -1385,6 +1391,13 @@
   (snap-restore! data)
   (swap! state assoc-in [:libs lib] entry)
   (swap! state assoc :loading parent)
+  nil)
+
+(defn register-snapshot-libs!
+  "A project snapshot's entry: {lib module} of its library modules, which
+   load-lib! then requires instead of loading the sources."
+  [libs]
+  (swap! state update :snapshot-libs merge libs)
   nil)
 
 (defn snapshot-report
