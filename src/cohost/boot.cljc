@@ -158,11 +158,42 @@
   []
   @snapshot-log)
 
+(defn snapshot-stop!
+  "End record mode: -> the events recorded, and record nothing more."
+  []
+  (let [ev @snapshot-log] (reset! snapshot-log nil) ev))
+
+(def ^:private snap-drop-meta
+  "Reader metadata the host adds again when it reads the snapshot's source."
+  #{:line :column :end-line :end-column :file :source-span :jank/source})
+
+(defn- snap-encode
+  "form with every metadata map made data: {:cohost.snap/meta m
+   :cohost.snap/val x}, since a host's printer may drop metadata (jank's
+   ignores *print-meta*). The emitter turns it back into reader metadata."
+  [x]
+  (let [enc (fn [y] (cond (map? y) (into {} (map (fn [[k v]] [(snap-encode k) (snap-encode v)]) y))
+                          (vector? y) (mapv snap-encode y)
+                          (set? y) (set (map snap-encode y))
+                          (seq? y) (apply list (map snap-encode y))
+                          :else y))
+        m (when (or (symbol? x) (coll? x)) (meta x))
+        m (when m (let [m' (apply dissoc m snap-drop-meta)] (when (seq m') m')))
+        v (enc x)]
+    (if m {:cohost.snap/meta (snap-encode m) :cohost.snap/val v} v)))
+
+(defn- snap-module
+  "The namespace of the snapshot module an event belongs to: the library
+   being loaded, else the core."
+  []
+  (or (:loading @state) 'clojure.core))
+
 (defn- snap! [event]
   (when @snapshot-log
-    (swap! snapshot-log conj event)
-    (when-let [f (host/snapshot-emit)]
-      (when (fn? f) (f event)))))
+    (let [event (assoc event :module (snap-module))]
+      (swap! snapshot-log conj event)
+      (when-let [f (host/snapshot-emit)]
+        (when (fn? f) (f event))))))
 
 (defn- scan-macros!
   "Promote `^:macro` defs the host did not treat as macros, and wrap every
@@ -181,9 +212,7 @@
                (host/set-var-root! v (fn [f] (wrap-macro ctx f))))
              (host/alter-var-meta! v assoc :cohost/wrapped true))
            (when (and @snapshot-log (or mark? wrap?))
-             (snap! {:op :macro :ns ns-sym :sym sym
-                     :mark? (boolean mark?)
-                     :wrap? (boolean (and wrap? (= :root (host/macro-wrap-style))))}))))))))
+             (snap! {:op :scan :ns ns-sym :sym sym}))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; eval
@@ -294,13 +323,13 @@
                                shim/install-is!
                                (fn [c]
                                  (let [d (shim/install-is! c)]
-                                   (snap! {:op :is :class c :name (str d)})
+                                   (snap! {:op :is :class c})
                                    d)))
                 :missing-dot (if-not @snapshot-log
                                shim/install-missing-dot!
                                (fn [m]
                                  (let [d (shim/install-missing-dot! m)]
-                                   (snap! {:op :dot :name (str d) :method m})
+                                   (snap! {:op :dot :method m})
                                    d)))
                 :resolve-head (head-resolver)
                 :stock-name (stock-name)
@@ -359,18 +388,21 @@
   [c ns-sym form lib?]
   (host/with-ns ns-sym
     (fn [] (if-let [d (directive form)]
-             (directive! d)
+             (let [r (directive! d)]
+               (snap! {:op :directive :ns ns-sym :d d})
+               r)
              (let [form' (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
                    v (if-not (profiling)
-                       (let [rewritten (rw/rewrite c form')]
-                         (snap! {:op :form :ns ns-sym :form rewritten})
-                         (host/eval-form rewritten))
+                       (let [rewritten (rw/rewrite c form')
+                             v (host/eval-form rewritten)]
+                         (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)})
+                         v)
                        (let [t0 (host/nano-time)
                              rewritten (rw/rewrite c form')
                              t1 (host/nano-time)
                              v (host/eval-form rewritten)
                              t2 (host/nano-time)]
-                         (snap! {:op :form :ns ns-sym :form rewritten})
+                         (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)})
                          (profile-add! :rewrite (- t1 t0))
                          (profile-add! :eval (- t2 t1))
                          (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form)))
@@ -458,12 +490,19 @@
   (when (some-> (or hv (host/resolve-core nm)) host/dynamic-var?)
     (swap! state update :host-dynamic (fn [v] (if (some #(= nm %) v) v (conj (or v []) nm))))))
 
+(declare take-from-host*)
 (defn- take-from-host!
   "Give cohost.core the host core's `nm`. Dynamic vars are referred (the
    var identity matters for binding); everything else is interned as a copy,
    so a stock macro's syntax-quoted `cohost.core/pr-str` resolves. Host
    macros are interned with their macro status and never wrapped. Returns true
    when the host had it; false means the caller boots the stock definition."
+  [report nm]
+  (let [r (take-from-host* report nm)]
+    (when r (snap! {:op :host :sym nm}))
+    r))
+
+(defn- take-from-host*
   [report nm]
   (boolean
    (if-let [v (get (host/core-extras) nm)]
@@ -479,8 +518,7 @@
           (if (host/dynamic-var? hv)
             (do (host/refer-from-core! core-ns nm)
                 (note-host-dynamic! nm hv)
-                (when-let [c (ctx)] (swap! (:host-referred c) conj nm))
-                (snap! {:op :host-dynamic :ns core-ns :sym nm}))
+                (when-let [c (ctx)] (swap! (:host-referred c) conj nm)))
             (let [v (host/intern! core-ns nm (ns-arg-wrap nm (host/var-root hv)))
                   hm (host/var-meta hv)
                   ;; marked first: ClojureScript moves a macro to its $macros
@@ -488,9 +526,7 @@
                   v (if (host/macro-var? hv) (host/mark-macro! v) v)
                   kept (merge (select-keys hm [:doc :arglists :private])
                               {:cohost/host true :cohost/wrapped true})]
-              (host/alter-var-meta! v merge kept)
-              (snap! {:op :host :ns core-ns :sym nm :macro? (boolean (host/macro-var? hv))
-                      :meta kept})))
+              (host/alter-var-meta! v merge kept)))
           (record! report :host {:name nm})
           true)
         (fn [_] false))))))
@@ -532,16 +568,19 @@
       (swap! state assoc :capture-inline?
              (not (fn? (some-> (host/interned-var core-ns nm) host/var-meta :inline)))))
     (when (:capture-inline? @state)
-      (host/try-all (fn [] (let [[f a] (host/eval-form (rw/rewrite ctx (list 'vector inl ar)))]
-                             (when (fn? f) (swap! state assoc-in [:inlines nm] [f a]))))))))
+      (host/try-all (fn [] (let [rewritten (rw/rewrite ctx (list 'vector inl ar))
+                                 [f a] (host/eval-form rewritten)]
+                             (when (fn? f)
+                               (swap! state assoc-in [:inlines nm] [f a])
+                               (snap! {:op :inline :sym nm :form (snap-encode rewritten)}))))))))
 
 (defn- eval-form! [ctx report form name status]
   (host/try-all
    (fn []
      (if-not (profiling)
        (let [rewritten (rw/rewrite ctx (prepare form))]
-         (snap! {:op :form :ns core-ns :form rewritten})
          (host/eval-form rewritten)
+         (snap! {:op :form :ns core-ns :form (snap-encode rewritten)})
          (host/after-eval form core-ns)
          (capture-inline! ctx form))
        (let [t0 (host/nano-time)
@@ -549,11 +588,11 @@
              rewritten (rw/rewrite ctx prepared)
              t1 (host/nano-time)
              _ (host/eval-form rewritten)
+             _ (snap! {:op :form :ns core-ns :form (snap-encode rewritten)})
              t2 (host/nano-time)
              _ (host/after-eval form core-ns)
              _ (capture-inline! ctx form)
              t3 (host/nano-time)]
-         (snap! {:op :form :ns core-ns :form rewritten})
          (profile-add! :rewrite (- t1 t0))
          (profile-add! :eval (prof+ (- t2 t1) (- t3 t2)))
          (profile-form! core-ns form name (- t1 t0) (- t2 t1))))
@@ -706,6 +745,46 @@
                                                          (swap! found assoc nm form))))))))
     @found))
 
+(defn- boot-setup!
+  "What boot! does before core.clj's first form (the snapshot's replay does
+   it too): cohost.core, the codemod's ctx, the hooks. -> [ctx report]."
+  [root]
+  (host/ensure-bare-ns! core-ns)
+  (let [ctx (if (profiling) (prof :setup #(make-ctx)) (make-ctx))
+        report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
+    (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks))))
+    (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
+           :libs {'clojure.core {:ns core-ns :status :loaded}})
+    ;; (eval form) evaluates in the namespace the caller runs in, as on the JVM
+    (reset! shim/eval-hook (fn [form] (eval-in (host/current-ns) form)))
+    (reset! shim/load-hook (fn [path] (boot-file! ctx report (str root "/clojure/" path ".clj"))))
+    [ctx report]))
+
+(defn- install-host-reducers!
+  "reduce with core's + or * hands the host its own (shim/host-reducers)."
+  []
+  (shim/set-host-reducers!
+   (into {} (keep (fn [nm]
+                    (let [sv (some-> (host/interned-var core-ns nm) host/var-root)
+                          hv (some-> (host/resolve-core nm) host/var-root)]
+                      (when (and (fn? sv) (fn? hv) (not (identical? sv hv)))
+                        [sv hv])))
+                  '[+ *]))))
+
+(defn- snap-state
+  "The boot's state a snapshot restores as data at the end of a module: the
+   report, and what the codemod's ctx and the loader collected."
+  [report]
+  (let [c (ctx)]
+    {:report report
+     :host-dynamic (:host-dynamic @state)
+     :capture-inline? (:capture-inline? @state)
+     :imports @(:imports c)
+     :renames @(:renames c)
+     :user-types @(:user-types c)
+     :host-referred @(:host-referred c)
+     :loader-nses @(:loader-nses c)}))
+
 (defn boot!
   "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
    (default resources/cohost/clojure-1.12.0); :files -- paths under it;
@@ -715,7 +794,7 @@
   ([{:keys [root files verbose profile? record?] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
    (reset! snapshot-log (when record? []))
-   (when record? (snap! {:op :ns :name core-ns :doc nil :refer-clojure {}}))
+   (snap! {:op :begin :opts {:root root :files files}})
    (if profile?
      (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
          (vreset! rw/profile-branches {})
@@ -727,15 +806,7 @@
          (vreset! rw/profile-macro-ns nil)
          (vreset! rw/profile-macro-n nil)))
    (let [t-boot (when (profiling) (host/nano-time))]
-   (host/ensure-bare-ns! core-ns)
-   (let [ctx (if (profiling) (prof :setup #(make-ctx)) (make-ctx))
-         report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
-     (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks))))
-     (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
-            :libs {'clojure.core {:ns core-ns :status :loaded}})
-     ;; (eval form) evaluates in the namespace the caller runs in, as on the JVM
-     (reset! shim/eval-hook (fn [form] (eval-in (host/current-ns) form)))
-     (reset! shim/load-hook (fn [path] (boot-file! ctx report (str root "/clojure/" path ".clj"))))
+   (let [[ctx report] (boot-setup! root)]
      ;; the prelude: what the JVM runtime defines before core.clj loads
      (host/with-ns core-ns
        (fn []
@@ -761,7 +832,8 @@
                          (record! report :skipped {:name nm :reason :no-host-equivalent}))
                        (when-not (take-from-host! report nm)
                          (if-let [v (get (host/core-extras) nm)]
-                           (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil))
+                           (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil)
+                               (snap! {:op :extra :sym nm}))
                            (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
                  (scan-macros! ctx))]
            (if-not (profiling)
@@ -772,14 +844,7 @@
                (run-companions)
                (swap! (:profile @state) assoc-in [:walls :companion] (- (host/nano-time) t0))
                (swap! state assoc :profile-bucket prev))))))
-     ;; reduce with core's + or * hands the host its own (shim/host-reducers)
-     (shim/set-host-reducers!
-      (into {} (keep (fn [nm]
-                       (let [sv (some-> (host/interned-var core-ns nm) host/var-root)
-                             hv (some-> (host/resolve-core nm) host/var-root)]
-                         (when (and (fn? sv) (fn? hv) (not (identical? sv hv)))
-                           [sv hv])))
-                     '[+ *])))
+     (install-host-reducers!)
      (reset! (:booted? ctx) true)
      (let [r (assoc @report
                     :rewrite-misses (rw/misses ctx)
@@ -787,6 +852,7 @@
        (when t-boot
          (swap! (:profile @state) assoc :boot-wall (- (host/nano-time) t-boot)))
        (swap! state assoc :report r)
+       (snap! {:op :end :data (snap-state r)})
        r)))))
 
 (defn profile-section!
@@ -876,14 +942,7 @@
   (let [skip (set exclude) keep (when only (set only))]
     (doseq [nm (:host-dynamic @state)
             :when (and (not (contains? skip nm)) (or (nil? keep) (contains? keep nm)))]
-      (host/try-all (fn [] (host/refer-from-core! ns-sym nm))))
-    (when @snapshot-log
-      (snap! {:op :refer-core :ns ns-sym
-              :opts (select-keys opts [:exclude :only :rename])
-              :host-dynamic (vec (filter (fn [nm]
-                                           (and (not (contains? skip nm))
-                                                (or (nil? keep) (contains? keep nm))))
-                                         (:host-dynamic @state)))})))
+      (host/try-all (fn [] (host/refer-from-core! ns-sym nm)))))
   ns-sym)
 
 (def ^:private session-ns
@@ -1037,7 +1096,6 @@
                   (host/try-all (fn [] (alter-meta! (host/the-ns* target) merge ns-meta)))))
     (swap! (:loader-nses (ctx)) conj (str target))
     (refer-core! target (or rc {}))
-    (snap! {:op :ns :name target :doc doc :refer-clojure (or rc {})})
     (host/set-current-ns! target)
     (doseq [[k & args] clauses]
       (case k
@@ -1126,24 +1184,35 @@
    (let [lib (symbol (str lib))]
      (if-let [e (get-in @state [:libs lib])]
        (:ns e)
+       (if-let [m (get (:snapshot-libs @state) lib)]
+         ;; a snapshot's compiled module of the library: loading it replays
+         ;; the load (snap-lib-begin! ... snap-lib-end!)
+         (do (host/require-host! m)
+             (or (get-in @state [:libs lib :ns])
+                 (throw (host/ex* 'java.lang.Exception (str "snapshot module " m " did not load " lib)))))
        (if-let [[path src] (find-source lib)]
          (let [target (stock-ns-name lib)
                outer (:loading @state)
                forget! (fn [] (swap! state update :libs dissoc lib) (swap! (:renames (ctx)) dissoc (str lib)))]
+           (snap! {:op :lib-begin :lib lib :target target :path path :parent outer})
            (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
            (swap! (:renames (ctx)) assoc (str lib) (str target))
            (swap! state assoc :loading lib)
            (try (host/try-all (fn [] (load-source! lib src from-ns))
-                              (fn [e] (forget!) (throw e)))
+                              (fn [e] (forget!) (snap! {:op :lib-fail :lib lib}) (throw e)))
                 (finally (swap! state assoc :loading outer)))
            (when-not (contains? @(:loader-nses (ctx)) (str target))
              (forget!)
+             (snap! {:op :lib-fail :lib lib})
              (throw (host/ex* 'java.lang.Exception (str "namespace '" lib "' not found after loading '/" (lib-path lib) "'"))))
            (swap! state assoc-in [:libs lib :status] :loaded)
+           (swap! state assoc :loading lib)
+           (snap! {:op :lib-end :lib lib :entry (get-in @state [:libs lib]) :data (snap-state nil)})
+           (swap! state assoc :loading outer)
            target)
          (do (host/require-host! lib)
              (swap! state assoc-in [:libs lib] {:ns lib :status :host})
-             lib))))))
+             lib)))))))
 
 (defn lib-report
   "{lib {:ns :status :ok :error :skipped :entries}} of every library loaded."
@@ -1214,3 +1283,97 @@
       (when (seq rm)
         (println "  shim misses hit at runtime:")
         (doseq [[k n] rm] (println (str "   - " (pr-str k) " x" n)))))))
+
+;; ---------------------------------------------------------------------------
+;; the AOT snapshot's replay (jank-FAST Step 6 stage 2)
+;;
+;; A snapshot module is the recorded boot as source: the forms the boot
+;; evaluated, in order, between calls of these fns, which redo what the boot
+;; did through the adapter (interns from the host, macro marking, refers,
+;; the shim's prebuilt vars) and restore the boot's state as data. The
+;; module's compiled object runs the same calls when it loads. Nothing here
+;; runs unless a snapshot module calls it.
+
+(def ^:private snap-report (atom nil))
+
+(defn snap-begin!
+  "A snapshot's cohost.core module, first: what boot! does before core.clj.
+   libs: {lib module} of the snapshot's library modules (load-lib! requires
+   the module instead of loading the source)."
+  [{:keys [root]} libs]
+  (reset! verbose? false)
+  (reset! snapshot-log nil)
+  (swap! state dissoc :profile :profile-bucket)
+  (let [[_ report] (boot-setup! root)]
+    (reset! snap-report report)
+    (swap! state assoc :snapshot-libs libs)
+    nil))
+
+(defn snap-take! "take-from-host! of nm, as the boot did." [nm]
+  (take-from-host! @snap-report nm)
+  nil)
+
+(defn snap-extra! "A companion name from the adapter's core-extras." [nm]
+  (host/intern! core-ns nm (get (host/core-extras) nm))
+  (note-host-dynamic! nm nil)
+  nil)
+
+(defn snap-scan! "scan-macros! of ns-sym." [ns-sym]
+  (scan-macros! (ctx) ns-sym)
+  nil)
+
+(defn snap-is! "The shim's instance test for class token c." [c]
+  (shim/install-is! c)
+  nil)
+
+(defn snap-dot! "The shim's dispatcher for a method it lacks." [m]
+  (shim/install-missing-dot! m)
+  nil)
+
+(defn snap-inline! "The :inline fn the codemod applies for nm: [f arities]." [nm v]
+  (swap! state assoc-in [:inlines nm] v)
+  nil)
+
+(defn snap-directive! "A loader directive, as eval-in* ran it." [d]
+  (directive! d)
+  nil)
+
+(defn- snap-restore! [{:keys [host-dynamic capture-inline? imports renames user-types host-referred loader-nses]}]
+  (let [c (ctx)]
+    (swap! state assoc :host-dynamic host-dynamic :capture-inline? capture-inline?)
+    (swap! (:imports c) merge imports)
+    (swap! (:renames c) merge renames)
+    (swap! (:user-types c) into user-types)
+    (swap! (:host-referred c) into host-referred)
+    (swap! (:loader-nses c) into loader-nses)))
+
+(defn snap-end!
+  "A snapshot's cohost.core module, last: what boot! does after core.clj,
+   and its report."
+  [data]
+  (install-host-reducers!)
+  (snap-restore! data)
+  (reset! (:booted? (ctx)) true)
+  (swap! state assoc :report (:report data) :snapshot? true)
+  nil)
+
+(defn snap-lib-begin!
+  "A library module, first: what load-lib! does before the source."
+  [lib target path parent]
+  (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
+  (swap! (:renames (ctx)) assoc (str lib) (str target))
+  (swap! state assoc :loading lib)
+  nil)
+
+(defn snap-lib-end!
+  "A library module, last: its load-lib! entry and the loader's state."
+  [lib entry data parent]
+  (snap-restore! data)
+  (swap! state assoc-in [:libs lib] entry)
+  (swap! state assoc :loading parent)
+  nil)
+
+(defn snapshot-report
+  "The report of the boot a loaded snapshot restored, or nil."
+  []
+  (when (:snapshot? @state) (:report @state)))
