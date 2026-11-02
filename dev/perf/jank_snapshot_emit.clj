@@ -14,9 +14,25 @@
 (require '[clojure.string :as str]
          '[babashka.fs :as fs])
 
+;; For an app's executable (D-7, src/cohost/build_jank.clj):
+;;   bb dev/perf/jank_snapshot_emit.clj --events <events.edn> --out <src dir> --main <app ns>
+;; writes the modules under <src dir> and, for --main, cohost/app_main.jank:
+;; the executable's entry, whose -main boots from the snapshot and calls the
+;; app's -main.
+(def cli-opts
+  (loop [args (seq *command-line-args*) o {}]
+    (if-let [[a b & more] args]
+      (case a
+        "--events" (recur more (assoc o :events b))
+        "--out" (recur more (assoc o :out b))
+        "--main" (recur more (assoc o :main b))
+        (recur (next args) o))
+      o)))
+(def src-root (or (:out cli-opts) "target/jank-snapshot/src"))
+
 (def events
   (binding [*read-eval* false]
-    (read-string (slurp "target/jank-snapshot/events.edn"))))
+    (read-string (slurp (or (:events cli-opts) "target/jank-snapshot/events.edn")))))
 
 (defn decode
   "Undo cohost.boot's snap-encode: {:cohost.snap/meta m :cohost.snap/val x}
@@ -114,9 +130,9 @@
          (str/join "\n" (keep event-src (collapse-scans evs))) "\n")))
 
 (defn module-file [nm]
-  (str "target/jank-snapshot/src/" (-> (str nm) (str/replace "-" "_") (str/replace "." "/")) ".jank"))
+  (str src-root "/" (-> (str nm) (str/replace "-" "_") (str/replace "." "/")) ".jank"))
 
-(fs/delete-tree "target/jank-snapshot/src")
+(fs/delete-tree src-root)
 (doseq [m modules]
   (let [nm (module-ns m)
         file (module-file nm)]
@@ -134,3 +150,16 @@
         (str "(clojure.core/ns cohost.snapshot\n  (:require [cohost.core]"
              (apply str (map #(str " [" % "]") top)) "))\n"))
   (println "MODULE cohost.snapshot" (module-file 'cohost.snapshot) (count top)))
+
+(when-let [app (:main cli-opts)]
+  (let [lib (symbol app)
+        m (module-ns lib)]
+    (when-not (lib-begins lib)
+      (throw (ex-info (str "the app's namespace " app " was not recorded (or failed to load)") {:failed failed})))
+    (spit (module-file 'cohost.app-main)
+          (str "(clojure.core/ns cohost.app-main\n  (:require [cohost.core] [" m "]))\n"
+               "(clojure.core/defn -main [& args]\n"
+               "  (cohost.boot/boot-from-snapshot! {})\n"
+               "  (cohost.boot/make-user-ns!)\n"
+               "  (clojure.core/apply " m "/-main args))\n"))
+    (println "MODULE cohost.app-main" (module-file 'cohost.app-main) "main" (str m "/-main"))))
