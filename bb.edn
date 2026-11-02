@@ -19,6 +19,8 @@
           (defn jank-snapshot-path []
             (load-file "dev/perf/jank_snapshot_key.clj")
             ((resolve 'fresh-path))))
+  cli:check {:doc "the cohost CLI against the Clojure CLI on the demo (dev/cli-demo): bb cli:check [target ...]; one line per target x case: SAME, ABSENT or DIFF"
+             :task (load-file "dev/cli-demo/check.clj")}
   boot:jolt {:doc "jolt (Chez Scheme): the `jolt` binary on PATH"
              :task (shell "jolt" "-Scp" "src" "-m" "cohost.run")}
   boot:lpy  {:doc "basilisp (Python): the uv/pip-installed `basilisp` on PATH"
