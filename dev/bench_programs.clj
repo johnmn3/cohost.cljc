@@ -187,10 +187,39 @@
   ;; cohost's own namespaces AOT (G-12), rebuilt when stale.
   (load-file "dev/perf/jank_aot_ensure.clj"))
 
+(def jank-boot
+  "Which boot the last cohost-on-jank command used: :snapshot or :aot."
+  (atom nil))
+
+(def jank-env
+  "The environment the last cohost-on-jank command needs (D-4's GC setting)."
+  (atom nil))
+
+(defn jank-cohost-cmd
+  "-> {:cmd [...] :env {...}}: cohost.run --eval code on jank. With lane D's
+   snapshot entry in the tree (dev/perf/jank_snapshot_cli.clj, D-5): the
+   snapshot when it is fresh, else the AOT objects, as that entry decides
+   (and its GC env). Without it: cohost's AOT objects (G-12)."
+  [code]
+  (if (fs/exists? "dev/perf/jank_snapshot_cli.clj")
+    (do (load-file "dev/perf/jank_snapshot_cli.clj")
+        (let [repo (str (fs/canonicalize "."))
+              {:keys [module-path snapshot? env]} ((resolve 'jank-cli-launch) repo)]
+          (reset! jank-boot (if snapshot? :snapshot :aot))
+          (reset! jank-env env)
+          {:env env
+           :cmd (if snapshot?
+                  ["jank" "-O3" "--module-path" module-path "run" (str repo "/dev/perf/jank_snapshot_run.jank")
+                   "--" "--eval" code]
+                  ["jank" "-O3" "--module-path" module-path "run-main" "cohost.run" "--" "--eval" code])}))
+    (do (reset! jank-boot :aot)
+        (reset! jank-env nil)
+        {:cmd ["jank" "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" code]})))
+
 (defn run-jank-cohost [_ src arg]
   ;; cohost's jank boot has no load-file; --eval reads every form of its argument.
-  (run! ["jank" "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--"
-         "--eval" (cohost-source src (clock "jank") arg)]))
+  (let [{:keys [cmd env]} (jank-cohost-cmd (cohost-source src (clock "jank") arg))]
+    (run! cmd (when env {:extra-env env}))))
 
 (defn run-cljrs [id src arg]
   (let [f (tmp (str (name id) ".clj"))]
@@ -373,7 +402,7 @@
     "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" ok-eval]
     "jank-jit" ["jank" "-O3" "run" file]
     "jank-aot" (wall-aot-cmd)
-    "jank" ["jank" "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" ok-eval]
+    "jank" (:cmd (jank-cohost-cmd ok-eval))
     "cljrs" ["cljrs" "run" file]
     "cljrs-cohost" ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
                     "src/cohost/run.cljc" "--" "--eval" ok-eval]
@@ -399,7 +428,9 @@
 (defn wall-run [id file]
   (let [cmd (wall-cmd id file)
         t0 (System/nanoTime)
-        proc (run! cmd (when (= id "cljrs-cohost") cljrs-env))]
+        proc (run! cmd (cond (= id "cljrs-cohost") cljrs-env
+                             ;; computed by wall-cmd, before the clock started
+                             (= id "jank") (when @jank-env {:extra-env @jank-env})))]
     {:exit (:exit proc) :ms (/ (- (System/nanoTime) t0) 1e6)
      :out (or (:out proc) "") :err (or (:err proc) "")}))
 
@@ -490,6 +521,7 @@
         m (if (:wall p) (measure-wall t p) (measure t p arg))
         jvm (when-not (or (:wall p) (= (:id t) "jvm")) (:result (get (load-results "jvm") (:id p))))
         m (cond-> (assoc m :arg arg)
+            (= (:id t) "jank") (assoc :boot @jank-boot)
             (and (:result m) jvm (not= jvm (:result m)) (not= (:arg (get (load-results "jvm") (:id p))) arg))
             (assoc :note "JVM record is at another size")
             (and (:result m) jvm (not= jvm (:result m)) (= (:arg (get (load-results "jvm") (:id p))) arg))
