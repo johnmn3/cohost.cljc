@@ -215,8 +215,10 @@
        (doseq [[sym v] (host/ns-interns-map ns-sym)]
          (let [m (host/var-meta v)
                mark? (and (:macro m) (not (host/macro-var? v)))
+               _ (when mark? (host/mark-macro! v))
+               ;; after the marking: a macro marked here is wrapped in the
+               ;; same pass (the next form may call it)
                wrap? (and (host/macro-var? v) (not (:cohost/wrapped m)))]
-           (when mark? (host/mark-macro! v))
            (when wrap?
              (when (= :root (host/macro-wrap-style))
                (host/set-var-root! v (fn [f] (wrap-macro ctx f))))
@@ -405,14 +407,14 @@
                    v (if-not (profiling)
                        (let [rewritten (rw/rewrite c form')
                              v (host/eval-form rewritten)]
-                         (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)})
+                         (when @snapshot-log (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
                          v)
                        (let [t0 (host/nano-time)
                              rewritten (rw/rewrite c form')
                              t1 (host/nano-time)
                              v (host/eval-form rewritten)
                              t2 (host/nano-time)]
-                         (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)})
+                         (when @snapshot-log (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
                          (profile-add! :rewrite (- t1 t0))
                          (profile-add! :eval (- t2 t1))
                          (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form)))
@@ -582,7 +584,7 @@
                                  [f a] (host/eval-form rewritten)]
                              (when (fn? f)
                                (swap! state assoc-in [:inlines nm] [f a])
-                               (snap! {:op :inline :sym nm :form (snap-encode rewritten)}))))))))
+                               (when @snapshot-log (snap! {:op :inline :sym nm :form (snap-encode rewritten)})))))))))
 
 (defn- eval-form! [ctx report form name status]
   (host/try-all
@@ -590,7 +592,7 @@
      (if-not (profiling)
        (let [rewritten (rw/rewrite ctx (prepare form))]
          (host/eval-form rewritten)
-         (snap! {:op :form :ns core-ns :form (snap-encode rewritten)})
+         (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode rewritten)}))
          (host/after-eval form core-ns)
          (capture-inline! ctx form))
        (let [t0 (host/nano-time)
@@ -598,7 +600,7 @@
              rewritten (rw/rewrite ctx prepared)
              t1 (host/nano-time)
              _ (host/eval-form rewritten)
-             _ (snap! {:op :form :ns core-ns :form (snap-encode rewritten)})
+             _ (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode rewritten)}))
              t2 (host/nano-time)
              _ (host/after-eval form core-ns)
              _ (capture-inline! ctx form)
