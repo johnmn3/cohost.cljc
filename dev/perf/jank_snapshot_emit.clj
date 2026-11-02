@@ -88,9 +88,28 @@
                    y)))]
     (walk x)))
 
+(defn escape-regexes
+  "A regex's source as the host prints it can hold literal control
+   characters (a recorded #\"\\r?\\n\" came back with a raw CR and LF); written
+   into a module they do not survive the host's reader (Python reads a .lpy
+   with universal newlines: the CR becomes LF). Every host's regex syntax
+   reads \\r \\n \\t as those characters, so they are written escaped."
+  [x]
+  (let [esc (fn [^String p] (-> p (str/replace "\r" "\\r") (str/replace "\n" "\\n") (str/replace "\t" "\\t")))
+        walk (fn walk [x]
+               (let [y (cond
+                         (instance? java.util.regex.Pattern x) (re-pattern (esc (str x)))
+                         (map? x) (into (empty x) (map (fn [[k v]] [(walk k) (walk v)]) x))
+                         (vector? x) (mapv walk x)
+                         (set? x) (set (map walk x))
+                         (seq? x) (apply list (map walk x))
+                         :else x)]
+                 (if (and (instance? clojure.lang.IObj y) (meta x)) (with-meta y (meta x)) y)))]
+    (walk x)))
+
 (defn pr-src [form]
   (binding [*print-length* nil *print-level* nil *print-meta* true *print-namespace-maps* false]
-    (pr-str (if (= "lpy" (:host cli-opts)) (lpy-fix form) form))))
+    (pr-str (escape-regexes (if (= "lpy" (:host cli-opts)) (lpy-fix form) form)))))
 
 (defn quoted [x] (str "(quote " (pr-src x) ")"))
 
