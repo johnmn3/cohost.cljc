@@ -794,4 +794,57 @@ ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0)
 | dispatch | 174.926754 | 169.391323 | 80.670851 |
 | json | 2.960087 | 3.116886 | 20.303633 |
 | first-output | 8712.230748 | 8717.079317 | 22.622088 |
-Phel bench is not started. ClojureScript Node boot finished (`bb boot:cljs`: stock 518, host 87, natives 46, skipped 140, errors 0, battery 143/145, libraries 61/61). `bb bench:programs cljs` is running. Chromium: Playwright and headless Chromium installed; the browser boot is not started.
+`phel` own core finished, `bb bench:programs phel`. `phel-cohost` fib median is in the next table; the rest of that run is still going.
+
+| program | phel median | phel cold | phel/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 220.706048 | 290.279168 | 41.694249 | SAME |
+| fib-hinted | ABSENT | | | [PHEL402] Phel\Lang\AbstractFn@anonymous(): Argument #1 ($n) must be of type long, int given, called in /tmp/phel/tmp/__phel_82352_c384c51a33c8d4892ade73239071d2c8_7a770e2acd188541 |
+| tak | 2.781952 | 7.024128 | 2.034084 | SAME |
+| tak-hinted | ABSENT | | | [PHEL402] Phel\Lang\AbstractFn@anonymous(): Argument #1 ($x) must be of type long, int given, called in /tmp/phel/tmp/__phel_82362_01802cdebf9fc3eddf1f9513b42b9c67_9529b9e03bbd94df |
+| nbody | ABSENT | | | Class "Math" not found |
+| nbody-hinted | ABSENT | | | PHP Warning:  "double" will be interpreted as a class name. Did you mean "float"? Write "\double" to suppress this warning in /tmp/phel/tmp/__phel_82369_7eacd53de524675e10c51f6a5cc |
+| spectral-norm | ABSENT | | | Class "Math" not found |
+| spectral-norm-hinted | ABSENT | | | [PHEL402] Phel\Lang\AbstractFn@anonymous(): Argument #1 ($i) must be of type long, int given, called in phar:///home/ubuntu/.cache/cohost-hosts/phel-v0.54.0/phel.phar/src/phel/core |
+| mandelbrot | 72.243968 | 68.316928 | 162.430678 | SAME |
+| mandelbrot-hinted | ABSENT | | | PHP Warning:  "double" will be interpreted as a class name. Did you mean "float"? Write "\double" to suppress this warning in /tmp/phel/tmp/__phel_82398_ab517d5ed9ff3b80118751ad348 |
+| binary-trees | 8.329728 | 8.861952 | 16.061673 | SAME |
+| binary-trees-hinted | ABSENT | | | [PHEL402] Phel\Lang\AbstractFn@anonymous(): Argument #1 ($d) must be of type long, int given, called in /tmp/phel/tmp/__phel_82468_8f9d5b64f57c7a849a19dcbd46307d27_b2b8881c6479acd1 |
+| fannkuch | 343.599104 | 307.492096 | 16.116455 | SAME |
+| fannkuch-hinted | 438.744832 | 484.914944 | 21.403370 | SAME |
+| nsieve | 8.925184 | 9.494272 | 10.677450 | SAME |
+| nsieve-hinted | 16.93184 | 9.447936 | 16.549529 | SAME |
+| k-nucleotide | 7.849984 | 4.425984 | 6.975538 | SAME |
+| pipeline | 33.619968 | 38.828288 | 13.392270 | SAME |
+| dispatch | ABSENT | | | [PHEL001] Cannot resolve symbol 'w'. Did you mean 'when', '%', or '*'? |
+| json | 0.129024 | 0.446976 | 0.884993 | DIFFER expected 580 got 0 |
+| first-output | ABSENT | | | Cannot resolve symbol println; bench/programs/first_output.clj does not start with an ns form |
+
+Geometric mean of the 11 phel / JVM median ratios for rows that produced a time: `12.451088`.
+
+`phel-cohost` is still running where a row says running.
+
+| program | phel-cohost median | phel-cohost cold | phel-cohost/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 316.849166 | 512.81058 | 59.856937 | SAME |
+| fib-hinted | running | | | |
+| tak | running | | | |
+| tak-hinted | running | | | |
+| nbody | running | | | |
+| nbody-hinted | running | | | |
+| spectral-norm | running | | | |
+| spectral-norm-hinted | running | | | |
+| mandelbrot | running | | | |
+| mandelbrot-hinted | running | | | |
+| binary-trees | running | | | |
+| binary-trees-hinted | running | | | |
+| fannkuch | running | | | |
+| fannkuch-hinted | running | | | |
+| nsieve | running | | | |
+| nsieve-hinted | running | | | |
+| k-nucleotide | running | | | |
+| pipeline | running | | | |
+| dispatch | running | | | |
+| json | running | | | |
+| first-output | running | | | |
+
