@@ -1,0 +1,11 @@
+{;; the runtime `cohost` runs this project on; `cohost :<target> ...` overrides it
+ :cohost/target :{{target}}
+ :paths ["src"]
+ :deps {}
+ :aliases
+ {;; cohost -M:main [args]
+  :main {:main-opts ["-m" "{{top/ns}}.{{main/ns}}"]}
+  ;; cohost -X:run :who '"you"'
+  :run {:exec-fn {{top/ns}}.{{main/ns}}/run :exec-args {:who "world"}}
+  ;; cohost -X:test
+  :test {:extra-paths ["test"] :exec-fn {{top/ns}}.{{main/ns}}-test/run}}}

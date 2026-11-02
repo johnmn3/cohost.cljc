@@ -43,9 +43,22 @@
        "       cohost :cljs -Spath"))
 
 (defn run-inherit
-  "Run cmd with inherited stdio in dir; -> its exit code."
+  "Run cmd with inherited stdio in dir; -> its exit code. Every child sees
+   COHOST_HOME, the checkout this script runs from (the cohost/app template
+   reads it)."
   [dir cmd]
-  (-> (p/process cmd {:dir dir :inherit true}) deref :exit))
+  (-> (p/process cmd {:dir dir :inherit true :extra-env {"COHOST_HOME" repo}}) deref :exit))
+
+(defn with-templates
+  "The Clojure CLI's arguments for a tool (-T): cohost's deps-new templates
+   (templates/cohost-app) on its classpath, merged into the -Sdeps the
+   arguments carry (the CLI takes one)."
+  [args]
+  (let [lib {'cohost/templates {:local/root (str repo "/templates/cohost-app")}}
+        i (.indexOf ^java.util.List args "-Sdeps")]
+    (if (neg? i)
+      (into ["-Sdeps" (pr-str {:deps lib})] args)
+      (assoc args (inc i) (pr-str (update (edn/read-string (nth args (inc i))) :deps merge lib))))))
 
 ;; --------------------------------------------------------------------------
 ;; arguments, as the Clojure CLI's own script reads them: its options first,
@@ -68,7 +81,7 @@
       (re-matches #"-A(:.*)?" a) (recur more (update o :aliases conj a))
       (re-matches #"-M(:.*)?" a) (assoc o :mode :M :alias a :main more)
       (re-matches #"-X(:.*)?" a) (assoc o :mode :X :alias a :main more)
-      (re-matches #"-T(:.*)?" a) (assoc o :mode :T)
+      (re-matches #"-T.*" a) (assoc o :mode :T)
       ;; anything else starts clojure.main's own arguments
       :else (assoc o :mode :M :main args))))
 
@@ -255,7 +268,7 @@
     (cond
       ;; the JVM runs the real CLI, whole; tools are JVM programs, on every host
       (or (= host "jvm") (= mode :T) (:describe? o))
-      (System/exit (run-inherit cwd (vec (cons "clojure" rest-args))))
+      (System/exit (run-inherit cwd (vec (cons "clojure" (if (= mode :T) (with-templates rest-args) rest-args)))))
 
       (not (some #{host} wired))
       (die 2 (str "cohost: :" host " is not wired into the CLI yet: its boot is still in flight (doc/hosts/PLAN.md)"))

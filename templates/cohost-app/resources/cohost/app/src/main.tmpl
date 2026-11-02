@@ -1,0 +1,18 @@
+(ns {{top/ns}}.{{main/ns}}
+  "{{description}}"
+  (:require [clojure.string :as str]))
+
+(defn greet
+  "A greeting for who."
+  [who]
+  (str "Hello, " (str/trim who) "!"))
+
+(defn -main
+  "cohost -M:main [who]"
+  [& args]
+  (println (greet (or (first args) "world"))))
+
+(defn run
+  "cohost -X:run :who '\"you\"'"
+  [{:keys [who]}]
+  (println (greet who)))
