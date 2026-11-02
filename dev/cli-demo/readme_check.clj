@@ -2,7 +2,7 @@
 ;;
 ;; For each target (default: jvm), in a fresh temporary directory: every ```bash
 ;; block of README.md, in order, with bin/cohost first on PATH. `cd dir` moves
-;; the next commands; the README's `cohost -Tnew create ...` gets `:target <t>`
+;; the next commands; the README's `... -Tnew create ...` gets `:target <t>`
 ;; appended, so the project it makes is that target's. A command's expected
 ;; output is its `# => line` comments (inline, then the comment lines below it):
 ;; the command's non-blank stdout lines must equal them (trailing spaces
