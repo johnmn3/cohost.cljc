@@ -45,3 +45,62 @@
      :env (if (= "none" (System/getenv "COHOST_JANK_GC"))
             {}
             (into {} (remove (fn [[k _]] (System/getenv k)) {"GC_INITIAL_HEAP_SIZE" "512M"})))}))
+
+;; D-8: a project's snapshot. The core's snapshot covers the stock core and
+;; the twelve libraries; the project's own namespaces (its main ns and what it
+;; requires, through cohost's loader) would be JIT-compiled at -O3 at their
+;; first call on every run. jank-project-launch compiles them ahead, once,
+;; into <project>/target/cohost-jank/: recorded on top of a snapshot boot
+;; (dev/perf/jank_snapshot_project_record.jank), emitted as modules
+;; (jank_snapshot_emit.clj --project), compile-module'd -O3 against the core
+;; snapshot's objects. Its key: the core snapshot's stamp, every file under
+;; the project's roots, the main ns, and this file and the record script; a
+;; stale one is rebuilt (one stderr line) before the run, a fresh one is used.
+;; COHOST_JANK_PROJECT=none: never. -> {:module-path <project objects>:<its
+;; src>:<the core's path> :project-snapshot "cohost.project"}, or nil (no main
+;; ns, opted out, or the build failed: the run goes on without it).
+(defn- sha256-of [^String s]
+  (let [d (java.security.MessageDigest/getInstance "SHA-256")]
+    (.update d (.getBytes s "UTF-8"))
+    (apply str (map #(format "%02x" (bit-and % 0xff)) (.digest d)))))
+
+(defn- project-key [repo roots main]
+  (let [files (sort (mapcat (fn [r] (map str (filter fs/regular-file? (fs/glob r "**")))) roots))
+        sums (if (seq files)
+               (:out (p/shell {:out :string :in (str/join "\n" files)} "xargs" "-d" "\n" "sha256sum"))
+               "")]
+    (sha256-of (str (slurp (str repo "/target/jank-snapshot/stamp"))
+                    sums
+                    (:out (p/shell {:out :string} "sha256sum" (str repo "/dev/perf/jank_snapshot_cli.clj")
+                                   (str repo "/dev/perf/jank_snapshot_project_record.jank")
+                                   (str repo "/dev/perf/jank_snapshot_emit.clj")))
+                    "main " main "\n"))))
+
+(defn jank-project-launch [repo project roots main core-path env]
+  (when (and main (not= "none" (System/getenv "COHOST_JANK_PROJECT")))
+    (let [dir (str (fs/absolutize (fs/path project "target/cohost-jank")))
+          stamp (str dir "/stamp") src (str dir "/src") aot (str dir "/aot")
+          k (project-key repo roots main)
+          cache (fn [] (first (map str (fs/glob aot "_cache/*"))))
+          fresh? (and (fs/exists? stamp) (= k (str/trim (slurp stamp))) (cache))]
+      (when-not fresh?
+        (binding [*out* *err*] (println "cohost: jank: compiling the project's namespaces ahead (once per change)"))
+        (fs/delete-tree dir)
+        (fs/create-dirs dir)
+        (let [run (fn [& cmd] (apply p/shell {:dir repo :out :string :err :string :continue true :extra-env env} cmd))
+              events (str dir "/events.edn")
+              r1 (apply run "jank" "--module-path" core-path "run" (str repo "/dev/perf/jank_snapshot_project_record.jank")
+                        "--" "--stock" (str repo "/resources/cohost/clojure-1.12.0") "--out" events "--lib" (str main)
+                        (mapcat (fn [r] ["--root" r]) roots))
+              r2 (when (zero? (:exit r1))
+                   (run "bb" (str repo "/dev/perf/jank_snapshot_emit.clj") "--project" "--events" events "--out" src))
+              r3 (when (and r2 (zero? (:exit r2)))
+                   (run "jank" "-O3" "--module-path" (str src ":" core-path) "compile-module" "cohost.project-build"
+                        "--target-dir" aot))]
+          (if (and r3 (zero? (:exit r3)) (cache))
+            (spit stamp (str k "\n"))
+            (binding [*out* *err*]
+              (println "cohost: jank: the project's ahead-of-time build failed; running without it")
+              (println (:err (or r3 r2 r1)))))))
+      (when (and (fs/exists? stamp) (cache))
+        {:module-path (str (cache) ":" src ":" core-path) :project-snapshot "cohost.project"}))))

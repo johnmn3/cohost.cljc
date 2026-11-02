@@ -81,6 +81,66 @@ the config names. `:jank` runs `jank -O3 --module-path <cohost's -O3 AOT objects
 run-main cohost.cli -- <config>`; the objects are `dev/perf/jank_aot_ensure.clj`'s, rebuilt
 when `src/cohost` or the jank binary changed (the first run after a change compiles them).
 
+## jank: where `cohost :jank` spends its time (D-8)
+
+Measured 2026-11-02 ET in `dev/cli-demo` with a fresh snapshot, `bash dev/perf/jank_snapshot_cli_parts.sh`: each part is its own command, three runs, seconds (the jank parts run the launch's own `jank -O3 ... run-main cohost.cli` with a config that stops at that point).
+
+| part | before (s) | after (s) |
+|---|---|---|
+| `bb` start | 0.032 / 0.027 / 0.023 | 0.024 / 0.025 / 0.023 |
+| `bin/cohost :jank -Spath` (bb, `clojure -Spath`, the roots) | 0.049 / 0.051 / 0.050 | 0.055 / 0.052 / 0.052 |
+| `clojure -Spath`, `.cpcache` hit / miss | 0.017 / 0.015 / 0.015; 1.301 / 1.266 / 1.305 | 0.014 / 0.014 / 0.013; 1.264 / 1.205 / 1.045 |
+| the launch helper (snapshot key, a second bb) | 0.099 / 0.107 / 0.102 | 0.097 / 0.116 / 0.107 |
+| a jank process, nothing loaded | 0.714 / 0.680 / 0.616 | 0.641 / 0.624 / 0.614 |
+| + cohost's AOT objects | 1.085 / 1.047 / 1.134 | 1.113 / 1.110 / 1.069 |
+| + cohost.cli, snapshot boot, user ns, exit | 3.277 / 3.289 / 3.301 | 1.685 / 1.750 / 1.807 |
+| + loading demo.main (tools.cli, greeter) | 3.612 / 3.090 / 3.420 | 1.858 / 2.086 / 1.834 (project snapshot) |
+| + `-main` | 6.006 / 5.690 / 5.783 | 1.906 / 1.967 / 2.096 (project snapshot) |
+| **`cohost :jank -M -m demo.main jank-user`** | 5.481 / 5.986 / 5.851 (median 5.851) | **2.075 / 2.070 / 1.976 (median 2.070)** |
+| `clojure -M -m demo.main jank-user` (JVM, same box) | | 1.485 / 1.486 / 1.236 (median 1.485) |
+
+What moved:
+
+- `-main` cost 2.36 s and loading the app 0.13 s: jank's lazy JIT compiled the app's functions at `-O3` on their first call, every run. A **project snapshot** compiles them once: `bin/cohost`'s jank launch records the main namespace's load on top of a snapshot boot, emits the project's library modules, `compile-module`s them `-O3` into `<project>/target/cohost-jank/` (keyed by the core snapshot's stamp, every file under the project's roots and the main namespace), and passes the module to `cohost.cli`, which registers it before running. When it is stale, the run builds it first (`cohost: jank: compiling the project's namespaces ahead (once per change)`; 37.2 s for the first run of the demo, the build included); `COHOST_JANK_PROJECT=none` turns it off. With it, loading and `-main` together are within the spread of a run that stops before them.
+- `cohost.cli` and its start cost 1.54 s more than the snapshot boot: `cohost.cli` was JIT-compiled from source every run. The snapshot's core module now requires it, so the snapshot's compile makes its object.
+- Not moved: the launcher (about 0.1 s with `.cpcache` hit), a jank process (0.62 s), cohost's objects (0.49 s; loading only `cohost.hosts.auto`, `cohost.boot` and `cohost.cli` instead of `cohost.run` measured the same, 1.197 / 1.208 / 1.062 against 1.204 / 1.118 / 1.218), the snapshot's replay (0.64 s). Under 1.485 s is jank's static executable (D-7: 0.911 s).
+- The stale case (26.26 s, D-5: the AOT boot of core.clj) lasts until `bb boot:jank-snapshot` rebuilds the core snapshot. That build records a boot (1 m 49 s in D-1), emits and compiles every module (4 m 56 s in D-1), and first recompiles cohost's AOT objects when `src/cohost` changed. Rebuilding only the modules whose source changed needs the emitter to keep unchanged files and jank's `compile-module` to skip them; whether it does is not measured, and a codemod change can change every recorded form. Not done in D-8.
+
+The fix this needed (any snapshot): a library module loaded inside another library's load now restores what was loading when it began (`snap-lib-begin!` pushes `:loading`, `snap-lib-end!` pops it) instead of the parent recorded at snapshot time.
+
+## A native executable on jank (D-7)
+
+`cohost.build-jank/build!` (src/cohost/build_jank.clj) makes one native executable of a project's app on jank: the booted core's snapshot plus the app's namespaces, compiled `-O3` and linked by `jank compile --runtime static`, with the app's `-main` as its entry. Lane C's `cohost.build` (tools.build: `cohost -T:build jank-exe`) calls it; in this repo, `bb build:jank <project-dir> <main-ns> [name]` does (the roots are what `bin/cohost :jank -Spath` prints).
+
+1. cohost's own namespaces as `-O3` AOT objects;
+2. a boot with record mode on: the project's source roots added, the twelve libraries and the app's main namespace loaded through cohost's loader (so the app, its `:local/root` libraries and its Maven jars are rewritten as every other namespace is);
+3. one module per booted namespace, and `cohost.app-main`, whose `-main` boots from the snapshot and calls the app's;
+4. `jank -O3 compile cohost.app-main --runtime static --name <name>`: `<project>/target/jank/<name>`.
+
+Every input (the stock sources, `src/cohost`, the snapshot scripts, jank's binary version, every file under the app's roots, the main and the name) goes into one sha256 stamped beside the executable: a fresh one is not built again (`JANK-EXE-FRESH`), a stale one always is.
+
+Measured 2026-11-02 ET on `dev/cli-demo` (jank `0.1-noble`):
+
+```
+bb build:jank dev/cli-demo demo.main demo
+JANK-EXE-BUILD .../dev/cli-demo/target/jank/demo (new)
+SNAPSHOT-EVENTS 1508 bytes 805029
+MODULE cohost.app-main .../cohost/app_main.jank main demo.main/-main
+JANK-EXE-BUILT .../dev/cli-demo/target/jank/demo in 428694 ms
+bb build:jank dev/cli-demo demo.main demo       # again
+JANK-EXE-FRESH .../dev/cli-demo/target/jank/demo   (0.161 s)
+```
+
+The executable is 38,921,656 bytes and links only the system's libc, libstdc++, libgcc_s and libm. A copy run from `/tmp` prints `hello, jank-USER!`; under `strace` it opens `/etc/ld.so.cache`, those four libraries and `/proc` files, nothing in the checkout, the project or jank's install. It cannot `eval` or load a namespace that was not in the build: the static runtime has no JIT.
+
+Startup, wall seconds to the greeting, three runs each, interleaved, in `dev/cli-demo`:
+
+| | runs | median |
+|---|---|---:|
+| `target/jank/demo jank-user` | 0.930 / 0.876 / 0.911 | 0.911 |
+| `cohost :jank -M -m demo.main jank-user` (fresh snapshot) | 6.797 / 5.925 / 5.870 | 5.925 |
+| `clojure -M -m demo.main jank-user` (JVM) | 1.400 / 1.259 / 1.363 | 1.363 |
+
 ## Verified (2026-11-02 ET)
 
 The demo is committed: `dev/cli-demo/` (`deps.edn` with `org.clojure/tools.cli 1.2.245` from Maven, the

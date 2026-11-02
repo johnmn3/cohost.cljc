@@ -163,6 +163,12 @@
   []
   (let [ev @snapshot-log] (reset! snapshot-log nil) ev))
 
+(defn snapshot-start!
+  "Record mode from here on, after a boot (a project's snapshot records what
+   it loads on top of a booted, or snapshot-booted, core)."
+  []
+  (reset! snapshot-log []))
+
 (def ^:private snap-drop-meta
   "Reader metadata the host adds again when it reads the snapshot's source."
   #{:line :column :end-line :end-column :file :source-span :jank/source})
@@ -1386,6 +1392,9 @@
 (defn snap-lib-begin!
   "A library module, first: what load-lib! does before the source."
   [lib target path parent]
+  ;; what is loading now (not the recorded parent: a module can load inside
+  ;; another library's load at run time), restored by snap-lib-end!
+  (swap! state update ::snap-outer (fnil conj []) (:loading @state))
   (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
   (swap! (:renames (ctx)) assoc (str lib) (str target))
   (swap! state assoc :loading lib)
@@ -1396,7 +1405,15 @@
   [lib entry data parent]
   (snap-restore! data)
   (swap! state assoc-in [:libs lib] entry)
-  (swap! state assoc :loading parent)
+  (let [outer (peek (::snap-outer @state))]
+    (swap! state (fn [st] (-> st (assoc :loading outer) (update ::snap-outer pop)))))
+  nil)
+
+(defn register-snapshot-libs!
+  "A project snapshot's entry: {lib module} of its library modules, which
+   load-lib! then requires instead of loading the sources."
+  [libs]
+  (swap! state update :snapshot-libs merge libs)
   nil)
 
 (defn snapshot-report
