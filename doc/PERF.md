@@ -772,6 +772,120 @@ already in this checkout from the X1-1 done-bar re-run, and the command does not
 - `lazy-pipeline` is x29 (jank-aot) and x121 (cohost on jank) on apt. u2's build carries no walk patch, and its
   jank-aot min-max (1281.872-4429.067) shows the noise of this shared window.
 
+### cohost-max: the merged series (2026-11-02, X1-3)
+
+The plan's scoreboard (jank-MAX §0) on the merged upstream series. Two jank binaries: `apt` is jank 0.1-noble;
+`merged` is jank-lang/jank f3d82d65 with cohost's `upstream/jank/patches/series`, built with
+`JANK_SRC=/usr/local/src/jank-main JANK_DEV_PREFIX=/usr/local/lib/jank-main bash dev/install/jank-src.sh`, then
+`--patches` as patches merged. Every jank run had its own `XDG_CACHE_HOME`: the source builds all print the same
+`print-binary-version` and would otherwise share one PCH. The binary-tagged AOT roots and the cache were cleared after
+every rebuild. The box has 4 CPUs and was shared with the other lanes, unserialized, at load average 7-9. The JVM rows of
+this run are slower than C-1's (fib 328.767 against 139.164 ms), and every xJVM below uses this run's JVM.
+
+**Full suite, nine-patch series** (max/main faa50c4: 11, 13, 14, 12-21, 18, 19, 15a-16, 15b-17, 22). `bb bench:programs
+jvm`, then `bb bench:programs jank-aot` and `bb bench:programs jank` on apt and with
+`JANK_BIN=/usr/local/lib/jank-main/bin/jank`. Median ms of 10 timed calls (xJVM):
+
+| program | size | jvm | jank-aot apt | jank-aot merged | jank apt | jank merged |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 36 | 328.767 | 148.339 (x0.45) | 140.364 (x0.43) | 553.721 (x1.68) | 544.508 (x1.66) |
+| fib-hinted | 36 | 147.111 | 168.561 (x1.15) | 243.378 (x1.65) | 3048.341 (x20.72) | 2539.452 (x17.26) |
+| tak | 30 20 10 | 415.510 | 750.618 (x1.81) | 866.382 (x2.09) | 1698.438 (x4.09) | 1565.381 (x3.77) |
+| tak-hinted | 30 20 10 | 296.893 | 1492.643 (x5.03) | 1428.758 (x4.81) | 20615.452 (x69.44) | 17891.301 (x60.26) |
+| nbody | 50000 | 245.980 | ABSENT | ABSENT | ABSENT | ABSENT |
+| nbody-hinted | 50000 | 226.022 | ABSENT | ABSENT | ABSENT | ABSENT |
+| spectral-norm | 600 | 304.986 | ABSENT | ABSENT | 5724.004 (x18.77) | 5287.932 (x17.34) |
+| spectral-norm-hinted | 600 | 167.914 | ABSENT | ABSENT | 6703.139 (x39.92) | 7290.028 (x43.42) |
+| mandelbrot | 1500 | 216.625 | ABSENT | ABSENT | ABSENT | ABSENT |
+| mandelbrot-hinted | 1500 | 242.505 | ABSENT | ABSENT | ABSENT | ABSENT |
+| binary-trees | 18 | 441.679 | 3827.530 (x8.67) | 1979.189 (x4.48) | 4353.341 (x9.86) | 1618.805 (x3.67) |
+| binary-trees-hinted | 18 | 362.610 | 3611.230 (x9.96) | 1922.790 (x5.30) | 6120.744 (x16.88) | 2593.301 (x7.15) |
+| binary-trees-14 | 14 | 18.072 | 156.323 (x8.65) | 71.412 (x3.95) | 239.796 (x13.27) | 87.586 (x4.85) |
+| binary-trees-14-hinted | 14 | 14.605 | 159.882 (x10.95) | 97.638 (x6.69) | 378.712 (x25.93) | 129.429 (x8.86) |
+| sum-overflow | 1000000 | 25.006 | 78.731 DIFFER | 18.754 (x0.75) | 168.079 DIFFER | 45.425 (x1.82) |
+| sum-overflow-hinted | 1000000 | 0.599 | 11.365 DIFFER | 4.367 (x7.29) | 10.872 DIFFER | 6.216 (x10.38) |
+| sort | 100000 | 43.809 | 27652.770 (x631.21) | 24.100 (x0.55) | 192.171 (x4.39) | 86.981 (x1.99) |
+| lazy-pipeline | 1000000 | 36.320 | 1398.660 (x38.51) | 205.817 (x5.67) | 2880.591 (x79.31) | 688.740 (x18.96) |
+| keyword-map | 1000000 | 127.189 | 557.583 (x4.38) | 281.313 (x2.21) | 1275.398 (x10.03) | 640.434 (x5.04) |
+| fannkuch | 8 | 213.102 | ABSENT | ABSENT | ABSENT | ABSENT |
+| fannkuch-hinted | 8 | 212.243 | ABSENT | ABSENT | ABSENT | ABSENT |
+| nsieve | 20 | 340.399 | ABSENT | ABSENT | ABSENT | ABSENT |
+| nsieve-hinted | 20 | 197.237 | ABSENT | ABSENT | ABSENT | ABSENT |
+| k-nucleotide | 2000000 | 174.209 | 844.388 (x4.85) | 888.224 (x5.10) | 2055.509 (x11.80) | 1778.718 (x10.21) |
+| pipeline | 500000 | 174.239 | 1290.984 DIFFER | 983.129 (x5.64) | 2171.439 DIFFER | 1747.661 (x10.03) |
+| dispatch | 5000000 | 213.103 | ABSENT | ABSENT | 12678.188 DIFFER | 7569.793 (x35.52) |
+| json | 30000 | 389.482 | 2331.012 (x5.98) | 1148.436 (x2.95) | 10164.134 (x26.10) | 7702.754 (x19.78) |
+| first-output | - | 1482.445 | 674.079 (x0.45) | 819.871 (x0.55) | 17545.517 (x11.84) | 16793.854 (x11.33) |
+
+Geomean xJVM (`bb bench:programs table jvm jank-aot jank`, on each binary's records):
+
+- jank's own AOT: apt 5.842 over 14 programs, merged 2.545 over 17. Over the 14 that both run SAME: apt 5.842,
+  merged 2.433.
+- cohost on jank: apt 14.818 over 16, merged 9.125 over 20. Over the same 16: apt 14.818, merged 9.143.
+- The merged binary turns sum-overflow, sum-overflow-hinted and pipeline (both targets) and dispatch (cohost) from
+  `DIFFER` (the i32 wrap) to `SAME` (12-21).
+- `ABSENT` on both binaries, the same causes as C-1's table. jank's own core: nbody (`Math/sqrt`), spectral-norm
+  (`Math/round`), dispatch (`defprotocol`). Both targets: mandelbrot, fannkuch and nsieve (`use of undeclared
+  identifier 'sNN'`, the inner-loop rebinding). Cohost: nbody too.
+- `bb bench:jank` (stock core / jank's own, 30 cases, geomean of the printed x column): apt x1.77, merged x2.12.
+  Booted the same on both: stock 542, from host 171, skipped 78, errors 0.
+
+**A B interleave, eleven-patch series** (max/main 3c08fb4: the nine above plus 20-native-returns and 23-chunk-branch;
+`/usr/local/lib/jank-main` rebuilt with `--patches`, its AOT roots, records and cache cleared). Three rounds. Each round
+runs apt jank-aot, apt jank, merged jank-aot, merged jank on binary-trees, binary-trees-14, sort, lazy-pipeline,
+keyword-map, pipeline, json, fib, fib-hinted, tak and tak-hinted. Each cell is the median of the three rounds' medians
+(10 timed calls each), with the min-max of those three in brackets. The JVM column is the full suite's JVM above.
+Measured 2026-11-02, 2:48 PM to 4:31 PM ET.
+
+jank-aot:
+
+| program | jvm | apt median (min-max) | merged median (min-max) | merged / apt | merged xJVM |
+|---|---:|---:|---:|---:|---:|
+| binary-trees | 441.7 | 4187.7 (3666.1-4368.6) | 1137.1 (1067.8-1140.7) | 0.27 | x2.57 |
+| binary-trees-14 | 18.1 | 197.1 (175.8-243.3) | 44.5 (37.0-50.9) | 0.23 | x2.46 |
+| sort | 43.8 | 24106.7 (20321.0-24840.2) | 24.0 (23.8-37.1) | 0.00 | x0.55 |
+| lazy-pipeline | 36.3 | 1103.4 (993.9-1452.7) | 86.0 (82.7-104.8) | 0.08 | x2.37 |
+| keyword-map | 127.2 | 511.4 (472.6-521.4) | 256.0 (239.2-279.5) | 0.50 | x2.01 |
+| pipeline | 174.2 | 1213.9 (1101.7-1247.5) DIFFER | 1128.2 (950.6-1264.1) | 0.93 | x6.48 |
+| json | 389.5 | 1961.7 (1943.2-2352.3) | 1077.2 (1045.9-1136.7) | 0.55 | x2.77 |
+| fib | 328.8 | 101.1 (97.4-106.1) | 107.9 (102.3-181.1) | 1.07 | x0.33 |
+| fib-hinted | 147.1 | 174.0 (165.4-264.5) | 80.6 (77.7-81.1) | 0.46 | x0.55 |
+| tak | 415.5 | 674.1 (646.9-726.6) | 316.2 (310.6-335.8) | 0.47 | x0.76 |
+| tak-hinted | 296.9 | 1347.4 (1285.3-1429.6) | 182.6 (182.4-186.1) | 0.14 | x0.62 |
+
+geomean merged/apt over 11: 0.212
+
+jank:
+
+| program | jvm | apt median (min-max) | merged median (min-max) | merged / apt | merged xJVM |
+|---|---:|---:|---:|---:|---:|
+| binary-trees | 441.7 | 3454.1 (3351.5-3729.3) | 1532.5 (1511.5-1590.5) | 0.44 | x3.47 |
+| binary-trees-14 | 18.1 | 221.5 (192.2-222.9) | 106.7 (83.5-107.5) | 0.48 | x5.90 |
+| sort | 43.8 | 118.2 (108.3-138.1) | 96.0 (85.0-109.6) | 0.81 | x2.19 |
+| lazy-pipeline | 36.3 | 2405.1 (2184.6-2515.6) | 797.9 (589.0-902.8) | 0.33 | x21.97 |
+| keyword-map | 127.2 | 824.3 (792.8-961.3) | 749.7 (725.0-1252.0) | 0.91 | x5.89 |
+| pipeline | 174.2 | 1846.9 (1797.1-2105.8) DIFFER | 2429.5 (2237.1-2668.5) | 1.32 | x13.94 |
+| json | 389.5 | 7498.1 (7434.6-8019.9) | 9415.1 (7117.3-10328.0) | 1.26 | x24.17 |
+| fib | 328.8 | 454.9 (452.0-500.2) | 682.6 (472.2-707.2) | 1.50 | x2.08 |
+| fib-hinted | 147.1 | 2867.1 (2866.0-3282.5) | 2488.3 (2483.0-2601.2) | 0.87 | x16.91 |
+| tak | 415.5 | 1598.3 (1476.4-2185.2) | 1476.9 (1472.1-1551.9) | 0.92 | x3.55 |
+| tak-hinted | 296.9 | 17636.6 (17076.7-22737.2) | 15890.1 (14175.0-16291.6) | 0.90 | x53.52 |
+
+geomean merged/apt over 11: 0.806
+
+- jank's own AOT moves on every row except fib (1.07, inside fib's spread). The biggest moves: sort x0.001 (11, the
+  sorted walk), lazy-pipeline 0.08 (15a/15b, 23), tak-hinted 0.14 and fib-hinted 0.46 (20, native returns),
+  binary-trees 0.23-0.27 (18, 19). Merged jank-aot is below the JVM on fib, fib-hinted, tak, tak-hinted and sort.
+- Cohost on jank moves less (geomean 0.806), and three rows are slower on the merged binary:
+  - fib: 682.6 against 454.9 ms. The spreads overlap (472.2-707.2 against 452.0-500.2).
+  - json: 9415.1 against 7498.1 ms. The spreads overlap (7117.3-10328.0 against 7434.6-8019.9).
+  - pipeline: 2429.5 against 1846.9 ms. apt's pipeline is the wrong answer (DIFFER, the i32 wrap), so that pair does
+    not compare like for like.
+
+  The fib and json rows are not confirmed regressions in this window. They are named here for the next merge's run.
+- The full-suite tables above are the nine-patch binary. This interleave is the eleven-patch one. The next run (X1-4 or
+  the coordinator's next merge) re-runs the full suite on the series of that day.
+
 ## Cohost AOT optimization level
 
 `bb boot:jank` calls `jank-aot-dir` (`bb.edn` lines 14-15), which loads `dev/perf/jank_aot_ensure.clj`. The recompile is one command, `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot`, at `dev/perf/jank_aot_ensure.clj:68-69`. That `-O3` covers `cohost.run` and the namespaces it depends on, including `cohost.shim` and `cohost.hosts.jank-host`. The script requires `cohost/shim.o` and `cohost/hosts/jank_host.o` in that same cache. There is no environment variable for the level. jank's own flag is `-O` / `--optimization`, values 0 through 3. The boot does not read it from the environment. The level is the literal `-O3` on that line, so the default is already `-O3`. `bb bench:programs jank` loads those objects. A second target would repeat the same compile. Default and `-O3` are that run: fib median `126.469398` ms, and the geometric mean of cohost `-O3` / default is `1`.
