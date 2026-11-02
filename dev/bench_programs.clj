@@ -254,10 +254,34 @@
       (when-not (zero? (:exit c))
         (throw (ex-info "cljs-node" {:err (str (:err c) "\n" (:out c))}))))))
 
-(defn run-cljs [id src arg]
-  (let [f (tmp (str (name id) ".cljs"))]
-    (spit f (str (harness src (clock "cljs") true) "(apply -main *command-line-args*)\n"))
-    (run! ["clojure" "-M:cljs" "-m" "cljs.main" "-re" "node" f arg])))
+(defn cljs-build
+  "Compile body (namespace bench.prog) as a Node program: -t node -O simple,
+   the way a cljs user ships one. Cached by body under root. -> main.js path."
+  [root body]
+  (let [stamp (str root "/stamp")
+        js (str root "/main.js")]
+    (when-not (and (fs/exists? stamp) (= (slurp stamp) body) (fs/exists? js))
+      (fs/delete-tree root)
+      (fs/create-dirs (str root "/src/bench"))
+      (spit (str root "/src/bench/prog.cljs") body)
+      (let [c (run! ["clojure" "-Sdeps" (pr-str {:paths [(str root "/src")]}) "-M:cljs"
+                     "-m" "cljs.main" "-t" "node" "-O" "simple"
+                     "-d" (str root "/out") "-o" js "-c" "bench.prog"])]
+        (when-not (and (zero? (:exit c)) (fs/exists? js))
+          (throw (ex-info "cljs-compile" {:err (str (:err c) "\n" (:out c))}))))
+      (spit stamp body))
+    js))
+
+(defn run-cljs
+  "ClojureScript's own core, compiled (cljs-build), run by node. (Script
+   mode, cljs.main -re node file, evaluates form by form through the REPL
+   and fails on defprotocol: `Can't change/establish root binding of:
+   *unchecked-if* with set`.)"
+  [id src arg]
+  (run! ["node" (cljs-build (str "target/bench-programs/cljs-" (name id))
+                            (str "(ns bench.prog)\n" (harness src (clock "cljs") true)
+                                 "(set! *main-cli-fn* -main)\n"))
+         arg]))
 
 (defn run-cljs-cohost [_ src arg]
   (ensure-cljs-node!)
@@ -322,7 +346,7 @@
     "phel-cohost" ["phel" "run" "dev/phel_main.phel" "--" "--eval" ok-eval]
     "lg" ["lg" file]
     "lg-cohost" ["lg" "-source-paths" "src" "dev/lg_main.lg" "--" "--eval" ok-eval]
-    "cljs" ["clojure" "-M:cljs" "-m" "cljs.main" "-re" "node" file]
+    "cljs" ["node" (cljs-build "target/bench-programs/cljs-wall" "(ns bench.prog)\n(println \"ok\")\n")]
     "cljs-cohost" (do (ensure-cljs-node!) ["node" "target/cljs-node/main.js" "--eval" ok-eval])
     (throw (ex-info "browser" {:err browser-why}))))
 
@@ -340,11 +364,15 @@
    (cohost's `=> ERR` line, a compiler `error:` line, an exception), else the
    first 400 characters of the output."
   [& outs]
-  (let [lines (mapcat #(str/split-lines (or % "")) outs)
+  (let [lines (remove #(re-find #"^WARNING:|DeprecationWarning|trace-deprecation" %)
+                      (mapcat #(str/split-lines (or % "")) outs))
+        ;; the Clojure CLI prints `Execution error (X) at ...` and the message on the next line
+        cli (some (fn [[a b]] (when (re-find #"^(Execution|Unexpected) error" a) (str (str/trim a) " " (str/trim (or b "")))))
+                  (reverse (partition 2 1 [nil] lines)))
         err (some #(when-let [[_ m] (re-find #"=> ERR (.*)" %)] (str/trim m)) lines)
         ;; a C++ compiler diagnostic names the cause cohost's ERR line only summarizes
         diag (some #(when (re-find #":\d+:\d+: error: " %) (str/trim %)) lines)]
-    (or (cond (and err diag) (str err " -- " diag) :else (or err diag))
+    (or (cond (and err diag) (str err " -- " diag) :else (or err diag cli))
         (some #(when (re-find #"(?i)error|exception|panic|could not|cannot|unable|undeclared|not found|traceback" %)
                  (str/trim %))
               lines)
