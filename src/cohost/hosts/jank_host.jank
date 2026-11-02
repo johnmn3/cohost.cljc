@@ -505,6 +505,18 @@ namespace cohost_obj {
     return impl;
   }
   jank::i64 generation() { return proto_generation.load(); }
+
+  // the stock multimethod's hit (X2-2): cell is the shim's cache atom holding
+  // [state-value hierarchy-ref hierarchy-value {dv method}]; a hit is the state
+  // atom's value and the hierarchy's value both identical to the cell's, and dv in
+  // the table. nil on any miss: the shim's mf-fast-method (the slow path) runs
+  object_ref mm_hit(object_ref cell, object_ref state, object_ref dv) {
+    auto const e = cell.deref();
+    if (e.get_type() != object_type::persistent_vector) { return make_box<obj::nil>(); }
+    auto const &d = expect_object<obj::persistent_vector>(e)->data;
+    if (d.size() != 4 || d[0] != state.deref() || d[2] != d[1].deref()) { return make_box<obj::nil>(); }
+    return get(d[3], dv);
+  }
 }
 ")
 
@@ -779,6 +791,8 @@ namespace cohost_obj {
 ;; the adapter is not visible from JIT-compiled user code (P12).
 
 (defn method-cache [] (volatile! nil))
+;; the shim's multimethod hit path (adapter :multimethod-cache?, X2-2)
+(defn mm-hit [cell state dv] (cpp/cohost_obj.mm_hit cell state dv))
 (defn cached-impl [c x] (cpp/cohost_obj.cached_impl c x))
 
 (defn- no-impl [p msym x]
@@ -1375,7 +1389,7 @@ namespace cohost_obj {
 (def adapter
   {:name :jank
    ;; the shim's stock multimethod behind a one-entry cache (X2-1, doc/research/jank-dispatch.md)
-   :multimethod-cache? true
+   :multimethod-cache? mm-hit
    :core-ns 'clojure.core
    :catch-all 'cpp/jank.runtime.object_ref
    :read-forms read-forms

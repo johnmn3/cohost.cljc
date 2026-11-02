@@ -51,6 +51,9 @@
 (def ^:private h-pending? (host/capability :pending?))
 (def ^:private h-multifn? (host/capability :multifn?))
 (def ^:private h-mm-cache? (host/capability :multimethod-cache?))
+;; a host's own hit check of the cache cell, when :multimethod-cache? is a fn (jank's
+;; is one C++ call); nil from it, or no fn, means mf-fast-method decides
+(def ^:private h-mm-hit (if (fn? h-mm-cache?) h-mm-cache? (fn [_ _ _] nil)))
 (def ^:private h-delay? (host/capability :delay?))
 (def ^:private h-decimal? (host/capability :decimal?))
 (def ^:private h-uuid? (host/capability :uuid?))
@@ -1249,22 +1252,23 @@
 
 (defn- mf-fast-method
   "mf-method behind a one-entry cache (adapter :multimethod-cache?): mc holds
-   [state-value hierarchy-value {dv method}], good while the multimethod's
-   state (methods, prefers, default) and its hierarchy's value are the very
-   ones it was filled under; a dv it lacks is found with mf-find-method and
-   added. No atom swap on a hit or a miss."
+   [state-value hierarchy-ref hierarchy-value {dv method}], good while the
+   multimethod's state (methods, prefers, default) and its hierarchy's value
+   are the very ones it was filled under; a dv it lacks is found with
+   mf-find-method and added. No atom swap on a hit or a miss. (A host's
+   h-mm-hit makes the same hit check first, in one call.)"
   [state mc dv]
-  (let [e @mc st @state h (deref (:hierarchy st))]
-    (if (and e (identical? (nth e 0) st) (identical? (nth e 1) h))
-      (let [m (get (nth e 2) dv ::miss)]
+  (let [e @mc st @state href (:hierarchy st) h (deref href)]
+    (if (and e (identical? (nth e 0) st) (identical? (nth e 2) h))
+      (let [m (get (nth e 3) dv ::miss)]
         (if (identical? m ::miss)
           (let [m (mf-find-method st dv)]
             ;; a miss is not cached, as the JVM's findAndCacheBestMethod
-            (when m (reset! mc [st h (assoc (nth e 2) dv m)]))
+            (when m (reset! mc [st href h (assoc (nth e 3) dv m)]))
             m)
           m))
       (let [m (mf-find-method st dv)]
-        (reset! mc [st h (if m {dv m} {})])
+        (reset! mc [st href h (if m {dv m} {})])
         m))))
 
 (def new-MultiFn
@@ -1275,11 +1279,11 @@
       ((fn [f] (if fn-meta? (with-meta f {::multifn state}) (do (swap! mf-states assoc f state) f)))
         (if h-mm-cache?
           (fn
-            ([] (let [dv (dispatch-fn) m (mf-fast-method state mc dv)] (if m (m) (no-method dv))))
-            ([a] (let [dv (dispatch-fn a) m (mf-fast-method state mc dv)] (if m (m a) (no-method dv))))
-            ([a b] (let [dv (dispatch-fn a b) m (mf-fast-method state mc dv)] (if m (m a b) (no-method dv))))
-            ([a b c] (let [dv (dispatch-fn a b c) m (mf-fast-method state mc dv)] (if m (m a b c) (no-method dv))))
-            ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-fast-method state mc dv)]
+            ([] (let [dv (dispatch-fn) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m) (no-method dv))))
+            ([a] (let [dv (dispatch-fn a) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a) (no-method dv))))
+            ([a b] (let [dv (dispatch-fn a b) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a b) (no-method dv))))
+            ([a b c] (let [dv (dispatch-fn a b c) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a b c) (no-method dv))))
+            ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))]
                               (if m (apply m a b c more) (no-method dv)))))
           (fn
             ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
