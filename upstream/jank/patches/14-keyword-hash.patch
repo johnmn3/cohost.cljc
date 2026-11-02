@@ -1,4 +1,4 @@
-From c029c57254b19ecc96761e128a318cd5541b8539 Mon Sep 17 00:00:00 2001
+From b3f300626843c814efa06e176097139a9af813ff Mon Sep 17 00:00:00 2001
 From: cohost u2 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 16:11:07 +0000
 Subject: [PATCH] Cache the hash of symbol (on first use) and keyword (at
