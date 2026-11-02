@@ -35,16 +35,16 @@
 (defn usage []
   (die 2
        "usage: cohost :<host> <clojure CLI args...>"
-       (str "  hosts: :jvm " (str/join " " (map #(str ":" %) wired)) "   (:cljrs :jank not wired yet)")
+       (str "  hosts: :jvm " (str/join " " (map #(str ":" %) wired)) "   (:cljrs not wired yet)")
        "  e.g. cohost :cljs -e \"(+ 1 2)\""
        "       cohost :cljs -M -m demo.main arg1"
        "       cohost :jolt -X demo.core/run :x 1"
        "       cohost :cljs -Spath"))
 
 (defn run-inherit
-  "Run cmd with inherited stdio in dir (env: extra environment); -> its exit code."
-  [dir cmd & [env]]
-  (-> (p/process cmd {:dir dir :inherit true :extra-env (or env {})}) deref :exit))
+  "Run cmd with inherited stdio in dir; -> its exit code."
+  [dir cmd]
+  (-> (p/process cmd {:dir dir :inherit true}) deref :exit))
 
 ;; --------------------------------------------------------------------------
 ;; arguments, as the Clojure CLI's own script reads them: its options first,
@@ -196,10 +196,24 @@
         (when-not (zero? (run-inherit repo cmd))
           (die 1 "cohost: cljs build failed"))))))
 
+(defn jank-aot-dir!
+  "cohost's own namespaces compiled -O3 (jank-FAST Step 6 stage 1), rebuilt
+   when src/cohost or the jank binary changed: dev/perf/jank_aot_ensure.clj,
+   run from the repo (its paths are the repo's). -> the absolute cache dir."
+  []
+  (let [r (-> (p/process ["bb" "-e" "(println (str \"COHOST-AOT-DIR \" (load-file \"dev/perf/jank_aot_ensure.clj\")))"]
+                         {:dir repo :out :string :err :inherit})
+              deref)
+        dir (some #(second (re-matches #"COHOST-AOT-DIR (.*)" %)) (str/split-lines (:out r)))]
+    (when-not (and (zero? (:exit r)) dir)
+      (die 1 "cohost: jank AOT modules failed (bb -e (load-file \"dev/perf/jank_aot_ensure.clj\") in the repo)"))
+    (str (fs/absolutize (fs/path repo dir)))))
+
 (defn jank-launch
-  "jank: the module path (a fresh snapshot of the booted core, else the AOT
-   objects) and whether cohost.cli boots from the snapshot (lane D's
-   dev/perf/jank_snapshot_cli.clj)."
+  "jank: the module path (a fresh snapshot of the booted core, else cohost's
+   AOT objects), whether cohost.cli boots from the snapshot, and the jank
+   process's extra environment (the GC setting): lane D's
+   dev/perf/jank_snapshot_cli.clj, decided in the repo."
   []
   (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
   ((resolve 'jank-cli-launch) repo))
@@ -218,7 +232,11 @@
       "lpy" (run-inherit cwd ["basilisp" "run" "-p" src "-c"
                               (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])
       "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg])
-      "jank" (run-inherit cwd ["jank" "-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg] (:env jank)))))
+      ;; the booted core from a fresh snapshot (else cohost's -O3 AOT objects
+      ;; and a boot of core.clj), cohost.cli and the program JIT-compiled at -O3
+      "jank" (-> (p/process ["jank" "-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg]
+                            {:dir cwd :inherit true :extra-env (:env jank)})
+                 deref :exit))))
 
 ;; --------------------------------------------------------------------------
 
@@ -254,7 +272,7 @@
             (fs/create-dirs (fs/parent cfg-file))
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
                                                :verbose (boolean (System/getenv "COHOST_VERBOSE"))}
-                                   (when jank {:snapshot? (:snapshot? jank)}))))
+                                          (when jank {:snapshot? (:snapshot? jank)}))))
             ;; System/exit skips finally: the config goes before it
             (let [code (try (launch! host cwd cfg-file jank) (finally (fs/delete-if-exists cfg-file)))]
               (System/exit code))))))))
