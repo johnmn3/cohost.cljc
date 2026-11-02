@@ -735,6 +735,47 @@ libraries: 61/61 cases pass across 12 clojure.* libraries
 
 The stale key was detected before anything loaded, the snapshot was rebuilt (364,831 ms with the stage 1 objects already fresh), and the next run loaded it.
 
+### The default (D-2)
+
+`bb boot:jank` and `bb bench:jank` boot from the snapshot when it is fresh (`fresh-path` in `dev/perf/jank_snapshot_key.clj`: the same key) and otherwise print why and run the AOT boot of `core.clj` as before. Neither builds nor loads a stale snapshot; `bb boot:jank-snapshot` builds it. Measured 2026-11-02 ET, `d/jank-snapshot-default`, one chain on an idle box:
+
+```
+== boot:jank (stale)
+SNAPSHOT-STALE key 9aaafc662f7efcf1a060f60bb41f46630ae62d5242d966f27f8f8b0769ac8c60 is not 525ad8536f6cf76d237374a707d96d812345e5fbd84276f47767f6431ce8e6c7 (bb boot:jank-snapshot builds it)
+AOT-FRESH
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+== boot:jank-snapshot (build)
+SNAPSHOT-BUILT 525ad8536f6cf76d237374a707d96d812345e5fbd84276f47767f6431ce8e6c7 in 371088 ms
+== boot:jank (fresh)
+SNAPSHOT-FRESH 525ad8536f6cf76d237374a707d96d812345e5fbd84276f47767f6431ce8e6c7
+SNAPSHOT-BOOT-MS 580.373918
+  booted as stock: 542   from host: 171   skipped: 78   errors: 0
+battery: 143/145 stock behaviors pass
+libraries: 61/61 cases pass across 12 clojure.* libraries
+```
+
+`bash dev/perf/jank_snapshot_time.sh` (its no-snapshot side runs the AOT boot directly, `run-main cohost.run -- --bench --quick`, what `bench:jank` ran before; the other side is `bb bench:jank --quick`, checked to print `SNAPSHOT-FRESH`). Each column's median is taken on its own:
+
+```
+RUN aot 1 boot-ms libs-ms sum: 10364.375912 9378.710642000195 19743.086554000194
+RUN snapshot 1 boot-ms libs-ms sum: 501.703839 530.5053889998235 1032.2092279998235
+RUN aot 2 boot-ms libs-ms sum: 9716.03025 8700.08130600024 18416.11155600024
+RUN snapshot 2 boot-ms libs-ms sum: 733.175061 710.0212499997579 1443.1963109997578
+RUN aot 3 boot-ms libs-ms sum: 11083.572973 9098.975416000001 20182.548389000003
+RUN snapshot 3 boot-ms libs-ms sum: 580.445917 609.4266209998168 1189.8725379998168
+MEDIAN aot boot-ms 10364.375912 libs-ms 9098.975416000001 sum 19743.086554000194
+MEDIAN snap boot-ms 580.445917 libs-ms 609.4266209998168 sum 1189.8725379998168
+```
+
+| `bb bench:jank --quick`, median of 3 | boot-ms | libs-ms | sum |
+|---|---:|---:|---:|
+| before (AOT boot of core.clj) | 10,364.4 | 9,099.0 | 19,743.1 |
+| after (fresh snapshot, the default) | 580.4 | 609.4 | 1,189.9 |
+
+The cost moved to the build: about 6 minutes (371,088 ms here) after any change to an input, `src/cohost` included, paid by `bb boot:jank-snapshot`; until then `bb boot:jank` boots as before.
+
 ## Type hints (H1)
 
 Measured 2026-11-01 ET on jank `0.1-noble`. The commands ran on `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. The branch was then rebased onto `b61bf0e5856c78d06605e6c32682534a61edf32c`; those commits touch `doc/upstream/` and `doc/hosts/jank-FAST.md` only, so the boots were not run again. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.
