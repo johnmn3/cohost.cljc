@@ -742,15 +742,16 @@
 
 (def Numbers-add +)
 (def Numbers-addP (host-fn '+' +))
-;; on jank the wrapper IS the host's - with an extra hop: it checks
-;; nothing (the host's - throws on nil and on a non-number, as the JVM's
-;; static does), so the static is the twin itself and host-aliases
-;; fires. The quotient/remainder/divide wrappers stay: jank's own die
-;; with SIGFPE on a zero divisor where the JVM throws ArithmeticException.
-;; max/min stay: jank's min answers the number for (min 1 ##NaN) where
-;; the JVM's static answers NaN.
-(def Numbers-minus #?(:jank -
-                      :default (fn ([x] (- x)) ([x y] (- x y)))))
+;; the wrapper was a pure forwarder on every host -- it checked
+;; nothing, it called the host's - and returned what it returned (on
+;; jank the host's - throws on nil and on a non-number, as the JVM's
+;; static does) -- so the static is the twin itself on every host and
+;; host-aliases fires. The quotient/remainder/divide wrappers stay:
+;; they carry the zero-divisor check (jank's own die with SIGFPE where
+;; the JVM throws ArithmeticException). max/min stay: they carry the
+;; NaN rule (jank's min answers the number for (min 1 ##NaN) where the
+;; JVM's static answers NaN).
+(def Numbers-minus -)
 (def Numbers-minusP (host-fn '-' -))
 (def Numbers-multiply *)
 (def Numbers-multiplyP (host-fn '*' *))
