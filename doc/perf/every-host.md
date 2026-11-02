@@ -12,7 +12,7 @@ reference state.
 | :syntax-quote-source? | | | | | | | |
 | :cohost-inst? | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | :prim-kind-test | | | | | | | |
-| :defn-fn-name? | N/A | ON | | | | | |
+| :defn-fn-name? | N/A | ON | (benching) | N/A | N/A | N/A | N/A |
 | :rewrite-inline? | | | | | | | |
 | tag type tests (M-4.1) | | | | | | | |
 | bound RT arms (M-4.2/3) | | | | | | | |
@@ -44,3 +44,12 @@ reference state.
   battery price. The JVM is N/A: it is the reference host -- the
   battery's redefinition expectation IS its semantics, and its JIT
   makes a var deref on a hot self-call free.
+
+  The same A/B on the other hosts (the unnamed arm's emission
+  verified in each session): cljs x0.996 (V8's inline caches make
+  the namespace-property call as fast as the named local), cljw
+  x0.99, phel x0.88 -- no cost to remove, cap stays off. On let-go
+  the only name shape is the letfn* binding, and it measures x6.3
+  SLOWER than the var (3,140 ms against 19,830 ms, every pair
+  agreeing): let-go's letfn* cell costs more per call than its var
+  deref, so the gain does not exist there in any shape.
