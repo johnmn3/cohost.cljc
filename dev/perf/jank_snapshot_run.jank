@@ -1,0 +1,45 @@
+;; jank-FAST Step 6 stage 2. Boot from the AOT snapshot instead of booting
+;; core.clj: require the snapshot's compiled cohost.core module (it replays
+;; the recorded boot and restores its state), then do what cohost.run/-main
+;; does after boot! -- the report, the user namespace, then the battery and
+;; the library battery, or with --bench the bench (its libs-ms loads the
+;; libraries' snapshot modules through load-lib!).
+;;
+;;   bb boot:jank-snapshot [--no-libs | --bench [--quick] ...]
+;;
+;; The module path is the snapshot's (see dev/perf/jank_snapshot_ensure.clj),
+;; which never hands this script a stale snapshot.
+(require 'cohost.run)
+(require 'cohost.adapter)
+(require 'cohost.boot)
+(require 'cohost.battery)
+(require 'cohost.lib-battery)
+(require 'cohost.bench)
+
+(let [args (or *command-line-args* ())
+      flags (set (filter #(and (string? %) (= "--" (subs % 0 (min 2 (count %))))) args))
+      t0 (cohost.adapter/nano-time)
+      _ (require 'cohost.core)
+      report (cohost.boot/snapshot-report)
+      boot-ms (/ (double (- (cohost.adapter/nano-time) t0)) 1000000.0)]
+  (when-not report
+    (throw (ex-info "cohost.core loaded, but it is not a snapshot (no snapshot report)" {})))
+  (println (str "SNAPSHOT-BOOT-MS " boot-ms))
+  (cohost.boot/print-report report)
+  (cohost.boot/make-user-ns!)
+  (if (contains? flags "--bench")
+    (cohost.bench/run-bench!
+     (merge {:boot-ms boot-ms :libs-ms (cohost.bench/load-libs!)}
+            (when-let [f (first (filter #(= "--scale=" (subs % 0 (min 8 (count %)))) flags))]
+              {:scale (cohost.adapter/read-string* (subs f 8))})
+            (when (contains? flags "--quick") {:warm-ms 0 :budget-ms 0 :min-runs 1 :settle-ms 0})
+            (when-let [f (first (filter #(= "--git=" (subs % 0 (min 6 (count %)))) flags))]
+              {:git (subs f 6)})
+            (when-let [f (first (filter #(= "--note=" (subs % 0 (min 7 (count %)))) flags))]
+              {:note (subs f 7)})))
+    (do (cohost.battery/run-battery! cohost.boot/eval-str)
+        (when-not (contains? flags "--no-libs")
+          (let [t1 (cohost.adapter/nano-time)]
+            (cohost.lib-battery/run-lib-battery! cohost.boot/eval-str)
+            (println (str "SNAPSHOT-LIBS-BATTERY-MS " (/ (double (- (cohost.adapter/nano-time) t1)) 1000000.0)))))))
+  nil)

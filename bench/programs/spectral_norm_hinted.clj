@@ -8,7 +8,7 @@
             (loop [j 0 s 0.0]
               (if (= j n)
                 s
-                (let [^double vij (nth v j)]
+                (let [vij (double (nth v j))]
                   (recur (inc j) (+ s (* (eval-a i j) vij)))))))
           (range n))))
 
@@ -18,7 +18,7 @@
             (loop [j 0 s 0.0]
               (if (= j n)
                 s
-                (let [^double vij (nth v j)]
+                (let [vij (double (nth v j))]
                   (recur (inc j) (+ s (* (eval-a j i) vij)))))))
           (range n))))
 
@@ -26,7 +26,7 @@
   (mul-atv (mul-av v)))
 
 (defn -run [s]
-  (let [^long n (parse-long s)
+  (let [n (long (parse-long s))
         u0 (vec (repeat n 1.0))]
     (loop [k 0 u u0]
       (if (= k 10)
@@ -38,7 +38,7 @@
               vv (loop [i 0 s 0.0]
                    (if (= i n)
                      s
-                     (let [^double vi (nth v i)]
+                     (let [vi (double (nth v i))]
                        (recur (inc i) (+ s (* vi vi))))))]
           (Math/round (* (Math/sqrt (/ vBv vv)) 1000000.0)))
         (recur (inc k) (mul-ata (mul-ata u)))))))
