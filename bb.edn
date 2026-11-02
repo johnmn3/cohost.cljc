@@ -22,8 +22,15 @@
           (defn jank-o []
             (let [o (System/getenv "COHOST_JANK_O")]
               (cond (nil? o) ["-O3"] (= "none" o) [] :else [o])))
+          ;; research item 4 (D-4): the collector's start heap for cohost's
+          ;; jank process (doc/perf/jank.md "GC"). A GC_* variable already
+          ;; set wins; COHOST_JANK_GC=none sets nothing.
+          (defn jank-gc-env []
+            (if (= "none" (System/getenv "COHOST_JANK_GC"))
+              {}
+              (into {} (remove (fn [[k _]] (System/getenv k)) {"GC_INITIAL_HEAP_SIZE" "512M"}))))
           (defn jank! [& args]
-            (apply babashka.process/shell (concat ["jank"] (jank-o) args)))
+            (apply babashka.process/shell {:extra-env (jank-gc-env)} (concat ["jank"] (jank-o) args)))
           (defn jank-snapshot-path []
             (load-file "dev/perf/jank_snapshot_key.clj")
             ((resolve 'fresh-path))))
