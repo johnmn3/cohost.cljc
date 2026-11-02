@@ -1,0 +1,338 @@
+From 78699c876fd58cf3e1fd7cdb9b0aa057d59a1eaa Mon Sep 17 00:00:00 2001
+From: cohost u3 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 20:49:55 +0000
+Subject: [PATCH] 30: the inline (NaN-boxed) integer holds 48 bits, not 32
+
+Draft: doc/upstream/jank-30-inline-int-width.md in johnmn3/cohost.cljc. Applies after
+the series up to 27 (12-21's i64 arithmetic is not edited). Repro: bash
+dev/research/upstream/run.sh 30-inline-int-width.
+
+With 12-21, a sum is correct past 2^31, and every add past it allocated an
+obj::integer (make_box tagged only the i32 range): reduce + over a 1e6 vector went
+7.5 ms -> 35-47 ms. The integer tag 0xFFF9 leaves the low 48 bits free (the pointer tag
+uses 48 too), so:
+
+- oref.hpp: integer_value_mask is 48 bits; min/max_small_integer are -2^47..2^47-1;
+  as_integer sign-extends the payload into an i64; tag(i64).
+- obj::small_integer and oref<obj::small_integer> hold an i64 (the 48-bit value).
+- make_box(integral) tags anything in 48 bits, heap-allocates only beyond.
+- math.hpp, the boxed add/sub/mul arms (12-21's): the fast path's width check moves to
+  the inline bound: add and sub of two operands within 47 bits run in i64 (no overflow
+  possible) and tag; mul of two i32 operands runs in i64; everything else takes 12-21's
+  checked i64 path unchanged (overflow still throws), which now tags a result in 48 bits.
+- codegen (cpp_processor.cpp, api.{hpp,cpp}) and the analyzer's literal typing
+  (cpp_util.cpp): a boxed literal is a small_integer up to 48 bits; _jank_small_int
+  takes an i64.
+
+Files: include/cpp/jank/runtime/oref.hpp, include/cpp/jank/runtime/obj/number.hpp,
+src/cpp/jank/runtime/obj/number.cpp, include/cpp/jank/runtime/core/make_box.hpp,
+include/cpp/jank/runtime/core/math.hpp, src/cpp/jank/codegen/cpp_processor.cpp,
+src/cpp/jank/codegen/api.cpp, include/cpp/jank/codegen/api.hpp, src/cpp/jank/analyze/cpp_util.cpp.
+---
+ .../include/cpp/jank/codegen/api.hpp          |  2 +-
+ .../cpp/jank/runtime/core/make_box.hpp        |  2 +-
+ .../include/cpp/jank/runtime/core/math.hpp    | 49 ++++++++++++++-----
+ .../include/cpp/jank/runtime/obj/number.hpp   |  3 +-
+ .../include/cpp/jank/runtime/oref.hpp         | 37 +++++++++-----
+ .../src/cpp/jank/analyze/cpp_util.cpp         |  2 +-
+ compiler+runtime/src/cpp/jank/codegen/api.cpp |  2 +-
+ .../src/cpp/jank/codegen/cpp_processor.cpp    | 18 +++----
+ .../src/cpp/jank/runtime/obj/number.cpp       |  2 +-
+ 9 files changed, 75 insertions(+), 42 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/codegen/api.hpp b/compiler+runtime/include/cpp/jank/codegen/api.hpp
+index 1b8366611..4baf0548d 100644
+--- a/compiler+runtime/include/cpp/jank/codegen/api.hpp
++++ b/compiler+runtime/include/cpp/jank/codegen/api.hpp
+@@ -23,7 +23,7 @@ jank::runtime::obj::symbol_ref
+ _jank_symbol(char const * const meta, char const * const ns, char const * const name);
+ 
+ jank::runtime::obj::integer_ref _jank_int(jtl::i64 const i);
+-jank::runtime::obj::small_integer_ref _jank_small_int(jtl::i32 const i);
++jank::runtime::obj::small_integer_ref _jank_small_int(jtl::i64 const i);
+ 
+ jank::runtime::obj::real_ref _jank_real(jtl::f64 const r);
+ jank::runtime::obj::small_real_ref _jank_small_real(jtl::f64 const r);
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core/make_box.hpp b/compiler+runtime/include/cpp/jank/runtime/core/make_box.hpp
+index 7fa2e7fc4..b5db5db6e 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core/make_box.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core/make_box.hpp
+@@ -95,7 +95,7 @@ namespace jank::runtime
+     if(detail::min_small_integer <= i && i <= detail::max_small_integer)
+ #pragma clang diagnostic pop
+     {
+-      return detail::tag<object *>(static_cast<i32>(i));
++      return detail::tag<object *>(static_cast<i64>(i));
+     }
+     return make_box<obj::integer>(static_cast<i64>(i));
+   }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core/math.hpp b/compiler+runtime/include/cpp/jank/runtime/core/math.hpp
+index 0a44ca28b..a5eb8b3f2 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core/math.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core/math.hpp
+@@ -178,10 +178,26 @@ namespace jank::runtime
+       }
+     }
+ 
+-    /* The boxed arms. When both operands fit in 32 bits (every small integer), the operation
+-     * is done in 32 bits and, if it doesn't overflow, the result is tagged directly: one
+-     * overflow branch more than the old wrapping arm, and no range check in make_box. Only
+-     * a result outside 32 bits takes the checked 64-bit path. */
++    /* An operand of at most 47 bits: two of them add or subtract in i64 with no overflow
++     * possible, and the result is inside the 48-bit inline integer (30-inline-int-width). */
++    template <typename T>
++    constexpr bool fits_inline_half(T const t)
++    {
++      if constexpr(std::is_signed_v<T> && sizeof(T) <= 4)
++      {
++        return true;
++      }
++      else
++      {
++        return std::cmp_greater_equal(t, -(i64{ 1 } << 46)) && std::cmp_less(t, i64{ 1 } << 46);
++      }
++    }
++
++    /* The boxed arms. add and sub: when both operands fit in 47 bits, the op runs in i64 and
++     * the result is inline (make_box tags anything in 48 bits); mul: when both fit in 32 bits,
++     * in i64 with no overflow possible. Anything else takes the checked 64-bit path, which
++     * also tags a result in 48 bits and heap-allocates only beyond it. (30 moves the width
++     * check to the inline bound; 12-21's i64 semantics and overflow errors are unchanged.) */
+     // clang-format off
+ #define JANK_BOXED_OP(name)                                                                \
+   template <typename A, typename B>                                                        \
+@@ -190,14 +206,9 @@ namespace jank::runtime
+   {                                                                                        \
+     if constexpr(checked_integral<A> && checked_integral<B>)                               \
+     {                                                                                      \
+-      if(fits_i32(a) && fits_i32(b)) [[likely]]                                            \
++      if(JANK_BOXED_FAST(name, a, b)) [[likely]]                                           \
+       {                                                                                    \
+-        i32 res{};                                                                         \
+-        if(!__builtin_##name##_overflow(static_cast<i32>(a), static_cast<i32>(b), &res))   \
+-          [[likely]]                                                                       \
+-        {                                                                                  \
+-          return make_box(res);                                                            \
+-        }                                                                                  \
++        return make_box(JANK_BOXED_EXPR(name, static_cast<i64>(a), static_cast<i64>(b)));  \
+       }                                                                                    \
+       if constexpr(std::in_range<i64>(std::numeric_limits<A>::max())                       \
+                    && std::in_range<i64>(std::numeric_limits<B>::max()))                   \
+@@ -215,10 +226,26 @@ namespace jank::runtime
+     }                                                                                      \
+   }
+ 
++#define JANK_BOXED_FAST_add(a, b) (fits_inline_half(a) && fits_inline_half(b))
++#define JANK_BOXED_FAST_sub(a, b) (fits_inline_half(a) && fits_inline_half(b))
++#define JANK_BOXED_FAST_mul(a, b) (fits_i32(a) && fits_i32(b))
++#define JANK_BOXED_FAST(name, a, b) JANK_BOXED_FAST_##name(a, b)
++#define JANK_BOXED_EXPR_add(a, b) ((a) + (b))
++#define JANK_BOXED_EXPR_sub(a, b) ((a) - (b))
++#define JANK_BOXED_EXPR_mul(a, b) ((a) * (b))
++#define JANK_BOXED_EXPR(name, a, b) JANK_BOXED_EXPR_##name(a, b)
+     JANK_BOXED_OP(add)
+     JANK_BOXED_OP(sub)
+     JANK_BOXED_OP(mul)
+ #undef JANK_BOXED_OP
++#undef JANK_BOXED_FAST_add
++#undef JANK_BOXED_FAST_sub
++#undef JANK_BOXED_FAST_mul
++#undef JANK_BOXED_FAST
++#undef JANK_BOXED_EXPR_add
++#undef JANK_BOXED_EXPR_sub
++#undef JANK_BOXED_EXPR_mul
++#undef JANK_BOXED_EXPR
+     // clang-format on
+   }
+ 
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/number.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/number.hpp
+index ec92bacca..fe4830ada 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/number.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/number.hpp
+@@ -103,7 +103,8 @@ namespace jank::runtime::obj
+     f64 to_real() const override;
+ 
+     /*** XXX: Everything here is immutable after initialization. ***/
+-    i32 data{};
++    /* Up to 48 bits (detail::min_small_integer..max_small_integer), the inline payload. */
++    i64 data{};
+   };
+ 
+   struct real : object
+diff --git a/compiler+runtime/include/cpp/jank/runtime/oref.hpp b/compiler+runtime/include/cpp/jank/runtime/oref.hpp
+index d18c38a3b..16f59709d 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/oref.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/oref.hpp
+@@ -64,8 +64,8 @@ namespace jank::runtime
+    * To expand on the inline values and tagged pointers, `object_ref` (the type-erased `oref`)
+    * can either hold a pointer value, an inline integer, or an inline real. This is done via a
+    * common strategy called NaN boxing, which allows us to avoid allocations for these values.
+-   * NaN boxing applies to all floating point values, but only for integers up to 32 bits. Larger
+-   * integers will be heap allocated.
++   * NaN boxing applies to all floating point values, and to integers up to 48 bits (signed:
++   * -2^47 to 2^47 - 1). Larger integers will be heap allocated.
+    *
+    * This is an incredible performance win for numeric-heavy jank programs, since
+    * it allows us to skip GC allocations for those values. However, it means that we need to
+@@ -93,12 +93,15 @@ namespace jank::runtime
+     /* Anything below this is an encoded real value. Anything equal to or above this is NaN. */
+     constexpr u64 max_real{ 0xFFF8'0000'0000'0000ull };
+ 
+-    /* Integers are tagged with the high bits being 0xFFF9. The lower 32 bits store the integer.
++    /* Integers are tagged with the high bits being 0xFFF9. The lower 48 bits store the integer,
++     * two's complement (sign-extended from bit 47 when read): every 48-bit payload is free under
++     * the tag, as the pointer tag below uses 48 too. A sum past 2^31 (reduce + over a 1e6 range)
++     * stays inline instead of allocating an integer per step.
+      *                     seeeeeee|eeeemmmm|mmmmmmmm|mmmmmmmm|mmmmmmmm|mmmmmmmm|mmmmmmmm|mmmmmmmm
+-     * 0xfff9000000000000: 11111111|11111001|00000000|00000000|iiiiiiii|iiiiiiii|iiiiiiii|iiiiiiii
++     * 0xfff9000000000000: 11111111|11111001|iiiiiiii|iiiiiiii|iiiiiiii|iiiiiiii|iiiiiiii|iiiiiiii
+      */
+     constexpr u64 integer_nan_tag{ 0xFFF9'0000'0000'0000ull };
+-    constexpr u64 integer_value_mask{ 0x0000'0000'FFFF'FFFFull };
++    constexpr u64 integer_value_mask{ 0x0000'FFFF'FFFF'FFFFull };
+ 
+     /* Pointers are tagged with the high bits being 0xFFFa. The lower 48 bits store the pointer.
+      *                     seeeeeee|eeeemmmm|mmmmmmmm|mmmmmmmm|mmmmmmmm|mmmmmmmm|mmmmmmmm|mmmmmmmm
+@@ -107,8 +110,8 @@ namespace jank::runtime
+     constexpr u64 pointer_nan_tag{ 0xFFFa'0000'0000'0000ull };
+     constexpr u64 pointer_value_mask{ 0x0000'FFFF'FFFF'FFFFull };
+ 
+-    constexpr i32 min_small_integer{ std::numeric_limits<i32>::min() };
+-    constexpr i32 max_small_integer{ std::numeric_limits<i32>::max() };
++    constexpr i64 min_small_integer{ -(i64{ 1 } << 47) };
++    constexpr i64 max_small_integer{ (i64{ 1 } << 47) - 1 };
+ 
+     inline bool is_tagged_small_real(void * const val)
+     {
+@@ -132,10 +135,11 @@ namespace jank::runtime
+       return std::bit_cast<f64>(val);
+     }
+ 
+-    inline i32 as_integer(void * const val)
++    inline i64 as_integer(void * const val)
+     {
+       jank_debug_assert(is_tagged_small_int(val));
+-      return static_cast<i32>(std::bit_cast<u64>(val) & integer_value_mask);
++      /* Sign-extend the 48-bit payload. */
++      return static_cast<i64>(std::bit_cast<u64>(val) << 16) >> 16;
+     }
+ 
+     template <typename T>
+@@ -187,7 +191,14 @@ namespace jank::runtime
+     T tag(i32 const val)
+     {
+       return std::bit_cast<T>(integer_nan_tag
+-                              | (static_cast<u64>(static_cast<u32>(val)) & integer_value_mask));
++                              | (static_cast<u64>(static_cast<i64>(val)) & integer_value_mask));
++    }
++
++    /* val must be in [min_small_integer, max_small_integer]. */
++    template <typename T>
++    T tag(i64 const val)
++    {
++      return std::bit_cast<T>(integer_nan_tag | (static_cast<u64>(val) & integer_value_mask));
+     }
+ 
+     template <typename T>
+@@ -1888,12 +1899,12 @@ namespace jank::runtime
+     }
+ 
+     oref(i64 const data) noexcept
+-      : data{ static_cast<i32>(data) }
++      : data{ data }
+     {
+     }
+ 
+     oref(oref<obj::integer> const data) noexcept
+-      : data{ static_cast<i32>(data->data) }
++      : data{ data->data }
+     {
+     }
+ 
+@@ -2247,7 +2258,7 @@ namespace jank::runtime
+       return data;
+     }
+ 
+-    i32 data{};
++    i64 data{};
+   };
+ 
+   template <>
+diff --git a/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp b/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp
+index 52c768901..5e2df844b 100644
+--- a/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp
++++ b/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp
+@@ -861,7 +861,7 @@ namespace jank::analyze::cpp_util
+     if(is_boxed && o.get_type() == runtime::object_type::integer)
+     {
+       auto const i{ runtime::expect_object<runtime::obj::integer>(o)->data };
+-      if(static_cast<i32>(i) == i)
++      if(runtime::detail::min_small_integer <= i && i <= runtime::detail::max_small_integer)
+       {
+         static auto const type{ cppinterop::get_type_from_scope(
+           resolve_scope("jank.runtime.obj.small_integer_ref").expect_ok()) };
+diff --git a/compiler+runtime/src/cpp/jank/codegen/api.cpp b/compiler+runtime/src/cpp/jank/codegen/api.cpp
+index 2d83a751e..586b2d0b9 100644
+--- a/compiler+runtime/src/cpp/jank/codegen/api.cpp
++++ b/compiler+runtime/src/cpp/jank/codegen/api.cpp
+@@ -39,7 +39,7 @@ jank::runtime::obj::integer_ref _jank_int(jtl::i64 const i)
+   return jank::runtime::make_box<jank::runtime::obj::integer>(i);
+ }
+ 
+-jank::runtime::obj::small_integer_ref _jank_small_int(jtl::i32 const i)
++jank::runtime::obj::small_integer_ref _jank_small_int(jtl::i64 const i)
+ {
+   return i;
+ }
+diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+index 2a74d4658..ce46bab51 100644
+--- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
++++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+@@ -217,17 +217,10 @@ namespace jank::codegen
+         else if(runtime::detail::is_tagged_small_int(ptr))
+         {
+           auto const i(runtime::detail::as_integer(ptr));
+-          /* The literal min value of an integer is treated as a long, so we need to do an
+-           * explicit cast. */
+-          if(i == std::numeric_limits<i32>::min())
+-          {
+-            fmt_str
+-              = util::format("{}{ static_cast<jtl::i32>({}) }", get_qualified_type_name(type), i);
+-          }
+-          else
+-          {
+-            fmt_str = util::format("{}{ {} }", get_qualified_type_name(type), i);
+-          }
++          /* The payload is 48 bits (30-inline-int-width): spell it as an i64, so a literal
++           * past i32 picks the i64 constructor and not an ambiguous conversion. */
++          fmt_str
++            = util::format("{}{ static_cast<jtl::i64>({}) }", get_qualified_type_name(type), i);
+         }
+         else if(runtime::detail::is_tagged_small_real(ptr))
+         {
+@@ -319,7 +312,8 @@ namespace jank::codegen
+             {
+               util::format_to(buffer, "{}", unboxed_integer_literal(typed_o->data));
+             }
+-            else if(static_cast<i32>(typed_o->data) == typed_o->data)
++            else if(runtime::detail::min_small_integer <= typed_o->data
++                    && typed_o->data <= runtime::detail::max_small_integer)
+             {
+               util::format_to(buffer, "_jank_small_int({})", typed_o->data);
+             }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/number.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/number.cpp
+index 94f78704e..6248f61cf 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/number.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/number.cpp
+@@ -177,7 +177,7 @@ namespace jank::runtime::obj
+ 
+   small_integer::small_integer(i64 const d)
+     : object{ obj_type, obj_behaviors }
+-    , data{ static_cast<i32>(d) }
++    , data{ d }
+   {
+   }
+ 
+-- 
+2.43.0
+
