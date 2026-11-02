@@ -681,6 +681,153 @@ namespace cohost_obj {
 (def ^:private shim-commute (delay (var-get (resolve 'cohost.shim/-commute))))
 (def ^:private shim-touch (delay (var-get (resolve 'cohost.shim/-touch))))
 
+;; Step 4 natives for the transient family (M-5). jank's own transient fns
+;; do not throw ClassCastException when handed a persistent collection --
+;; stock core.clj's hinted arguments do (battery: "a hinted argument is
+;; checked (transients, CharSequence)") -- so the natives are jank's fns
+;; behind the one check stock makes: the receiver must be a transient.
+;; jank's core vars are resolved lazily, like the shim's above.
+(def ^:private host-vector? (delay @(get (ns-publics 'clojure.core) 'vector?)))
+(def ^:private host-map? (delay @(get (ns-publics 'clojure.core) 'map?)))
+(def ^:private host-set? (delay @(get (ns-publics 'clojure.core) 'set?)))
+(def ^:private host-transient (delay @(get (ns-publics 'clojure.core) 'transient)))
+(def ^:private host-persistent! (delay @(get (ns-publics 'clojure.core) 'persistent!)))
+(def ^:private host-conj! (delay @(get (ns-publics 'clojure.core) 'conj!)))
+(def ^:private host-assoc! (delay @(get (ns-publics 'clojure.core) 'assoc!)))
+(def ^:private host-dissoc! (delay @(get (ns-publics 'clojure.core) 'dissoc!)))
+(def ^:private host-disj! (delay @(get (ns-publics 'clojure.core) 'disj!)))
+
+(defn- must-be-transient [t]
+  (when-not (adapter/transient? t)
+    (throw (adapter/ex* 'java.lang.ClassCastException
+                        "a persistent collection cannot be cast to a transient"))))
+
+(def ^:private native-transient
+  (fn [x]
+    (if (or (@host-vector? x) (@host-map? x) (@host-set? x))
+      (@host-transient x)
+      (throw (adapter/ex* 'java.lang.ClassCastException
+                          "only a vector, map or set can be made transient")))))
+(def ^:private native-persistent!
+  (fn [t] (must-be-transient t) (@host-persistent! t)))
+(def ^:private native-conj!
+  (fn [t & xs] (must-be-transient t) (apply @host-conj! t xs)))
+(def ^:private native-assoc!
+  (fn ([t k v] (must-be-transient t) (@host-assoc! t k v))
+      ([t k v & kvs] (must-be-transient t) (apply @host-assoc! t k v kvs))))
+(def ^:private native-dissoc!
+  (fn [t k & ks] (must-be-transient t) (apply @host-dissoc! t k ks)))
+(def ^:private native-disj!
+  (fn [t & xs] (must-be-transient t) (apply @host-disj! t xs)))
+
+;; into and transduce (M-5): jank's own fold walks the source with jank's
+;; seq/reduce, which aborts on a cohost_object -- and sources are cohost
+;; instances all the time (an eduction, a lazy seq, a record's seq). The
+;; natives are jank's fns when neither side is a cohost instance; an
+;; instance input folds through stock reduce/conj instead, which is the
+;; machinery that knows instances. Stock core vars are resolved lazily,
+;; like the shim's: this namespace cannot require cohost.core.
+(def ^:private stock-reduce (delay (var-get (resolve 'cohost.core/reduce))))
+(def ^:private stock-conj (delay (var-get (resolve 'cohost.core/conj))))
+(def ^:private stock-eduction (delay (var-get (resolve 'cohost.core/eduction))))
+(def ^:private host-into (delay @(get (ns-publics 'clojure.core) 'into)))
+(def ^:private host-transduce (delay @(get (ns-publics 'clojure.core) 'transduce)))
+
+(def ^:private native-into
+  (fn ([to from]
+       (if (or (cpp/cohost_obj.is_cohost to) (cpp/cohost_obj.is_cohost from))
+         (@stock-reduce @stock-conj to from)
+         (@host-into to from)))
+      ([to xform from]
+       (if (or (cpp/cohost_obj.is_cohost to) (cpp/cohost_obj.is_cohost from))
+         (@stock-reduce @stock-conj to (@stock-eduction xform from))
+         (@host-into to xform from)))))
+
+(def ^:private native-transduce
+  (fn transduce*
+    ([xform f coll] (transduce* xform f (f) coll))
+    ([xform f init coll]
+     (if (cpp/cohost_obj.is_cohost coll)
+       (@stock-reduce (xform f) init coll)
+       (@host-transduce xform f init coll)))))
+
+;; sort, sort-by, set, frequencies, group-by (M-5): the same guard one
+;; level up -- a cohost-instance SOURCE is first materialized into a host
+;; vector through stock reduce/conj; jank's own fn then runs on host data
+;; alone. (Elements may still be cohost instances; comparing and hashing
+;; them is what the cohost_object's compare/hasheq slots are for.)
+(def ^:private host-sort (delay @(get (ns-publics 'clojure.core) 'sort)))
+(def ^:private host-sort-by (delay @(get (ns-publics 'clojure.core) 'sort-by)))
+(def ^:private host-set (delay @(get (ns-publics 'clojure.core) 'set)))
+(def ^:private host-frequencies (delay @(get (ns-publics 'clojure.core) 'frequencies)))
+(def ^:private host-group-by (delay @(get (ns-publics 'clojure.core) 'group-by)))
+
+(defn- host-data [coll]
+  (if (cpp/cohost_obj.is_cohost coll)
+    (@stock-reduce @stock-conj [] coll)
+    coll))
+
+(def ^:private native-sort
+  (fn ([coll] (@host-sort (host-data coll)))
+      ([comp coll] (@host-sort comp (host-data coll)))))
+(def ^:private native-sort-by
+  (fn ([keyfn coll] (@host-sort-by keyfn (host-data coll)))
+      ([keyfn comp coll] (@host-sort-by keyfn comp (host-data coll)))))
+(def ^:private native-set
+  (fn [coll] (@host-set (host-data coll))))
+(def ^:private native-frequencies
+  (fn [coll] (@host-frequencies (host-data coll))))
+(def ^:private native-group-by
+  (fn [f coll] (@host-group-by f (host-data coll))))
+
+;; assoc, get, nth, count (M-5): one is_cohost test decides. A cohost
+;; instance goes to the shim's RT fn for the op (that is where instance
+;; dispatch lives); any other value goes straight to jank's own fn,
+;; skipping stock's protocol dispatch. nth keeps RT-nth's bounds guard
+;; on its host branch: jank's own nth out of range throws a native error
+;; no class catch can take, where the JVM's answers
+;; IndexOutOfBoundsException. get's instance branch goes through
+;; RT-find -- RT-get itself is core's get, which is this native.
+(def ^:private shim-RT-count (delay (var-get (resolve 'cohost.shim/RT-count))))
+(def ^:private shim-RT-nth (delay (var-get (resolve 'cohost.shim/RT-nth))))
+(def ^:private shim-RT-find (delay (var-get (resolve 'cohost.shim/RT-find))))
+(def ^:private shim-RT-assoc (delay (var-get (resolve 'cohost.shim/RT-assoc))))
+(def ^:private host-count (delay @(get (ns-publics 'clojure.core) 'count)))
+(def ^:private host-nth (delay @(get (ns-publics 'clojure.core) 'nth)))
+(def ^:private host-get (delay @(get (ns-publics 'clojure.core) 'get)))
+(def ^:private host-assoc (delay @(get (ns-publics 'clojure.core) 'assoc)))
+(def ^:private host-string? (delay @(get (ns-publics 'clojure.core) 'string?)))
+
+(def ^:private native-count
+  (fn [x] (if (cpp/cohost_obj.is_cohost x) (@shim-RT-count x) (@host-count x))))
+(def ^:private native-nth
+  (fn ([c i] (if (cpp/cohost_obj.is_cohost c)
+               (@shim-RT-nth c i)
+               (do (when (and (or (@host-vector? c) (@host-string? c))
+                              (not (< -1 i (@host-count c))))
+                     (throw (adapter/ex* 'java.lang.IndexOutOfBoundsException
+                                         (str "Index " i " out of bounds for length " (@host-count c)))))
+                   (@host-nth c i))))
+      ([c i nf] (if (cpp/cohost_obj.is_cohost c)
+                  (@shim-RT-nth c i nf)
+                  (@host-nth c i nf)))))
+(def ^:private native-get
+  (fn ([m k] (if (cpp/cohost_obj.is_cohost m)
+               (let [e (@shim-RT-find m k)] (if e (val e) nil))
+               (@host-get m k)))
+      ([m k nf] (if (cpp/cohost_obj.is_cohost m)
+                  (let [e (@shim-RT-find m k)] (if e (val e) nf))
+                  (@host-get m k nf)))))
+(def ^:private native-assoc
+  (fn ([m k v] (if (cpp/cohost_obj.is_cohost m)
+                 (@shim-RT-assoc m k v)
+                 (@host-assoc m k v)))
+      ([m k v & kvs] (if (cpp/cohost_obj.is_cohost m)
+                       (reduce (fn [mm [kk vv]] (@shim-RT-assoc mm kk vv))
+                               (@shim-RT-assoc m k v)
+                               (partition 2 kvs))
+                       (apply @host-assoc m k v kvs)))))
+
 (defn type-key
   "The protocol dispatch key of a value."
   [x]
@@ -1469,6 +1616,35 @@ namespace cohost_obj {
    :sb-string (fn [sb] (apply str @(inst-field sb 0)))
    ;; H0 spellings: ^long ^double ^bool ^int. boolean does not resolve.
    :native-hints '{long long double double boolean bool int int}
+   ;; Step 4 natives, one name at a time (M-5). :host = jank's own core var.
+   :natives {'clojure.core/re-seq :host
+             'clojure.core/re-find :host
+             ;; atoms on jank are jank's own clojure.lang.Atom (probed
+             ;; 2026-11-02), so swap!/reset! cannot meet a cohost instance.
+             'clojure.core/swap! :host
+             'clojure.core/reset! :host
+             ;; the transient family: jank's fns behind stock's cast
+             ;; check (see native-transient above).
+             'clojure.core/transient native-transient
+             'clojure.core/persistent! native-persistent!
+             'clojure.core/conj! native-conj!
+             'clojure.core/assoc! native-assoc!
+             'clojure.core/dissoc! native-dissoc!
+             'clojure.core/disj! native-disj!
+             'clojure.core/into native-into
+             'clojure.core/transduce native-transduce
+             'clojure.core/sort native-sort
+             'clojure.core/sort-by native-sort-by
+             'clojure.core/set native-set
+             'clojure.core/frequencies native-frequencies
+             'clojure.core/group-by native-group-by
+             'clojure.core/count native-count
+             'clojure.core/nth native-nth
+             'clojure.core/get native-get
+             'clojure.core/assoc native-assoc}
+   ;; str is NOT a native here: policy owns str on every host -- an
+   ;; exception's str must reach the shim's toString (JVM rendering), and
+   ;; jank's own str writes jank's. See policy.cljc.
 })
 
 

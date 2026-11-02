@@ -679,6 +679,12 @@ arose (measured 2026-10-31 ET):
   distinction (a CJK ideograph has none); glibc's wide classification under
   C.UTF-8 agrees with Java on letters but is likewise ASCII-only for
   digits, so no host static closes the row.
+- jank's own `clojure.core/format` is a stub: `(format "%5.2f|%,d" 3.14159
+  1234567)` returns the format string itself, unformatted. It does not
+  implement java.util.Formatter, so it is not opted in as a Step 4 native
+  (the shim's format carries the battery row "format is
+  java.util.Formatter's"); a native that diverges is a host fact, not a
+  native.
 
 ## The design that fell out
 
