@@ -12,7 +12,6 @@
 #   JANK_SRC          the jank clone (default /usr/local/src/jank)
 #   JANK_DEV_PREFIX   install prefix (default /usr/local/lib/jank-dev)
 #   JANK_LLVM         the LLVM prefix jank builds against (default /opt/jank-llvm/e280c505)
-#   JANK_BUILD_LOCK   a file to flock around the compile (e.g. /home/user/locks/box.lock on a shared box)
 #   JOBS              ninja -j (default nproc)
 #   JANK_SERIES       a series file to apply instead of upstream/jank/patches/series (patch names in it
 #                     resolve against its own directory), e.g. to measure a patch before it joins the series
@@ -64,7 +63,6 @@ series="$(realpath "${JANK_SERIES:-$cohost/upstream/jank/patches/series}")"
 patchdir="$(dirname "$series")"
 t0=$(date +%s)
 stage() { echo "== jank-src: $* ($(( $(date +%s) - t0 ))s)"; }
-locked() { if [ -n "${JANK_BUILD_LOCK:-}" ]; then flock "$JANK_BUILD_LOCK" "$@"; else "$@"; fi; }
 
 # ---- dependencies (book: compiler+runtime/doc/build.md, Debian list; libstdc++ 14 is enough) ----
 deps() {
@@ -179,30 +177,55 @@ apply_series() {
   done
   git read-tree "$tree"
   cd "$cohost"
+  rewritten=$n
   stage "series applied: tree $tree, $n file(s) rewritten"
 }
 
 configure() {
   local b="$JANK_SRC/compiler+runtime/build"
+  # A build dir configured by a JANK_LTO run carries -flto in its *_RELEASE flags: reconfigure it
+  # plain (and drop its core-libs, built as bitcode-era objects), or the default build stays LTO.
   if [ -f "$b/CMakeCache.txt" ] && grep -q "^llvm_dir:.*=$JANK_LLVM\$" "$b/CMakeCache.txt" \
-     && grep -q "^CMAKE_INSTALL_PREFIX:.*=$JANK_DEV_PREFIX\$" "$b/CMakeCache.txt"; then
+     && grep -q "^CMAKE_INSTALL_PREFIX:.*=$JANK_DEV_PREFIX\$" "$b/CMakeCache.txt" \
+     && ! grep -q "^CMAKE_CXX_FLAGS_RELEASE:.*-flto" "$b/CMakeCache.txt"; then
     return
+  fi
+  local extra
+  if [ -f "$b/CMakeCache.txt" ] && grep -q "^CMAKE_CXX_FLAGS_RELEASE:.*-flto" "$b/CMakeCache.txt"; then
+    rm -rf "$b/core-libs"
+    extra=(-DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG"
+           -DCMAKE_EXE_LINKER_FLAGS_RELEASE= -DCMAKE_SHARED_LINKER_FLAGS_RELEASE=
+           -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib)
+  else
+    extra=()
   fi
   stage "configure jank (Release, llvm_dir=$JANK_LLVM, prefix $JANK_DEV_PREFIX, ccache)"
   (cd "$JANK_SRC/compiler+runtime" && CC="$JANK_LLVM/bin/clang" CXX="$JANK_LLVM/bin/clang++" ./bin/configure -GNinja \
      -DCMAKE_BUILD_TYPE=Release -Dllvm_dir="$JANK_LLVM" -Djank_local_clang=on \
      -DCMAKE_INSTALL_PREFIX="$JANK_DEV_PREFIX" \
-     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache "${extra[@]}")
+}
+
+# Before phase 1 of a --patches build that rewrote any file: jank's phase 1 reuses
+# build/core-libs/_cache/0/clojure/core.o whenever it is newer than core.jank, whatever the
+# headers say, so an object-layout change ran the old core.o and segfaulted (u5, jit_closure::call);
+# and the build-tree PCH (build/incremental.pch) and this prefix's cache entries are keyed by the
+# binary version and flags, never by header contents (u1). Delete all three; phase 1 rebuilds them.
+# A --patches run that rewrote nothing deletes nothing (ninja has nothing to do).
+fresh_phase_1() {
+  [ "$mode" = patches ] && [ "${rewritten:-0}" -gt 0 ] || return 0
+  local b="$JANK_SRC/compiler+runtime/build"
+  rm -rf "$b/core-libs" "$b/classes/core-libraries" "$b/incremental.pch"
+  wipe_pch
+  stage "fresh phase 1: removed $b/core-libs, classes/core-libraries, incremental.pch"
 }
 
 build_install() {
-  stage "build (ninja -j$JOBS${JANK_BUILD_LOCK:+, under flock $JANK_BUILD_LOCK})"
-  local s c; s=$(date +%s)
-  c="$(mktemp)"
-  locked bash -c 'date +%s > "$1"; shift; exec "$@"' _ "$c" cmake --build "$JANK_SRC/compiler+runtime/build" -j "$JOBS"
-  local e; e=$(date +%s)
-  stage "build done: compile $(( e - $(cat "$c") ))s, lock wait $(( $(cat "$c") - s ))s"
-  rm -f "$c"
+  fresh_phase_1
+  stage "build (ninja -j$JOBS)"
+  local s; s=$(date +%s)
+  cmake --build "$JANK_SRC/compiler+runtime/build" -j "$JOBS"
+  stage "build done: compile $(( $(date +%s) - s ))s"
   cmake --install "$JANK_SRC/compiler+runtime/build" > "$JANK_SRC/compiler+runtime/build/install.log"
   wrap_cache
   wipe_pch
@@ -250,7 +273,7 @@ if [ "$mode" = full ]; then
   if [ "$llvm_src" = 1 ]; then
     clone
     stage "build jank's LLVM snapshot from source (compiler+runtime/bin/build-clang)"
-    (cd "$JANK_SRC/compiler+runtime" && CC="$APT_JANK/bin/clang" CXX="$APT_JANK/bin/clang++" locked ./bin/build-clang -j "$JOBS")
+    (cd "$JANK_SRC/compiler+runtime" && CC="$APT_JANK/bin/clang" CXX="$APT_JANK/bin/clang++" ./bin/build-clang -j "$JOBS")
     JANK_LLVM="$JANK_SRC/compiler+runtime/build/llvm-install/usr/local"
   else
     llvm_prefix_from_apt
