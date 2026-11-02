@@ -359,7 +359,27 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
   are compiled into the shipped runtime archive per `nm`) with `GC_INITIAL_HEAP_SIZE=1G GC_FREE_SPACE_DIVISOR=1`, and `GC_ENABLE_INCREMENTAL`
   costs 4-6x (do not). The vector representation's share is unknown until P3b (`[i i]` against
   `(cons i nil)`, `{:a i}`, a `cpp/raw` struct: which allocation is the 200 ns).
-- **Probe.** P3 and the env matrix (done); P3b (queued): the allocation kinds side by side.
+- **Probe.** P3 and the env matrix (done); P3b (done): the allocation kinds side by side.
+  `run-jank.sh p3b_alloc_kinds.jank`, 2e6 of each, per-item cost = median / 2e6:
+
+  | case | JIT median ns | AOT median ns | per item (AOT) |
+  |---|---:|---:|---:|
+  | `[i i]` | 505846300 | 564562897 | 282 ns |
+  | `(vector i i)` | 498298136 | 538864347 | 269 ns |
+  | `{:a i}` | 243553708 | 243568011 | 122 ns |
+  | `(cons i nil)` | 171815720 | 169006305 | 85 ns |
+  | `(list i i)` (variadic) | 674527904 | 685245335 | 343 ns |
+  | `(fn [] i)` (a closure object) | 277245812 | 266557725 | 133 ns |
+  | `cpp/raw` `GC_MALLOC(16)` | 56104631 | 55561602 | 28 ns |
+  | `cpp/raw` `GC_MALLOC(48)` | 86362897 | 77249979 | 39 ns |
+  | `cpp/raw` `GC_MALLOC_ATOMIC(16)` | 48744722 | 50647882 | 25 ns |
+
+  Reading: one bdwgc allocation is 25-40 ns on this box (the JVM's whole two-element vector,
+  allocation included, is 10 ns: pair-alloc 20087465 ns / 2e6); a `[a b]` is about 280 ns, i.e.
+  three allocations (about 100 ns, one of them a 256-byte leaf) plus the transient build, copy
+  and box; a one-key map 122 ns; a cons 85 ns. Both layers matter: the allocator floor is 3-4x
+  the JVM's per object, and the vector representation spends 3 objects and about 180 ns of
+  work above that floor.
 - **Semantic risk.** None for the collector's settings; the small vector must keep every
   vector behavior (nth, conj, seq, equality, hashing, transients, meta) identical.
 - **Owner.** Upstream jank (runtime). cohost can only set the environment for its own process.
