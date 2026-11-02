@@ -42,7 +42,7 @@ Every artifact is a directory `target/<name>/` whose `run args...` calls the mai
 directory; the task prints `build: target/<name>/run`. Measured 2026-11-02 on `cohost/app` projects
 (`run you` from `/tmp` -> `Hello, you!`):
 
-| target | `target/<name>/` holds | needs at run time | measured (new layout: readme:check running, 2:30 PM ET) |
+| target | `target/<name>/` holds | needs at run time | measured (bb readme:check, 2026-11-02 2:06-2:27 PM ET) |
 |---|---|---|---|
 | `:jvm` | `<name>.jar` (tools.build uberjar, `clojure.main` as its main; no `:gen-class` in code every target reads), `run` (`java -jar ... -m <main>`) | java | yes |
 | `:cljs` | cohost's ClojureScript host build (`target/cljs-cli`), the stock sources, the source roots, `run.js`, `run` | node | yes |
