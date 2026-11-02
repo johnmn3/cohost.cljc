@@ -49,6 +49,21 @@ Files:
 - compiler+runtime/src/jank/clojure/core.jank: + - * / inline every arity 2-8, folded left as the
   variadic arity folds (Clojure's nary-inline); before, (* a b c) was a dynamic var call.
 
+Measured (cohost dev/research; control = f3d82d65 + series to 19, patched = the same + this patch,
+same recipe; A/B/A/B/A/B on a shared 4-CPU box, medians of 3, ns):
+- run.sh 20-native-returns: add-plain 19559976 -> 18097052; add-hinted 25098006 -> 13751890 (now
+  1.32x faster than add-plain: a typed call site); fib 30 ^long 10323139 -> 3669127 (2.81x).
+  fib ^long is 1.87x the C++ reference fib (1966700): that fib is unchecked, and clang turns it
+  into one call per level plus a loop; with the i64 overflow check jank must keep, C++ fib is
+  3589297 vs 1763421 unchecked (standalone clang -O3), and jank's native fib matches checked C++.
+- run-jank.sh p7_native_entry: tak ^long 28447142 -> 3542387 JIT (C++ 3344293, 1.06x),
+  30945172 -> 3757057 AOT (C++ 3023132, 1.24x); nbody kernel 250889728 -> 14227399 JIT,
+  246864944 -> 14283098 AOT (C++ 14.9e6: parity).
+- bb boot:jank: 542/171/78/0, battery 143/145, libraries 61/61 (unchanged).
+- the repro's correctness lines (native results, overflow, apply/map, typed call sites through
+  var redefinition) print Clojure's values on both builds; run.sh 12-i32-add and
+  21-int32-loop-local still print their Expected lines.
+
 diff --git a/compiler+runtime/include/cpp/jank/analyze/cpp_util.hpp b/compiler+runtime/include/cpp/jank/analyze/cpp_util.hpp
 index 44e809eb..84996156 100644
 --- a/compiler+runtime/include/cpp/jank/analyze/cpp_util.hpp
