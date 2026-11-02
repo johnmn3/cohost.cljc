@@ -610,11 +610,13 @@ ABSENT and DIFFER, as printed:
   `(loop [b 0 a a] ...)` fail too); `let` shadowing and a `loop` rebinding a fn parameter compile. The programs'
   inner loops: nbody `(loop [j (inc i) bs bs b b] ...)` and `(loop [j (inc i) e e] ...)`, mandelbrot
   `(loop [x 0 acc acc] ...)`, fannkuch `(loop [p p i 0 j k] ...)`, nsieve `(loop [j (+ i i) flags flags] ...)`.
-  C-2 (doc/perf/jank.md) has the cohost side.
+  No upstream draft names it yet (doc/upstream/ at c499930). C-2 (doc/perf/jank.md) has the cohost side.
 - **jank 0.1 integer arithmetic wraps at 32 bits when both operands fit in int32** (jank-jit, jank-aot, cohost on
   jank: pipeline and dispatch `DIFFER`, each the JVM value mod 2^32). Raw jank: `(+ 2147483647 1)` -> `-2147483648`,
   `(* 65536 65536)` -> `0`, `(* 100000 100000)` -> `1410065408`, `(reduce + (range 100000))` -> `704982704`; with
-  a wider operand the result is 64-bit: `(+ 4000000000 1000000000)` -> `5000000000`.
+  a wider operand the result is 64-bit: `(+ 4000000000 1000000000)` -> `5000000000`. The cause and the source
+  lines are lane R's drafts doc/upstream/jank-12-i32-add.md and jank-21-int32-loop-local.md (an integer literal
+  that fits in i32 is a C++ `int`).
 - jank's own core: `Math/sqrt` (nbody), `Math/round` (spectral-norm) and `defprotocol` (dispatch) do not resolve.
 - cljs's own core: `read-string` is not in `cljs.core` (tak: `TypeError: Cannot read properties of undefined
   (reading 'call')`); `(int ch)` of a one-character string is 0, so json's parser reads nothing (`DIFFER`, 0).
