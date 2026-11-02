@@ -52,7 +52,12 @@
         (if-let [[_ to] (re-matches #"cd\s+(\S+)" cmd)]
           (recur more (str (fs/path cwd to)))
           (let [cmd' (if (re-find #"^cohost -Tnew create " cmd) (str cmd " :target " target) cmd)
-                r (deref (p/process ["bash" "-c" cmd'] {:dir cwd :extra-env env :out :string :err :string :in ""}))
+                proc (p/process ["bash" "-c" cmd'] {:dir cwd :extra-env env :out :string :err :string :in ""})
+                ;; a command that hangs is a FAIL, not a stalled check
+                r (let [x (deref proc 600000 ::timeout)]
+                    (if (= x ::timeout)
+                      (do (p/destroy-tree proc) {:exit -1 :out "" :err "killed: no exit after 600 s"})
+                      x))
                 got (vec (remove str/blank? (map str/trimr (str/split-lines (:out r)))))
                 ok? (if (seq expect) (= got expect) (zero? (:exit r)))]
             (when-not ok? (swap! fails inc))
