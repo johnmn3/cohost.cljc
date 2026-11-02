@@ -15,8 +15,9 @@
 (def adapter
   {:name :jolt
    ;; X3-1: the shim's MultiFn with its one-entry cache (adapter.cljc); bench:jolt
-   ;; --quick, 9 interleaved rounds: multimethod stock 15.16 -> 13.47 ms, no case
-   ;; outside its spread, battery 149/149 and libraries 61/61 both ways
+   ;; --quick, 9 interleaved rounds on max/main aeac81b: multimethod stock 20.19
+   ;; -> 18.29 ms (on 5fd3e3e: 15.16 -> 13.47), no case outside its spread,
+   ;; battery 149/149 and libraries 61/61 both ways
    :multimethod-cache? true
    :core-ns 'clojure.core
    :catch-all 'Throwable
