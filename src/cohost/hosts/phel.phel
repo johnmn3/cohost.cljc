@@ -274,11 +274,12 @@
         (conj! out (symbol k))))
     (persistent out)))
 
+;; (into {} (map f) coll) is not Phel's: its into takes no transducer
 (defn- ns-interns* [ns-sym]
-  (into {} (map (fn [k] [k (var-of ns-sym k)])) (def-names ns-sym false)))
+  (into {} (map (fn [k] [k (var-of ns-sym k)]) (def-names ns-sym false))))
 
 (defn- ns-publics* [ns-sym]
-  (into {} (map (fn [k] [k (var-of ns-sym k)])) (def-names ns-sym true)))
+  (into {} (map (fn [k] [k (var-of ns-sym k)]) (def-names ns-sym true))))
 
 (defn- refer-one! [into-ns sym from-ns]
   (.addRefer (genv) (ns-str into-ns) (Symbol/create (str sym)) (Symbol/create (ns-str from-ns))))
