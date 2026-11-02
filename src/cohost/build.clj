@@ -19,7 +19,11 @@
 ;;          sources, the stock sources, the source roots, and `run`, on the
 ;;          host's installed binary (their native packagers refuse cohost's
 ;;          code: doc/CLI.md, "Building")
-;;   other  "build: not yet on <target>" (jank: lane D's D-7)
+;;   :jank  target/<name>/run: one native executable (cohost.build-jank, lane
+;;          D's D-7): the booted core's snapshot plus the project's namespaces,
+;;          compiled -O3, linked by jank's static runtime; no cohost checkout
+;;          to run it; rebuilt when stale (its build state: target/<name>/cohost-build)
+;;   other  "build: not yet on <target>"
 (ns cohost.build
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -174,6 +178,15 @@ process.exit(r.status === null ? 1 : r.status);
     (sh! "." "rm" "-rf" (str work))
     (str out "/run")))
 
+(defn- jank-exe [{:keys [main name]}]
+  (let [home (cohost-home)
+        ;; the source roots, resolved as `cohost :jank` resolves them (jars extracted)
+        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jank" "-Spath")) #":")
+        build! (requiring-resolve 'cohost.build-jank/build!)]
+    (build! {:repo home :project (.getCanonicalPath (io/file ".")) :roots roots
+             :main main :name "run" :target (str "target/" name)})
+    (str "target/" name "/run")))
+
 (defn build
   "Build the project for its target. opts: :main (the -main namespace, a
    symbol), :name (default: the directory's name), :target (default:
@@ -187,8 +200,8 @@ process.exit(r.status === null ? 1 : r.status);
       :cljs (cljs-bundle opts)
       :jolt (jolt-native opts)
       (:cljw :lg :lpy :phel) (script-bundle t opts)
-      (do (println (str "build: not yet on " t
-                        (when (= t :jank) " (lane D's D-7: an AOT executable)")))
+      :jank (jank-exe opts)
+      (do (println (str "build: not yet on " t))
           (throw (ex-info (str "build: not yet on " t) {:target t}))))]
       ;; every target's artifact: target/<name>/run args... runs -main
       (println (str "build: " run))

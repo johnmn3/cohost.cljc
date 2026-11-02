@@ -51,7 +51,7 @@ directory; the task prints `build: target/<name>/run`. Measured 2026-11-02 on `c
 | `:lg` | a script bundle, `run` (`lg -source-paths ... lg_cli.lg`) | lg | yes (the same argument) |
 | `:lpy` | a script bundle, `run` (`basilisp run -p ... -c ...`) | basilisp | not on this box: the coordinator's |
 | `:phel` | a script bundle with `phel-config.php`, `run` (`phel run dev/phel_cli.phel` in the bundle's `cohost/`) | php + phel | not on this box: the coordinator's |
-| `:jank` | lane D's D-7 (an AOT executable): until it lands, `build: not yet on :jank` | | |
+| `:jank` | `run` itself: one native executable (`cohost.build-jank`, D-7): the booted core's snapshot and the project's namespaces compiled `-O3`, jank's static runtime; rebuilt when stale (state in `cohost-build/`) | nothing: it links only libc, libstdc++, libgcc_s, libm | yes (D-7: `Hello, you!` in 0.926 s, median of 3, from another directory) |
 | `:cljrs` | not yet: cohost's clojurust boot is parked and the CLI does not run it (`bin/cohost`: not wired) | | |
 
 Why cljw and lg ship a script bundle and not their own native packaging (measured on cohost.cli): `cljw build -m

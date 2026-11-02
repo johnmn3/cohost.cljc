@@ -91,7 +91,7 @@ whose `build` makes the artifact for the project's runtime: a directory `target/
 whose `run` starts your `-main`, from any directory:
 
 ```bash
-# targets: jvm jolt cljs cljw lg lpy phel
+# targets: jvm jolt jank cljs cljw lg lpy phel
 cohost -T:build build                               # => build: target/myapp/run
 (cd /tmp && "$OLDPWD"/target/myapp/run you)         # => Hello, you!
 ```
