@@ -489,7 +489,149 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
 
 ## 4. Session 3: the cohost layer
 
-(pending)
+What runs when a program runs under cohost's stock core on jank (from the cohost reader and
+the sources named):
+
+- `bb boot:jank`, `bb bench:jank` and `bb bench:programs jank` run
+  `jank --module-path <aot>:src run-main cohost.run -- --eval <program>` with no `-O`
+  (`bb.edn`, `dev/bench_programs.clj:157`). cohost's own namespaces are AOT objects at `-O3`
+  (`dev/perf/jank_aot_ensure.clj:68`), but the 550 booted `cohost.core` forms, the twelve
+  libraries and the user's program go through the adapter's `:eval` (jank's `eval`,
+  `adapter.cljc:293`, `boot.cljc:333`), i.e. the JIT, at the default `-O0` (`cli.cpp:205`).
+  `run-main` accepts `-O` and copies it to the JIT (`cli.cpp:528`).
+- The codemod applies core.clj's `:inline` fns itself (`jank_host.jank:1347` `:rewrite-inline?
+  true`; `rewrite.cljc:1370`), so `(+ a b)` becomes `(. clojure.lang.Numbers (add a b))`, then
+  the shim static `cohost.shim/Numbers-add`, which host-aliasing turns into jank's own
+  `clojure.core/+` because the static's value IS that fn (`boot.cljc:169`, `shim.cljc:743`); jank's
+  analyzer then inlines it to `cpp/jank.runtime.add`. A static whose value is a wrapper fn is
+  not aliasable: `Numbers-minus` is `(fn ([x] (- x)) ([x y] (- x y)))` (`shim.cljc:743`), so
+  `(- n 2)` is a cross-namespace dynamic call before jank's `-`.
+- A `defn`'s recursion is a direct call (the fn name is in `*locals*`, `rewrite.cljc:868`; jank
+  lowers named recursion directly). The stock `defn` emits `(def name (fn ...))` with no
+  per-call wrapper (`core.clj:294-336`); macros are wrapped once at boot (`boot.cljc:150`).
+- Every `RT-count`/`RT-nth`/`RT-conj`/`assoc` guards for a cohost type instance through
+  `h-cohost-inst?`, a jank fn in the adapter namespace calling `cpp/cohost_obj.is_cohost`
+  (`shim.cljc:345`, `:615`, `jank_host.jank:1302`): one cross-namespace call per collection
+  op. `host-object?` computes `(type x)` (a name string on jank) and looks it up in an
+  atom-held map per `(.m x ...)` call (`shim.cljc:2194`, `:2209`).
+- jank has no `defprotocol`/`defrecord`/`deftype`/`reify` (core.jank line 7261 commented;
+  no `deftype*`/`reify*` special forms at HEAD). cohost's type layer is one `cpp/raw` object
+  type with a descriptor map (`jank_host.jank:316`); a protocol method is a variadic
+  `(fn [& args] (protocol-dispatch P 'm args))` (`:860`) that finds the impl per call
+  (`protocol-impl`: `@(:impls p)`, `type-key`, up to four `get`/`get-in`, a supers walk, `:694`)
+  and `apply`s it (`:715`); a record method rebinds every field through `inst-field` calls
+  (`:756`). The stock `defmulti` boots stock: `mf-method` is an atom deref, three `identical?`
+  checks and a cache find per call (`shim.cljc:1139`).
+- jank's `:natives` map is empty (`jank_host.jank` has no `:natives`; `adapter.cljc:344`
+  default `{}`); the JVM has 66, jolt 63. Lane M's M-5 (Step 4) is the natives order.
+
+The probe. `bash dev/research/run-cohost-jank.sh dev/research/p6_cohost_fib.clj` (the stock
+core booted on jank, program through `--eval`; no `-O` as the bb tasks do, then `JANK_O=3`),
+the JVM twin, and raw jank from P1 for the same source:
+
+| case | cohost on jank, no `-O` (ns) | cohost on jank, `-O3` (ns) | JVM (ns) | raw jank JIT `-O3` / AOT (P1) |
+|---|---:|---:|---:|---:|
+| fib-stock (the suite's fib: stock `<` `+` `dec` `-`, stock `defn`) | 245827372 | 38481897 | 13354515 | 13479580 / 6101027 |
+| fib-host-ops (jank's own `clojure.core/<` `+` `dec` `-`) | 268095089 | 29816492 | 13536284 | |
+| fib-fn-def (`(def f (fn f [n] ...))`, stock ops) | 156045648 | 20871741 | 8525867 | |
+| fib-host-ops-fn-def (both) | 175224337 | 20571980 | 11927258 | |
+| loop-stock-5e6 (5e6 `inc` + `<`, no call) | 53033170 | 82 (folded) | 220 (folded) | 19843686 (P2 loop-only) |
+| loop-host-ops-5e6 | 60345513 | 112 (folded) | 161 (folded) | |
+
+Reading: `-O3` on the JIT is 6.4x on cohost's fib (245827372 -> 38481897 ns), 7.5x with
+`def`+`fn`; at `-O3` the stock `inc`/`<` loop folds to a constant exactly as raw jank's does
+(the stock arithmetic is jank's own after aliasing and inlining). With `-O3`, cohost's fib is
+2.9x the JVM's and 2.9x raw jank JIT's; written as `(def f (fn ...))` it is 1.56x the JVM's.
+The stock `defn` shape costs 1.84x over `def`+`fn` (38481897 vs 20871741) and the stock ops
+1.3x over jank's own inside a `defn` (38481897 vs 29816492) but nothing inside a `def`+`fn`
+(20871741 vs 20571980); the generated C++ of the two shapes (`JANK_PRINT_CODEGEN=1`, §8.3) is
+what separates them.
+
+### S3-1. Compile what cohost evaluates at `-O3`: the JIT flag now, the snapshot next
+
+- **Mechanism.** Add `-O3` to the `run-main cohost.run` command in `bb.edn` (`boot:jank`,
+  `bench:jank`), `dev/bench_programs.clj` (`run-jank-cohost`, and `jank run` for the `jank-jit`
+  target) and `dev/perf/jank_aot_ensure.clj`'s consumers; every form the codemod hands to
+  jank's `eval` is then compiled by clang at `-O3` with the IR passes on. The cost moves to
+  compile time: each first-use `jit eval_string` (13-31 per bench case, 12-34% of a case's
+  loop, doc/perf/jank.md "Runtime profile") compiles longer, and the 550 core forms do at
+  boot; that is exactly what lane D's snapshot (Step 6 stage 2, D-1/D-2) removes by compiling
+  the booted core once at `-O3` ahead of time, so the two are one plan: the flag now, the
+  snapshot to make it free.
+- **Cost attacked.** `-O0` machine code for every stock-core fn and every user fn: the whole
+  cohost column of Step 8 (geomean 10.34; fib 23.9x, tak 7.4x, spectral-norm 47.6x, dispatch
+  11.2x, doc/PERF.md) and the stock-vs-own bench (geomean x4.09) were measured at `-O0` on the
+  stock side while jank's own core is compiled into the binary at `-O3`/`-O2`
+  (`CMakeLists.txt:144`, `:951`). The suite's `jank-jit` column is `-O0` too.
+- **Expected effect.** Measured on fib: 6.4x (P6). On the rest: unknown until `bb bench:programs
+  jank` and `bb bench:jank` are re-run with the flag (about an hour; lane C's suite re-measure
+  should carry it). The boot: unknown until `bb boot:jank` is timed with the flag (P6b, queued).
+- **Probe.** P6 (done, above); P6b: `boot-ms`/`libs-ms` with and without `-O3`.
+- **Semantic risk.** None: the same C++, a different clang level. (`-O3` also turns on jank's
+  `hoist_var_derefs`, which skips dynamic vars, `hoist_var_derefs.cpp:42`.)
+- **Owner.** cohost: lane C (the bench commands) and lane D (the boot command and the snapshot).
+
+### S3-2. Close the emission gaps: aliasable statics for every host op, and the `defn` shape
+
+- **Mechanism.** (a) Every shim static that wraps a host op with the host's own semantics
+  becomes the host fn itself so `host-aliases` fires and jank inlines it: `Numbers-minus`
+  (`shim.cljc:743`) and its kin (`Numbers-multiply`, `Numbers-quotient`, `Util-equiv`'s arms,
+  the `RT-*` that are plain `nth`/`count` on jank when no cohost instance is involved), either
+  as `(def Numbers-minus -)` where the arities match, or by a jank-only `:inline` on the shim
+  static that emits `(clojure.core/- x y)` for arity 2 (the codemod already carries
+  `:rewrite-inline?`). (b) The cohost-instance guard as an inline tag check in the emitted
+  form (`cpp/cohost_obj.is_cohost x` is a 1.6 ns `cpp/raw` call, P2; the guard today is a var
+  call into the adapter namespace, 9-11 ns, plus the descriptor lookup) and `host-object?`
+  keyed by object type integer instead of the `(type x)` string. (c) Whatever the stock `defn`
+  adds over `def`+`fn` (P6: 1.84x; the C++ dump in §8.3 names it) emitted away by the
+  codemod's `defn` handling (the dropped "plain defn" shortcut of doc/perf/jank.md "Codemod" was
+  about boot time; this is about the emitted fn's shape).
+- **Cost attacked.** fib-stock 38481897 against fib-fn-def 20871741 and fib-host-ops 29816492
+  at `-O3` (P6); lane M's ~100 ns per entry (M-6); the collection-op guards on every
+  `RT-count`/`RT-nth`/`RT-conj` (`shim.cljc:606-615`), i.e. the transient-vector, into,
+  group-by, frequencies, set-build cases (x11-x19 stock vs own, doc/PERF.md "jank baseline")
+  and json/k-nucleotide/pipeline in the yardstick.
+- **Expected effect.** fib: up to 1.84x (P6, the `def`+`fn` shape); the collection cases:
+  unknown until the guard is emitted inline and `bb bench:jank` re-run (lane M's Step 3 items
+  measured by the bench's `xN` column).
+- **Probe.** P6 (done); the codegen dump of the two fib shapes (`JANK_PRINT_CODEGEN=1`, §8.3);
+  P12 (an hour): `RT-nth` with the guard inline as `cpp/cohost_obj.is_cohost` against the
+  shipped shape, 5e6 calls.
+- **Semantic risk.** The statics must keep the JVM's semantics where jank's op differs
+  (`-` on a non-number, `/` on integers has no ratios on jank: keep the shim for those arms);
+  the guard must still route cohost instances to their descriptor.
+- **Owner.** cohost, lane M (shim and adapter, Step 3/4 territory).
+
+### S3-3. Dispatch on jank: fixed-arity protocol methods with an inline cache, record fields by index, a multimethod cache
+
+- **Mechanism.** `defprotocol` on jank emits, per method and per declared arglist, a
+  fixed-arity fn `(fn ([this] ...) ([this a] ...))` whose body is: read the instance's
+  descriptor once (`cpp/cohost_obj.descriptor_of`, a `cpp/raw` call), compare it with a
+  per-method cache var holding the last descriptor and its impl (one `identical?`), and call
+  the impl directly; on a miss run today's `protocol-impl` and refill the cache. Record
+  method bodies read fields by index through one `cpp/raw` accessor instead of the
+  `inst-field` var calls (`jank_host.jank:756`). The stock multimethod gets a one-entry
+  cache of (dispatch value -> method) in the shim's `MultiFn` ahead of `mf-method`'s atom
+  deref and cache find (`shim.cljc:1139`). jank's own `multi_function` does two dynamic
+  calls plus a hierarchy deref and a HAMT get per call (`multi_function.cpp:33`, `:247`), so
+  the same one-entry cache is the upstream twin.
+- **Cost attacked.** dispatch under cohost on jank 24320671 ns for 20000 iterations, 1.2 us
+  per protocol call + multimethod call + arithmetic, against the JVM's 2168401 (11.2x); the
+  protocol bench case 163.10 ms against the JVM's 0.81 ms (about 200x) (doc/PERF.md); the
+  variadic entry alone is 108 ns per call and a multimethod call 61 ns on raw jank (P2).
+- **Expected effect.** The protocol call falls from a variadic call + `apply` + 4-6 lookups
+  to a fixed-arity call + one `cpp/raw` read + one `identical?`: the order of P2's
+  `call-var-same-ns` (9-11 ns) plus the impl's own call, against today's microseconds; the
+  exact figure is unknown until P11.
+- **Probe.** P11 (an hour): under cohost on jank, a protocol method called 1e6 times as
+  shipped, against a hand-written fixed-arity fn that reads the descriptor through
+  `cpp/cohost_obj.descriptor_of` and calls the impl from a cached pair.
+- **Semantic risk.** `extend`/`extend-type` after the cache is filled must invalidate it
+  (bump a protocol generation counter the cache compares); `satisfies?`, `extends?`, the
+  `Object`/`nil` fallbacks and supers order stay in the slow path.
+- **Owner.** cohost, lane M (the adapter's type layer, `:cohost-types`); the multimethod
+  cache is a shim change on every host (byte-identical behavior, a shared-layer regression
+  run) or a `:jank` arm.
 
 ## 5. The ranking
 
