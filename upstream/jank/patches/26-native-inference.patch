@@ -12,6 +12,11 @@ expression is native; an if whose branches are native (or one branch recurs) kee
 + - * / inc dec on native operands stay native and checked; a fn with untyped params gets native
 loops inside it.
 
+Merge note (coordinator, 2026-11-02 3:00 PM ET): var::deref_inline and the generated deref_inline call
+(var.hpp, cpp_processor.cpp) were implemented identically by 24-direct-calls, which precedes this
+patch in the series; those two hunks are dropped here and 24 carries them. This patch is the
+loop-widening change (3 files).
+
 Files:
 - compiler+runtime/src/cpp/jank/analyze/processor.cpp, include .../analyze/expr/let.hpp,
   .../analyze/processor.hpp: a native loop binding stays native only while every recur argument
@@ -76,29 +81,6 @@ index d447bb94..aef420d6 100644
 +    native_vector<bool> next_loop_box_bindings;
    };
  }
-diff --git a/compiler+runtime/include/cpp/jank/runtime/var.hpp b/compiler+runtime/include/cpp/jank/runtime/var.hpp
-index 4267917a..0fad1b79 100644
---- a/compiler+runtime/include/cpp/jank/runtime/var.hpp
-+++ b/compiler+runtime/include/cpp/jank/runtime/var.hpp
-@@ -125,6 +125,18 @@ namespace jank::runtime
- 
-     /* behavior::deref */
-     object_ref deref() override;
-+    /* jank-26: deref for generated code: the root, inline, when no thread has bound this var
-+     * (deref's own first check); otherwise deref. Saves the virtual call on every var read
-+     * in a loop, such as a loop bound held in a var. */
-+    [[gnu::always_inline]]
-+    object_ref deref_inline()
-+    {
-+      if(!thread_bound.load()) [[likely]]
-+      {
-+        return root.load();
-+      }
-+      return deref();
-+    }
- 
-     /* behavior::metadatable */
-     var_ref with_meta(object_ref m);
 diff --git a/compiler+runtime/src/cpp/jank/analyze/processor.cpp b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
 index f270829f..89080246 100644
 --- a/compiler+runtime/src/cpp/jank/analyze/processor.cpp
@@ -187,17 +169,4 @@ index f270829f..89080246 100644
 +
      auto const let{ static_box_cast<expr::let>(let_res.expect_ok()) };
      let->propagate_position(position);
- 
-diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
-index 84df129f..93db5544 100644
---- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
-+++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
-@@ -599,7 +599,7 @@ namespace jank::codegen
-   {
-     b.next_instruction();
-     auto const lifted{ lift_var(inst->qualified_var, b) };
--    util::format_to(b.body_buffer, "auto const {}({}->deref());\n", inst->name, lifted);
-+    util::format_to(b.body_buffer, "auto const {}({}->deref_inline());\n", inst->name, lifted);
-     return inst->name;
-   }
  
