@@ -137,9 +137,15 @@ re-run on these fixes and matched the earlier numbers.
   the host's own message ("Could not locate nope/ns.jolt …").
 - **Names print under `cohost.*`**: `#'clojure.core/map` prints
   `#'cohost.core/map`, as everywhere in cohost (doc/REPORT.md).
-- **The REPL** reads standard input whole: for piped input it prints what
-  `clojure` prints, but a prompt per form (`clojure` prints one per line read),
-  and it stops at the first error. There is no line-at-a-time terminal REPL.
+- **The REPL** (`cohost` with no main option, as `clj`) reads a line at a time, on a
+  terminal or a pipe: a prompt, lines until they hold whole forms, each value printed
+  (the forms of one line under one prompt), an error reported and the REPL goes on, as
+  `clojure` does. The banner says `Clojure 1.12.0` (the booted core); there is no
+  line editing or history (wrap it in `rlwrap`, as `clj` wraps `clojure`). Piped
+  input, 2026-11-02 (7 lines: a multi-line `def`, two forms on one line, `(/ 1 0)`, a `;`
+  in a string): the same output as `clojure` on jolt, cljw and jank but for the banner
+  and the error location; cljs the same but `(/ 1 0)` prints `##Inf` (as `-e` does there);
+  lg checked on a shorter input.
 - **Jars contribute sources only.** Resources in a jar (data files,
   `data_readers.clj`) are not extracted; a source-less (AOT-only) jar
   contributes nothing. `.cljs`-only libraries do not load (the loader reads

@@ -109,6 +109,8 @@ namespace cohost_io {
      ;; jank 0.1's flush throws "TODO: port flesh"
      :jank (print s)
      :phel (print s)
+     ;; let-go has no flush
+     :lg (print s)
      :default (do (print s) (flush))))
 
 (defn- complete?
