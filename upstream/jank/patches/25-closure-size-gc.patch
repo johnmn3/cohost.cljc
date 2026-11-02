@@ -1,0 +1,975 @@
+From 193abb5945f235f3d8cfa197b41db828a61c8e99 Mon Sep 17 00:00:00 2001
+From: u5 <u5@cohost-max>
+Date: Mon, 2 Nov 2026 20:00:17 +0000
+Subject: [PATCH] u5: 25-closure-size-gc: closures, lazy seqs and chunked seqs
+ sized to what they hold; 256 MiB initial heap
+
+- lazy_meta_ptr: meta out of line (null until set, atomic publish), for jit_closure,
+  lazy_sequence, chunked_cons and integer_range (an inline lazy_meta is ~56 bytes)
+- jit_closure: a pointer to an arity table codegen emits once per closure site (static)
+  instead of 11 inline pointers; arity_flags in object's tail padding; 176 -> 40 bytes.
+  jit_closure::create<Ctx> builds the box and its capture context in one GC block (fixed-arity
+  closures; variadic unchanged). c_api's jank_closure_set_arity* write a private table copy.
+- lazy_sequence: std::recursive_mutex (40 bytes) replaced by a recursive lock of a u32 owner
+  token (in object's tail padding) and a u8 depth, taken only during first realization;
+  144 -> 56 bytes
+- map/filter over an integer_range compute the chunk's values in the loop (chunk_map_first,
+  chunk_filter_first) instead of making the range's chunk first
+- jank_init's default initial heap 128 -> 256 MiB (env still wins)
+
+A two-capture closure 224 -> 64 bytes, a lazy-seq frame 384 -> 128; count (filter odd? (map inc
+(range 1e6))) 61.0 -> 31.0 bytes per element.
+
+Applies on f3d82d65 + 11, 13, 14, 12-21, 18, 19, 15a-16, 15b-17, 22, 23.
+---
+ .../include/cpp/jank/runtime/core/seq.hpp     |   4 +
+ .../include/cpp/jank/runtime/lazy_meta.hpp    |  22 +++
+ .../cpp/jank/runtime/obj/chunked_cons.hpp     |   2 +-
+ .../cpp/jank/runtime/obj/integer_range.hpp    |   2 +-
+ .../cpp/jank/runtime/obj/jit_closure.hpp      | 150 +++++++++++-------
+ .../cpp/jank/runtime/obj/lazy_sequence.hpp    |  20 ++-
+ compiler+runtime/src/cpp/jank/c_api.cpp       |  27 ++--
+ .../src/cpp/jank/codegen/cpp_processor.cpp    |  71 ++++++---
+ .../src/cpp/jank/runtime/core/seq.cpp         |  45 ++++++
+ .../src/cpp/jank/runtime/lazy_meta.cpp        |  62 ++++++++
+ .../src/cpp/jank/runtime/obj/jit_closure.cpp  |  60 ++++---
+ .../cpp/jank/runtime/obj/lazy_sequence.cpp    |  44 ++++-
+ compiler+runtime/src/jank/clojure/core.jank   |   4 +-
+ 13 files changed, 393 insertions(+), 120 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp b/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
+index 6e4cfdf6..49fe3822 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core/seq.hpp
+@@ -149,6 +149,10 @@ namespace jank::runtime
+    * element in order, the results written straight into a new chunk. */
+   object_ref chunk_map(object_ref const f, object_ref const chunk);
+   object_ref chunk_filter(object_ref const pred, object_ref const chunk);
++  /* The same over a chunked seq's first chunk: for an integer_range the values are computed
++   * in the loop, so its chunk is never made; anything else maps (chunk-first s). */
++  object_ref chunk_map_first(object_ref const f, object_ref const s);
++  object_ref chunk_filter_first(object_ref const pred, object_ref const s);
+ 
+   object_ref iterate(object_ref const fn, object_ref const o);
+ 
+diff --git a/compiler+runtime/include/cpp/jank/runtime/lazy_meta.hpp b/compiler+runtime/include/cpp/jank/runtime/lazy_meta.hpp
+index c6958d95..26a1c3d3 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/lazy_meta.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/lazy_meta.hpp
+@@ -40,4 +40,26 @@ namespace jank::runtime
+     /*** XXX: Everything here is immutable after initialization. ***/
+     ns_ref ns;
+   };
++
++  /* A lazy_meta held out of line: null until the object carries meta, so a box pays 8 bytes
++   * instead of lazy_meta's 56 (almost no closure, lazy seq or chunked seq carries meta). Each
++   * holder owns its lazy_meta (copying a holder copies it), so set() never reaches another
++   * object. The pointer is published atomically; the lazy_meta synchronizes its own state. */
++  struct lazy_meta_ptr
++  {
++    lazy_meta_ptr() = default;
++    lazy_meta_ptr(object_ref const meta);
++    lazy_meta_ptr(lazy_meta_ptr const &o);
++    lazy_meta_ptr(lazy_meta_ptr &&o) noexcept;
++    lazy_meta_ptr &operator=(lazy_meta_ptr const &o);
++    lazy_meta_ptr &operator=(object_ref const meta);
++
++    object_ref get() const;
++    void set(object_ref const o);
++
++  private:
++    lazy_meta *load() const;
++
++    mutable lazy_meta *ptr{};
++  };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/chunked_cons.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/chunked_cons.hpp
+index c7fbfd86..8a5c3a6a 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/chunked_cons.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/chunked_cons.hpp
+@@ -61,6 +61,6 @@ namespace jank::runtime::obj
+ 
+     /*** XXX: Everything here is thread-safe. ***/
+   private:
+-    lazy_meta meta;
++    lazy_meta_ptr meta;
+   };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/integer_range.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/integer_range.hpp
+index 7ec87e4c..e48a236c 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/integer_range.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/integer_range.hpp
+@@ -89,6 +89,6 @@ namespace jank::runtime::obj
+     i64 step{ 1 };
+     bounds_check_t bounds_check{};
+ 
+-    lazy_meta meta{};
++    lazy_meta_ptr meta{};
+   };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/jit_closure.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/jit_closure.hpp
+index 89f5a640..45e184df 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/jit_closure.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/jit_closure.hpp
+@@ -2,11 +2,71 @@
+ 
+ #include <jank/runtime/object.hpp>
+ #include <jank/runtime/lazy_meta.hpp>
++#include <jank/gc.hpp>
+ 
+ namespace jank::runtime::obj
+ {
+   using jit_closure_ref = oref<struct jit_closure>;
+ 
++  /* The arity entry points of a closure. */
++  struct jit_closure_arities
++  {
++    object_ref (*arity_0)(object_ref){};
++    object_ref (*arity_1)(object_ref, object_ref){};
++    object_ref (*arity_2)(object_ref, object_ref, object_ref){};
++    object_ref (*arity_3)(object_ref, object_ref, object_ref, object_ref){};
++    object_ref (*arity_4)(object_ref, object_ref, object_ref, object_ref, object_ref){};
++    object_ref (*arity_5)(object_ref, object_ref, object_ref, object_ref, object_ref, object_ref){};
++    object_ref (*arity_6)(object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref){};
++    object_ref (*arity_7)(object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref){};
++    object_ref (*arity_8)(object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref){};
++    object_ref (*arity_9)(object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref,
++                          object_ref){};
++    object_ref (*arity_10)(object_ref,
++                           object_ref,
++                           object_ref,
++                           object_ref,
++                           object_ref,
++                           object_ref,
++                           object_ref,
++                           object_ref,
++                           object_ref,
++                           object_ref,
++                           object_ref){};
++
++    static jit_closure_arities const none;
++  };
++
++
+   struct jit_closure : object
+   {
+     static constexpr object_type obj_type{ object_type::jit_closure };
+@@ -19,6 +79,29 @@ namespace jank::runtime::obj
+     jit_closure(callable_arity_flags arity_flags, void *context);
+     jit_closure(object_ref const meta);
+ 
++    /* One allocation for the box and its capture context: the context is built in place right
++     * after the box (generated code: one closure site, one GC block). */
++    template <typename Ctx, typename... Args>
++    static jit_closure_ref create(callable_arity_flags const arity_flags,
++                                  jit_closure_arities const * const arities,
++                                  Args &&...args)
++    {
++      /* The context follows the box at its own alignment (not max_align_t's): a 40-byte box
++       * and a two-capture context are 56 bytes, one 64-byte block with bdwgc's extra byte. */
++      constexpr usize align{ alignof(Ctx) < alignof(jit_closure) ? alignof(jit_closure)
++                                                               : alignof(Ctx) };
++      constexpr usize box_size{ (sizeof(jit_closure) + align - 1) / align * align };
++      auto const mem{ static_cast<char *>(GC_malloc(box_size + sizeof(Ctx))) };
++      if(!mem)
++      {
++        throw std::bad_alloc{};
++      }
++      auto const ctx{ ::new(static_cast<void *>(mem + box_size)) Ctx{ std::forward<Args>(args)... } };
++      auto const ret{ ::new(static_cast<void *>(mem)) jit_closure{ arity_flags, ctx } };
++      ret->arities = arities;
++      return runtime::detail::untagged(ret);
++    }
++
+     /* behavior::object_like */
+     using object::to_string;
+     void to_string(jtl::string_builder &buff) const override;
+@@ -82,62 +165,23 @@ namespace jank::runtime::obj
+                     object_ref const) const final;
+ 
+     /*** XXX: Everything here is immutable after initialization. ***/
+-    void *context{};
+-    object_ref (*arity_0)(object_ref){};
+-    object_ref (*arity_1)(object_ref, object_ref){};
+-    object_ref (*arity_2)(object_ref, object_ref, object_ref){};
+-    object_ref (*arity_3)(object_ref, object_ref, object_ref, object_ref){};
+-    object_ref (*arity_4)(object_ref, object_ref, object_ref, object_ref, object_ref){};
+-    object_ref (*arity_5)(object_ref, object_ref, object_ref, object_ref, object_ref, object_ref){};
+-    object_ref (*arity_6)(object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref){};
+-    object_ref (*arity_7)(object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref){};
+-    object_ref (*arity_8)(object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref){};
+-    object_ref (*arity_9)(object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref,
+-                          object_ref){};
+-    object_ref (*arity_10)(object_ref,
+-                           object_ref,
+-                           object_ref,
+-                           object_ref,
+-                           object_ref,
+-                           object_ref,
+-                           object_ref,
+-                           object_ref,
+-                           object_ref,
+-                           object_ref,
+-                           object_ref){};
++    /* First, so they sit in object's 4 bytes of tail padding: the box is 40 bytes, and with a
++     * two-capture context one 64-byte GC block (bdwgc adds a byte), where it was 176 + 16. */
+     callable_arity_flags arity_flags{};
++    bool owns_arities{};
++    /* Generated code reads its captures through this (static_cast<jit_closure *>(fn)->context),
++     * so it stays at the offset jit_variadic_closure has it at (right after object). */
++    void *context{};
++    /* The arities: a table the closure's code emits once per closure site (static storage),
++     * so a closure is 8 bytes of arity pointers instead of 88. A table set one arity at a time
++     * (c_api's jank_closure_set_arity*) is this closure's own copy. */
++    jit_closure_arities const *arities{ &jit_closure_arities::none };
++
++    /* The arities this closure may change: its own copy of the table, made on first use. */
++    jit_closure_arities &own_arities();
+ 
+     /*** XXX: Everything here is thread-safe. ***/
+   private:
+-    lazy_meta meta;
++    lazy_meta_ptr meta;
+   };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp
+index 1a66e5ca..7e4d6819 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp
+@@ -70,12 +70,28 @@ namespace jank::runtime::obj
+     object_ref unwrap(object_ref ls) const;
+ 
+   public:
++    /* The realization lock: recursive, 5 bytes in place of std::recursive_mutex's 40. It is
++     * taken only while a lazy seq is first realized (the realized flag skips it after), so a
++     * waiter yields. Held for one scope by realize_lock. */
++    struct realize_lock
++    {
++      realize_lock(lazy_sequence const &o) noexcept;
++      ~realize_lock();
++
++      lazy_sequence const &o;
++    };
++
+     /*** XXX: Everything here is thread-safe. ***/
+-    lazy_meta meta;
+-    mutable std::recursive_mutex mutex;
++    /* First, so it sits in object's 4 bytes of tail padding: the lock's owner, a per-thread
++     * token (0 when free). The box is then 56 bytes, a 64-byte GC block with bdwgc's extra
++     * byte, where it was 72 (80). */
++    mutable std::atomic<u32> lock_owner{};
++    lazy_meta_ptr meta;
+     mutable object_ref fn{};
+     mutable object_ref sv{};
+     mutable object_ref s{};
++    /* The owner's re-entry depth (touched only by the owner). */
++    mutable u8 lock_depth{};
+     /* Set (release) once fn has run and s holds the realized seq; s never changes after
+      * that (except in an owned fresh seq, stepped by its one owner), so a reader that sees
+      * the flag (acquire) reads s without the lock. */
+diff --git a/compiler+runtime/src/cpp/jank/c_api.cpp b/compiler+runtime/src/cpp/jank/c_api.cpp
+index 313bf778..edce8ec4 100644
+--- a/compiler+runtime/src/cpp/jank/c_api.cpp
++++ b/compiler+runtime/src/cpp/jank/c_api.cpp
+@@ -52,7 +52,10 @@ using function_arity = typename make_function_arity<std::make_index_sequence<N>>
+ /* jank-19: the collector defaults jank_init applies when the environment does not set them.
+  * Measured with cohost.cljc's dev/research/upstream/run.sh 18-small-vectors and binary-trees at
+  * depths 14, 16 and 18 (doc/upstream/jank-19-gc-defaults.md). 0 keeps bdwgc's divisor. */
+-static constexpr size_t jank_gc_default_initial_heap{ 128 * 1024 * 1024 };
++/* jank-25: 256 MiB (was 128): the chunked lazy pipeline and binary-trees depth 14/18 measured
++ * best or tied at 256M against 128M, 512M and divisor 2/1 (3 rounds each), collections 7 -> 3,
++ * within the boot-RSS bar (doc/upstream/jank-25-closure-gc.md). */
++static constexpr size_t jank_gc_default_initial_heap{ 256 * 1024 * 1024 };
+ static constexpr GC_word jank_gc_default_free_space_divisor{ 0 };
+ 
+ extern "C"
+@@ -798,7 +801,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_0 = reinterpret_cast<function_arity<0>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_0 = reinterpret_cast<function_arity<0>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -808,7 +811,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_1 = reinterpret_cast<function_arity<1>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_1 = reinterpret_cast<function_arity<1>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -820,7 +823,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_2 = reinterpret_cast<function_arity<2>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_2 = reinterpret_cast<function_arity<2>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -831,7 +834,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_3 = reinterpret_cast<function_arity<3>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_3 = reinterpret_cast<function_arity<3>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -845,7 +848,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_4 = reinterpret_cast<function_arity<4>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_4 = reinterpret_cast<function_arity<4>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -860,7 +863,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_5 = reinterpret_cast<function_arity<5>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_5 = reinterpret_cast<function_arity<5>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -876,7 +879,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_6 = reinterpret_cast<function_arity<6>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_6 = reinterpret_cast<function_arity<6>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -893,7 +896,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_7 = reinterpret_cast<function_arity<7>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_7 = reinterpret_cast<function_arity<7>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -911,7 +914,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_8 = reinterpret_cast<function_arity<8>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_8 = reinterpret_cast<function_arity<8>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -930,7 +933,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_9 = reinterpret_cast<function_arity<9>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_9 = reinterpret_cast<function_arity<9>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+@@ -950,7 +953,7 @@ extern "C"
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+     object_ref const fn_obj(reinterpret_cast<object *>(fn));
+-    try_object<obj::jit_closure>(fn_obj)->arity_10 = reinterpret_cast<function_arity<10>>(f);
++    try_object<obj::jit_closure>(fn_obj)->own_arities().arity_10 = reinterpret_cast<function_arity<10>>(f);
+ #pragma clang diagnostic pop
+   }
+ 
+diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+index e46eddf0..a05b748e 100644
+--- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
++++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+@@ -762,11 +762,9 @@ namespace jank::codegen
+   {
+     b.next_instruction();
+     util::format_to(b.deps_buffer, "struct {}{", inst->context);
+-    util::format_to(b.body_buffer,
+-                    "auto const {}(jtl::make_ref<struct {}>(",
+-                    inst->context,
+-                    inst->context);
+ 
++    /* The capture context's initializers, in its field order. */
++    jtl::string_builder captures;
+     bool need_comma{};
+     for(auto const &capture : inst->captures)
+     {
+@@ -777,52 +775,79 @@ namespace jank::codegen
+ 
+       if(need_comma)
+       {
+-        util::format_to(b.body_buffer, ", ");
++        captures(", ");
+       }
+       need_comma = true;
+       if(capture.second.name == ":defer")
+       {
+         b.defer(inst->context, capture.first);
+-        b.body_buffer("jank::runtime::jank_nil");
++        captures("jank::runtime::jank_nil");
+       }
+       else
+       {
+-        b.body_buffer(capture.second.name);
++        captures(capture.second.name);
+       }
+     }
+ 
+     util::format_to(b.deps_buffer, "};\n");
+-    util::format_to(b.body_buffer, "));\n");
+-
++    auto const capture_args{ captures.release() };
+ 
+-    util::format_to(b.body_buffer, "auto const {}(", inst->name);
+     if(inst->is_variadic)
+     {
+       util::format_to(b.body_buffer,
+-                      "_jank_vclosure({}, {}.data)",
+-                      inst->arity_flags,
+-                      inst->context);
+-    }
+-    else
+-    {
++                      "auto const {}(jtl::make_ref<struct {}>({}));\n",
++                      inst->context,
++                      inst->context,
++                      capture_args);
+       util::format_to(b.body_buffer,
+-                      "_jank_closure({}, {}.data)",
++                      "auto const {}(_jank_vclosure({}, {}.data));\n",
++                      inst->name,
+                       inst->arity_flags,
+                       inst->context);
++
++      for(auto const &arity : inst->arities)
++      {
++        util::format_to(b.body_buffer,
++                        "{}->arity_{} = &{};\n",
++                        inst->name,
++                        arity.first,
++                        arity.second);
++        builder nested{ b.module, arity.second };
++        gen(*nested.function, nested);
++        util::format_to(b.deps_buffer, "{}", nested.declaration_str());
++      }
++
++      return inst->name;
+     }
+-    util::format_to(b.body_buffer, ");\n");
+ 
++    /* A fixed-arity closure: its arity table is emitted once for this site (static storage)
++     * and the closure is one GC block holding the box and its context. */
++    jtl::string_builder table;
+     for(auto const &arity : inst->arities)
+     {
+-      util::format_to(b.body_buffer,
+-                      "{}->arity_{} = &{};\n",
+-                      inst->name,
+-                      arity.first,
+-                      arity.second);
++      util::format_to(table, "t.arity_{} = &{}; ", arity.first, arity.second);
+       builder nested{ b.module, arity.second };
+       gen(*nested.function, nested);
+       util::format_to(b.deps_buffer, "{}", nested.declaration_str());
+     }
++    util::format_to(b.body_buffer,
++                    "static jank::runtime::obj::jit_closure_arities const {}_arities{ []() { "
++                    "jank::runtime::obj::jit_closure_arities t; {}return t; }() };\n",
++                    inst->name,
++                    table.release());
++    util::format_to(b.body_buffer,
++                    "auto const {}(jank::runtime::obj::jit_closure::create<struct {}>({}, &{}_arities{}{}));\n",
++                    inst->name,
++                    inst->context,
++                    inst->arity_flags,
++                    inst->name,
++                    capture_args.empty() ? "" : ", ",
++                    capture_args);
++    util::format_to(b.body_buffer,
++                    "auto * const {}(static_cast<struct {} *>({}->context));\n",
++                    inst->context,
++                    inst->context,
++                    inst->name);
+ 
+     return inst->name;
+   }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
+index b8d799bb..0811403e 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/core/seq.cpp
+@@ -1314,6 +1314,51 @@ namespace jank::runtime
+     return make_box<obj::array_chunk>(std::move(out), static_cast<usize>(0));
+   }
+ 
++  object_ref chunk_map_first(object_ref const f, object_ref const s)
++  {
++    if(s.get_type() == object_type::integer_range)
++    {
++      /* (chunk-first s) would be these n boxed values; f gets each, in order. */
++      auto const r(expect_object<obj::integer_range>(s));
++      auto const n{ std::min(r->count(), static_cast<usize>(obj::integer_range::chunk_size)) };
++      auto ret{ obj::array_chunk::create(n) };
++      auto &out{ *ret->buffer };
++      for(usize i{}; i < n; ++i)
++      {
++        out.emplace_back(f.call(make_box(r->start + static_cast<i64>(i) * r->step)));
++      }
++      return ret;
++    }
++    return chunk_map(f, chunk_first(s));
++  }
++
++  object_ref chunk_filter_first(object_ref const pred, object_ref const s)
++  {
++    if(s.get_type() == object_type::integer_range)
++    {
++      auto const r(expect_object<obj::integer_range>(s));
++      auto const n{ std::min(r->count(), static_cast<usize>(obj::integer_range::chunk_size)) };
++      object_ref kept[obj::integer_range::chunk_size];
++      usize k{};
++      for(usize i{}; i < n; ++i)
++      {
++        auto const v{ make_box(r->start + static_cast<i64>(i) * r->step) };
++        if(keeps(pred.call(v)))
++        {
++          kept[k++] = v;
++        }
++      }
++      auto ret{ obj::array_chunk::create(k) };
++      auto &out{ *ret->buffer };
++      for(usize i{}; i < k; ++i)
++      {
++        out.emplace_back(kept[i]);
++      }
++      return ret;
++    }
++    return chunk_filter(pred, chunk_first(s));
++  }
++
+   bool is_chunked_seq(object_ref const o)
+   {
+     /* TODO: Port visit_object: chunkable. */
+diff --git a/compiler+runtime/src/cpp/jank/runtime/lazy_meta.cpp b/compiler+runtime/src/cpp/jank/runtime/lazy_meta.cpp
+index 9d0207d3..af7ccf0b 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/lazy_meta.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/lazy_meta.cpp
+@@ -51,4 +51,66 @@ namespace jank::runtime
+     locked_state->source = "";
+     locked_state->meta = o;
+   }
++
++  lazy_meta_ptr::lazy_meta_ptr(object_ref const meta)
++    : ptr{ meta.is_nil() ? nullptr : new(UseGC) lazy_meta{ meta } }
++  {
++  }
++
++  lazy_meta_ptr::lazy_meta_ptr(lazy_meta_ptr const &o)
++  {
++    auto const m{ o.load() };
++    ptr = m ? new(UseGC) lazy_meta{ *m } : nullptr;
++  }
++
++  lazy_meta_ptr::lazy_meta_ptr(lazy_meta_ptr &&o) noexcept
++    : ptr{ o.load() }
++  {
++    o.ptr = nullptr;
++  }
++
++  lazy_meta_ptr &lazy_meta_ptr::operator=(lazy_meta_ptr const &o)
++  {
++    if(this != &o)
++    {
++      auto const m{ o.load() };
++      std::atomic_ref<lazy_meta *>{ ptr }.store(m ? new(UseGC) lazy_meta{ *m } : nullptr,
++                                                std::memory_order_release);
++    }
++    return *this;
++  }
++
++  lazy_meta_ptr &lazy_meta_ptr::operator=(object_ref const meta)
++  {
++    std::atomic_ref<lazy_meta *>{ ptr }.store(meta.is_nil() ? nullptr
++                                                            : new(UseGC) lazy_meta{ meta },
++                                              std::memory_order_release);
++    return *this;
++  }
++
++  lazy_meta *lazy_meta_ptr::load() const
++  {
++    return std::atomic_ref<lazy_meta *>{ ptr }.load(std::memory_order_acquire);
++  }
++
++  object_ref lazy_meta_ptr::get() const
++  {
++    auto const m{ load() };
++    return m ? m->get() : object_ref{};
++  }
++
++  void lazy_meta_ptr::set(object_ref const o)
++  {
++    std::atomic_ref<lazy_meta *> const slot{ ptr };
++    auto current{ slot.load(std::memory_order_acquire) };
++    if(!current)
++    {
++      auto const fresh{ new(UseGC) lazy_meta{ o } };
++      if(slot.compare_exchange_strong(current, fresh, std::memory_order_acq_rel))
++      {
++        return;
++      }
++    }
++    current->set(o);
++  }
+ }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/jit_closure.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/jit_closure.cpp
+index 4e059921..49df3e46 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/jit_closure.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/jit_closure.cpp
+@@ -17,8 +17,8 @@ namespace jank::runtime::obj
+ 
+   jit_closure::jit_closure(callable_arity_flags const arity_flags, void * const context)
+     : object{ obj_type, obj_behaviors }
+-    , context{ context }
+     , arity_flags{ arity_flags }
++    , context{ context }
+   {
+   }
+ 
+@@ -28,6 +28,18 @@ namespace jank::runtime::obj
+   {
+   }
+ 
++  jit_closure_arities const jit_closure_arities::none{};
++
++  jit_closure_arities &jit_closure::own_arities()
++  {
++    if(!owns_arities)
++    {
++      arities = new(UseGC) jit_closure_arities{ *arities };
++      owns_arities = true;
++    }
++    return const_cast<jit_closure_arities &>(*arities);
++  }
++
+   void jit_closure::to_string(jtl::string_builder &buff) const
+   {
+     auto const name(meta.get().get(__rt_ctx->intern_keyword("name").expect_ok()));
+@@ -43,6 +55,8 @@ namespace jank::runtime::obj
+   {
+     auto const new_meta(behavior::detail::validate_meta(m));
+     auto const ret{ make_box<jit_closure>(*this) };
++    /* The copy shares the table; it makes its own if it is ever changed. */
++    ret->owns_arities = false;
+     ret->meta = new_meta;
+     return ret;
+   }
+@@ -60,38 +74,38 @@ namespace jank::runtime::obj
+ 
+   object_ref jit_closure::call() const
+   {
+-    if(!arity_0)
++    if(!arities->arity_0)
+     {
+       throw invalid_arity<0>{ to_string() };
+     }
+-    return arity_0(runtime::detail::untagged(this));
++    return arities->arity_0(runtime::detail::untagged(this));
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1) const
+   {
+-    if(!arity_1)
++    if(!arities->arity_1)
+     {
+       throw invalid_arity<1>{ to_string() };
+     }
+-    return arity_1(runtime::detail::untagged(this), a1);
++    return arities->arity_1(runtime::detail::untagged(this), a1);
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1, object_ref const a2) const
+   {
+-    if(!arity_2)
++    if(!arities->arity_2)
+     {
+       throw invalid_arity<2>{ to_string() };
+     }
+-    return arity_2(runtime::detail::untagged(this), a1, a2);
++    return arities->arity_2(runtime::detail::untagged(this), a1, a2);
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1, object_ref const a2, object_ref const a3) const
+   {
+-    if(!arity_3)
++    if(!arities->arity_3)
+     {
+       throw invalid_arity<3>{ to_string() };
+     }
+-    return arity_3(runtime::detail::untagged(this), a1, a2, a3);
++    return arities->arity_3(runtime::detail::untagged(this), a1, a2, a3);
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1,
+@@ -99,11 +113,11 @@ namespace jank::runtime::obj
+                                object_ref const a3,
+                                object_ref const a4) const
+   {
+-    if(!arity_4)
++    if(!arities->arity_4)
+     {
+       throw invalid_arity<4>{ to_string() };
+     }
+-    return arity_4(runtime::detail::untagged(this), a1, a2, a3, a4);
++    return arities->arity_4(runtime::detail::untagged(this), a1, a2, a3, a4);
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1,
+@@ -112,11 +126,11 @@ namespace jank::runtime::obj
+                                object_ref const a4,
+                                object_ref const a5) const
+   {
+-    if(!arity_5)
++    if(!arities->arity_5)
+     {
+       throw invalid_arity<5>{ to_string() };
+     }
+-    return arity_5(runtime::detail::untagged(this), a1, a2, a3, a4, a5);
++    return arities->arity_5(runtime::detail::untagged(this), a1, a2, a3, a4, a5);
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1,
+@@ -126,11 +140,11 @@ namespace jank::runtime::obj
+                                object_ref const a5,
+                                object_ref const a6) const
+   {
+-    if(!arity_6)
++    if(!arities->arity_6)
+     {
+       throw invalid_arity<6>{ to_string() };
+     }
+-    return arity_6(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6);
++    return arities->arity_6(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6);
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1,
+@@ -141,11 +155,11 @@ namespace jank::runtime::obj
+                                object_ref const a6,
+                                object_ref const a7) const
+   {
+-    if(!arity_7)
++    if(!arities->arity_7)
+     {
+       throw invalid_arity<7>{ to_string() };
+     }
+-    return arity_7(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6, a7);
++    return arities->arity_7(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6, a7);
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1,
+@@ -157,11 +171,11 @@ namespace jank::runtime::obj
+                                object_ref const a7,
+                                object_ref const a8) const
+   {
+-    if(!arity_8)
++    if(!arities->arity_8)
+     {
+       throw invalid_arity<8>{ to_string() };
+     }
+-    return arity_8(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6, a7, a8);
++    return arities->arity_8(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6, a7, a8);
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1,
+@@ -174,11 +188,11 @@ namespace jank::runtime::obj
+                                object_ref const a8,
+                                object_ref const a9) const
+   {
+-    if(!arity_9)
++    if(!arities->arity_9)
+     {
+       throw invalid_arity<9>{ to_string() };
+     }
+-    return arity_9(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6, a7, a8, a9);
++    return arities->arity_9(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6, a7, a8, a9);
+   }
+ 
+   object_ref jit_closure::call(object_ref const a1,
+@@ -192,10 +206,10 @@ namespace jank::runtime::obj
+                                object_ref const a9,
+                                object_ref const a10) const
+   {
+-    if(!arity_10)
++    if(!arities->arity_10)
+     {
+       throw invalid_arity<10>{ to_string() };
+     }
+-    return arity_10(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
++    return arities->arity_10(runtime::detail::untagged(this), a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+   }
+ }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp
+index c7411087..c09ee504 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp
+@@ -1,3 +1,4 @@
++#include <thread>
+ #include <jank/runtime/obj/lazy_sequence.hpp>
+ #include <jank/runtime/obj/persistent_list.hpp>
+ #include <jank/runtime/obj/nil.hpp>
+@@ -138,7 +139,7 @@ namespace jank::runtime::obj
+       return s;
+     }
+ 
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
++    realize_lock const lock{ *this };
+     force();
+     if(sv.is_some())
+     {
+@@ -166,7 +167,7 @@ namespace jank::runtime::obj
+ 
+   object_ref lazy_sequence::sval() const
+   {
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
++    realize_lock const lock{ *this };
+     if(fn.is_some())
+     {
+       force();
+@@ -193,7 +194,7 @@ namespace jank::runtime::obj
+     {
+       return true;
+     }
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
++    realize_lock const lock{ *this };
+     return fn.is_nil() || sv.is_some();
+   }
+ 
+@@ -215,4 +216,41 @@ namespace jank::runtime::obj
+     auto const new_meta(behavior::detail::validate_meta(o));
+     meta.set(new_meta);
+   }
++
++  /* Each thread's token: a small number from a counter, never 0. */
++  static u32 realize_lock_token() noexcept
++  {
++    static std::atomic<u32> next{ 1 };
++    thread_local u32 const token{ next.fetch_add(1, std::memory_order_relaxed) };
++    return token;
++  }
++
++  lazy_sequence::realize_lock::realize_lock(lazy_sequence const &o) noexcept
++    : o{ o }
++  {
++    auto const me{ realize_lock_token() };
++    if(o.lock_owner.load(std::memory_order_relaxed) == me)
++    {
++      ++o.lock_depth;
++      return;
++    }
++    u32 expected{};
++    while(!o.lock_owner.compare_exchange_weak(expected,
++                                              me,
++                                              std::memory_order_acquire,
++                                              std::memory_order_relaxed))
++    {
++      expected = 0;
++      std::this_thread::yield();
++    }
++    o.lock_depth = 1;
++  }
++
++  lazy_sequence::realize_lock::~realize_lock()
++  {
++    if(--o.lock_depth == 0)
++    {
++      o.lock_owner.store(0, std::memory_order_release);
++    }
++  }
+ }
+diff --git a/compiler+runtime/src/jank/clojure/core.jank b/compiler+runtime/src/jank/clojure/core.jank
+index 475024dd..d13d5ac3 100644
+--- a/compiler+runtime/src/jank/clojure/core.jank
++++ b/compiler+runtime/src/jank/clojure/core.jank
+@@ -2925,7 +2925,7 @@
+      (when-let [s (seq coll)]
+        (if (chunked-seq? s)
+          ;; One runtime loop per chunk: f once per element, straight into the new chunk.
+-         (chunk-cons (cpp/jank.runtime.chunk_map f (chunk-first s))
++         (chunk-cons (cpp/jank.runtime.chunk_map_first f s)
+                      (map f (chunk-rest s)))
+          (cons (f (first s)) (map f (rest s)))))))
+   ([f c1 c2]
+@@ -3898,7 +3898,7 @@
+      (when-let [s (seq coll)]
+        (if (chunked-seq? s)
+          ;; One runtime loop per chunk: pred once per element, kept elements into the new chunk.
+-         (chunk-cons (cpp/jank.runtime.chunk_filter pred (chunk-first s))
++         (chunk-cons (cpp/jank.runtime.chunk_filter_first pred s)
+                      (filter pred (chunk-rest s)))
+          (let [f (first s) r (rest s)]
+            (if (pred f)
+-- 
+2.43.0
+
