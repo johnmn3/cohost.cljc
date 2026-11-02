@@ -38,6 +38,7 @@
      :lpy (python/exit code)
      :phel (php/exit code)
      :lg (os/exit code)
+     :jank (do (flush) (cpp/std.exit code))
      :default (do (flush) (System/exit code))))
 
 (defn- read-stdin
