@@ -14,3 +14,30 @@
 (timed "fib 30 plain" #(fib-plain 30))
 (timed "fib 30 ^long param" #(fib-hinted 30))
 (timed "fib 30 in C++ through cpp/raw" #(fib-cpp 30))
+;; Correctness of a native entry (U6). Expected (Clojure):
+;;   native results: 9000000000000000000 2.5 0 5050 [3 2 1] 1024 3.5 6765 5
+;;   native overflow: throws 4611686018427387904 throws
+;;   native via apply/map: 3 [1 4 9] [0.5 1.5]
+(defn ^long sq-ret [^long x] (* x x))
+(defn ^double half [^double x] (/ x 2.0))
+(defn count-down [^long n] (if (< n 1) 0 (count-down (dec n))))
+(defn sum-to [^long n] (if (< n 1) 0 (+ n (sum-to (dec n)))))
+(defn mixed [^long n acc] (if (< n 1) acc (mixed (dec n) (conj acc n))))
+(defn multi ([^long n] (multi n 1)) ([^long n ^long k] (if (< n 1) k (multi (dec n) (* k 2)))))
+(defn dbl [^long n ^long k] (if (< k 1) n (dbl (* n 2) (dec k))))
+(defn real-tail [^long n] (if (< n 1) 0.5 (+ 1.0 (real-tail (dec n)))))
+(println "native results:" (sq-ret 3000000000) (half 5.0) (count-down 10000) (sum-to 100) (mixed 3 []) (multi 10) (real-tail 3)
+         (fib-hinted 20) (add-ret-hinted 2 3))
+(println "native overflow:" (try (sq-ret 4000000000) (catch :default e "throws")) (dbl 1 62) (try (dbl 1 64) (catch :default e "throws")))
+(println "native via apply/map:" (apply add-hinted [1 2]) (vec (map sq-ret [1 2 3])) (vec (map half [1.0 3.0])))
+;; Typed call sites (a call to a var defined with a native entry) and redefinition. Expected:
+;;   typed call sites: 49 8 -7 10.5 [2 4]
+(defn ^long tsq [^long x] (* x x))
+(defn use-tsq [] (tsq 7))
+(def ts1 (use-tsq))
+(defn ^long tsq [^long x] (+ x 1))
+(def ts2 (use-tsq))
+(defn tsq [x] (- x))
+(def ts3 (use-tsq))
+(defn ^double scale [^double x ^long k] (* x k))
+(println "typed call sites:" ts1 ts2 ts3 (scale 3.5 3) (mapv #(multi 0 %) [2 4]))

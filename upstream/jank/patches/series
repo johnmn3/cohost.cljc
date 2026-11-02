@@ -4,4 +4,8 @@
 12-21-i64-arithmetic.patch
 18-small-vectors.patch
 19-gc-defaults.patch
+15a-16-in-place-walks.patch
+15b-17-reduce-chunks.patch
 22-multi-cache-truthy.patch
+20-native-returns.patch
+23-chunk-branch.patch
