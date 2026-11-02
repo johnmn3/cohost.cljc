@@ -1,4 +1,4 @@
-;; jank-25: variadic calls allocate their rest args; a multimethod call is three dynamic calls plus a cache check.
+;; jank-29: variadic calls allocate their rest args; a multimethod call is three dynamic calls plus a cache check.
 (defn id1 [x] x)
 (defn id2 [x y] x)
 (defn idv [x & ys] x)

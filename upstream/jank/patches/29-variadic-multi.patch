@@ -1,11 +1,11 @@
-From 978205e6a0f3716ab4838824ad1d0b2cd252f9fc Mon Sep 17 00:00:00 2001
+From 493dea3e3282ec41cd80eecad8f51718d0513428 Mon Sep 17 00:00:00 2001
 From: cohost u2 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 20:18:56 +0000
 Subject: [PATCH] Rest args on the caller's stack when they cannot escape;
  multimethod cache hit without the mutex; keyword dispatch inline
 
-Draft: cohost doc/upstream/jank-25-variadic-multi.md.
-Repro: bash dev/research/upstream/run.sh 25-variadic-multi (in johnmn3/cohost.cljc).
+Draft: cohost doc/upstream/jank-29-variadic-multi.md.
+Repro: bash dev/research/upstream/run.sh 29-variadic-multi (in johnmn3/cohost.cljc).
 
 1. Variadic calls. At -Odirect-call (the -O3 default), the IR pass decides for a
    non-closure variadic fn whether the variadic arity's rest param can escape:
@@ -17,17 +17,20 @@ Repro: bash dev/research/upstream/run.sh 25-variadic-multi (in johnmn3/cohost.cl
    then passes the rest args as a native_array_sequence on the caller's stack
    (stack_rest_args, alive until the call returns) instead of a GC
    allocation. Escaping rest params keep the one allocation of 24.
-2. Multimethods. reset_cache stored the hierarchy ref (the var) in
-   cached_hierarchy while get_method compares it with hierarchy.deref() (the
-   map), so the compare failed on every call: every call took the recursive
-   mutex and reset the method cache, and find_and_cache_best_method handed
-   the var to is_preferred, whose parents walk expects the map. It now stores
-   hierarchy.deref() and passes the map to is_a (no longer dereffing) and
-   is_preferred alike, as Clojure's MultiFn does. A keyword dispatch fn
-   ((defmulti area :shape)) is computed inline as a get on the first
-   argument; other dispatch fns and the method go through call_fast.
-
-3. Lazily compiled fns (jank run's default). A deferred_cpp_function that is
+2. The multimethod cache was reset on every call. reset_cache stored the
+   hierarchy ref (the var #'global-hierarchy) in cached_hierarchy, while
+   get_method compares cached_hierarchy with hierarchy.deref() (the map), so
+   the compare failed on every call: every multimethod call took the
+   recursive mutex and reset method_cache to method_table (a dispatch value
+   found through isa? or :default was resolved again on every call), and
+   find_and_cache_best_method handed the var to is_preferred, whose parents
+   walk expects the map. reset_cache now stores hierarchy.deref(), and is_a
+   (no longer dereffing) and is_preferred both take the map, as Clojure's
+   MultiFn does. This is most of the multimethod gap U7-2 named.
+3. A keyword dispatch fn ((defmulti area :shape)) is computed inline as a get
+   on the first argument; other dispatch fns and the method go through
+   call_fast.
+4. Lazily compiled fns (jank run's default). A deferred_cpp_function that is
    called through a captured value (a defmethod's method, a defmulti's
    dispatch fn, any fn held outside its var) took its recursive mutex on
    every call, compiled or not. realize() now returns on an atomic
