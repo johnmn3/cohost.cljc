@@ -120,7 +120,44 @@
              absent
              (throw e))))))
 
+;; a host multifn's name and namespace: jolt's MultiFn carries
+;; neither, so they are found by identity over the loaded namespaces
+;; (defmethod-setup wants both) and cached by the multifn itself
+(def ^:private mf-names (atom []))
+(defn- mf-name [mf]
+  (or (some (fn [[m v]] (when (identical? m mf) v)) @mf-names)
+      (let [found (some (fn [ns]
+                          (some (fn [[s v]] (when (identical? (var-get v) mf) [(ns-name ns) s]))
+                                (ns-interns ns)))
+                        (all-ns))]
+        (when found (swap! mf-names conj [mf found]))
+        found)))
+
+;; the MultiFn members of a host multifn: its methods live in jolt's
+;; own registry, which jolt's own core fns address (defmethod-setup
+;; for a new method, given the name the search above recovers)
+;; a dispatch value written as a class name is the shim's class
+;; token (a symbol); the host registry keys class methods by the
+;; Class itself, as the dispatch (class x) answers it
+(defn- mf-dv [dv]
+  (if (symbol? dv)
+    (let [c (try (resolve dv) (catch Throwable _ nil))]
+      (if (class? c) c dv))
+    dv))
+
+(defn- multifn-op [mf op args]
+  (case op
+    :add (let [[dv f] args [ns s] (mf-name mf)]
+           (clojure.core/defmethod-setup s (mf-dv dv) f ns)
+           mf)
+    :remove (do (remove-method mf (mf-dv (first args))) mf)
+    :get (get-method mf (mf-dv (first args)))
+    :table (methods mf)
+    :prefers (prefers mf)
+    :prefer (do (prefer-method mf (first args) (second args)) mf)))
+
 (adapter/install! (merge java/capabilities
                          adapter
                          {:math (assoc (:math java/capabilities) 'log10 log10)
-                          :invoke-member invoke-member}))
+                          :invoke-member invoke-member
+                          :multifn-op multifn-op}))
