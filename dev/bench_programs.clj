@@ -340,8 +340,11 @@
    (cohost's `=> ERR` line, a compiler `error:` line, an exception), else the
    first 400 characters of the output."
   [& outs]
-  (let [lines (mapcat #(str/split-lines (or % "")) outs)]
-    (or (some #(when-let [[_ m] (re-find #"=> ERR (.*)" %)] (str/trim m)) lines)
+  (let [lines (mapcat #(str/split-lines (or % "")) outs)
+        err (some #(when-let [[_ m] (re-find #"=> ERR (.*)" %)] (str/trim m)) lines)
+        ;; a C++ compiler diagnostic names the cause cohost's ERR line only summarizes
+        diag (some #(when (re-find #":\d+:\d+: error: " %) (str/trim %)) lines)]
+    (or (cond (and err diag) (str err " -- " diag) :else (or err diag))
         (some #(when (re-find #"(?i)error|exception|panic|could not|cannot|unable|undeclared|not found|traceback" %)
                  (str/trim %))
               lines)
