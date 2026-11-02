@@ -793,7 +793,8 @@
       ;; call: hinted code must not be slower than unhinted (Step 5 H1)
       (if (= 'int hint)
         convert
-        (list 'if (list (shim-fn (if (= 'double hint) "double-kind?" "long-kind?")) sym)
+        (list 'if (or (when-let [pkt (host/prim-kind-test)] (pkt hint sym))
+                      (list (shim-fn (if (= 'double hint) "double-kind?" "long-kind?")) sym))
               sym
               convert)))))
 
