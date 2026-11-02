@@ -28,26 +28,26 @@
 
 ;; Sizes: one JVM call takes 100-1000 ms after warm-up (measured 2026-11-02).
 (def programs
-  [{:id :fib :file "bench/programs/fib.clj" :arg "32"}
-   {:id :fib-hinted :file "bench/programs/fib_hinted.clj" :arg "32" :hinted? true}
-   {:id :tak :file "bench/programs/tak.clj" :arg "24 16 8"}
-   {:id :tak-hinted :file "bench/programs/tak_hinted.clj" :arg "24 16 8" :hinted? true}
-   {:id :nbody :file "bench/programs/nbody.clj" :arg "20000"}
-   {:id :nbody-hinted :file "bench/programs/nbody_hinted.clj" :arg "20000" :hinted? true}
-   {:id :spectral-norm :file "bench/programs/spectral_norm.clj" :arg "400"}
-   {:id :spectral-norm-hinted :file "bench/programs/spectral_norm_hinted.clj" :arg "400" :hinted? true}
-   {:id :mandelbrot :file "bench/programs/mandelbrot.clj" :arg "600"}
-   {:id :mandelbrot-hinted :file "bench/programs/mandelbrot_hinted.clj" :arg "600" :hinted? true}
-   {:id :binary-trees :file "bench/programs/binary_trees.clj" :arg "16"}
-   {:id :binary-trees-hinted :file "bench/programs/binary_trees_hinted.clj" :arg "16" :hinted? true}
-   {:id :fannkuch :file "bench/programs/fannkuch.clj" :arg "9"}
-   {:id :fannkuch-hinted :file "bench/programs/fannkuch_hinted.clj" :arg "9" :hinted? true}
-   {:id :nsieve :file "bench/programs/nsieve.clj" :arg "21"}
-   {:id :nsieve-hinted :file "bench/programs/nsieve_hinted.clj" :arg "21" :hinted? true}
-   {:id :k-nucleotide :file "bench/programs/k_nucleotide.clj" :arg "200000"}
-   {:id :pipeline :file "bench/programs/pipeline.clj" :arg "200000"}
-   {:id :dispatch :file "bench/programs/dispatch.clj" :arg "2000000"}
-   {:id :json :file "bench/programs/json.clj" :arg "40000"}
+  [{:id :fib :file "bench/programs/fib.clj" :arg "36"}
+   {:id :fib-hinted :file "bench/programs/fib_hinted.clj" :arg "36" :hinted? true}
+   {:id :tak :file "bench/programs/tak.clj" :arg "30 20 10"}
+   {:id :tak-hinted :file "bench/programs/tak_hinted.clj" :arg "30 20 10" :hinted? true}
+   {:id :nbody :file "bench/programs/nbody.clj" :arg "50000"}
+   {:id :nbody-hinted :file "bench/programs/nbody_hinted.clj" :arg "50000" :hinted? true}
+   {:id :spectral-norm :file "bench/programs/spectral_norm.clj" :arg "600"}
+   {:id :spectral-norm-hinted :file "bench/programs/spectral_norm_hinted.clj" :arg "600" :hinted? true}
+   {:id :mandelbrot :file "bench/programs/mandelbrot.clj" :arg "1500"}
+   {:id :mandelbrot-hinted :file "bench/programs/mandelbrot_hinted.clj" :arg "1500" :hinted? true}
+   {:id :binary-trees :file "bench/programs/binary_trees.clj" :arg "18"}
+   {:id :binary-trees-hinted :file "bench/programs/binary_trees_hinted.clj" :arg "18" :hinted? true}
+   {:id :fannkuch :file "bench/programs/fannkuch.clj" :arg "8"}
+   {:id :fannkuch-hinted :file "bench/programs/fannkuch_hinted.clj" :arg "8" :hinted? true}
+   {:id :nsieve :file "bench/programs/nsieve.clj" :arg "20"}
+   {:id :nsieve-hinted :file "bench/programs/nsieve_hinted.clj" :arg "20" :hinted? true}
+   {:id :k-nucleotide :file "bench/programs/k_nucleotide.clj" :arg "2000000"}
+   {:id :pipeline :file "bench/programs/pipeline.clj" :arg "500000"}
+   {:id :dispatch :file "bench/programs/dispatch.clj" :arg "5000000"}
+   {:id :json :file "bench/programs/json.clj" :arg "30000"}
    {:id :first-output :file "bench/programs/first_output.clj" :wall true}])
 
 (def targets
@@ -139,22 +139,26 @@
 (defn run! [cmd & [opts]]
   (apply shell (merge {:out :string :err :string :continue true :timeout timeout-ms} opts) cmd))
 
-(defn tmp [f]
-  (fs/create-dirs "target/bench-programs")
-  (str "target/bench-programs/" f))
+(def pid (.pid (java.lang.ProcessHandle/current)))
+
+(defn tmp
+  "A wrapper file of this driver process: two drivers never share one."
+  [f]
+  (fs/create-dirs (str "target/bench-programs/" pid))
+  (str "target/bench-programs/" pid "/" f))
 
 ;; ---- runners: (fn [program-id src arg]) -> process result
 
-(defn run-jvm [_ src arg]
-  (let [f (tmp "wrap.clj")]
+(defn run-jvm [id src arg]
+  (let [f (tmp (str (name id) ".clj"))]
     (spit f (str (harness src (clock "jvm") true) "(apply -main *command-line-args*)\n"))
     (run! ["clojure" "-M" f arg])))
 
 (defn run-jvm-cohost [_ src arg]
   (run! ["clojure" "-M" "-m" "cohost.run" "--" "--eval" (cohost-source src (clock "jvm-cohost") arg)]))
 
-(defn run-jank-jit [_ src arg]
-  (let [f (tmp "wrap.jank")]
+(defn run-jank-jit [id src arg]
+  (let [f (tmp (str (name id) ".jank"))]
     (spit f (str (harness src (clock "jank-jit") true) "(apply -main *command-line-args*)\n"))
     (run! ["jank" "run" f "--" arg])))
 
@@ -187,8 +191,8 @@
   (run! ["jank" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--"
          "--eval" (cohost-source src (clock "jank") arg)]))
 
-(defn run-cljrs [_ src arg]
-  (let [f (tmp "wrap.clj")]
+(defn run-cljrs [id src arg]
+  (let [f (tmp (str (name id) ".clj"))]
     (spit f (harness src (clock "cljrs") true))
     (run! ["cljrs" "run" f "--" arg])))
 
@@ -199,45 +203,45 @@
          "src/cohost/run.cljc" "--" "--eval" (cohost-source src (clock "cljrs-cohost") arg)]
         cljrs-env))
 
-(defn run-jolt [_ src arg]
-  (let [f (tmp "wrap.clj")]
+(defn run-jolt [id src arg]
+  (let [f (tmp (str (name id) ".clj"))]
     (spit f (str (harness src (clock "jolt") true) "(apply -main *command-line-args*)\n"))
     (run! ["jolt" "run" f arg])))
 
 (defn run-jolt-cohost [_ src arg]
   (run! ["jolt" "-Scp" "src" "-m" "cohost.run" "--eval" (cohost-source src (clock "jolt-cohost") arg)]))
 
-(defn run-lpy [_ src arg]
+(defn run-lpy [id src arg]
   ;; basilisp has no System/nanoTime: Python's time.perf_counter_ns.
-  (let [f (tmp "wrap.clj")]
+  (let [f (tmp (str (name id) ".clj"))]
     (spit f (str "(import time)\n" (harness src (clock "lpy") true) "(apply -main *command-line-args*)\n"))
     (run! ["basilisp" "run" f "--" arg])))
 
-(defn run-lpy-cohost [_ src arg]
-  (let [f (tmp "cohost.clj")]
+(defn run-lpy-cohost [id src arg]
+  (let [f (tmp (str (name id) "-cohost.clj"))]
     (spit f (cohost-source src (clock "lpy-cohost") arg))
     (run! ["basilisp" "run" "-p" "src" "-c"
            (str "(require 'cohost.run) (cohost.run/-main \"--eval\" (slurp " (pr-str f) "))")])))
 
-(defn run-cljw [_ src arg]
-  (let [f (tmp "wrap.clj")]
+(defn run-cljw [id src arg]
+  (let [f (tmp (str (name id) ".clj"))]
     (spit f (str (harness src (clock "cljw") true) "(apply -main *command-line-args*)\n"))
     (run! ["cljw" f arg])))
 
 (defn run-cljw-cohost [_ src arg]
   (run! ["cljw" "-cp" "src" "-m" "cohost.run" "--eval" (cohost-source src (clock "cljw-cohost") arg)]))
 
-(defn run-phel [_ src arg]
+(defn run-phel [id src arg]
   ;; Phel needs a leading ns and passes args as *argv*.
-  (let [f (tmp "wrap.phel")]
+  (let [f (tmp (str (name id) ".phel"))]
     (spit f (str "(ns bench.prog)\n" (harness src (clock "phel") true) "(apply -main *argv*)\n"))
     (run! ["phel" "run" f arg])))
 
 (defn run-phel-cohost [_ src arg]
   (run! ["phel" "run" "dev/phel_main.phel" "--" "--eval" (cohost-source src (clock "phel-cohost") arg)]))
 
-(defn run-lg [_ src arg]
-  (let [f (tmp "wrap.clj")]
+(defn run-lg [id src arg]
+  (let [f (tmp (str (name id) ".clj"))]
     (spit f (str (harness src (clock "lg") true) "(apply -main *command-line-args*)\n"))
     (run! ["lg" f arg])))
 
@@ -250,8 +254,8 @@
       (when-not (zero? (:exit c))
         (throw (ex-info "cljs-node" {:err (str (:err c) "\n" (:out c))}))))))
 
-(defn run-cljs [_ src arg]
-  (let [f (tmp "wrap.cljs")]
+(defn run-cljs [id src arg]
+  (let [f (tmp (str (name id) ".cljs"))]
     (spit f (str (harness src (clock "cljs") true) "(apply -main *command-line-args*)\n"))
     (run! ["clojure" "-M:cljs" "-m" "cljs.main" "-re" "node" f arg])))
 
