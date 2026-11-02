@@ -1,0 +1,414 @@
+From cfa453f2299067a2bf08607142d31cb09c597c5b Mon Sep 17 00:00:00 2001
+From: cohost u2 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 16:06:22 +0000
+Subject: [PATCH] Share the buffer of native_vector_sequence and array_chunk
+ across steps
+
+Draft: cohost doc/upstream/jank-11-sorted-walk.md (walking the result of
+`sort` is O(n^2)).
+Repro: bash dev/research/upstream/run.sh 11-sorted-walk (in johnmn3/cohost.cljc);
+Expected: sort-nth-half and sort-reduce within 3x of sort-first at n=1e3, 1e4, 1e5.
+
+native_vector_sequence::next() and array_chunk::chunk_next() boxed a new
+object holding a copy of the whole native_vector, so every step of a walk
+copied all n elements. Both now hold the elements through one GC-allocated
+vector (jtl::ref<native_vector<object_ref>>) that every stepped object shares;
+only the index/offset differs. next_in_place / chunk_next_in_place are
+unchanged. The constructors taking a native_vector keep their signatures
+(they move or copy into the shared buffer once); array_chunk gains a
+by-move constructor so chunk_buffer::chunk() no longer copies.
+
+Also fixed on the way: native_vector_sequence's equal, to_string,
+to_code_string and to_hash walked the vector from 0 and ignored `index`, so
+on the apt 0.1-noble binary (rest (sort [3 1 2])) prints (1 2 3) and is not
+= to (2 3). They now start at `index`, as persistent_vector_sequence does;
+seq/fresh_seq/conj test index >= size instead of empty().
+
+Files: compiler+runtime/include/cpp/jank/runtime/obj/native_vector_sequence.hpp,
+compiler+runtime/src/cpp/jank/runtime/obj/native_vector_sequence.cpp,
+compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp,
+compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp.
+---
+ .../cpp/jank/runtime/obj/array_chunk.hpp      |  8 +-
+ .../runtime/obj/native_vector_sequence.hpp    |  8 +-
+ .../src/cpp/jank/runtime/obj/array_chunk.cpp  | 57 ++++++++++---
+ .../runtime/obj/native_vector_sequence.cpp    | 79 ++++++++++++++-----
+ 4 files changed, 118 insertions(+), 34 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
+index 19ac3848e..c4730303e 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/array_chunk.hpp
+@@ -12,10 +12,16 @@ namespace jank::runtime::obj
+     static constexpr object_behavior obj_behaviors{ object_behavior::indexable };
+     static constexpr bool pointer_free{ false };
+ 
++    /* The elements live in one GC-allocated vector shared by every chunk stepped from it
++     * with `chunk_next`; only `offset` differs. */
++    using buffer_ref = jtl::ref<native_vector<object_ref>>;
++
+     array_chunk();
+     array_chunk(native_vector<object_ref> const &buffer);
++    array_chunk(native_vector<object_ref> &&buffer);
+     array_chunk(native_vector<object_ref> const &buffer, usize offset);
+     array_chunk(native_vector<object_ref> &&buffer, usize offset);
++    array_chunk(buffer_ref const buffer, usize offset);
+ 
+     /* behavior::chunk_like */
+     array_chunk_ref chunk_next() const;
+@@ -27,7 +33,7 @@ namespace jank::runtime::obj
+     object_ref nth(object_ref const index, object_ref const fallback) const override;
+ 
+     /*** XXX: Everything here is immutable after initialization. ***/
+-    native_vector<object_ref> buffer;
++    buffer_ref buffer;
+     usize offset{};
+   };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/native_vector_sequence.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/native_vector_sequence.hpp
+index c4d5a1f3e..d168d4af5 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/native_vector_sequence.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/native_vector_sequence.hpp
+@@ -10,6 +10,11 @@ namespace jank::runtime::obj
+ 
+   struct native_vector_sequence : object
+   {
++    /* The elements live in one GC-allocated vector which is shared by every sequence
++     * stepped from it (`next`, `fresh_seq`, `with_meta`); only `index` differs. Stepping
++     * is O(1), not a copy of the whole vector. */
++    using buffer_ref = jtl::ref<native_vector<object_ref>>;
++
+     static constexpr object_type obj_type{ object_type::native_vector_sequence };
+     static constexpr object_behavior obj_behaviors{ object_behavior::seqable
+                                                     | object_behavior::sequence_like
+@@ -24,6 +29,7 @@ namespace jank::runtime::obj
+     native_vector_sequence(native_vector<object_ref> &&data);
+     native_vector_sequence(object_ref const meta, native_vector<object_ref> &&data);
+     native_vector_sequence(native_vector<object_ref> &&data, usize index);
++    native_vector_sequence(buffer_ref const data, usize index);
+ 
+     /* behavior::object_like */
+     bool equal(object const &o) const override;
+@@ -55,7 +61,7 @@ namespace jank::runtime::obj
+     void set_meta(object_ref const o);
+ 
+     /*** XXX: Everything here is immutable after initialization. ***/
+-    native_vector<object_ref> data{};
++    buffer_ref data;
+     usize index{};
+ 
+     /*** XXX: Everything here is thead-safe. ***/
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
+index 5b5cd823d..9caeb1c55 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/array_chunk.cpp
+@@ -7,44 +7,79 @@
+ 
+ namespace jank::runtime::obj
+ {
++  using array_chunk_buffer_ref = array_chunk::buffer_ref;
++
++  static array_chunk_buffer_ref make_chunk_buffer()
++  {
++    return jtl::make_ref<native_vector<object_ref>>();
++  }
++
++  static array_chunk_buffer_ref make_chunk_buffer(native_vector<object_ref> const &data)
++  {
++    auto ret(make_chunk_buffer());
++    *ret = data;
++    return ret;
++  }
++
++  static array_chunk_buffer_ref make_chunk_buffer(native_vector<object_ref> &&data)
++  {
++    auto ret(make_chunk_buffer());
++    *ret = std::move(data);
++    return ret;
++  }
++
+   array_chunk::array_chunk()
+     : object{ obj_type, obj_behaviors }
++    , buffer{ make_chunk_buffer() }
+   {
+   }
+ 
+   array_chunk::array_chunk(native_vector<object_ref> const &buffer)
+     : object{ obj_type, obj_behaviors }
+-    , buffer{ buffer }
++    , buffer{ make_chunk_buffer(buffer) }
++  {
++  }
++
++  array_chunk::array_chunk(native_vector<object_ref> &&buffer)
++    : object{ obj_type, obj_behaviors }
++    , buffer{ make_chunk_buffer(std::move(buffer)) }
+   {
+   }
+ 
+   array_chunk::array_chunk(native_vector<object_ref> const &buffer, usize const offset)
+     : object{ obj_type, obj_behaviors }
+-    , buffer{ buffer }
++    , buffer{ make_chunk_buffer(buffer) }
+     , offset{ offset }
+   {
+   }
+ 
+   array_chunk::array_chunk(native_vector<object_ref> &&buffer, usize const offset)
+     : object{ obj_type, obj_behaviors }
+-    , buffer{ std::move(buffer) }
++    , buffer{ make_chunk_buffer(std::move(buffer)) }
++    , offset{ offset }
++  {
++  }
++
++  array_chunk::array_chunk(buffer_ref const buffer, usize const offset)
++    : object{ obj_type, obj_behaviors }
++    , buffer{ buffer }
+     , offset{ offset }
+   {
+   }
+ 
+   array_chunk_ref array_chunk::chunk_next() const
+   {
+-    if(offset == buffer.size())
++    if(offset == buffer->size())
+     {
+       throw std::runtime_error{ "There are no more chunks remaining for `chunk-next`." };
+     }
+-    /* TODO: This copying will be slow. Use a persistent_vector? */
++    /* Shares the buffer: O(1), no copy. */
+     return make_box<array_chunk>(buffer, offset + 1);
+   }
+ 
+   array_chunk_ref array_chunk::chunk_next_in_place()
+   {
+-    if(offset == buffer.size())
++    if(offset == buffer->size())
+     {
+       throw std::runtime_error{ "There are no more chunks remaining for `chunk-next`." };
+     }
+@@ -54,7 +89,7 @@ namespace jank::runtime::obj
+ 
+   usize array_chunk::count() const
+   {
+-    return buffer.size() - offset;
++    return buffer->size() - offset;
+   }
+ 
+   object_ref array_chunk::nth(object_ref const index) const
+@@ -62,13 +97,13 @@ namespace jank::runtime::obj
+     if(is_integral(index))
+     {
+       auto const i(to_i64(index));
+-      if(i < 0 || buffer.size() - offset <= static_cast<size_t>(i))
++      if(i < 0 || buffer->size() - offset <= static_cast<size_t>(i))
+       {
+         throw std::runtime_error{
+           util::format("The index `{}` is out of bounds for this `array_chunk`.", i)
+         };
+       }
+-      return buffer[offset + i];
++      return (*buffer)[offset + i];
+     }
+     else
+     {
+@@ -83,11 +118,11 @@ namespace jank::runtime::obj
+     if(is_integral(index))
+     {
+       auto const i(to_i64(index));
+-      if(i < 0 || buffer.size() - offset <= static_cast<size_t>(i))
++      if(i < 0 || buffer->size() - offset <= static_cast<size_t>(i))
+       {
+         return fallback;
+       }
+-      return buffer[offset + i];
++      return (*buffer)[offset + i];
+     }
+     else
+     {
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/native_vector_sequence.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/native_vector_sequence.cpp
+index d369b098d..c2e7a3042 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/native_vector_sequence.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/native_vector_sequence.cpp
+@@ -4,38 +4,74 @@
+ 
+ namespace jank::runtime::obj
+ {
++  using seq_buffer_ref = native_vector_sequence::buffer_ref;
++
++  static seq_buffer_ref make_seq_buffer()
++  {
++    return jtl::make_ref<native_vector<object_ref>>();
++  }
++
++  static seq_buffer_ref make_seq_buffer(native_vector<object_ref> const &data)
++  {
++    auto ret(make_seq_buffer());
++    *ret = data;
++    return ret;
++  }
++
++  static seq_buffer_ref make_seq_buffer(native_vector<object_ref> &&data)
++  {
++    auto ret(make_seq_buffer());
++    *ret = jtl::move(data);
++    return ret;
++  }
++
++  template <typename It>
++  static auto seq_from(It const begin, usize const index)
++  {
++    return begin + static_cast<typename std::iterator_traits<It>::difference_type>(index);
++  }
++
+   native_vector_sequence::native_vector_sequence()
+     : object{ obj_type, obj_behaviors }
++    , data{ make_seq_buffer() }
+   {
+   }
+ 
+   native_vector_sequence::native_vector_sequence(native_vector<object_ref> const &data, usize index)
+     : object{ obj_type, obj_behaviors }
+-    , data{ data }
++    , data{ make_seq_buffer(data) }
+     , index{ index }
+   {
+-    jank_debug_assert(!this->data.empty());
++    jank_debug_assert(!this->data->empty());
+   }
+ 
+   native_vector_sequence::native_vector_sequence(native_vector<object_ref> &&data)
+     : object{ obj_type, obj_behaviors }
+-    , data{ jtl::move(data) }
++    , data{ make_seq_buffer(jtl::move(data)) }
+   {
+-    jank_debug_assert(!this->data.empty());
++    jank_debug_assert(!this->data->empty());
+   }
+ 
+   native_vector_sequence::native_vector_sequence(native_vector<object_ref> &&data, usize index)
+     : object{ obj_type, obj_behaviors }
+-    , data{ jtl::move(data) }
++    , data{ make_seq_buffer(jtl::move(data)) }
++    , index{ index }
++  {
++    jank_debug_assert(!this->data->empty());
++  }
++
++  native_vector_sequence::native_vector_sequence(buffer_ref const data, usize const index)
++    : object{ obj_type, obj_behaviors }
++    , data{ data }
+     , index{ index }
+   {
+-    jank_debug_assert(!this->data.empty());
++    jank_debug_assert(index < this->data->size());
+   }
+ 
+   native_vector_sequence::native_vector_sequence(object_ref const meta,
+                                                  native_vector<object_ref> &&data)
+     : object{ obj_type, obj_behaviors }
+-    , data{ jtl::move(data) }
++    , data{ make_seq_buffer(jtl::move(data)) }
+     , meta{ meta }
+   {
+   }
+@@ -43,56 +79,56 @@ namespace jank::runtime::obj
+   /* behavior::object_like */
+   bool native_vector_sequence::equal(object const &o) const
+   {
+-    return runtime::equal(o, data.begin(), data.end());
++    return runtime::equal(o, seq_from(data->begin(), index), data->end());
+   }
+ 
+   void native_vector_sequence::to_string(jtl::string_builder &buff) const
+   {
+-    runtime::to_string(data.begin(), data.end(), "(", ')', buff);
++    runtime::to_string(seq_from(data->begin(), index), data->end(), "(", ')', buff);
+   }
+ 
+   jtl::immutable_string native_vector_sequence::to_string() const
+   {
+     jtl::string_builder buff;
+-    runtime::to_string(data.begin(), data.end(), "(", ')', buff);
++    runtime::to_string(seq_from(data->begin(), index), data->end(), "(", ')', buff);
+     return buff.release();
+   }
+ 
+   jtl::immutable_string native_vector_sequence::to_code_string() const
+   {
+     jtl::string_builder buff;
+-    runtime::to_code_string(data.begin(), data.end(), "(", ')', buff);
++    runtime::to_code_string(seq_from(data->begin(), index), data->end(), "(", ')', buff);
+     return buff.release();
+   }
+ 
+   uhash native_vector_sequence::to_hash() const
+   {
+-    return hash::ordered(data.begin(), data.end());
++    return hash::ordered(seq_from(data->begin(), index), data->end());
+   }
+ 
+   /* behavior::seqable */
+   object_ref native_vector_sequence::seq() const
+   {
+-    return data.empty() ? native_vector_sequence_ref{} : runtime::detail::untagged(this);
++    return index >= data->size() ? native_vector_sequence_ref{} : runtime::detail::untagged(this);
+   }
+ 
+   object_ref native_vector_sequence::fresh_seq() const
+   {
+-    return data.empty() ? native_vector_sequence_ref{}
+-                        : make_box<native_vector_sequence>(data, index);
++    return index >= data->size() ? native_vector_sequence_ref{}
++                                 : make_box<native_vector_sequence>(data, index);
+   }
+ 
+   /* behavior::countable */
+   usize native_vector_sequence::count() const
+   {
+-    return data.size() - index;
++    return data->size() - index;
+   }
+ 
+   /* behavior::sequence */
+   object_ref native_vector_sequence::first() const
+   {
+-    jank_debug_assert(index < data.size());
+-    return data[index];
++    jank_debug_assert(index < data->size());
++    return (*data)[index];
+   }
+ 
+   object_ref native_vector_sequence::next() const
+@@ -100,7 +136,7 @@ namespace jank::runtime::obj
+     auto n(index);
+     ++n;
+ 
+-    if(n == data.size())
++    if(n == data->size())
+     {
+       return {};
+     }
+@@ -112,7 +148,7 @@ namespace jank::runtime::obj
+   {
+     ++index;
+ 
+-    if(index == data.size())
++    if(index == data->size())
+     {
+       return {};
+     }
+@@ -122,7 +158,8 @@ namespace jank::runtime::obj
+ 
+   cons_ref native_vector_sequence::conj(object_ref const head)
+   {
+-    return make_box<cons>(head, data.empty() ? object_ref{} : runtime::detail::untagged(this));
++    return make_box<cons>(head,
++                          index >= data->size() ? object_ref{} : runtime::detail::untagged(this));
+   }
+ 
+   native_vector_sequence_ref native_vector_sequence::with_meta(object_ref const m) const
+-- 
+2.43.0
+
