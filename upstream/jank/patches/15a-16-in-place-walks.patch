@@ -1,0 +1,625 @@
+From 01403fe918b7aaa11162576befd1a1e535499e1e Mon Sep 17 00:00:00 2001
+From: cohost u3 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 16:13:06 +0000
+Subject: [PATCH] 15a-16: in-place walks in every runtime walker; no lock on a
+ realized lazy seq or range
+
+Draft: doc/upstream/jank-15-reduce-walk.md (part one) and jank-16-lazy-mutex.md in
+johnmn3/cohost.cljc. Repros: bash dev/research/upstream/run.sh 15-reduce-walk,
+run.sh 16-lazy-mutex (Expected: reduce + over a vector near reduce-kv; first on a
+realized lazy seq near first on a list).
+
+- sequence_range: the walk takes fresh_seq() once and steps with next_in_place()
+  while it owns the seq (object.hpp's ownership rule); a step that hands off to
+  another object (a shared tail, a cached chunk) takes a fresh_seq() of it if it
+  steps in place, else steps it with next(); lazy seqs are unwrapped, so no lazy
+  wrapper is stepped; chunked_cons is stepped with next() (its next_in_place does
+  not cross a chunk boundary). Every make_sequence_range walker gets it: reduce,
+  str, sort, vec, sequence_length, sequence_equal, equal, nth, hashing, apply_to,
+  print/println/pr/prn, the collection constructors.
+- lazy_sequence: an atomic realized flag (release on realize, acquire on read);
+  seq/first/next/fresh_seq take no lock once realized. next_in_place for a lazy
+  seq made by fresh_seq (owned); any other lazy seq steps with next(). The
+  sequence_like_in_place behavior bit is set.
+- range: chunk_ready/next_ready atomic flags; next(), chunked_first(),
+  chunked_next() lock only to build the chunk or the cached next; next_in_place
+  (owner only) takes no lock.
+
+Files: include/cpp/jank/runtime/sequence_range.hpp, src/cpp/jank/runtime/sequence_range.cpp,
+include/cpp/jank/runtime/obj/lazy_sequence.hpp, src/cpp/jank/runtime/obj/lazy_sequence.cpp,
+include/cpp/jank/runtime/obj/range.hpp, src/cpp/jank/runtime/obj/range.cpp.
+---
+ .../cpp/jank/runtime/obj/lazy_sequence.hpp    |  16 +-
+ .../include/cpp/jank/runtime/obj/range.hpp    |   7 +
+ .../cpp/jank/runtime/sequence_range.hpp       | 137 ++++++------------
+ .../cpp/jank/runtime/obj/lazy_sequence.cpp    |  49 +++++--
+ .../src/cpp/jank/runtime/obj/range.cpp        |  47 ++++--
+ .../src/cpp/jank/runtime/sequence_range.cpp   |  83 ++++++++++-
+ 6 files changed, 220 insertions(+), 119 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp
+index 5abdc07d9..1a66e5caf 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/lazy_sequence.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <atomic>
+ #include <mutex>
+ 
+ #include <jtl/option.hpp>
+@@ -18,7 +19,8 @@ namespace jank::runtime::obj
+   {
+     static constexpr object_type obj_type{ object_type::lazy_sequence };
+     static constexpr object_behavior obj_behaviors{ object_behavior::seqable
+-                                                    | object_behavior::sequence_like };
++                                                    | object_behavior::sequence_like
++                                                    | object_behavior::sequence_like_in_place };
+     static constexpr bool pointer_free{ false };
+     static constexpr bool is_sequential{ true };
+ 
+@@ -45,7 +47,9 @@ namespace jank::runtime::obj
+     obj::cons_ref conj(object_ref const head) const;
+ 
+     /* behavior::sequence_like_in_place */
+-    //object_ref next_in_place() override;
++    /* Steps in place only a lazy seq made by fresh_seq() (which owns its inner seq); any
++     * other lazy seq is shared, so this is next() for it. */
++    object_ref next_in_place() override;
+ 
+     /* behavior::realizable */
+     bool is_realized() const;
+@@ -72,5 +76,13 @@ namespace jank::runtime::obj
+     mutable object_ref fn{};
+     mutable object_ref sv{};
+     mutable object_ref s{};
++    /* Set (release) once fn has run and s holds the realized seq; s never changes after
++     * that (except in an owned fresh seq, stepped by its one owner), so a reader that sees
++     * the flag (acquire) reads s without the lock. */
++    mutable std::atomic<bool> realized{ false };
++    /* Made by fresh_seq(): this object and its inner seq belong to one walker. */
++    bool owned{ false };
++    /* For an owned lazy seq: whether the inner seq steps with next_in_place(). */
++    bool inner_owned{ false };
+   };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/range.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/range.hpp
+index e598ca83d..a7e6e1bed 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/range.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/range.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <atomic>
+ #include <mutex>
+ 
+ #include <jtl/option.hpp>
+@@ -71,6 +72,8 @@ namespace jank::runtime::obj
+     obj::array_chunk_ref chunked_first() const;
+     range_ref chunked_next() const;
+     void force_chunk() const;
++    /* force_chunk() behind the lock, or nothing once chunk_ready is set. */
++    void ensure_chunk() const;
+ 
+     /* behavior::conjable */
+     obj::cons_ref conj(object_ref const head) const;
+@@ -95,5 +98,9 @@ namespace jank::runtime::obj
+     mutable range_ref chunk_next{};
+     mutable range_ref cached_next{};
+     lazy_meta meta{};
++    /* Set (release) once chunk and chunk_next are final, and once cached_next is: a reader
++     * that sees the flag (acquire) reads them without the lock. */
++    mutable std::atomic<bool> chunk_ready{ false };
++    mutable std::atomic<bool> next_ready{ false };
+   };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/runtime/sequence_range.hpp b/compiler+runtime/include/cpp/jank/runtime/sequence_range.hpp
+index 7424d8962..24dbcaf17 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/sequence_range.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/sequence_range.hpp
+@@ -6,6 +6,37 @@
+ 
+ namespace jank::runtime
+ {
++  namespace detail
++  {
++    /* The in-place walk every runtime walker uses (`reduce`, `str`, `sort`, `vec`, `count` of a
++     * seq, equality, hashing, `apply`). It follows the ownership rule `object::next_in_place`
++     * documents: the walker owns the seq it advances in place, and it only ever owns a seq it
++     * got from `fresh_seq()` (or that `next_in_place()` handed back as the same object).
++     *
++     *   - `walk_begin` takes a seqable and returns its first seq, made with `fresh_seq()` once;
++     *     a lazy seq is realized and its inner seq is walked, so no lazy wrapper is stepped.
++     *   - `walk_next` steps the seq: with `next_in_place()` while the walker owns it, else with
++     *     `next()`. When the step lands on a different object (a shared tail, a cached next
++     *     chunk), that object is not owned: if it can step in place, the walker takes a
++     *     `fresh_seq()` of it (one allocation per hand-off, not per element); otherwise it is
++     *     stepped with `next()`, which never mutates.
++     *
++     * `owned` says which of the two steps applies to the returned seq. Both return nil when
++     * the walk is over. */
++    object_ref walk_begin(object_ref const s, bool &owned);
++    object_ref walk_next(object_ref const s, bool &owned);
++    /* Whether a seq the walker owns may be stepped with next_in_place(). */
++    bool steps_in_place(object_ref const s);
++    /* An object reached mid-walk: unwrap lazy seqs, take a fresh seq if it steps in place. */
++    object_ref walk_own(object_ref s, bool &owned);
++  }
++
++  /* A single-pass walk over any seqable. `T` is kept for the callers that name it; the walk
++   * itself is untyped, since a seq can hand off to a seq of another type (a cons onto a
++   * vector, a chunked seq onto its tail). Each `begin()` starts a new walk with its own fresh
++   * seq, so a range can be walked more than once; an iterator is an input iterator and must
++   * not be copied and then advanced twice. `data` is the current seq: it is the walker's to
++   * hand out (as `apply` does with its rest args) once the walker stops advancing it. */
+   template <typename T>
+   struct sequence_range
+   {
+@@ -21,8 +52,9 @@ namespace jank::runtime
+       iterator(iterator const &) noexcept = default;
+       iterator(iterator &&) noexcept = default;
+ 
+-      iterator(object_ref const data)
++      iterator(object_ref const data, bool const owned)
+         : data{ data }
++        , owned{ owned }
+       {
+       }
+ 
+@@ -38,7 +70,7 @@ namespace jank::runtime
+ 
+       iterator &operator++()
+       {
+-        data = data.next();
++        data = detail::walk_next(data, owned);
+ 
+         return *this;
+       }
+@@ -56,124 +88,47 @@ namespace jank::runtime
+       iterator &operator=(iterator const &) = default;
+ 
+       object_ref data;
++      bool owned{};
+     };
+ 
+     iterator begin() const
+     {
+-      return { s };
++      bool owned{};
++      auto const data{ detail::walk_begin(s, owned) };
++      return { data, owned };
+     }
+ 
+     iterator end() const
+     {
+-      return { jank_nil };
++      return { jank_nil, false };
+     }
+ 
+     sequence_range skip(usize const n) const
+     {
+-      sequence_range const r{ s };
+-      auto it{ r.begin() };
+-      for(usize i{}; i < n; ++i)
++      auto it{ begin() };
++      for(usize i{}; i < n && it.data.is_some(); ++i)
+       {
+         ++it;
+       }
+ 
++      /* The rest is handed out as a plain seq: a later walk of it takes its own fresh seq. */
+       return { it.data };
+     }
+ 
++    /* The seqable to walk; never mutated by the walk. */
+     object_ref s;
+   };
+ 
++  /* Kept as a name for the walk: the same type as `sequence_range` now. */
+   template <typename T>
+-  struct fresh_sequence_range
+-  {
+-    struct iterator
+-    {
+-      using iterator_category = std::input_iterator_tag;
+-      using difference_type = std::ptrdiff_t;
+-      using value_type = object_ref;
+-      using pointer = object_ref;
+-      using reference = value_type &;
+-
+-      iterator() = default;
+-      iterator(iterator const &) noexcept = default;
+-      iterator(iterator &&) noexcept = default;
+-
+-      iterator(oref<T> const &data)
+-        : data{ data }
+-      {
+-      }
+-
+-      auto operator*() const
+-      {
+-        return data->first();
+-      }
+-
+-      auto operator->() const
+-      {
+-        return data->first();
+-      }
+-
+-      iterator &operator++()
+-      {
+-        data = data->next_in_place();
+-
+-        return *this;
+-      }
+-
+-      bool operator!=(iterator const &rhs) const
+-      {
+-        return data != rhs.data;
+-      }
+-
+-      bool operator==(iterator const &rhs) const
+-      {
+-        return data == rhs.data;
+-      }
+-
+-      iterator &operator=(iterator const &) = default;
+-
+-      oref<T> data;
+-    };
+-
+-    iterator begin() const
+-    {
+-      return { s };
+-    }
+-
+-    iterator end() const
+-    {
+-      return { jank_nil };
+-    }
+-
+-    fresh_sequence_range skip(usize const n) const
+-    {
+-      sequence_range const r{ s };
+-      auto it{ r.begin() };
+-      for(usize i{}; i < n; ++i)
+-      {
+-        ++it;
+-      }
+-
+-      return { it.data };
+-    }
+-
+-    oref<T> s;
+-  };
++  using fresh_sequence_range = sequence_range<T>;
+ 
+   template <typename T>
+   requires behavior::seqable<T>
+   auto make_sequence_range(oref<T> const s)
+   {
+     using S = typename decltype(s->seq())::value_type;
+-
+-    //if constexpr(S::obj_behaviors & object_behavior::sequence_like_in_place )
+-    //{
+-    //  return fresh_sequence_range<S>{ s.is_some() ? s->fresh_seq() : oref<S>{} };
+-    //}
+-    //else
+-    {
+-      return sequence_range<S>{ s.is_some() ? s->seq() : s };
+-    }
++    return sequence_range<S>{ s.erase() };
+   }
+ 
+   sequence_range<object_ref> make_sequence_range(object_ref const s);
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp
+index cea1b305f..c74110879 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/lazy_sequence.cpp
+@@ -7,12 +7,14 @@
+ #include <jank/runtime/rtti.hpp>
+ #include <jank/runtime/core/seq.hpp>
+ #include <jank/runtime/core/to_string.hpp>
++#include <jank/runtime/sequence_range.hpp>
+ #include <jank/util/fmt/print.hpp>
+ 
+ namespace jank::runtime::obj
+ {
+   lazy_sequence::lazy_sequence()
+     : object{ obj_type, obj_behaviors }
++    , realized{ true }
+   {
+   }
+ 
+@@ -27,12 +29,12 @@ namespace jank::runtime::obj
+     : object{ obj_type, obj_behaviors }
+     , fn{ fn }
+     , s{ sequence }
++    , realized{ fn.is_nil() }
+   {
+   }
+ 
+   object_ref lazy_sequence::seq() const
+   {
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
+     return realize();
+   }
+ 
+@@ -44,10 +46,14 @@ namespace jank::runtime::obj
+       return {};
+     }
+ 
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
+-    auto const r(s.fresh_seq());
++    /* The inner seq is this new object's own copy, as before; callers such as doseq take
++     * it out with seq() and step it in place themselves. */
++    auto const r(ret.fresh_seq());
+     jank_debug_assert(r.is_some());
+-    return make_box<lazy_sequence>(jank_nil, r);
++    auto const fresh{ make_box<lazy_sequence>(jank_nil, r) };
++    fresh->owned = true;
++    fresh->inner_owned = runtime::detail::steps_in_place(r);
++    return fresh;
+   }
+ 
+   object_ref lazy_sequence::first() const
+@@ -58,8 +64,7 @@ namespace jank::runtime::obj
+       return ret;
+     }
+ 
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
+-    return runtime::first(s);
++    return runtime::first(ret);
+   }
+ 
+   object_ref lazy_sequence::next() const
+@@ -70,9 +75,24 @@ namespace jank::runtime::obj
+       return {};
+     }
+ 
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
+-    auto const n(runtime::next(s));
+-    return n;
++    return runtime::next(ret);
++  }
++
++  object_ref lazy_sequence::next_in_place()
++  {
++    if(!owned)
++    {
++      return next();
++    }
++
++    /* fresh_seq() made this object realized, with an inner seq it owns: no lock. */
++    auto const n{ runtime::detail::walk_next(s, inner_owned) };
++    if(n.is_nil())
++    {
++      return {};
++    }
++    s = n;
++    return runtime::detail::untagged(this);
+   }
+ 
+   bool lazy_sequence::equal(object const &o) const
+@@ -112,6 +132,12 @@ namespace jank::runtime::obj
+ 
+   object_ref lazy_sequence::realize() const
+   {
++    /* Realized: s is final, read it without the lock. */
++    if(realized.load(std::memory_order_acquire))
++    {
++      return s;
++    }
++
+     std::lock_guard<std::recursive_mutex> const lock{ mutex };
+     force();
+     if(sv.is_some())
+@@ -124,6 +150,7 @@ namespace jank::runtime::obj
+       }
+       s = ls.seq();
+     }
++    realized.store(true, std::memory_order_release);
+     return s;
+   }
+ 
+@@ -162,6 +189,10 @@ namespace jank::runtime::obj
+ 
+   bool lazy_sequence::is_realized() const
+   {
++    if(realized.load(std::memory_order_acquire))
++    {
++      return true;
++    }
+     std::lock_guard<std::recursive_mutex> const lock{ mutex };
+     return fn.is_nil() || sv.is_some();
+   }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/range.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/range.cpp
+index 7a9198edf..b42f7cca4 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/range.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/range.cpp
+@@ -76,6 +76,7 @@ namespace jank::runtime::obj
+     , bounds_check{ bounds_check }
+     , chunk{ chunk }
+     , chunk_next{ chunk_next }
++    , chunk_ready{ chunk.is_some() }
+   {
+   }
+ 
+@@ -162,33 +163,49 @@ namespace jank::runtime::obj
+     chunk_next = make_box<range>(val, end, step, bounds_check);
+   }
+ 
+-  object_ref range::next() const
++  void range::ensure_chunk() const
+   {
++    if(chunk_ready.load(std::memory_order_acquire))
++    {
++      return;
++    }
+     std::lock_guard<std::recursive_mutex> const lock{ mutex };
+-    if(cached_next.is_some())
++    force_chunk();
++    chunk_ready.store(true, std::memory_order_release);
++  }
++
++  object_ref range::next() const
++  {
++    if(next_ready.load(std::memory_order_acquire))
+     {
+       return cached_next;
+     }
+ 
+-    force_chunk();
++    ensure_chunk();
+     if(chunk->count() > 1)
+     {
+-      auto const smaller_chunk(chunk->chunk_next());
+-      cached_next = make_box<range>(smaller_chunk->nth(make_box(0)),
+-                                    end,
+-                                    step,
+-                                    bounds_check,
+-                                    smaller_chunk,
+-                                    chunk_next);
++      std::lock_guard<std::recursive_mutex> const lock{ mutex };
++      if(cached_next.is_nil())
++      {
++        auto const smaller_chunk(chunk->chunk_next());
++        cached_next = make_box<range>(smaller_chunk->nth(make_box(0)),
++                                      end,
++                                      step,
++                                      bounds_check,
++                                      smaller_chunk,
++                                      chunk_next);
++        next_ready.store(true, std::memory_order_release);
++      }
+       return cached_next;
+     }
+     return chunked_next();
+   }
+ 
++  /* Only the walker that owns this range (it came from fresh_seq()) calls this, so the
++   * in-place step takes no lock. */
+   object_ref range::next_in_place()
+   {
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
+-    force_chunk();
++    ensure_chunk();
+     if(chunk->count() > 1)
+     {
+       chunk = chunk->chunk_next_in_place();
+@@ -200,15 +217,13 @@ namespace jank::runtime::obj
+ 
+   array_chunk_ref range::chunked_first() const
+   {
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
+-    force_chunk();
++    ensure_chunk();
+     return chunk;
+   }
+ 
+   range_ref range::chunked_next() const
+   {
+-    std::lock_guard<std::recursive_mutex> const lock{ mutex };
+-    force_chunk();
++    ensure_chunk();
+     if(chunk_next.is_nil())
+     {
+       return {};
+diff --git a/compiler+runtime/src/cpp/jank/runtime/sequence_range.cpp b/compiler+runtime/src/cpp/jank/runtime/sequence_range.cpp
+index 28d247b5d..6f9615965 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/sequence_range.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/sequence_range.cpp
+@@ -2,8 +2,89 @@
+ 
+ namespace jank::runtime
+ {
++  namespace detail
++  {
++    /* chunked_cons is left out: its next_in_place() does not hand off to its tail correctly
++     * at a chunk boundary, so the walk steps it with next(), as before. */
++    bool steps_in_place(object_ref const s)
++    {
++      return s.has_behavior(object_behavior::sequence_like_in_place)
++        && s.get_type() != object_type::chunked_cons;
++    }
++
++    object_ref walk_own(object_ref s, bool &owned)
++    {
++      owned = false;
++      while(s.is_some() && s.get_type() == object_type::lazy_sequence)
++      {
++        s = s.seq();
++      }
++      if(s.is_nil())
++      {
++        return {};
++      }
++      if(steps_in_place(s))
++      {
++        auto const fresh{ s.fresh_seq() };
++        if(fresh.is_nil())
++        {
++          return {};
++        }
++        owned = true;
++        return fresh;
++      }
++      return s;
++    }
++
++    object_ref walk_begin(object_ref const s, bool &owned)
++    {
++      owned = false;
++      if(s.is_nil())
++      {
++        return {};
++      }
++      if(s.get_type() == object_type::lazy_sequence)
++      {
++        return walk_own(s.seq(), owned);
++      }
++
++      /* One allocation for the whole walk: a collection makes a new seq, a seq copies itself. */
++      auto const fresh{ s.fresh_seq() };
++      if(fresh.is_nil())
++      {
++        return {};
++      }
++      if(fresh.get_type() == object_type::lazy_sequence)
++      {
++        return walk_own(fresh.seq(), owned);
++      }
++      owned = steps_in_place(fresh);
++      return fresh;
++    }
++
++    object_ref walk_next(object_ref const s, bool &owned)
++    {
++      if(owned)
++      {
++        auto n{ s.next_in_place() };
++        if(n.is_nil())
++        {
++          return {};
++        }
++        if(n == s)
++        {
++          return n;
++        }
++        /* Handed off to another object (a tail, a cached chunk): not ours until copied. */
++        return walk_own(n, owned);
++      }
++
++      return walk_own(s.next(), owned);
++    }
++  }
++
+   sequence_range<object_ref> make_sequence_range(object_ref const s)
+   {
+-    return sequence_range<object_ref>{ s.is_some() ? s.seq() : s };
++    return sequence_range<object_ref>{ s };
+   }
+ }
+-- 
+2.43.0
+
