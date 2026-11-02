@@ -201,6 +201,17 @@
              (host/try-all (fn [] (some? (host/interned-var ns-sym nm))) (fn [_] false)))
     (snap! {:op :declare :ns ns-sym :sym nm})))
 
+(def ^:private snap-load-scoped
+  "The vars a library's load binds (with-load-bindings): a top-level set! of
+   one changes nothing after the load, and a replay outside that binding
+   could not set! it, so it is not recorded."
+  #{'*warn-on-reflection* '*unchecked-math*})
+
+(defn- snap-skip-form?
+  [form]
+  (and (seq? form) (= 'set! (first form)) (symbol? (second form))
+       (contains? snap-load-scoped (symbol (name (second form))))))
+
 (defn- snap-module
   "The namespace of the snapshot module an event belongs to: the library
    being loaded, else the core."
@@ -417,14 +428,14 @@
                    v (if-not (profiling)
                        (let [rewritten (rw/rewrite c form')
                              v (host/eval-form rewritten)]
-                         (when @snapshot-log (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
+                         (when (and @snapshot-log (not (snap-skip-form? form'))) (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
                          v)
                        (let [t0 (host/nano-time)
                              rewritten (rw/rewrite c form')
                              t1 (host/nano-time)
                              v (host/eval-form rewritten)
                              t2 (host/nano-time)]
-                         (when @snapshot-log (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
+                         (when (and @snapshot-log (not (snap-skip-form? form'))) (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
                          (profile-add! :rewrite (- t1 t0))
                          (profile-add! :eval (- t2 t1))
                          (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form)))

@@ -719,6 +719,21 @@ What each host can cache, measured on one box (lane D's; times are not comparabl
 | ClojureScript (Node 24.22.1) | 53.161 s (the cljs build included); 518/87/46/140/0, 143/145, 61/61 | not probed (its boot is seconds once built) | the compiled JS of a generated module (cljs.main caches the build). |
 | jolt v0.8.23 | 11.391 s; 466/199/63/63/0, 145/145, 61/61 | not probed (the fastest boot) | -- |
 
+### Basilisp's cached boot (D-6)
+
+Built as ranked: `bb boot:lpy-snapshot` records a Basilisp boot with the twelve libraries (`dev/perf/lpy_snapshot_record.lpy`, D-1's record mode, unchanged), emits one `.lpy` module per booted namespace (`dev/perf/jank_snapshot_emit.clj --host lpy`) into `target/lpy-snapshot/src/`, and loads them once so Basilisp compiles their bytecode (`__pycache__/*.lpyc`). Its key (`dev/perf/lpy_snapshot_ensure.clj`) is one sha256 over the stock sources, `src/cohost`, the emitter and the `lpy_snapshot_*` scripts, and `basilisp version`; a stale one is rebuilt (`LPY-SNAPSHOT-STALE another key` after an emitter change, shown), never loaded. `bb boot:lpy` boots from it when it is fresh, else boots as before. A build: 184,127 ms.
+
+The emitter's Basilisp dialect: `.lpy` files, `basilisp.core/ns` headers (the replay's first call clears the refers Basilisp's ns form always makes), `(quote ns//)` written `(basilisp.core/symbol "ns" "/")` (Basilisp's reader takes no qualified `/`), Basilisp's reader position meta dropped. Two record/emit fixes it needed, for every host: a top-level `set!` of `*warn-on-reflection*` / `*unchecked-math*` is not recorded (it runs inside the load's binding; replayed outside it, it throws), and a regex is written with `\r \n \t` escaped (a raw CR in a `.lpy` becomes LF when Python reads it).
+
+`basilisp run -p src dev/perf/lpy_snapshot_run.lpy` (boot!) against `bb boot:lpy` (fresh cache), alternating, `BOOT-MS` the boot alone:
+
+| | runs (BOOT-MS) | median | process (boot + batteries) | battery, libraries |
+|---|---|---:|---|---|
+| boot! | 55087.051 / 55374.238 / 55274.832 | 55,275 ms | 1 m 58.101 s / 1 m 56.750 s / 1 m 55.722 s | 144/145, 61/61 |
+| the cached boot | 2994.445 / 3099.626 / 3418.538 | 3,100 ms | 21.642 / 22.889 / 23.480 s | 144/145, 61/61 |
+
+17.8x on the boot. The battery's one failure is the same on both: numeric tower, `(= 1 1.0)` is `true` on Basilisp (doc/REPORT.md).
+
 ## Basilisp, ClojureWasm, Phel, let-go
 
 Boots, 2026-11-02. basilisp `bb boot:lpy`: stock 529, host 130, natives 36, skipped 96, errors 0, battery 143/145, libraries 61/61. ClojureWasm `bb boot:cljw`: stock 555, host 145, skipped 91, errors 0, battery 143/145, libraries 61/61. Phel `bb boot:phel`: stock 591, host 73, skipped 127, errors 0, battery 145/145, libraries 61/61. let-go `bb boot:lg`: stock 569, host 105, skipped 117, errors 0, battery 143/145, libraries 61/61.
