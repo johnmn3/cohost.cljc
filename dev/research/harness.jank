@@ -1,0 +1,24 @@
+;; dev/research: shared timing harness for raw-jank probes (lane R, R-1).
+;; Prepended to each probe by dev/research/run-jank.sh. Clock: jank's
+;; current_time (nanoseconds). Each case warms until 2 s have passed (at least
+;; once), then runs 5 timed calls; median-ns is the middle sample. Every call's
+;; result is folded into a volatile sink so a constant-result loop cannot be
+;; dropped by the optimizer; the printed result is the last call's.
+(def __sink (volatile! 0))
+(defn __eat [r] (vreset! __sink (+ @__sink (if (number? r) r (count (str r))))) r)
+(defn __time-ns [f]
+  (let [t0 (cpp/jank.runtime.current_time)
+        r (f)
+        t1 (cpp/jank.runtime.current_time)]
+    (__eat r)
+    [(- t1 t0) r]))
+(defn bench [label f]
+  (let [t0 (cpp/jank.runtime.current_time)]
+    (loop [n 1]
+      (f)
+      (when (< (- (cpp/jank.runtime.current_time) t0) 2000000000)
+        (recur (inc n)))))
+  (let [rs (vec (repeatedly 5 #(__time-ns f)))
+        ns (sort (map first rs))]
+    (println label "runs-ns" (apply str (interpose " " (map first rs)))
+             "median-ns" (nth (vec ns) 2) "result" (pr-str (second (last rs))))))
