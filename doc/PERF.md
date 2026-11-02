@@ -710,6 +710,68 @@ min-max of the 10 timed calls / the cold call (the first call in a fresh process
   x16.61 and x25.85. On the JVM one call of the 10 at depth 14 took 128.6 ms (median 9.3 ms), a collector pause
   inside the timed calls; the min-max columns show it.
 
+### The sentinel table (jank-MAX X1-2): seven rows, one command
+
+Two more sentinels, same shape as the three above:
+
+- `lazy-pipeline`: `(count (filter odd? (map inc (range 1000000))))`, 500000; every element crosses three lazy
+  seqs (U3's in-place walks and lazy lock, U4's internal reduce and chunks; jank-15, 16, 17).
+- `keyword-map`: 1000000 `get` + `assoc` pairs on a 16-key map whose keys are 30-character keywords
+  (`:keyword-map-sentinel-key-alpha` ...), with a checksum kept under 2^20 so no integer width changes it
+  (U2's keyword hash; jank-14). 218003 on the JVM.
+
+The command (the coordinator runs it after every merged patch):
+
+```
+bb bench:programs sentinels              # measure jank-aot and jank on the seven rows, jvm only where it has no record, print the table
+bb bench:programs sentinels table        # print only, from the records
+JANK_BIN=<path> bb bench:programs sentinels   # the same on another jank binary
+```
+
+Under `JANK_BIN` the jank targets' records go to `target/bench-programs/results/<target>-<tag>.edn`, the tag being the
+first 12 hex digits of the sha256 of the binary's real path (the same tag as its AOT roots), so a source build's rows
+never overwrite the apt binary's and either table can be printed again later. The JVM records are shared.
+
+Measured 2026-11-02, 12:44 PM to 1:06 PM ET, cohost `max/x1` @ c3c76cb (max/main 0271898 merged). The box has 4 CPUs
+and was shared with two other lanes, unserialized: the apt run and the u2-binary run overlapped from 12:56 PM to
+1:04 PM ET, with other lanes' builds and benches running too. So compare the two tables row by row for large factors
+only. The JVM medians for lazy-pipeline and keyword-map were measured in this run; the other five JVM records were
+already in this checkout from the X1-1 done-bar re-run, and the command does not re-measure them.
+
+`bb bench:programs sentinels` on apt jank 0.1-noble (log `/home/user/logs/x1-sentinels-apt.log` on the lane box):
+
+| program | size | jvm | jank-aot | jank |
+|---|---:|---:|---:|---:|
+| binary-trees-14 | 14 | 13.474 | 119.482 (x8.87) | 259.437 (x19.25) |
+| binary-trees-14-hinted | 14 | 11.973 | 111.824 (x9.34) | 257.988 (x21.55) |
+| sum-overflow | 1000000 | 14.178 | 69.040 DIFFER | 119.049 DIFFER |
+| sum-overflow-hinted | 1000000 | 0.608 | 11.801 DIFFER | 16.075 DIFFER |
+| sort | 100000 | 38.737 | 17215.731 (x444.43) | 122.020 (x3.15) |
+| lazy-pipeline | 1000000 | 35.656 | 1042.084 (x29.23) | 4297.217 (x120.52) |
+| keyword-map | 1000000 | 90.400 | 614.343 (x6.80) | 1144.508 (x12.66) |
+
+`JANK_BIN=/usr/local/lib/jank-u2/bin/jank bb bench:programs sentinels`: u2's build, src f3d82d65 with patches
+11, 13, 14 (sorted walk, `=` inline, keyword hash; records tag `-bfe39dde20e3`):
+
+| program | size | jvm | jank-aot | jank |
+|---|---:|---:|---:|---:|
+| binary-trees-14 | 14 | 13.474 | 159.199 (x11.82) | 292.704 (x21.72) |
+| binary-trees-14-hinted | 14 | 11.973 | 162.473 (x13.57) | 310.971 (x25.97) |
+| sum-overflow | 1000000 | 14.178 | 91.746 DIFFER | 171.123 DIFFER |
+| sum-overflow-hinted | 1000000 | 0.608 | 8.854 DIFFER | 3.313 DIFFER |
+| sort | 100000 | 38.737 | 50.393 (x1.30) | 157.493 (x4.07) |
+| lazy-pipeline | 1000000 | 35.656 | 1619.950 (x45.43) | 2484.581 (x69.68) |
+| keyword-map | 1000000 | 90.400 | 439.950 (x4.87) | 664.527 (x7.35) |
+
+- `sort` shows U2-1 (jank-11) on the suite. On jank's own core it fell from 17215.731 ms (min-max
+  12437.249-21181.731) to 50.393 ms (45.232-54.502), x444 to x1.30 the JVM. Cohost on jank was already off jank's
+  `sort` (122.020 and 157.493 ms, inside the noise of this window).
+- `keyword-map`, jank-aot: 614.343 ms (537.892-648.671) on apt, 439.950 ms (368.565-508.468) on u2's build. The
+  ranges do not overlap, but the window was shared, so U2-3's own measure should confirm the change.
+- `sum-overflow` prints `DIFFER: 1783293664, JVM 499999500000` on both binaries; neither carries U1's patch.
+- `lazy-pipeline` is x29 (jank-aot) and x121 (cohost on jank) on apt. u2's build carries no walk patch, and its
+  jank-aot min-max (1281.872-4429.067) shows the noise of this shared window.
+
 ## Cohost AOT optimization level
 
 `bb boot:jank` calls `jank-aot-dir` (`bb.edn` lines 14-15), which loads `dev/perf/jank_aot_ensure.clj`. The recompile is one command, `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot`, at `dev/perf/jank_aot_ensure.clj:68-69`. That `-O3` covers `cohost.run` and the namespaces it depends on, including `cohost.shim` and `cohost.hosts.jank-host`. The script requires `cohost/shim.o` and `cohost/hosts/jank_host.o` in that same cache. There is no environment variable for the level. jank's own flag is `-O` / `--optimization`, values 0 through 3. The boot does not read it from the environment. The level is the literal `-O3` on that line, so the default is already `-O3`. `bb bench:programs jank` loads those objects. A second target would repeat the same compile. Default and `-O3` are that run: fib median `126.469398` ms, and the geometric mean of cohost `-O3` / default is `1`.
