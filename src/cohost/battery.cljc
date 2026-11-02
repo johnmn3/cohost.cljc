@@ -129,7 +129,7 @@
    ["Pattern.pattern and toString" "[(.pattern #\"a.b\") (.toString (re-pattern (str (.pattern #\"a\") \"|\" (.pattern #\"b\"))))]" ["a.b" "a|b"]]
    ["Math/round at the edges" "[(Math/round 0.49999999999999994) (Math/round -2.5) (Math/round 2.5)]" [0 -2 3]]
    ["clojure.string/split: a String separator; nil" "(do (require 'clojure.string) [(try (clojure.string/split \"a b\" \" \") (catch ClassCastException e :cce)) (try (clojure.string/split nil #\",\") (catch NullPointerException e :npe)) (clojure.string/split \"a,b\" #\",\")])" [:cce :npe ["a" "b"]]]
-   ["each form is read after the one before it runs" "(ns bt.q) (def k ::kk) (in-ns 'cohost.user) bt.q/k" :bt.q/kk]
+   ["each form is read after the one before it runs" "(ns bt.q) (def k ::kk) (ns bt.r) bt.q/k" :bt.q/kk]
    ["Object.hashCode is Java's" "[(.hashCode \"hello\") (.hashCode 5) (.hashCode -2) (.hashCode true) (.hashCode \\a)]" [99162322 5 1 1231 97]]
    ["a hinted argument is checked (transients, CharSequence)" "[(try (assoc! {:a 1} :b 2) (catch ClassCastException e :cce)) (try (conj! [1] 2) (catch ClassCastException e :cce)) (try (clojure.string/blank? 1) (catch ClassCastException e :cce)) (try (clojure.string/split 1 #\"a\") (catch ClassCastException e :cce)) (persistent! (assoc! (transient {}) :a 1))]" [:cce :cce :cce :cce {:a 1}]]
    ["metadata is a map" "[(try (atom nil :meta 5) (catch ClassCastException _ :cce)) (meta (atom nil :meta {:a 1}))]" [:cce {:a 1}]]

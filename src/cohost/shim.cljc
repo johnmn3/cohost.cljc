@@ -50,6 +50,7 @@
 (def ^:private h-reduced? (host/capability :reduced?))
 (def ^:private h-pending? (host/capability :pending?))
 (def ^:private h-multifn? (host/capability :multifn?))
+(def ^:private h-multifn-op (host/capability :multifn-op))
 (def ^:private h-delay? (host/capability :delay?))
 (def ^:private h-decimal? (host/capability :decimal?))
 (def ^:private h-uuid? (host/capability :uuid?))
@@ -157,6 +158,21 @@
     clojure.lang.LazySeq [clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IPending clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
     clojure.lang.Cons [clojure.lang.ISeq clojure.lang.ASeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
     clojure.lang.ASeq [clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.lang.Object]
+    clojure.lang.LongRange [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.Range [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.Iterate [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.Repeat [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.Cycle [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.StringSeq [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Indexed clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.PersistentVector$ChunkedSeq [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IChunkedSeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.PersistentList$EmptyList [clojure.lang.IPersistentList clojure.lang.ISeq clojure.lang.ASeq clojure.lang.IPersistentCollection clojure.lang.IPersistentStack clojure.lang.Sequential clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta clojure.lang.IReduce clojure.lang.IReduceInit java.util.List java.lang.Object]
+    clojure.lang.APersistentMap$KeySeq [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.APersistentMap$ValSeq [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.PersistentArrayMap$Seq [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.PersistentHashMap$NodeSeq [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.PersistentTreeMap$Seq [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.APersistentVector$RSeq [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Counted clojure.lang.Indexed clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
+    clojure.lang.ArraySeq [clojure.lang.ASeq clojure.lang.ISeq clojure.lang.IChunkedSeq clojure.lang.IPersistentCollection clojure.lang.Sequential clojure.lang.Indexed clojure.lang.Counted clojure.lang.IObj clojure.lang.IMeta java.util.List java.lang.Object]
     clojure.lang.Symbol [clojure.lang.Named clojure.lang.IObj clojure.lang.IMeta clojure.lang.IFn java.lang.Comparable java.lang.Object]
     clojure.lang.Keyword [clojure.lang.Named clojure.lang.IFn java.lang.Comparable java.lang.Object]
     clojure.lang.Var [clojure.lang.IRef clojure.lang.IReference clojure.lang.IDeref clojure.lang.IMeta clojure.lang.IFn clojure.lang.Settable java.lang.Object]
@@ -278,11 +294,47 @@
      :jank (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))] (:name d) (type x))
      :default (type x)))
 
+(def ^:private host-seq-tokens
+  "The specialized seq classes a host's own seqs carry (the JVM's
+   range / iterate / repeat / chunked classes): when a seq value is
+   one of the host's own objects of these classes, class-of names
+   it, instead of flattening every seq to Cons (M-11). Built from a
+   quoted list, not a quoted set: let-go reads a set literal inside
+   a quoted form as a (hash-set ...) list, and contains? on that
+   list throws on let-go -- the token-ancestors table's own warning."
+  (set '(clojure.lang.LongRange clojure.lang.Range clojure.lang.Iterate
+         clojure.lang.Repeat clojure.lang.Cycle clojure.lang.StringSeq
+         clojure.lang.PersistentVector$ChunkedSeq
+         clojure.lang.PersistentList$EmptyList
+         clojure.lang.APersistentMap$KeySeq clojure.lang.APersistentMap$ValSeq
+         clojure.lang.PersistentArrayMap$Seq
+         clojure.lang.PersistentHashMap$NodeSeq
+         clojure.lang.PersistentTreeMap$Seq
+         clojure.lang.APersistentVector$RSeq clojure.lang.ArraySeq)))
+
+(defn- host-seq-token
+  "x's specialized host seq class token, or nil when x's own class
+   is not one of them (a host Cons, a shim stand-in seq). The
+   host's type token is a symbol on some hosts and a class object
+   on others (whose str is class-prefixed), so the comparison is
+   by class name, and the answer is the name as a symbol --
+   class-of's tokens are symbols."
+  [x]
+  (let [t (type-of x)
+        n (str t)
+        n (if (and (>= (count n) 6) (= (subs n 0 6) "class "))
+            (subs n 6)
+            n)]
+    (when (contains? host-seq-tokens (symbol n)) (symbol n))))
+
+(declare Charset?)
+
 (defn class-of
   "The JVM class token (a symbol) of a host value."
   [x]
   (cond
     (nil? x) nil
+    (Charset? x) 'java.nio.charset.Charset
     (string? x) 'java.lang.String
     (boolean? x) 'java.lang.Boolean
     (h-char? x) 'java.lang.Character
@@ -303,6 +355,7 @@
                    :else 'clojure.lang.PersistentArrayMap)
     (host-queue? x) 'clojure.lang.PersistentQueue
     (set? x) (if (h-sorted? x) 'clojure.lang.PersistentTreeSet 'clojure.lang.PersistentHashSet)
+    (host-seq-token x) (host-seq-token x)
     (list? x) 'clojure.lang.PersistentList
     (seq? x) 'clojure.lang.Cons
     (h-atom? x) 'clojure.lang.Atom
@@ -704,6 +757,7 @@
                                         (integer? x) x
                                         :else (d2l (RT-doubleCast x) long-min-value 9223372036854775807))))
 (def RT-uncheckedDoubleCast RT-doubleCast)
+
 (def RT-uncheckedFloatCast RT-floatCast)
 (def RT-uncheckedCharCast RT-charCast)
 (def RT-uncheckedByteCast (fn [x] (when (h-char? x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 128) 255) 128)))
@@ -820,6 +874,23 @@
 (def Numbers-unchecked_int_negate (fn [x] (wrap32 (- (wrap32 x)))))
 (def Numbers-unchecked_int_remainder (fn [x y] (rem (wrap32 x) (wrap32 y))))
 (def Numbers-toBigInt (host-fn 'bigint identity))
+
+;; a ^long / ^double RETURN on the JVM is the unchecked cast, not the
+;; checked one: a BigInt keeps its low 64 bits, a double saturates
+;; (NaN is 0), a non-number is a ClassCastException, and nil is a
+;; NullPointerException (a primitive cannot hold it). The wrap's
+;; modulus is built from BigInts: 2^64 itself overflows a long.
+(defn- wrap64 [b]
+  (let [two32 (Numbers-toBigInt 4294967296)
+        two64 (* two32 two32)
+        m (mod b two64)]
+    (if (>= m (/ two64 2)) (- m two64) m)))
+(def prim-ret-long (fn [x] (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot cast null to a primitive long"))
+                                 (h-bigint? x) (wrap64 x)
+                                 :else (RT-uncheckedLongCast x))))
+(def prim-ret-double (fn [x] (if (nil? x)
+                               (throw (host/ex* 'java.lang.NullPointerException "Cannot cast null to a primitive double"))
+                               (RT-doubleCast x))))
 (def Numbers-toBigDecimal (host-fn 'bigdec identity))
 (def Numbers-rationalize (host-fn 'rationalize identity))
 (def Numbers-booleans identity)
@@ -839,8 +910,22 @@
                           (to-array* (take size (concat (map cast init-or-seq) (repeat zero))))
                           (to-array* (repeat size (cast init-or-seq)))))))
 (def Numbers-boolean_array (typed-array false boolean))
-(def Numbers-byte_array (typed-array 0 RT-byteCast))
-(def Numbers-char_array (typed-array (RT-charCast 0) RT-charCast))
+;; byte and char arrays come from the host's own makers where the
+;; host has them (jolt, the JVM, jank): a generic object array is
+;; refused by the host's stream members (OutputStream/write) and
+;; misread by its arraycopy, where a real byte[] is what the JVM's
+;; code holds. Hosts without them keep the object-array stand-in,
+;; which the shim's own doors tell apart by element kind (M-11).
+(defn- host-typed-array [host-fn-name zero cast]
+  (let [fallback (typed-array zero cast)]
+    (if-let [h (host-fn host-fn-name nil)]
+      (fn ([size-or-seq] (h (if (number? size-or-seq)
+                              size-or-seq
+                              (map cast size-or-seq))))
+          ([size init-or-seq] (fallback size init-or-seq)))
+      fallback)))
+(def Numbers-byte_array (host-typed-array 'byte-array 0 RT-byteCast))
+(def Numbers-char_array (host-typed-array 'char-array (RT-charCast 0) RT-charCast))
 (def Numbers-short_array (typed-array 0 RT-shortCast))
 (def Numbers-float_array (typed-array 0.0 RT-floatCast))
 (def Numbers-int_array (typed-array 0 RT-intCast))
@@ -921,8 +1006,30 @@
                       ns-sym (fn [ns] (if (h-namespace? ns) (nn ns) ns))]
                   (fn ([ns sym] (cn (ns-sym ns))
                                 (if in (in (ns-sym ns) sym) (host/intern! (ns-sym ns) sym nil)))
-                    ([ns sym val] (cn (ns-sym ns)) (host/intern! (ns-sym ns) sym val)))))
-(def Var-find (host-fn 'find-var (fn [sym] (get (host/ns-interns-map (symbol (namespace sym))) (symbol (name sym))))))
+                    ([ns sym val] (when (symbol? ns)
+                                    (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Namespace ns))))
+                                  (cn (ns-sym ns)) (host/intern! (ns-sym ns) sym val)))))
+(declare Namespace-find)
+(def Var-find (fn [sym]
+                (when-not (namespace sym)
+                  (throw (host/ex* 'java.lang.IllegalArgumentException "Symbol must be namespace-qualified")))
+                (let [ns (symbol (namespace sym))]
+                  (when (nil? (Namespace-find ns))
+                    (throw (host/ex* 'java.lang.IllegalArgumentException (str "No such namespace: " ns))))
+                  ;; the mappings of the namespace OBJECT, interned
+                  ;; entries only: Namespace-find + the ns-map host fn
+                  ;; are the path the booted core itself walks, and on
+                  ;; jolt they reach the booted world's var objects --
+                  ;; the by-symbol interns map and the host's the-ns
+                  ;; resolve a different registry's vars, so Var/find
+                  ;; was not identical (nor =) to (var sym)
+                  (let [nso (Namespace-find ns)
+                        nm (host-fn 'ns-map nil)
+                        v (when (and nso nm) (get (nm nso) (symbol (name sym))))]
+                    (if (and v (= ns (let [n (host/var-ns v)]
+                                       (if (h-namespace? n) (host/ns-name* n) n))))
+                      v
+                      (get (host/ns-interns-map ns) (symbol (name sym))))))))
 ;; Var.create(): an anonymous var (with-local-vars). The hosts have no
 ;; anonymous vars, so one is interned under a fresh name in a scratch namespace
 ;; and made dynamic, which is what pushThreadBindings asks of it.
@@ -1068,11 +1175,29 @@
 (def EdnReader-readString (fn [s opts] (host/edn-read-string opts s)))
 (def PersistentVector-create (fn [coll] (vec coll)))
 (def PersistentVector-EMPTY [])
-(def Range-create (fn ([end] (range end)) ([start end] (range start end)) ([start end step] (range start end step))))
+;; the seq classes' creates delegate to the host's own fns, bound at
+;; shim load before the stock core overlays them (the pattern
+;; PersistentTreeMap-create uses for sorted-map): a host whose range
+;; answers with its specialized seq classes (LongRange, Range,
+;; Iterate, Repeat on the JVM-shaped hosts) gives the stock core
+;; those classes too, where the stock fns' own seqs are generic
+;; (M-11, the corpus' seq-type-model rows)
+(def Range-create
+  (let [h-range (host-fn 'range nil)]
+    (fn ([end] (if h-range (h-range end) (range end)))
+      ([start end] (if h-range (h-range start end) (range start end)))
+      ([start end step] (if h-range (h-range start end step) (range start end step))))))
 (def LongRange-create Range-create)
-(def Repeat-create (fn ([x] (repeat x)) ([n x] (repeat n x))))
-(def Cycle-create (fn [coll] (cycle coll)))
-(def Iterate-create (fn [f x] (iterate f x)))
+(def Repeat-create
+  (let [h-repeat (host-fn 'repeat nil)]
+    (fn ([x] (if h-repeat (h-repeat x) (repeat x)))
+      ([n x] (if h-repeat (h-repeat n x) (repeat n x))))))
+(def Cycle-create
+  (let [h-cycle (host-fn 'cycle nil)]
+    (fn [coll] (if h-cycle (h-cycle coll) (cycle coll)))))
+(def Iterate-create
+  (let [h-iterate (host-fn 'iterate nil)]
+    (fn [f x] (if h-iterate (h-iterate f x) (iterate f x)))))
 ;; clojure.lang.TransformerIterator: the outputs of a transducer pulled from
 ;; iterator(s) on demand. Written here rather than over the host's `sequence`
 ;; so every host gets the JVM's buffering and completion (basilisp's sequence
@@ -1289,6 +1414,308 @@
 (def new-IllegalAccessError (ex-ctor 'java.lang.IllegalAccessError))
 (def new-NullPointerException (ex-ctor 'java.lang.NullPointerException))
 (def new-Compiler_CompilerException (ex-ctor 'clojure.lang.Compiler$CompilerException))
+(defn- code-of [c] (if (number? c) c (h-char-code c)))
+(defn- char-str [c] (str (if (number? c) (RT-charCast c) c)))
+;; java.nio.charset, the String(byte[]/char[]) constructors and
+;; String.getBytes: the shim's own codecs, because a cohost byte
+;; array is a generic object array and no host String constructor
+;; decodes one. The decoders follow the JDK's replacement rules,
+;; which the corpus pins exactly: an overlong lead costs one
+;; replacement per byte; an encoded surrogate one replacement for
+;; all three bytes; a partial sequence at the end one replacement
+;; for the bytes present; a byte-order mark decodes to U+FEFF.
+#?(:jank (defn ->Charset [n] (host/standin 'Charset {:name n}))
+   :default (defrecord Charset [name]))
+(defn Charset? [x]
+  #?(:phel (php/is_a x "cohost\\shim\\Charset")
+     :jank (host/standin? 'Charset x)
+     :default (instance? Charset x)))
+(def ^:private charset-aliases
+  {"utf-8" "UTF-8" "utf8" "UTF-8" "utf-16" "UTF-16" "utf-16be" "UTF-16BE"
+   "utf-16le" "UTF-16LE" "us-ascii" "US-ASCII" "ascii" "US-ASCII"
+   "iso-8859-1" "ISO-8859-1" "iso8859-1" "ISO-8859-1" "iso8859_1" "ISO-8859-1"
+   "latin1" "ISO-8859-1"})
+(defn- charset-canonical
+  "The canonical name for a charset name or a Charset, or nil."
+  [cs]
+  (cond (string? cs) (get charset-aliases (h-lower-case cs))
+        (Charset? cs) (get charset-aliases (h-lower-case (:name cs)))
+        :else nil))
+(defn- need-charset [cs]
+  (or (charset-canonical cs)
+      (throw (host/ex* 'java.io.UnsupportedEncodingException (str cs)))))
+(def Charset-forName
+  (fn [n] (if (charset-canonical n)
+            (->Charset (charset-canonical n))
+            (throw (host/ex* 'java.io.UnsupportedEncodingException (str n))))))
+(def Charset-defaultCharset (fn [] (->Charset "UTF-8")))
+(defn- ubyte [bs i] (bit-and (nth bs i) 0xFF))
+(defn- emit-cp! [out cp]
+  (if (<= cp 0xFFFF)
+    (conj! out (char-str cp))
+    (let [v (- cp 0x10000)]
+      (conj! (conj! out (char-str (+ 0xD800 (bit-shift-right v 10))))
+             (char-str (+ 0xDC00 (bit-and v 0x3FF)))))))
+(defn- emit-replacement! [out] (conj! out (char-str 0xFFFD)))
+(defn- cont-byte? [b] (<= 0x80 b 0xBF))
+(defn- decode-utf8 [bs off len]
+  (let [out (transient []) end (+ off len)]
+    (loop [i off]
+      (if (>= i end)
+        (apply str (persistent! out))
+        (let [b (ubyte bs i) left (- end i)]
+          (cond
+            (< b 0x80)
+            (do (conj! out (char-str b)) (recur (inc i)))
+            (<= 0xC2 b 0xDF)
+            (if (and (>= left 2) (cont-byte? (ubyte bs (inc i))))
+              (do (emit-cp! out (+ (bit-shift-left (bit-and b 0x1F) 6)
+                                   (bit-and (ubyte bs (inc i)) 0x3F)))
+                  (recur (+ i 2)))
+              (do (emit-replacement! out) (recur (inc i))))
+            (<= 0xE0 b 0xEF)
+            (let [b2 (when (>= left 2) (ubyte bs (inc i)))
+                  b3 (when (>= left 3) (ubyte bs (+ i 2)))]
+              (cond
+                (or (nil? b2) (not (cont-byte? b2)))
+                (do (emit-replacement! out) (recur (inc i)))
+                ;; an overlong pair (E0 80..9F): the lead alone is malformed
+                (and (= b 0xE0) (<= b2 0x9F))
+                (do (emit-replacement! out) (recur (inc i)))
+                ;; an encoded surrogate (ED A0..BF): one replacement for
+                ;; the whole sequence the JDK counts -- three bytes when
+                ;; the third is a continuation, else the pair
+                (and (= b 0xED) (>= b2 0xA0))
+                (do (emit-replacement! out)
+                    (recur (+ i (if (and b3 (cont-byte? b3)) 3 2))))
+                (nil? b3)
+                (do (emit-replacement! out) (recur (+ i 2)))
+                (not (cont-byte? b3))
+                (do (emit-replacement! out) (recur (+ i 2)))
+                :else
+                (do (emit-cp! out (+ (bit-shift-left (bit-and b 0x0F) 12)
+                                     (bit-shift-left (bit-and b2 0x3F) 6)
+                                     (bit-and b3 0x3F)))
+                    (recur (+ i 3)))))
+            (<= 0xF0 b 0xF4)
+            (let [b2 (when (>= left 2) (ubyte bs (inc i)))
+                  b3 (when (>= left 3) (ubyte bs (+ i 2)))
+                  b4 (when (>= left 4) (ubyte bs (+ i 3)))]
+              (cond
+                (or (nil? b2) (not (cont-byte? b2)))
+                (do (emit-replacement! out) (recur (inc i)))
+                ;; overlong (F0 80..8F) or past U+10FFFF (F4 90..BF):
+                ;; the lead alone is malformed, the rest are strays
+                (or (and (= b 0xF0) (<= b2 0x8F))
+                    (and (= b 0xF4) (>= b2 0x90)))
+                (do (emit-replacement! out) (recur (inc i)))
+                (nil? b3)
+                (do (emit-replacement! out) (recur (+ i 2)))
+                (not (cont-byte? b3))
+                (do (emit-replacement! out) (recur (+ i 2)))
+                (nil? b4)
+                (do (emit-replacement! out) (recur (+ i 3)))
+                (not (cont-byte? b4))
+                (do (emit-replacement! out) (recur (+ i 3)))
+                :else
+                (do (emit-cp! out (+ (bit-shift-left (bit-and b 0x07) 18)
+                                     (bit-shift-left (bit-and b2 0x3F) 12)
+                                     (bit-shift-left (bit-and b3 0x3F) 6)
+                                     (bit-and b4 0x3F)))
+                    (recur (+ i 4)))))
+            :else
+            (do (emit-replacement! out) (recur (inc i)))))))))
+(defn- decode-utf16 [bs off len big-endian?]
+  (let [out (transient []) end (+ off len)
+        unit (fn [i] (if big-endian?
+                       (+ (bit-shift-left (ubyte bs i) 8) (ubyte bs (inc i)))
+                       (+ (ubyte bs i) (bit-shift-left (ubyte bs (inc i)) 8))))]
+    (loop [i off]
+      (cond
+        (>= i end) (apply str (persistent! out))
+        (= i (dec end)) (do (emit-replacement! out) (apply str (persistent! out)))
+        :else
+        (let [u (unit i)]
+          (cond
+            (<= 0xD800 u 0xDBFF)
+            (if (<= (+ i 4) end)
+              (let [u2 (unit (+ i 2))]
+                (if (<= 0xDC00 u2 0xDFFF)
+                  (do (emit-cp! out (+ 0x10000
+                                       (bit-shift-left (- u 0xD800) 10)
+                                       (- u2 0xDC00)))
+                      (recur (+ i 4)))
+                  (do (emit-replacement! out) (recur (+ i 2)))))
+              (do (emit-replacement! out) (recur (+ i 2))))
+            (<= 0xDC00 u 0xDFFF)
+            (do (emit-replacement! out) (recur (+ i 2)))
+            :else
+            (do (conj! out (char-str u)) (recur (+ i 2)))))))))
+(defn- decode-bytes
+  "bs[off, off+len) decoded in the canonical charset cs-name."
+  [bs off len cs-name]
+  (case cs-name
+    "UTF-8" (decode-utf8 bs off len)
+    "UTF-16BE" (decode-utf16 bs off len true)
+    "UTF-16LE" (decode-utf16 bs off len false)
+    "UTF-16" (if (and (>= len 2) (= (ubyte bs off) 0xFF) (= (ubyte bs (inc off)) 0xFE))
+               (decode-utf16 bs (+ off 2) (- len 2) false)
+               (if (and (>= len 2) (= (ubyte bs off) 0xFE) (= (ubyte bs (inc off)) 0xFF))
+                 (decode-utf16 bs (+ off 2) (- len 2) true)
+                 (decode-utf16 bs off len true)))
+    "US-ASCII" (apply str (map (fn [i] (let [b (ubyte bs i)]
+                                         (if (< b 0x80) (char-str b) (char-str 0xFFFD))))
+                               (range off (+ off len))))
+    "ISO-8859-1" (apply str (map (fn [i] (char-str (ubyte bs i)))
+                                 (range off (+ off len))))))
+(defn- encode-utf8-bytes [s]
+  (let [units (map code-of (seq s)) n (count units)]
+    (loop [us (seq units) out []]
+      (if (nil? us)
+        out
+        (let [u (first us)]
+          (cond
+            (< u 0x80) (recur (next us) (conj out u))
+            (< u 0x800) (recur (next us)
+                               (conj out (+ 0xC0 (bit-shift-right u 6))
+                                     (+ 0x80 (bit-and u 0x3F))))
+            (<= 0xD800 u 0xDBFF)
+            (let [u2 (second us)]
+              (if (and u2 (<= 0xDC00 u2 0xDFFF))
+                (let [cp (+ 0x10000 (bit-shift-left (- u 0xD800) 10) (- u2 0xDC00))]
+                  (recur (nnext us)
+                         (conj out (+ 0xF0 (bit-shift-right cp 18))
+                               (+ 0x80 (bit-and (bit-shift-right cp 12) 0x3F))
+                               (+ 0x80 (bit-and (bit-shift-right cp 6) 0x3F))
+                               (+ 0x80 (bit-and cp 0x3F)))))
+                (recur (next us) (conj out 0xEF 0xBF 0xBD))))
+            (<= 0xDC00 u 0xDFFF) (recur (next us) (conj out 0xEF 0xBF 0xBD))
+            :else (recur (next us)
+                         (conj out (+ 0xE0 (bit-shift-right u 12))
+                               (+ 0x80 (bit-and (bit-shift-right u 6) 0x3F))
+                               (+ 0x80 (bit-and u 0x3F))))))))))
+(defn- encode-string-bytes
+  "The unsigned bytes of s in the canonical charset cs-name."
+  [s cs-name]
+  (case cs-name
+    "UTF-8" (encode-utf8-bytes s)
+    ("UTF-16" "UTF-16BE")
+    (into (if (= cs-name "UTF-16") [0xFE 0xFF] [])
+          (mapcat (fn [c] (let [u (code-of c)]
+                            [(bit-shift-right u 8) (bit-and u 0xFF)]))
+                  (seq s)))
+    "UTF-16LE"
+    (vec (mapcat (fn [c] (let [u (code-of c)]
+                           [(bit-and u 0xFF) (bit-shift-right u 8)]))
+                 (seq s)))
+    "US-ASCII" (mapv (fn [c] (let [u (code-of c)] (if (< u 0x80) u 0x3F))) (seq s))
+    "ISO-8859-1" (mapv (fn [c] (let [u (code-of c)] (if (<= u 0xFF) u 0x3F))) (seq s))))
+(defn- string->byte-array [s cs]
+  ;; byte-array's cast is the JVM's byte: the range is signed
+  (Numbers-byte_array (mapv (fn [u] (if (> u 127) (- u 256) u))
+                            (encode-string-bytes s (need-charset cs)))))
+(defn- array-kind
+  "A cohost array's element kind, read off its first element: byte
+   and char arrays are both host object arrays, told apart only by
+   what they hold."
+  [a]
+  (when (pos? (count a))
+    (let [e (nth a 0)]
+      (cond (h-char? e) :chars (number? e) :bytes :else nil))))
+(def new-String
+  (fn ([] "")
+      ([x]
+       (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"String(byte[])\" because \"bytes\" is null"))
+             (string? x) x
+             (h-sb? x) (h-sb-str x)
+             (arr? x)
+             (case (array-kind x)
+               :chars (apply str (map char-str (seq x)))
+               :bytes (decode-bytes x 0 (count x) "UTF-8")
+               (str x))
+             :else (str x)))
+      ([bs cs]
+       (cond (arr? bs)
+             (case (array-kind bs)
+               :chars (apply str (map char-str (seq bs)))
+               (decode-bytes bs 0 (count bs) (need-charset cs)))
+             :else (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of bs) " cannot be cast to class [B")))))
+      ([a off len] (new-String a off len "UTF-8"))
+      ([bs off len cs]
+       (case (array-kind bs)
+         :chars (apply str (map char-str (take len (drop off (seq bs)))))
+         (decode-bytes bs off len (need-charset cs))))))
+(def String-getBytes
+  (fn ([s] (string->byte-array s "UTF-8"))
+      ([s cs] (string->byte-array s cs))))
+;; java.net.URLEncoder / URLDecoder: application/x-www-form-urlencoded
+;; over the shim's codecs. The charset is validated first, so an
+;; unknown name is the JVM's UnsupportedEncodingException at this
+;; door too (the corpus's named-encodings row checks all four doors).
+(def ^:private hex-digits "0123456789ABCDEF")
+(defn- url-safe-char? [u]
+  (or (<= 48 u 57) (<= 65 u 90) (<= 97 u 122)
+      (== u 46) (== u 45) (== u 42) (== u 95)))
+(def URLEncoder-encode
+  (fn ([s] (URLEncoder-encode s "UTF-8"))
+      ([s enc]
+       (let [cs (need-charset enc)
+             out (transient [])]
+         (loop [us (seq s)]
+           (if (nil? us)
+             (apply str (persistent! out))
+             (let [u (code-of (first us))]
+               (cond
+                 (url-safe-char? u)
+                 (do (conj! out (char-str u)) (recur (next us)))
+                 (== u 32)
+                 (do (conj! out "+") (recur (next us)))
+                 (<= 0xD800 u 0xDBFF)
+                 (let [pair (if (second us)
+                              (str (char-str u) (char-str (code-of (second us))))
+                              (char-str u))]
+                   (doseq [b (encode-string-bytes pair cs)]
+                     (conj! out "%" (subs hex-digits (bit-shift-right b 4) (inc (bit-shift-right b 4)))
+                            (subs hex-digits (bit-and b 15) (inc (bit-and b 15)))))
+                   (recur (nnext us)))
+                 :else
+                 (do (doseq [b (encode-string-bytes (char-str u) cs)]
+                       (conj! out "%" (subs hex-digits (bit-shift-right b 4) (inc (bit-shift-right b 4)))
+                              (subs hex-digits (bit-and b 15) (inc (bit-and b 15)))))
+                     (recur (next us)))))))))))
+(defn- bytes-of-unsigned [us]
+  (Numbers-byte_array (mapv (fn [u] (if (> u 127) (- u 256) u)) us)))
+(defn- hex-val [ch]
+  (let [u (code-of ch)]
+    (cond (<= 48 u 57) (- u 48)
+          (<= 65 u 70) (+ 10 (- u 65))
+          (<= 97 u 102) (+ 10 (- u 97))
+          :else -1)))
+(def URLDecoder-decode
+  (fn ([s] (URLDecoder-decode s "UTF-8"))
+      ([s enc]
+       (let [cs (need-charset enc)
+             out (transient [])]
+         (loop [i 0 bytes []]
+           (if (>= i (count s))
+             (do (when (seq bytes)
+                   (conj! out (decode-bytes (bytes-of-unsigned bytes) 0 (count bytes) cs)))
+                 (apply str (persistent! out)))
+             (let [ch (nth s i) u (code-of ch)]
+               (cond
+                 (== u 37)
+                 (let [h1 (when (< (inc i) (count s)) (hex-val (nth s (inc i))))
+                       h2 (when (< (+ i 2) (count s)) (hex-val (nth s (+ i 2))))]
+                   (if (and h1 h2 (>= h1 0) (>= h2 0))
+                     (recur (+ i 3) (conj bytes (+ (bit-shift-left h1 4) h2)))
+                     (throw (host/ex* 'java.lang.IllegalArgumentException "URLDecoder: Illegal trailing escape (%) pattern"))))
+                 :else
+                 (do (when (seq bytes)
+                       (conj! out (decode-bytes (bytes-of-unsigned bytes) 0 (count bytes) cs))
+                       (loop [] nil))
+                     (conj! out (if (== u 43) " " (char-str u)))
+                     (recur (inc i) []))))))))))
+
 ;; StringBuilder() / (int capacity) / (CharSequence s); StringBuffer is the same here
 (def new-StringBuilder (fn ([] (h-string-builder))
                          ([s] (cond (number? s) (h-string-builder)
@@ -1304,7 +1731,7 @@
 ;; metadata, so chunk-first sees the whole chunk and chunk-rest the rest
 (def new-ChunkedCons (or (:chunk-cons hc)
                          (fn [chunk more] (with-meta (concat (seq chunk) more) {::chunk chunk ::more more}))))
-(defn chunked-cons? [x] (and (seq? x) (contains? (meta x) ::chunk)))
+(defn chunked-cons? [x] (and (seq? x) (map? (meta x)) (contains? (meta x) ::chunk)))
 (def new-Thread (unsupported "java.lang.Thread"))
 ;; Thread.currentThread(): its stack trace is empty, like every trace here
 (def Thread-currentThread (let [t (atom ::current-thread)] (fn [] t)))
@@ -1434,7 +1861,6 @@
 (def Boolean-valueOf (fn [x] (if (string? x) (Boolean-parseBoolean x) (boolean x))))
 ;; Character: a char or an int code point; the host's own statics where the
 ;; adapter names them (:java-statics), else these, over the char code
-(defn- code-of [c] (if (number? c) c (h-char-code c)))
 (defn- jstatic [nm dflt] (get (host/java-statics) nm dflt))
 (def Character-isWhitespace
   (jstatic 'Character/isWhitespace
@@ -1444,7 +1870,6 @@
                      (boolean (or (<= 9 n 13) (<= 28 n 32) (== n 0x1680) (<= 0x2000 n 0x2006)
                                   (<= 0x2008 n 0x200A) (== n 0x2028) (== n 0x2029) (== n 0x205F)
                                   (== n 0x3000)))))))
-(defn- char-str [c] (str (if (number? c) (RT-charCast c) c)))
 (defn- cased [f c] (let [s (char-str c) r (f s)] (if (= 1 (count r)) (first r) (first s))))
 (def Character-isDigit (jstatic 'Character/isDigit (fn [c] (<= 48 (code-of c) 57))))
 (def Character-isLetter (jstatic 'Character/isLetter (fn [c] (let [s (char-str c)] (not= (h-upper-case s) (h-lower-case s))))))
@@ -1766,6 +2191,7 @@
 ;; a String method on nil is the JVM's NullPointerException
 (defn- nn [x] (if (nil? x) (throw (host/ex* 'java.lang.NullPointerException "")) x))
 (def -length (fn [x] (if (h-sb? x) (count (h-sb-str x)) (count (nn x)))))
+(def -getBytes (fn ([s] (String-getBytes s)) ([s cs] (String-getBytes s cs))))
 (def -reverse (fn [x] (if (h-sb? x)
                         (h-sb-append! (h-string-builder) (apply str (reverse (h-sb-str x))))
                         (reverse x))))
@@ -1992,12 +2418,31 @@
                     (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (seq (::more (meta s))) :else (next s)))))
 ;; Named.getName; a non-Named value is the JVM's ClassCastException (nil: NPE);
 ;; a host class object (from `class` of a record) prints its name
-(def -getName (fn [x] (cond (h-namespace? x) (host/ns-name* x)
+(def -getName (fn [x] (cond (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: getName for class clojure.lang.Var"))
+                            ;; a qualified class token in class position
+                            ;; (Var.getTag's answer): its name is the full
+                            ;; string. An unqualified symbol -- core's sigs
+                            ;; calls (.getName tag) on arglist tags and
+                            ;; branches on a dot in the answer -- falls
+                            ;; through to the symbol arm's name part.
+                            ;; On let-go even the qualified answer breaks
+                            ;; the load (its compiler resolves the tag
+                            ;; from the name), so there the arm never
+                            ;; fires and symbols keep the name part.
+                            #?(:lg false :default (and (class-token? x) (namespace x))) (str x)
+                            (h-namespace? x) (host/ns-name* x)
                             (symbol? x) (name #?(:lg (host/plain-symbol x) :default x))
                             (keyword? x) (name x)
                             (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
                             (or (string? x) (number? x) (boolean? x) (coll?* x))
                             (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Named x)))
+                            ;; a host Class object (Var.getTag's answer):
+                            ;; its name is its print minus the class prefix.
+                            ;; (No class-of call here: -getName is on the
+                            ;; loader's own path and class-of can throw for
+                            ;; values this arm used to pass to (str x).)
+                            (let [n (str x)] (and (>= (count n) 7) (= "class " (subs n 0 6)) (not (neg? (h-index-of (subs n 6) "." 0)))))
+                            (subs (str x) 6)
                             :else (str x))))
 (def -getNamespace #?(:lg (fn [x] (namespace (host/plain-symbol x))) :default namespace))
 (def -getSimpleName (fn [x] (let [n (if (symbol? x) (name (canon x)) (pr-str x))
@@ -2006,7 +2451,9 @@
 ;; Var.sym and Keyword.sym (core.clj's `symbol` of a keyword)
 (def -sym (fn [x] (if (keyword? x) (symbol (namespace x) (name x)) (host/var-sym x))))
 (def -ns (fn [v] (host/var-ns v)))
-(def -name (fn [x] (if (h-namespace? x) (host/ns-name* x) (name x))))
+(def -name (fn [x] (cond (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: name for class clojure.lang.Var"))
+                         (h-namespace? x) (host/ns-name* x)
+                         :else (name x))))
 (def -getMappings (host-fn 'ns-map (unsupported "ns-map")))
 (def -getAliases (host-fn 'ns-aliases (fn [_] {})))
 (def -addAlias (let [al (host-fn 'alias nil)]
@@ -2023,14 +2470,33 @@
 (def -getMapping (fn [ns sym] (get (-getMappings ns) sym)))
 (def -isMacro host/macro-var?)
 (def -isPublic (fn [v] (not (:private (host/var-meta v)))))
-(def -getTag (fn [v] (:tag (host/var-meta v))))
+(def -getTag (fn [v] (let [t (:tag (host/var-meta v))]
+                       (when t (canon (cond (string? t) (symbol t)
+                                            (seq? t) (second t)
+                                            :else t))))))
 (def -fn (fn [v] (let [x (host/var-root v)]
                    (if (ifn? x) x (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IFn x)))))))
 (def -setMacro host/mark-macro!)
 (def -isDynamic host/dynamic-var?)
 (def -setDynamic (fn ([v] (host/set-dynamic! v)) ([v _b] (host/set-dynamic! v))))
 (def -isBound host/var-bound?)
-(def -hasRoot host/var-bound?)
+(declare -endsWith)
+(def -hasRoot (fn [v] (let [rr (host/var-raw-root v)
+                            n (str (class-of rr))]
+                        (and (some? rr)
+                             (not (or ;; the unbound marker's name, in
+                                      ;; whatever dress the host's class
+                                      ;; print gives it: the bare symbol
+                                      ;; on the JVM, the quoted class
+                                      ;; print on basilisp
+                                      (-endsWith n "Unbound")
+                                      (-endsWith n "Unbound'>")
+                                      ;; jank's unbound marker class
+                                      (-endsWith n "var_unbound_root")
+                                      ;; phel's marker is a bare stdClass
+                                      ;; singleton (phel.phel's `unbound`);
+                                      ;; no name on it but its class's
+                                      #?(:phel (= n "stdClass") :default false)))))))
 (def -getRawRoot (fn [v] (host/var-raw-root v)))
 ;; Var.getThreadBinding: a box (non-nil even when the binding is nil), or nil
 (def -getThreadBinding (fn [v] (when (host/var-thread-bound? v) [(host/var-root v)])))
@@ -2191,17 +2657,23 @@
 (def -longValue RT-longCast)
 (def -intValue RT-intCast)
 (def -floatValue RT-floatCast)
-(def -getMethodTable (fn [mf] (:methods @(mf-state mf))))
-(def -getPreferTable (fn [mf] (:prefers @(mf-state mf))))
-(def -addMethod (fn [mf dv f] (swap! (mf-state mf) assoc-in [:methods dv] f) mf))
-(def -removeMethod (fn [mf dv] (swap! (mf-state mf) update :methods dissoc dv) mf))
+;; a HOST multifn's methods live in the host's own registry, where the
+;; shim's state atom is not: its members delegate to the host's
+;; :multifn-op where the adapter provides one (jolt)
+(defn- host-mf? [mf] (and h-multifn-op (h-multifn? mf)))
+(def -getMethodTable (fn [mf] (if (host-mf? mf) (host/multifn-op mf :table []) (:methods @(mf-state mf)))))
+(def -getPreferTable (fn [mf] (if (host-mf? mf) (host/multifn-op mf :prefers []) (:prefers @(mf-state mf)))))
+(def -addMethod (fn [mf dv f] (if (host-mf? mf) (host/multifn-op mf :add [dv f]) (do (swap! (mf-state mf) assoc-in [:methods dv] f) mf))))
+(def -removeMethod (fn [mf dv] (if (host-mf? mf) (host/multifn-op mf :remove [dv]) (do (swap! (mf-state mf) update :methods dissoc dv) mf))))
 (def -preferMethod (fn [mf x y]
-                     (let [{:keys [name prefers hierarchy]} @(mf-state mf)]
-                       (when (mf-prefers? prefers (deref hierarchy) y x)
-                         (throw (host/ex* 'IllegalStateException (str "Preference conflict in multimethod '" name "': " y " is already preferred to " x))))
-                       (swap! (mf-state mf) update-in [:prefers x] (fnil conj #{}) y)
-                       mf)))
-(def -getMethod (fn [mf dv] (mf-find-method @(mf-state mf) dv)))
+                     (if (host-mf? mf)
+                       (host/multifn-op mf :prefer [x y])
+                       (let [{:keys [name prefers hierarchy]} @(mf-state mf)]
+                         (when (mf-prefers? prefers (deref hierarchy) y x)
+                           (throw (host/ex* 'IllegalStateException (str "Preference conflict in multimethod '" name "': " y " is already preferred to " x))))
+                         (swap! (mf-state mf) update-in [:prefers x] (fnil conj #{}) y)
+                         mf))))
+(def -getMethod (fn [mf dv] (if (host-mf? mf) (host/multifn-op mf :get [dv]) (mf-find-method @(mf-state mf) dv))))
 (def -isDone (fn [_] true))
 (def -isCancelled (fn [_] false))
 

@@ -1,0 +1,10 @@
+(do (require 'clojure.test)
+    (eval '(do (ns probe-ns (:require [clojure.test :refer [deftest is]]))
+               (deftest my-test (is (= 1 1)))))
+    (let [v1 (ns-resolve 'probe-ns 'my-test)
+          v2 (get (ns-interns 'probe-ns) 'my-test)]
+      (println :same (identical? v1 v2))
+      (println :meta-resolve (pr-str (keys (meta v1))))
+      (println :meta-interns (pr-str (keys (meta v2))))
+      (println :test-resolve (some? (:test (meta v1))))
+      (println :test-interns (some? (:test (meta v2))))))

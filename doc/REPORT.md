@@ -140,66 +140,126 @@ What made them load, in order of how many libraries each fix unblocked:
 ## The conformance-corpus scoreboard (jolt)
 
 `bb corpus:jolt path/to/corpus.edn` evaluates the jolt-conformance corpus
-(the 4,833 rows marked `:portability :common`, one excluded: an undelivered
+(the 4,942 rows marked `:portability :common`, one excluded: an undelivered
 promise blocks forever) through the booted stock core and through jolt's own
 core, **each side in its own process**. The corpus is jolt's
-`test/chez/corpus.edn` (https://github.com/jolt-lang/jolt, EPL-2.0); the
-numbers here are for jolt's commit 569ba3b4062d9b4dd2993652bd98ccc8a17f2e90.
-Each side has its own process because both share the host's namespace
-registry, and a row that makes a namespace (`(ns my.app (:require …))`) on
-one side used to meet it on the other. Earlier reports' numbers carried that
-contamination.
+`test/chez/corpus.edn` (https://github.com/jolt-lang/jolt, EPL-2.0). Each
+side has its own process because both share the host's namespace registry,
+and a row that makes a namespace on one side used to meet it on the other.
 
 | | pass | fail | error |
 |---|---:|---:|---:|
-| the stock core, booted on jolt | **4,186** | 512 | 135 |
-| jolt's own hand-written core | 4,368 | 412 | 53 |
+| the stock core, booted on jolt | **4,401** | 418 | 123 |
+| jolt's own hand-written core | 4,468 | 417 | 57 |
 
-Rows the stock core passes and jolt's core fails: 5. Rows jolt's core passes
-and the stock core fails: 187 (387 before the first review, 238 before the
-second, 207 and 194 after its two batches: host interop on the JVM-like
-hosts, the format exceptions, String's null checks; then host exceptions,
-iterators, member calls on user types; then hinted arguments, macros,
-namespaces; then the rows below that JVM Clojure confirms).
-Both sides ran in 68 s in all; jolt's own count moves by a few rows between runs (rows that
-time threads and futures). Each side runs in `target/corpus-cwd`, so rows
-that write files leave nothing in the library's directory.
+The stock core's count across the corpus campaign (M-11): 4,304 at the
+baseline, then 4,355 after the seq classes, the charset layer and the Var
+surface; 4,361 after return hints; 4,401 after the print-method group and
+the session-namespace rename below. Rows jolt's core passes and the stock
+core fails: 108. Rows the stock core passes and jolt's core fails: 41, of
+which 35 are rows whose expected answer names the session namespace
+(`user`): jolt's own side of this harness evaluates in a namespace it calls
+`cohost.corpus-host`, so those rows fail there for a harness reason while
+the stock side gives the JVM's answer. The other 6 are semantics the JVM
+has and jolt's core does not (among them `with-open` not calling a map's
+`:close` fn, and `into` keeping a transducer target's meta).
 
-Each of the remaining 187 was run again on JVM Clojure 1.12.0 (`bb
-corpus:jvm`, after `bb corpus:jolt`): the row's form evaluated in a fresh
-namespace, printed, and compared with the row's expected answer as
-`cohost.corpus` compares it. For 49 the JVM does not give that answer
-either. 32 use names or arities that are jolt or ClojureScript
-extensions rather than clojure.core (`atom?`, `regex?`, `sorted-map?`,
-`transient?`, `ref?`, `keyword-identical?`, a three-argument `conj!`, a
-zero-argument `ns-aliases`, `satisfies?` on an interface, jolt's
-reader-feature toggles). 17 expect jolt's behavior where the JVM throws or
-answers otherwise: `(distinct #{:only})` throws "nth not supported on this
-type: PersistentHashSet" on the JVM (the corpus expects `[:only 1]`), as do
-`with-open` over a map with a `:close` fn and a map as a multimethod's
-`:hierarchy`, and `str` does not resolve in a namespace `in-ns` just created.
-The stock core gives the JVM's answer on 8 of the 17 and throws where the JVM
-throws on 5 more.
+What the last two steps changed:
 
-The other 138 are answers the JVM gives and the stock core on jolt does not
-(sorted by the rows' suites and forms): JVM interop jolt shims and cohost
-does not (`java.io` readers and writers, charsets, executors and threads,
-`clojure.lang.Var` methods, system properties: 59 rows), the host's own
-value model showing through (seq classes, chunking and chunked realization,
-integer boxes: 41), type hints that coerce on the JVM (`^long` parameters
-and returns: 17), macroexpansions and syntax-quote templates naming
-`cohost.core/let` where the JVM's name `clojure.core/let` (13), a
-syntax-quote splice realized sooner than the JVM realizes it (2: the
-codemod walks a macro's output before it is evaluated), and 6 others: names
-printing under `cohost.*` (`(doc map)`, the `ns-name` of a required
-`clojure.string`), the `Inst` protocol being the host's,
-`clojure.string/replace` with a nil replacement (calling nil is a
-ClassCastException on jolt and a NullPointerException on the JVM), the `str`
-of a class (class tokens are symbols), and `drop` past the long range (the
-JVM's `IDrop` path casts the count). Seven more were answered after the
-second review: `hash-combine` (4 rows), `->Eduction`, `default-data-readers`
-and `empty` of a record.
+- **Return hints are the unchecked cast** (M-6 made parameters the checked
+  one). A `^long` return wraps a BigInt to its low 64 bits, saturates a
+  double (NaN is 0), and throws a ClassCastException for a non-number and a
+  NullPointerException for nil; the shim's `prim-ret-long` /
+  `prim-ret-double` are what the codemod wraps a hinted body's last form
+  in, per arity, from the arglist's tag, the fn form's `:rettag`, or the
+  def name's tag.
+- **`print-method` is a host multimethod on jolt, and its members now
+  delegate.** The var is taken from the host (its methods live in core_print
+  territory the boot does not load), so `defmethod` used to reach the shim's
+  MultiFn members with a multifn the shim owns no state for, and throw.
+  The shim's members now delegate for a host multifn through an adapter
+  capability, `:multifn-op`; jolt's adapter implements it with jolt's own
+  `defmethod-setup` (recovering the multifn's name and namespace by an
+  identity search over the loaded namespaces, since jolt's MultiFn carries
+  neither) and its core `methods` / `remove-method` / `get-method` /
+  `prefer-method`. A dispatch value written as a class name is the shim's
+  class token, so the adapter canonicalizes it to the host Class the
+  registry keys by, as `(class x)` answers it. Methods on host classes and
+  on records now fire, nest, inspect and remove as on the JVM.
+- **The session namespace is `user`.** It was `cohost.user`, so records
+  printed `#cohost.user.Pt{...}`, `(str *ns*)` was `cohost.user`, and
+  syntax-quote in user code qualified its symbols there. It is `user` on
+  every host except ClojureWasm, whose own runtime lives in its `user`
+  namespace -- making that one bare breaks the host's later loads, so the
+  session keeps `cohost.user` there.
 
+The remaining 108 rows jolt's core passes and the stock core does not,
+grouped by cause:
+
+- **The `(Class/.method target)` syntax (5).** `(String/.length "hello")`,
+  `(java.util.List/.size coll)`: the codemod does not rewrite the
+  qualified-instance-method shape, and `List/.size` is also jolt's
+  provider rule about which members its compiler exposes.
+- **The Var surface (5).** Four rows want a thread-binding box classed
+  `clojure.lang.Var$TBox`, one per binding frame, identity-stable across
+  `set!`, with package-private fields: a new representation in the binding
+  machinery, not an arm in the current one (the shim's `-getThreadBinding`
+  answers a vector stand-in). One row wants `Var/find` to return the
+  identical var `ns-interns` returns: every by-name lookup the shim can
+  make resolves a var from a different registry view than the booted
+  core's own `ns-interns` path (raw jolt's two paths are identical, so
+  this is a cohost-layer defect, named here for a follow-up).
+- **Stateful charsets (5).** ISO-2022-style encodings that shift back to
+  ASCII mid-string are not in the shim's charset layer, which covers the
+  stateless family (UTF-8/16, US-ASCII, ISO-8859-1) exactly.
+- **Stream-constructor doors (10).** Open failures (8) and an unknown
+  `:encoding` (2): stock `clojure.java.io` calls the host's stream
+  constructors by passthrough, and the JVM's constructor checks --
+  FileNotFoundException for a directory or a missing path,
+  UnsupportedEncodingException thrown after the target is opened -- are
+  the constructor's own. No cohost layer sits at that door; jolt's own
+  core passes the rows because it validates inside its io fns.
+- **Macro expansion shapes (9).** `defmacro` (4), its attr-map (2) and
+  `cond->` (3): the corpus compares `macroexpand-1`'s form itself, and
+  the booted expansions place `&form`/`&env` and `cond->`'s threading
+  differently than the reference text. The expansions evaluate the same.
+- **Names the corpus defines and stock core does not (8).** `object?`,
+  `undefined?`, `keyword-identical?`, and the corpus's own `atom?` are
+  jolt/ClojureScript extension predicates, not `clojure.core` names.
+- **Transient sets and nil (4).** `conj!`/`disj!`/`contains?` of nil in a
+  transient set: the shim's transient set drops the nil the JVM keeps.
+- **Sorted predicates (4).** `sorted-map?` / `sorted-set?` misanswer for
+  the shim's sorted collections.
+- **`with-open` (4).** Close order and visibility for a real Closeable
+  through the member machinery (its sibling row, a map's `:close` fn
+  *not* being called, the stock core answers as the JVM does).
+- **Syntax-quote inside deftype method bodies (3).** An unquote in a
+  method template is left as `(unquote x)` where the JVM splices it: the
+  codemod walks method templates on a different path than fn bodies.
+- **The reader-feature toggle (3).** The rows read and set the corpus
+  harness's own `__reader-features` var, which jolt's harness provisions
+  for its core; the booted side has no such var. A harness provision,
+  not a core gap.
+- **Transient vectors (3).** Multi-arg `conj!`, and `transient?` of the
+  shim's transient stand-ins.
+- **Smaller groups (19).** The alias store `ns-aliases` reads (2);
+  AFunction's direct supers lacking IObj/IMeta/Serializable (2); the
+  integer box model -- cohost collapses Byte/Float to Long/Double by
+  design, the corpus names the boxes (2); `*ns*` tracking across `in-ns`
+  inside a fn (2); `regex?` of a host pattern (3); and singletons: the
+  `aget` out-of-bounds exception's class name, `clojure.main`'s read
+  phase stopping at a stray delimiter, a `bytes` view of a typed array,
+  `Collections/enumeration`'s exception message, UTF-16 surrogate pairs
+  split at a read buffer's edge (jolt's char is a scalar), the `str` of a
+  class (class values are symbols here, so no `class ` prefix), `ref`
+  (there is no Ref type), `inst-ms*` as a protocol method var, a System
+  static's argument check, one `~@` laziness row, `satisfies?` on an
+  interface, `int?` as a fn distinct from `integer?`, one syntax-quote
+  literal collapse, an empty sorted set's kind.
+
+The other 433 rows the stock core does not pass, jolt's own core does not
+pass either; they are the corpus's reach exceeding both cores, not a
+cohost gap.
 ## The review, and what it changed
 
 An independent review read the codemod, the shim, the loader and the

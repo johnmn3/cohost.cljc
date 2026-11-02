@@ -192,6 +192,7 @@
    :sorted?         [['x] "is x a sorted collection (clojure.lang.Sorted)?"]
    :sorted-comparator [['x] "the comparator a sorted collection was built with (default: compare)"]
    :multifn?        [['x] "is x the host's own multimethod?"]
+   :multifn-op      [['mf 'op 'args] "a member operation (op :add :remove :get :table :prefer :prefers; args a vector) on a HOST multifn whose methods live in the host's own registry (jolt's): the shim's MultiFn members delegate here for such a multifn; nil where the host has none"]
    ;; hooks
    :after-eval      [['form 'ns-sym] "called after each form the boot evals (optional)"]])
 
@@ -461,6 +462,7 @@ namespace cohost_err {
     :sorted? (fn [_] false)
     :sorted-comparator (fn [_] compare)
     :multifn? (fn [_] false)
+    :multifn-op nil
     :after-eval (fn [_ _] nil)}))
 
 (def required
@@ -747,5 +749,6 @@ namespace cohost_err {
 (defn sorted?* [x] ((cap :sorted?) x))
 (defn sorted-comparator [x] ((cap :sorted-comparator) x))
 (defn multifn? [x] ((cap :multifn?) x))
+(defn multifn-op [mf op args] ((cap :multifn-op) mf op args))
 (defn host-fn? [x] (fn? x))
 (defn ifn?* [x] (ifn? x))

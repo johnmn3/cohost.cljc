@@ -397,9 +397,10 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? cohost-types? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source? loop-rebind-shadow?]
+           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source? loop-rebind-shadow? def-tag?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:plain-symbol (or plain-symbol identity)
+   :def-tag? def-tag?
    :shim-names shim-names
    ;; {shim static name -> the host core's symbol} where the shim's static is
    ;; the host's own fn: emitted instead, so the host's compiler sees (and may
@@ -849,6 +850,19 @@
   (let [s (*plain* p)]
     (if (meta s) (with-meta s nil) s)))
 
+(defn- wrap-ret
+  "A ^long / ^double return hint wraps the body's last form in the
+   shim's unchecked return cast. A body ending in a bare recur never
+   returns a value, so it is left alone."
+  [hint body']
+  (if (and hint (seq body'))
+    (let [lf (last body')]
+      (if (and (seq? lf) (symbol? (first lf)) (= "recur" (name (*plain* (first lf)))))
+        body'
+        (concat (butlast body')
+                [(list (shim-fn (if (= 'long hint) "prim-ret-long" "prim-ret-double")) lf)])))
+    body'))
+
 (defn- emit-arity
   "One fn* arity. A primitive hint is coerced on every host, so the value
    matches the JVM. The host's native tag is passed through only when
@@ -856,9 +870,12 @@
    parameter hint paying for a loop that carries it and losing on a leaf.
    The outer parameter stays untyped; the coerced value is handed to one
    inner fn* that carries the tag, so jank never converts the original
-   argument itself."
-  [params body']
-  (let [hints (mapv (fn [p] (when (symbol? p) (primitive-hint (:tag (meta p))))) params)]
+   argument itself. A return hint (the arglist's tag, the fn form's
+   :rettag, or the def name's tag through the ctx) wraps the value the
+   arity returns in the unchecked cast the JVM applies."
+  [params body' ret-hint]
+  (let [body' (wrap-ret ret-hint body')
+        hints (mapv (fn [p] (when (symbol? p) (primitive-hint (:tag (meta p))))) params)]
     (if-not (some some? hints)
       (apply list (rw-params params) body')
       (let [body' (or (seq body') '(nil))
@@ -889,8 +906,12 @@
         names (into (if nm #{nm} #{})
                     (mapcat (fn [[params]] (filter #(and (symbol? %) (not= '& %)) params)) arities))
         arities' (binding [*locals* (into *locals* names)]
-                   (doall (map (fn [[params & body]]
-                                 (let [ps0 (filter symbol? params)
+                   (doall (map (fn [arity]
+                                 (let [[params & body] arity
+                                       ret-hint (or (primitive-hint (:tag (meta params)))
+                                                    (primitive-hint (:rettag (meta form)))
+                                                    (:ret-hint ctx))
+                                       ps0 (filter symbol? params)
                                        ps (map *plain* ps0)
                                        tags (hint-tags *local-tags* ps0)
                                        classes (class-tags *local-classes* (map (fn [p] [p nil]) ps))
@@ -903,7 +924,7 @@
                                        body' (if (and (:vector-rest-args? ctx) (symbol? rest-arg))
                                                [(apply list 'let* [rest-arg (list (shim-fn "RT-seq") rest-arg)] body')]
                                                body')]
-                                   (emit-arity params body')))
+                                   (emit-arity params body' ret-hint)))
                                arities)))]
     (if (and nm (not (:named-fn*? ctx)))
       (list 'letfn* [nm (apply list (carry-meta 'fn* (first form)) (if single? (first arities') arities'))] nm)
@@ -1049,12 +1070,38 @@
         :else false))
 
 (defn- rw-def [ctx [_ nm & more]]
-  (let [nm (carry-meta nm nm)
+  (let [;; the name's class tag is var data as well as a hint: .getTag
+        ;; and (meta var) read it back, so it survives the strip here.
+        ;; Not on jank: its def reads a name tag as the var's native
+        ;; type, and core.clj tags names with classes jank does not
+        ;; have (clojure.lang.ISeq on next) -- the def fails to
+        ;; resolve the class and core load cascades.
+        ;; Only where the host's def keeps a name tag as inert data:
+        ;; the JVM and jolt store it in the var's meta, cljs keeps it
+        ;; as meta. jank reads it as the var's native type, basilisp
+        ;; cannot even analyse a dotted tag, phel/let-go break on it,
+        ;; and ClojureWasm's return-tagged defns (volatile!,
+        ;; chunk-buffer, chunk-first) lose their roots at boot.
+        ;; The choice is the ctx's :def-tag?, set by the boot from
+        ;; the adapter's host name -- a reader conditional cannot
+        ;; make it, because ClojureWasm reads this file as :clj,
+        ;; exactly like the JVM it differs from here.
+        ret-hint (primitive-hint (:tag (meta nm)))
+        nm-tag (when (:def-tag? ctx)
+                 (let [t (:tag (meta nm))]
+                   (when (or (symbol? t) (string? t)
+                             (and (seq? t) (= 'quote (first t)) (symbol? (second t))))
+                     t)))
+        nm (carry-meta nm nm)
+        nm (if nm-tag (vary-meta nm assoc :tag nm-tag) nm)
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
              nm)
         nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)
-        more' (rw-all ctx more)
+        more' (if (and ret-hint (seq more))
+                (concat (rw-all ctx (butlast more))
+                        [(rw (assoc ctx :ret-hint ret-hint) (last more))])
+                (rw-all ctx more))
         ;; a host whose defn names its fn (jank's own does): carry the
         ;; def's name onto an unnamed fn* value, so self-recursion is a
         ;; direct call instead of a var deref and a dynamic call. The
