@@ -129,6 +129,8 @@
   bench:cljrs {:doc "cohost.bench on clojurust (target/bench-cljrs.edn)"
                :task (do (babashka.fs/create-dirs "target")
                          (apply shell {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}} "cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns" "src/cohost/run.cljc" "--" "--bench" (git-rev) *command-line-args*))}
+  bench:programs {:doc "Step 8 program suite. bb bench:programs <target>|all. Times land in doc/PERF.md."
+                  :task (load-file "dev/bench_programs.clj")}
   bench:jank {:doc "cohost.bench on jank, AOT modules (target/bench-jank.edn). Source path: boot:jank-jit, then the same --bench arguments."
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "jank" "--module-path" (str (jank-aot-dir) ":src") "run-main" "cohost.run" "--" "--bench" (git-rev) *command-line-args*))}

@@ -436,3 +436,487 @@ bb bench:report target
 ```bash
 bb bench:report --compare doc/perf/before doc/perf/after
 ```
+
+## Programs against JVM Clojure
+
+jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Programs live in `bench/programs/`. The driver is `dev/bench_programs.clj`. `MEDIAN-MS` is the middle of five timed calls after one untimed call in the same process. `COLD-MS` is one call in a fresh process. The clock is inside the process (`System/nanoTime` on the JVM, `cpp/jank.runtime.current_time` on jank). Each timed call reads its size argument at runtime and adds the result into a volatile. A program's printed result is compared with the JVM result. `first-output` is process wall time until stdout contains `ok` (one cold process, one discarded warmup process, then five).
+
+Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`, binary-trees `8`, fannkuch `7`, nsieve `12`, k-nucleotide `2000`, pipeline `2000`, dispatch `20000`, json `20`.
+
+Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core), then `bb bench:programs jvm-cohost` (`clojure -M -m cohost.run -- --eval`), then `bb bench:programs cljrs-cohost`. A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` is timed for jvm, jank-jit, jank-aot, cohost on jank, clojurust, jvm-cohost, and cljrs-cohost.
+
+| program | jvm median | jvm cold | jit median | jit cold | jit/jvm | aot median | aot cold | aot/jvm | result |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| fib | 5.293441 | 18.17026 | 81.066692 | 313.770143 | 15.314555 | 4.228778 | 4.22679 | 0.798871 | 832040 |
+| fib-hinted | 4.425011 | 17.725987 | 79.821299 | 247.66818 | 18.038667 | 7.362588 | 7.320614 | 1.663858 | 832040 |
+| tak | 1.367668 | 6.945293 | 2.653217 | 253.907528 | 1.939957 | 0.324893 | 0.370587 | 0.237553 | 7 |
+| tak-hinted | 1.129298 | 3.340478 | 4.194396 | 42.517684 | 3.714162 | 0.617815 | 0.705569 | 0.547079 | 7 |
+| nbody | 3.876606 | 13.552441 | ABSENT Math/sqrt | | | ABSENT Math/sqrt | | | -169027 |
+| nbody-hinted | 3.079164 | 14.419944 | ABSENT Math/sqrt | | | ABSENT Math/sqrt | | | -169027 |
+| spectral-norm | 0.663116 | 15.028961 | ABSENT Math/round | | | ABSENT Math/round | | | 784826 |
+| spectral-norm-hinted | 1.674702 | 13.756405 | ABSENT Math/round | | | ABSENT Math/round | | | 784826 |
+| mandelbrot | 0.444768 | 1.998482 | ABSENT s35 | | | ABSENT s35 | | | 608 |
+| mandelbrot-hinted | 0.213834 | 1.950147 | ABSENT s35 | | | ABSENT s35 | | | 608 |
+| binary-trees | 0.518609 | 3.696582 | 1.736672 | 353.635392 | 3.348712 | 0.905763 | 0.556616 | 1.746524 | 7083 |
+| binary-trees-hinted | 1.276997 | 3.619701 | 1.740416 | 290.493741 | 1.362897 | 0.951506 | 1.972727 | 0.745112 | 7083 |
+| fannkuch | 21.31977 | 60.519953 | ABSENT s28 | | | ABSENT s28 | | | -502 |
+| fannkuch-hinted | 20.498867 | 67.888894 | ABSENT s28 | | | ABSENT s28 | | | -502 |
+| nsieve | 0.835891 | 3.45517 | ABSENT s56 | | | ABSENT s56 | | | 564 |
+| nsieve-hinted | 1.023101 | 2.823484 | ABSENT s56 | | | ABSENT s56 | | | 564 |
+| k-nucleotide | 1.125359 | 5.198497 | 1.078813 | 113.019317 | 0.958639 | 0.491155 | 0.596223 | 0.436443 | 500 |
+| pipeline | 2.510401 | 9.299799 | 4.264566 | 368.019931 | 1.698759 | 3.360476 | 2.776184 | 1.338621 | 5995001 |
+| dispatch | 2.168401 | 10.863573 | ABSENT defprotocol | | | ABSENT defprotocol | | | 200183333 |
+| json | 0.145791 | 0.566916 | 0.073902 | 790.121021 | 0.506904 | 0.033901 | 0.106072 | 0.232532 | 580 |
+| first-output | 385.120548 | 377.261128 | 362.395388 | 373.893489 | 0.940992 | 384.276232 | 662.439066 | 0.997808 | ok |
+
+Times are milliseconds. jit is `jank-jit` (jank's own core, `jank run`). aot is `jank-aot` (jank's own core, `-O3`).
+
+ABSENT on both jank-jit and jank-aot: nbody and nbody-hinted, `The symbol Math/sqrt could not be resolved`. spectral-norm and spectral-norm-hinted, `The symbol Math/round could not be resolved`. mandelbrot and mandelbrot-hinted, `use of undeclared identifier 's35'`. fannkuch and fannkuch-hinted, `use of undeclared identifier 's28'`. nsieve and nsieve-hinted, `use of undeclared identifier 's56'`. dispatch, `The symbol defprotocol could not be resolved`.
+
+Geometric mean of the jank-jit / JVM median ratios: `2.425829` over the ten programs that ran (including first-output). Geometric mean of the jank-aot / JVM median ratios: `0.705328` over the ten programs that ran (including first-output). Ratio of every JVM median to itself is 1, geometric mean `1`.
+
+Hinted median / unhinted median on the JVM: fib `0.835942`, tak `0.825711`, nbody `0.794294`, spectral-norm `2.525504`, mandelbrot `0.480776`, binary-trees `2.462350`, fannkuch `0.961496`, nsieve `1.223965`. Geometric mean of those eight ratios: `1.085595`.
+
+On jank-jit, where both forms ran: fib `0.984637`, tak `1.580872`, binary-trees `1.002156`. On jank-aot: fib `1.741068`, tak `1.901595`, binary-trees `1.050502`.
+
+`jank` is cohost on jank. Times are milliseconds.
+
+| program | cohost median | cohost cold | cohost/jvm | result |
+|---|---:|---:|---:|---|
+| fib | 126.469398 | 401.822922 | 23.891718 | 832040 |
+| fib-hinted | 442.530535 | 732.72114 | 100.006652 | 832040 |
+| tak | 10.118948 | 284.221359 | 7.398687 | 7 |
+| tak-hinted | 31.30494 | 314.73165 | 27.720708 | 7 |
+| nbody | ABSENT s34 | | | -169027 |
+| nbody-hinted | ABSENT s34 | | | -169027 |
+| spectral-norm | 31.55363 | 1532.564494 | 47.583877 | 784826 |
+| spectral-norm-hinted | 48.056577 | 1614.759454 | 28.695599 | 784826 |
+| mandelbrot | ABSENT s36 | | | 608 |
+| mandelbrot-hinted | ABSENT s36 | | | 608 |
+| binary-trees | 2.152043 | 575.325684 | 4.149645 | 7083 |
+| binary-trees-hinted | 2.644479 | 592.012082 | 2.070858 | 7083 |
+| fannkuch | ABSENT s28 | | | -502 |
+| fannkuch-hinted | ABSENT s28 | | | -502 |
+| nsieve | ABSENT s61 | | | 564 |
+| nsieve-hinted | ABSENT s61 | | | 564 |
+| k-nucleotide | 2.518669 | 365.33767 | 2.238103 | 500 |
+| pipeline | 5.749218 | 1079.960877 | 2.290159 | 5995001 |
+| dispatch | 24.320671 | 921.303304 | 11.215947 | 200183333 |
+| json | 0.262185 | 1639.843371 | 1.798362 | 580 |
+| first-output | 10009.518983 | 10145.458176 | 25.990613 | ok |
+
+Cohost ABSENT reasons: nbody and nbody-hinted, `use of undeclared identifier 's34'`. mandelbrot and mandelbrot-hinted, `use of undeclared identifier 's36'`. fannkuch and fannkuch-hinted, `use of undeclared identifier 's28'`. nsieve and nsieve-hinted, `use of undeclared identifier 's61'`.
+
+Geometric mean of the thirteen cohost / JVM median ratios: `10.340329`.
+
+Hinted median / unhinted median on cohost, where both ran: fib `3.499112`, tak `3.093695`, spectral-norm `1.523013`, binary-trees `1.228823`.
+
+`cljrs` is clojurust's own core. Times are milliseconds.
+
+| program | cljrs median | cljrs cold | cljrs/jvm | result |
+|---|---:|---:|---:|---|
+| fib | 1432.576098 | 1452.711787 | 270.632297 | 832040 |
+| fib-hinted | 1350.766075 | 1319.948278 | 305.257111 | 832040 |
+| tak | 30.360394 | 34.486952 | 22.198658 | 7 |
+| tak-hinted | 30.24246 | 31.79012 | 26.779876 | 7 |
+| nbody | ABSENT not callable: <nil> is not | | | -169027 |
+| nbody-hinted | ABSENT not callable: <nil> is not | | | -169027 |
+| spectral-norm | 364.45816 | 415.780843 | 549.614487 | 784826 |
+| spectral-norm-hinted | 421.163685 | 473.198959 | 251.485748 | 784826 |
+| mandelbrot | 5.973609 | 16.83927 | 13.430843 | 608 |
+| mandelbrot-hinted | 6.937899 | 17.972488 | 32.445257 | 608 |
+| binary-trees | 10.920277 | 13.61334 | 21.056860 | 7083 |
+| binary-trees-hinted | 11.107553 | 12.140018 | 8.698183 | 7083 |
+| fannkuch | ABSENT vector index out of bounds: 0 | | | -502 |
+| fannkuch-hinted | ABSENT vector index out of bounds: 0 | | | -502 |
+| nsieve | 705.783142 | 703.566645 | 844.348297 | 564 |
+| nsieve-hinted | 776.055012 | 768.159621 | 758.532161 | 564 |
+| k-nucleotide | 11.595415 | 11.994055 | 10.303748 | 500 |
+| pipeline | 292.63828 | 340.102924 | 116.570333 | 5995001 |
+| dispatch | 74.356264 | 77.886771 | 34.290827 | 200183333 |
+| json | 18.164097 | 27.988001 | 124.589975 | 580 |
+| first-output | 11.607159 | 17.149073 | 0.030139 | ok |
+
+clojurust ABSENT reasons, as printed by `bb bench:programs cljrs`: nbody and nbody-hinted, `not callable: <nil> is not`. fannkuch and fannkuch-hinted, `vector index out of bounds: 0`.
+
+Geometric mean of the seventeen cljrs / JVM median ratios: `48.975879`.
+
+Hinted median / unhinted median on cljrs, where both ran: fib `0.942893`, tak `0.996116`, spectral-norm `1.155589`, mandelbrot `1.161425`, binary-trees `1.017149`, nsieve `1.099566`.
+
+`jvm-cohost` is `bb boot:jvm`'s entry, `clojure -M -m cohost.run`, with the program source passed to `--eval`. `bb bench:programs jvm-cohost`. Times are milliseconds.
+
+| program | jvm-cohost median | jvm-cohost cold | jvm-cohost/jvm | result |
+|---|---:|---:|---:|---|
+| fib | 6.925279 | 100.765007 | 1.308275 | 832040 |
+| fib-hinted | ABSENT cohost.user$fib cannot be cast to clojure.lang.IFn$LO | | | 832040 |
+| tak | 1.493625 | 2.279273 | 1.092096 | 7 |
+| tak-hinted | ABSENT cohost.user$tak cannot be cast to clojure.lang.IFn$LLLO | | | 7 |
+| nbody | 5.881155 | 11.028646 | 1.517089 | -169027 |
+| nbody-hinted | ABSENT cohost.user$advance cannot be cast to clojure.lang.IFn$ODO | | | -169027 |
+| spectral-norm | 2.972595 | 11.769845 | 4.482768 | 784826 |
+| spectral-norm-hinted | ABSENT cohost.user$eval_a cannot be cast to clojure.lang.IFn$LLO | | | 784826 |
+| mandelbrot | 0.739784 | 4.120885 | 1.663303 | 608 |
+| mandelbrot-hinted | ABSENT cohost.user$inside_QMARK_ cannot be cast to clojure.lang.IFn$DDO | | | 608 |
+| binary-trees | 0.407226 | 2.500697 | 0.785227 | 7083 |
+| binary-trees-hinted | ABSENT cohost.user$build cannot be cast to clojure.lang.IFn$LO | | | 7083 |
+| fannkuch | 31.943536 | 50.202803 | 1.498306 | -502 |
+| fannkuch-hinted | 25.690042 | 41.558123 | 1.253242 | -502 |
+| nsieve | 2.396237 | 7.064721 | 2.866686 | 564 |
+| nsieve-hinted | 2.447969 | 9.586698 | 2.392695 | 564 |
+| k-nucleotide | 1.311027 | 2.932697 | 1.164986 | 500 |
+| pipeline | 1.270138 | 5.243058 | 0.505950 | 5995001 |
+| dispatch | 10.115538 | 13.574763 | 4.664976 | 200183333 |
+| json | 0.121365 | 0.742074 | 0.832459 | 580 |
+| first-output | 2763.332345 | 2787.681567 | 7.175240 | ok |
+
+Geometric mean of the fifteen jvm-cohost / JVM median ratios: `1.692743`.
+
+Hinted median / unhinted median on jvm-cohost, where both ran: fannkuch `0.804232`, nsieve `1.021588`.
+
+`cljrs-cohost` is `bb boot:cljrs`'s command (`CLJRS_IR_THRESHOLD=1`, `CLJRS_NO_JIT=1`, `cljrs run` of `src/cohost/run.cljc`) with the program source passed to `--eval`. `bb bench:programs cljrs-cohost`. Times are milliseconds. The harness's `volatile!` fails on this host, so every program that uses it is ABSENT with that cast. `dispatch` fails first, inside the program. `first-output` does not use a volatile.
+
+| program | cljrs-cohost median | cljrs-cohost cold | cljrs-cohost/jvm | result |
+|---|---:|---:|---:|---|
+| fib | ABSENT Volatile cannot be cast to Future | | | 832040 |
+| fib-hinted | ABSENT Volatile cannot be cast to Future | | | 832040 |
+| tak | ABSENT Volatile cannot be cast to Future | | | 7 |
+| tak-hinted | ABSENT Volatile cannot be cast to Future | | | 7 |
+| nbody | ABSENT Volatile cannot be cast to Future | | | -169027 |
+| nbody-hinted | ABSENT Volatile cannot be cast to Future | | | -169027 |
+| spectral-norm | ABSENT Volatile cannot be cast to Future | | | 784826 |
+| spectral-norm-hinted | ABSENT Volatile cannot be cast to Future | | | 784826 |
+| mandelbrot | ABSENT Volatile cannot be cast to Future | | | 608 |
+| mandelbrot-hinted | ABSENT Volatile cannot be cast to Future | | | 608 |
+| binary-trees | ABSENT Volatile cannot be cast to Future | | | 7083 |
+| binary-trees-hinted | ABSENT Volatile cannot be cast to Future | | | 7083 |
+| fannkuch | ABSENT Volatile cannot be cast to Future | | | -502 |
+| fannkuch-hinted | ABSENT Volatile cannot be cast to Future | | | -502 |
+| nsieve | ABSENT Volatile cannot be cast to Future | | | 564 |
+| nsieve-hinted | ABSENT Volatile cannot be cast to Future | | | 564 |
+| k-nucleotide | ABSENT Volatile cannot be cast to Future | | | 500 |
+| pipeline | ABSENT Volatile cannot be cast to Future | | | 5995001 |
+| dispatch | ABSENT unbound symbol: protocol-fn | | | 200183333 |
+| json | ABSENT Volatile cannot be cast to Future | | | 580 |
+| first-output | 42555.86778 | 46280.039108 | 110.500123 | ok |
+
+The driver's line for the volatile failures is `class clojure.lang.Volatile cannot be cast to class java.util.concurrent.Future`. Geometric mean of the one cljrs-cohost / JVM median ratio (`first-output`): `110.500123`.
+
+## Cohost AOT optimization level
+
+`bb boot:jank` calls `jank-aot-dir` (`bb.edn` lines 14-15), which loads `dev/perf/jank_aot_ensure.clj`. The recompile is one command, `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot`, at `dev/perf/jank_aot_ensure.clj:68-69`. That `-O3` covers `cohost.run` and the namespaces it depends on, including `cohost.shim` and `cohost.hosts.jank-host`. The script requires `cohost/shim.o` and `cohost/hosts/jank_host.o` in that same cache. There is no environment variable for the level. jank's own flag is `-O` / `--optimization`, values 0 through 3. The boot does not read it from the environment. The level is the literal `-O3` on that line, so the default is already `-O3`. `bb bench:programs jank` loads those objects. A second target would repeat the same compile. Default and `-O3` are that run: fib median `126.469398` ms, and the geometric mean of cohost `-O3` / default is `1`.
+
+`jolt` is jolt 0.8.23's own core (`jolt run`). `jolt-cohost` is `bb boot:jolt` (`jolt -Scp src -m cohost.run --eval`). Boot: stock 466, host 199, natives 63, skipped 63, errors 0, battery 145/145, libraries 61/61. `bb bench:programs jolt` and `bb bench:programs jolt-cohost`. Every row printed SAME. Times are milliseconds.
+
+| program | jolt median | jolt cold | jolt/jvm | cohost median | cohost cold | cohost/jvm | result |
+|---|---:|---:|---:|---:|---:|---:|---|
+| fib | 9.332578 | 9.417227 | 1.763046 | 39.499601 | 39.743152 | 7.461989 | 832040 |
+| fib-hinted | 8.90545 | 9.138106 | 2.012526 | 251.79843 | 251.064143 | 56.903459 | 832040 |
+| tak | 0.246605 | 0.259483 | 0.180311 | 1.349508 | 1.343892 | 0.986722 | 7 |
+| tak-hinted | 0.185614 | 0.1982 | 0.164362 | 15.333638 | 15.341936 | 13.578026 | 7 |
+| nbody | 1.567588 | 1.609389 | 0.404371 | 3.243066 | 3.359114 | 0.836574 | -169027 |
+| nbody-hinted | 1.510234 | 1.474866 | 0.490469 | 3.283267 | 3.314992 | 1.066285 | -169027 |
+| spectral-norm | 2.952609 | 4.393105 | 4.452628 | 5.423403 | 5.590879 | 8.178664 | 784826 |
+| spectral-norm-hinted | 2.14092 | 2.649665 | 1.278389 | 15.692423 | 16.056846 | 9.370278 | 784826 |
+| mandelbrot | 0.59783 | 0.674659 | 1.344139 | 0.717242 | 0.759875 | 1.612621 | 608 |
+| mandelbrot-hinted | 0.110312 | 0.114599 | 0.515877 | 0.866126 | 0.90322 | 4.050460 | 608 |
+| binary-trees | 0.282292 | 0.275508 | 0.544325 | 0.54897 | 0.571791 | 1.058543 | 7083 |
+| binary-trees-hinted | 0.279242 | 0.284978 | 0.218671 | 1.061998 | 1.098512 | 0.831637 | 7083 |
+| fannkuch | 27.381871 | 20.717505 | 1.284342 | 26.733999 | 26.608502 | 1.253953 | -502 |
+| fannkuch-hinted | 19.117359 | 19.667614 | 0.932606 | 25.241029 | 27.179449 | 1.231338 | -502 |
+| nsieve | 1.525536 | 1.848063 | 1.825042 | 2.180737 | 2.278142 | 2.608877 | 564 |
+| nsieve-hinted | 1.393835 | 1.905298 | 1.362363 | 2.077267 | 2.211934 | 2.030364 | 564 |
+| k-nucleotide | 0.2435 | 0.283621 | 0.216375 | 0.572904 | 0.59383 | 0.509086 | 500 |
+| pipeline | 2.299106 | 2.213147 | 0.915832 | 2.015231 | 2.044342 | 0.802753 | 5995001 |
+| dispatch | 3.615562 | 3.442353 | 1.667386 | 5.354062 | 5.324077 | 2.469129 | 200183333 |
+| json | 0.015425 | 0.039097 | 0.105802 | 0.14983 | 0.224902 | 1.027704 | 580 |
+| first-output | 127.289412 | 155.165961 | 0.330518 | 2036.561343 | 1997.019663 | 5.288114 | ok |
+
+Geometric mean of the twenty-one jolt / JVM median ratios: `0.683374`. Geometric mean of the twenty-one jolt-cohost / JVM median ratios: `2.404439`.
+
+## Basilisp, ClojureWasm, Phel, let-go
+
+Boots, 2026-11-02. basilisp `bb boot:lpy`: stock 529, host 130, natives 36, skipped 96, errors 0, battery 143/145, libraries 61/61. ClojureWasm `bb boot:cljw`: stock 555, host 145, skipped 91, errors 0, battery 143/145, libraries 61/61. Phel `bb boot:phel`: stock 591, host 73, skipped 127, errors 0, battery 145/145, libraries 61/61. let-go `bb boot:lg`: stock 569, host 105, skipped 117, errors 0, battery 143/145, libraries 61/61.
+
+ClojureScript 1.12.42 is in the local Maven repo (`clojure -P -M:cljs` exited 0). Node and Chromium benches are not started. They stay on the list.
+
+`lpy` is basilisp 0.5.1's own core. The finished `bb bench:programs lpy` could not resolve `System/nanoTime` (the suite line was `raise ctx.AnalyzerException(`; a direct rerun of that wrap reported `unable to resolve symbol 'System/nanoTime'`). `first-output` does not use that call.
+
+| program | lpy median | lpy cold | lpy/jvm | note |
+|---|---:|---:|---:|---|
+| fib | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| fib-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| tak | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| tak-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| nbody | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| nbody-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| spectral-norm | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| spectral-norm-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| mandelbrot | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| mandelbrot-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| binary-trees | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| binary-trees-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| fannkuch | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| fannkuch-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| nsieve | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| nsieve-hinted | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| k-nucleotide | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| pipeline | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| dispatch | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| json | ABSENT System/nanoTime | | | unable to resolve symbol System/nanoTime |
+| first-output | 349.786772 | 345.477217 | 0.908253 | SAME |
+
+`lpy-cohost` is still running. Finished rows are from `bb bench:programs lpy-cohost`.
+
+| program | lpy-cohost median | lpy-cohost cold | lpy-cohost/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 68668.971933 | 69068.767795 | 12972.463835 | SAME |
+| fib-hinted | running | | | |
+| tak | running | | | |
+| tak-hinted | running | | | |
+| nbody | running | | | |
+| nbody-hinted | running | | | |
+| spectral-norm | running | | | |
+| spectral-norm-hinted | running | | | |
+| mandelbrot | running | | | |
+| mandelbrot-hinted | running | | | |
+| binary-trees | running | | | |
+| binary-trees-hinted | running | | | |
+| fannkuch | running | | | |
+| fannkuch-hinted | running | | | |
+| nsieve | running | | | |
+| nsieve-hinted | running | | | |
+| k-nucleotide | running | | | |
+| pipeline | running | | | |
+| dispatch | running | | | |
+| json | running | | | |
+| first-output | running | | | |
+
+`cljw` own core, `bb bench:programs cljw`, finished. All rows SAME. Geometric mean of the 21 ratios: `5.521527`.
+
+| program | cljw median | cljw cold | cljw/jvm |
+|---|---:|---:|---:|
+| fib | 258.791722 | 250.40352 | 48.889129 |
+| fib-hinted | 213.504856 | 218.850296 | 48.249565 |
+| tak | 11.303418 | 11.833819 | 8.264738 |
+| tak-hinted | 9.797178 | 9.715001 | 8.675459 |
+| nbody | 7.543047 | 12.497634 | 1.945786 |
+| nbody-hinted | 7.214054 | 9.352476 | 2.342861 |
+| spectral-norm | 31.679446 | 31.754872 | 47.773611 |
+| spectral-norm-hinted | 32.942604 | 33.127416 | 19.670726 |
+| mandelbrot | 11.940398 | 12.024766 | 26.846351 |
+| mandelbrot-hinted | 11.909486 | 11.927925 | 55.695006 |
+| binary-trees | 3.024328 | 2.915662 | 5.831615 |
+| binary-trees-hinted | 2.883956 | 2.85393 | 2.258389 |
+| fannkuch | 162.470282 | 228.416185 | 7.620640 |
+| fannkuch-hinted | 167.610682 | 205.18267 | 8.176583 |
+| nsieve | 4.156203 | 4.059614 | 4.972183 |
+| nsieve-hinted | 4.140753 | 3.936173 | 4.047257 |
+| k-nucleotide | 1.321186 | 1.334856 | 1.174013 |
+| pipeline | 6.357257 | 7.393957 | 2.532367 |
+| dispatch | 7.764501 | 7.777447 | 3.580750 |
+| json | 0.10543 | 0.14497 | 0.723158 |
+| first-output | 10.710144 | 11.3251 | 0.027810 |
+
+`cljw-cohost` is still running.
+
+| program | cljw-cohost median | cljw-cohost cold | cljw-cohost/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 313.386024 | 315.267143 | 59.202705 | SAME |
+| fib-hinted | 1628.666196 | 1596.058136 | 368.059242 | SAME |
+| tak | 11.18252 | 11.024245 | 8.176341 | SAME |
+| tak-hinted | running | | | |
+| nbody | running | | | |
+| nbody-hinted | running | | | |
+| spectral-norm | running | | | |
+| spectral-norm-hinted | running | | | |
+| mandelbrot | running | | | |
+| mandelbrot-hinted | running | | | |
+| binary-trees | running | | | |
+| binary-trees-hinted | running | | | |
+| fannkuch | running | | | |
+| fannkuch-hinted | running | | | |
+| nsieve | running | | | |
+| nsieve-hinted | running | | | |
+| k-nucleotide | running | | | |
+| pipeline | running | | | |
+| dispatch | running | | | |
+| json | running | | | |
+| first-output | running | | | |
+
+`lg` own core, `bb bench:programs lg`, finished. All rows SAME. Geometric mean of the 21 ratios: `5.378788`.
+
+| program | lg median | lg cold | lg/jvm |
+|---|---:|---:|---:|
+| fib | 202.471613 | 214.399309 | 38.249527 |
+| fib-hinted | 206.750547 | 214.214823 | 46.723171 |
+| tak | 6.812086 | 9.509864 | 4.980804 |
+| tak-hinted | 6.650945 | 19.368971 | 5.889451 |
+| nbody | 11.951767 | 9.009027 | 3.083049 |
+| nbody-hinted | 11.661802 | 13.97779 | 3.787327 |
+| spectral-norm | 37.54895 | 43.079839 | 56.625010 |
+| spectral-norm-hinted | 30.511873 | 38.449635 | 18.219285 |
+| mandelbrot | 6.996983 | 10.110264 | 15.731759 |
+| mandelbrot-hinted | 11.109 | 9.557957 | 51.951514 |
+| binary-trees | 2.685263 | 6.936737 | 5.177818 |
+| binary-trees-hinted | 2.717584 | 3.20049 | 2.128105 |
+| fannkuch | 202.899667 | 200.943873 | 9.516973 |
+| fannkuch-hinted | 195.101098 | 186.708334 | 9.517653 |
+| nsieve | 1.311874 | 3.954379 | 1.569432 |
+| nsieve-hinted | 1.211636 | 3.649268 | 1.184278 |
+| k-nucleotide | 1.671194 | 1.40621 | 1.485032 |
+| pipeline | 28.093177 | 38.515226 | 11.190713 |
+| dispatch | 12.924592 | 14.916383 | 5.960425 |
+| json | 0.185182 | 0.31923 | 1.270188 |
+| first-output | 7.064883 | 6.858866 | 0.018345 |
+
+`lg-cohost` finished. `bb bench:programs lg-cohost`. All rows SAME. Geometric mean of the 21 ratios: `46.889842`.
+
+| program | lg-cohost median | lg-cohost cold | lg-cohost/jvm |
+|---|---:|---:|---:|
+| fib | 220.115409 | 217.611492 | 41.582670 |
+| fib-hinted | 2305.34758 | 2333.752483 | 520.981209 |
+| tak | 9.19794 | 13.32779 | 6.725273 |
+| tak-hinted | 145.126391 | 159.688673 | 128.510270 |
+| nbody | 38.613692 | 78.998465 | 9.960696 |
+| nbody-hinted | 38.735488 | 43.510931 | 12.579872 |
+| spectral-norm | 280.964109 | 293.895161 | 423.702805 |
+| spectral-norm-hinted | 396.917051 | 407.634758 | 237.007570 |
+| mandelbrot | 86.303457 | 104.321966 | 194.041516 |
+| mandelbrot-hinted | 87.492487 | 112.464563 | 409.160784 |
+| binary-trees | 7.656029 | 7.471469 | 14.762623 |
+| binary-trees-hinted | 12.633712 | 12.717552 | 9.893298 |
+| fannkuch | 645.216733 | 689.460238 | 30.263776 |
+| fannkuch-hinted | 642.003764 | 683.612019 | 31.318988 |
+| nsieve | 38.244721 | 26.683283 | 45.753239 |
+| nsieve-hinted | 42.087736 | 27.375508 | 41.137420 |
+| k-nucleotide | 53.792721 | 74.169041 | 47.800498 |
+| pipeline | 35.998721 | 39.038946 | 14.339829 |
+| dispatch | 174.926754 | 169.391323 | 80.670851 |
+| json | 2.960087 | 3.116886 | 20.303633 |
+| first-output | 8712.230748 | 8717.079317 | 22.622088 |
+`phel` own core finished, `bb bench:programs phel`. `phel-cohost` fib median is in the next table; the rest of that run is still going.
+
+| program | phel median | phel cold | phel/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 220.706048 | 290.279168 | 41.694249 | SAME |
+| fib-hinted | ABSENT | | | [PHEL402] Phel\Lang\AbstractFn@anonymous(): Argument #1 ($n) must be of type long, int given, called in /tmp/phel/tmp/__phel_82352_c384c51a33c8d4892ade73239071d2c8_7a770e2acd188541 |
+| tak | 2.781952 | 7.024128 | 2.034084 | SAME |
+| tak-hinted | ABSENT | | | [PHEL402] Phel\Lang\AbstractFn@anonymous(): Argument #1 ($x) must be of type long, int given, called in /tmp/phel/tmp/__phel_82362_01802cdebf9fc3eddf1f9513b42b9c67_9529b9e03bbd94df |
+| nbody | ABSENT | | | Class "Math" not found |
+| nbody-hinted | ABSENT | | | PHP Warning:  "double" will be interpreted as a class name. Did you mean "float"? Write "\double" to suppress this warning in /tmp/phel/tmp/__phel_82369_7eacd53de524675e10c51f6a5cc |
+| spectral-norm | ABSENT | | | Class "Math" not found |
+| spectral-norm-hinted | ABSENT | | | [PHEL402] Phel\Lang\AbstractFn@anonymous(): Argument #1 ($i) must be of type long, int given, called in phar:///home/ubuntu/.cache/cohost-hosts/phel-v0.54.0/phel.phar/src/phel/core |
+| mandelbrot | 72.243968 | 68.316928 | 162.430678 | SAME |
+| mandelbrot-hinted | ABSENT | | | PHP Warning:  "double" will be interpreted as a class name. Did you mean "float"? Write "\double" to suppress this warning in /tmp/phel/tmp/__phel_82398_ab517d5ed9ff3b80118751ad348 |
+| binary-trees | 8.329728 | 8.861952 | 16.061673 | SAME |
+| binary-trees-hinted | ABSENT | | | [PHEL402] Phel\Lang\AbstractFn@anonymous(): Argument #1 ($d) must be of type long, int given, called in /tmp/phel/tmp/__phel_82468_8f9d5b64f57c7a849a19dcbd46307d27_b2b8881c6479acd1 |
+| fannkuch | 343.599104 | 307.492096 | 16.116455 | SAME |
+| fannkuch-hinted | 438.744832 | 484.914944 | 21.403370 | SAME |
+| nsieve | 8.925184 | 9.494272 | 10.677450 | SAME |
+| nsieve-hinted | 16.93184 | 9.447936 | 16.549529 | SAME |
+| k-nucleotide | 7.849984 | 4.425984 | 6.975538 | SAME |
+| pipeline | 33.619968 | 38.828288 | 13.392270 | SAME |
+| dispatch | ABSENT | | | [PHEL001] Cannot resolve symbol 'w'. Did you mean 'when', '%', or '*'? |
+| json | 0.129024 | 0.446976 | 0.884993 | DIFFER expected 580 got 0 |
+| first-output | ABSENT | | | Cannot resolve symbol println; bench/programs/first_output.clj does not start with an ns form |
+
+Geometric mean of the 11 phel / JVM median ratios for rows that produced a time: `12.451088`.
+
+`phel-cohost` is still running where a row says running.
+
+| program | phel-cohost median | phel-cohost cold | phel-cohost/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 316.849166 | 512.81058 | 59.856937 | SAME |
+| fib-hinted | running | | | |
+| tak | running | | | |
+| tak-hinted | running | | | |
+| nbody | running | | | |
+| nbody-hinted | running | | | |
+| spectral-norm | running | | | |
+| spectral-norm-hinted | running | | | |
+| mandelbrot | running | | | |
+| mandelbrot-hinted | running | | | |
+| binary-trees | running | | | |
+| binary-trees-hinted | running | | | |
+| fannkuch | running | | | |
+| fannkuch-hinted | running | | | |
+| nsieve | running | | | |
+| nsieve-hinted | running | | | |
+| k-nucleotide | running | | | |
+| pipeline | running | | | |
+| dispatch | running | | | |
+| json | running | | | |
+| first-output | running | | | |
+
+
+## ClojureScript Node
+
+`bb boot:cljs`: stock 518, host 87, natives 46, skipped 140, errors 0, battery 143/145, libraries 61/61. `bb bench:programs cljs` is the host's own core (`cljs.main -re node`). `js/Date.now` is millisecond resolution, so a median of 0 is a sub-millisecond run. `cljs-cohost` (`node target/cljs-node/main.js --eval`) is running.
+
+| program | cljs median | cljs cold | cljs/jvm | note |
+|---|---:|---:|---:|---|
+| fib | 6.000128 | 19.000064 | 1.133502 | SAME |
+| fib-hinted | 5.999872 | 6.999808 | 1.355900 | SAME |
+| tak | ABSENT | | | ABSENT undeclared Var cljs.user/read-string; TypeError Cannot read properties of undefined (reading call) |
+| tak-hinted | ABSENT | | | ABSENT undeclared Var cljs.user/read-string; TypeError Cannot read properties of undefined (reading call) |
+| nbody | 13.999872 | 37.999872 | 3.611373 | SAME |
+| nbody-hinted | 12.0 | 41.000192 | 3.897162 | SAME |
+| spectral-norm | 3.999744 | 32.0 | 6.031741 | SAME |
+| spectral-norm-hinted | 8.0 | 36.999936 | 4.776969 | SAME |
+| mandelbrot | 0.999936 | 8.0 | 2.248219 | SAME |
+| mandelbrot-hinted | 0.999936 | 8.0 | 4.676225 | SAME |
+| binary-trees | 0.0 | 2.999808 | | SAME, median 0 excluded from the geometric mean |
+| binary-trees-hinted | 0.0 | 4.999936 | | SAME, median 0 excluded from the geometric mean |
+| fannkuch | 88.999936 | 272.999936 | 4.174526 | SAME |
+| fannkuch-hinted | 85.999872 | 248.999936 | 4.195348 | SAME |
+| nsieve | 0.999936 | 16.999936 | 1.196252 | SAME |
+| nsieve-hinted | 5.999872 | 16.999936 | 5.864399 | SAME |
+| k-nucleotide | 5.000192 | 8.999936 | 4.443197 | SAME |
+| pipeline | 8.999936 | 40.0 | 3.585059 | SAME |
+| dispatch | ABSENT | | | ABSENT Can't change/establish root binding of: *unchecked-if* with set |
+| json | 0.0 | 0.999936 | | DIFFER expected 580 got 0; median 0 excluded from the geometric mean |
+| first-output | 8614.866417 | 8293.703139 | 22.369272 | SAME |
+
+Geometric mean of the 15 non-zero cljs / JVM median ratios: `3.663063`. Zero medians excluded: binary-trees, binary-trees-hinted, json.
+
+
+`cljs-cohost` finished. `node target/cljs-node/main.js --eval`. All rows SAME. Geometric mean of the 21 ratios: `3.568417`.
+
+| program | cljs-cohost median | cljs-cohost cold | cljs-cohost/jvm |
+|---|---:|---:|---:|
+| fib | 16.511291 | 34.985732 | 3.119198 |
+| fib-hinted | 124.01835 | 166.855207 | 28.026676 |
+| tak | 0.962271 | 2.08558 | 0.703585 |
+| tak-hinted | 9.097164 | 47.388461 | 8.055592 |
+| nbody | 5.246313 | 28.399463 | 1.353326 |
+| nbody-hinted | 10.752265 | 23.718061 | 3.491943 |
+| spectral-norm | 8.002536 | 21.976406 | 12.068079 |
+| spectral-norm-hinted | 26.05276 | 34.078675 | 15.556654 |
+| mandelbrot | 1.674245 | 5.282076 | 3.764311 |
+| mandelbrot-hinted | 1.570977 | 7.227463 | 7.346713 |
+| binary-trees | 0.197245 | 7.655943 | 0.380335 |
+| binary-trees-hinted | 0.861213 | 11.450477 | 0.674405 |
+| fannkuch | 113.238141 | 208.027084 | 5.311415 |
+| fannkuch-hinted | 129.769042 | 289.164348 | 6.330547 |
+| nsieve | 3.198177 | 24.14507 | 3.826069 |
+| nsieve-hinted | 3.030083 | 24.821575 | 2.961666 |
+| k-nucleotide | 1.412419 | 7.227048 | 1.255083 |
+| pipeline | 4.058098 | 9.748818 | 1.616514 |
+| dispatch | 10.255879 | 35.585418 | 4.729697 |
+| json | 0.258467 | 0.570729 | 1.772860 |
+| first-output | 7620.182209 | 7562.899564 | 19.786486 |
+
+## Chromium
+
+`bb boot:browser` exited 0. stock 518, host 87, natives 46, skipped 140, errors 0, battery 143/145, libraries 61/61, elapsed 11041 ms. The page in `src/cohost/run_browser.cljs` runs the battery or `?bench` only. It has no `--eval`, so `bb bench:programs browser` and `browser-cohost` stay ABSENT: no program hook.
+
+## Still running at close
+
+These three `bb bench:programs` processes were still running when G-13 closed. Rows below are the lines already printed.
+
+`lpy-cohost` fib 68668.971933, fib-hinted 146340.083443, tak 2006.472601, tak-hinted 5346.053021, nbody 1152.967872, nbody-hinted 1148.295367, all SAME. The rest of that suite had not printed.
+
+`cljw-cohost` had printed through binary-trees median 4.066756 SAME. The rest had not printed.
+
+`phel-cohost` had printed through dispatch median 234.659488 SAME. spectral-norm and spectral-norm-hinted ABSENT `Seq::range` end must be int|float, BigInt given. fannkuch and fannkuch-hinted ABSENT the same `Seq::range` BigInt error. nsieve and nsieve-hinted ABSENT `Unsupported operand types: int << BigInt`. pipeline ABSENT the same `Seq::range` BigInt error.
+

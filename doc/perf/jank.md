@@ -1107,3 +1107,5 @@ libraries: 61/61 cases pass across 12 clojure.* libraries
 ```
 
 The two jank failures are `subs count nth first last butlast` (`Unterminated vector.`) and `Character outside ASCII` (`Unexpected end of file.`). `bb boot:jank` on the tip, after the defn, spec, and call-list shortcuts were removed, printed the same three lines: `542` / `171` / `78` / `0`, battery `143/145`, libraries `61/61`.
+
+Step 8's program suite (fib, tak, nbody, and the rest) is `bb bench:programs`. The table is "Programs against JVM Clojure" in `doc/PERF.md` (JVM, jank-jit, jank-aot, cohost on jank, and clojurust).
