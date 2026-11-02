@@ -469,11 +469,15 @@ jank-FAST Step 8. Programs in `bench/programs/`, driver `dev/bench_programs.clj`
   program compiled `-t browser -O simple` and loaded in headless Chromium (Playwright), console printing on.
   `browser-cohost` has no runner: `src/cohost/run_browser.cljs` runs the battery or `?bench` only and has no
   `--eval`.
+- jank optimization level, per column (C-1 addendum): `jank-jit` is `jank -O3 run`; `jank-aot` is
+  `jank compile-module -O3`, then `run-main`; `jank` (cohost on jank) is `jank -O3 --module-path <cohost's -O3 AOT
+  modules>:src run-main cohost.run -- --eval <program>`, so the boot's JIT and the program's forms compile at -O3.
+  first-output uses the same commands.
 - Hinted programs carry the hints a JVM programmer writes for primitive math: `^long`/`^double` on parameters,
   `^long` on the return of `fib` and `tak`, and `(double x)`/`(long x)` coercion of locals (a `^double` tag on a
   local bound to an Object makes no primitive local on the JVM). `json` round-trips its sample `n` times.
 
-Measured 2026-11-02, 8:48 AM to 10:52 AM ET, one 4-CPU box, one target at a time, nothing else running, cohost
+Measured 2026-11-02, 8:48 AM to 11:24 AM ET (jank-jit and cohost on jank at -O3: 10:54-11:24 AM), one 4-CPU box, one target at a time, nothing else running, cohost
 `c/bench-programs` (base `b286ba1`). The sections after this one ("Basilisp, ClojureWasm, Phel, let-go",
 "ClojureScript Node", "Chromium", "Still running at close") are G-13's runs with the old method (one warm-up, five
 calls of 0.03-80 ms); the coordinator's all-host rerun with this driver replaces them. Hosts this box lacks (jolt,
@@ -487,66 +491,66 @@ Median ms of 10 timed calls (xJVM: median / JVM median).
 
 | program | size | jvm | jvm-cohost | jank-jit | jank-aot | jank | cljs | cljs-cohost | browser |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| fib | 36 | 139.164 | 155.234 (x1.12) | 2068.851 (x14.87) | 136.690 (x0.98) | 2593.866 (x18.64) | 239.783 (x1.72) | 261.039 (x1.88) | 181.100 (x1.30) |
-| fib-hinted | 36 | 86.788 | ABSENT | 1991.294 (x22.94) | 164.436 (x1.89) | 9652.053 (x111.21) | 253.498 (x2.92) | 3022.310 (x34.82) | 150.150 (x1.73) |
-| tak | 30 20 10 | 370.015 | 305.499 (x0.83) | 5865.958 (x15.85) | 568.600 (x1.54) | 20005.129 (x54.07) | ABSENT | 1222.172 (x3.30) | ABSENT |
-| tak-hinted | 30 20 10 | 160.435 | ABSENT | 8223.789 (x51.26) | 1075.946 (x6.71) | 62008.624 (x386.50) | ABSENT | 17801.744 (x110.96) | ABSENT |
+| fib | 36 | 139.164 | 155.234 (x1.12) | 109.448 (x0.79) | 136.690 (x0.98) | 459.506 (x3.30) | 239.783 (x1.72) | 261.039 (x1.88) | 181.100 (x1.30) |
+| fib-hinted | 36 | 86.788 | ABSENT | 275.183 (x3.17) | 164.436 (x1.89) | 3436.371 (x39.60) | 253.498 (x2.92) | 3022.310 (x34.82) | 150.150 (x1.73) |
+| tak | 30 20 10 | 370.015 | 305.499 (x0.83) | 758.011 (x2.05) | 568.600 (x1.54) | 1488.983 (x4.02) | ABSENT | 1222.172 (x3.30) | ABSENT |
+| tak-hinted | 30 20 10 | 160.435 | ABSENT | 1296.105 (x8.08) | 1075.946 (x6.71) | 18396.719 (x114.67) | ABSENT | 17801.744 (x110.96) | ABSENT |
 | nbody | 50000 | 201.169 | 299.999 (x1.49) | ABSENT | ABSENT | ABSENT | 879.060 (x4.37) | 1568.248 (x7.80) | 526.800 (x2.62) |
 | nbody-hinted | 50000 | 199.261 | ABSENT | ABSENT | ABSENT | ABSENT | 834.527 (x4.19) | 1653.455 (x8.30) | 517.100 (x2.60) |
-| spectral-norm | 600 | 234.551 | 322.950 (x1.38) | ABSENT | ABSENT | 8649.375 (x36.88) | 1740.105 (x7.42) | 2812.995 (x11.99) | 1090.450 (x4.65) |
-| spectral-norm-hinted | 600 | 118.189 | ABSENT | ABSENT | ABSENT | 13401.452 (x113.39) | 1790.396 (x15.15) | 4490.841 (x38.00) | 952.600 (x8.06) |
+| spectral-norm | 600 | 234.551 | 322.950 (x1.38) | ABSENT | ABSENT | 3290.174 (x14.03) | 1740.105 (x7.42) | 2812.995 (x11.99) | 1090.450 (x4.65) |
+| spectral-norm-hinted | 600 | 118.189 | ABSENT | ABSENT | ABSENT | 5252.280 (x44.44) | 1790.396 (x15.15) | 4490.841 (x38.00) | 952.600 (x8.06) |
 | mandelbrot | 1500 | 171.545 | 177.148 (x1.03) | ABSENT | ABSENT | ABSENT | 2504.099 (x14.60) | 4701.288 (x27.41) | 1986.250 (x11.58) |
 | mandelbrot-hinted | 1500 | 172.394 | ABSENT | ABSENT | ABSENT | ABSENT | 2435.867 (x14.13) | 4487.109 (x26.03) | 1923.250 (x11.16) |
-| binary-trees | 18 | 279.690 | 258.124 (x0.92) | 6765.922 (x24.19) | 4030.292 (x14.41) | 7230.156 (x25.85) | 912.235 (x3.26) | 1388.831 (x4.97) | 481.200 (x1.72) |
-| binary-trees-hinted | 18 | 249.042 | ABSENT | 6601.447 (x26.51) | 3781.119 (x15.18) | 9871.674 (x39.64) | 854.270 (x3.43) | 2917.456 (x11.71) | 513.700 (x2.06) |
+| binary-trees | 18 | 279.690 | 258.124 (x0.92) | 4016.127 (x14.36) | 4030.292 (x14.41) | 3439.206 (x12.30) | 912.235 (x3.26) | 1388.831 (x4.97) | 481.200 (x1.72) |
+| binary-trees-hinted | 18 | 249.042 | ABSENT | 3781.694 (x15.18) | 3781.119 (x15.18) | 4594.999 (x18.45) | 854.270 (x3.43) | 2917.456 (x11.71) | 513.700 (x2.06) |
 | fannkuch | 8 | 188.514 | 167.783 (x0.89) | ABSENT | ABSENT | ABSENT | 692.804 (x3.68) | 864.746 (x4.59) | 477.550 (x2.53) |
 | fannkuch-hinted | 8 | 150.001 | 178.316 (x1.19) | ABSENT | ABSENT | ABSENT | 738.551 (x4.92) | 920.872 (x6.14) | 471.350 (x3.14) |
 | nsieve | 20 | 237.117 | 369.284 (x1.56) | ABSENT | ABSENT | ABSENT | 821.985 (x3.47) | 1714.090 (x7.23) | 428.800 (x1.81) |
 | nsieve-hinted | 20 | 243.300 | 373.298 (x1.53) | ABSENT | ABSENT | ABSENT | 749.941 (x3.08) | 1799.450 (x7.40) | 443.900 (x1.82) |
-| k-nucleotide | 2000000 | 154.312 | 135.902 (x0.88) | 1419.795 (x9.20) | 699.293 (x4.53) | 3032.476 (x19.65) | 836.140 (x5.42) | 1449.917 (x9.40) | 525.500 (x3.41) |
-| pipeline | 500000 | 159.547 | 161.266 (x1.01) | 1599.987 DIFFER | 1280.717 DIFFER | 2181.297 DIFFER | 705.978 (x4.42) | 869.912 (x5.45) | 421.800 (x2.64) |
-| dispatch | 5000000 | 158.637 | 710.070 (x4.48) | ABSENT | ABSENT | 11665.907 DIFFER | 683.848 (x4.31) | 3502.906 (x22.08) | 448.850 (x2.83) |
-| json | 30000 | 218.450 | 257.687 (x1.18) | 3107.481 (x14.23) | 1974.701 (x9.04) | 8699.881 (x39.83) | 514.319 DIFFER | 2026.651 (x9.28) | 291.200 DIFFER |
-| first-output | - | 708.823 | 4616.659 (x6.51) | 672.119 (x0.95) | 650.275 (x0.92) | 13872.158 (x19.57) | 116.127 (x0.16) | 7335.602 (x10.35) | 717.774 (x1.01) |
+| k-nucleotide | 2000000 | 154.312 | 135.902 (x0.88) | 717.094 (x4.65) | 699.293 (x4.53) | 1652.495 (x10.71) | 836.140 (x5.42) | 1449.917 (x9.40) | 525.500 (x3.41) |
+| pipeline | 500000 | 159.547 | 161.266 (x1.01) | 1235.519 DIFFER | 1280.717 DIFFER | 1568.218 DIFFER | 705.978 (x4.42) | 869.912 (x5.45) | 421.800 (x2.64) |
+| dispatch | 5000000 | 158.637 | 710.070 (x4.48) | ABSENT | ABSENT | 8413.152 DIFFER | 683.848 (x4.31) | 3502.906 (x22.08) | 448.850 (x2.83) |
+| json | 30000 | 218.450 | 257.687 (x1.18) | 2189.466 (x10.02) | 1974.701 (x9.04) | 6433.241 (x29.45) | 514.319 DIFFER | 2026.651 (x9.28) | 291.200 DIFFER |
+| first-output | - | 708.823 | 4616.659 (x6.51) | 678.953 (x0.96) | 650.275 (x0.92) | 20101.329 (x28.36) | 116.127 (x0.16) | 7335.602 (x10.35) | 717.774 (x1.01) |
 
 min-max of the 10 timed calls / the cold call (the first call in a fresh process), ms.
 
 | program | jvm | jvm-cohost | jank-jit | jank-aot | jank | cljs | cljs-cohost | browser |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| fib | 121.893-173.004 / 233.909 | 134.460-175.644 / 242.638 | 1840.709-2366.837 / 2671.520 | 91.708-148.784 / 95.254 | 2491.588-2839.399 / 3269.228 | 217.159-295.926 / 229.979 | 248.599-324.140 / 283.481 | 148.000-254.800 / 164.400 |
-| fib-hinted | 73.411-106.860 / 84.710 |  | 1827.644-2179.601 / 2554.355 | 158.890-175.891 / 168.631 | 9409.898-10118.336 / 11451.143 | 222.023-302.680 / 241.763 | 2883.344-3108.095 / 2832.468 | 138.900-271.800 / 204.500 |
-| tak | 349.317-449.223 / 409.261 | 257.935-367.386 / 497.106 | 5484.307-6432.275 / 6262.808 | 552.627-615.240 / 584.227 | 19051.381-21087.342 / 20884.461 |  | 1182.877-1416.299 / 1190.151 |  |
-| tak-hinted | 145.241-193.638 / 204.114 |  | 7959.455-8493.331 / 8383.941 | 954.089-1289.832 / 1083.634 | 61110.805-64494.483 / 63303.681 |  | 17523.027-18595.653 / 17385.173 |  |
+| fib | 121.893-173.004 / 233.909 | 134.460-175.644 / 242.638 | 109.003-175.848 / 2037.889 | 91.708-148.784 / 95.254 | 432.536-567.998 / 2145.138 | 217.159-295.926 / 229.979 | 248.599-324.140 / 283.481 | 148.000-254.800 / 164.400 |
+| fib-hinted | 73.411-106.860 / 84.710 |  | 234.601-328.591 / 1757.686 | 158.890-175.891 / 168.631 | 3357.095-3598.962 / 4934.339 | 222.023-302.680 / 241.763 | 2883.344-3108.095 / 2832.468 | 138.900-271.800 / 204.500 |
+| tak | 349.317-449.223 / 409.261 | 257.935-367.386 / 497.106 | 588.823-840.599 / 2422.257 | 552.627-615.240 / 584.227 | 1393.540-1532.935 / 2987.238 |  | 1182.877-1416.299 / 1190.151 |  |
+| tak-hinted | 145.241-193.638 / 204.114 |  | 1208.900-1426.532 / 1420.880 | 954.089-1289.832 / 1083.634 | 17867.856-18757.106 / 19717.923 |  | 17523.027-18595.653 / 17385.173 |  |
 | nbody | 189.382-228.212 / 443.707 | 288.089-317.808 / 729.456 |  |  |  | 759.902-965.781 / 713.572 | 1466.478-1904.077 / 1629.451 | 521.600-683.000 / 735.700 |
 | nbody-hinted | 192.349-238.456 / 365.860 |  |  |  |  | 640.057-972.742 / 592.664 | 1513.893-1771.034 / 1774.427 | 491.700-627.700 / 621.900 |
-| spectral-norm | 218.567-260.318 / 408.983 | 314.728-415.629 / 606.467 |  |  | 8120.426-9505.006 / 12547.067 | 1631.269-1874.363 / 1488.645 | 2642.144-3133.513 / 2649.015 | 917.700-1239.000 / 1124.400 |
-| spectral-norm-hinted | 113.866-123.326 / 180.562 |  |  |  | 13159.563-14044.831 / 17294.484 | 1508.544-2007.471 / 1427.908 | 4238.068-4783.363 / 4657.268 | 883.400-1103.300 / 963.000 |
+| spectral-norm | 218.567-260.318 / 408.983 | 314.728-415.629 / 606.467 |  |  | 3055.631-3725.200 / 11902.784 | 1631.269-1874.363 / 1488.645 | 2642.144-3133.513 / 2649.015 | 917.700-1239.000 / 1124.400 |
+| spectral-norm-hinted | 113.866-123.326 / 180.562 |  |  |  | 5023.124-5461.202 / 13629.194 | 1508.544-2007.471 / 1427.908 | 4238.068-4783.363 / 4657.268 | 883.400-1103.300 / 963.000 |
 | mandelbrot | 164.407-188.132 / 225.656 | 170.093-213.945 / 341.477 |  |  |  | 2345.535-2718.797 / 2343.588 | 4118.100-4883.892 / 4499.872 | 1805.900-2574.000 / 2195.000 |
 | mandelbrot-hinted | 169.392-194.851 / 208.608 |  |  |  |  | 2250.830-2898.689 / 2143.212 | 4096.782-4890.160 / 4484.662 | 1804.400-2175.900 / 1898.500 |
-| binary-trees | 248.818-360.795 / 404.257 | 225.865-310.096 / 395.313 | 6238.318-7298.401 / 8492.133 | 3830.185-4288.654 / 3999.799 | 6980.525-7919.920 / 9465.919 | 861.994-1028.158 / 1099.092 | 1248.214-1543.078 / 1853.716 | 443.400-496.400 / 572.200 |
-| binary-trees-hinted | 227.488-305.945 / 368.497 |  | 6074.731-7187.445 / 8526.705 | 3680.953-4232.837 / 4055.209 | 9267.449-10631.907 / 12717.020 | 815.488-1033.283 / 1101.454 | 2745.428-3024.936 / 3141.776 | 446.900-586.900 / 549.300 |
+| binary-trees | 248.818-360.795 / 404.257 | 225.865-310.096 / 395.313 | 3743.478-4406.921 / 6964.655 | 3830.185-4288.654 / 3999.799 | 3135.028-3635.705 / 8295.135 | 861.994-1028.158 / 1099.092 | 1248.214-1543.078 / 1853.716 | 443.400-496.400 / 572.200 |
+| binary-trees-hinted | 227.488-305.945 / 368.497 |  | 3594.718-4196.401 / 5610.184 | 3680.953-4232.837 / 4055.209 | 4311.672-5045.489 / 8956.335 | 815.488-1033.283 / 1101.454 | 2745.428-3024.936 / 3141.776 | 446.900-586.900 / 549.300 |
 | fannkuch | 169.603-2159.668 / 443.924 | 152.306-330.297 / 348.516 |  |  |  | 659.441-817.213 / 902.760 | 829.870-1031.310 / 1047.781 | 438.800-515.600 / 571.200 |
 | fannkuch-hinted | 141.871-181.190 / 477.881 | 162.338-420.674 / 487.901 |  |  |  | 689.928-858.307 / 950.861 | 834.170-978.794 / 975.421 | 437.600-547.800 / 585.600 |
 | nsieve | 165.181-345.449 / 327.814 | 258.366-512.643 / 620.980 |  |  |  | 675.585-879.620 / 821.358 | 1554.773-1880.519 / 1948.007 | 373.400-597.200 / 478.700 |
 | nsieve-hinted | 154.964-453.000 / 277.746 | 232.154-456.271 / 487.100 |  |  |  | 708.951-1021.247 / 940.211 | 1557.190-2236.151 / 2035.877 | 388.100-646.100 / 457.400 |
-| k-nucleotide | 133.901-234.418 / 280.684 | 128.940-148.615 / 313.342 | 1325.514-1525.583 / 1926.557 | 632.507-769.656 / 851.177 | 2957.362-3300.183 / 4253.745 | 772.332-938.589 / 897.334 | 1292.041-1518.269 / 1310.404 | 463.200-618.200 / 542.100 |
-| pipeline | 140.442-187.292 / 331.187 | 149.109-242.927 / 271.219 | 1480.565-1778.104 / 2537.538 | 1203.132-1331.695 / 1195.588 | 2072.095-2525.688 / 4609.076 | 596.955-871.403 / 640.547 | 796.085-977.524 / 942.784 | 385.800-530.500 / 466.100 |
-| dispatch | 149.159-231.840 / 302.659 | 632.955-726.764 / 787.209 |  |  | 11170.936-12049.894 / 14788.425 | 592.807-864.816 / 809.393 | 3261.834-3691.508 / 3649.045 | 443.000-641.600 / 608.300 |
-| json | 210.395-292.018 / 554.421 | 236.281-310.498 / 793.939 | 2976.178-3435.254 / 4761.902 | 1904.445-2061.242 / 2119.903 | 7989.088-11028.126 / 12636.501 | 465.062-599.325 / 460.360 | 1909.693-2193.864 / 2066.897 | 284.400-345.100 / 527.900 |
-| first-output | 651.416-1118.000 / 652.451 | 4168.637-6703.454 / 4110.573 | 633.206-737.747 / 716.166 | 598.728-749.510 / 673.279 | 12971.453-15332.219 / 14349.268 | 107.709-194.537 / 108.283 | 6951.264-7670.996 / 7531.770 | 673.702-800.678 / 670.673 |
+| k-nucleotide | 133.901-234.418 / 280.684 | 128.940-148.615 / 313.342 | 624.057-791.882 / 1249.509 | 632.507-769.656 / 851.177 | 1505.480-1920.007 / 5004.154 | 772.332-938.589 / 897.334 | 1292.041-1518.269 / 1310.404 | 463.200-618.200 / 542.100 |
+| pipeline | 140.442-187.292 / 331.187 | 149.109-242.927 / 271.219 | 1155.889-1496.229 / 3199.306 | 1203.132-1331.695 / 1195.588 | 1447.958-1660.159 / 7665.890 | 596.955-871.403 / 640.547 | 796.085-977.524 / 942.784 | 385.800-530.500 / 466.100 |
+| dispatch | 149.159-231.840 / 302.659 | 632.955-726.764 / 787.209 |  |  | 8238.488-8682.587 / 14029.796 | 592.807-864.816 / 809.393 | 3261.834-3691.508 / 3649.045 | 443.000-641.600 / 608.300 |
+| json | 210.395-292.018 / 554.421 | 236.281-310.498 / 793.939 | 2102.671-2292.437 / 6517.639 | 1904.445-2061.242 / 2119.903 | 6207.318-7309.046 / 14644.056 | 465.062-599.325 / 460.360 | 1909.693-2193.864 / 2066.897 | 284.400-345.100 / 527.900 |
+| first-output | 651.416-1118.000 / 652.451 | 4168.637-6703.454 / 4110.573 | 630.919-753.876 / 649.077 | 598.728-749.510 / 673.279 | 18653.374-22290.783 / 20154.912 | 107.709-194.537 / 108.283 | 6951.264-7670.996 / 7531.770 | 673.702-800.678 / 670.673 |
 
 - jvm-cohost: geomean xJVM 1.390 over 15 programs (unhinted 1.396 over 13, hinted 1.351 over 2)
-- jank-jit: geomean xJVM 14.102 over 9 programs (unhinted 9.440 over 6, hinted 31.473 over 3)
+- jank-jit: geomean xJVM 4.194 over 9 programs (unhinted 3.179 over 6, hinted 7.300 over 3)
 - jank-aot: geomean xJVM 3.780 over 9 programs (unhinted 3.058 over 6, hinted 5.778 over 3)
-- jank: geomean xJVM 47.601 over 11 programs (unhinted 28.349 over 7, hinted 117.897 over 4)
+- jank: geomean xJVM 18.283 over 11 programs (unhinted 11.080 over 7, hinted 43.926 over 4)
 - cljs: geomean xJVM 4.029 over 18 programs (unhinted 3.338 over 11, hinted 5.414 over 7)
 - cljs-cohost: geomean xJVM 10.774 over 21 programs (unhinted 7.604 over 13, hinted 18.984 over 8)
 - browser: geomean xJVM 2.873 over 18 programs (unhinted 2.604 over 11, hinted 3.354 over 7)
 - hinted/unhinted median on jvm: fib 0.624, tak 0.434, nbody 0.991, spectral-norm 0.504, mandelbrot 1.005, binary-trees 0.890, fannkuch 0.796, nsieve 1.026
 - hinted/unhinted median on jvm-cohost: fannkuch 1.063, nsieve 1.011
-- hinted/unhinted median on jank-jit: fib 0.963, tak 1.402, binary-trees 0.976
+- hinted/unhinted median on jank-jit: fib 2.514, tak 1.710, binary-trees 0.942
 - hinted/unhinted median on jank-aot: fib 1.203, tak 1.892, binary-trees 0.938
-- hinted/unhinted median on jank: fib 3.721, tak 3.100, spectral-norm 1.549, binary-trees 1.365
+- hinted/unhinted median on jank: fib 7.478, tak 12.355, spectral-norm 1.596, binary-trees 1.336
 - hinted/unhinted median on cljs: fib 1.057, nbody 0.949, spectral-norm 1.029, mandelbrot 0.973, binary-trees 0.936, fannkuch 1.066, nsieve 0.912
 - hinted/unhinted median on cljs-cohost: fib 11.578, tak 14.566, nbody 1.054, spectral-norm 1.596, mandelbrot 0.954, binary-trees 2.101, fannkuch 1.065, nsieve 1.050
 - hinted/unhinted median on browser: fib 0.829, nbody 0.982, spectral-norm 0.874, mandelbrot 0.968, binary-trees 1.068, fannkuch 0.987, nsieve 1.035
@@ -563,12 +567,12 @@ ABSENT and DIFFER, as printed:
 - jank-jit nbody-hinted: `error: The symbol 'Math/sqrt' could not be resolved.`
 - jank-jit spectral-norm: `error: The symbol 'Math/round' could not be resolved.`
 - jank-jit spectral-norm-hinted: `error: The symbol 'Math/round' could not be resolved.`
-- jank-jit mandelbrot: `target/bench-programs/28679/mandelbrot.jank:16:1: error: use of undeclared identifier 's35'`
-- jank-jit mandelbrot-hinted: `target/bench-programs/28679/mandelbrot-hinted.jank:16:1: error: use of undeclared identifier 's37'`
-- jank-jit fannkuch: `target/bench-programs/28679/fannkuch.jank:9:1: error: use of undeclared identifier 's28'`
-- jank-jit fannkuch-hinted: `target/bench-programs/28679/fannkuch-hinted.jank:7:1: error: use of undeclared identifier 's30'`
-- jank-jit nsieve: `target/bench-programs/28679/nsieve.jank:11:1: error: use of undeclared identifier 's56'; did you mean 's16'?`
-- jank-jit nsieve-hinted: `target/bench-programs/28679/nsieve-hinted.jank:11:1: error: use of undeclared identifier 's58'; did you mean 's18'?`
+- jank-jit mandelbrot: `target/bench-programs/23404/mandelbrot.jank:16:1: error: use of undeclared identifier 's35'`
+- jank-jit mandelbrot-hinted: `target/bench-programs/23404/mandelbrot-hinted.jank:16:1: error: use of undeclared identifier 's37'`
+- jank-jit fannkuch: `target/bench-programs/23404/fannkuch.jank:9:1: error: use of undeclared identifier 's28'`
+- jank-jit fannkuch-hinted: `target/bench-programs/23404/fannkuch-hinted.jank:7:1: error: use of undeclared identifier 's30'`
+- jank-jit nsieve: `target/bench-programs/23404/nsieve.jank:11:1: error: use of undeclared identifier 's56'; did you mean 's16'?`
+- jank-jit nsieve-hinted: `target/bench-programs/23404/nsieve-hinted.jank:11:1: error: use of undeclared identifier 's58'; did you mean 's18'?`
 - jank-jit pipeline: DIFFER: 1336595249, JVM 374998750001
 - jank-jit dispatch: `error: The symbol 'defprotocol' could not be resolved.`
 - jank-aot nbody: `error: The symbol 'Math/sqrt' could not be resolved.`
@@ -623,10 +627,41 @@ ABSENT and DIFFER, as printed:
   These are the programs' JVM-isms on a host whose own core differs; cohost runs both on cljs.
 - jvm-cohost, every program with a primitive-hinted fn: `class cohost.user$fib cannot be cast to class
   clojure.lang.IFn$LL` (tak `IFn$LLLL`, advance `IFn$ODO`, eval_a `IFn$LLO`, inside? `IFn$DDO`, build `IFn$LO`).
-- Hinted slower than unhinted, where both run: cohost on jank fib 3.72, tak 3.10, spectral-norm 1.55, binary-trees
-  1.37; cljs-cohost fib 11.58, tak 14.57, binary-trees 2.10; jank's own core tak 1.40 (JIT) and 1.89 (AOT). On the
+- Hinted slower than unhinted, where both run: cohost on jank (-O3) fib 7.48, tak 12.36, spectral-norm 1.60,
+  binary-trees 1.34; cljs-cohost fib 11.58, tak 14.57, binary-trees 2.10; jank's own core fib 2.51 and tak 1.71
+  (JIT -O3), fib 1.20 and tak 1.89 (AOT). On the
   JVM, hinted/unhinted is at most 1.026 (nsieve, min-max 155-453 vs 165-345 ms), 1.005 (mandelbrot) and 0.991
   (nbody): inside the box's noise; fib 0.62, tak 0.43, spectral-norm 0.50.
+
+### jank without -O against -O3
+
+The same driver, the same box, jank-jit and cohost on jank before the addendum
+(no `-O`: 8:54-9:54 AM) and after (`-O3`: 10:54-11:24 AM). Median ms; pipeline and dispatch are DIFFER rows (the
+i32 wrap above), timed anyway.
+
+| program | jank-jit no -O | jank-jit -O3 | cohost on jank no -O | cohost on jank -O3 |
+|---|---:|---:|---:|---:|
+| fib | 2068.851 | 109.448 | 2593.866 | 459.506 |
+| fib-hinted | 1991.294 | 275.183 | 9652.053 | 3436.371 |
+| tak | 5865.958 | 758.011 | 20005.129 | 1488.983 |
+| tak-hinted | 8223.789 | 1296.105 | 62008.624 | 18396.719 |
+| nbody | ABSENT | ABSENT | ABSENT | ABSENT |
+| nbody-hinted | ABSENT | ABSENT | ABSENT | ABSENT |
+| spectral-norm | ABSENT | ABSENT | 8649.375 | 3290.174 |
+| spectral-norm-hinted | ABSENT | ABSENT | 13401.452 | 5252.280 |
+| mandelbrot | ABSENT | ABSENT | ABSENT | ABSENT |
+| mandelbrot-hinted | ABSENT | ABSENT | ABSENT | ABSENT |
+| binary-trees | 6765.922 | 4016.127 | 7230.156 | 3439.206 |
+| binary-trees-hinted | 6601.447 | 3781.694 | 9871.674 | 4594.999 |
+| fannkuch | ABSENT | ABSENT | ABSENT | ABSENT |
+| fannkuch-hinted | ABSENT | ABSENT | ABSENT | ABSENT |
+| nsieve | ABSENT | ABSENT | ABSENT | ABSENT |
+| nsieve-hinted | ABSENT | ABSENT | ABSENT | ABSENT |
+| k-nucleotide | 1419.795 | 717.094 | 3032.476 | 1652.495 |
+| pipeline | 1599.987 | 1235.519 | 2181.297 | 1568.218 |
+| dispatch | ABSENT | ABSENT | 11665.907 | 8413.152 |
+| json | 3107.481 | 2189.466 | 8699.881 | 6433.241 |
+| first-output | 672.119 | 678.953 | 13872.158 | 20101.329 |
 
 
 ## Cohost AOT optimization level
