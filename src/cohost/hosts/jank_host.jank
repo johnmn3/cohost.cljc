@@ -431,6 +431,9 @@ namespace cohost_var {
 #include <jank/runtime/obj/cons.hpp>
 #include <jank/runtime/obj/exception_info.hpp>
 #include <jank/runtime/obj/nil.hpp>
+#include <jank/runtime/obj/volatile.hpp>
+#include <jank/runtime/obj/number.hpp>
+#include <atomic>
 
 namespace cohost_obj {
   using namespace jank::runtime;
@@ -570,7 +573,41 @@ namespace cohost_obj {
   object_ref fields_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->fields; }
   object_ref extmap_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->extmap; }
   object_ref meta_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->meta_; }
-  object_ref field(object_ref x, jank::i64 i) { return static_cast<cohost_object *>(x.ptr())->fields.nth(make_box(i)); }
+  object_ref field(object_ref x, jank::i64 i) {
+    auto const &f = static_cast<cohost_object *>(x.ptr())->fields;
+    // fields is the constructor's vector (or an assoc of it): index it directly
+    if (f.get_type() == object_type::persistent_vector) {
+      auto const &d = expect_object<obj::persistent_vector>(f)->data;
+      if (0 <= i && static_cast<jank::usize>(i) < d.size()) { return d[static_cast<jank::usize>(i)]; }
+    }
+    return f.nth(make_box(i));
+  }
+
+  // protocol method inline caches (doc/research/jank-dispatch.md): a method's cache is a
+  // volatile holding [descriptor impl generation]; a hit is the instance's descriptor,
+  // identical, under the current generation, which every extend bumps
+  std::atomic<jank::i64> proto_generation{ 0 };
+  jank::i64 bump_generation() { return ++proto_generation; }
+  object_ref cached_impl(object_ref c, object_ref x) {
+    if (x.is_nil() || x.get_type() != cohost_object::obj_type) { return make_box<obj::nil>(); }
+    auto const v = expect_object<obj::volatile_>(c)->val;
+    if (v.get_type() != object_type::persistent_vector) { return make_box<obj::nil>(); }
+    auto const &d = expect_object<obj::persistent_vector>(v)->data;
+    if (d.size() != 3 || d[0] != static_cast<cohost_object *>(x.ptr())->descriptor
+        || d[2].get_type() != object_type::integer
+        || expect_object<obj::integer>(d[2])->data != proto_generation.load()) {
+      return make_box<obj::nil>();
+    }
+    return d[1];
+  }
+  object_ref fill_cache(object_ref c, object_ref x, object_ref impl, jank::i64 gen) {
+    if (!x.is_nil() && x.get_type() == cohost_object::obj_type) {
+      expect_object<obj::volatile_>(c)->val = make_box<obj::persistent_vector>(
+        std::in_place, static_cast<cohost_object *>(x.ptr())->descriptor, impl, make_box<obj::integer>(gen));
+    }
+    return impl;
+  }
+  jank::i64 generation() { return proto_generation.load(); }
 }
 ")
 
@@ -826,13 +863,42 @@ namespace cohost_obj {
 
 (defn register-impl!
   "extend's work: record mmap {method-sym fn} as type t's impl of protocol p.
-   t is a type descriptor, a class token, or nil."
+   t is a type descriptor, a class token, or nil. Bumps the protocol
+   generation, so every method's inline cache misses once."
   [p t mmap]
   (let [k (cond (nil? t) nil
                 (map? t) (:name t)
                 :else t)]
     (swap! (:impls p) update k (fn [old] (merge old mmap)))
+    (cpp/cohost_obj.bump_generation)
     p))
+
+;; -- protocol method inline caches (doc/research/jank-dispatch.md) -----------
+;; A protocol method is a fixed-arity fn per declared arglist: it reads the
+;; instance's descriptor once and calls the impl the method's cache holds for
+;; it; a miss (another type, a non-cohost value, an extend since) runs
+;; protocol-impl, refills the cache for a cohost instance and calls the impl.
+;; The emitted code reaches the C++ through these vars: a cpp/raw namespace of
+;; the adapter is not visible from JIT-compiled user code (P12).
+
+(defn method-cache [] (volatile! nil))
+(defn cached-impl [c x] (cpp/cohost_obj.cached_impl c x))
+
+(defn- no-impl [p msym x]
+  (throw (adapter/ex* 'java.lang.IllegalArgumentException
+                      (str "No implementation of method: :" (name msym)
+                           " of protocol: #'" (:name p)
+                           " found for class: " (type-key x)))))
+
+(defn miss-impl
+  "The slow path of a protocol method: the impl for x (refilling the
+   method's cache when x is a cohost instance), or the stock error."
+  [c p msym x]
+  (let [gen (cpp/cohost_obj.generation)
+        f (protocol-impl p msym x)]
+    (if f
+      (cpp/cohost_obj.fill_cache c x f gen)
+      (no-impl p msym x))))
 
 ;; -- the macros ---------------------------------------------------------------
 ;; A cohost macro fn takes [&form &env & args]; jank hands a macro ((args))
@@ -856,17 +922,29 @@ namespace cohost_obj {
   [[_ & more]]
   (if (vector? (first more)) [(vec more)] (map vec more)))
 
+(defn- form-symbols
+  "Every symbol anywhere in form (a superset of the ones it uses)."
+  [form]
+  (cond (symbol? form) #{form}
+        (map? form) (into #{} (mapcat form-symbols) (concat (keys form) (vals form)))
+        (coll? form) (into #{} (mapcat form-symbols) form)
+        :else #{}))
+
 (defn- method-fns-form
   "One method name's clauses -> a (fn [this ...] (let [field (inst-field
    this i) ...] body...)) form holding every arity the clauses declare.
-   fields are the type's field symbols (none for extend / reify)."
+   fields are the type's field symbols (none for extend / reify); only the
+   fields whose symbol occurs in an arity's body are bound in it, each by
+   index (one C++ read)."
   [fields clauses]
   (apply list 'fn
          (mapcat (fn [clause]
                    (map (fn [arity]
                           (let [params (first arity) body (rest arity)
                                 this (first params)
-                                binds (vec (mapcat (fn [i f] [f (list 'cohost.hosts.jank-host/inst-field this i)])
+                                used (form-symbols body)
+                                binds (vec (mapcat (fn [i f] (when (contains? used f)
+                                                               [f (list 'cohost.hosts.jank-host/inst-field this i)]))
                                                    (range) fields))]
                             (apply list params
                                    (if (empty? binds) body [(apply list 'let binds body)]))))
@@ -940,6 +1018,27 @@ namespace cohost_obj {
                  :groups (groups-form [] specs)})
           [])))
 
+(defn- method-dispatch-form
+  "A protocol method's fn: one fixed arity per declared arglist, each
+   looking the impl up in the method's inline cache. With no arglists, or
+   a variadic one, the old variadic protocol-dispatch."
+  [pname m arglists]
+  (let [counts (distinct (map count arglists))]
+    (if (or (empty? counts) (some (fn [a] (some #{'&} a)) arglists) (some zero? counts))
+      (list 'fn '[& args] (list 'cohost.hosts.jank-host/protocol-dispatch pname (list 'quote m) 'args))
+      (let [c (gensym "cache")]
+        (list 'let [c (list 'cohost.hosts.jank-host/method-cache)]
+              (apply list 'fn
+                     (map (fn [n]
+                            (let [params (vec (map (fn [i] (symbol (str "p" i))) (range n)))
+                                  this (first params) f (gensym "impl")]
+                              (list params
+                                    (list 'let [f (list 'cohost.hosts.jank-host/cached-impl c this)]
+                                          (list 'if f
+                                                (apply list f params)
+                                                (apply list (list 'cohost.hosts.jank-host/miss-impl c pname (list 'quote m) this) params))))))
+                          (sort counts))))))))
+
 (defn defprotocol-macro [&form &env pname & specs]
   (let [doc (when (string? (first specs)) (first specs))
         specs (if doc (rest specs) specs)
@@ -960,7 +1059,7 @@ namespace cohost_obj {
             (map (fn [e]
                    (let [m (key e) sig (val e)]
                      (list 'def (with-meta m {:arglists (list 'quote (:arglists sig))})
-                           (list 'fn '[& args] (list 'cohost.hosts.jank-host/protocol-dispatch pname (list 'quote m) 'args)))))
+                           (method-dispatch-form pname m (:arglists sig)))))
                  sigs)
             [(when doc (list 'alter-meta! (list 'var pname) 'assoc :doc doc))
              (list 'quote pname)]
@@ -1378,6 +1477,8 @@ namespace cohost_obj {
 
 (def adapter
   {:name :jank
+   ;; the shim's stock multimethod behind a one-entry cache (X2-1, doc/research/jank-dispatch.md)
+   :multimethod-cache? true
    :core-ns 'clojure.core
    :catch-all 'cpp/jank.runtime.object_ref
    :read-forms read-forms

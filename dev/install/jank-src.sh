@@ -14,6 +14,8 @@
 #   JANK_LLVM         the LLVM prefix jank builds against (default /opt/jank-llvm/e280c505)
 #   JANK_BUILD_LOCK   a file to flock around the compile (e.g. /home/user/locks/box.lock on a shared box)
 #   JOBS              ninja -j (default nproc)
+#   JANK_SERIES       a series file to apply instead of upstream/jank/patches/series (patch names in it
+#                     resolve against its own directory), e.g. to measure a patch before it joins the series
 #
 # The LLVM: jank needs Clang/LLVM 23 from jank-lang/llvm-project @ e280c505, the one its apt package
 # ships (/usr/local/lib/jank/0.1: clang-23, libLLVM.so.23.1, libclang-cpp.so.23.1, every llvm/ and
@@ -25,6 +27,15 @@
 # package lacks (static component libs, tools: jank links only libLLVM.so and libclang-cpp.so; the
 # stubs are listed in $JANK_LLVM/STUBS.txt). Binutils the exports name (llvm-ar, -nm, -ranlib, ...)
 # point at GNU binutils.
+#
+# The configure passes -Dllvm_dir with -Djank_local_clang=on, so cmake --install copies clang-23,
+# libLLVM and libclang-cpp into $JANK_DEV_PREFIX/lib/jank/0.1 and sets the binary's RUNPATH to
+# $ORIGIN/../lib/jank/0.1/lib: the installed jank needs no LD_LIBRARY_PATH. (Configured with
+# jank_local_clang=on and no llvm_dir, the install looks for build/llvm-install and fails; with it off
+# the binary needs LD_LIBRARY_PATH=$JANK_LLVM/lib.)
+#
+# Running jank (apt or source) also wants a UTF-8 locale: under POSIX its lexer rejects non-ASCII
+# string literals (jank_init's setlocale(LC_CTYPE, ".UTF8") is not a glibc locale name).
 set -euo pipefail
 # jank's lexer reads string literals by the C locale: under POSIX (a bare container) the "…" in
 # jank's own src/jank/jank/nrepl/server/util.jank is "Unterminated string" and phase 2 fails.
@@ -48,8 +59,9 @@ for a in "$@"; do
 done
 
 cohost="$(pwd)"
-series="$cohost/upstream/jank/patches/series"
-[ -f "$series" ] || { echo "run from cohost's root (no upstream/jank/patches/series)" >&2; exit 2; }
+[ -f "$cohost/upstream/jank/patches/series" ] || { echo "run from cohost's root (no upstream/jank/patches/series)" >&2; exit 2; }
+series="$(realpath "${JANK_SERIES:-$cohost/upstream/jank/patches/series}")"
+patchdir="$(dirname "$series")"
 t0=$(date +%s)
 stage() { echo "== jank-src: $* ($(( $(date +%s) - t0 ))s)"; }
 locked() { if [ -n "${JANK_BUILD_LOCK:-}" ]; then flock "$JANK_BUILD_LOCK" "$@"; else "$@"; fi; }
@@ -74,8 +86,16 @@ deps() {
 # ---- the LLVM prefix ----
 llvm_prefix_from_apt() {
   [ -f "$JANK_LLVM/lib/cmake/llvm/LLVMConfig.cmake" ] && { stage "LLVM prefix present: $JANK_LLVM"; return; }
-  grep -q "$LLVM_SHA" "$APT_JANK/include/llvm/Config/llvm-config.h" \
-    || { echo "apt jank's LLVM is not $LLVM_SHA; use --llvm-from-source" >&2; exit 1; }
+  # Where the package records the snapshot differs between apt builds of 0.1-noble: some carry
+  # LLVM_REVISION in include/llvm/Support/VCSRevision.h, some in include/llvm/Config/llvm-config.h;
+  # clang-23 --version names it in both.
+  local where=""
+  for h in "$APT_JANK/include/llvm/Support/VCSRevision.h" "$APT_JANK/include/llvm/Config/llvm-config.h"; do
+    if [ -f "$h" ] && grep -q "$LLVM_SHA" "$h"; then where="$h"; break; fi
+  done
+  if [ -z "$where" ] && "$APT_JANK/bin/clang-23" --version | grep -q "$LLVM_SHA"; then where="clang-23 --version"; fi
+  [ -n "$where" ] || { echo "apt jank's LLVM is not $LLVM_SHA (checked VCSRevision.h, llvm-config.h, clang-23 --version); use --llvm-from-source" >&2; exit 1; }
+  stage "apt LLVM is $LLVM_SHA (from $where)"
   stage "LLVM prefix from the apt package -> $JANK_LLVM"
   mkdir -p "$JANK_LLVM"/{bin,include,lib}
   cp -a "$APT_JANK/bin/." "$JANK_LLVM/bin/"
@@ -145,7 +165,7 @@ apply_series() {
     git read-tree "$JANK_SHA"
     while read -r p; do
       p="${p%%#*}"; p="$(echo "$p" | xargs)"; [ -z "$p" ] && continue
-      git apply --cached "$cohost/upstream/jank/patches/$p" || { echo "patch does not apply: $p" >&2; exit 1; }
+      git apply --cached "$patchdir/$p" || { echo "patch does not apply: $patchdir/$p" >&2; exit 1; }
       echo "applied $p" >&2
     done < "$series"
     git write-tree > "$idx.tree"
@@ -177,9 +197,12 @@ configure() {
 
 build_install() {
   stage "build (ninja -j$JOBS${JANK_BUILD_LOCK:+, under flock $JANK_BUILD_LOCK})"
-  local s; s=$(date +%s)
-  locked cmake --build "$JANK_SRC/compiler+runtime/build" -j "$JOBS"
-  stage "build done in $(( $(date +%s) - s ))s"
+  local s c; s=$(date +%s)
+  c="$(mktemp)"
+  locked bash -c 'date +%s > "$1"; shift; exec "$@"' _ "$c" cmake --build "$JANK_SRC/compiler+runtime/build" -j "$JOBS"
+  local e; e=$(date +%s)
+  stage "build done: compile $(( e - $(cat "$c") ))s, lock wait $(( $(cat "$c") - s ))s"
+  rm -f "$c"
   cmake --install "$JANK_SRC/compiler+runtime/build" > "$JANK_SRC/compiler+runtime/build/install.log"
   stage "installed: $JANK_DEV_PREFIX/bin/jank ($("$JANK_DEV_PREFIX/bin/jank" print-binary-version))"
 }
