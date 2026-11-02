@@ -92,6 +92,7 @@
    :inline-meta     [[] ":keep when the host ignores a var's :inline fn or is the JVM; :strip when it honors it (basilisp) -- the stock inline fns build forms holding quoted JVM interop"]
    :rewrite-inline? [[] "true when the host's compiler ignores a var's :inline fn: the codemod applies core.clj's own inline expansions at rewrite time, as the JVM compiler does (with :inline-meta :keep); default false"]
    :syntax-quote-source? [[] "true when the host's reader expands syntax-quote into (clojure.core/with-meta x (clojure.core/hash-map :jank/source ...)) wrappers, one per quoted form: the codemod drops those wrappers from the forms cohost evaluates -- the meta is the host's source bookkeeping, not the program's, and building it costs a hash-map per quoted symbol on every expansion; default false"]
+   :loop-rebind-shadow? [[] "true when the host's compiler fails on a loop* binding a name an enclosing loop* binds (jank 0.1: C++ codegen, use of undeclared identifier 'sNN'): the codemod binds such a name under a fresh one and rebinds it with let* at the top of the body (recur is positional, so the loop is the same); default false"]
    :empty-queue     [[] "the host's empty persistent queue (clojure.lang.PersistentQueue/EMPTY), or nil"]
    :host-class      [['token] "the host's own class or interface a JVM class token names, or nil: instance? also asks it"]
    :host-instance?  [['token 'x] "is x, an object that is not the host's own data, an instance of the JVM class token on this host? (default: instance? of :host-class)"]
@@ -115,6 +116,7 @@
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
    :native-hints    [[] "nil (the default), or {hint-symbol host-type-symbol}: primitive fn* parameter hints this host compiles as native types (long, double, int, boolean). nil leaves every other host's rewritten forms without native tags."]
    :prim-kind-test  [[] "nil (the default), or a fn of [hint sym] returning the form that tests whether sym is already of the hinted kind, which the codemod emits in place of the shim's kind test (cohost.shim/long-kind? / double-kind?). jank's returns a cpp tag test, inlined by its compiler. nil keeps the shim call."]
+   :defn-fn-name?   [[] "true when a def whose value is an unnamed fn* carries the def's name onto the fn* -- (def f (fn* f ...)) -- so self-recursion is a direct call, not a var deref (jank's own defn does this). Default false: the JVM's defn leaves the fn unnamed and recursion goes through the var."]
    :chunks          [[] "the host's chunked seqs, or nil: {:chunked-seq? :chunk-first :chunk-rest :chunk-next :chunk-buffer :chunk-append :chunk :chunk-cons}, plus :chunk? and :chunk-reduce when the host's reduce cannot walk one of its chunks (the JVM's ArrayChunk); :chunk-reduce keeps IChunk.reduce's contract: a reduced result returned unopened. The stock chunked branches (map, filter, concat, doseq, for, reduce1) then run over the host's own chunks; with nil, no host seq is chunked to stock code. Default: the host core's fns of those names, when it has them all"]
    :host-data?      [['x] "a cheap test, asked at every (.m x args) before the type is looked up: true only when x is certainly the host's own data, never a user type (jolt: its transients, atoms, fns, strings, numbers ...); default: never true"]
    :invoke-member   [['x 'name 'args 'absent] "x's member called name (a string, as written in the source): the field when args is empty and name is a field, else the method applied to args; absent when x has no such member"]
@@ -135,6 +137,7 @@
    ;; host facts
    :nano-time       [[] "System/nanoTime: a monotonic clock, in nanoseconds"]
    :current-time-millis [[] "System/currentTimeMillis"]
+   :exit            [['code] "System/exit: end the process with the exit code, standard output flushed; the default knows every host"]
    :math-ceil       [['x] "Math/ceil of a double"]
    :math-floor      [['x] "Math/floor of a double"]
    :math-sqrt       [['x] "Math/sqrt of a double"]
@@ -346,6 +349,7 @@ namespace cohost_err {
     :natives {}
     :native-hints nil
     :prim-kind-test nil
+    :defn-fn-name? false
     :host-aliases? true
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
@@ -393,6 +397,7 @@ namespace cohost_err {
     :inline-meta :keep
     :rewrite-inline? false
     :syntax-quote-source? false
+    :loop-rebind-shadow? false
     :empty-queue (fn [] nil)
     :atom (fn ([x] (atom x)) ([x m] (atom x :meta m)))
     :ex-info (fn ([msg m] (apply ex-info [msg m]))
@@ -400,6 +405,14 @@ namespace cohost_err {
     :exception-class (fn [_] 'RuntimeException)
     :nano-time (unsupported :nano-time)
     :current-time-millis (unsupported :current-time-millis)
+    :exit (fn [code]
+            #?(:cljs (.exit js/process code)
+               :lpy (python/exit code)
+               :phel (php/exit code)
+               :lg (os/exit code)
+               ;; jank 0.1's flush throws "TODO: port flesh"; std::exit flushes stdout
+               :jank (cpp/std.exit code)
+               :default (do (flush) (System/exit code))))
     :math-ceil (unsupported :math-ceil)
     :math-floor (unsupported :math-floor)
     :math-sqrt (unsupported :math-sqrt)
@@ -584,6 +597,7 @@ namespace cohost_err {
 (defn strip-inline? [] (= :strip (cap :inline-meta)))
 (defn rewrite-inline? [] (boolean (cap :rewrite-inline?)))
 (defn syntax-quote-source? [] (boolean (cap :syntax-quote-source?)))
+(defn loop-rebind-shadow? [] (boolean (cap :loop-rebind-shadow?)))
 (defn chunks [] ((cap :chunks)))
 (defn natives [] (or (get @installed :natives) {}))
 (defn native-hints
@@ -592,6 +606,7 @@ namespace cohost_err {
    adapter) emits no native tag."
   []
   (when-let [m (current)] (:native-hints m)))
+(defn defn-fn-name? [] (boolean (cap :defn-fn-name?)))
 (defn prim-kind-test
   "nil, or a fn of [hint sym] -> the form testing whether sym is already of
    the hinted kind, emitted in place of the shim's kind test. nil (the
@@ -690,6 +705,7 @@ namespace cohost_err {
 
 (defn nano-time [] ((cap :nano-time)))
 (defn current-time-millis [] ((cap :current-time-millis)))
+(defn exit [code] ((cap :exit) code))
 (defn math-ceil [x] ((cap :math-ceil) x))
 (defn math-floor [x] ((cap :math-floor) x))
 (defn math-sqrt [x] ((cap :math-sqrt) x))

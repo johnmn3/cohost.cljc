@@ -10,14 +10,16 @@
 (require '[babashka.fs :as fs]
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_inputs.clj"))
 
 (def ^:private lpy-root "target/lpy-snapshot")
 (def ^:private lpy-src (str lpy-root "/src"))
 
 (defn- lpy-key []
-  (let [files (->> (concat (fs/glob "resources/cohost/clojure-1.12.0" "**") (fs/glob "src/cohost" "**")
-                           (fs/glob "dev/perf" "{jank_snapshot_emit.clj,lpy_snapshot_*}"))
-                   (filter fs/regular-file?) (map str) sort)
+  ;; the inputs as for every jank key (dev/perf/jank_inputs.clj): Basilisp's
+  ;; own __pycache__ beside src/cohost is not one
+  (let [files (sort (concat (source-files "resources/cohost/clojure-1.12.0") (source-files "src/cohost")
+                            (source-files "dev/perf" "{jank_inputs.clj,jank_snapshot_emit.clj,lpy_snapshot_*}")))
         sums (:out (shell {:out :string :in (str/join "\n" files)} "xargs" "-d" "\n" "sha256sum"))
         version (str/trim (:out (shell {:out :string} "basilisp" "version")))]
     (-> (shell {:out :string :in (str sums "basilisp " version "\n")} "sha256sum") :out str/trim (str/split #"\s+") first)))

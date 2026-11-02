@@ -384,6 +384,7 @@
                 :move-methods? (= :protocols (host/type-method-style))
                 :cohost-types? (= :cohost-types (host/type-method-style))
                 :syntax-quote-source? (host/syntax-quote-source?)
+                :loop-rebind-shadow? (host/loop-rebind-shadow?)
                 :host-method host/host-method
                 :var-form (fn [x] (when (host/var?* x)
                                     (let [n (host/var-ns x) n (if (host/namespace? n) (host/ns-name* n) n)]

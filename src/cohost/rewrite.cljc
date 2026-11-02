@@ -136,6 +136,11 @@
    binding vectors of let / loop / for / doseq ... before they expand): a
    local spelled like a class is a local."
   #{})
+(def ^:dynamic *loop-locals*
+  "Names bound by the loop* forms enclosing the form being rewritten (only
+   tracked when the host sets :loop-rebind-shadow?)."
+  #{})
+
 (def ^:dynamic *local-tags*
   "{local hint} of the enclosing locals hinted with a class whose checkcast
    decides an interop call: String.split(regex) and Pattern.split(input) share
@@ -392,7 +397,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? cohost-types? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source?]
+           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source? loop-rebind-shadow?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:plain-symbol (or plain-symbol identity)
    :shim-names shim-names
@@ -456,6 +461,7 @@
    ;; read is a member call the shim dispatches, not the host's own access
    :cohost-types? (boolean cohost-types?)
    :syntax-quote-source? (boolean syntax-quote-source?)
+   :loop-rebind-shadow? (boolean loop-rebind-shadow?)
    :host-method host-method
    ;; record?: is a form a record instance (a reader literal); protocol-var?:
    ;; (fn [ns-sym name-sym]) is that var a protocol; interned?: (fn [sym]) is
@@ -908,14 +914,39 @@
                            (partition 2 bvec)))
               bvec))
 
+(defn- loop-rebind
+  "(loop* [a init ...] body) where an enclosing loop* binds a ->
+   (loop* [a__N init ...] (let* [a a__N] body)): jank 0.1's C++ codegen fails
+   on the shadowing loop* (`use of undeclared identifier 'sNN'`) and compiles
+   the let* one. recur is positional, so the loop is the same. nil when no
+   binding shadows."
+  [bvec body]
+  (let [pairs (partition 2 bvec)
+        hit (fn [b] (and (symbol? b) (contains? *loop-locals* (*plain* b))))]
+    (when (some (comp hit first) pairs)
+      (let [fresh (map (fn [[b _]] (when (hit b) (with-meta (gensym (str (name (*plain* b)) "__")) (meta b)))) pairs)]
+        (list 'loop*
+              (vec (mapcat (fn [[b v] g] [(or g b) v]) pairs fresh))
+              (apply list 'let*
+                     (vec (mapcat (fn [[b _] g] (when g [(*plain* b) g])) pairs fresh))
+                     (or (seq body) [nil])))))))
+
+(declare rw-let*')
+
 (defn- rw-let* [ctx [h bvec & body]]
+  (if-let [form' (and (= h 'loop*) (:loop-rebind-shadow? ctx) (loop-rebind bvec body))]
+    (rw-let* ctx form')
+    (rw-let*' ctx h bvec body)))
+
+(defn- rw-let*' [ctx h bvec body]
   (let [syms0 (filter symbol? (take-nth 2 bvec))
         syms (map *plain* syms0)
         tags (hint-tags *local-tags* syms0)
         classes (class-tags *local-classes* (filter (comp symbol? first) (partition 2 bvec)))
         [bs depths] (markers-for syms tags classes)]
     (binding [*locals* (into *locals* syms)
-              *local-tags* tags *local-classes* classes *marker-depth* depths]
+              *local-tags* tags *local-classes* classes *marker-depth* depths
+              *loop-locals* (if (and (= h 'loop*) (:loop-rebind-shadow? ctx)) (into *loop-locals* syms) *loop-locals*)]
       (let [bvec' (rw-bindings ctx bvec)
             ;; an empty body is nil: ClojureWasm's let*, loop* and letfn* take
             ;; no empty one
@@ -1003,13 +1034,49 @@
    deftest's :test fn, core.clj's :inline fns."
   [:test :inline :inline-arities])
 
+(defn- fn*-inside?
+  "True when a rewritten fn* body holds a nested fn/fn* form (a closure)
+   anywhere outside a quote. jank's compile-module codegen mishandles a
+   self-named fn* whose body holds closures: the generated C++ calls the
+   fn with an undeclared capture (cohost.spec.alpha's op-explain and
+   re-gen, found by the snapshot build; the JIT path never hits it). A
+   named fn* with no closure inside compiles on both paths."
+  [form]
+  (cond (seq? form) (and (not= 'quote (first form))
+                         (or (#{'fn 'fn*} (first form))
+                             (boolean (some fn*-inside? form))))
+        (coll? form) (boolean (some fn*-inside? form))
+        :else false))
+
 (defn- rw-def [ctx [_ nm & more]]
   (let [nm (carry-meta nm nm)
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
              nm)
-        nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)]
-    (apply list 'def nm (rw-all ctx more))))
+        nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)
+        more' (rw-all ctx more)
+        ;; a host whose defn names its fn (jank's own does): carry the
+        ;; def's name onto an unnamed fn* value, so self-recursion is a
+        ;; direct call instead of a var deref and a dynamic call. The
+        ;; semantic price is pinned by a battery row: an in-flight
+        ;; recursion no longer sees a redefinition of the var.
+        more' (if (and (host/defn-fn-name?)
+                       ;; a dotted name is a class or a constructor
+                       ;; pseudo-name (deftype's Box.), not a fn name:
+                       ;; jank's codegen rejects it on a fn*
+                       (not (some #{\.} (str nm)))
+                       (seq more')
+                       (seq? (last more'))
+                       (= 'fn* (first (last more')))
+                       (not (symbol? (second (last more'))))
+                       ;; and no closure inside: a self-named fn*
+                       ;; holding closures breaks jank's compile-module
+                       ;; codegen (see fn*-inside?)
+                       (not (some fn*-inside? (rest (last more')))))
+                (concat (butlast more')
+                        [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
+                more')]
+    (apply list 'def nm more')))
 
 (defn- rw-map
   "A map literal is data: its keys and values are rewritten, nothing is

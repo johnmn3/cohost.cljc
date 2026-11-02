@@ -27,6 +27,8 @@
           (defn jank-snapshot-path []
             (load-file "dev/perf/jank_snapshot_key.clj")
             ((resolve 'fresh-path))))
+  readme:check {:doc "README.md's bash blocks, run as written against a fresh cohost/app project per target: bb readme:check [target ...] (default jvm)"
+                :task (load-file "dev/cli-demo/readme_check.clj")}
   cli:check {:doc "the cohost CLI against the Clojure CLI on the demo (dev/cli-demo): bb cli:check [target ...]; one line per target x case: SAME, ABSENT or DIFF"
              :task (load-file "dev/cli-demo/check.clj")}
   boot:jolt {:doc "jolt (Chez Scheme): the `jolt` binary on PATH"

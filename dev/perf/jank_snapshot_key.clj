@@ -18,19 +18,16 @@
 (require '[babashka.fs :as fs]
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_inputs.clj"))
 
 (def ^:private root "target/jank-snapshot")
 (def ^:private src-dir (str root "/src"))
 (def ^:private aot-dir (str root "/aot"))
 
 (defn- input-files []
-  (->> (concat (fs/glob "resources/cohost/clojure-1.12.0" "**")
-               (fs/glob "src/cohost" "**")
-               (fs/glob "dev/perf" "jank_snapshot_{record.jank,emit.clj,key.clj,ensure.clj,run.jank}"))
-       (filter fs/regular-file?)
-       (map str)
-       sort
-       vec))
+  (vec (sort (concat (source-files "resources/cohost/clojure-1.12.0")
+                     (source-files "src/cohost")
+                     (source-files "dev/perf" "jank_{inputs.clj,snapshot_record.jank,snapshot_emit.clj,snapshot_key.clj,snapshot_ensure.clj,snapshot_run.jank}")))))
 
 (defn- jank-version []
   (str/trim (:out (shell {:out :string} "jank" "print-binary-version"))))
