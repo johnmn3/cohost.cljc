@@ -644,15 +644,183 @@ jank, `defn` names the fn (core.jank line 778), so raw jank already has the dire
 
 ## 5. The ranking
 
-(pending)
+The nine, ranked by expected gain on the Step 8 programs against the JVM, breadth across
+them, cost, and semantic risk. "Measured" means a probe above; "bounded" means the probe gives
+the ceiling; "unknown" means only the named probe can say.
+
+| rank | idea | gain on the yardstick | breadth | cost | semantic risk |
+|---:|---|---|---|---|---|
+| 1 | S3-1 `-O3` for what cohost evaluates (then the snapshot) | measured 6.4x on cohost's fib (P6); the whole cohost column was measured at `-O0` | every program on cohost; the `jank-jit` column too | one line per bb task; the snapshot is lane D's running order | none |
+| 2 | S2-3 the pathological leaves (sorted-walk O(n^2), `=` not inlined, uncached keyword hash, array-map `assoc` demotion, `apply str`, string `nth`, `truthy`; the i32 `add` arm as a correctness blocker) | measured per leaf: sort walk 1000x, `apply str` 19x, string `nth` 11x, `=` a var call per test | json, k-nucleotide, pipeline, dispatch, every `(= i n)` loop; the stock core's worst bench cases | each a small upstream change | none (same results) |
+| 3 | S2-2 allocation-free seq walks, internal reduce, chunked ranges and vector seqs | measured gaps: lazy map/filter 49x, reduce over a vector 10.5x, transduce 6x, into 3.8x (P5); reachable share unknown until P10 | pipeline, json, nbody, k-nucleotide's `gen`, every `reduce`/`map`/`filter` | upstream, medium (the in-place branch exists; `reduce-kv` is the model) | chunk granularity, as Clojure |
+| 4 | S2-1 small vectors and the collector's settings | measured 25x on binary-trees at depth 14 and 25x on two-element vectors (P3); the env alone 1.43x | binary-trees, pipeline, json, nbody; every allocating program | upstream: settings small, the vector representation medium | none |
+| 5 | S3-2 cohost's emission gaps: the fn's name, aliasable statics, the inline guard | measured 1.84x on fib (`def`+`fn` vs `defn`, P6); the guard's share unknown until P12 | every cohost program with recursion or collection ops | cohost, lane M, small | redefinition during recursion (pin it) |
+| 6 | S1-1 native numeric locals and returns by type propagation | bounded 1.67x on fib (C++ floor, P1) and 8-10x on carried loops (H0); the hinted variants of 8 programs | the numeric half of the suite | upstream, large (analyzer + codegen) | overflow and the 32-bit `int` typing: fix first |
+| 7 | S3-3 dispatch: fixed-arity protocol methods with an inline cache, record fields by index, a multimethod cache | dispatch 11.2x today; the entry alone 108 ns + `apply` + lookups (P2, P11) | one yardstick program (and the protocol/multimethod bench cases) | cohost, lane M, medium | `extend` after caching (a generation counter) |
+| 8 | S1-2 direct var calls and fixed-arity variadic entries | bounded: (9.3 - 1.6) ns per cross-var call, ~100 ns per variadic call (P2); self-recursion is already direct | json's helper calls, pipeline's `assoc`/`update-in` | upstream, medium | redefinition reaching call sites (a guard flag) |
+| 9 | S1-3 LTO across modules and into the runtime, then PGO | unknown: `-O3` already gives 7-20x per TU (P9); the cross-object part is unmeasured | AOT-only | needs a source build of jank (no bitcode shipped; LTO is disabled upstream for the JIT's symbol lookup, `CMakeLists.txt:18`) | none |
+
+Why this order. 1 is measured, broad and nearly free, and it is the condition under which every
+other number in the cohost column should be re-read. 2 is a list of small, certain fixes with
+very large local ratios, several of which sit on the yardstick's hot paths (`=` in every loop
+test; `nth` on strings in k-nucleotide and json; the sorted-walk bug in any program that
+sorts). 3 and 4 are the two structural runtime gaps the probes found largest (49x and 25x); 3
+ranks above 4 because its first step is finishing an existing branch and because `reduce`,
+`map` and `filter` touch more programs than two-element vectors do. 5 is cohost's own, small,
+measured. 6 has the largest numeric upside but is the costliest and the only one whose
+semantics need a decision (overflow) and a prerequisite fix (the `int` typing), so it closes
+the six. 7 to 9 are below the line for the reasons in §7.
 
 ## 6. The plan: the top six
 
-(pending)
+### 1. `-O3` for everything cohost evaluates, then the snapshot (S3-1)
+
+- **Hypothesis.** The cohost column of Step 8 is mostly `-O0` machine code; compiling the
+  booted core and the user program at `-O3` closes most of the gap to raw jank JIT.
+- **Probe and result so far.** P6 (`dev/research/p6_cohost_fib.clj` under
+  `run-cohost-jank.sh`): fib-stock 245827372 ns without `-O`, 38481897 with `-O3` (6.4x); the
+  5e6-iteration stock loop folds to a constant at `-O3` exactly as raw jank's. P6b
+  (`p6b_boot_O.sh`): the boot's wall time with and without the flag, §8.4.
+- **Implementation sketch.** Add `-O3` to the `run-main cohost.run` command in `bb.edn`
+  (`boot:jank`, `bench:jank`, `boot:jank-aot-profile`), to `run-jank-cohost` and `run-jank-jit`
+  in `dev/bench_programs.clj` (the `jank-jit` column is `-O0` today too), and to the
+  `cohost` CLI's jank target. Then lane D's snapshot compiles the booted core at `-O3` once,
+  so a fresh process pays neither the boot's JIT nor the 13-31 first-use compiles per program
+  (doc/perf/jank.md "Runtime profile").
+- **Done-bar.** `bb bench:programs jank` on the merged branch prints a cohost/JVM geomean
+  below the first pass's 10.34 with every row that ran still `SAME`; `bb bench:jank` prints no
+  case worse than before; `bb boot:jank` keeps 542/171/78/0, battery 143/145, libraries 61/61,
+  and its `boot-ms` + `libs-ms` is recorded with the flag (P6b's cost) and after the snapshot.
+- **Owner.** cohost: lane C (bench commands, the re-measure), lane D (boot command, snapshot).
+
+### 2. The pathological leaves (S2-3)
+
+- **Hypothesis.** A handful of local defects in the runtime and core.jank account for the
+  largest raw-jank-vs-JVM ratios, and each is a small change with no semantic exposure.
+- **Probe and result so far.** P5/P5b/P5c: sort of 1e5 is 18 ms, walking its result is 15-35 s
+  (`native_vector_sequence::next` copies the vector); `apply str` 19x, string `nth` 11x,
+  `conj` 5x; P4: keyword-keyed `get` on a 1,000-key map 3.8x, `assoc` on a small map 4.1x;
+  P2: `=` is a var call (core.jank line 659), a variadic call 108 ns; P5: `(reduce + (range
+  1000000))` = `1783293664` (the i32 `add` arm, `math.hpp:86`).
+- **Implementation sketch.** Upstream, one change each: share the buffer in
+  `native_vector_sequence::next` (and `array_chunk::chunk_next`); uncomment `=`'s `:inline`
+  (and fix `assoc`'s `:inline-arities #{2}` which never matches its 3-arity, core.jank line
+  467); cache keyword and symbol hashes (or route `hash::string` through
+  `immutable_string::to_hash`); check for an existing key before demoting a full array map;
+  one-pass `str`/`apply`; an `nth(object_ref, i64)` overload and a direct virtual `nth`;
+  `truthy` as two word compares; compute the small+small `add` arm in `i64` with the overflow
+  check `inc` already has.
+- **Done-bar.** On the patched jank, `run-jank.sh p5c_sort_walk.jank` prints
+  `sort-nth-50k-of-1e5` and `sort-reduce-1e5` within 3x of `sort-first-1e5`; `p5_seqs`'s
+  `apply-str-1e4` and `string-nth-1e6` within 3x of the JVM twin; `p4_maps`'s `get-1000-1e6`
+  within 2x; `(reduce + (range 1000000))` prints `499999500000`; the Step 8 rows for json,
+  k-nucleotide and pipeline on jank-aot move down; the bench's sort/sort-by/str-build cases
+  stop being the stock core's worst.
+- **Owner.** Upstream jank (the drafts go under `doc/upstream/` like jank-01..10; the sorted
+  walk and the i32 wrap are the first two).
+
+### 3. Allocation-free seq walks, internal reduce, chunks (S2-2)
+
+- **Hypothesis.** The seq machinery's per-element allocation and locking, not the user's
+  code, is what makes `map`/`filter`/`reduce` 4-49x the JVM's; the in-place walk the runtime
+  already half-implements removes most of it, internal reduce the rest.
+- **Probe and result so far.** P5: lazy-count 1277837517 vs 25912086 ns (49x), reduce-vec
+  55472886 vs 5307562 (10.5x), first-next-range 4.4x, transduce 6.1x, into 3.8x; the sources:
+  `sequence_range.hpp:169` (in-place branch commented out), `seq.cpp:901` (reduce), `:926`
+  (`reduce-kv`'s direct loop), `lazy_sequence.cpp:53` (mutex per step),
+  `integer_range.hpp:293` (not chunkable). P10 (next): a `cpp/raw` index loop and a
+  hand-chunked `map` against `reduce`/`map` in raw jank, to size the reachable share.
+- **Implementation sketch.** Upstream: (1) finish `fresh_sequence_range` and use it in
+  `reduce`, `str`, `sort`, `vec`, `apply_to`, `sequence_length`, equality; (2) a
+  `visit_object` dispatch at the top of `runtime::reduce` with direct loops for vectors,
+  lists, maps, `integer_range`, chunked seqs; (3) a lock-free realized fast path in
+  `lazy_sequence` and `next_in_place` for it; (4) chunked `integer_range` and
+  `persistent_vector_sequence` so core.jank's existing chunk branches in `map`/`filter` fire.
+- **Done-bar.** `run-jank.sh p5_seqs.jank`: `reduce-vec-1e6` within 2x of the JVM twin,
+  `lazy-count-1e6` within 5x, `transduce-1e6` and `into-map-1e6` within 2x; Step 8's pipeline
+  and json on jank-aot below the JVM; the stock core's lazy-pipeline/transduce/into-vector
+  bench cases move with the host side.
+- **Owner.** Upstream jank.
+
+### 4. Small vectors and the collector (S2-1)
+
+- **Hypothesis.** A two-element vector costs three GC allocations and a 32-slot leaf; a
+  small-vector representation plus a program-sized heap makes allocation-bound programs
+  competitive with the JVM's bump allocator.
+- **Probe and result so far.** P3: bt-14 218850983 vs 8727705 ns (25x), pair-alloc 2e6 498902205
+  vs 20087465 (25x); P3 env: `GC_INITIAL_HEAP_SIZE=1G GC_FREE_SPACE_DIVISOR=1` 174828601 ->
+  122085049 (1.43x), incremental 4-6x slower; P3b: a bdwgc allocation 25-40 ns, `[i i]` 282 ns,
+  `(cons i nil)` 85 ns, `{:a i}` 122 ns.
+- **Implementation sketch.** Upstream: set the heap and divisor in `jank_init` (or honor the
+  environment and document it); a `small_vector` object (inline storage to 32, one
+  allocation) that `_jank_vec` and `vector` build for <= 32 elements and `conj` grows into the
+  immer tree past that, with every vector behavior; pointer-free allocation for leaf boxes
+  that hold no references; typed descriptors for the hot box types so conservative marking
+  scans fewer words. cohost can set the environment for its own process at once.
+- **Done-bar.** `run-jank.sh p3_gc_alloc.jank`: `pair-alloc-2e6` within 3x of the JVM twin and
+  `bt-14` within 3x; Step 8's binary-trees on jank-aot below the JVM at depth 8 and at depth
+  14 (add the depth to the suite); no battery row changes.
+- **Owner.** Upstream jank (the environment knobs: cohost's bb tasks, at once).
+
+### 5. cohost's emission gaps (S3-2)
+
+- **Hypothesis.** Three shapes the codemod emits on jank cost a dynamic call where raw jank
+  has a direct one: an unnamed `defn` (recursion through the var), wrapper statics
+  (`Numbers-minus`), and the cohost-instance guard as a cross-namespace call.
+- **Probe and result so far.** P6 at `-O3`: fib-stock 38481897, fib-fn-def 20871741 (1.84x),
+  fib-host-ops 29816492; the C++ in §8.3 shows the var derefs. P12 (next): `RT-nth` with the
+  guard inline, 5e6 calls.
+- **Implementation sketch.** In `rewrite.cljc`'s `defn`/`def`+`fn*` handling on jank, carry
+  the name onto the `fn*`; in `shim.cljc`, make every static whose jank twin has the JVM's
+  semantics the twin itself (`Numbers-minus` -> `-`, and the rest of the arithmetic family)
+  so `host-aliases` fires; emit `cpp/cohost_obj.is_cohost` inline in the `RT-*` arms (a
+  `:jank` branch) and key `host-object?` by the object-type integer. A battery row for
+  redefinition during recursion.
+- **Done-bar.** `JANK_O=3 run-cohost-jank.sh p6_cohost_fib.clj`: fib-stock within 1.1x of
+  fib-fn-def; `bb bench:jank`'s transient-vector, into-vector, set-build, group-by,
+  frequencies cases move toward x1.5 (jank-FAST's Step 4 done-bar); both batteries unchanged;
+  the all-host regression unchanged for the shared `rewrite.cljc`/`shim.cljc` edits.
+- **Owner.** cohost, lane M.
+
+### 6. Native numeric locals and returns (S1-1)
+
+- **Hypothesis.** With local type inference and a native entry per typed arity, jank's
+  numeric programs run at the C++ floor, which P1 puts 1.67x below the boxed fn for fib and
+  H0 puts 8-10x below for carried loops; the hinted half of the suite then beats the JVM's
+  hinted rows instead of losing to them.
+- **Probe and result so far.** P1: fib-cpp-native 3663884 vs fib-var 6101027 (AOT) vs
+  fib-hinted-leaf 17595281; H0: 0.105-0.125 for carried loops, 1.24-1.52 for hinted leaves;
+  the analyzer facts in §2 (tail forced boxed, `:rettag` unread, `if` forces boxing,
+  `needs_box` unread by codegen). P7 (next): hand-written native entries for tak and nbody's
+  `advance` through `cpp/raw`, the ceiling for those two programs.
+- **Implementation sketch.** Upstream, in order: type integer literals `i64` (not `int`)
+  and compute the small+small arm in `i64`; let `if` keep a native type when both branches
+  have it; honor `:rettag`/infer the tail type and emit a second native entry per typed
+  arity used by named recursion and typed call sites; keep the boxing entry for dynamic
+  callers; overflow checks on the native arms (`inc` already has one). cohost's H1 already
+  passes `^long`/`^double` through for looping arities; it would then pass them for leaves
+  too (the H0 leaf loss disappears with a native return).
+- **Done-bar.** `run-jank.sh p1_fib_floor.jank`: fib-hinted-leaf within 1.2x of
+  fib-cpp-native; H0's called-leaf ratios below 1; Step 8's hinted rows on jank-aot below
+  their unhinted rows and below the JVM's hinted rows for fib, tak, nbody, spectral-norm,
+  mandelbrot; `(reduce + (range 1000000))` still `499999500000`; overflow on `+` of two
+  longs throws as on the JVM (a new battery row).
+- **Owner.** Upstream jank (analyzer and codegen); cohost widens H1 to leaves when it lands.
 
 ## 7. The other three
 
-(pending)
+- **S3-3, dispatch on jank** (rank 7): it attacks one yardstick program (dispatch, 11.2x) and
+  two bench cases; the fix is cohost-only and medium-sized, and jank itself has no protocols
+  to improve, so it ranked below the broad upstream items. It stays the next cohost item
+  after S3-2 (P11 under `dev/research/` measures the shipped shape).
+- **S1-2, direct var calls and fixed-arity variadic entries** (rank 8): bounded by P2 at about
+  8 ns per cross-var call and about 100 ns per variadic call, self-recursion is already direct,
+  and the redefinition semantics need a guard design; the variadic part reappears inside S2-3
+  (`list`, `assoc`, `update-in`) where it is cheaper to fix locally.
+- **S1-3, LTO and PGO across the module graph** (rank 9): P9 showed clang already delivers
+  7-20x per translation unit, the cross-object share is unmeasured, the shipped package has
+  no bitcode, upstream disables LTO for the JIT's symbol lookup, and the gain would be
+  AOT-only.
 
 ## 8. Appendix: the generated C++ the sessions cite
 
