@@ -1,0 +1,16 @@
+{;; the runtime `cohost` runs this project on; `cohost :<target> ...` overrides it
+ :cohost/target :{{target}}
+ :paths ["src"]
+ ;; the language version: cohost boots Clojure 1.12.0's own sources on every target
+ :deps {org.clojure/clojure {:mvn/version "1.12.0"}}
+ :aliases
+ {;; cohost -M:main [args]
+  :main {:main-opts ["-m" "{{top/ns}}.{{main/ns}}"]}
+  ;; cohost -X:run :who '"you"'
+  :run {:exec-fn {{top/ns}}.{{main/ns}}/run :exec-args {:who "world"}}
+  ;; cohost -X:test
+  :test {:extra-paths ["test"] :exec-fn {{top/ns}}.{{main/ns}}-test/run}
+  ;; cohost -T:build build
+  :build {:deps {io.github.clojure/tools.build {:git/tag "v0.10.14" :git/sha "1176afd"}
+                 cohost/cohost {:local/root "{{cohost-root}}"}}
+          :ns-default build}}}

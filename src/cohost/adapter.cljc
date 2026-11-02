@@ -136,6 +136,7 @@
    ;; host facts
    :nano-time       [[] "System/nanoTime: a monotonic clock, in nanoseconds"]
    :current-time-millis [[] "System/currentTimeMillis"]
+   :exit            [['code] "System/exit: end the process with the exit code, standard output flushed; the default knows every host"]
    :math-ceil       [['x] "Math/ceil of a double"]
    :math-floor      [['x] "Math/floor of a double"]
    :math-sqrt       [['x] "Math/sqrt of a double"]
@@ -402,6 +403,14 @@ namespace cohost_err {
     :exception-class (fn [_] 'RuntimeException)
     :nano-time (unsupported :nano-time)
     :current-time-millis (unsupported :current-time-millis)
+    :exit (fn [code]
+            #?(:cljs (.exit js/process code)
+               :lpy (python/exit code)
+               :phel (php/exit code)
+               :lg (os/exit code)
+               ;; jank 0.1's flush throws "TODO: port flesh"; std::exit flushes stdout
+               :jank (cpp/std.exit code)
+               :default (do (flush) (System/exit code))))
     :math-ceil (unsupported :math-ceil)
     :math-floor (unsupported :math-floor)
     :math-sqrt (unsupported :math-sqrt)
@@ -693,6 +702,7 @@ namespace cohost_err {
 
 (defn nano-time [] ((cap :nano-time)))
 (defn current-time-millis [] ((cap :current-time-millis)))
+(defn exit [code] ((cap :exit) code))
 (defn math-ceil [x] ((cap :math-ceil) x))
 (defn math-floor [x] ((cap :math-floor) x))
 (defn math-sqrt [x] ((cap :math-sqrt) x))

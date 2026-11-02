@@ -1522,6 +1522,7 @@
 (def Math-negateExact (math-fn 'negateExact (fn [a] (exact (- a)))))
 (def System-nanoTime (host/capability :nano-time))
 (def System-currentTimeMillis host/current-time-millis)
+(def System-exit host/exit)
 (def System-getProperty (fn ([_k] nil) ([_k dflt] dflt)))
 (def System-identityHashCode hash)
 ;; String.format(fmt, Object... args): core.clj's format passes one array

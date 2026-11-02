@@ -14,6 +14,40 @@ cohost :cljs -Spath                  # the source roots, in tools.deps order
 Wired: `:cljs :jolt :lpy :cljw :phel :lg :jank`. `:jvm` runs the real Clojure CLI.
 `:cljrs` is wired when its boot lands (doc/hosts/PLAN.md).
 
+## The target
+
+`cohost :<target> ...` names the runtime for one command. Without it, the target is
+`:cohost/target` in `./deps.edn` (a keyword, e.g. `:jank`), and without that `:jvm`: the
+real Clojure CLI runs the command whole, so a project with no key behaves as with `clj`.
+tools.deps ignores the key. `cohost` with no arguments is the REPL.
+
+## New projects
+
+deps-new, as a tool: `cohost -Tnew create :template cohost/app :name acme/myapp
+[:target jank]`. `-T` runs the real CLI on every target, and `bin/cohost` merges cohost's
+template library (`templates/cohost-app`, deps-new's `cohost/app`) into the `-Sdeps` of
+every `-T` call, so the template is found without naming it. The project: `deps.edn`
+(`:cohost/target`, Clojure 1.12.0, aliases `:main`, `:run`, `:test`, `:build`),
+`src/acme/myapp.cljc`, `test/acme/myapp_test.cljc` (clojure.test; `-X:test` exits 1 on a
+failure), `build.clj`, `README.md`. The template reads `COHOST_HOME`, which `bin/cohost`
+exports, for the `:build` alias's `:local/root` on the cohost checkout.
+
+## Building
+
+tools.build, as for `clojure`: `cohost -T:build build` runs the project's `build.clj`,
+which calls `cohost.build/build` (`src/cohost/build.clj`, JVM-side). The target is
+`:target` in the task's arguments, else `:cohost/target`, else `:jvm`:
+
+| target | artifact | runs as |
+|---|---|---|
+| `:jvm` | `target/<name>.jar`, an uberjar with `clojure.main` as its main | `java -jar target/<name>.jar -m <main> args...` |
+| `:cljs` | `target/<name>-cljs/`: cohost's ClojureScript host build, the stock sources, the project's and its dependencies' source roots, `run.js` | `node target/<name>-cljs/run.js args...` (2026-11-02: `Hello, you!` from another directory) |
+| `:jank` | not yet: lane D's D-7 (an AOT executable) | |
+| `:jolt` `:lpy` `:cljw` `:phel` `:lg` `:cljrs` | not yet: the task prints `build: not yet on <target>` and fails | `cohost -M -m <main>` in the project |
+
+`bb readme:check [target ...]` runs README.md's command blocks, as written, against a fresh
+`cohost/app` project per target.
+
 ## Shape
 
 Two halves, one contract between them (an EDN file):
@@ -137,9 +171,15 @@ re-run on these fixes and matched the earlier numbers.
   the host's own message ("Could not locate nope/ns.jolt …").
 - **Names print under `cohost.*`**: `#'clojure.core/map` prints
   `#'cohost.core/map`, as everywhere in cohost (doc/REPORT.md).
-- **The REPL** reads standard input whole: for piped input it prints what
-  `clojure` prints, but a prompt per form (`clojure` prints one per line read),
-  and it stops at the first error. There is no line-at-a-time terminal REPL.
+- **The REPL** (`cohost` with no main option, as `clj`) reads a line at a time, on a
+  terminal or a pipe: a prompt, lines until they hold whole forms, each value printed
+  (the forms of one line under one prompt), an error reported and the REPL goes on, as
+  `clojure` does. The banner says `Clojure 1.12.0` (the booted core); there is no
+  line editing or history (wrap it in `rlwrap`, as `clj` wraps `clojure`). Piped
+  input, 2026-11-02 (7 lines: a multi-line `def`, two forms on one line, `(/ 1 0)`, a `;`
+  in a string): the same output as `clojure` on jolt, cljw and jank but for the banner
+  and the error location; cljs the same but `(/ 1 0)` prints `##Inf` (as `-e` does there);
+  lg checked on a shorter input.
 - **Jars contribute sources only.** Resources in a jar (data files,
   `data_readers.clj`) are not extracted; a source-less (AOT-only) jar
   contributes nothing. `.cljs`-only libraries do not load (the loader reads
