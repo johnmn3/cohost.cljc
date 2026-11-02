@@ -161,7 +161,7 @@
 (defn run-jank-jit [id src arg]
   (let [f (tmp (str (name id) ".jank"))]
     (spit f (str (harness src (clock "jank-jit") true) "(apply -main *command-line-args*)\n"))
-    (run! ["jank" "run" f "--" arg])))
+    (run! ["jank" "-O3" "run" f "--" arg])))
 
 (defn aot-dir [id src]
   (let [root (str "target/bench-programs/aot-" (name id))
@@ -189,7 +189,7 @@
 
 (defn run-jank-cohost [_ src arg]
   ;; cohost's jank boot has no load-file; --eval reads every form of its argument.
-  (run! ["jank" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--"
+  (run! ["jank" "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--"
          "--eval" (cohost-source src (clock "jank") arg)]))
 
 (defn run-cljrs [id src arg]
@@ -371,9 +371,9 @@
   (case id
     "jvm" ["clojure" "-M" file]
     "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" ok-eval]
-    "jank-jit" ["jank" "run" file]
+    "jank-jit" ["jank" "-O3" "run" file]
     "jank-aot" (wall-aot-cmd)
-    "jank" ["jank" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" ok-eval]
+    "jank" ["jank" "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" ok-eval]
     "cljrs" ["cljrs" "run" file]
     "cljrs-cohost" ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
                     "src/cohost/run.cljc" "--" "--eval" ok-eval]
