@@ -1,33 +1,53 @@
-;; jank-FAST Step 8. bb bench:programs <target>|all
-;; Each timed call reads its argument from a volatile filled from the process
-;; arguments, then parses it inside -run, and adds the result into a volatile.
-;; Cold: one call in a fresh process. Warm: one untimed call, then five timed
-;; calls, median is the middle value.
+;; jank-FAST Step 8. The program suite against JVM Clojure.
+;;
+;;   bb bench:programs <target> [program[:size],...]   measure, print, record
+;;   bb bench:programs all [program[:size],...]        every target, in order
+;;   bb bench:programs table [target ...]              doc/PERF.md table from the records
+;;
+;; Method (C-1, 2026-11-02). One process per program and target. Inside it:
+;; - the first call of -run is COLD-MS (the first call in a fresh process);
+;; - warm-up continues until the median of the last 5 calls moves under 2%
+;;   from the median of the 5 before the newest call, or 20 calls, or 10 s
+;;   of warm-up, whichever comes first (the cold call counts);
+;; - then 10 timed calls: MEDIAN-MS (the mean of the middle two), MIN-MS, MAX-MS.
+;; The clock is each core's own: System/nanoTime on the JVM; on a cohost
+;; target the program's (System/nanoTime) is rewritten by cohost to the shim's
+;; System-nanoTime, which is the adapter's :nano-time capability; other own
+;; cores use their native clocks (see `clocks`). The harness's inner loop
+;; binds no name of its outer loop (jank 0.1 fails C++ codegen on that:
+;; `use of undeclared identifier 'sNN'`). It uses no volatile
+;; and no atom: the input is a string argument, the result of every call is
+;; folded into a sink carried by the loop and printed at the end, and every
+;; call's result is checked against the first call's.
+;; first-output is process wall time to the line `ok`: one cold process, one
+;; discarded process, then 10 processes (median, min-max).
+;; Records: target/bench-programs/results/<target>.edn (program -> record).
 (require '[babashka.fs :as fs]
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
 
+;; Sizes: one JVM call takes 100-1000 ms after warm-up (measured 2026-11-02).
 (def programs
-  [{:id :fib :file "bench/programs/fib.clj" :arg "30"}
-   {:id :fib-hinted :file "bench/programs/fib_hinted.clj" :arg "30" :hinted? true}
-   {:id :tak :file "bench/programs/tak.clj" :arg "18 12 6"}
-   {:id :tak-hinted :file "bench/programs/tak_hinted.clj" :arg "18 12 6" :hinted? true}
-   {:id :nbody :file "bench/programs/nbody.clj" :arg "200"}
-   {:id :nbody-hinted :file "bench/programs/nbody_hinted.clj" :arg "200" :hinted? true}
-   {:id :spectral-norm :file "bench/programs/spectral_norm.clj" :arg "40"}
-   {:id :spectral-norm-hinted :file "bench/programs/spectral_norm_hinted.clj" :arg "40" :hinted? true}
-   {:id :mandelbrot :file "bench/programs/mandelbrot.clj" :arg "32"}
-   {:id :mandelbrot-hinted :file "bench/programs/mandelbrot_hinted.clj" :arg "32" :hinted? true}
-   {:id :binary-trees :file "bench/programs/binary_trees.clj" :arg "8"}
-   {:id :binary-trees-hinted :file "bench/programs/binary_trees_hinted.clj" :arg "8" :hinted? true}
-   {:id :fannkuch :file "bench/programs/fannkuch.clj" :arg "7"}
-   {:id :fannkuch-hinted :file "bench/programs/fannkuch_hinted.clj" :arg "7" :hinted? true}
-   {:id :nsieve :file "bench/programs/nsieve.clj" :arg "12"}
-   {:id :nsieve-hinted :file "bench/programs/nsieve_hinted.clj" :arg "12" :hinted? true}
-   {:id :k-nucleotide :file "bench/programs/k_nucleotide.clj" :arg "2000"}
-   {:id :pipeline :file "bench/programs/pipeline.clj" :arg "2000"}
-   {:id :dispatch :file "bench/programs/dispatch.clj" :arg "20000"}
-   {:id :json :file "bench/programs/json.clj" :arg "20"}
+  [{:id :fib :file "bench/programs/fib.clj" :arg "32"}
+   {:id :fib-hinted :file "bench/programs/fib_hinted.clj" :arg "32" :hinted? true}
+   {:id :tak :file "bench/programs/tak.clj" :arg "24 16 8"}
+   {:id :tak-hinted :file "bench/programs/tak_hinted.clj" :arg "24 16 8" :hinted? true}
+   {:id :nbody :file "bench/programs/nbody.clj" :arg "20000"}
+   {:id :nbody-hinted :file "bench/programs/nbody_hinted.clj" :arg "20000" :hinted? true}
+   {:id :spectral-norm :file "bench/programs/spectral_norm.clj" :arg "400"}
+   {:id :spectral-norm-hinted :file "bench/programs/spectral_norm_hinted.clj" :arg "400" :hinted? true}
+   {:id :mandelbrot :file "bench/programs/mandelbrot.clj" :arg "600"}
+   {:id :mandelbrot-hinted :file "bench/programs/mandelbrot_hinted.clj" :arg "600" :hinted? true}
+   {:id :binary-trees :file "bench/programs/binary_trees.clj" :arg "16"}
+   {:id :binary-trees-hinted :file "bench/programs/binary_trees_hinted.clj" :arg "16" :hinted? true}
+   {:id :fannkuch :file "bench/programs/fannkuch.clj" :arg "9"}
+   {:id :fannkuch-hinted :file "bench/programs/fannkuch_hinted.clj" :arg "9" :hinted? true}
+   {:id :nsieve :file "bench/programs/nsieve.clj" :arg "21"}
+   {:id :nsieve-hinted :file "bench/programs/nsieve_hinted.clj" :arg "21" :hinted? true}
+   {:id :k-nucleotide :file "bench/programs/k_nucleotide.clj" :arg "200000"}
+   {:id :pipeline :file "bench/programs/pipeline.clj" :arg "200000"}
+   {:id :dispatch :file "bench/programs/dispatch.clj" :arg "2000000"}
+   {:id :json :file "bench/programs/json.clj" :arg "40000"}
    {:id :first-output :file "bench/programs/first_output.clj" :wall true}])
 
 (def targets
@@ -53,189 +73,176 @@
    {:id "cljrs" :exe "cljrs"}
    {:id "cljrs-cohost" :exe "cljrs"}])
 
-(def timed-ids #{"jvm" "jvm-cohost" "jank-jit" "jank-aot" "jank" "cljrs" "cljrs-cohost"
-                 "jolt" "jolt-cohost" "lpy" "lpy-cohost" "cljw" "cljw-cohost"
-                 "phel" "phel-cohost" "lg" "lg-cohost" "cljs" "cljs-cohost"
-                 "browser" "browser-cohost"})
+;; Each own core's clock, in nanoseconds. Every cohost target uses
+;; (System/nanoTime), which cohost turns into the adapter's :nano-time.
+(def clocks
+  {"jvm" "(System/nanoTime)"
+   "jank-jit" "(cpp/jank.runtime.current_time)"
+   "jank-aot" "(cpp/jank.runtime.current_time)"
+   "jolt" "(System/nanoTime)"
+   "lpy" "(time/perf_counter_ns)"
+   "cljs" "(* (js/performance.now) 1000000.0)"
+   "cljw" "(System/nanoTime)"
+   "phel" "(php/hrtime true)"
+   "lg" "(System/nanoTime)"
+   "cljrs" "(System/nanoTime)"})
+
+(defn clock [target-id]
+  (or (clocks target-id) "(System/nanoTime)"))
+
+(def timeout-ms 1800000)
 
 (defn reason [t]
-  (cond
-    (:blocked t) (:blocked t)
-    (not (fs/which (:exe t))) (str "no " (:exe t) " on PATH")
-    :else nil))
+  (when-not (fs/which (:exe t)) (str "no " (:exe t) " on PATH")))
 
-(defn harness [src clock script?]
+(defn harness
+  "The program's source plus the timing loop. `main?`: also define -main
+   (process arguments: the size string). Portable: loop/recur, vectors,
+   sort, nth, count, str; no volatile, atom or host call but the clock."
+  [src clock main?]
   (str src "\n"
-       "(def __input (volatile! nil))\n"
-       "(def __sink (volatile! 0))\n"
-       "(defn __go []\n"
-       "  (let [s @__input\n"
-       "        t0 " clock "\n"
-       "        r (-run s)\n"
-       "        t1 " clock "]\n"
-       "    (vreset! __sink (+ @__sink (if (number? r) r (count (str r)))))\n"
-       "    (println \"PROGRAM-RESULT\" (pr-str r))\n"
-       "    (println \"PROGRAM-MS\" (double (/ (- t1 t0) 1000000.0)))))\n"
-       "(defn -main [& args]\n"
-       "  (vreset! __input (first args))\n"
-       "  (if (= (second args) \"cold\")\n"
-       "    (__go)\n"
-       "    (do (-run @__input) (dotimes [_ 5] (__go))))\n"
-       "  (println \"PROGRAM-SINK\" @__sink))\n"
-       (if script? "(apply -main *command-line-args*)\n" "")))
+       "(defn __now [] " clock ")\n"
+       "(defn __ms [t0 t1] (/ (- t1 t0) 1000000.0))\n"
+       "(defn __sinkv [acc r] (+ acc (if (number? r) r (count (str r)))))\n"
+       "(defn __med5 [ws]\n"
+       "  (let [n (count ws)]\n"
+       "    (nth (sort [(nth ws (- n 1)) (nth ws (- n 2)) (nth ws (- n 3)) (nth ws (- n 4)) (nth ws (- n 5))]) 2)))\n"
+       "(defn __bench [s]\n"
+       "  (let [t-start (__now)\n"
+       "        r0 (-run s)\n"
+       "        t-cold (__now)\n"
+       "        r0s (pr-str r0)]\n"
+       "    (println \"PROGRAM-RESULT\" r0s)\n"
+       "    (println \"PROGRAM-COLD\" (__ms t-start t-cold))\n"
+       "    (loop [ws [(__ms t-start t-cold)] prev nil acc (__sinkv 0 r0) bad 0]\n"
+       "      (let [n (count ws)\n"
+       "            m (if (< n 5) nil (__med5 ws))\n"
+       "            d (if (or (nil? m) (nil? prev) (zero? prev)) 1.0 (/ (- m prev) prev))\n"
+       "            d (if (< d 0) (- 0 d) d)]\n"
+       "        (if (or (>= n 20) (> (__ms t-start (__now)) 10000.0) (< d 0.02))\n"
+       "          (do (println \"PROGRAM-WARMUP\" n)\n"
+       "              (loop [i 0 sink acc wrong bad]\n"
+       "                (if (= i 10)\n"
+       "                  (do (println \"PROGRAM-BAD\" wrong)\n"
+       "                      (println \"PROGRAM-SINK\" sink))\n"
+       "                  (let [t0 (__now) r (-run s) t1 (__now)]\n"
+       "                    (println \"PROGRAM-MS\" (__ms t0 t1))\n"
+       "                    (recur (+ i 1) (__sinkv sink r) (if (= (pr-str r) r0s) wrong (+ wrong 1)))))))\n"
+       "          (let [t0 (__now) r (-run s) t1 (__now)]\n"
+       "            (recur (conj ws (__ms t0 t1)) m (__sinkv acc r)\n"
+       "                   (if (= (pr-str r) r0s) bad (+ bad 1)))))))))\n"
+       (if main? "(defn -main [& args] (__bench (first args)))\n" "")))
 
-(defn run! [cmd]
-  (apply shell {:out :string :err :string :continue true :timeout 300000} cmd))
+(defn cohost-source [src clock arg]
+  (str (harness src clock false) "(__bench " (pr-str arg) ")\n"))
 
-(defn parse-run [proc]
-  (let [out (or (:out proc) "")
-        lines (str/split-lines out)
-        results (vec (keep #(second (re-matches #"PROGRAM-RESULT (.*)" %)) lines))
-        ms (vec (keep #(when-let [[_ n] (re-matches #"PROGRAM-MS (.*)" %)]
-                         (Double/parseDouble (str/trim n))) lines))
-        err (str/trim (or (:err proc) ""))]
-    {:exit (:exit proc) :result (last results) :ms ms :err err :out out}))
+(defn run! [cmd & [opts]]
+  (apply shell (merge {:out :string :err :string :continue true :timeout timeout-ms} opts) cmd))
 
-(defn median [xs]
-  (nth (vec (sort xs)) (quot (count xs) 2)))
-
-(defn one-error [err]
-  (let [lines (str/split-lines (or err ""))]
-    (or (some (fn [line]
-                (when-let [[_ m] (re-find #"=> ERR (.*)" line)]
-                  (str/trim m)))
-              lines)
-        (some #(when (or (str/includes? % "error:")
-                         (str/includes? % "Error")
-                         (str/includes? % "Exception"))
-                 (str/trim %))
-              lines)
-        (let [t (str/trim (or err ""))]
-          (when (seq t) (subs t 0 (min 220 (count t))))))))
-
-(defn run-jvm [src arg cold?]
+(defn tmp [f]
   (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wrap.clj"
-        (harness src "(System/nanoTime)" true))
-  (run! ["clojure" "-M" "target/bench-programs/wrap.clj" arg (if cold? "cold" "warm")]))
+  (str "target/bench-programs/" f))
 
-(defn run-jank-jit [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wrap.jank"
-        (harness src "(cpp/jank.runtime.current_time)" true))
-  (run! ["jank" "run" "target/bench-programs/wrap.jank" "--" arg (if cold? "cold" "warm")]))
+;; ---- runners: (fn [program-id src arg]) -> process result
+
+(defn run-jvm [_ src arg]
+  (let [f (tmp "wrap.clj")]
+    (spit f (str (harness src (clock "jvm") true) "(apply -main *command-line-args*)\n"))
+    (run! ["clojure" "-M" f arg])))
+
+(defn run-jvm-cohost [_ src arg]
+  (run! ["clojure" "-M" "-m" "cohost.run" "--" "--eval" (cohost-source src (clock "jvm-cohost") arg)]))
+
+(defn run-jank-jit [_ src arg]
+  (let [f (tmp "wrap.jank")]
+    (spit f (str (harness src (clock "jank-jit") true) "(apply -main *command-line-args*)\n"))
+    (run! ["jank" "run" f "--" arg])))
 
 (defn aot-dir [id src]
   (let [root (str "target/bench-programs/aot-" (name id))
         file (str root "/src/bench/prog.jank")
         stamp (str root "/stamp")
-        body (harness src "(cpp/jank.runtime.current_time)" false)]
+        body (str "(ns bench.prog)\n" (harness src (clock "jank-aot") true))]
     (when-not (and (fs/exists? stamp) (= (slurp stamp) body) (seq (fs/glob root "**/bench/prog.o")))
+      (fs/delete-tree root)
       (fs/create-dirs (str root "/src/bench"))
-      (spit file (str "(ns bench.prog)\n" body))
+      (spit file body)
       (let [c (run! ["jank" "--module-path" (str root "/src") "compile-module" "bench.prog"
                      "-O3" "--target-dir" root])]
         (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/prog.o")))
           (throw (ex-info "aot-compile" {:err (str (:err c) "\n" (:out c))}))))
       (spit stamp body))
-    (let [cache (first (fs/glob root "_cache/*"))]
-      {:cache (str cache) :src (str root "/src")})))
+    {:cache (str (first (fs/glob root "_cache/*"))) :src (str root "/src")}))
 
-(defn run-jank-aot [id src arg cold?]
+(defn run-jank-aot [id src arg]
   (let [d (aot-dir id src)]
-    (run! ["jank" "--module-path" (str (:cache d) ":" (:src d))
-           "run-main" "bench.prog" "--" arg (if cold? "cold" "warm")])))
+    (run! ["jank" "--module-path" (str (:cache d) ":" (:src d)) "run-main" "bench.prog" "--" arg])))
 
-(defn run-jank-cohost [src arg cold?]
-  ;; cohost's jank boot has no load-file (it is a host var Clojure's RT
-  ;; provides). --eval reads every form, so the program source is the argument.
-  (let [dir (load-file "dev/perf/jank_aot_ensure.clj")
-        mode (if cold? "cold" "warm")
-        code (str (harness src "(cpp/jank.runtime.current_time)" false)
-                  "(-main " (pr-str arg) " " (pr-str mode) ")")]
-    (apply shell {:out :string :err :string :continue true :timeout 300000}
-           ["jank" "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
-            "--eval" code])))
+(defn jank-cohost-dir []
+  ;; cohost's own namespaces AOT (G-12), rebuilt when stale.
+  (load-file "dev/perf/jank_aot_ensure.clj"))
 
-(defn run-cljrs [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wrap.clj"
-        (harness src "(System/nanoTime)" false))
-  (run! ["cljrs" "run" "target/bench-programs/wrap.clj" "--" arg (if cold? "cold" "warm")]))
+(defn run-jank-cohost [_ src arg]
+  ;; cohost's jank boot has no load-file; --eval reads every form of its argument.
+  (run! ["jank" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--"
+         "--eval" (cohost-source src (clock "jank") arg)]))
 
-(defn run-jvm-cohost [src arg cold?]
-  (let [mode (if cold? "cold" "warm")
-        code (str (harness src "(System/nanoTime)" false)
-                  "(-main " (pr-str arg) " " (pr-str mode) ")")]
-    (apply shell {:out :string :err :string :continue true :timeout 300000}
-           ["clojure" "-M" "-m" "cohost.run" "--" "--eval" code])))
+(defn run-cljrs [_ src arg]
+  (let [f (tmp "wrap.clj")]
+    (spit f (harness src (clock "cljrs") true))
+    (run! ["cljrs" "run" f "--" arg])))
 
-(defn run-cljrs-cohost [src arg cold?]
-  (let [mode (if cold? "cold" "warm")
-        code (str (harness src "(System/nanoTime)" false)
-                  "(-main " (pr-str arg) " " (pr-str mode) ")")]
-    (apply shell {:out :string :err :string :continue true :timeout 300000
-                  :extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}}
-           ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
-            "src/cohost/run.cljc" "--" "--eval" code])))
+(def cljrs-env {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}})
 
-(defn cohost-source [src clock arg cold?]
-  (str (harness src clock false)
-       "(-main " (pr-str arg) " " (pr-str (if cold? "cold" "warm")) ")"))
+(defn run-cljrs-cohost [_ src arg]
+  (run! ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
+         "src/cohost/run.cljc" "--" "--eval" (cohost-source src (clock "cljrs-cohost") arg)]
+        cljrs-env))
 
-(defn run-jolt [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
-  (run! ["jolt" "run" "target/bench-programs/wrap.clj" arg (if cold? "cold" "warm")]))
+(defn run-jolt [_ src arg]
+  (let [f (tmp "wrap.clj")]
+    (spit f (str (harness src (clock "jolt") true) "(apply -main *command-line-args*)\n"))
+    (run! ["jolt" "run" f arg])))
 
-(defn run-jolt-cohost [src arg cold?]
-  (run! ["jolt" "-Scp" "src" "-m" "cohost.run" "--eval"
-         (cohost-source src "(System/nanoTime)" arg cold?)]))
+(defn run-jolt-cohost [_ src arg]
+  (run! ["jolt" "-Scp" "src" "-m" "cohost.run" "--eval" (cohost-source src (clock "jolt-cohost") arg)]))
 
-(defn run-lpy [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  ;; Basilisp has no System/nanoTime. time/time_ns is Python's time.time_ns.
-  (spit "target/bench-programs/wrap.clj"
-        (str "(import time)\n" (harness src "(time/time_ns)" true)))
-  (run! ["basilisp" "run" "target/bench-programs/wrap.clj" "--" arg (if cold? "cold" "warm")]))
+(defn run-lpy [_ src arg]
+  ;; basilisp has no System/nanoTime: Python's time.perf_counter_ns.
+  (let [f (tmp "wrap.clj")]
+    (spit f (str "(import time)\n" (harness src (clock "lpy") true) "(apply -main *command-line-args*)\n"))
+    (run! ["basilisp" "run" f "--" arg])))
 
-(defn run-lpy-cohost [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/cohost.clj" (cohost-source src "(System/nanoTime)" arg cold?))
-  (run! ["basilisp" "run" "-p" "src" "-c"
-         "(require 'cohost.run) (cohost.run/-main \"--eval\" (slurp \"target/bench-programs/cohost.clj\"))"]))
+(defn run-lpy-cohost [_ src arg]
+  (let [f (tmp "cohost.clj")]
+    (spit f (cohost-source src (clock "lpy-cohost") arg))
+    (run! ["basilisp" "run" "-p" "src" "-c"
+           (str "(require 'cohost.run) (cohost.run/-main \"--eval\" (slurp " (pr-str f) "))")])))
 
-(defn run-cljw [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
-  (run! ["cljw" "target/bench-programs/wrap.clj" arg (if cold? "cold" "warm")]))
+(defn run-cljw [_ src arg]
+  (let [f (tmp "wrap.clj")]
+    (spit f (str (harness src (clock "cljw") true) "(apply -main *command-line-args*)\n"))
+    (run! ["cljw" f arg])))
 
-(defn run-cljw-cohost [src arg cold?]
-  (run! ["cljw" "-cp" "src" "-m" "cohost.run" "--eval"
-         (cohost-source src "(System/nanoTime)" arg cold?)]))
+(defn run-cljw-cohost [_ src arg]
+  (run! ["cljw" "-cp" "src" "-m" "cohost.run" "--eval" (cohost-source src (clock "cljw-cohost") arg)]))
 
-(defn run-phel [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  ;; Phel needs a leading ns, passes args as *argv*, and has no System class.
-  ;; php/microtime is seconds; scale it so the harness's / 1e6 yields milliseconds.
-  (spit "target/bench-programs/wrap.phel"
-        (str "(ns bench.prog)\n"
-             (harness src "(* (php/microtime true) 1000000000.0)" false)
-             "(apply -main *argv*)\n"))
-  (run! ["phel" "run" "target/bench-programs/wrap.phel" arg (if cold? "cold" "warm")]))
+(defn run-phel [_ src arg]
+  ;; Phel needs a leading ns and passes args as *argv*.
+  (let [f (tmp "wrap.phel")]
+    (spit f (str "(ns bench.prog)\n" (harness src (clock "phel") true) "(apply -main *argv*)\n"))
+    (run! ["phel" "run" f arg])))
 
-(defn run-phel-cohost [src arg cold?]
-  (run! ["phel" "run" "dev/phel_main.phel" "--" "--eval"
-         (cohost-source src "(System/nanoTime)" arg cold?)]))
+(defn run-phel-cohost [_ src arg]
+  (run! ["phel" "run" "dev/phel_main.phel" "--" "--eval" (cohost-source src (clock "phel-cohost") arg)]))
 
-(defn run-lg [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
-  (run! ["lg" "target/bench-programs/wrap.clj" arg (if cold? "cold" "warm")]))
+(defn run-lg [_ src arg]
+  (let [f (tmp "wrap.clj")]
+    (spit f (str (harness src (clock "lg") true) "(apply -main *command-line-args*)\n"))
+    (run! ["lg" f arg])))
 
-(defn run-lg-cohost [src arg cold?]
-  (run! ["lg" "-source-paths" "src" "dev/lg_main.lg" "--" "--eval"
-         (cohost-source src "(System/nanoTime)" arg cold?)]))
+(defn run-lg-cohost [_ src arg]
+  (run! ["lg" "-source-paths" "src" "dev/lg_main.lg" "--" "--eval" (cohost-source src (clock "lg-cohost") arg)]))
 
 (defn ensure-cljs-node! []
   (when-not (fs/exists? "target/cljs-node/main.js")
@@ -243,209 +250,243 @@
       (when-not (zero? (:exit c))
         (throw (ex-info "cljs-node" {:err (str (:err c) "\n" (:out c))}))))))
 
-(defn run-cljs [src arg cold?]
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wrap.cljs"
-        (harness src "(* (js/Date.now) 1000000.0)" true))
-  (run! ["clojure" "-M:cljs" "-m" "cljs.main" "-re" "node"
-         "target/bench-programs/wrap.cljs" arg (if cold? "cold" "warm")]))
+(defn run-cljs [_ src arg]
+  (let [f (tmp "wrap.cljs")]
+    (spit f (str (harness src (clock "cljs") true) "(apply -main *command-line-args*)\n"))
+    (run! ["clojure" "-M:cljs" "-m" "cljs.main" "-re" "node" f arg])))
 
-(defn run-cljs-cohost [src arg cold?]
+(defn run-cljs-cohost [_ src arg]
   (ensure-cljs-node!)
-  (run! ["node" "target/cljs-node/main.js" "--eval"
-         (cohost-source src "(System/nanoTime)" arg cold?)]))
+  (run! ["node" "target/cljs-node/main.js" "--eval" (cohost-source src (clock "cljs-cohost") arg)]))
 
-(defn run-browser [_src _arg _cold?]
-  (throw (ex-info "browser"
-                  {:err "cohost.run-browser only runs the battery or ?bench; the page has no --eval, and there is no own-core browser entry"})))
+(def browser-why
+  "no runner: cohost.run-browser (src/cohost/run_browser.cljs) runs the battery or ?bench only; the page has no --eval and there is no own-core browser entry")
 
-(defn runner-for [id]
-  (case id
-    "jvm" (fn [id src arg cold?] (run-jvm src arg cold?))
-    "jvm-cohost" (fn [id src arg cold?] (run-jvm-cohost src arg cold?))
-    "jank-jit" (fn [id src arg cold?] (run-jank-jit src arg cold?))
-    "jank-aot" run-jank-aot
-    "jank" (fn [id src arg cold?] (run-jank-cohost src arg cold?))
-    "cljrs" (fn [id src arg cold?] (run-cljrs src arg cold?))
-    "cljrs-cohost" (fn [id src arg cold?] (run-cljrs-cohost src arg cold?))
-    "jolt" (fn [id src arg cold?] (run-jolt src arg cold?))
-    "jolt-cohost" (fn [id src arg cold?] (run-jolt-cohost src arg cold?))
-    "lpy" (fn [id src arg cold?] (run-lpy src arg cold?))
-    "lpy-cohost" (fn [id src arg cold?] (run-lpy-cohost src arg cold?))
-    "cljw" (fn [id src arg cold?] (run-cljw src arg cold?))
-    "cljw-cohost" (fn [id src arg cold?] (run-cljw-cohost src arg cold?))
-    "phel" (fn [id src arg cold?] (run-phel src arg cold?))
-    "phel-cohost" (fn [id src arg cold?] (run-phel-cohost src arg cold?))
-    "lg" (fn [id src arg cold?] (run-lg src arg cold?))
-    "lg-cohost" (fn [id src arg cold?] (run-lg-cohost src arg cold?))
-    "cljs" (fn [id src arg cold?] (run-cljs src arg cold?))
-    "cljs-cohost" (fn [id src arg cold?] (run-cljs-cohost src arg cold?))
-    "browser" (fn [id src arg cold?] (run-browser src arg cold?))
-    "browser-cohost" (fn [id src arg cold?] (run-browser src arg cold?))
-    nil))
+(defn run-browser [_ _ _] (throw (ex-info "browser" {:err browser-why})))
+
+(def runners
+  {"jvm" run-jvm "jvm-cohost" run-jvm-cohost
+   "jank-jit" run-jank-jit "jank-aot" run-jank-aot "jank" run-jank-cohost
+   "cljrs" run-cljrs "cljrs-cohost" run-cljrs-cohost
+   "jolt" run-jolt "jolt-cohost" run-jolt-cohost
+   "lpy" run-lpy "lpy-cohost" run-lpy-cohost
+   "cljw" run-cljw "cljw-cohost" run-cljw-cohost
+   "phel" run-phel "phel-cohost" run-phel-cohost
+   "lg" run-lg "lg-cohost" run-lg-cohost
+   "cljs" run-cljs "cljs-cohost" run-cljs-cohost
+   "browser" run-browser "browser-cohost" run-browser})
+
+;; ---- first-output
 
 (defn wall-aot-cmd []
   (let [root "target/bench-programs/aot-wall"
-        file (str root "/src/bench/wall.jank")
         body "(ns bench.wall)\n(defn -main [& _]\n  (println \"ok\"))\n"
         stamp (str root "/stamp")]
-    (when-not (and (fs/exists? stamp) (= (slurp stamp) body)
-                   (seq (fs/glob root "**/bench/wall.o")))
+    (when-not (and (fs/exists? stamp) (= (slurp stamp) body) (seq (fs/glob root "**/bench/wall.o")))
+      (fs/delete-tree root)
       (fs/create-dirs (str root "/src/bench"))
-      (spit file body)
+      (spit (str root "/src/bench/wall.jank") body)
       (let [c (run! ["jank" "--module-path" (str root "/src") "compile-module" "bench.wall"
                      "-O3" "--target-dir" root])]
         (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/wall.o")))
           (throw (ex-info "aot-wall" {:err (str (:err c) "\n" (:out c))}))))
       (spit stamp body))
-    (let [cache (str (first (fs/glob root "_cache/*")))]
-      ["jank" "--module-path" (str cache ":" root "/src") "run-main" "bench.wall"])))
+    ["jank" "--module-path" (str (first (fs/glob root "_cache/*")) ":" root "/src") "run-main" "bench.wall"]))
 
-(defn wall-cljrs-cmd []
-  (fs/create-dirs "target/bench-programs")
-  (spit "target/bench-programs/wall.clj" "(defn -main [& _]\n  (println \"ok\"))\n")
-  ["cljrs" "run" "target/bench-programs/wall.clj"])
+(def ok-eval "(println \"ok\")")
 
 (defn wall-cmd [id file]
   (case id
     "jvm" ["clojure" "-M" file]
+    "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" ok-eval]
     "jank-jit" ["jank" "run" file]
     "jank-aot" (wall-aot-cmd)
-    "jank" (let [dir (load-file "dev/perf/jank_aot_ensure.clj")]
-             ["jank" "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
-              "--eval" "(println \"ok\")"])
-    "cljrs" (wall-cljrs-cmd)
-    "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" "(println \"ok\")"]
+    "jank" ["jank" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" ok-eval]
+    "cljrs" ["cljrs" "run" file]
     "cljrs-cohost" ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
-                    "src/cohost/run.cljc" "--" "--eval" "(println \"ok\")"]
+                    "src/cohost/run.cljc" "--" "--eval" ok-eval]
     "jolt" ["jolt" "run" file]
-    "jolt-cohost" ["jolt" "-Scp" "src" "-m" "cohost.run" "--eval" "(println \"ok\")"]
+    "jolt-cohost" ["jolt" "-Scp" "src" "-m" "cohost.run" "--eval" ok-eval]
     "lpy" ["basilisp" "run" file]
     "lpy-cohost" ["basilisp" "run" "-p" "src" "-c"
-                  "(require 'cohost.run) (cohost.run/-main \"--eval\" \"(println \\\"ok\\\")\")"]
+                  (str "(require 'cohost.run) (cohost.run/-main \"--eval\" " (pr-str ok-eval) ")")]
     "cljw" ["cljw" file]
-    "cljw-cohost" ["cljw" "-cp" "src" "-m" "cohost.run" "--eval" "(println \"ok\")"]
-    "phel" ["phel" "run" file]
-    "phel-cohost" ["phel" "run" "dev/phel_main.phel" "--" "--eval" "(println \"ok\")"]
+    "cljw-cohost" ["cljw" "-cp" "src" "-m" "cohost.run" "--eval" ok-eval]
+    "phel" (let [f (tmp "wall.phel")]
+             (spit f "(ns bench.wall)\n(println \"ok\")\n")
+             ["phel" "run" f])
+    "phel-cohost" ["phel" "run" "dev/phel_main.phel" "--" "--eval" ok-eval]
     "lg" ["lg" file]
-    "lg-cohost" ["lg" "-source-paths" "src" "dev/lg_main.lg" "--" "--eval" "(println \"ok\")"]
+    "lg-cohost" ["lg" "-source-paths" "src" "dev/lg_main.lg" "--" "--eval" ok-eval]
     "cljs" ["clojure" "-M:cljs" "-m" "cljs.main" "-re" "node" file]
-    "cljs-cohost" (do (ensure-cljs-node!)
-                      ["node" "target/cljs-node/main.js" "--eval" "(println \"ok\")"])
-    "browser" (throw (ex-info "browser" {:err "cohost.run-browser only runs the battery or ?bench; the page has no --eval, and there is no own-core browser entry"}))
-    "browser-cohost" (throw (ex-info "browser" {:err "cohost.run-browser only runs the battery or ?bench; the page has no --eval"}))
-    nil))
+    "cljs-cohost" (do (ensure-cljs-node!) ["node" "target/cljs-node/main.js" "--eval" ok-eval])
+    (throw (ex-info "browser" {:err browser-why}))))
 
 (defn wall-run [id file]
+  (let [cmd (wall-cmd id file)
+        t0 (System/nanoTime)
+        proc (run! cmd (when (= id "cljrs-cohost") cljrs-env))]
+    {:exit (:exit proc) :ms (/ (- (System/nanoTime) t0) 1e6)
+     :out (or (:out proc) "") :err (or (:err proc) "")}))
+
+;; ---- parsing, errors
+
+(defn error-text
+  "The host's error, as printed: the first line naming an error, in full
+   (cohost's `=> ERR` line, a compiler `error:` line, an exception), else the
+   first 400 characters of the output."
+  [& outs]
+  (let [lines (mapcat #(str/split-lines (or % "")) outs)]
+    (or (some #(when-let [[_ m] (re-find #"=> ERR (.*)" %)] (str/trim m)) lines)
+        (some #(when (re-find #"(?i)error|exception|panic|could not|cannot|unable|undeclared|not found|traceback" %)
+                 (str/trim %))
+              lines)
+        (let [t (str/trim (str/join "\n" (remove str/blank? outs)))]
+          (when (seq t) (subs t 0 (min 400 (count t))))))))
+
+(defn lines-of [out tag]
+  (keep #(second (re-matches (re-pattern (str tag " (.*)")) %)) (str/split-lines (or out ""))))
+
+(defn num [s] (Double/parseDouble (str/trim s)))
+
+(defn median [xs]
+  (let [v (vec (sort xs)) n (count v)]
+    (if (even? n) (/ (+ (v (dec (quot n 2))) (v (quot n 2))) 2.0) (v (quot n 2)))))
+
+(defn summary [ms]
+  {:median (median ms) :min (apply min ms) :max (apply max ms) :runs ms})
+
+(defn measure [t p arg]
   (try
-    (if-let [cmd (wall-cmd id file)]
-      (let [t0 (System/nanoTime)
-            proc (apply shell (merge {:out :string :err :string :continue true :timeout 300000}
-                                      (when (= id "cljrs-cohost")
-                                        {:extra-env {"CLJRS_IR_THRESHOLD" "1" "CLJRS_NO_JIT" "1"}}))
-                        cmd)
-            ms (double (/ (- (System/nanoTime) t0) 1000000.0))]
-        {:exit (:exit proc) :ms ms :out (or (:out proc) "") :err (or (:err proc) "")})
-      nil)
+    (let [proc ((runners (:id t)) (:id p) (slurp (:file p)) arg)
+          out (:out proc)
+          ms (mapv num (lines-of out "PROGRAM-MS"))
+          result (first (lines-of out "PROGRAM-RESULT"))
+          bad (some-> (first (lines-of out "PROGRAM-BAD")) num long)]
+      (cond
+        (or (not= 10 (count ms)) (nil? result))
+        {:fail (or (error-text (:err proc) out) (str "exit " (:exit proc)))}
+        (pos? bad)
+        {:fail (str bad " of 10 timed calls returned a result other than the first call's " result)}
+        :else
+        (merge (summary ms)
+               {:result result
+                :cold (num (first (lines-of out "PROGRAM-COLD")))
+                :warmup (long (num (first (lines-of out "PROGRAM-WARMUP"))))})))
     (catch Exception e
-      {:exit 1 :ms nil :out "" :err (or (some-> e ex-data :err) (.getMessage e))})))
+      {:fail (or (some-> e ex-data :err error-text) (.getMessage e))})))
 
-(defn report-wall [t p]
-  (let [id (:id t)
-        runner-ok (#{"jvm" "jvm-cohost" "jank-jit" "jank-aot" "jank" "cljrs" "cljrs-cohost"
-                     "jolt" "jolt-cohost" "lpy" "lpy-cohost" "cljw" "cljw-cohost"
-                     "phel" "phel-cohost" "lg" "lg-cohost" "cljs" "cljs-cohost"
-                     "browser" "browser-cohost"} id)]
-    (if-not runner-ok
-      (println (str "  PROGRAM first-output NOT-TIMED runner not written"))
-      (let [cold (wall-run id (:file p))
-            _ (wall-run id (:file p))
-            warms (vec (repeatedly 5 #(wall-run id (:file p))))]
-        (if (nil? cold)
-          (println "  PROGRAM first-output NOT-TIMED runner not written")
-          (if-not (str/includes? (:out cold) "ok")
-          (println (str "  PROGRAM first-output ABSENT " (one-error (:err cold))))
-          (println (str "  PROGRAM first-output COLD-MS " (:ms cold)
-                        " WARM-MS " (pr-str (mapv :ms warms))
-                        " MEDIAN-MS " (median (map :ms warms))
-                        " SAME"))))))))
-
-(def jvm-results-file "target/bench-programs/jvm-results.edn")
-
-(defn load-jvm-results []
-  (when (fs/exists? jvm-results-file)
-    (read-string (slurp jvm-results-file))))
-
-(defn save-jvm-result! [id result]
-  (fs/create-dirs "target/bench-programs")
-  (spit jvm-results-file (pr-str (assoc (or (load-jvm-results) {}) id result))))
-
-(defn measure [t p]
+(defn measure-wall [t p]
   (try
-    (let [src (slurp (:file p))
-          arg (:arg p)
-          run (runner-for (:id t))
-          cold (parse-run (run (:id p) src arg true))]
-      (if (or (not (zero? (:exit cold))) (nil? (:result cold)))
-        {:fail (or (one-error (:err cold))
-                   (one-error (:out cold))
-                   (str "exit " (:exit cold)))}
-        (let [warm (parse-run (run (:id p) src arg false))]
-          {:result (:result cold)
-           :cold (first (:ms cold))
-           :warm (:ms warm)
-           :median (when (= 5 (count (:ms warm))) (median (:ms warm)))
-           :warm-result (:result warm)
-           :fail (when-not (zero? (:exit warm))
-                   (or (one-error (:err warm)) (one-error (:out warm))))})))
+    (let [cold (wall-run (:id t) (:file p))]
+      (if-not (str/includes? (:out cold) "ok")
+        {:fail (or (error-text (:err cold) (:out cold)) (str "exit " (:exit cold)))}
+        (do (wall-run (:id t) (:file p))
+            (merge (summary (vec (repeatedly 10 #(:ms (wall-run (:id t) (:file p))))))
+                   {:result "ok" :cold (:ms cold) :warmup 1}))))
     (catch Exception e
-      {:fail (or (some-> e ex-data :err one-error) (.getMessage e))})))
+      {:fail (or (some-> e ex-data :err error-text) (.getMessage e))})))
 
-(defn report-program [t p jvm-results]
-  (let [name (name (:id p))]
-    (cond
-      (not (fs/exists? (:file p)))
-      (println (str "  PROGRAM " name " MISSING-FILE"))
-      (:wall p)
-      (report-wall t p)
-      (not (timed-ids (:id t)))
-      (println (str "  PROGRAM " name " NOT-TIMED runner not written"))
-      :else
-      (let [m (measure t p)]
-        (if (:fail m)
-          (println (str "  PROGRAM " name " ABSENT " (:fail m)))
-          (let [expected (get jvm-results (:id p))
-                same? (or (= (:id t) "jvm") (= (:result m) expected))]
-            (when (= (:id t) "jvm")
-              (save-jvm-result! (:id p) (:result m)))
-            (println (str "  PROGRAM " name
-                          " COLD-MS " (:cold m)
-                          " WARM-MS " (pr-str (:warm m))
-                          " MEDIAN-MS " (:median m)
-                          (if same?
-                            (str " SAME " (:result m))
-                            (str " DIFFER expected " expected " got " (:result m)))))))))))
+;; ---- records
 
-(defn report-target [t]
+(defn results-file [target-id] (str "target/bench-programs/results/" target-id ".edn"))
+
+(defn load-results [target-id]
+  (let [f (results-file target-id)]
+    (if (fs/exists? f) (read-string (slurp f)) {})))
+
+(defn save-result! [target-id pid rec]
+  (fs/create-dirs "target/bench-programs/results")
+  (spit (results-file target-id) (pr-str (assoc (load-results target-id) pid rec))))
+
+(defn fmt [x] (if (number? x) (format "%.3f" (double x)) (str x)))
+
+(defn report-program [t p arg]
+  (let [n (name (:id p))
+        m (if (:wall p) (measure-wall t p) (measure t p arg))
+        jvm (when-not (or (:wall p) (= (:id t) "jvm")) (:result (get (load-results "jvm") (:id p))))
+        m (cond-> (assoc m :arg arg)
+            (and (:result m) jvm (not= jvm (:result m)) (not= (:arg (get (load-results "jvm") (:id p))) arg))
+            (assoc :note "JVM record is at another size")
+            (and (:result m) jvm (not= jvm (:result m)) (= (:arg (get (load-results "jvm") (:id p))) arg))
+            (assoc :differ jvm))]
+    (save-result! (:id t) (:id p) m)
+    (println
+     (if (:fail m)
+       (str "  PROGRAM " n " ABSENT " (:fail m))
+       (str "  PROGRAM " n " SIZE " (or arg "-") " COLD-MS " (fmt (:cold m)) " WARMUP " (:warmup m)
+            " MEDIAN-MS " (fmt (:median m)) " MIN-MS " (fmt (:min m)) " MAX-MS " (fmt (:max m))
+            (if (:differ m) (str " DIFFER jvm " (:differ m) " got " (:result m)) (str " RESULT " (:result m))))))
+    (flush)))
+
+(defn select
+  "\"fib,tak:12 8 4\" -> [[program arg] ...]; nil -> every program."
+  [filt]
+  (if (str/blank? filt)
+    (map (fn [p] [p (:arg p)]) programs)
+    (for [item (str/split filt #",")
+          :let [[pn size] (str/split item #":" 2)
+                p (first (filter #(= (name (:id %)) pn) programs))]]
+      (if p [p (or size (:arg p))] (throw (ex-info (str "unknown program " pn) {}))))))
+
+(defn report-target [t filt]
   (if-let [why (reason t)]
     (println (str "TARGET " (:id t) " ABSENT " why))
     (do (println (str "TARGET " (:id t) " present"))
-        (let [base (when (not= (:id t) "jvm") (or (load-jvm-results) {}))]
-          (doseq [p programs]
-            (report-program t p base))))))
+        (doseq [[p arg] (select filt)]
+          (report-program t p arg)))))
+
+;; ---- the doc/PERF.md table
+
+(defn geomean [xs] (when (seq xs) (Math/exp (/ (reduce + (map #(Math/log %) xs)) (count xs)))))
+
+(defn table [ids]
+  (let [ids (if (seq ids) ids (filter #(fs/exists? (results-file %)) (map :id targets)))
+        recs (into {} (map (fn [i] [i (load-results i)]) ids))
+        jvm (load-results "jvm")
+        ratio (fn [i pid] (let [a (get-in recs [i pid :median]) b (get-in jvm [pid :median])]
+                            (when (and a b (nil? (get-in recs [i pid :differ]))) (/ a b))))]
+    (println (str "| program | size | " (str/join " | " (map #(str % " median (min-max) / cold / xJVM") ids)) " |"))
+    (println (str "|---|---:|" (str/join "" (repeat (count ids) "---:|"))))
+    (doseq [p programs :let [pid (:id p)]]
+      (println (str "| " (name pid) " | " (or (get-in jvm [pid :arg]) "-") " | "
+                    (str/join " | "
+                              (for [i ids :let [r (get-in recs [i pid])]]
+                                (cond
+                                  (nil? r) "not run"
+                                  (:fail r) (str "ABSENT: " (str/replace (:fail r) "|" "\\|"))
+                                  :else (str (fmt (:median r)) " (" (fmt (:min r)) "-" (fmt (:max r)) ") / "
+                                             (fmt (:cold r))
+                                             (when (not= i "jvm") (str " / x" (if-let [x (ratio i pid)] (format "%.2f" x) "?")))
+                                             (when (:differ r) (str " DIFFER: " (:result r))))))) " |")))
+    (println)
+    (doseq [i ids :when (not= i "jvm")
+            :let [all (keep #(ratio i (:id %)) programs)
+                  un (keep #(when-not (:hinted? %) (ratio i (:id %))) programs)
+                  hi (keep #(when (:hinted? %) (ratio i (:id %))) programs)]]
+      (println (str "- " i ": geomean xJVM " (some-> (geomean all) (#(format "%.3f" %))) " over " (count all)
+                    " programs (unhinted " (some-> (geomean un) (#(format "%.3f" %))) " over " (count un)
+                    ", hinted " (some-> (geomean hi) (#(format "%.3f" %))) " over " (count hi) ")")))
+    (doseq [i ids
+            :let [pairs (for [p programs :when (:hinted? p)
+                              :let [base (keyword (str/replace (name (:id p)) "-hinted" ""))
+                                    h (get-in recs [i (:id p) :median]) u (get-in recs [i base :median])]
+                              :when (and h u)]
+                          (str (name base) " " (format "%.3f" (/ h u))))]
+            :when (seq pairs)]
+      (println (str "- hinted/unhinted median on " i ": " (str/join ", " pairs))))))
 
 (defn -main [& args]
-  (let [arg (first args)]
+  (let [[arg filt] args]
     (cond
       (or (nil? arg) (= arg "help"))
-      (do (println "usage: bb bench:programs <target>|all")
-          (println (str "targets: " (str/join " " (map :id targets)) " all")))
-      (= arg "all")
-      (doseq [t targets] (report-target t))
+      (do (println "usage: bb bench:programs <target>|all [program[:size],...] | table [target ...]")
+          (println (str "targets: " (str/join " " (map :id targets)))))
+      (= arg "table") (table (rest args))
+      (= arg "all") (doseq [t targets] (report-target t filt))
       :else
       (if-let [t (first (filter #(= (:id %) arg) targets))]
-        (report-target t)
-        (do (println (str "UNKNOWN " arg))
-            (System/exit 1))))))
+        (report-target t filt)
+        (do (println (str "UNKNOWN " arg)) (System/exit 1))))))
 
 (apply -main *command-line-args*)
