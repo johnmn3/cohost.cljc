@@ -1,0 +1,18 @@
+;; jank-28: a fn whose untyped param is used as a number gets a native entry (the param as i64)
+;; beside its generic body; the boxing entry picks the native entry when the args are integers,
+;; and the generic body otherwise (a real, a string), so the fn still works on any object.
+;; Expected (Clojure):
+;;   speculation: 6765 2.0 42 3 2.5 5050 55.0 throws throws 6765
+(defn ovf [f] (try (f) (catch :default e "throws")))
+(defn fib-var [n] (if (< n 2) n (+ (fib-var (dec n)) (fib-var (- n 2)))))
+(defn ^long fib-hinted [^long n] (if (< n 2) n (+ (fib-hinted (dec n)) (fib-hinted (- n 2)))))
+(defn describe [x] (if (number? x) (inc x) (count x)))
+(defn down-plain [n] (loop [i n acc 0] (if (< 0 i) (recur (- i 1) (+ acc i)) acc)))
+(defn sq [x] (* x x))
+(defn use-fib [] (fib-var 20))
+(println "speculation:"
+         (fib-var 20) (fib-var 2.5) (describe 41) (describe "abc") (describe 1.5)
+         (down-plain 100) (down-plain 10.0) (ovf #(fib-var "x")) (ovf #(sq 4000000000)) (use-fib))
+(timed "fib-var 30 (untyped param)" #(fib-var 30))
+(timed "fib-hinted 30 (^long)" #(fib-hinted 30))
+(timed "down-plain 2e6 (loop from an untyped param)" #(down-plain 2000000))

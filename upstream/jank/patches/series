@@ -13,4 +13,5 @@
 26-native-inference.patch
 25-closure-size-gc.patch
 27-string-nth-str.patch
+28-param-speculation.patch
 29-variadic-multi.patch

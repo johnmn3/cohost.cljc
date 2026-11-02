@@ -1,5 +1,5 @@
-jank-26: native numerics without hints: loop locals stay native only while recur keeps them native;
-var derefs inline
+jank-26: native numerics without hints: a native loop local stays native only while recur keeps it
+native, else it is boxed (Clojure's auto-boxed loop arg)
 (cohost doc/upstream/jank-26-native-inference.md; lane U6, order U6-2)
 
 Base: jank-lang/jank f3d82d65499920f81216e9235bd5d3a34a968e3f with the series before it in
@@ -27,14 +27,13 @@ Files:
   real truncated into an integer local ((loop [s 0] ... (recur (+ s 1.5))) gave 3 for 4.5), an
   object unboxed with a throw ("An object of type integer was expected here, but a small_real was
   provided"), and (recur nil) or a string failed to compile (from_object ambiguous).
-- compiler+runtime/include/cpp/jank/runtime/var.hpp: var::deref_inline: the root, inline, when no
-  thread has bound the var (deref's own first check), otherwise deref.
-- compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp: generated var derefs use deref_inline,
-  so a var read in a loop (a loop bound in a var, a fn called through a var) is two loads and a
-  branch instead of a virtual call.
+- (not in this patch: var::deref_inline and the generated deref_inline call are 24-direct-calls';
+  see the merge note above. The P2/H0 call rows below were measured with them.)
 
-Measured (cohost dev/research; control = f3d82d65 + series through 20, patched = the same + this
-patch, same recipe; A/B/A/B/A/B on a shared 4-CPU box at load 10-15, medians of 3, ns):
+Measured (cohost dev/research; control = f3d82d65 + series through 20, patched = the same + U6-2's
+rev 2 of this patch, which also carried the deref_inline hunks now in 24; same recipe;
+A/B/A/B/A/B on a shared 4-CPU box at load 10-15, medians of 3, ns). The loop-only and call rows
+are deref_inline's (24's change, measured on that build); the recur-widening line is this patch's:
 - run-jank.sh p2_call_path jit: loop-only 16309078 -> 3621578 (4.50x); call-var-same-ns 61566980 ->
   27660443; call-var-other-ns 63210558 -> 31722594; call-2 62064959 -> 22960277; call-cpp-objref
   23151485 -> 6335453; call-multi 177299385 -> 134072675. (apt 0.1-noble loop-only: 13345444.)
