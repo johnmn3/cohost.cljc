@@ -446,23 +446,32 @@
 
 (defn table [ids]
   (let [ids (if (seq ids) ids (filter #(fs/exists? (results-file %)) (map :id targets)))
+        others (remove #{"jvm"} ids)
         recs (into {} (map (fn [i] [i (load-results i)]) ids))
         jvm (load-results "jvm")
         ratio (fn [i pid] (let [a (get-in recs [i pid :median]) b (get-in jvm [pid :median])]
-                            (when (and a b (nil? (get-in recs [i pid :differ]))) (/ a b))))]
-    (println (str "| program | size | " (str/join " | " (map #(str % " median (min-max) / cold / xJVM") ids)) " |"))
-    (println (str "|---|---:|" (str/join "" (repeat (count ids) "---:|"))))
+                            (when (and a b (nil? (get-in recs [i pid :differ]))) (/ a b))))
+        row (fn [cells] (println (str "| " (str/join " | " cells) " |")))]
+    (println "Median ms of 10 timed calls (xJVM: median / JVM median).")
+    (println)
+    (row (concat ["program" "size" "jvm"] others))
+    (println (str "|---|---:|" (str/join "" (repeat (inc (count others)) "---:|"))))
     (doseq [p programs :let [pid (:id p)]]
-      (println (str "| " (name pid) " | " (or (get-in jvm [pid :arg]) "-") " | "
-                    (str/join " | "
-                              (for [i ids :let [r (get-in recs [i pid])]]
-                                (cond
-                                  (nil? r) "not run"
-                                  (:fail r) (str "ABSENT: " (str/replace (:fail r) "|" "\\|"))
-                                  :else (str (fmt (:median r)) " (" (fmt (:min r)) "-" (fmt (:max r)) ") / "
-                                             (fmt (:cold r))
-                                             (when (not= i "jvm") (str " / x" (if-let [x (ratio i pid)] (format "%.2f" x) "?")))
-                                             (when (:differ r) (str " DIFFER: " (:result r))))))) " |")))
+      (row (concat [(name pid) (or (get-in jvm [pid :arg]) "-") (some-> (get-in jvm [pid :median]) fmt)]
+                   (for [i others :let [r (get-in recs [i pid])]]
+                     (cond (nil? r) "not run"
+                           (:fail r) "ABSENT"
+                           (:differ r) (str (fmt (:median r)) " DIFFER")
+                           :else (str (fmt (:median r)) " (x" (format "%.2f" (ratio i pid)) ")"))))))
+    (println)
+    (println "min-max of the 10 timed calls / the cold call (the first call in a fresh process), ms.")
+    (println)
+    (row (concat ["program"] ids))
+    (println (str "|---|" (str/join "" (repeat (count ids) "---:|"))))
+    (doseq [p programs :let [pid (:id p)]]
+      (row (cons (name pid)
+                 (for [i ids :let [r (get-in recs [i pid])]]
+                   (if (:median r) (str (fmt (:min r)) "-" (fmt (:max r)) " / " (fmt (:cold r))) "")))))
     (println)
     (doseq [i ids :when (not= i "jvm")
             :let [all (keep #(ratio i (:id %)) programs)
@@ -478,7 +487,16 @@
                               :when (and h u)]
                           (str (name base) " " (format "%.3f" (/ h u))))]
             :when (seq pairs)]
-      (println (str "- hinted/unhinted median on " i ": " (str/join ", " pairs))))))
+      (println (str "- hinted/unhinted median on " i ": " (str/join ", " pairs))))
+    (println)
+    (println "ABSENT and DIFFER, as printed:")
+    (println)
+    (doseq [i ids p programs :let [r (get-in recs [i (:id p)])]
+            :when (or (:fail r) (:differ r))]
+      (println (str "- " i " " (name (:id p)) ": "
+                    (if (:fail r)
+                      (str "`" (str/replace (:fail r) "`" "'") "`")
+                      (str "DIFFER: " (:result r) ", JVM " (:differ r))))))))
 
 (defn -main [& args]
   (let [[arg filt] args]
