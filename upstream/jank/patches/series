@@ -11,3 +11,5 @@
 23-chunk-branch.patch
 24-direct-calls.patch
 26-native-inference.patch
+25-closure-size-gc.patch
+27-string-nth-str.patch
