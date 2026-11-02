@@ -443,7 +443,7 @@ jank-FAST Step 8. `bb bench:programs <target>` and `bb bench:programs all`. Prog
 
 Sizes: fib `30`, tak `18 12 6`, nbody `200`, spectral-norm `40`, mandelbrot `32`, binary-trees `8`, fannkuch `7`, nsieve `12`, k-nucleotide `2000`, pipeline `2000`, dispatch `20000`, json `20`.
 
-Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core), then `bb bench:programs jvm-cohost` (`clojure -M -m cohost.run -- --eval`). A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` is timed for jvm, jank-jit, jank-aot, cohost on jank, and clojurust.
+Measured 2026-11-01. `bb bench:programs jvm`, then `bb bench:programs jank-jit`, then `bb bench:programs jank-aot` (`compile-module -O3`, then `run-main`), then `bb bench:programs jank` (cohost's stock core, AOT boot, program source passed to `--eval`), then `bb bench:programs cljrs` (clojurust's own core), then `bb bench:programs jvm-cohost` (`clojure -M -m cohost.run -- --eval`), then `bb bench:programs cljrs-cohost`. A timed row printed `SAME` and the JVM result. `ABSENT` is the host error, not a gap. `first-output` is timed for jvm, jank-jit, jank-aot, cohost on jank, clojurust, jvm-cohost, and cljrs-cohost.
 
 | program | jvm median | jvm cold | jit median | jit cold | jit/jvm | aot median | aot cold | aot/jvm | result |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -573,10 +573,36 @@ Geometric mean of the fifteen jvm-cohost / JVM median ratios: `1.692743`.
 
 Hinted median / unhinted median on jvm-cohost, where both ran: fannkuch `0.804232`, nsieve `1.021588`.
 
+`cljrs-cohost` is `bb boot:cljrs`'s command (`CLJRS_IR_THRESHOLD=1`, `CLJRS_NO_JIT=1`, `cljrs run` of `src/cohost/run.cljc`) with the program source passed to `--eval`. `bb bench:programs cljrs-cohost`. Times are milliseconds. The harness's `volatile!` fails on this host, so every program that uses it is ABSENT with that cast. `dispatch` fails first, inside the program. `first-output` does not use a volatile.
+
+| program | cljrs-cohost median | cljrs-cohost cold | cljrs-cohost/jvm | result |
+|---|---:|---:|---:|---|
+| fib | ABSENT Volatile cannot be cast to Future | | | 832040 |
+| fib-hinted | ABSENT Volatile cannot be cast to Future | | | 832040 |
+| tak | ABSENT Volatile cannot be cast to Future | | | 7 |
+| tak-hinted | ABSENT Volatile cannot be cast to Future | | | 7 |
+| nbody | ABSENT Volatile cannot be cast to Future | | | -169027 |
+| nbody-hinted | ABSENT Volatile cannot be cast to Future | | | -169027 |
+| spectral-norm | ABSENT Volatile cannot be cast to Future | | | 784826 |
+| spectral-norm-hinted | ABSENT Volatile cannot be cast to Future | | | 784826 |
+| mandelbrot | ABSENT Volatile cannot be cast to Future | | | 608 |
+| mandelbrot-hinted | ABSENT Volatile cannot be cast to Future | | | 608 |
+| binary-trees | ABSENT Volatile cannot be cast to Future | | | 7083 |
+| binary-trees-hinted | ABSENT Volatile cannot be cast to Future | | | 7083 |
+| fannkuch | ABSENT Volatile cannot be cast to Future | | | -502 |
+| fannkuch-hinted | ABSENT Volatile cannot be cast to Future | | | -502 |
+| nsieve | ABSENT Volatile cannot be cast to Future | | | 564 |
+| nsieve-hinted | ABSENT Volatile cannot be cast to Future | | | 564 |
+| k-nucleotide | ABSENT Volatile cannot be cast to Future | | | 500 |
+| pipeline | ABSENT Volatile cannot be cast to Future | | | 5995001 |
+| dispatch | ABSENT unbound symbol: protocol-fn | | | 200183333 |
+| json | ABSENT Volatile cannot be cast to Future | | | 580 |
+| first-output | 42555.86778 | 46280.039108 | 110.500123 | ok |
+
+The driver's line for the volatile failures is `class clojure.lang.Volatile cannot be cast to class java.util.concurrent.Future`. Geometric mean of the one cljrs-cohost / JVM median ratio (`first-output`): `110.500123`.
+
 ## Cohost AOT optimization level
 
 `bb boot:jank` calls `jank-aot-dir` (`bb.edn` lines 14-15), which loads `dev/perf/jank_aot_ensure.clj`. The recompile is one command, `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot`, at `dev/perf/jank_aot_ensure.clj:68-69`. That `-O3` covers `cohost.run` and the namespaces it depends on, including `cohost.shim` and `cohost.hosts.jank-host`. The script requires `cohost/shim.o` and `cohost/hosts/jank_host.o` in that same cache. There is no environment variable for the level. jank's own flag is `-O` / `--optimization`, values 0 through 3. The boot does not read it from the environment. The level is the literal `-O3` on that line, so the default is already `-O3`. `bb bench:programs jank` loads those objects. A second target would repeat the same compile. Default and `-O3` are that run: fib median `126.469398` ms, and the geometric mean of cohost `-O3` / default is `1`.
-
-Not measured yet on this box: `cljrs-cohost`.
 
 Absent on this box: `jolt` and `jolt-cohost` (no `jolt` on PATH), `lpy` and `lpy-cohost` (no `basilisp`), `cljw` and `cljw-cohost` (no `cljw`), `phel` and `phel-cohost` (no `phel`), `lg` and `lg-cohost` (no `lg`). `cljs`, `cljs-cohost`, `browser`, and `browser-cohost` have `node` but no ClojureScript jar in the local Maven repo, so the build cannot be compiled here.
