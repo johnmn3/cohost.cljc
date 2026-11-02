@@ -1358,3 +1358,72 @@ ABSENT rows (six hinted programs were absent), tak-hinted's warm median
 0.60 ms beats tak's 2.39, and fib-hinted runs (86.5 median, unsettled spread,
 vs fib 10.95). `bb boot:jvm` battery 144/145 (the eduction row above fails
 on the base too), libraries 61/61; `bb boot:jank` 143/145, 61/61.
+
+## Programs on cohost-on-jank
+
+C-2 (jank-FAST Step 8). nbody, mandelbrot, fannkuch and nsieve fail on cohost on jank, and they fail the same way on
+jank's own core (`jank -O3 run`, and `compile-module -O3`): this is not a cohost bug but jank 0.1's, and cohost can
+work around it in its codemod. Measured 2026-11-02 on jank 0.1-noble, cohost at `c499930`; programs from
+`c/bench-programs` (`bb bench:programs jank`, doc/PERF.md "Programs against JVM Clojure").
+
+**The cause (all four).** jank 0.1's C++ codegen fails on a `loop*` that binds a name an enclosing `loop*` binds:
+`error: use of undeclared identifier 'sNN'`. The init does not matter (`(loop [a a] ...)`, `(loop [a (inc a)] ...)`,
+`(loop [b 0 a a] ...)` all fail); `let` shadowing, and a `loop` rebinding a fn parameter, compile. Each program has
+one such inner loop. The same form rebound through a fresh name, `(loop [x__1 x] (let [x x__1] ...))`, compiles and
+gives the JVM's answer on raw jank and on cohost (one form per process: after a failed C++ compile, later forms in the
+same cohost process failed to link, `JIT session error: Symbols not found: [ ...try_object... ]`, then `Failed to
+find symbol: 'cohost_user$let_73_0'`).
+
+**The owning file.** cohost's codemod: `src/cohost/rewrite.cljc`, `rw-let*` (every `loop*` cohost evaluates passes
+through it, the user's `loop` after the stock macro expands it). The fix needs a capability, so it touches the shared
+layer: `src/cohost/adapter.cljc` (`:loop-rebind-shadow?`, doc, default `false`, accessor), `src/cohost/boot.cljc`
+(passes it to the rewrite options), and one key in `src/cohost/hosts/jank_host.jank` (lane M's file):
+`:loop-rebind-shadow? true`. With it set, `rw-let*` rewrites `(loop* [a init ...] body)`, `a` bound by an enclosing
+`loop*`, to `(loop* [a__N init ...] (let* [a a__N] body))` (recur is positional, so the loop is the same; the hint
+meta moves to `a__N`). Every other host's default leaves its forms byte-identical. The patch is the commit
+"C-2 proposed fix" on `c/jank-programs`, for the coordinator to order where it lands; with it:
+`bb boot:jank` -> stock 542, host 171, skipped 78, errors 0; battery 143/145; libraries 61/61 (unchanged), and the
+four programs run on cohost on jank with the JVM's results (below, small sizes: `bb bench:programs jank
+"nbody:200,mandelbrot:40,fannkuch:6,nsieve:12"` -> -169027, 967, -77, 564, the same as `bb bench:programs jvm` at
+those sizes).
+
+### nbody
+
+- Error (cohost on jank, `bb bench:programs jank nbody`): `Unable to compile C++ source. -- nil:7:1: error: use of
+  undeclared identifier 's34'` (nbody-hinted the same). jank's own core first fails on `Math/sqrt` (`The symbol
+  'Math/sqrt' could not be resolved`), so the G-13 note "runs on jank's own core" did not hold.
+- The loops: `energy`'s `(loop [j (inc i) e e] ...)` inside `(loop [i 0 e 0.0] ...)`, and `advance`'s
+  `(loop [j (inc i) bs bs b b] ...)` inside `(loop [i 0 bs bs] ...)`.
+- Repro: `(loop [i 0 e 0.0] (if (= i 2) e (recur (inc i) (loop [j 0 e e] (if (= j 2) e (recur (inc j) (+ e 1.0)))))))`
+  -> JVM `4.0`; raw jank `error: use of undeclared identifier 's31'`; cohost on jank the same.
+- With the fix: -169027 at size 200, the JVM's.
+
+### mandelbrot
+
+- Error: `Unable to compile C++ source. -- nil:7:1: error: use of undeclared identifier 's36'` (hinted `'s38'`);
+  jank's own core `use of undeclared identifier 's35'`.
+- The loop: `(loop [x 0 acc acc] ...)` inside `(loop [y 0 acc 0] ...)`.
+- Repro: `(loop [y 0 acc 0] (if (= y 2) acc (recur (inc y) (loop [x 0 acc acc] (if (= x 2) acc (recur (inc x) (inc acc)))))))`
+  -> JVM `4`; raw jank `'s31'`; cohost on jank the same. Rebound: `4` on both.
+- With the fix: 967 at size 40, the JVM's.
+
+### fannkuch
+
+- Error: `Unable to compile C++ source. -- nil:6:1: error: use of undeclared identifier 's28'` (hinted `'s30'`);
+  jank's own core `'s28'`.
+- The loop: `flips`' `(loop [p p i 0 j k] ...)` inside `(loop [p (vec p) f 0] ...)`.
+- Repro: `(loop [p [1 0] f 0] (if (zero? (p 0)) f (recur (loop [p p i 0] (if (< i 1) (recur (assoc p 0 (p 1) 1 (p 0)) (inc i)) p)) (inc f))))`
+  -> JVM `1`; raw jank `'s27'`; cohost on jank the same.
+- With the fix: -77 at size 6, the JVM's.
+
+### nsieve
+
+- Error: `Unable to compile C++ source. -- nil:10:1: error: use of undeclared identifier 's61'` (hinted `'s63'`);
+  jank's own core `'s56'`.
+- The loop: `(loop [j (+ i i) flags flags] ...)` inside `(loop [i 2 cnt 0 flags flags] ...)`.
+- Repro: `(loop [i 0 flags [true true]] (if (= i 2) flags (recur (inc i) (loop [j i flags flags] (if (>= j 2) flags (recur (+ j 2) (assoc flags j false)))))))`
+  -> JVM `[false false]`; raw jank `'s30'`; cohost on jank the same.
+- With the fix: 564 at size 12, the JVM's.
+
+No bench program changes: the programs are portable Clojure; the failure is the host's, and the codemod is where
+cohost absorbs it. Upstream: no draft in doc/upstream/ names this codegen bug yet (Step 7).
