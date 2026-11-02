@@ -1,0 +1,116 @@
+From 7c1a32b466d8da30096ec6a1227c796944a7c94d Mon Sep 17 00:00:00 2001
+From: cohost u2 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 16:09:10 +0000
+Subject: [PATCH] Inline = at two args through a single-overload is_equal; fix
+ assoc's :inline-arities to #{3}
+
+Draft: cohost doc/upstream/jank-13-eq-inline.md (`=` is not inlined: every
+(= a b) is a var deref and a dynamic call).
+Repro: bash dev/research/upstream/run.sh 13-eq-inline (in johnmn3/cohost.cljc);
+Expected: loop-with-= within 1.2x of loop-with-==.
+
+`=` had its :inline commented out ("TODO: Add template to support this"),
+so every (= a b) derefed clojure.core/= and went through object_ref::call,
+while ==, <, + inline to cpp/jank.runtime.*.
+
+Inlining straight to jank::runtime::equal does not build: equal has two
+overloads, (char, object_ref) and (object_ref, object_ref), and when both
+args are native (core.jank's mod: (= (pos? num) (pos? div)), two C++ bools)
+the analyzer's trait conversion to object_ref is ambiguous
+(analyze/invalid-cpp-call in phase 2's compile-module clojure.core). So the
+runtime gains bool is_equal(object_ref, object_ref), a single-overload
+`equal` (like is_equiv for ==), and = inlines to cpp/jank.runtime.is_equal at
+two args; native args then take the one trait conversion. prelude.hpp (the
+run-time PCH) now includes core/equal.hpp: core.jank reaches it through
+(cpp/raw "#include ..."), but every other module that inlines = (the first
+is jank.nrepl.server.core) needs is_equal declared in the PCH.
+
+assoc's :inline fn takes three args but :inline-arities was #{2}, which the
+analyzer compares with the call's argument count (analyze/processor.cpp,
+the var_deref :inline path), so (assoc m k v) never inlined; now #{3}.
+
+Files: compiler+runtime/src/jank/clojure/core.jank (the metadata of = and
+assoc only), compiler+runtime/include/cpp/jank/runtime/core/equal.hpp,
+compiler+runtime/src/cpp/jank/runtime/core/equal.cpp,
+compiler+runtime/include/cpp/jank/prelude.hpp.
+---
+ compiler+runtime/include/cpp/jank/prelude.hpp          |  1 +
+ .../include/cpp/jank/runtime/core/equal.hpp            |  4 ++++
+ compiler+runtime/src/cpp/jank/runtime/core/equal.cpp   |  5 +++++
+ compiler+runtime/src/jank/clojure/core.jank            | 10 ++++------
+ 4 files changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/prelude.hpp b/compiler+runtime/include/cpp/jank/prelude.hpp
+index 32d46b236..42e6200e2 100644
+--- a/compiler+runtime/include/cpp/jank/prelude.hpp
++++ b/compiler+runtime/include/cpp/jank/prelude.hpp
+@@ -9,6 +9,7 @@
+ #include <jank/runtime/core/truthy.hpp>
+ #include <jank/runtime/core/seq.hpp>
+ #include <jank/runtime/core/meta.hpp>
++#include <jank/runtime/core/equal.hpp>
+ #include <jank/runtime/core/call.hpp>
+ #include <jank/runtime/core.hpp>
+ #include <jank/codegen/api.hpp>
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core/equal.hpp b/compiler+runtime/include/cpp/jank/runtime/core/equal.hpp
+index f72ebce16..f59a6f6b0 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core/equal.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core/equal.hpp
+@@ -6,6 +6,10 @@ namespace jank::runtime
+ {
+   bool equal(char lhs, object_ref const rhs);
+   bool equal(object_ref const lhs, object_ref const rhs);
++  /* `equal` without the char overload: the target of `=`'s :inline. With one candidate, a
++   * native argument (a bool from an inlined `pos?`, a number) takes the analyzer's trait
++   * conversion to object_ref; with two, the conversion is ambiguous. */
++  bool is_equal(object_ref const lhs, object_ref const rhs);
+   i64 compare(object_ref const, object_ref const);
+   bool is_identical(object_ref const lhs, object_ref const rhs);
+ }
+diff --git a/compiler+runtime/src/cpp/jank/runtime/core/equal.cpp b/compiler+runtime/src/cpp/jank/runtime/core/equal.cpp
+index ddbfe602a..3811f4019 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/core/equal.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/core/equal.cpp
+@@ -21,6 +21,11 @@ namespace jank::runtime
+     return lhs.equal(rhs);
+   }
+ 
++  bool is_equal(object_ref const lhs, object_ref const rhs)
++  {
++    return lhs.equal(rhs);
++  }
++
+   i64 compare(object_ref const l, object_ref const r)
+   {
+     if(l.is_some() && r.is_nil())
+diff --git a/compiler+runtime/src/jank/clojure/core.jank b/compiler+runtime/src/jank/clojure/core.jank
+index 7936bea8e..f74c959d5 100644
+--- a/compiler+runtime/src/jank/clojure/core.jank
++++ b/compiler+runtime/src/jank/clojure/core.jank
+@@ -466,7 +466,7 @@
+        contains val at index. Note - index must be <= (count vector)."
+        :inline (fn* [map key val]
+                  (list 'cpp/jank.runtime.assoc map key val))
+-       :inline-arities #{2}}
++       :inline-arities #{3}}
+   assoc
+   (fn* assoc
+     ([map key val]
+@@ -656,11 +656,9 @@
+        for nil and compares collections by value. Numeric values from the same
+        numeric category compare equal, while different numeric categories do
+        not; use == for type-independent numeric comparison."
+-       ; TODO: Add template to support this.
+-       ;:inline (fn* [x y]
+-       ;          (list 'cpp/jank.runtime.equal x y))
+-       ;:inline-arities #{2}
+-       }
++       :inline (fn* [x y]
++                 (list 'cpp/jank.runtime.is_equal x y))
++       :inline-arities #{2}}
+   =
+   (fn* =
+     ([x] true)
+-- 
+2.43.0
+

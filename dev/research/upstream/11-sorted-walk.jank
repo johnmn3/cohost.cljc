@@ -5,3 +5,5 @@
     (timed (str "sort-first n=" n) #(first (sort v)))
     (timed (str "sort-nth-half n=" n) #(nth (sort v) h))
     (timed (str "sort-reduce n=" n) #(reduce + (sort v)))))
+;; correctness: a stepped native_vector_sequence must start at its index (apt 0.1-noble prints "(1 2 3) false")
+(println "rest-of-sort" (pr-str (rest (sort [3 1 2]))) (= (rest (sort [3 1 2])) [2 3]) "expected (2 3) true")
