@@ -14,6 +14,40 @@ cohost :cljs -Spath                  # the source roots, in tools.deps order
 Wired: `:cljs :jolt :lpy :cljw :phel :lg :jank`. `:jvm` runs the real Clojure CLI.
 `:cljrs` is wired when its boot lands (doc/hosts/PLAN.md).
 
+## The target
+
+`cohost :<target> ...` names the runtime for one command. Without it, the target is
+`:cohost/target` in `./deps.edn` (a keyword, e.g. `:jank`), and without that `:jvm`: the
+real Clojure CLI runs the command whole, so a project with no key behaves as with `clj`.
+tools.deps ignores the key. `cohost` with no arguments is the REPL.
+
+## New projects
+
+deps-new, as a tool: `cohost -Tnew create :template cohost/app :name acme/myapp
+[:target jank]`. `-T` runs the real CLI on every target, and `bin/cohost` merges cohost's
+template library (`templates/cohost-app`, deps-new's `cohost/app`) into the `-Sdeps` of
+every `-T` call, so the template is found without naming it. The project: `deps.edn`
+(`:cohost/target`, Clojure 1.12.0, aliases `:main`, `:run`, `:test`, `:build`),
+`src/acme/myapp.cljc`, `test/acme/myapp_test.cljc` (clojure.test; `-X:test` exits 1 on a
+failure), `build.clj`, `README.md`. The template reads `COHOST_HOME`, which `bin/cohost`
+exports, for the `:build` alias's `:local/root` on the cohost checkout.
+
+## Building
+
+tools.build, as for `clojure`: `cohost -T:build build` runs the project's `build.clj`,
+which calls `cohost.build/build` (`src/cohost/build.clj`, JVM-side). The target is
+`:target` in the task's arguments, else `:cohost/target`, else `:jvm`:
+
+| target | artifact | runs as |
+|---|---|---|
+| `:jvm` | `target/<name>.jar`, an uberjar with `clojure.main` as its main | `java -jar target/<name>.jar -m <main> args...` |
+| `:cljs` | `target/<name>-cljs/`: cohost's ClojureScript host build, the stock sources, the project's and its dependencies' source roots, `run.js` | `node target/<name>-cljs/run.js args...` (untested, 2026-11-02 1:40 PM ET) |
+| `:jank` | not yet: lane D's D-7 (an AOT executable) | |
+| `:jolt` `:lpy` `:cljw` `:phel` `:lg` `:cljrs` | not yet: the task prints `build: not yet on <target>` and fails | `cohost -M -m <main>` in the project |
+
+`bb readme:check [target ...]` runs README.md's command blocks, as written, against a fresh
+`cohost/app` project per target.
+
 ## Shape
 
 Two halves, one contract between them (an EDN file):
