@@ -634,6 +634,14 @@ arose (measured 2026-10-31 ET):
 
 ## Core battery cases that fail, and why (host facts)
 
+- Redefining a fn during its own recursion, on jank: cohost carries the
+  def's name onto its fn* there (jank's own `defn` does the same), so a
+  self-call is a direct call, not a var deref. An in-flight recursion
+  therefore keeps the fn it started with: the row "redefining a fn during
+  its own recursion" gets `:original` for the JVM 1.12 value
+  `:redefined`. This is raw jank's own answer for its `defn`, and the
+  price of the direct-call shape (M-9).
+
 - `(= 1 1.0)` is `true` on ClojureScript (one number type) and on basilisp
   (Python `1 == 1.0`).
 - `Matcher.start(g)` / `end(g)` on ClojureWasm: its `java.util.regex.Matcher` has
