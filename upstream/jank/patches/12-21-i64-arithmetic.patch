@@ -1,0 +1,607 @@
+jank-12 + jank-21: small-integer arithmetic in i64, i64 integer literals, + - * throw on overflow
+(cohost doc/upstream/jank-12-i32-add.md, doc/upstream/jank-21-int32-loop-local.md; lane U1, order U1-1)
+
+Base: jank-lang/jank f3d82d65499920f81216e9235bd5d3a34a968e3f. Apply from the clone's root: git apply <this file>.
+
+Files:
+- compiler+runtime/include/cpp/jank/runtime/core/math.hpp: every integer x integer arm of add, sub,
+  mul computes in i64 (a small integer's i32 payload and a 32-bit native operand no longer wrap at
+  32 bits) and throws "integer overflow" on i64 overflow, as inc throws "Overflow on increment.";
+  reals, ratios and big numbers keep the plain operator. +' (promoting_add etc.) is unchanged.
+  - unboxed arms: detail::checked_{add,sub,mul}: __builtin_*_overflow into i64; no check when both
+    operands are 32 bit (it cannot overflow).
+  - boxed arms: detail::boxed_{add,sub,mul}: when both operands fit in i32, the op runs in i32 and,
+    without overflow, the result is tagged directly (one `jo` more than the old wrapping arm);
+    otherwise detail::boxed_*_slow (out of line, cold) does the checked i64 op and boxes it.
+  - the helpers take operands by const & and are always_inline but not flatten: by value, or
+    flattened, every big_integer/ratio/big_decimal arm of the visit inlined copies and allocations
+    (add(object_ref, object_ref) grew from 1090 to 5295 instructions at -O3; now 1166) and
+    fib-30-plain ran 22% slower; that measurement is why they are shaped this way.
+- compiler+runtime/src/cpp/jank/runtime/core/math.cpp: detail::throw_integer_overflow and the
+  three boxed_*_slow functions.
+- compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp: an unboxed integer literal is typed `long`
+  (`long long` on Windows), never `int`, so a let/loop local initialized from a literal is 64 bit
+  (mutable_type keeps the literal's type; recur converts into it). literal_codegen_type only maps an
+  integer to a ref type when boxed.
+- compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp: the unboxed literal is spelled with that
+  type (`2147483647l`; i64 min as `(-9223372036854775807l - 1l)`), in both the eval (JIT) and the
+  module (AOT) constant paths; before, `auto v(0);` made the local an int whatever the analyzer said.
+
+Repro (cohost): bash dev/research/upstream/run.sh 12-i32-add; bash dev/research/upstream/run.sh 21-int32-loop-local
+Expected: the drafts' "Expected" lines, plus the cases appended under U1-1 in each repro.
+Known side effect: an interop call whose C++ overloads differ only between int and long long, called
+with a bare literal, is now ambiguous where it picked the int overload; cast the literal.
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core/math.hpp b/compiler+runtime/include/cpp/jank/runtime/core/math.hpp
+index 9035dd10..0a44ca28 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core/math.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core/math.hpp
+@@ -1,5 +1,8 @@
+ #pragma once
+ 
++#include <limits>
++#include <utility>
++
+ #include <jank/runtime/object.hpp>
+ #include <jank/runtime/core/make_box.hpp>
+ #include <jank/runtime/obj/big_integer.hpp>
+@@ -65,6 +68,160 @@ namespace jank::runtime
+   /* Only for fixed real sizes (i.e. real and small_real). */
+   f64 to_f64(object_ref const o);
+ 
++  namespace detail
++  {
++    template <typename T>
++    concept checked_integral = (std::is_integral_v<T> && !jtl::is_same<std::remove_cv_t<T>, bool>);
++
++    /* Clojure's `+`, `-`, `*` on longs throw on overflow (`+'` and friends promote). Kept out
++     * of line and cold so the arithmetic arms below stay small enough to inline. */
++    [[noreturn, gnu::cold, gnu::noinline]]
++    void throw_integer_overflow();
++
++    /* The boxed arms' slow path, out of line so `flatten` doesn't copy an allocation and a
++     * throw into every type pair of the visit: the 64-bit operation, checked, then boxed. */
++    [[gnu::cold, gnu::noinline]]
++    object_ref boxed_add_slow(i64 a, i64 b);
++    [[gnu::cold, gnu::noinline]]
++    object_ref boxed_sub_slow(i64 a, i64 b);
++    [[gnu::cold, gnu::noinline]]
++    object_ref boxed_mul_slow(i64 a, i64 b);
++
++    /* Integer arithmetic is always done in 64 bits, whatever the operands' width (a small
++     * integer's payload and an unboxed literal can be 32 bit), and checked for overflow.
++     * Every other combination (reals, ratios, big numbers) is the plain operator. */
++    template <typename A, typename B>
++    [[gnu::always_inline, gnu::hot]]
++    auto checked_add(A const &a, B const &b)
++    {
++      if constexpr(checked_integral<A> && checked_integral<B> && (sizeof(A) <= 4 && sizeof(B) <= 4))
++      {
++        /* Two 32-bit operands can't overflow 64 bits. */
++        return static_cast<i64>(a) + static_cast<i64>(b);
++      }
++      else if constexpr(checked_integral<A> && checked_integral<B>)
++      {
++        i64 res{};
++        if(__builtin_add_overflow(a, b, &res)) [[unlikely]]
++        {
++          throw_integer_overflow();
++        }
++        return res;
++      }
++      else
++      {
++        return a + b;
++      }
++    }
++
++    template <typename A, typename B>
++    [[gnu::always_inline, gnu::hot]]
++    auto checked_sub(A const &a, B const &b)
++    {
++      if constexpr(checked_integral<A> && checked_integral<B> && (sizeof(A) <= 4 && sizeof(B) <= 4))
++      {
++        /* Two 32-bit operands can't overflow 64 bits. */
++        return static_cast<i64>(a) - static_cast<i64>(b);
++      }
++      else if constexpr(checked_integral<A> && checked_integral<B>)
++      {
++        i64 res{};
++        if(__builtin_sub_overflow(a, b, &res)) [[unlikely]]
++        {
++          throw_integer_overflow();
++        }
++        return res;
++      }
++      else
++      {
++        return a - b;
++      }
++    }
++
++    template <typename A, typename B>
++    [[gnu::always_inline, gnu::hot]]
++    auto checked_mul(A const &a, B const &b)
++    {
++      if constexpr(checked_integral<A> && checked_integral<B>
++                   && (sizeof(A) <= 4 && sizeof(B) <= 4
++                       && std::is_signed_v<A> && std::is_signed_v<B>))
++      {
++        /* Two 32-bit operands can't overflow 64 bits. */
++        return static_cast<i64>(a) * static_cast<i64>(b);
++      }
++      else if constexpr(checked_integral<A> && checked_integral<B>)
++      {
++        i64 res{};
++        if(__builtin_mul_overflow(a, b, &res)) [[unlikely]]
++        {
++          throw_integer_overflow();
++        }
++        return res;
++      }
++      else
++      {
++        return a * b;
++      }
++    }
++
++    template <typename T>
++    [[gnu::always_inline]]
++    constexpr bool fits_i32(T const t)
++    {
++      if constexpr(std::is_signed_v<T> && sizeof(T) <= 4)
++      {
++        return true;
++      }
++      else
++      {
++        return std::in_range<i32>(t);
++      }
++    }
++
++    /* The boxed arms. When both operands fit in 32 bits (every small integer), the operation
++     * is done in 32 bits and, if it doesn't overflow, the result is tagged directly: one
++     * overflow branch more than the old wrapping arm, and no range check in make_box. Only
++     * a result outside 32 bits takes the checked 64-bit path. */
++    // clang-format off
++#define JANK_BOXED_OP(name)                                                                \
++  template <typename A, typename B>                                                        \
++  [[gnu::always_inline, gnu::hot]]                                                         \
++  object_ref boxed_##name(A const &a, B const &b)                                           \
++  {                                                                                        \
++    if constexpr(checked_integral<A> && checked_integral<B>)                               \
++    {                                                                                      \
++      if(fits_i32(a) && fits_i32(b)) [[likely]]                                            \
++      {                                                                                    \
++        i32 res{};                                                                         \
++        if(!__builtin_##name##_overflow(static_cast<i32>(a), static_cast<i32>(b), &res))   \
++          [[likely]]                                                                       \
++        {                                                                                  \
++          return make_box(res);                                                            \
++        }                                                                                  \
++      }                                                                                    \
++      if constexpr(std::in_range<i64>(std::numeric_limits<A>::max())                       \
++                   && std::in_range<i64>(std::numeric_limits<B>::max()))                   \
++      {                                                                                    \
++        return boxed_##name##_slow(a, b);                                                  \
++      }                                                                                    \
++      else                                                                                 \
++      {                                                                                    \
++        return make_box(checked_##name(a, b));                                             \
++      }                                                                                    \
++    }                                                                                      \
++    else                                                                                   \
++    {                                                                                      \
++      return make_box(checked_##name(a, b)).erase();                                       \
++    }                                                                                      \
++  }
++
++    JANK_BOXED_OP(add)
++    JANK_BOXED_OP(sub)
++    JANK_BOXED_OP(mul)
++#undef JANK_BOXED_OP
++    // clang-format on
++  }
++
+   template <typename L, typename R>
+   requires(!detail::primitive_number<L> && !detail::primitive_number<R>)
+   [[gnu::always_inline, gnu::flatten, gnu::hot]]
+@@ -83,7 +240,7 @@ namespace jank::runtime
+         [](auto const typed_l, auto const r) -> object_ref {
+           return visit_number_like(
+             [](auto const typed_r, auto const typed_l) -> object_ref {
+-              return make_box(typed_l->data + typed_r->data).erase();
++              return detail::boxed_add(typed_l->data, typed_r->data).erase();
+             },
+             r,
+             typed_l);
+@@ -94,20 +251,24 @@ namespace jank::runtime
+     else if constexpr(jtl::is_same<L, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_l, auto const r) { return make_box(typed_l->data + r->data).erase(); },
++        [](auto const typed_l, auto const r) {
++          return detail::boxed_add(typed_l->data, r->data).erase();
++        },
+         l,
+         r);
+     }
+     else if constexpr(jtl::is_same<R, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_r, auto const l) { return make_box(l->data + typed_r->data).erase(); },
++        [](auto const typed_r, auto const l) {
++          return detail::boxed_add(l->data, typed_r->data).erase();
++        },
+         r,
+         l);
+     }
+     else
+     {
+-      return l->data + r->data;
++      return detail::checked_add(l->data, r->data);
+     }
+   }
+ 
+@@ -126,17 +287,17 @@ namespace jank::runtime
+     else if constexpr(jtl::is_same<R, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_r, L const l) { return make_box(l + typed_r->data).erase(); },
++        [](auto const typed_r, L const l) { return detail::boxed_add(l, typed_r->data).erase(); },
+         r,
+         l);
+     }
+     else if constexpr(detail::typed_object<R>)
+     {
+-      return l + r->data;
++      return detail::checked_add(l, r->data);
+     }
+     else
+     {
+-      return l + r;
++      return detail::checked_add(l, r);
+     }
+   }
+ 
+@@ -155,17 +316,17 @@ namespace jank::runtime
+     else if constexpr(jtl::is_same<L, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_l, R const r) { return make_box(typed_l->data + r).erase(); },
++        [](auto const typed_l, R const r) { return detail::boxed_add(typed_l->data, r).erase(); },
+         l,
+         r);
+     }
+     else if constexpr(detail::typed_object<L>)
+     {
+-      return l->data + r;
++      return detail::checked_add(l->data, r);
+     }
+     else
+     {
+-      return l + r;
++      return detail::checked_add(l, r);
+     }
+   }
+ 
+@@ -174,7 +335,7 @@ namespace jank::runtime
+   [[gnu::always_inline, gnu::flatten, gnu::hot]]
+   auto add(L const l, R const r)
+   {
+-    return l + r;
++    return detail::checked_add(l, r);
+   }
+ 
+   object_ref promoting_add(object_ref const l, object_ref const r);
+@@ -197,7 +358,7 @@ namespace jank::runtime
+         [](auto const typed_l, auto const r) -> object_ref {
+           return visit_number_like(
+             [](auto const typed_r, auto const typed_l) -> object_ref {
+-              return make_box(typed_l->data - typed_r->data).erase();
++              return detail::boxed_sub(typed_l->data, typed_r->data).erase();
+             },
+             r,
+             typed_l);
+@@ -208,20 +369,24 @@ namespace jank::runtime
+     else if constexpr(jtl::is_same<L, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_l, auto const r) { return make_box(typed_l->data - r->data).erase(); },
++        [](auto const typed_l, auto const r) {
++          return detail::boxed_sub(typed_l->data, r->data).erase();
++        },
+         l,
+         r);
+     }
+     else if constexpr(jtl::is_same<R, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_r, auto const l) { return make_box(l->data - typed_r->data).erase(); },
++        [](auto const typed_r, auto const l) {
++          return detail::boxed_sub(l->data, typed_r->data).erase();
++        },
+         r,
+         l);
+     }
+     else
+     {
+-      return l->data - r->data;
++      return detail::checked_sub(l->data, r->data);
+     }
+   }
+ 
+@@ -240,17 +405,17 @@ namespace jank::runtime
+     else if constexpr(jtl::is_same<R, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_r, L const l) { return make_box(l - typed_r->data).erase(); },
++        [](auto const typed_r, L const l) { return detail::boxed_sub(l, typed_r->data).erase(); },
+         r,
+         l);
+     }
+     else if constexpr(detail::typed_object<R>)
+     {
+-      return l - r->data;
++      return detail::checked_sub(l, r->data);
+     }
+     else
+     {
+-      return l - r;
++      return detail::checked_sub(l, r);
+     }
+   }
+ 
+@@ -269,17 +434,17 @@ namespace jank::runtime
+     else if constexpr(jtl::is_same<L, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_l, R const r) { return make_box(typed_l->data - r).erase(); },
++        [](auto const typed_l, R const r) { return detail::boxed_sub(typed_l->data, r).erase(); },
+         l,
+         r);
+     }
+     else if constexpr(detail::typed_object<L>)
+     {
+-      return l->data - r;
++      return detail::checked_sub(l->data, r);
+     }
+     else
+     {
+-      return l - r;
++      return detail::checked_sub(l, r);
+     }
+   }
+ 
+@@ -288,7 +453,7 @@ namespace jank::runtime
+   [[gnu::always_inline, gnu::flatten, gnu::hot]]
+   auto sub(L const l, R const r)
+   {
+-    return l - r;
++    return detail::checked_sub(l, r);
+   }
+ 
+   object_ref promoting_sub(object_ref const l, object_ref const r);
+@@ -423,7 +588,7 @@ namespace jank::runtime
+         [](auto const typed_l, auto const r) -> object_ref {
+           return visit_number_like(
+             [](auto const typed_r, auto const typed_l) -> object_ref {
+-              return make_box(typed_l->data * typed_r->data).erase();
++              return detail::boxed_mul(typed_l->data, typed_r->data).erase();
+             },
+             r,
+             typed_l);
+@@ -434,20 +599,24 @@ namespace jank::runtime
+     else if constexpr(jtl::is_same<L, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_l, auto const r) { return make_box(typed_l->data * r->data).erase(); },
++        [](auto const typed_l, auto const r) {
++          return detail::boxed_mul(typed_l->data, r->data).erase();
++        },
+         l,
+         r);
+     }
+     else if constexpr(jtl::is_same<R, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_r, auto const l) { return make_box(l->data * typed_r->data).erase(); },
++        [](auto const typed_r, auto const l) {
++          return detail::boxed_mul(l->data, typed_r->data).erase();
++        },
+         r,
+         l);
+     }
+     else
+     {
+-      return l->data * r->data;
++      return detail::checked_mul(l->data, r->data);
+     }
+   }
+ 
+@@ -466,17 +635,17 @@ namespace jank::runtime
+     else if constexpr(jtl::is_same<R, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_r, L const l) { return make_box(l * typed_r->data).erase(); },
++        [](auto const typed_r, L const l) { return detail::boxed_mul(l, typed_r->data).erase(); },
+         r,
+         l);
+     }
+     else if constexpr(detail::typed_object<R>)
+     {
+-      return l * r->data;
++      return detail::checked_mul(l, r->data);
+     }
+     else
+     {
+-      return l * r;
++      return detail::checked_mul(l, r);
+     }
+   }
+ 
+@@ -495,17 +664,17 @@ namespace jank::runtime
+     if constexpr(jtl::is_same<L, object_ref>)
+     {
+       return visit_number_like(
+-        [](auto const typed_l, R const r) { return make_box(typed_l->data * r).erase(); },
++        [](auto const typed_l, R const r) { return detail::boxed_mul(typed_l->data, r).erase(); },
+         l,
+         r);
+     }
+     else if constexpr(detail::typed_object<L>)
+     {
+-      return l->data * r;
++      return detail::checked_mul(l->data, r);
+     }
+     else
+     {
+-      return l * r;
++      return detail::checked_mul(l, r);
+     }
+   }
+ 
+@@ -514,7 +683,7 @@ namespace jank::runtime
+   [[gnu::always_inline, gnu::flatten, gnu::hot]]
+   auto mul(L const l, R const r)
+   {
+-    return l * r;
++    return detail::checked_mul(l, r);
+   }
+ 
+   object_ref promoting_mul(object_ref const l, object_ref const r);
+diff --git a/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp b/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp
+index 03d10667..cd829c6b 100644
+--- a/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp
++++ b/compiler+runtime/src/cpp/jank/analyze/cpp_util.cpp
+@@ -622,12 +622,9 @@ namespace jank::analyze::cpp_util
+         {
+           if(!is_boxed)
+           {
+-            auto const i{ runtime::to_i64(o) };
+-            if(static_cast<i32>(i) == i)
+-            {
+-              static auto const type{ int_type() };
+-              return type;
+-            }
++            /* Clojure's integers are 64 bit. An unboxed literal is always a 64 bit integer,
++             * even when it fits in 32, so a local initialized from it, and arithmetic on it,
++             * never wraps at 32 bits. The codegen emits the literal with the same type. */
+ #ifdef WIN32
+             static auto const type{ long_long_type() };
+ #else
+@@ -646,7 +643,12 @@ namespace jank::analyze::cpp_util
+         {
+           if(!is_boxed)
+           {
+-            static auto const type{ int_type() };
++            /* See the integer case: unboxed integers are always 64 bit. */
++#ifdef WIN32
++            static auto const type{ long_long_type() };
++#else
++            static auto const type{ long_type() };
++#endif
+             return type;
+           }
+           else
+@@ -855,7 +857,8 @@ namespace jank::analyze::cpp_util
+ 
+   jtl::ptr<void> literal_codegen_type(runtime::object_ref const o, bool const is_boxed)
+   {
+-    if(o.get_type() == runtime::object_type::integer)
++    /* An unboxed integer is a native i64 (literal_type), never a ref. */
++    if(is_boxed && o.get_type() == runtime::object_type::integer)
+     {
+       auto const i{ runtime::expect_object<runtime::obj::integer>(o)->data };
+       if(static_cast<i32>(i) == i)
+diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+index aadbda9c..e46eddf0 100644
+--- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
++++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+@@ -7,6 +7,7 @@
+ #include <jank/runtime/core/munge.hpp>
+ #include <jank/runtime/core/seq.hpp>
+ #include <jank/runtime/core/meta.hpp>
++#include <jank/runtime/core/math.hpp>
+ #include <jank/runtime/core/call.hpp>
+ #include <jank/runtime/visit.hpp>
+ #include <jank/runtime/sequence_range.hpp>
+@@ -128,6 +129,24 @@ namespace jank::codegen
+     /* NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables) */
+     global_vars;
+ 
++  /* An unboxed integer literal is spelled with the type the analyzer gives it
++   * (cpp_util::literal_type: `long`, or `long long` on Windows), so `auto x(1l)` is 64 bit
++   * and arithmetic on it never wraps at 32 bits. */
++  static jtl::immutable_string unboxed_integer_literal(i64 const i)
++  {
++#ifdef WIN32
++    static constexpr auto suffix{ "ll" };
++#else
++    static constexpr auto suffix{ "l" };
++#endif
++    if(i == std::numeric_limits<i64>::min())
++    {
++      /* The literal 9223372036854775808 has no signed type, so it can't be negated. */
++      return util::format("({}{} - 1{})", i + 1, suffix, suffix);
++    }
++    return util::format("{}{}", i, suffix);
++  }
++
+   static identifier
+   lift_constant(identifier const &name, object_ref const o, bool const is_boxed, builder const &b)
+   {
+@@ -135,6 +154,10 @@ namespace jank::codegen
+     {
+       if(!is_boxed)
+       {
++        if(o.get_type() == object_type::integer || o.get_type() == object_type::small_integer)
++        {
++          return unboxed_integer_literal(runtime::to_i64(o));
++        }
+         if(auto const r{ dyn_cast<obj::real>(o) }; r.is_some())
+         {
+           jtl::string_builder sb;
+@@ -280,7 +303,7 @@ namespace jank::codegen
+           {
+             if(!is_boxed)
+             {
+-              util::format_to(buffer, "{}", typed_o->data);
++              util::format_to(buffer, "{}", unboxed_integer_literal(typed_o->data));
+             }
+             else if(static_cast<i32>(typed_o->data) == typed_o->data)
+             {
+diff --git a/compiler+runtime/src/cpp/jank/runtime/core/math.cpp b/compiler+runtime/src/cpp/jank/runtime/core/math.cpp
+index f8bd331c..c14cb7b3 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/core/math.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/core/math.cpp
+@@ -7,6 +7,29 @@
+ 
+ namespace jank::runtime
+ {
++  namespace detail
++  {
++    void throw_integer_overflow()
++    {
++      throw make_box("integer overflow").erase();
++    }
++
++    object_ref boxed_add_slow(i64 const a, i64 const b)
++    {
++      return make_box(checked_add(a, b));
++    }
++
++    object_ref boxed_sub_slow(i64 const a, i64 const b)
++    {
++      return make_box(checked_sub(a, b));
++    }
++
++    object_ref boxed_mul_slow(i64 const a, i64 const b)
++    {
++      return make_box(checked_mul(a, b));
++    }
++  }
++
+   i64 to_i64(object_ref const o)
+   {
+     if(detail::is_tagged_small_int(o.raw()))

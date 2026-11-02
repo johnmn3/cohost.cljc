@@ -1,5 +1,6 @@
 11-sorted-walk.patch
 13-eq-inline.patch
 14-keyword-hash.patch
+12-21-i64-arithmetic.patch
 18-small-vectors.patch
 19-gc-defaults.patch
