@@ -486,23 +486,9 @@
   (let [ns (.getNamespace v) nm (.getName v) reg (Registry/getInstance)]
     (and (.isDefined reg ns nm) (not (php/=== unbound (.getDefinition reg ns nm))))))
 
-;; The registry's metadata of the definition a var names: a var find-var
-;; makes (ns-interns' vars) carries none of its own, while (var x) compiles
-;; with it. The namespace as the var holds it, else encoded as def stores it.
-(defn- registry-meta [v]
-  (let [ns (.getNamespace v) nm (.getName v)
-        m (Phel/getDefinitionMetaData ns nm)]
-    (if (seq m) m (Phel/getDefinitionMetaData (.encodeRegistryKey (new Munge) ns) nm))))
-
-;; a var's metadata names it, as the JVM's does; deftest's :test comes from
-;; the registry when the var does not carry it, so clojure.test's run-tests,
-;; which walks ns-interns, finds the tests
+;; a var's metadata names it, as the JVM's does
 (defn- var-meta [v]
-  (let [m (or (meta v) {})
-        m (if (contains? m :test)
-            m
-            (let [t (get (registry-meta v) :test)] (if (nil? t) m (assoc m :test t))))]
-    (assoc m :name (symbol (.getName v)) :ns (.getNamespace v))))
+  (assoc (or (meta v) {}) :name (symbol (.getName v)) :ns (.getNamespace v)))
 
 ;; the vars this thread binds: each DynamicScope frame's, innermost first
 (defn- thread-bindings []
