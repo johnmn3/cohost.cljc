@@ -22,6 +22,7 @@
   (let [user (str t "-user")]
     [["-M -m" ["-M" "-m" "demo.main" user]]
      ["-M:main" ["-M:main" "-g" "hi" "-n" "2" user]]
+     ["-M flag" ["-M" "-m" "demo.main" "-l" user]]
      ["-X:run" ["-X:run" ":user" (pr-str user)]]
      ["-e" ["-e" "(require 'greeter.core)" "-e" (str "(greeter.core/name-of " (pr-str user) ")")]]
      ["script" ["script.clj" user "jvm-x"]]
