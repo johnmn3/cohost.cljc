@@ -15,4 +15,5 @@
 27-string-nth-str.patch
 28-param-speculation.patch
 30-inline-int-width.patch
+29-variadic-multi.patch
 32-real-speculation.patch

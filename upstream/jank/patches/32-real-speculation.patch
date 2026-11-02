@@ -38,6 +38,11 @@ Files:
   identifier 'sNN'" (on the apt binary too). This is why mandelbrot, fannkuch and nsieve (and
   nbody on cohost) were ABSENT on every jank target. Independent of the f64 work; it can be split
   into its own patch.
+- compiler+runtime/src/cpp/jank/analyze/processor.cpp, analyze_if: two integral branches whose
+  common type is unsigned (a native i64 and a count's size_t) give an i64 (Clojure's integers are
+  signed). Found by bench:programs' AOT harness, (defn __sinkv [acc r] (+ acc (if (number? r) r
+  (count (str r))))): speculated (28), r = -502 became 2^64-502 in the unsigned if and the checked
+  add threw "integer overflow". Repro 32's "if signedness" line.
 
 diff --git a/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp b/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
 index c4f63033..a8bf67ee 100644
@@ -106,7 +111,7 @@ index d7bfb89d..4245aca8 100644
  
      using named_recursion_ref = jtl::ref<named_recursion>;
 diff --git a/compiler+runtime/src/cpp/jank/analyze/processor.cpp b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
-index f22450fd..3506865a 100644
+index f22450fd..2bb3984e 100644
 --- a/compiler+runtime/src/cpp/jank/analyze/processor.cpp
 +++ b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
 @@ -1706,13 +1706,173 @@ namespace jank::analyze
@@ -409,6 +414,26 @@ index f22450fd..3506865a 100644
        if(base + 1 == arities.end())
        {
          break;
+@@ -3121,6 +3336,19 @@ namespace jank::analyze
+         std::swap(chosen_type, other_type);
+       }
+ 
++      /* jank-32: Clojure's integers are signed. Two integral branches whose common type is
++       * unsigned (a native i64 and a count, a size_t) are an i64, or a negative branch value
++       * would wrap ((if (number? r) r (count (str r))) with r -502 gave 2^64-502). */
++      if(!cpp_util::is_any_object(chosen_type) && cppinterop::is_integral(chosen_type)
++         && !cpp_util::is_bool(chosen_type)
++         && cppinterop::get_canonical_type(cppinterop::get_unsigned_type(chosen_type))
++           == cppinterop::get_canonical_type(chosen_type)
++         && cppinterop::get_canonical_type(cppinterop::get_signed_type(chosen_type))
++           != cppinterop::get_canonical_type(chosen_type))
++      {
++        chosen_type = cpp_util::long_long_type();
++      }
++
+       return jtl::make_ref<expr::if_>(position,
+                                       current_frame,
+                                       needs_box,
 diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
 index 150cb4e9..3c46f88b 100644
 --- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp

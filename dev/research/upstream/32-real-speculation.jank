@@ -5,6 +5,7 @@
 ;; converted to a real, so (scale 2) is still Clojure's 3.0 and a string takes the generic body.
 ;; Expected (Clojure 1.12, the same forms with Math/sqrt; nbody's value scaled by 1e9, rounded):
 ;;   real speculation: 3.0 3.0 throws 55.0 55.0 57054003 true 0.125 50 50 2
+;;   if signedness: -502 3 7
 (cpp/raw "#include <cmath>\nnamespace r32 { inline double sqrt_(double x) { return std::sqrt(x); } }")
 (defn ovf [f] (try (f) (catch :default e "throws")))
 (defn scale [x] (* x 1.5))
@@ -30,6 +31,8 @@
 (defn mandel [cr ci] (loop [zr 0.0 zi 0.0 k 0] (if (and (< k 50) (< (+ (* zr zr) (* zi zi)) 4.0)) (recur (+ (- (* zr zr) (* zi zi)) cr) (+ (* 2.0 zr zi) ci) (inc k)) k)))
 (println "real speculation:" (scale 2) (scale 2.0) (ovf #(scale "a")) (down-d 10.0) (down-d 10)
          (cpp/jank.runtime.to_int (* 1e9 (kstep 1000 1.0 4.0))) (= (kstep 10 1 4) (kstep 10 1.0 4.0)) (eval-a 1 2) (mandel -0.5 0.5) (mandel 0 0) (mandel 1.0 1.0))
+(defn sinkv [acc r] (+ acc (if (number? r) r (count (str r)))))
+(println "if signedness:" (sinkv 0 -502) (sinkv 0 "abc") (sinkv 4 3))
 (timed "down-d 2e6 (untyped, real arg)" #(down-d 2000000.0))
 (timed "down-d-hinted 2e6 (^double)" #(down-d-hinted 2000000.0))
 (timed "kstep 1e6 (untyped n bx cx)" #(kstep 1000000 1.0 4.0))
