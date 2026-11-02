@@ -91,8 +91,8 @@ whose `build` makes the artifact for the project's runtime (an uberjar by defaul
 
 ```bash
 # targets: jvm
-cohost -T:build build             # => build: target/myapp.jar (java -jar target/myapp.jar)
-java -jar target/myapp.jar        # => Hello, world!
+cohost -T:build build             # => build: target/myapp.jar (java -jar target/myapp.jar -m acme.myapp)
+java -jar target/myapp.jar -m acme.myapp    # => Hello, world!
 ```
 
 What each runtime builds is in `doc/CLI.md` ("Building").
@@ -218,6 +218,7 @@ deliberately left out.
 ## Developing cohost
 
 ```bash
+# not checked: cohost's own tasks, run in the cohost checkout
 bb boot:jolt      # jolt on PATH
 bb boot:lpy       # basilisp on PATH  (uv tool install basilisp)
 bb boot:cljs      # ClojureScript, self-hosted on Node (needs the clojure CLI + node)

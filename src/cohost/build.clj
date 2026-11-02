@@ -6,7 +6,9 @@
 ;;   (defn build [opts] (cb/build (merge {:main 'acme.myapp} opts)))
 ;;
 ;; The target is :target in opts, else :cohost/target in deps.edn, else :jvm:
-;;   :jvm   an uberjar, target/<name>.jar (java -jar runs -main)
+;;   :jvm   an uberjar, target/<name>.jar, clojure.main as its main:
+;;          java -jar target/<name>.jar -m <main> args... (no :gen-class needed
+;;          in a namespace every target reads)
 ;;   :cljs  target/<name>-cljs/: cohost's ClojureScript host, the stock core
 ;;          sources, the project's and its dependencies' source roots, and
 ;;          run.js (node target/<name>-cljs/run.js args... runs -main)
@@ -40,8 +42,8 @@
     ((build-api 'delete) {:path "target"})
     ((build-api 'copy-dir) {:src-dirs (:paths basis) :target-dir class-dir})
     ((build-api 'compile-clj) {:basis basis :class-dir class-dir :ns-compile [main]})
-    ((build-api 'uber) {:class-dir class-dir :uber-file jar :basis basis :main main})
-    (println (str "build: " jar " (java -jar " jar ")"))
+    ((build-api 'uber) {:class-dir class-dir :uber-file jar :basis basis :main 'clojure.main})
+    (println (str "build: " jar " (java -jar " jar " -m " main ")"))
     jar))
 
 (defn- sh! [dir & cmd]
