@@ -25,8 +25,8 @@
 (def stock-root (str repo "/resources/cohost/clojure-1.12.0"))
 (def cache-dir (str (fs/home) "/.cache/cohost"))
 
-(def wired ["cljs" "jolt" "lpy" "cljw" "phel" "lg"])
-(def hosts (set (concat ["jvm" "cljrs" "jank"] wired)))
+(def wired ["cljs" "jolt" "lpy" "cljw" "phel" "lg" "jank"])
+(def hosts (set (concat ["jvm" "cljrs"] wired)))
 
 (defn die [code & lines]
   (doseq [l lines] (binding [*out* *err*] (println l)))
@@ -196,7 +196,15 @@
         (when-not (zero? (run-inherit repo cmd))
           (die 1 "cohost: cljs build failed"))))))
 
-(defn launch! [host cwd config]
+(defn jank-launch
+  "jank: the module path (a fresh snapshot of the booted core, else the AOT
+   objects) and whether cohost.cli boots from the snapshot (lane D's
+   dev/perf/jank_snapshot_cli.clj)."
+  []
+  (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
+  ((resolve 'jank-cli-launch) repo))
+
+(defn launch! [host cwd config & [jank]]
   (let [cfg (str config)
         src (str repo "/src")]
     (case host
@@ -209,7 +217,8 @@
       "cljw" (run-inherit cwd ["cljw" "-cp" src "-m" "cohost.cli" cfg])
       "lpy" (run-inherit cwd ["basilisp" "run" "-p" src "-c"
                               (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])
-      "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg]))))
+      "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg])
+      "jank" (run-inherit cwd ["jank" "-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg]))))
 
 ;; --------------------------------------------------------------------------
 
@@ -240,10 +249,12 @@
           (let [run (if (= mode :X)
                       {:inits [] :main (exec-config (:main o) argmap)}
                       (main-config cwd (concat (when (= mode :M) (:main-opts argmap)) (:main o))))
-                cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))]
+                cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))
+                jank (when (= host "jank") (jank-launch))]
             (fs/create-dirs (fs/parent cfg-file))
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
-                                               :verbose (boolean (System/getenv "COHOST_VERBOSE"))})))
+                                               :verbose (boolean (System/getenv "COHOST_VERBOSE"))}
+                                   (when jank {:snapshot? (:snapshot? jank)}))))
             ;; System/exit skips finally: the config goes before it
-            (let [code (try (launch! host cwd cfg-file) (finally (fs/delete-if-exists cfg-file)))]
+            (let [code (try (launch! host cwd cfg-file jank) (finally (fs/delete-if-exists cfg-file)))]
               (System/exit code))))))))
