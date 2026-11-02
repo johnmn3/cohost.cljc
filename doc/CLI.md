@@ -42,7 +42,7 @@ which calls `cohost.build/build` (`src/cohost/build.clj`, JVM-side). The target 
 |---|---|---|
 | `:jvm` | `target/<name>.jar`, an uberjar with `clojure.main` as its main | `java -jar target/<name>.jar -m <main> args...` |
 | `:cljs` | `target/<name>-cljs/`: cohost's ClojureScript host build, the stock sources, the project's and its dependencies' source roots, `run.js` | `node target/<name>-cljs/run.js args...` (2026-11-02: `Hello, you!` from another directory) |
-| `:jank` | not yet: lane D's D-7 (an AOT executable) | |
+| `:jank` | `target/jank/<name>`: one native executable (`cohost.build-jank`, D-7): the booted core's snapshot and the project's namespaces compiled `-O3`, jank's static runtime; rebuilt when stale | `target/jank/<name> args...`, from any directory, no cohost checkout (2026-11-02: `Hello, you!` in 0.926 s, median of 3, from a deps-new `cohost/app` project; built in 464958 ms) |
 | `:jolt` `:lpy` `:cljw` `:phel` `:lg` `:cljrs` | not yet: the task prints `build: not yet on <target>` and fails | `cohost -M -m <main>` in the project |
 
 `bb readme:check [target ...]` runs README.md's command blocks, as written, against a fresh
