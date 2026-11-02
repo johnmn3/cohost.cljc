@@ -1,0 +1,40 @@
+;; requires: research.p2-other
+;; P2 (session 1, codegen; also session 2, dispatch): what one call costs on
+;; raw jank, by the path it takes. 5e6 calls of a one-line fn in a boxed loop.
+;; loop-only: the loop with no call (its own boxed inc/< cost).
+;; call-var-same-ns / call-var-other-ns: (f i) through a var in this namespace
+;;   and in another module (lane M: ~100 ns per cross-module entry, M-6).
+;; call-local: the fn object read once into a local, then called (no var deref).
+;; call-2 / call-variadic: a 2-arity fn and a [x & ys] fn (rest-arg cost).
+;; call-cpp-objref: a cpp/raw fn taking and returning object_ref (no dynamic_call).
+;; call-multi: a defmulti whose dispatch fn is constant (one method).
+;; call-volatile-fn: the fn read from a volatile on every call (P1's fib-local shape).
+(defn id1 [x] x)
+(defn id2 [x y] x)
+(defn idv [x & ys] x)
+(defmulti mm (fn [x] 0))
+(defmethod mm 0 [x] x)
+(cpp/raw "namespace r2 {
+  inline jank::runtime::object_ref id(jank::runtime::object_ref x) { return x; }
+}")
+(def vf (volatile! id1))
+(def n 5000000)
+(defn loop-only [] (loop [i 0] (if (< i n) (recur (inc i)) i)))
+(defn call-var-same-ns [] (loop [i 0] (if (< i n) (recur (inc (id1 i))) i)))
+(defn call-var-other-ns [] (loop [i 0] (if (< i n) (recur (inc (research.p2-other/id1 i))) i)))
+(defn call-local [] (let [f id1] (loop [i 0] (if (< i n) (recur (inc (f i))) i))))
+(defn call-2 [] (loop [i 0] (if (< i n) (recur (inc (id2 i i))) i)))
+(defn call-variadic [] (loop [i 0] (if (< i n) (recur (inc (idv i i))) i)))
+(defn call-cpp-objref [] (loop [i 0] (if (< i n) (recur (inc (cpp/r2.id i))) i)))
+(defn call-multi [] (loop [i 0] (if (< i n) (recur (inc (mm i))) i)))
+(defn call-volatile-fn [] (loop [i 0] (if (< i n) (recur (inc (@vf i))) i)))
+(defn run []
+  (bench "loop-only" loop-only)
+  (bench "call-var-same-ns" call-var-same-ns)
+  (bench "call-var-other-ns" call-var-other-ns)
+  (bench "call-local" call-local)
+  (bench "call-2" call-2)
+  (bench "call-variadic" call-variadic)
+  (bench "call-cpp-objref" call-cpp-objref)
+  (bench "call-multi" call-multi)
+  (bench "call-volatile-fn" call-volatile-fn))

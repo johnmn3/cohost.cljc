@@ -1,0 +1,31 @@
+;; P4, the JVM twin of p4_maps.jank (same code).
+(def m3 {:a 1 :b 2 :c 3})
+(def m1000 (into {} (map (fn [i] [i i]) (range 1000))))
+(defn assoc-small [] (loop [i 0 m m3] (if (< i 1000000) (recur (inc i) (assoc m :n i)) (:n m))))
+(defn assoc-in-32 [] (loop [i 0 m {}] (if (< i 1000000) (recur (inc i) (assoc-in m [:xs (mod i 32)] i)) (get-in m [:xs 7]))))
+(defn update-in-2 [] (loop [i 0 m {}] (if (< i 1000000) (recur (inc i) (update-in m [:a :b] (fnil + 0) i)) (get-in m [:a :b]))))
+(defn get-in-2 [] (let [m {:a {:b 7}}] (loop [i 0 s 0] (if (< i 1000000) (recur (inc i) (+ s (get-in m [:a :b]))) s))))
+(defn kw-lookup [] (loop [i 0 s 0] (if (< i 5000000) (recur (inc i) (+ s (:a m3))) s)))
+(defn map-lookup [] (loop [i 0 s 0] (if (< i 5000000) (recur (inc i) (+ s (m3 :a))) s)))
+(defn get-1000 [] (loop [i 0 s 0] (if (< i 1000000) (recur (inc i) (+ s (get m1000 (mod i 1000)))) s)))
+(defn hash-map-grow [] (loop [i 0 m {}] (if (< i 100000) (recur (inc i) (assoc m i i)) (count m))))
+(defn pipeline [n]
+  (let [m (reduce (fn [m i]
+                    (-> m
+                        (assoc :n i)
+                        (update-in [:a :b] (fnil + 0) i)
+                        (assoc-in [:xs (mod i 32)] {:v (* i i)})))
+                  {}
+                  (range n))]
+    (+ (get-in m [:a :b]) (get-in m [:xs (mod (dec n) 32) :v]))))
+(defn run []
+  (bench "assoc-small-1e6" assoc-small)
+  (bench "assoc-in-1e6" assoc-in-32)
+  (bench "update-in-1e6" update-in-2)
+  (bench "get-in-1e6" get-in-2)
+  (bench "kw-lookup-5e6" kw-lookup)
+  (bench "map-lookup-5e6" map-lookup)
+  (bench "get-1000-1e6" get-1000)
+  (bench "hash-map-grow-1e5" hash-map-grow)
+  (bench "pipeline-2000" #(pipeline 2000))
+  (bench "pipeline-20000" #(pipeline 20000)))

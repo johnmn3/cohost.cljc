@@ -1,0 +1,2 @@
+(ns research.p2-other)
+(defn id1 [x] x)

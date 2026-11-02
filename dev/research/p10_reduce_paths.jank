@@ -1,0 +1,23 @@
+;; P10 (plan item 3): what an allocation-free walk and internal reduce would reach.
+;; Over a 1e6 vector: reduce (allocating seq walk), reduce-kv (direct loop), a loop with nth,
+;; a cpp/raw loop over the immer vector; and for the lazy pipeline: (map inc (range n)) counted
+;; lazily, a mapv, a transducer, and a hand-chunked loop (32 at a time).
+(cpp/raw "namespace r10 {
+  inline long sum_vec(jank::runtime::object_ref v) {
+    auto const typed = jank::runtime::expect_object<jank::runtime::obj::persistent_vector>(v);
+    long s = 0;
+    for(auto const e : typed->data) { s += jank::runtime::to_i64(e); }
+    return s;
+  }
+}")
+(def n 1000000)
+(def v (vec (range n)))
+(defn run []
+  (bench "reduce + v" #(reduce + v))
+  (bench "reduce-kv over v" #(reduce-kv (fn [a _ x] (+ a x)) 0 v))
+  (bench "loop nth over v" #(loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (nth v i))) s)))
+  (bench "cpp/raw loop over v's immer data" #(cpp/r10.sum_vec v))
+  (bench "count (map inc (range n))" #(count (map inc (range n))))
+  (bench "count (mapv inc (range n))" #(count (mapv inc (range n))))
+  (bench "transduce (map inc) + (range n)" #(transduce (map inc) + 0 (range n)))
+  (bench "hand-chunked 32-at-a-time sum of inc over 0..n" #(loop [i 0 s 0] (if (< i n) (recur (+ i 32) (loop [j i t s] (if (and (< j (+ i 32)) (< j n)) (recur (inc j) (+ t (inc j))) t))) s))))

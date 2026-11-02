@@ -1,0 +1,43 @@
+;; P5 (session 2, runtime: seqs, reduce, transducers, strings, sort).
+;; reduce-range / reduce-vec: reduce + over (range 1e6) and a 1e6 vector.
+;; first-next-range: a loop over (seq (range 1e6)) with first/next.
+;; lazy-count: count (filter odd? (map inc (range 1e6))).
+;; transduce / into-map: the bench's transduce and into-vector shapes at 1e6.
+;; frequencies-1e5: frequencies of a 1e5 vector of small ints.
+;; string-nth-1e6: nth over a 1e6-char string (k-nucleotide's inner loop).
+;; apply-str-1e4: apply str over 1e4 short strings (json's printer).
+;; conj-vec / transient-vec: 1e6 conj into a vector, persistent and transient.
+;; sort-1e5: sort 1e5 numbers; sort-by-1e5: sort-by :k over 1e5 maps.
+(def n 1000000)
+(def v (vec (range n)))
+(def small (vec (map (fn [i] (mod i 7)) (range 100000))))
+(def s (apply str (map (fn [i] (nth "acgt" (mod i 4))) (range n))))
+(def maps (vec (map (fn [i] {:k (mod (* i 7919) 100000)}) (range 100000))))
+(def nums (vec (map (fn [i] (mod (* i 7919) 100000)) (range 100000))))
+(defn reduce-range [] (reduce + (range n)))
+(defn reduce-vec [] (reduce + v))
+(defn first-next-range [] (loop [xs (seq (range n)) s 0] (if xs (recur (next xs) (+ s (first xs))) s)))
+(defn lazy-count [] (count (filter odd? (map inc (range n)))))
+(defn transduce-1 [] (transduce (comp (map inc) (filter odd?)) + 0 (range n)))
+(defn into-map [] (count (into [] (map inc) (range n))))
+(defn freqs [] (count (frequencies small)))
+(defn string-nth [] (loop [i 0 c 0] (if (< i n) (recur (inc i) (if (= (nth s i) \t) (inc c) c)) c)))
+(defn apply-str [] (count (apply str (map str (range 10000)))))
+(defn conj-vec [] (count (loop [i 0 acc []] (if (< i n) (recur (inc i) (conj acc i)) acc))))
+(defn transient-vec [] (count (persistent! (loop [i 0 acc (transient [])] (if (< i n) (recur (inc i) (conj! acc i)) acc)))))
+(defn sort-1e5 [] (nth (sort nums) 50000))
+(defn sort-by-1e5 [] (:k (nth (sort-by :k maps) 50000)))
+(defn run []
+  (bench "reduce-range-1e6" reduce-range)
+  (bench "reduce-vec-1e6" reduce-vec)
+  (bench "first-next-range-1e6" first-next-range)
+  (bench "lazy-count-1e6" lazy-count)
+  (bench "transduce-1e6" transduce-1)
+  (bench "into-map-1e6" into-map)
+  (bench "frequencies-1e5" freqs)
+  (bench "string-nth-1e6" string-nth)
+  (bench "apply-str-1e4" apply-str)
+  (bench "conj-vec-1e6" conj-vec)
+  (bench "transient-vec-1e6" transient-vec)
+  (bench "sort-1e5" sort-1e5)
+  (bench "sort-by-1e5" sort-by-1e5))

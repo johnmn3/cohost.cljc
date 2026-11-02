@@ -1,0 +1,7 @@
+;; jank-21: a loop local started from an integer literal is a C++ int (32-bit).
+(println "(loop [i 2147483640 n 0] ... 10 steps of (inc i)) =>"
+         (loop [i 2147483640 n 0] (if (< n 10) (recur (inc i) (inc n)) i)))
+(println "(loop [i 0 s 0] 70000 steps of (+ s i)) =>"
+         (loop [i 0 s 0] (if (< i 70000) (recur (inc i) (+ s i)) s)))
+(println "(let [i 2147483647] (+ i 1)) =>" (let [i 2147483647] (+ i 1)))
+(println "(loop [i 2147483647] (+ i 1)) =>" (loop [i 2147483647] (+ i 1)))

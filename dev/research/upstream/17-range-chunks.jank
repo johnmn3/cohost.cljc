@@ -1,0 +1,10 @@
+;; jank-17: (range n) and a vector's seq are not chunked, so map/filter take the per-element path.
+(println "chunked-seq? (seq (range 10)) =>" (chunked-seq? (seq (range 10))))
+(println "chunked-seq? (seq (vec (range 10))) =>" (chunked-seq? (seq (vec (range 10)))))
+(println "chunked-seq? (seq (range 0.0 10.0)) =>" (chunked-seq? (seq (range 0.0 10.0))))
+(println "type (seq (range 10)) =>" (type (seq (range 10))))
+(def n 1000000)
+(timed "count (filter odd? (map inc (range 1e6)))" (fn [] (count (filter odd? (map inc (range n))))))
+(timed "count (filter odd? (map inc (vec (range 1e6))))" (fn [] (count (filter odd? (map inc (vec (range n)))))))
+(timed "transduce (comp (map inc) (filter odd?)) + (range 1e6)" (fn [] (transduce (comp (map inc) (filter odd?)) + 0 (range n))))
+(timed "loop equivalent" (fn [] (loop [i 0 c 0] (if (< i n) (recur (inc i) (if (odd? (inc i)) (inc c) c)) c))))
