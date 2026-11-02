@@ -144,8 +144,13 @@
   ;; loaded stale: dev/perf/jank_snapshot_ensure.clj. Args as boot:jank
   ;; (--no-libs, --bench [--quick]).
   boot:jank-snapshot {:doc "jank: boot from the AOT snapshot (rebuilt first when stale), then the batteries or --bench. See dev/perf/jank_snapshot_ensure.clj."
-                      :task (apply jank! "--module-path" (load-file "dev/perf/jank_snapshot_ensure.clj")
-                                   "run" "dev/perf/jank_snapshot_run.jank" "--" *command-line-args*)}
+                      ;; the default jank only: the snapshot key reads print-binary-version,
+                      ;; which a source build's patches do not move
+                      :task (if (= "jank" jank-bin)
+                              (apply jank! "--module-path" (load-file "dev/perf/jank_snapshot_ensure.clj")
+                                     "run" "dev/perf/jank_snapshot_run.jank" "--" *command-line-args*)
+                              (throw (ex-info (str "boot:jank-snapshot runs the default jank only; with JANK_BIN="
+                                                   jank-bin " use bb boot:jank (its AOT modules)") {})))}
   bench:cljw {:doc "cohost.bench on ClojureWasm (target/bench-cljw.edn)"
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "cljw" "-cp" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
