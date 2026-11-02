@@ -38,12 +38,26 @@ tools.build, as for `clojure`: `cohost -T:build build` runs the project's `build
 which calls `cohost.build/build` (`src/cohost/build.clj`, JVM-side). The target is
 `:target` in the task's arguments, else `:cohost/target`, else `:jvm`:
 
-| target | artifact | runs as |
-|---|---|---|
-| `:jvm` | `target/<name>.jar`, an uberjar with `clojure.main` as its main | `java -jar target/<name>.jar -m <main> args...` |
-| `:cljs` | `target/<name>-cljs/`: cohost's ClojureScript host build, the stock sources, the project's and its dependencies' source roots, `run.js` | `node target/<name>-cljs/run.js args...` (2026-11-02: `Hello, you!` from another directory) |
-| `:jank` | not yet: lane D's D-7 (an AOT executable) | |
-| `:jolt` `:lpy` `:cljw` `:phel` `:lg` `:cljrs` | not yet: the task prints `build: not yet on <target>` and fails | `cohost -M -m <main>` in the project |
+Every artifact is a directory `target/<name>/` whose `run args...` calls the main's `-main` from any
+directory; the task prints `build: target/<name>/run`. Measured 2026-11-02 on `cohost/app` projects
+(`run you` from `/tmp` -> `Hello, you!`):
+
+| target | `target/<name>/` holds | needs at run time | measured (new layout: readme:check running, 2:30 PM ET) |
+|---|---|---|---|
+| `:jvm` | `<name>.jar` (tools.build uberjar, `clojure.main` as its main; no `:gen-class` in code every target reads), `run` (`java -jar ... -m <main>`) | java | yes |
+| `:cljs` | cohost's ClojureScript host build (`target/cljs-cli`), the stock sources, the source roots, `run.js`, `run` | node | yes |
+| `:jolt` | `bin/cohost-jolt` (`jolt build -m cohost.cli`, 36 MB, 36 s), the stock sources, the source roots, `run` | nothing: ran with jolt off `PATH` | yes |
+| `:cljw` | a script bundle: cohost's sources, the stock sources, the source roots, `run` (`cljw -cp ... -m cohost.cli`) | cljw | yes (an argument with spaces and quotes too) |
+| `:lg` | a script bundle, `run` (`lg -source-paths ... lg_cli.lg`) | lg | yes (the same argument) |
+| `:lpy` | a script bundle, `run` (`basilisp run -p ... -c ...`) | basilisp | not on this box: the coordinator's |
+| `:phel` | a script bundle with `phel-config.php`, `run` (`phel run dev/phel_cli.phel` in the bundle's `cohost/`) | php + phel | not on this box: the coordinator's |
+| `:jank` | lane D's D-7 (an AOT executable): until it lands, `build: not yet on :jank` | | |
+| `:cljrs` | not yet: cohost's clojurust boot is parked and the CLI does not run it (`bin/cohost`: not wired) | | |
+
+Why cljw and lg ship a script bundle and not their own native packaging (measured on cohost.cli): `cljw build -m
+cohost.cli -o out -cp src` stops with `build failed: UnsupportedValueTag`; `lg -source-paths src -b out entry.lg`
+stops with `unsupported value type for serialization: *vm.Ratio` (and with `-entry-frame-entry`: `-entry-frame-entry
+requires -c and a namespace/main or namespace/-main value`).
 
 `bb readme:check [target ...]` runs README.md's command blocks, as written, against a fresh
 `cohost/app` project per target.
