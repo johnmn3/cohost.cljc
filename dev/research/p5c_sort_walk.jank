@@ -1,0 +1,16 @@
+;; P5c (session 2): is sort slow, or walking its result? P5b: sort-1e4 183 ms,
+;; sort-1e5 14.6 s (quadratic). jank's sort returns a native_vector_sequence;
+;; if its next() copies the whole native vector, any walk of the result is
+;; O(n^2) while the sort itself is n log n. Cases on 1e5 numbers:
+;; sort-first: (first (sort v)); sort-count: (count (sort v));
+;; sort-nth-50k: (nth (sort v) 50000) (P5's shape); sort-reduce: (reduce + (sort v));
+;; sort-vec-nth: (nth (vec (sort v)) 50000); and the 1e4 sort-nth for scale.
+(defn nums [n] (vec (map (fn [i] (mod (* i 7919) n)) (range n))))
+(def n4 (nums 10000)) (def n5 (nums 100000))
+(defn run []
+  (bench "sort-first-1e5" #(first (sort n5)))
+  (bench "sort-count-1e5" #(count (sort n5)))
+  (bench "sort-nth-5k-of-1e4" #(nth (sort n4) 5000))
+  (bench "sort-nth-50k-of-1e5" #(nth (sort n5) 50000))
+  (bench "sort-reduce-1e5" #(reduce + (sort n5)))
+  (bench "sort-vec-nth-1e5" #(nth (vec (sort n5)) 50000)))

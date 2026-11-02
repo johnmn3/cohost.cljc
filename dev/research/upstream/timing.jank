@@ -1,0 +1,9 @@
+;; Shared by the repros below (prepended by run.sh): ns clock, median of 3 after one warm call.
+(defn __ns [] (cpp/jank.runtime.current_time))
+(def __sink (volatile! 0))
+(defn timed [label f]
+  (f)
+  (let [rs (vec (repeatedly 3 (fn [] (let [t0 (__ns) r (f) t1 (__ns)]
+                                     (vswap! __sink + (if (number? r) r (count (str r))))
+                                     (- t1 t0)))))]
+    (println label "ns" (nth (vec (sort rs)) 1) "runs" (apply str (interpose " " rs)))))

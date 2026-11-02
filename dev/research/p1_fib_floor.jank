@@ -1,0 +1,25 @@
+;; P1 (session 1, codegen): the fib floor on raw jank.
+;; fib-var: the plain defn (every call derefs the var and boxes the result).
+;; fib-hinted-leaf: ^long parameter (H0: a hinted leaf unboxes on entry and
+;;   boxes on exit; the recursion still goes through the var).
+;; fib-cpp-native: the same recursion in C++ through cpp/raw: the floor that
+;;   whole-program unboxing + direct calls could reach at best.
+;; fib-local: the recursive call bound once in a let (the var deref hoisted),
+;;   an upper bound on what -Odirect-call alone would buy on this shape.
+(defn fib [n]
+  (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))
+(defn fib-hinted [^long n]
+  (if (< n 2) n (+ (fib-hinted (dec n)) (fib-hinted (- n 2)))))
+(cpp/raw "namespace r1 {
+  inline long fib(long n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
+}")
+(defn fib-cpp [^long n] (cpp/r1.fib n))
+(def fib-local
+  (let [self (volatile! nil)]
+    (vreset! self (fn [n] (if (< n 2) n (+ (@self (dec n)) (@self (- n 2))))))
+    @self))
+(defn run []
+  (bench "fib-var" #(fib 30))
+  (bench "fib-hinted-leaf" #(fib-hinted 30))
+  (bench "fib-cpp-native" #(fib-cpp 30))
+  (bench "fib-local-volatile" #(fib-local 30)))

@@ -1,0 +1,5 @@
+;; jank-19: the collector runs with bdwgc's defaults (no initial heap, no free-space divisor).
+(defn build [d] (if (zero? d) nil (let [d (dec d)] [(build d) (build d)])))
+(defn check [t] (if (nil? t) 1 (+ 1 (check (t 0)) (check (t 1)))))
+(timed "binary-trees: 16 x (check (build 14))" (fn [] (loop [i 0 s 0] (if (< i 16) (recur (inc i) (+ s (check (build 14)))) s))))
+(timed "2e6 two-element vectors" (fn [] (loop [i 0 last nil] (if (< i 2000000) (recur (inc i) [i i]) (count last)))))

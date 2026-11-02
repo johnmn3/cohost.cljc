@@ -1,0 +1,11 @@
+;; jank-14: a keyword's hash is recomputed from its name on every hash-map lookup.
+(def short-keys (vec (map (fn [i] (keyword (str "k" i))) (range 16))))
+(def long-keys (vec (map (fn [i] (keyword (str "a-keyword-name-that-is-rather-long-to-hash-every-single-time-" i))) (range 16))))
+(def m-short (into {} (map (fn [k] [k 1]) short-keys)))
+(def m-long (into {} (map (fn [k] [k 1]) long-keys)))
+(def ks (nth short-keys 7)) (def kl (nth long-keys 7))
+(println "map types" (type m-short) (type m-long) "counts" (count m-short) (count m-long))
+(timed "get short-keyword 16-key map 1e6" (fn [] (loop [i 0 s 0] (if (< i 1000000) (recur (inc i) (+ s (get m-short ks))) s))))
+(timed "get long-keyword 16-key map 1e6" (fn [] (loop [i 0 s 0] (if (< i 1000000) (recur (inc i) (+ s (get m-long kl))) s))))
+(timed "hash short-keyword 1e6" (fn [] (loop [i 0 s 0] (if (< i 1000000) (recur (inc i) (+ s (bit-and 1 (hash ks)))) s))))
+(timed "hash long-keyword 1e6" (fn [] (loop [i 0 s 0] (if (< i 1000000) (recur (inc i) (+ s (bit-and 1 (hash kl)))) s))))

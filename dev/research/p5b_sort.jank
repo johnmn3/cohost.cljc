@@ -1,0 +1,16 @@
+;; P5b (session 2): why sort is slow on jank. P5 measured sort of 1e5 numbers
+;; at 9.4 s (JIT 9594502700 ns). Scaling tells quadratic from a slow compare:
+;; sort-1e3, sort-1e4, sort-1e5 (n log n would be 1 : 13 : 170; n^2 1 : 100 : 10000).
+;; compare-1e6: (compare a b) on two boxed longs in a loop, the comparator sort
+;; calls (runtime::compare in sort, seq.cpp).
+;; sort-vec-1e4 / sort-list-1e4: the input as a vector and as a list.
+(defn nums [n] (vec (map (fn [i] (mod (* i 7919) n)) (range n))))
+(def n3 (nums 1000)) (def n4 (nums 10000)) (def n5 (nums 100000))
+(def l4 (apply list n4))
+(defn compare-1e6 [] (loop [i 0 s 0] (if (< i 1000000) (recur (inc i) (+ s (compare i 500000))) s)))
+(defn run []
+  (bench "compare-1e6" compare-1e6)
+  (bench "sort-1e3" #(nth (sort n3) 500))
+  (bench "sort-1e4" #(nth (sort n4) 5000))
+  (bench "sort-list-1e4" #(nth (sort l4) 5000))
+  (bench "sort-1e5" #(nth (sort n5) 50000)))
