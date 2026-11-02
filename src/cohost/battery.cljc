@@ -104,6 +104,7 @@
    ["Character/isWhitespace is Java's" "[(Character/isWhitespace (char 11)) (Character/isWhitespace (char 8195)) (Character/isWhitespace (char 160))]" [true true false]]
    ["unchecked int arithmetic wraps at 32 bits" "[(unchecked-add-int 2147483647 1) (unchecked-multiply-int 2147483647 2) (unchecked-int 3000000000) (unchecked-byte 300)]" [-2147483648 -2 -1294967296 44]]
    ["string and array index exceptions" "[(try (subs \"abc\" 1 5) (catch StringIndexOutOfBoundsException e :sioobe)) (try (aget (to-array [1]) 5) (catch ArrayIndexOutOfBoundsException e :aioobe))]" [:sioobe :aioobe]]
+   ["an unmatched group is nil" "[(re-find #\"a(b)?\" \"a\") (re-matches #\"(a)|(b)\" \"b\") (re-seq #\"a(b)?\" \"aab\") (re-find #\"^(\\S+)(?:\\s+(.*))?\" \"-v\")]" [["a" nil] ["b" nil "b"] '(["a" nil] ["ab" "b"]) ["-v" "-v" nil]]]
    ["Matcher group spans" "(let [m (re-matcher #\"(\\d)(\\d)|(x)\" \"a12\")] (.find m) [(.start m 1) (.end m 2) (.start m 3)])" [1 3 -1]]
    ["reduce over an eduction; a :tag that is data" "[(reduce + (eduction (filter odd?) [1 2 3 4 5])) (meta ^{:tag :int} [1 2])]" [9 {:tag :int}]]
    ["with-local-vars; #'clojure.core/x is the booted var" "[(with-local-vars [x 1] (var-set x 2) (var-get x)) (= (var clojure.core/map) (var map))]" [2 true]]
