@@ -11,3 +11,84 @@ to that commit; the compiler's `.cpp` files are only in the clone.
 
 Each patch file starts with a header naming the draft, the files, and the repro command whose
 "Expected" it makes true.
+
+## The source build (lane U0, U0-1, 2026-11-02)
+
+`/usr/local/lib/jank-dev/bin/jank` is jank-lang/jank @ `f3d82d65` with the series applied, a Release
+build. Use it with `JANK_BIN=/usr/local/lib/jank-dev/bin/jank` on every cohost jank command: `bb
+boot:jank`, `bb boot:jank-jit`, the profiles, `bb bench:jank`, `bb bench:programs jank|jank-jit|jank-aot`,
+`dev/research/run-jank.sh`, `run-cohost-jank.sh`, `upstream/run.sh`. Unset, they run `jank` on PATH.
+A `JANK_BIN` binary gets its own AOT cache roots (`target/jank-aot-<12 hex of sha256(realpath)>`, and
+the same suffix on `target/bench-programs/aot-*`), and its stamp carries the binary's path, size and
+mtime, so a rebuild recompiles cohost's objects and the apt and source binaries never share them.
+
+### Which LLVM, and why
+
+jank needs Clang/LLVM 23 from jank-lang/llvm-project @ `e280c5056ed110a11411413da2b76da226f3113b`
+(`compiler+runtime/bin/build-clang`). The apt package `jank 0.1-noble` already ships exactly that
+build (`/usr/local/lib/jank/0.1/include/llvm/Config/llvm-config.h`: `LLVM_REVISION e280c505...`,
+23.1.2): `clang-23`, `libLLVM.so.23.1`, `libclang-cpp.so.23.1`, every `llvm/` and `clang/` header,
+libc++ headers and the clang resource dir. It lacks the CMake package (`LLVMConfig.cmake`,
+`ClangConfig.cmake`, `AddLLVM.cmake`, the exports), which jank's `cmake/llvm.cmake` and CppInterOp's
+`add_llvm_library` need. So the script does not build LLVM (bin/build-clang: "an hour or two" per
+jank's doc/build.md, more on 4 CPUs); it:
+
+1. copies the package's LLVM-origin files into `/opt/jank-llvm/e280c505` (347 MB);
+2. clones llvm-project at that sha (`--filter=blob:none --depth 1`: 1m47s, 2.9 GB checkout), runs
+   its CMake configure only with bin/build-clang's options (12 s, no compile), and installs the
+   `cmake-exports` and `clang-cmake-exports` components into the prefix;
+3. stubs the 313 files those exports name that the package lacks (static component libraries as
+   empty archives, tools as failing scripts, `libLTO`/`libRemarks`/`libclang` as empty shared libs;
+   `llvm-ar`, `-nm`, `-ranlib`, `-objcopy`, `-objdump`, `-readelf`, `-strip`, `-addr2line` link to GNU
+   binutils, because CMake takes `CMAKE_AR` from the compiler's directory). jank links only
+   `libLLVM.so` and `libclang-cpp.so`; no stub reaches a link (`ldd jank`: those two). The list is
+   `/opt/jank-llvm/e280c505/STUBS.txt`.
+
+`--llvm-from-source` takes the other path (bin/build-clang, then `llvm_dir` = its install).
+
+### Commands (what `bash dev/install/jank-src.sh` runs)
+
+```
+# deps (book: compiler+runtime/doc/build.md; on Ubuntu 24.04 only these were missing):
+apt-get install -y entr libdouble-conversion-dev ccache
+# (already present: cmake 3.28.3, ninja 1.11.1, libboost-all-dev 1.83, libssl/ffi/bz2/zstd/xml2-dev,
+#  git-lfs, build-essential; libstdc++ 14 from gcc-14 was enough, no PPA)
+git clone https://github.com/jank-lang/jank /usr/local/src/jank && cd /usr/local/src/jank
+git checkout f3d82d65499920f81216e9235bd5d3a34a968e3f
+git submodule update --init --recursive --depth 1
+# the series, applied to the pinned tree (only files whose content changes are rewritten)
+cd compiler+runtime
+CC=/opt/jank-llvm/e280c505/bin/clang CXX=/opt/jank-llvm/e280c505/bin/clang++ ./bin/configure -GNinja \
+  -DCMAKE_BUILD_TYPE=Release -Dllvm_dir=/opt/jank-llvm/e280c505 -Djank_local_clang=on \
+  -DCMAKE_INSTALL_PREFIX=/usr/local/lib/jank-dev \
+  -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+LC_ALL=C.UTF-8 cmake --build build -j4
+cmake --install build
+```
+
+`LC_ALL=C.UTF-8` is required: under the POSIX locale jank's lexer (the apt binary too) reads
+`"…"` as "Unterminated string", and phase 2 fails compiling jank's own
+`src/jank/jank/nrepl/server/util.jank`. Repro on any jank: `printf '(println "a…b")\n' > u.jank;
+LC_ALL=POSIX jank run u.jank`.
+
+### Prices (this box: 4 CPUs, 15 GB, Ubuntu 24.04; ccache cold)
+
+| step | wall | disk |
+|---|---:|---:|
+| jank clone + submodules | (not timed separately) | 213 MB |
+| llvm-project clone at e280c505 | 1m47s | 2.9 GB |
+| LLVM configure only + export install | 12 s | 37 MB build dir |
+| LLVM prefix (copied from apt + exports + stubs) | seconds | 347 MB |
+| jank configure | 9 s | |
+| jank build, 429 steps, `-j4` | 204 s (160 s to the locale failure, 44 s after) | 377 MB build dir |
+| jank install | 2 s | 449 MB (`/usr/local/lib/jank-dev`) |
+| `jank-src.sh --patches`, empty series (no-op) | 8 s | |
+
+### Check (U0-1 done-bar, both binaries, same box)
+
+- `bb boot:jank` and `JANK_BIN=/usr/local/lib/jank-dev/bin/jank bb boot:jank`: `booted as stock: 542
+  from host: 171 skipped: 78 errors: 0`, `battery: 143/145`, `libraries: 61/61`, identical output
+  but for the source build's first-run "Building pre-compiled header" notes (196 s / 204 s with the AOT
+  recompile).
+- `bash dev/research/upstream/run.sh 12-i32-add`, with and without `JANK_BIN`: byte-identical output.
+- `jank print-binary-version`: apt `...-cf627abb...`, source `...-8c51ef51...`.

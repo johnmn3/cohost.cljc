@@ -1,0 +1,120 @@
+From 2a0ea1df9e04b795c025bc1f8c2d4142c989928c Mon Sep 17 00:00:00 2001
+From: cohost u2 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 16:11:07 +0000
+Subject: [PATCH] Cache the hash of symbol (on first use) and keyword (at
+ intern)
+
+Draft: cohost doc/upstream/jank-14-keyword-hash.md (a keyword's hash is
+recomputed from its name on every hash-map lookup).
+Repro: bash dev/research/upstream/run.sh 14-keyword-hash (in johnmn3/cohost.cljc);
+Expected: get with the long keyword within 1.1x of get with the short one.
+
+keyword::to_hash was sym->to_hash() + 0x9e3779b9 and symbol::to_hash was
+hash::combine(hash::string(name), hash::string(ns)), a murmur3 pass over
+both strings on every call, so every get/assoc on a persistent_hash_map
+keyed by keywords hashed the keyword's text. symbol now caches its hash in
+a mutable field on first to_hash (0 = not yet; the same lazy cache as
+jtl::immutable_string's), copied by with_meta; keyword computes its hash
+once in the interning constructors. The hash values are unchanged (same
+functions, same seed), so (hash :k) and (hash 'a) print what they did.
+
+Files: compiler+runtime/include/cpp/jank/runtime/obj/symbol.hpp,
+compiler+runtime/src/cpp/jank/runtime/obj/symbol.cpp,
+compiler+runtime/include/cpp/jank/runtime/obj/keyword.hpp,
+compiler+runtime/src/cpp/jank/runtime/obj/keyword.cpp.
+---
+ compiler+runtime/include/cpp/jank/runtime/obj/keyword.hpp | 4 ++++
+ compiler+runtime/include/cpp/jank/runtime/obj/symbol.hpp  | 3 +++
+ compiler+runtime/src/cpp/jank/runtime/obj/keyword.cpp     | 8 +++++++-
+ compiler+runtime/src/cpp/jank/runtime/obj/symbol.cpp      | 7 ++++++-
+ 4 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/keyword.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/keyword.hpp
+index 40da53d13..fea0cc8c0 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/keyword.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/keyword.hpp
+@@ -48,6 +48,10 @@ namespace jank::runtime::obj
+ 
+     /*** XXX: Everything here is immutable after initialization. ***/
+     symbol_ref sym;
++    /* sym's hash plus hash_magic, computed when the keyword is interned (keywords are interned
++     * once and never change), so a hash-map lookup reads it instead of hashing the name.
++     * 0 only for a default-constructed keyword, which computes it on first use. */
++    mutable uhash cached_hash{};
+   };
+ 
+   using keyword_ref = oref<keyword>;
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/symbol.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/symbol.hpp
+index 16882855a..855bd7054 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/symbol.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/symbol.hpp
+@@ -67,6 +67,9 @@ namespace jank::runtime::obj
+     /*** XXX: Everything here is immutable after initialization. ***/
+     jtl::immutable_string ns;
+     jtl::immutable_string name;
++    /* The hash of ns and name, computed on the first `to_hash` and then read. 0 means not
++     * computed yet. Same lazy cache (and the same benign race) as jtl::immutable_string's. */
++    mutable uhash cached_hash{};
+ 
+   private:
+     /*** XXX: Everything here is thead-safe. ***/
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/keyword.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/keyword.cpp
+index 95aabca1e..72e24e0a4 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/keyword.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/keyword.cpp
+@@ -13,6 +13,7 @@ namespace jank::runtime::obj
+   keyword::keyword(runtime::detail::must_be_interned, jtl::immutable_string_view const &s)
+     : object{ obj_type, obj_behaviors }
+     , sym{ make_box<obj::symbol>(s) }
++    , cached_hash{ sym->to_hash() + 0x9e3779b9 }
+   {
+   }
+ 
+@@ -21,6 +22,7 @@ namespace jank::runtime::obj
+                    jtl::immutable_string_view const &n)
+     : object{ obj_type, obj_behaviors }
+     , sym{ make_box<obj::symbol>(ns, n) }
++    , cached_hash{ sym->to_hash() + 0x9e3779b9 }
+   {
+   }
+ 
+@@ -44,7 +46,11 @@ namespace jank::runtime::obj
+ 
+   uhash keyword::to_hash() const
+   {
+-    return sym->to_hash() + 0x9e3779b9;
++    if(cached_hash != 0)
++    {
++      return cached_hash;
++    }
++    return cached_hash = sym->to_hash() + 0x9e3779b9;
+   }
+ 
+   i64 keyword::compare(object const &o) const
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/symbol.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/symbol.cpp
+index 504ec431b..3fa54388c 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/symbol.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/symbol.cpp
+@@ -151,13 +151,18 @@ namespace jank::runtime::obj
+ 
+   uhash symbol::to_hash() const
+   {
+-    return hash::combine(hash::string(name), hash::string(ns));
++    if(cached_hash != 0)
++    {
++      return cached_hash;
++    }
++    return cached_hash = hash::combine(hash::string(name), hash::string(ns));
+   }
+ 
+   symbol_ref symbol::with_meta(object_ref const m) const
+   {
+     auto const meta(behavior::detail::validate_meta(m));
+     auto ret(make_box<symbol>(ns, name));
++    ret->cached_hash = cached_hash;
+     ret->meta = meta;
+     return ret;
+   }
+-- 
+2.43.0
+
