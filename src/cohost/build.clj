@@ -12,6 +12,13 @@
 ;;   :cljs  target/<name>-cljs/: cohost's ClojureScript host, the stock core
 ;;          sources, the project's and its dependencies' source roots, and
 ;;          run.js (node target/<name>-cljs/run.js args... runs -main)
+;;   :jolt  target/<name>-jolt/: cohost.cli compiled by `jolt build` into one
+;;          native binary, the stock sources, the source roots, and `run`
+;;          (target/<name>-jolt/run args... runs -main; no jolt needed)
+;;   :cljw :lg :lpy :phel  target/<name>-<target>/: a script bundle -- cohost's
+;;          sources, the stock sources, the source roots, and `run`, on the
+;;          host's installed binary (their native packagers refuse cohost's
+;;          code: doc/CLI.md, "Building")
 ;;   other  "build: not yet on <target>" (jank: lane D's D-7)
 (ns cohost.build
   (:require [clojure.edn :as edn]
@@ -94,6 +101,79 @@ process.exit(r.status === null ? 1 : r.status);
     (println (str "build: " out "/ (node " out "/run.js args...)"))
     (str out)))
 
+(defn- bundle-sources!
+  "Copy the stock sources and the project's source roots (as `cohost :<t>
+   -Spath` resolves them: jars extracted) into out; -> the roots' paths
+   relative to out."
+  [home t out]
+  (let [roots (str/split (str/trim (sh! "." (str home "/bin/cohost") (str ":" (name t)) "-Spath")) #":")
+        names (map-indexed (fn [i r] (str "roots/" i "-" (.getName (io/file r)))) roots)]
+    (copy-tree! (str home "/resources/cohost/clojure-1.12.0") (io/file out "stock"))
+    (doseq [[r n] (map vector roots names)] (copy-tree! r (io/file out n)))
+    names))
+
+(defn- launcher
+  "The bundle's `run`: writes the config cohost.cli reads (absolute paths
+   from its own directory, the arguments as EDN strings) and runs launch,
+   a shell command line ending in the config path."
+  [main roots launch]
+  (str "#!/bin/sh\n"
+       "# run [args...]: " main "'s -main on cohost (made by cohost.build)\n"
+       "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
+       "q() { printf '\"%s\"' \"$(printf '%s' \"$1\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\"; }\n"
+       "args=''; for a in \"$@\"; do args=\"$args $(q \"$a\")\"; done\n"
+       "roots=''; for r in " (str/join " " roots) "; do roots=\"$roots $(q \"$here/$r\")\"; done\n"
+       "cfg=$(mktemp \"${TMPDIR:-/tmp}/cohost-run-XXXXXX\")\n"
+       "printf '{:stock-root %s :roots [%s] :cwd %s :inits [] :main {:type :main :ns %s :args [%s]}}' "
+       "\"$(q \"$here/stock\")\" \"$roots\" \"$(q \"$PWD\")\" \"$(q " (pr-str (str main)) ")\" \"$args\" > \"$cfg\"\n"
+       launch " \"$cfg\"\n"
+       "code=$?\nrm -f \"$cfg\"\nexit $code\n"))
+
+(defn- write-run! [out text]
+  (let [f (io/file out "run")]
+    (spit f text)
+    (.setExecutable f true false)
+    (str f)))
+
+(def ^:private script-launch
+  ;; as bin/cohost launches each host, from the bundle's copy of cohost
+  {:cljw "cljw -cp \"$here/cohost/src\" -m cohost.cli"
+   :lg "lg -source-paths \"$here/cohost/src\" \"$here/cohost/dev/lg_cli.lg\""
+   :lpy "basilisp run -p \"$here/cohost/src\" -c \"(require 'cohost.cli) (cohost.cli/-main \\\"$cfg\\\")\" #"
+   ;; Phel reads phel-config.php from its working directory; cohost.cli moves to :cwd
+   :phel "cd \"$here/cohost\" && phel run dev/phel_cli.phel"})
+
+(defn- script-bundle [t {:keys [main name]}]
+  (let [home (cohost-home)
+        out (io/file "target" (str name "-" (clojure.core/name t)))]
+    (sh! "." "rm" "-rf" (str out))
+    (let [roots (bundle-sources! home t out)]
+      (copy-tree! (str home "/src") (io/file out "cohost/src"))
+      (doseq [f ["dev/lg_cli.lg" "dev/phel_cli.phel" "phel-config.php"]]
+        (io/make-parents (io/file out "cohost" f))
+        (io/copy (io/file home f) (io/file out "cohost" f)))
+      (write-run! out (launcher main roots (script-launch t))))
+    (println (str "build: " out "/ (" out "/run args..., with " (clojure.core/name t) " installed)"))
+    (str out)))
+
+(defn- jolt-native [{:keys [main name]}]
+  (let [home (cohost-home)
+        out (io/file "target" (str name "-jolt"))
+        work (io/file "target" "cohost-jolt-build")]
+    (sh! "." "rm" "-rf" (str out) (str work))
+    (.mkdirs work)
+    ;; jolt build reads deps.edn :paths (its -Scp is not honored by build)
+    (spit (io/file work "deps.edn") (pr-str {:paths [(str home "/src")]}))
+    (sh! (str work) "jolt" "build" "-m" "cohost.cli" "-o" "cohost-jolt")
+    (let [roots (bundle-sources! home :jolt out)]
+      (io/make-parents (io/file out "bin" "cohost-jolt"))
+      (io/copy (io/file work "cohost-jolt") (io/file out "bin" "cohost-jolt"))
+      (.setExecutable (io/file out "bin" "cohost-jolt") true false)
+      (write-run! out (launcher main roots "\"$here/bin/cohost-jolt\"")))
+    (sh! "." "rm" "-rf" (str work))
+    (println (str "build: " out "/ (" out "/run args...)"))
+    (str out)))
+
 (defn build
   "Build the project for its target. opts: :main (the -main namespace, a
    symbol), :name (default: the directory's name), :target (default:
@@ -105,6 +185,8 @@ process.exit(r.status === null ? 1 : r.status);
     (case t
       :jvm (jvm-uber opts)
       :cljs (cljs-bundle opts)
+      :jolt (jolt-native opts)
+      (:cljw :lg :lpy :phel) (script-bundle t opts)
       (do (println (str "build: not yet on " t
                         (when (= t :jank) " (lane D's D-7: an AOT executable)")))
           (throw (ex-info (str "build: not yet on " t) {:target t}))))))
