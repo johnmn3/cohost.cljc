@@ -15,6 +15,14 @@
 
 (def repo (str (fs/canonicalize ".")))
 
+(defn doc-files
+  "README.md, then, for bb docs:check (which defines docs?), the guide's pages
+   in order: one project, the pages' commands run after the README's."
+  []
+  (into ["README.md"]
+        (when (some-> (resolve 'docs?) deref)
+          (sort (map str (fs/glob "doc/guide" "*.md"))))))
+
 (defn blocks [md]
   (map second (re-seq #"(?s)```bash\n(.*?)```" md)))
 
@@ -46,7 +54,7 @@
         env {"PATH" (str repo "/bin:" (System/getenv "PATH"))}
         fails (atom 0)]
     (println (str "== target " target " in " dir))
-    (loop [[{:keys [cmd expect]} & more] (mapcat commands (filter #(run-block? % target) (blocks (slurp "README.md"))))
+    (loop [[{:keys [cmd expect]} & more] (mapcat commands (filter #(run-block? % target) (mapcat (comp blocks slurp) (doc-files))))
            cwd dir]
       (when cmd
         (if-let [[_ to] (re-matches #"cd\s+(\S+)" cmd)]
@@ -73,5 +81,5 @@
 
 (let [targets (or (seq *command-line-args*) ["jvm"])
       fails (reduce + (map check-target targets))]
-  (println (str "readme:check: " fails " failing command(s) over " (count targets) " target(s)"))
+  (println (str (if (some-> (resolve 'docs?) deref) "docs:check: " "readme:check: ") fails " failing command(s) over " (count targets) " target(s)"))
   (System/exit (if (zero? fails) 0 1)))
