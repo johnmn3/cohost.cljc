@@ -33,14 +33,10 @@
      :phel (php/fwrite php/STDERR (str s "\n"))
      :default (binding [*out* *err*] (println s))))
 
-(defn- exit! [code]
-  #?(:cljs (.exit js/process code)
-     :lpy (python/exit code)
-     :phel (php/exit code)
-     :lg (os/exit code)
-     ;; jank 0.1's flush throws "TODO: port flesh"; std::exit flushes stdout
-     :jank (cpp/std.exit code)
-     :default (do (flush) (System/exit code))))
+(defn- exit!
+  "System/exit: the adapter's :exit (each host's own process exit)."
+  [code]
+  (host/exit code))
 
 (defn- read-stdin
   "Standard input, read whole (Phel's slurp takes files alone)."
