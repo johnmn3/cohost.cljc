@@ -90,6 +90,7 @@
    :def-meta        [[] "nil, or metadata every `def` name gets so alter-var-root / with-redefs reach compiled references (basilisp: {:redef true})"]
    :inline-meta     [[] ":keep when the host ignores a var's :inline fn or is the JVM; :strip when it honors it (basilisp) -- the stock inline fns build forms holding quoted JVM interop"]
    :rewrite-inline? [[] "true when the host's compiler ignores a var's :inline fn: the codemod applies core.clj's own inline expansions at rewrite time, as the JVM compiler does (with :inline-meta :keep); default false"]
+   :syntax-quote-source? [[] "true when the host's reader expands syntax-quote into (clojure.core/with-meta x (clojure.core/hash-map :jank/source ...)) wrappers, one per quoted form: the codemod drops those wrappers from the forms cohost evaluates -- the meta is the host's source bookkeeping, not the program's, and building it costs a hash-map per quoted symbol on every expansion; default false"]
    :empty-queue     [[] "the host's empty persistent queue (clojure.lang.PersistentQueue/EMPTY), or nil"]
    :host-class      [['token] "the host's own class or interface a JVM class token names, or nil: instance? also asks it"]
    :host-instance?  [['token 'x] "is x, an object that is not the host's own data, an instance of the JVM class token on this host? (default: instance? of :host-class)"]
@@ -387,6 +388,7 @@ namespace cohost_err {
     :def-meta nil
     :inline-meta :keep
     :rewrite-inline? false
+    :syntax-quote-source? false
     :empty-queue (fn [] nil)
     :atom (fn ([x] (atom x)) ([x m] (atom x :meta m)))
     :ex-info (fn ([msg m] (apply ex-info [msg m]))
@@ -572,6 +574,7 @@ namespace cohost_err {
 (defn def-meta [] (get @installed :def-meta))
 (defn strip-inline? [] (= :strip (cap :inline-meta)))
 (defn rewrite-inline? [] (boolean (cap :rewrite-inline?)))
+(defn syntax-quote-source? [] (boolean (cap :syntax-quote-source?)))
 (defn chunks [] ((cap :chunks)))
 (defn natives [] (or (get @installed :natives) {}))
 (defn native-hints
