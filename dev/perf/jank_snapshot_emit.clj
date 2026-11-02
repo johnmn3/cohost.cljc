@@ -193,12 +193,63 @@
 (defn module-file [nm]
   (str src-root "/" (-> (str nm) (str/replace "-" "_") (str/replace "." "/")) (:ext lang)))
 
-(fs/delete-tree src-root)
+;; D-9: the module files are written for an incremental compile. jank 0.1's
+;; compile-module recompiles a module when its source is newer than its object
+;; and never because a module it depends on changed (measured: a touched
+;; cohost/zip.jank recompiles zip.o alone, 8.1 s; a touched cohost/core.jank
+;; core.o alone, 44.7 s; nothing touched, 2.3 s, no object written). So the
+;; emitter decides what is stale and says it with the mtime: a module file
+;; whose content is unchanged, and whose dependencies' content is too, is kept
+;; as it is (bytes and mtime); every other one is written. A module's
+;; dependencies are the modules whose load began before its own ended
+;; (cohost.core, every library loaded before it, the ones it loads): the
+;; namespaces whose macros its forms can expand. cohost's own sources are not
+;; among them: they define no macros, and a module calls their fns through vars
+;; (jank 0.1 does not implement -Odirect-call), so a src/cohost change reaches
+;; a module only by changing its recorded text. Files under src-root this run
+;; does not emit are deleted (module files only: a host's own caches beside
+;; them stay). The last line counts them: EMIT-FILES <written> <kept> <deleted>.
+(def emitted (atom {}))
+
+(defn- abs-path [file] (str (fs/normalize (fs/absolutize file))))
+
+(defn- same-text? [file text] (and (fs/regular-file? file) (= text (slurp file))))
+
+(defn emit!
+  ([file text] (emit! file text false))
+  ([file text force?]
+   (fs/create-dirs (fs/parent file))
+   (let [keep? (and (not force?) (same-text? file text))]
+     (when-not keep? (spit file text))
+     (swap! emitted assoc (abs-path file) (if keep? :kept :written)))))
+
+(defn- index-of [pred] (first (keep-indexed (fn [i e] (when (pred e) i)) events)))
+
+(def spans
+  "module -> [first last] index of its load's events."
+  (into {}
+        (map (fn [m]
+               [m (if (= 'clojure.core m)
+                    [(or (index-of #(= :begin (:op %))) -1)
+                     (or (index-of #(= :end (:op %))) (count events))]
+                    [(index-of #(and (= :lib-begin (:op %)) (= m (:lib %))))
+                     (or (index-of #(and (= :lib-end (:op %)) (= m (:lib %)))) (count events))])])
+             modules)))
+
+(def module-texts (into {} (map (fn [m] [m (module-src m)]) modules)))
+
+(def changed
+  (set (remove #(same-text? (module-file (module-ns %)) (module-texts %)) modules)))
+
+(defn- stale? [m]
+  (or (contains? changed m)
+      (let [end (second (spans m))]
+        (boolean (some (fn [d] (and (not= d m) (< (first (spans d)) end))) changed)))))
+
 (doseq [m modules]
   (let [nm (module-ns m)
         file (module-file nm)]
-    (fs/create-dirs (fs/parent file))
-    (spit file (module-src m))
+    (emit! file (module-texts m) (stale? m))
     (println "MODULE" nm file (count (filter #(= :form (:op %)) (events-of m))))))
 (when (seq failed) (println "FAILED-LIBS" (pr-str (sort failed))))
 
@@ -208,15 +259,15 @@
 ;; cohost.core only; the libraries load when load-lib! asks for them.
 (let [top (keep (fn [m] (when (and (not= 'clojure.core m) (nil? (:parent (lib-begins m)))) (module-ns m))) modules)]
   (when (:project cli-opts)
-    (spit (module-file 'cohost.project)
+    (emit! (module-file 'cohost.project)
           (str "(" C "/ns cohost.project\n  (:require [cohost.boot]))\n"
                "(cohost.boot/register-snapshot-libs! " (quoted libs-map) ")\n"))
-    (spit (module-file 'cohost.project-build)
+    (emit! (module-file 'cohost.project-build)
           (str "(" C "/ns cohost.project-build\n  (:require [cohost.core] [cohost.project]"
                (apply str (map #(str " [" % "]") top)) "))\n"))
     (println "MODULE cohost.project" (module-file 'cohost.project) (count libs-map)))
   (when-not (:project cli-opts)
-  (spit (module-file 'cohost.snapshot)
+  (emit! (module-file 'cohost.snapshot)
         (str "(" C "/ns cohost.snapshot\n  (:require [cohost.core]"
              (apply str (map #(str " [" % "]") top)) "))\n"))
   (println "MODULE cohost.snapshot" (module-file 'cohost.snapshot) (count top))))
@@ -226,10 +277,17 @@
         m (module-ns lib)]
     (when-not (lib-begins lib)
       (throw (ex-info (str "the app's namespace " app " was not recorded (or failed to load)") {:failed failed})))
-    (spit (module-file 'cohost.app-main)
+    (emit! (module-file 'cohost.app-main)
           (str "(" C "/ns cohost.app-main\n  (:require [cohost.core] [" m "]))\n"
                "(" C "/defn -main [& args]\n"
                "  (cohost.boot/boot-from-snapshot! {})\n"
                "  (cohost.boot/make-user-ns!)\n"
                "  (" C "/apply " m "/-main args))\n"))
     (println "MODULE cohost.app-main" (module-file 'cohost.app-main) "main" (str m "/-main"))))
+
+(let [stale (when (fs/directory? src-root)
+              (remove #(@emitted (abs-path %))
+                      (filter fs/regular-file? (fs/glob src-root (str "**" (:ext lang))))))]
+  (doseq [f stale] (fs/delete f))
+  (println "EMIT-FILES" (count (filter #{:written} (vals @emitted)))
+           (count (filter #{:kept} (vals @emitted))) (count stale)))

@@ -7,8 +7,10 @@
 ;; ensure,run}.*; not the timing scripts), and
 ;; `jank print-binary-version`. It is written to target/jank-snapshot/stamp
 ;; after a build. A missing stamp, a different key, or a missing object is
-;; stale: the snapshot is deleted and built again (record, emit, compile)
-;; before anything loads it. A stale snapshot is never loaded.
+;; stale: the stamp is deleted and the snapshot built again (record, emit,
+;; compile) before anything loads it. A stale snapshot is never loaded. The
+;; build is incremental (D-9, rebuild! below): the last build's objects are
+;; kept when this jank binary made them, and only the stale modules recompile.
 ;;
 ;; This file only defines: dev/perf/jank_snapshot_ensure.clj builds when
 ;; stale (ensure!); bb boot:jank and bench:jank only ask (fresh-path), and
@@ -63,23 +65,49 @@
 
 (defn- module-path [cache] (str cache ":" src-dir ":src"))
 
-(defn rebuild! [k]
+(defn- ms-since [t0] (quot (- (System/nanoTime) t0) 1000000))
+
+(defn- jank-version-file [] (str root "/jank-version"))
+
+(defn rebuild!
+  "Build the snapshot for key k, incrementally (D-9). The objects of the last
+   build are kept when they were made by this jank binary; otherwise the whole
+   snapshot is deleted first. Then, each step printing its time:
+     1. compile-module cohost.run -O3 into the snapshot's cache: jank 0.1
+        recompiles a src/cohost module whose source is newer than its object,
+        and only those (cohost's sources define no macros: see the emitter);
+     2. record a boot from those objects (dev/perf/jank_snapshot_record.jank);
+     3. emit: a module file whose text and dependencies are unchanged keeps
+        its bytes and mtime (dev/perf/jank_snapshot_emit.clj);
+     4. compile-module cohost.snapshot -O3, which recompiles the modules the
+        emitter wrote and skips the rest.
+   COHOST_JANK_SNAPSHOT=full: delete it all first, every time."
+  [k]
   (let [t0 (System/nanoTime)
-        stage1 (load-file "dev/perf/jank_aot_ensure.clj")]
-    (fs/delete-tree root)
+        version (jank-version)
+        full? (or (= "full" (System/getenv "COHOST_JANK_SNAPSHOT"))
+                  (not (fs/regular-file? (jank-version-file)))
+                  (not= version (str/trim (slurp (jank-version-file))))
+                  (> (count (caches)) 1))
+        step (fn [nm f] (let [t (System/nanoTime)] (f) (println "SNAPSHOT-STEP" nm (ms-since t) "ms")))]
+    (if full?
+      (fs/delete-tree root)
+      (fs/delete-if-exists (str root "/stamp")))
     (fs/create-dirs aot-dir)
-    ;; 1. record: a boot with record mode on, and the twelve libraries
-    (shell "jank" "--module-path" (str stage1 ":src") "run" "dev/perf/jank_snapshot_record.jank")
-    ;; 2. emit one module per namespace
-    (shell "bb" "dev/perf/jank_snapshot_emit.clj")
-    ;; 3. compile them all through the entry module, -O3
-    (shell "jank" "--module-path" (str src-dir ":src") "compile-module" "cohost.snapshot"
-           "-O3" "--target-dir" aot-dir)
+    (spit (jank-version-file) (str version "\n"))
+    (step "aot" #(shell "jank" "--module-path" "src" "compile-module" "cohost.run" "-O3" "--target-dir" aot-dir))
     (let [cache (cache-dir)]
+      ;; 1. record: a boot with record mode on, and the twelve libraries
+      (step "record" #(shell "jank" "--module-path" (str cache ":src") "run" "dev/perf/jank_snapshot_record.jank"))
+      ;; 2. emit one module per namespace
+      (step "emit" #(shell "bb" "dev/perf/jank_snapshot_emit.clj"))
+      ;; 3. compile them all through the entry module, -O3
+      (step "compile" #(shell "jank" "--module-path" (str src-dir ":src") "compile-module" "cohost.snapshot"
+                              "-O3" "--target-dir" aot-dir))
       (when-not (objects-present? cache)
         (throw (ex-info "snapshot compile finished without its objects" {:caches (caches)})))
       (spit (str root "/stamp") (str k "\n"))
-      (println "SNAPSHOT-BUILT" k "in" (quot (- (System/nanoTime) t0) 1000000) "ms")
+      (println "SNAPSHOT-BUILT" k "in" (ms-since t0) "ms" (if full? "(full)" "(incremental)"))
       (module-path cache))))
 
 (defn fresh-path
