@@ -1,0 +1,418 @@
+From 4f3e620e9682618e87bf4563dcbae8c8f264d516 Mon Sep 17 00:00:00 2001
+From: u5 <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 15:57:10 +0000
+Subject: [PATCH] jank-18: small vectors, one GC allocation for vectors of up
+ to 32 elements
+
+Draft: cohost.cljc doc/upstream/jank-18-small-vectors.md
+Files: compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp,
+       compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp,
+       compiler+runtime/src/cpp/jank/runtime/obj/transient_vector.cpp,
+       compiler+runtime/src/cpp/jank/codegen/api.cpp
+Repro: bash dev/research/upstream/run.sh 18-small-vectors (Expected: [i i] 2e6 within 3x of
+       GC_MALLOC(16) 2e6; binary-trees depth 14 within 3x of the JVM's 8.7 ms)
+
+persistent_vector::create_small lays out one GC_malloc block as
+[persistent_vector | exact-size immer leaf] and makes the leaf the vector's tail
+(root = immer's shared empty root). The result is an ordinary immer vector, so
+nth, conj, assoc, pop, seq, equality, hash, transients, meta and printing are
+the same code as before; growth past 32 moves the leaf into the tree as usual.
+The general path built a stack transient: a 1-byte owner token, a full 32-slot
+leaf (272 bytes) and then the box, three allocations.
+
+- _jank_vec (vector literals and clojure.core/vector, which is defined by
+  literals) of <= 32 elements without string meta: create_small.
+- persistent_vector::conj below 32 elements: one block holding the old
+  elements plus the new one (was: immer's leaf copy plus a separate box).
+- persistent_vector::find and transient_vector::find entries: create_small
+  (was: the initializer_list path, i.e. owner token + full leaf + box).
+- persistent_vector's meta moves out of line: a `lazy_meta *` allocated only
+  for a vector that carries meta (an inline lazy_meta is a folly::Synchronized,
+  a string and an ns: 48 of the box's 104 bytes). Each vector owns its own
+  lazy_meta (conj/assoc/pop/copy copy it, as the by-value member did), read and
+  published with std::atomic_ref; get_meta on a vector without meta no longer
+  takes a lock. The box is 56 bytes, a two-element vector one 80-byte block.
+
+The block is a plain conservatively scanned GC_malloc, never a typed
+descriptor, so the elements in the trailing leaf are traced; jank runs bdwgc
+with GC_set_all_interior_pointers(1), so the tail pointer alone keeps the block
+alive when the immer value outlives its box. immer never frees or mutates the
+leaf: the memory policy does no refcounting and the leaf has no transient
+owner, so a transient or a persistent update copies it.
+---
+ .../jank/runtime/obj/persistent_vector.hpp    |  24 ++-
+ compiler+runtime/src/cpp/jank/codegen/api.cpp |  25 +++
+ .../jank/runtime/obj/persistent_vector.cpp    | 160 ++++++++++++++++--
+ .../cpp/jank/runtime/obj/transient_vector.cpp |   3 +-
+ compiler+runtime/third-party/cpptrace         |   2 +-
+ 5 files changed, 199 insertions(+), 15 deletions(-)
+
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp
+index 6e69e162..ad8e3237 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/persistent_vector.hpp
+@@ -25,7 +25,7 @@ namespace jank::runtime::obj
+ 
+     persistent_vector();
+     persistent_vector(persistent_vector &&) noexcept = default;
+-    persistent_vector(persistent_vector const &) = default;
++    persistent_vector(persistent_vector const &);
+     persistent_vector(value_type &&d);
+     persistent_vector(value_type const &d);
+     persistent_vector(object_ref const meta, value_type &&d);
+@@ -42,12 +42,22 @@ namespace jank::runtime::obj
+     persistent_vector(object_ref const meta, std::in_place_t, Args &&...args)
+       : object{ obj_type, obj_behaviors }
+       , data{ std::forward<Args>(args)... }
+-      , meta{ meta }
++      , meta{ make_meta(meta) }
+     {
+     }
+ 
+     static persistent_vector_ref create(object_ref const s);
+ 
++    /* Small vectors: a vector of up to `small_max` elements is built with one GC allocation,
++     * the box followed by an exact-size immer leaf which is the vector's tail. The general path
++     * (a transient) costs an owner token, a full 32-slot leaf and the box. The result is an
++     * ordinary immer vector, so every vector operation is unchanged; growing past `small_max`
++     * moves the leaf into the immer tree as usual. */
++    static constexpr usize small_max{ 32 };
++    static persistent_vector_ref create_small(object_ref const *elems, usize const n);
++    static persistent_vector_ref
++    create_small(object_ref const meta, object_ref const *elems, usize const n);
++
+     static persistent_vector_ref empty();
+ 
+     /* behavior::object_like */
+@@ -111,6 +121,14 @@ namespace jank::runtime::obj
+ 
+     /*** XXX: Everything here is thread-safe. ***/
+   private:
+-    lazy_meta meta;
++    static lazy_meta *make_meta(object_ref const m);
++    static lazy_meta *copy_meta(lazy_meta const *m);
++    lazy_meta *load_meta() const;
++
++    /* Out of line, allocated only for a vector that carries meta: an inline lazy_meta is 48
++     * bytes of a 104-byte box, and almost no vector has meta. Each vector owns its own
++     * lazy_meta (derived vectors copy it), so set_meta never reaches another vector. Read and
++     * published atomically (std::atomic_ref); the lazy_meta itself synchronizes its state. */
++    mutable lazy_meta *meta{};
+   };
+ }
+diff --git a/compiler+runtime/src/cpp/jank/codegen/api.cpp b/compiler+runtime/src/cpp/jank/codegen/api.cpp
+index 077f32a2..2cfa567f 100644
+--- a/compiler+runtime/src/cpp/jank/codegen/api.cpp
++++ b/compiler+runtime/src/cpp/jank/codegen/api.cpp
+@@ -143,6 +143,19 @@ static jank::runtime::obj::persistent_vector_ref
+ /* NOLINTNEXTLINE(readability-non-const-parameter) */
+ _jank_vec_impl(char const * const meta, jank::u64 const elems, va_list args)
+ {
++  using jank::runtime::obj::persistent_vector;
++  if(!meta && elems <= persistent_vector::small_max)
++  {
++    /* One allocation: the box and an exact-size leaf (persistent_vector::create_small). */
++    jank::runtime::object_ref buf[persistent_vector::small_max];
++    for(jank::u64 i{}; i < elems; ++i)
++    {
++      /* NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg) */
++      buf[i] = va_arg(args, jank::runtime::object *);
++    }
++    return persistent_vector::create_small(buf, elems);
++  }
++
+   jank::runtime::obj::transient_vector trans;
+ 
+   for(jank::u64 i{}; i < elems; ++i)
+@@ -185,6 +198,18 @@ static jank::runtime::obj::persistent_vector_ref
+ /* NOLINTNEXTLINE(readability-non-const-parameter) */
+ _jank_vec_impl(jank::runtime::object_ref const meta, jank::u64 const elems, va_list args)
+ {
++  using jank::runtime::obj::persistent_vector;
++  if(elems <= persistent_vector::small_max)
++  {
++    jank::runtime::object_ref buf[persistent_vector::small_max];
++    for(jank::u64 i{}; i < elems; ++i)
++    {
++      /* NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg) */
++      buf[i] = va_arg(args, jank::runtime::object *);
++    }
++    return persistent_vector::create_small(meta, buf, elems);
++  }
++
+   jank::runtime::obj::transient_vector trans;
+ 
+   for(jank::u64 i{}; i < elems; ++i)
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp
+index 4e9aab7d..4b2132ad 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/persistent_vector.cpp
+@@ -7,9 +7,59 @@
+ #include <jank/runtime/core/math.hpp>
+ #include <jank/runtime/behavior/sequential.hpp>
+ #include <jank/util/fmt.hpp>
++#include <jank/gc.hpp>
++
++#include <atomic>
+ 
+ namespace jank::runtime::obj
+ {
++  namespace
++  {
++    using native_vector = runtime::detail::native_persistent_vector;
++    using native_rbtree
++      = std::remove_cvref_t<decltype(std::declval<native_vector const &>().impl())>;
++    using native_node = native_rbtree::node_t;
++
++    /* One GC allocation laid out as [persistent_vector | leaf of n elements]; the leaf is the
++     * vector's tail and its root is immer's shared empty root. The block is a plain GC_malloc
++     * (scanned conservatively, never a typed descriptor), so the elements in the leaf are traced.
++     * jank runs bdwgc with all interior pointers recognized, so the tail pointer alone keeps the
++     * block alive when the immer value outlives its box. immer never frees or mutates the leaf:
++     * the memory policy does no refcounting, and the leaf has no transient owner, so a transient
++     * or a persistent update copies it. `fill` writes the n elements. */
++    template <typename Fill, typename... Args>
++    persistent_vector_ref make_small(usize const n, Fill &&fill, Args &&...args)
++    {
++      constexpr usize align{ alignof(native_node) };
++      constexpr usize box_size{ (sizeof(persistent_vector) + align - 1) / align * align };
++      static_assert(alignof(persistent_vector) <= alignof(std::max_align_t));
++      auto const count{ static_cast<immer::detail::rbts::count_t>(n) };
++      auto const leaf_size{ native_node::sizeof_leaf_n(count) };
++      auto const mem{ static_cast<char *>(GC_malloc(box_size + leaf_size)) };
++      if(!mem)
++      {
++        throw std::bad_alloc{};
++      }
++      auto const leaf{ native_node::make_leaf_n_into(mem + box_size, leaf_size, count) };
++      fill(leaf->leaf());
++      native_vector v(
++        native_rbtree(n, native_node::bits_leaf, native_rbtree::empty_root(), leaf));
++      auto const ret{ ::new(static_cast<void *>(mem))
++                        persistent_vector{ std::forward<Args>(args)..., std::move(v) } };
++      return runtime::detail::untagged(ret);
++    }
++
++    auto copy_fill(object_ref const *elems, usize const n)
++    {
++      return [=](object_ref *const dst) {
++        for(usize i{}; i < n; ++i)
++        {
++          ::new(static_cast<void *>(dst + i)) object_ref{ elems[i] };
++        }
++      };
++    }
++  }
++
+   persistent_vector::persistent_vector()
+     : object{ obj_type, obj_behaviors }
+   {
+@@ -27,20 +77,50 @@ namespace jank::runtime::obj
+   {
+   }
+ 
++  persistent_vector::persistent_vector(persistent_vector const &o)
++    : object{ o }
++    , data{ o.data }
++    , meta{ copy_meta(o.load_meta()) }
++  {
++  }
++
+   persistent_vector::persistent_vector(object_ref const meta, value_type &&d)
+     : object{ obj_type, obj_behaviors }
+     , data{ std::move(d) }
+-    , meta{ meta }
++    , meta{ make_meta(meta) }
+   {
+   }
+ 
+   persistent_vector::persistent_vector(lazy_meta const &meta, value_type &&d)
+     : object{ obj_type, obj_behaviors }
+     , data{ jtl::move(d) }
+-    , meta{ meta }
++    , meta{ new(UseGC) lazy_meta{ meta } }
+   {
+   }
+ 
++  lazy_meta *persistent_vector::make_meta(object_ref const m)
++  {
++    if(m.is_nil())
++    {
++      return nullptr;
++    }
++    return new(UseGC) lazy_meta{ m };
++  }
++
++  lazy_meta *persistent_vector::copy_meta(lazy_meta const *const m)
++  {
++    if(!m)
++    {
++      return nullptr;
++    }
++    return new(UseGC) lazy_meta{ *m };
++  }
++
++  lazy_meta *persistent_vector::load_meta() const
++  {
++    return std::atomic_ref<lazy_meta *>{ meta }.load(std::memory_order_acquire);
++  }
++
+   persistent_vector_ref persistent_vector::create(object_ref const s)
+   {
+     if(auto const v{ dyn_cast<obj::persistent_vector>(s) }; v.is_some())
+@@ -56,6 +136,30 @@ namespace jank::runtime::obj
+     return make_box<persistent_vector>(v.persistent());
+   }
+ 
++  persistent_vector_ref persistent_vector::create_small(object_ref const *elems, usize const n)
++  {
++    jank_debug_assert(n <= small_max);
++    if(n == 0)
++    {
++      return make_box<persistent_vector>();
++    }
++    return make_small(n, copy_fill(elems, n));
++  }
++
++  persistent_vector_ref
++  persistent_vector::create_small(object_ref const meta, object_ref const *elems, usize const n)
++  {
++    jank_debug_assert(n <= small_max);
++    auto const m(behavior::detail::validate_meta(meta));
++    if(n == 0)
++    {
++      return make_box<persistent_vector>(m, value_type{});
++    }
++    auto ret{ make_small(n, copy_fill(elems, n)) };
++    ret->meta = make_meta(m);
++    return ret;
++  }
++
+   persistent_vector_ref persistent_vector::empty()
+   {
+     static persistent_vector const ret;
+@@ -176,8 +280,26 @@ namespace jank::runtime::obj
+ 
+   persistent_vector_ref persistent_vector::conj(object_ref const head) const
+   {
++    /* Below `small_max` every element is in the tail: build the result as one allocation
++     * (box + exact-size leaf) rather than immer's leaf copy plus a separate box. */
++    if(auto const size{ data.size() }; size < small_max)
++    {
++      auto const src{ size == 0 ? nullptr : data.impl().tail->leaf() };
++      auto const fill{ [=](object_ref *const dst) {
++        for(usize i{}; i < size; ++i)
++        {
++          ::new(static_cast<void *>(dst + i)) object_ref{ src[i] };
++        }
++        ::new(static_cast<void *>(dst + size)) object_ref{ head };
++      } };
++      auto ret{ make_small(size + 1, fill) };
++      ret->meta = copy_meta(load_meta());
++      return ret;
++    }
++
+     auto vec(data.push_back(head));
+-    auto ret(make_box<persistent_vector>(meta, std::move(vec)));
++    auto ret(make_box<persistent_vector>(std::move(vec)));
++    ret->meta = copy_meta(load_meta());
+     return ret;
+   }
+ 
+@@ -195,19 +317,30 @@ namespace jank::runtime::obj
+   {
+     auto const meta(behavior::detail::validate_meta(m));
+     auto ret(make_box<persistent_vector>(data));
+-    ret->meta = meta;
++    ret->meta = make_meta(meta);
+     return ret;
+   }
+ 
+   object_ref persistent_vector::get_meta() const
+   {
+-    return meta.get();
++    auto const m{ load_meta() };
++    return m ? m->get() : object_ref{};
+   }
+ 
+   void persistent_vector::set_meta(object_ref const o)
+   {
+     auto const new_meta(behavior::detail::validate_meta(o));
+-    meta.set(new_meta);
++    std::atomic_ref<lazy_meta *> const slot{ meta };
++    auto current{ slot.load(std::memory_order_acquire) };
++    if(!current)
++    {
++      auto const fresh{ new(UseGC) lazy_meta{ new_meta } };
++      if(slot.compare_exchange_strong(current, fresh, std::memory_order_acq_rel))
++      {
++        return;
++      }
++    }
++    current->set(new_meta);
+   }
+ 
+   object_ref persistent_vector::get(object_ref const key) const
+@@ -242,7 +375,8 @@ namespace jank::runtime::obj
+         return {};
+       }
+       /* TODO: Map entry type? */
+-      return make_box<persistent_vector>(std::in_place, key, data[i]);
++      object_ref const entry[]{ key, data[i] };
++      return create_small(entry, 2);
+     }
+     else
+     {
+@@ -285,11 +419,15 @@ namespace jank::runtime::obj
+     if(i == size)
+     {
+       auto vec(data.push_back(val));
+-      return make_box<persistent_vector>(meta, std::move(vec));
++      auto ret(make_box<persistent_vector>(std::move(vec)));
++      ret->meta = copy_meta(load_meta());
++      return ret;
+     }
+ 
+     auto vec(data.set(i, val));
+-    return make_box<persistent_vector>(meta, std::move(vec));
++    auto ret(make_box<persistent_vector>(std::move(vec)));
++    ret->meta = copy_meta(load_meta());
++    return ret;
+   }
+ 
+   persistent_vector_ref persistent_vector::dissoc(object_ref const /*key*/) const
+@@ -316,7 +454,9 @@ namespace jank::runtime::obj
+       throw std::runtime_error{ "Cannot pop from an empty `persistent_vector`." };
+     }
+ 
+-    return make_box<persistent_vector>(meta, data.take(data.size() - 1));
++    auto ret(make_box<persistent_vector>(data.take(data.size() - 1)));
++    ret->meta = copy_meta(load_meta());
++    return ret;
+   }
+ 
+   object_ref persistent_vector::nth(object_ref const index) const
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/transient_vector.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/transient_vector.cpp
+index 8e6809aa..4a32344e 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/transient_vector.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/transient_vector.cpp
+@@ -205,7 +205,8 @@ namespace jank::runtime::obj
+         return {};
+       }
+       /* TODO: Map entry type? */
+-      return make_box<persistent_vector>(std::in_place, idx, data[i]);
++      object_ref const entry[]{ idx, data[i] };
++      return persistent_vector::create_small(entry, 2);
+     }
+     else
+     {
+diff --git a/compiler+runtime/third-party/cpptrace b/compiler+runtime/third-party/cpptrace
+index 33a8348a..fac4d08f 160000
+--- a/compiler+runtime/third-party/cpptrace
++++ b/compiler+runtime/third-party/cpptrace
+@@ -1 +1 @@
+-Subproject commit 33a8348af776eb91c091390c0eb8a099cd1525b7
++Subproject commit fac4d08fd0473a94d99c143c6ba6b1f9e0bd7636
+-- 
+2.43.0
+
