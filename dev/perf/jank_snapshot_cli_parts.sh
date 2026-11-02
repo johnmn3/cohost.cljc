@@ -33,5 +33,19 @@ three jank-cohost-objects "${J[@]}" run /tmp/claude-cohost-run.jank
 three jank-cli-boot-exit "${J[@]}" run-main cohost.cli -- "$C0"
 three jank-cli-load-app "${J[@]}" run-main cohost.cli -- "$C1"
 three jank-cli-main "${J[@]}" run-main cohost.cli -- "$C2"
+# the project's snapshot (D-8), when it is built and fresh: the same parts with
+# its module path and :project-snapshot in the config
+PJ=$(cd "$R" && bb -e "(load-file \"dev/perf/jank_snapshot_cli.clj\") (prn (jank-project-launch \"$R\" \"$P\" (clojure.string/split \"$ROOTS\" (re-pattern \":\")) \"$M\" \"$MP\" {}))" 2>/dev/null)
+PMP=$(bb -e '(println (or (:module-path (read-string (slurp *in*))) ""))' <<<"$PJ")
+if [ -n "$PMP" ]; then
+  pcfg() { local f=$(cfg "$1" "$2"); bb -e "(spit \"$f\" (pr-str (assoc (read-string (slurp \"$f\")) :project-snapshot \"cohost.project\")))"; echo "$f"; }
+  P0=$(pcfg nil '[]'); P1=$(pcfg nil "[[:e \"(require '$M)\"]]"); P2=$(pcfg "{:type :main :ns \"$M\" :args [\"$A\"]}" '[]')
+  PJR=(env GC_INITIAL_HEAP_SIZE=512M jank -O3 --module-path "$PMP")
+  three proj-cli-boot-exit "${PJR[@]}" run-main cohost.cli -- "$P0"
+  three proj-cli-load-app "${PJR[@]}" run-main cohost.cli -- "$P1"
+  three proj-cli-main "${PJR[@]}" run-main cohost.cli -- "$P2"
+  rm -f "$P0" "$P1" "$P2"
+fi
 three whole "$R/bin/cohost" :jank -M -m "$M" "$A"
+three jvm clojure -M -m "$M" "$A"
 rm -f "$C0" "$C1" "$C2"
