@@ -304,7 +304,7 @@
   page.on('console', m => { console.log(m.text()); if (m.text().startsWith('PROGRAM-SINK') || m.text() === 'ok') done(0); });
   page.on('pageerror', e => { console.error('pageerror: ' + e.message); done(1); });
   const t = setTimeout(() => { console.error('timeout after ' + timeout + ' ms'); done(1); }, timeout);
-  await page.goto(page_url);
+  page.goto(page_url, {waitUntil: 'commit', timeout: 0}).catch(e => { console.error('goto: ' + e.message); done(1); });
   const code = await finished;
   clearTimeout(t);
   await browser.close();
