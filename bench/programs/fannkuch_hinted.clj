@@ -1,7 +1,7 @@
 ;; Same lexicographic fannkuch checksum, with ^long indexes.
 (defn flips [p]
   (loop [p (vec p) f 0]
-    (let [^long k (p 0)]
+    (let [k (long (p 0))]
       (if (zero? k)
         f
         (recur (loop [p p i 0 j k]
@@ -19,7 +19,7 @@
             xs)))
 
 (defn -run [s]
-  (let [^long n (parse-long s)]
+  (let [n (long (parse-long s))]
     (loop [ps (perms (range n)) sign 1 acc 0]
       (if (nil? ps)
         acc
