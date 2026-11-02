@@ -10,3 +10,12 @@
 (println "(let [a 2147483647 b 1] (+ a b)) =>" (let [a 2147483647 b 1] (+ a b)))
 (defn add2 [a b] (+ a b))
 (println "(add2 2147483647 1) =>" (add2 2147483647 1))
+;; U1-1 (i64 overflow, Clojure's semantics): + - * throw on i64 overflow as inc does; +' promotes.
+;; Expected after the patch: throws, throws, throws, throws, 9223372036854775808.
+;; On apt 0.1-noble: throws, -9223372036854775808, 9223372036854775807, 0, 9223372036854775808.
+(defn ovf [f] (try (str (f)) (catch :default e "throws")))
+(println "(inc 9223372036854775807) =>" (ovf #(inc 9223372036854775807)))
+(println "(+ 9223372036854775807 1) =>" (ovf #(+ 9223372036854775807 1)))
+(println "(- -9223372036854775807 2) =>" (ovf #(- -9223372036854775807 2)))
+(println "(* 4294967296 4294967296) =>" (ovf #(* 4294967296 4294967296)))
+(println "(+' 9223372036854775807 1) =>" (ovf #(+' 9223372036854775807 1)))

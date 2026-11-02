@@ -147,6 +147,11 @@
    ["a map is no var" "(var? {:ns 'a :name 'b :macro? false})" false]
    ["extend-protocol to concrete classes" "(do (defprotocol BtSh (bt-area [s])) (extend-protocol BtSh clojure.lang.PersistentVector (bt-area [v] (count v)) clojure.lang.PersistentHashSet (bt-area [s] :set)) [(bt-area [1 2]) (bt-area #{1})])" [2 :set]]
    ["with-redefs of a protocol method" "(do (defprotocol BtRP (bt-rp [x])) (extend-protocol BtRP Long (bt-rp [x] :orig)) (defn bt-callrp [] (bt-rp 1)) (with-redefs [bt-rp (fn [_] :redef)] (bt-callrp)))" :redef]
+   ;; dispatch caches (X2-1, doc/research/jank-dispatch.md): a call fills a cache; these change what it holds
+   ["protocol: extend-type after a call reaches the type" "(do (defprotocol BtX (bt-x [s])) (deftype BtXT [a]) (extend-protocol BtX Object (bt-x [_] :obj)) (let [t (->BtXT 1) r1 (bt-x t)] (extend-type BtXT BtX (bt-x [_] :ext)) [r1 (bt-x t)]))" [:obj :ext]]
+   ["protocol: a redefined record dispatches its new method" "(do (defprotocol BtY (bt-y [s] [s k])) (defrecord BtYR [a b] BtY (bt-y [_] a) (bt-y [_ k] [k b])) (let [r1 [(bt-y (->BtYR 1 2)) (bt-y (->BtYR 1 2) :k)]] (defrecord BtYR [a b] BtY (bt-y [_] b) (bt-y [_ k] [a k])) [r1 (bt-y (->BtYR 1 2)) (bt-y (->BtYR 1 2) :k)]))" [[1 [:k 2]] 2 [1 :k]]]
+   ["multimethod: defmethod after a call is seen" "(do (defmulti bt-mm identity) (defmethod bt-mm :default [_] :d) (let [a (bt-mm 1)] (defmethod bt-mm 1 [_] :one) [a (bt-mm 1) (bt-mm 2)]))" [:d :one :d]]
+   ["multimethod: derive after a call is seen" "(do (defmulti bt-mh identity) (defmethod bt-mh ::bt-p [_] :p) (defmethod bt-mh :default [_] :d) (let [a (bt-mh ::bt-q)] (derive ::bt-q ::bt-p) [a (bt-mh ::bt-q)]))" [:d :p]]
    ["hash-combine hashes its argument as Object.hashCode does" "[(hash-combine 0 \"a\") (hash-combine 0 nil) (hash-combine 1 2) (hash-combine -5 \"hello\")]" [-1640531430 -1640531527 -1640531462 1541369522]]
    ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]
    ;; primitive fn* parameters coerce as JVM Clojure 1.12.0 does (measured
