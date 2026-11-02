@@ -225,7 +225,7 @@
       "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg])
       ;; cohost's own namespaces from their -O3 AOT objects, cohost.cli and
       ;; the program JIT-compiled at -O3
-      "jank" (run-inherit cwd ["jank" "-O3" "--module-path" (str (jank-aot-dir!) ":" src) "run-main" "cohost.cli" cfg]))))
+      "jank" (run-inherit cwd ["jank" "-O3" "--module-path" (str (jank-aot-dir!) ":" src) "run-main" "cohost.cli" "--" cfg]))))
 
 ;; --------------------------------------------------------------------------
 
