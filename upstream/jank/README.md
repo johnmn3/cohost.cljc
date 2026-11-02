@@ -101,6 +101,7 @@ LC_ALL=POSIX jank run u.jank`.
 | jank build, 429 steps, `-j4` | 204 s (160 s to the locale failure, 44 s after) | 377 MB build dir |
 | jank install | 2 s | 449 MB (`/usr/local/lib/jank-dev`) |
 | `jank-src.sh --patches`, empty series (no-op) | 8 s | |
+| `jank-src.sh` end to end from nothing (fresh LLVM prefix, fresh clones, new install prefix, LANG/LC_ALL unset, 934e6f2) | 1034 s wall: 108 s LLVM clone, 12 s LLVM configure, 24 s jank clone, 9 s configure, 184 s compile (ccache partly warm), 694 s box.lock wait | |
 
 ### Check (U0-1 done-bar, both binaries, same box)
 
