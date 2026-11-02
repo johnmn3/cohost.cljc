@@ -115,6 +115,39 @@ the config names. `:jank` runs `jank -O3 --module-path <cohost's -O3 AOT objects
 run-main cohost.cli -- <config>`; the objects are `dev/perf/jank_aot_ensure.clj`'s, rebuilt
 when `src/cohost` or the jank binary changed (the first run after a change compiles them).
 
+## A native executable on jank (D-7)
+
+`cohost.build-jank/build!` (src/cohost/build_jank.clj) makes one native executable of a project's app on jank: the booted core's snapshot plus the app's namespaces, compiled `-O3` and linked by `jank compile --runtime static`, with the app's `-main` as its entry. Lane C's `cohost.build` (tools.build: `cohost -T:build jank-exe`) calls it; in this repo, `bb build:jank <project-dir> <main-ns> [name]` does (the roots are what `bin/cohost :jank -Spath` prints).
+
+1. cohost's own namespaces as `-O3` AOT objects;
+2. a boot with record mode on: the project's source roots added, the twelve libraries and the app's main namespace loaded through cohost's loader (so the app, its `:local/root` libraries and its Maven jars are rewritten as every other namespace is);
+3. one module per booted namespace, and `cohost.app-main`, whose `-main` boots from the snapshot and calls the app's;
+4. `jank -O3 compile cohost.app-main --runtime static --name <name>`: `<project>/target/jank/<name>`.
+
+Every input (the stock sources, `src/cohost`, the snapshot scripts, jank's binary version, every file under the app's roots, the main and the name) goes into one sha256 stamped beside the executable: a fresh one is not built again (`JANK-EXE-FRESH`), a stale one always is.
+
+Measured 2026-11-02 ET on `dev/cli-demo` (jank `0.1-noble`):
+
+```
+bb build:jank dev/cli-demo demo.main demo
+JANK-EXE-BUILD .../dev/cli-demo/target/jank/demo (new)
+SNAPSHOT-EVENTS 1508 bytes 805029
+MODULE cohost.app-main .../cohost/app_main.jank main demo.main/-main
+JANK-EXE-BUILT .../dev/cli-demo/target/jank/demo in 428694 ms
+bb build:jank dev/cli-demo demo.main demo       # again
+JANK-EXE-FRESH .../dev/cli-demo/target/jank/demo   (0.161 s)
+```
+
+The executable is 38,921,656 bytes and links only the system's libc, libstdc++, libgcc_s and libm. A copy run from `/tmp` prints `hello, jank-USER!`; under `strace` it opens `/etc/ld.so.cache`, those four libraries and `/proc` files, nothing in the checkout, the project or jank's install. It cannot `eval` or load a namespace that was not in the build: the static runtime has no JIT.
+
+Startup, wall seconds to the greeting, three runs each, interleaved, in `dev/cli-demo`:
+
+| | runs | median |
+|---|---|---:|
+| `target/jank/demo jank-user` | 0.930 / 0.876 / 0.911 | 0.911 |
+| `cohost :jank -M -m demo.main jank-user` (fresh snapshot) | 6.797 / 5.925 / 5.870 | 5.925 |
+| `clojure -M -m demo.main jank-user` (JVM) | 1.400 / 1.259 / 1.363 | 1.363 |
+
 ## Verified (2026-11-02 ET)
 
 The demo is committed: `dev/cli-demo/` (`deps.edn` with `org.clojure/tools.cli 1.2.245` from Maven, the

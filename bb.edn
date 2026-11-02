@@ -143,6 +143,16 @@
   boot:jank-snapshot {:doc "jank: boot from the AOT snapshot (rebuilt first when stale), then the batteries or --bench. See dev/perf/jank_snapshot_ensure.clj."
                       :task (apply jank! "--module-path" (load-file "dev/perf/jank_snapshot_ensure.clj")
                                    "run" "dev/perf/jank_snapshot_run.jank" "--" *command-line-args*)}
+  ;; D-7: a native executable of a project's app on jank (src/cohost/build_jank.clj;
+  ;; lane C's cohost.build calls the same build! for cohost -T:build jank-exe).
+  build:jank {:doc "jank: bb build:jank <project-dir> <main-ns> [name] -- the app as one native executable (<project>/target/jank/<name>), rebuilt when stale"
+              :task (let [[dir main nm] *command-line-args*
+                          project (str (babashka.fs/canonicalize dir))
+                          spath (:out (babashka.process/shell {:dir project :out :string} (str (babashka.fs/canonicalize "bin/cohost")) ":jank" "-Spath"))
+                          roots (vec (remove clojure.string/blank? (clojure.string/split (clojure.string/trim spath) (re-pattern ":"))))]
+                      (load-file "src/cohost/build_jank.clj")
+                      (println ((resolve 'cohost.build-jank/build!)
+                                {:repo (str (babashka.fs/canonicalize ".")) :project project :roots roots :main main :name nm})))}
   bench:cljw {:doc "cohost.bench on ClojureWasm (target/bench-cljw.edn)"
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "cljw" "-cp" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
