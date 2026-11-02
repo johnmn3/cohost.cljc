@@ -879,5 +879,32 @@ Geometric mean of the 11 phel / JVM median ratios for rows that produced a time:
 
 Geometric mean of the 15 non-zero cljs / JVM median ratios: `3.663063`. Zero medians excluded: binary-trees, binary-trees-hinted, json.
 
+
+`cljs-cohost` finished. `node target/cljs-node/main.js --eval`. All rows SAME. Geometric mean of the 21 ratios: `3.568417`.
+
+| program | cljs-cohost median | cljs-cohost cold | cljs-cohost/jvm |
+|---|---:|---:|---:|
+| fib | 16.511291 | 34.985732 | 3.119198 |
+| fib-hinted | 124.01835 | 166.855207 | 28.026676 |
+| tak | 0.962271 | 2.08558 | 0.703585 |
+| tak-hinted | 9.097164 | 47.388461 | 8.055592 |
+| nbody | 5.246313 | 28.399463 | 1.353326 |
+| nbody-hinted | 10.752265 | 23.718061 | 3.491943 |
+| spectral-norm | 8.002536 | 21.976406 | 12.068079 |
+| spectral-norm-hinted | 26.05276 | 34.078675 | 15.556654 |
+| mandelbrot | 1.674245 | 5.282076 | 3.764311 |
+| mandelbrot-hinted | 1.570977 | 7.227463 | 7.346713 |
+| binary-trees | 0.197245 | 7.655943 | 0.380335 |
+| binary-trees-hinted | 0.861213 | 11.450477 | 0.674405 |
+| fannkuch | 113.238141 | 208.027084 | 5.311415 |
+| fannkuch-hinted | 129.769042 | 289.164348 | 6.330547 |
+| nsieve | 3.198177 | 24.14507 | 3.826069 |
+| nsieve-hinted | 3.030083 | 24.821575 | 2.961666 |
+| k-nucleotide | 1.412419 | 7.227048 | 1.255083 |
+| pipeline | 4.058098 | 9.748818 | 1.616514 |
+| dispatch | 10.255879 | 35.585418 | 4.729697 |
+| json | 0.258467 | 0.570729 | 1.772860 |
+| first-output | 7620.182209 | 7562.899564 | 19.786486 |
+
 Chromium: Playwright and headless Chromium are installed. The browser boot starts after `bb bench:programs cljs-cohost` releases the machine.
 
