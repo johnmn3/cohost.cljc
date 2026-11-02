@@ -6,16 +6,16 @@
 ;;   (defn build [opts] (cb/build (merge {:main 'acme.myapp} opts)))
 ;;
 ;; The target is :target in opts, else :cohost/target in deps.edn, else :jvm:
-;;   :jvm   an uberjar, target/<name>.jar, clojure.main as its main:
-;;          java -jar target/<name>.jar -m <main> args... (no :gen-class needed
-;;          in a namespace every target reads)
-;;   :cljs  target/<name>-cljs/: cohost's ClojureScript host, the stock core
+;; Every artifact is a directory target/<name>/ whose `run args...` calls the
+;; main's -main from any directory; the task prints `build: target/<name>/run`.
+;;   :jvm   target/<name>/<name>.jar, an uberjar with clojure.main as its main
+;;          (no :gen-class in a namespace every target reads); run: java -jar
+;;   :cljs  target/<name>/: cohost's ClojureScript host, the stock core
 ;;          sources, the project's and its dependencies' source roots, and
-;;          run.js (node target/<name>-cljs/run.js args... runs -main)
-;;   :jolt  target/<name>-jolt/: cohost.cli compiled by `jolt build` into one
-;;          native binary, the stock sources, the source roots, and `run`
-;;          (target/<name>-jolt/run args... runs -main; no jolt needed)
-;;   :cljw :lg :lpy :phel  target/<name>-<target>/: a script bundle -- cohost's
+;;          run.js (run: node run.js)
+;;   :jolt  target/<name>/: cohost.cli compiled by `jolt build` into one native
+;;          binary, the stock sources, the source roots (no jolt needed)
+;;   :cljw :lg :lpy :phel  target/<name>/: a script bundle -- cohost's
 ;;          sources, the stock sources, the source roots, and `run`, on the
 ;;          host's installed binary (their native packagers refuse cohost's
 ;;          code: doc/CLI.md, "Building")
@@ -42,16 +42,20 @@
 
 (defn- build-api [sym] (requiring-resolve (symbol "clojure.tools.build.api" (name sym))))
 
+(declare write-run!)
+
 (defn- jvm-uber [{:keys [main name] :as _opts}]
   (let [basis ((build-api 'create-basis) {:project "deps.edn"})
         class-dir "target/classes"
-        jar (str "target/" name ".jar")]
+        jar (str "target/" name "/" name ".jar")]
     ((build-api 'delete) {:path "target"})
     ((build-api 'copy-dir) {:src-dirs (:paths basis) :target-dir class-dir})
     ((build-api 'compile-clj) {:basis basis :class-dir class-dir :ns-compile [main]})
     ((build-api 'uber) {:class-dir class-dir :uber-file jar :basis basis :main 'clojure.main})
-    (println (str "build: " jar " (java -jar " jar " -m " main ")"))
-    jar))
+    ((build-api 'delete) {:path class-dir})
+    (write-run! (str "target/" name)
+                (str "#!/bin/sh\n# run [args...]: " main "'s -main (made by cohost.build)\n"
+                     "exec java -jar \"$(cd \"$(dirname \"$0\")\" && pwd)/" name ".jar\" -m " main " \"$@\"\n"))))
 
 (defn- sh! [dir & cmd]
   (let [r (apply sh/sh (concat cmd [:dir dir]))]
@@ -85,7 +89,7 @@ process.exit(r.status === null ? 1 : r.status);
 
 (defn- cljs-bundle [{:keys [main name]}]
   (let [home (cohost-home)
-        out (io/file "target" (str name "-cljs"))
+        out (io/file "target" name)
         ;; the source roots, resolved as `cohost :cljs` resolves them (jars extracted)
         roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":cljs" "-Spath")) #":")
         ;; cohost's ClojureScript host build: `cohost :cljs` builds it when stale
@@ -98,8 +102,7 @@ process.exit(r.status === null ? 1 : r.status);
       (spit (io/file out "bundle.json")
             (str "{\"main\": " (pr-str (str main)) ", \"roots\": [" (str/join ", " (map pr-str names)) "]}")))
     (spit (io/file out "run.js") run-js)
-    (println (str "build: " out "/ (node " out "/run.js args...)"))
-    (str out)))
+    (write-run! out "#!/bin/sh\n# run [args...] (made by cohost.build)\nexec node \"$(cd \"$(dirname \"$0\")\" && pwd)/run.js\" \"$@\"\n")))
 
 (defn- bundle-sources!
   "Copy the stock sources and the project's source roots (as `cohost :<t>
@@ -145,20 +148,18 @@ process.exit(r.status === null ? 1 : r.status);
 
 (defn- script-bundle [t {:keys [main name]}]
   (let [home (cohost-home)
-        out (io/file "target" (str name "-" (clojure.core/name t)))]
+        out (io/file "target" name)]
     (sh! "." "rm" "-rf" (str out))
     (let [roots (bundle-sources! home t out)]
       (copy-tree! (str home "/src") (io/file out "cohost/src"))
       (doseq [f ["dev/lg_cli.lg" "dev/phel_cli.phel" "phel-config.php"]]
         (io/make-parents (io/file out "cohost" f))
         (io/copy (io/file home f) (io/file out "cohost" f)))
-      (write-run! out (launcher main roots (script-launch t))))
-    (println (str "build: " out "/ (" out "/run args..., with " (clojure.core/name t) " installed)"))
-    (str out)))
+      (write-run! out (launcher main roots (script-launch t))))))
 
 (defn- jolt-native [{:keys [main name]}]
   (let [home (cohost-home)
-        out (io/file "target" (str name "-jolt"))
+        out (io/file "target" name)
         work (io/file "target" "cohost-jolt-build")]
     (sh! "." "rm" "-rf" (str out) (str work))
     (.mkdirs work)
@@ -171,8 +172,7 @@ process.exit(r.status === null ? 1 : r.status);
       (.setExecutable (io/file out "bin" "cohost-jolt") true false)
       (write-run! out (launcher main roots "\"$here/bin/cohost-jolt\"")))
     (sh! "." "rm" "-rf" (str work))
-    (println (str "build: " out "/ (" out "/run args...)"))
-    (str out)))
+    (str out "/run")))
 
 (defn build
   "Build the project for its target. opts: :main (the -main namespace, a
@@ -182,11 +182,14 @@ process.exit(r.status === null ? 1 : r.status);
   (let [opts (merge {:name (.getName (.getCanonicalFile (io/file ".")))} opts)
         t (project-target opts)]
     (when-not (:main opts) (throw (ex-info "build: :main (the -main namespace) is required" {})))
-    (case t
+    (let [run (case t
       :jvm (jvm-uber opts)
       :cljs (cljs-bundle opts)
       :jolt (jolt-native opts)
       (:cljw :lg :lpy :phel) (script-bundle t opts)
       (do (println (str "build: not yet on " t
                         (when (= t :jank) " (lane D's D-7: an AOT executable)")))
-          (throw (ex-info (str "build: not yet on " t) {:target t}))))))
+          (throw (ex-info (str "build: not yet on " t) {:target t}))))]
+      ;; every target's artifact: target/<name>/run args... runs -main
+      (println (str "build: " run))
+      run)))
