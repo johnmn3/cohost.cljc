@@ -24,4 +24,17 @@ A sum below 2^47 costs what a sum below 2^31 costs: the tagged pointer's 48 low 
 
 The integer payload is 48 bits (two's complement, sign-extended when read); `obj::small_integer` and `oref<obj::small_integer>` hold an `i64`; `make_box` tags anything in 48 bits. In 12-21's boxed arms only the fast path's width check moves: add and sub of two operands within 47 bits run in i64 (no overflow possible) and tag; mul of two 32-bit operands runs in i64; everything else is 12-21's checked path, unchanged (overflow still throws), which now tags a result inside 48 bits. Codegen and the analyzer's literal typing treat a boxed literal as a `small_integer` up to 48 bits.
 
-Numbers: the U2-5 blocks of `coord/cohost-max/reports/u3.md`.
+## Actual, with the patch
+
+`run.sh 15-reduce-walk`, three interleaved rounds of no-12-21 (f3d82d65 + 11 13 14 18 19 15a 15b 22) / the series to 27 / the series to 27 + 30, ns:
+
+```
+GC_INITIAL_HEAP_SIZE=1G
+reduce + over a 1e6 vector   7148372 11884351 11870642 | 35912650 35422638 33645880 | 7900425 7817166 7833569
+loop nth over it            17990772 19059059 19460144 | 36007393 37287494 35692432 | 6968710 13896304 9253601
+default heap
+reduce + over a 1e6 vector   7119518 15531932  7157040 | 51639605 33405201 36074956 | 7801854 12553608 7758133
+loop nth over it            20389670 19545931 25791603 | 22093543 21219006 22712663 | 7512205  7715919 12973797
+```
+
+The sums stay 499999500000 (inline now); the repro's edge line (2^31, 2^47 and past it, i64 overflow throwing, `=`/`hash`/`get` across a value built by arithmetic and a literal) prints the same on the series with and without 30. `run.sh 12`, `21`, `20`, `24` and `26` print the same lines with and without 30.

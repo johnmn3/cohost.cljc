@@ -1,4 +1,4 @@
-From deb6a250332f3b2eb08085767f86fd8dd02f1958 Mon Sep 17 00:00:00 2001
+From 78699c876fd58cf3e1fd7cdb9b0aa057d59a1eaa Mon Sep 17 00:00:00 2001
 From: cohost u3 <noreply@anthropic.com>
 Date: Mon, 2 Nov 2026 20:49:55 +0000
 Subject: [PATCH] 30: the inline (NaN-boxed) integer holds 48 bits, not 32
@@ -36,9 +36,9 @@ src/cpp/jank/codegen/api.cpp, include/cpp/jank/codegen/api.hpp, src/cpp/jank/ana
  .../include/cpp/jank/runtime/oref.hpp         | 37 +++++++++-----
  .../src/cpp/jank/analyze/cpp_util.cpp         |  2 +-
  compiler+runtime/src/cpp/jank/codegen/api.cpp |  2 +-
- .../src/cpp/jank/codegen/cpp_processor.cpp    |  3 +-
+ .../src/cpp/jank/codegen/cpp_processor.cpp    | 18 +++----
  .../src/cpp/jank/runtime/obj/number.cpp       |  2 +-
- 9 files changed, 71 insertions(+), 31 deletions(-)
+ 9 files changed, 75 insertions(+), 42 deletions(-)
 
 diff --git a/compiler+runtime/include/cpp/jank/codegen/api.hpp b/compiler+runtime/include/cpp/jank/codegen/api.hpp
 index 1b8366611..4baf0548d 100644
@@ -285,10 +285,32 @@ index 2d83a751e..586b2d0b9 100644
    return i;
  }
 diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
-index 2a74d4658..88d141bf4 100644
+index 2a74d4658..ce46bab51 100644
 --- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
 +++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
-@@ -319,7 +319,8 @@ namespace jank::codegen
+@@ -217,17 +217,10 @@ namespace jank::codegen
+         else if(runtime::detail::is_tagged_small_int(ptr))
+         {
+           auto const i(runtime::detail::as_integer(ptr));
+-          /* The literal min value of an integer is treated as a long, so we need to do an
+-           * explicit cast. */
+-          if(i == std::numeric_limits<i32>::min())
+-          {
+-            fmt_str
+-              = util::format("{}{ static_cast<jtl::i32>({}) }", get_qualified_type_name(type), i);
+-          }
+-          else
+-          {
+-            fmt_str = util::format("{}{ {} }", get_qualified_type_name(type), i);
+-          }
++          /* The payload is 48 bits (30-inline-int-width): spell it as an i64, so a literal
++           * past i32 picks the i64 constructor and not an ambiguous conversion. */
++          fmt_str
++            = util::format("{}{ static_cast<jtl::i64>({}) }", get_qualified_type_name(type), i);
+         }
+         else if(runtime::detail::is_tagged_small_real(ptr))
+         {
+@@ -319,7 +312,8 @@ namespace jank::codegen
              {
                util::format_to(buffer, "{}", unboxed_integer_literal(typed_o->data));
              }
