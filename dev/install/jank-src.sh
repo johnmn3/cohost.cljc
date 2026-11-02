@@ -257,6 +257,74 @@ if [ "$mode" = full ]; then
     clone
   fi
 fi
+# ---- optional: ThinLTO build of jank (JANK_LTO=thin; off by default) -- u5, U5-4 ----
+# jank's CMakeLists sets CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE, and the apt-derived $JANK_LLVM has no LTO linker
+# (no lld, no LLVMgold.so; llvm-ar is GNU ar, which cannot index bitcode; llvm-tblgen and llvm-profdata are stubs).
+# lto_tools builds them once from jank-lang/llvm-project @ $LLVM_SHA (sparse checkout) against $JANK_LLVM's real
+# libLLVM.so into $JANK_LLVM.lto/bin: a minimal llvm-tblgen (the option-parser backend + lib/TableGen, which libLLVM.so
+# lacks), llvm-ar, llvm-profdata (two Debuginfod symbols stubbed: profile merging never uses them) and lld (standalone
+# CMake build). Then configure passes -flto=thin to every C/C++ TU and links with that lld. JANK_PGO=<profdata> adds
+# -fprofile-use (train with an -fprofile-generate build: JANK_PGO=generate). Use its own JANK_SRC/JANK_DEV_PREFIX; the
+# generate and use builds share one JANK_SRC (PGO names internal-linkage functions by their source path).
+# The flags go in the *_RELEASE variables: jank copies CMAKE_CXX_FLAGS and CMAKE_SHARED_LINKER_FLAGS into the runtime's
+# JANK_AOT_FLAGS (compiler+runtime/CMakeLists.txt:713), and -flto there makes phase 1 emit core.o as bitcode it cannot
+# load. The build dir must be compiler+runtime/build: jank treats only that as an in-tree build (environment_dynamic.cpp).
+if [ -n "${JANK_LTO:-}" ]; then
+  LTO_TOOLS="$JANK_LLVM.lto"
+  lto_tools() {
+    [ -x "$LTO_TOOLS/bin/ld.lld" ] && [ -x "$LTO_TOOLS/bin/llvm-ar" ] && return
+    stage "LTO tools: llvm-tblgen, llvm-ar, llvm-profdata, lld from llvm-project @ $LLVM_SHA against $JANK_LLVM/lib/libLLVM.so"
+    local src="$LTO_TOOLS/src" bin="$LTO_TOOLS/bin" cxx="$JANK_LLVM/bin/clang++" inc="$LTO_TOOLS/inc"
+    mkdir -p "$bin" "$inc/llvm/Config"
+    if [ ! -d "$src/lld" ]; then
+      git init -q "$src" && git -C "$src" remote add origin https://github.com/jank-lang/llvm-project.git
+      git -C "$src" config core.sparseCheckout true
+      printf 'lld/\ncmake/\nlibunwind/include/\nllvm/utils/TableGen/\nllvm/lib/TableGen/\nllvm/tools/llvm-ar/\nllvm/tools/llvm-profdata/\n' \
+        > "$src/.git/info/sparse-checkout"
+      git -C "$src" fetch -q --filter=blob:none --depth 1 origin "$LLVM_SHA" && git -C "$src" checkout -q FETCH_HEAD
+    fi
+    echo '#include "llvm/Config/llvm-config.h"' > "$inc/llvm/Config/config.h"
+    printf '%s\n' '#include "llvm/Support/LLVMDriver.h"' 'int TOOL_MAIN(int, char **, const llvm::ToolContext &);' \
+      'int main(int argc, char **argv) { return TOOL_MAIN(argc, argv, {argv[0], nullptr, false}); }' > "$inc/driver_main.cpp"
+    printf '%s\n' '#include "llvm/Debuginfod/BuildIDFetcher.h"' '#include "llvm/HTTP/HTTPClient.h"' \
+      'void llvm::HTTPClient::initialize() {}' \
+      'llvm::Expected<std::string> llvm::DebuginfodFetcher::fetch(llvm::object::BuildIDRef) const {' \
+      '  return llvm::createStringError("debuginfod is not available in this llvm-profdata"); }' > "$inc/debuginfod_stub.cpp"
+    local f=(-std=c++17 -O2 -fno-rtti -I"$inc" -I"$JANK_LLVM/include") l=(-L"$JANK_LLVM/lib" -lLLVM -Wl,-rpath,"$JANK_LLVM/lib")
+    (cd "$src/llvm/utils/TableGen" && "$cxx" "${f[@]}" -I. -IBasic -ICommon llvm-min-tblgen.cpp Basic/TableGen.cpp \
+       OptionParserEmitter.cpp Common/OptEmitter.cpp ../../lib/TableGen/*.cpp "${l[@]}" -o "$bin/llvm-tblgen")
+    "$cxx" "${f[@]}" -DTOOL_MAIN=llvm_ar_main "$src/llvm/tools/llvm-ar/llvm-ar.cpp" "$inc/driver_main.cpp" "${l[@]}" -o "$bin/llvm-ar"
+    ln -sfn llvm-ar "$bin/llvm-ranlib"
+    "$cxx" "${f[@]}" "$src/llvm/tools/llvm-profdata/llvm-profdata.cpp" "$inc/debuginfod_stub.cpp" "${l[@]}" -o "$bin/llvm-profdata"
+    cmake -S "$src/lld" -B "$LTO_TOOLS/lld-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR="$JANK_LLVM/lib/cmake/llvm" \
+      -DCMAKE_C_COMPILER="$JANK_LLVM/bin/clang" -DCMAKE_CXX_COMPILER="$cxx" -DLLVM_INCLUDE_TESTS=OFF \
+      -DLLVM_TABLEGEN_EXE="$bin/llvm-tblgen" > "$LTO_TOOLS/lld-configure.log"
+    cmake --build "$LTO_TOOLS/lld-build" -j "$JOBS" --target lld > "$LTO_TOOLS/lld-build.log"
+    ln -sfn "$LTO_TOOLS/lld-build/bin/lld" "$bin/ld.lld"
+  }
+  configure() {
+    local b="$JANK_SRC/compiler+runtime/build" fl="-flto=thin"
+    case "${JANK_PGO:-}" in
+      "") ;;
+      generate) fl="$fl -fprofile-generate" ;;
+      *) fl="$fl -fprofile-use=$JANK_PGO -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date" ;;
+    esac
+    if [ -f "$b/CMakeCache.txt" ] && grep -qF "CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG $fl" "$b/CMakeCache.txt" \
+       && grep -q "^CMAKE_INSTALL_PREFIX:.*=$JANK_DEV_PREFIX\$" "$b/CMakeCache.txt"; then
+      return
+    fi
+    lto_tools
+    local ld="-fuse-ld=lld --ld-path=$LTO_TOOLS/bin/ld.lld -Wl,--thinlto-jobs=$JOBS"
+    stage "configure jank with $fl (prefix $JANK_DEV_PREFIX)"
+    rm -rf "$b/core-libs"
+    (cd "$JANK_SRC/compiler+runtime" && CC="$JANK_LLVM/bin/clang" CXX="$JANK_LLVM/bin/clang++" ./bin/configure -GNinja \
+       -DCMAKE_BUILD_TYPE=Release -Dllvm_dir="$JANK_LLVM" -Djank_local_clang=on -DCMAKE_INSTALL_PREFIX="$JANK_DEV_PREFIX" \
+       -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG $fl" -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG $fl" \
+       -DCMAKE_EXE_LINKER_FLAGS_RELEASE="$fl $ld" -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="$fl $ld" \
+       -DCMAKE_AR="$LTO_TOOLS/bin/llvm-ar" -DCMAKE_RANLIB="$LTO_TOOLS/bin/llvm-ranlib")
+  }
+fi
+# ---- end ThinLTO ----
 [ -d "$JANK_SRC/.git" ] || { echo "no clone at $JANK_SRC: run without --patches first" >&2; exit 1; }
 apply_series
 configure
