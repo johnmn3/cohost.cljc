@@ -39,10 +39,19 @@
 
 (defn- abs [& parts] (.getCanonicalPath (apply io/file parts)))
 
+(defn- host-cache-file?
+  "A file a host writes beside its sources (Basilisp's __pycache__/, *.pyc,
+   *.lpyc): not an input, as in dev/perf/jank_inputs.clj -- keyed in, any
+   basilisp run made the executable stale."
+  [^String path]
+  (or (some #(= "__pycache__" %) (str/split path #"/"))
+      (str/ends-with? path ".pyc")
+      (str/ends-with? path ".lpyc")))
+
 (defn- files-under [dir]
   (let [f (io/file dir)]
     (if (.exists f)
-      (sort (map #(.getPath %) (filter #(.isFile %) (file-seq f))))
+      (sort (remove host-cache-file? (map #(.getPath %) (filter #(.isFile %) (file-seq f)))))
       [])))
 
 (defn- sha256 [^String s]
