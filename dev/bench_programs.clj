@@ -7,6 +7,21 @@
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
 
+;; JANK_BIN=<path> runs the jank targets on that binary (default: jank on
+;; PATH). Its AOT objects live under their own roots (suffix: sha256 of the
+;; binary's real path, 12 hex), so the apt jank and a source build never load
+;; each other's objects.
+(def jank-bin
+  (let [b (System/getenv "JANK_BIN")]
+    (if (str/blank? b) "jank" b)))
+
+(def jank-tag
+  (if (= "jank" jank-bin)
+    ""
+    (str "-" (subs (-> (shell {:out :string :in (str (fs/real-path jank-bin))} "sha256sum")
+                       :out str/trim)
+                   0 12))))
+
 (def programs
   [{:id :fib :file "bench/programs/fib.clj" :arg "30"}
    {:id :fib-hinted :file "bench/programs/fib_hinted.clj" :arg "30" :hinted? true}
@@ -33,9 +48,9 @@
 (def targets
   [{:id "jvm" :exe "clojure"}
    {:id "jvm-cohost" :exe "clojure"}
-   {:id "jank-jit" :exe "jank"}
-   {:id "jank-aot" :exe "jank"}
-   {:id "jank" :exe "jank"}
+   {:id "jank-jit" :exe jank-bin}
+   {:id "jank-aot" :exe jank-bin}
+   {:id "jank" :exe jank-bin}
    {:id "jolt" :exe "jolt"}
    {:id "jolt-cohost" :exe "jolt"}
    {:id "lpy" :exe "basilisp"}
@@ -123,17 +138,17 @@
   (fs/create-dirs "target/bench-programs")
   (spit "target/bench-programs/wrap.jank"
         (harness src "(cpp/jank.runtime.current_time)" true))
-  (run! ["jank" "run" "target/bench-programs/wrap.jank" "--" arg (if cold? "cold" "warm")]))
+  (run! [jank-bin "run" "target/bench-programs/wrap.jank" "--" arg (if cold? "cold" "warm")]))
 
 (defn aot-dir [id src]
-  (let [root (str "target/bench-programs/aot-" (name id))
+  (let [root (str "target/bench-programs/aot-" (name id) jank-tag)
         file (str root "/src/bench/prog.jank")
         stamp (str root "/stamp")
         body (harness src "(cpp/jank.runtime.current_time)" false)]
     (when-not (and (fs/exists? stamp) (= (slurp stamp) body) (seq (fs/glob root "**/bench/prog.o")))
       (fs/create-dirs (str root "/src/bench"))
       (spit file (str "(ns bench.prog)\n" body))
-      (let [c (run! ["jank" "--module-path" (str root "/src") "compile-module" "bench.prog"
+      (let [c (run! [jank-bin "--module-path" (str root "/src") "compile-module" "bench.prog"
                      "-O3" "--target-dir" root])]
         (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/prog.o")))
           (throw (ex-info "aot-compile" {:err (str (:err c) "\n" (:out c))}))))
@@ -143,7 +158,7 @@
 
 (defn run-jank-aot [id src arg cold?]
   (let [d (aot-dir id src)]
-    (run! ["jank" "--module-path" (str (:cache d) ":" (:src d))
+    (run! [jank-bin "--module-path" (str (:cache d) ":" (:src d))
            "run-main" "bench.prog" "--" arg (if cold? "cold" "warm")])))
 
 (defn run-jank-cohost [src arg cold?]
@@ -154,7 +169,7 @@
         code (str (harness src "(cpp/jank.runtime.current_time)" false)
                   "(-main " (pr-str arg) " " (pr-str mode) ")")]
     (apply shell {:out :string :err :string :continue true :timeout 300000}
-           ["jank" "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
+           [jank-bin "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
             "--eval" code])))
 
 (defn run-cljrs [src arg cold?]
@@ -285,7 +300,7 @@
     nil))
 
 (defn wall-aot-cmd []
-  (let [root "target/bench-programs/aot-wall"
+  (let [root (str "target/bench-programs/aot-wall" jank-tag)
         file (str root "/src/bench/wall.jank")
         body "(ns bench.wall)\n(defn -main [& _]\n  (println \"ok\"))\n"
         stamp (str root "/stamp")]
@@ -293,13 +308,13 @@
                    (seq (fs/glob root "**/bench/wall.o")))
       (fs/create-dirs (str root "/src/bench"))
       (spit file body)
-      (let [c (run! ["jank" "--module-path" (str root "/src") "compile-module" "bench.wall"
+      (let [c (run! [jank-bin "--module-path" (str root "/src") "compile-module" "bench.wall"
                      "-O3" "--target-dir" root])]
         (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/wall.o")))
           (throw (ex-info "aot-wall" {:err (str (:err c) "\n" (:out c))}))))
       (spit stamp body))
     (let [cache (str (first (fs/glob root "_cache/*")))]
-      ["jank" "--module-path" (str cache ":" root "/src") "run-main" "bench.wall"])))
+      [jank-bin "--module-path" (str cache ":" root "/src") "run-main" "bench.wall"])))
 
 (defn wall-cljrs-cmd []
   (fs/create-dirs "target/bench-programs")
@@ -309,10 +324,10 @@
 (defn wall-cmd [id file]
   (case id
     "jvm" ["clojure" "-M" file]
-    "jank-jit" ["jank" "run" file]
+    "jank-jit" [jank-bin "run" file]
     "jank-aot" (wall-aot-cmd)
     "jank" (let [dir (load-file "dev/perf/jank_aot_ensure.clj")]
-             ["jank" "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
+             [jank-bin "--module-path" (str dir ":src") "run-main" "cohost.run" "--"
               "--eval" "(println \"ok\")"])
     "cljrs" (wall-cljrs-cmd)
     "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" "(println \"ok\")"]
