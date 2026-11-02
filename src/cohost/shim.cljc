@@ -859,8 +859,11 @@
            ;; jank's seq walk (removed when upstream jank-15 lands); resolved by
            ;; name, as the adapter resolves shim vars, after both are loaded
            (delay (or (some-> (resolve 'cohost.hosts.jank-host/reduce-init) var-get) reduce))))
+#?(:jank (def ^:private jank-reduce-noinit
+           (delay (or (some-> (resolve 'cohost.hosts.jank-host/reduce-noinit) var-get) reduce))))
 (defn- host-reduce
-  ([f coll] (reduce f #?(:phel (if (map? coll) (seq coll) coll) :default coll)))
+  ([f coll] #?(:jank (@jank-reduce-noinit f coll)
+               :default (reduce f #?(:phel (if (map? coll) (seq coll) coll) :default coll))))
   ([f init coll] #?(:jank (@jank-reduce-init f init coll)
                     :default (reduce f init #?(:phel (if (map? coll) (seq coll) coll) :default coll)))))
 (def protocols-coll-reduce (fn ([coll f] (host-reduce (host-reducer f) coll)) ([coll f init] (host-reduce (host-reducer f) init coll))))

@@ -21,6 +21,9 @@
 (def v1e6 (vec (range 1000000)))
 (defn reduce-vec [] (reduce + 0 v1e6))
 (defn reduce-range [] (reduce + 0 (range 1000000)))
+(defn reduce-vec-noinit [] (reduce + v1e6))
+(defn reduce-range-noinit [] (reduce + (range 1000000)))
+(defn map-over-vec-1e5 [] (count (doall (map inc (subvec v1e6 0 100000)))))
 (defn transduce-1e5 [] (transduce (comp (map inc) (filter odd?)) + (range 100000)))
 (defn into-vector-1e5 [] (count (into [] (map inc) (range 100000))))
 (defn run []
@@ -39,5 +42,8 @@
   (bench "apply-str-2e4" apply-str)
   (bench "reduce-vec-1e6" reduce-vec)
   (bench "reduce-range-1e6" reduce-range)
+  (bench "reduce-vec-noinit-1e6" reduce-vec-noinit)
+  (bench "reduce-range-noinit-1e6" reduce-range-noinit)
+  (bench "map-over-vec-1e5" map-over-vec-1e5)
   (bench "transduce-1e5" transduce-1e5)
   (bench "into-vector-1e5" into-vector-1e5))
