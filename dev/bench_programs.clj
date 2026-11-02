@@ -40,14 +40,10 @@
    {:id "jolt-cohost" :exe "jolt"}
    {:id "lpy" :exe "basilisp"}
    {:id "lpy-cohost" :exe "basilisp"}
-   {:id "cljs" :exe "node"
-    :blocked "ClojureScript is not in the local Maven repo, so the Node build cannot be compiled here"}
-   {:id "cljs-cohost" :exe "node"
-    :blocked "ClojureScript is not in the local Maven repo, so the Node build cannot be compiled here"}
-   {:id "browser" :exe "node"
-    :blocked "ClojureScript is not in the local Maven repo, so the browser build cannot be compiled here"}
-   {:id "browser-cohost" :exe "node"
-    :blocked "ClojureScript is not in the local Maven repo, so the browser build cannot be compiled here"}
+   {:id "cljs" :exe "node"}
+   {:id "cljs-cohost" :exe "node"}
+   {:id "browser" :exe "node"}
+   {:id "browser-cohost" :exe "node"}
    {:id "cljw" :exe "cljw"}
    {:id "cljw-cohost" :exe "cljw"}
    {:id "phel" :exe "phel"}
@@ -57,7 +53,10 @@
    {:id "cljrs" :exe "cljrs"}
    {:id "cljrs-cohost" :exe "cljrs"}])
 
-(def timed-ids #{"jvm" "jvm-cohost" "jank-jit" "jank-aot" "jank" "cljrs" "cljrs-cohost"})
+(def timed-ids #{"jvm" "jvm-cohost" "jank-jit" "jank-aot" "jank" "cljrs" "cljrs-cohost"
+                 "jolt" "jolt-cohost" "lpy" "lpy-cohost" "cljw" "cljw-cohost"
+                 "phel" "phel-cohost" "lg" "lg-cohost" "cljs" "cljs-cohost"
+                 "browser" "browser-cohost"})
 
 (defn reason [t]
   (cond
@@ -86,7 +85,7 @@
        (if script? "(apply -main *command-line-args*)\n" "")))
 
 (defn run! [cmd]
-  (apply shell {:out :string :err :string :continue true :timeout 180000} cmd))
+  (apply shell {:out :string :err :string :continue true :timeout 300000} cmd))
 
 (defn parse-run [proc]
   (let [out (or (:out proc) "")
@@ -180,6 +179,79 @@
            ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
             "src/cohost/run.cljc" "--" "--eval" code])))
 
+(defn cohost-source [src clock arg cold?]
+  (str (harness src clock false)
+       "(-main " (pr-str arg) " " (pr-str (if cold? "cold" "warm")) ")"))
+
+(defn run-jolt [src arg cold?]
+  (fs/create-dirs "target/bench-programs")
+  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
+  (run! ["jolt" "run" "target/bench-programs/wrap.clj" arg (if cold? "cold" "warm")]))
+
+(defn run-jolt-cohost [src arg cold?]
+  (run! ["jolt" "-Scp" "src" "-m" "cohost.run" "--eval"
+         (cohost-source src "(System/nanoTime)" arg cold?)]))
+
+(defn run-lpy [src arg cold?]
+  (fs/create-dirs "target/bench-programs")
+  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
+  (run! ["basilisp" "run" "target/bench-programs/wrap.clj" "--" arg (if cold? "cold" "warm")]))
+
+(defn run-lpy-cohost [src arg cold?]
+  (fs/create-dirs "target/bench-programs")
+  (spit "target/bench-programs/cohost.clj" (cohost-source src "(System/nanoTime)" arg cold?))
+  (run! ["basilisp" "run" "-p" "src" "-c"
+         "(require 'cohost.run) (cohost.run/-main \"--eval\" (slurp \"target/bench-programs/cohost.clj\"))"]))
+
+(defn run-cljw [src arg cold?]
+  (fs/create-dirs "target/bench-programs")
+  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
+  (run! ["cljw" "target/bench-programs/wrap.clj" arg (if cold? "cold" "warm")]))
+
+(defn run-cljw-cohost [src arg cold?]
+  (run! ["cljw" "-cp" "src" "-m" "cohost.run" "--eval"
+         (cohost-source src "(System/nanoTime)" arg cold?)]))
+
+(defn run-phel [src arg cold?]
+  (fs/create-dirs "target/bench-programs")
+  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
+  (run! ["phel" "run" "target/bench-programs/wrap.clj" "--" arg (if cold? "cold" "warm")]))
+
+(defn run-phel-cohost [src arg cold?]
+  (run! ["phel" "run" "dev/phel_main.phel" "--" "--eval"
+         (cohost-source src "(System/nanoTime)" arg cold?)]))
+
+(defn run-lg [src arg cold?]
+  (fs/create-dirs "target/bench-programs")
+  (spit "target/bench-programs/wrap.clj" (harness src "(System/nanoTime)" true))
+  (run! ["lg" "target/bench-programs/wrap.clj" arg (if cold? "cold" "warm")]))
+
+(defn run-lg-cohost [src arg cold?]
+  (run! ["lg" "-source-paths" "src" "dev/lg_main.lg" "--" "--eval"
+         (cohost-source src "(System/nanoTime)" arg cold?)]))
+
+(defn ensure-cljs-node! []
+  (when-not (fs/exists? "target/cljs-node/main.js")
+    (let [c (run! ["clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c"])]
+      (when-not (zero? (:exit c))
+        (throw (ex-info "cljs-node" {:err (str (:err c) "\n" (:out c))}))))))
+
+(defn run-cljs [src arg cold?]
+  (fs/create-dirs "target/bench-programs")
+  (spit "target/bench-programs/wrap.cljs"
+        (harness src "(* (js/Date.now) 1000000.0)" true))
+  (run! ["clojure" "-M:cljs" "-m" "cljs.main" "-re" "node"
+         "target/bench-programs/wrap.cljs" arg (if cold? "cold" "warm")]))
+
+(defn run-cljs-cohost [src arg cold?]
+  (ensure-cljs-node!)
+  (run! ["node" "target/cljs-node/main.js" "--eval"
+         (cohost-source src "(System/nanoTime)" arg cold?)]))
+
+(defn run-browser [_src _arg _cold?]
+  (throw (ex-info "browser"
+                  {:err "cohost.run-browser only runs the battery or ?bench; the page has no --eval, and there is no own-core browser entry"})))
+
 (defn runner-for [id]
   (case id
     "jvm" (fn [id src arg cold?] (run-jvm src arg cold?))
@@ -189,6 +261,20 @@
     "jank" (fn [id src arg cold?] (run-jank-cohost src arg cold?))
     "cljrs" (fn [id src arg cold?] (run-cljrs src arg cold?))
     "cljrs-cohost" (fn [id src arg cold?] (run-cljrs-cohost src arg cold?))
+    "jolt" (fn [id src arg cold?] (run-jolt src arg cold?))
+    "jolt-cohost" (fn [id src arg cold?] (run-jolt-cohost src arg cold?))
+    "lpy" (fn [id src arg cold?] (run-lpy src arg cold?))
+    "lpy-cohost" (fn [id src arg cold?] (run-lpy-cohost src arg cold?))
+    "cljw" (fn [id src arg cold?] (run-cljw src arg cold?))
+    "cljw-cohost" (fn [id src arg cold?] (run-cljw-cohost src arg cold?))
+    "phel" (fn [id src arg cold?] (run-phel src arg cold?))
+    "phel-cohost" (fn [id src arg cold?] (run-phel-cohost src arg cold?))
+    "lg" (fn [id src arg cold?] (run-lg src arg cold?))
+    "lg-cohost" (fn [id src arg cold?] (run-lg-cohost src arg cold?))
+    "cljs" (fn [id src arg cold?] (run-cljs src arg cold?))
+    "cljs-cohost" (fn [id src arg cold?] (run-cljs-cohost src arg cold?))
+    "browser" (fn [id src arg cold?] (run-browser src arg cold?))
+    "browser-cohost" (fn [id src arg cold?] (run-browser src arg cold?))
     nil))
 
 (defn wall-aot-cmd []
@@ -225,6 +311,22 @@
     "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" "(println \"ok\")"]
     "cljrs-cohost" ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
                     "src/cohost/run.cljc" "--" "--eval" "(println \"ok\")"]
+    "jolt" ["jolt" "run" file]
+    "jolt-cohost" ["jolt" "-Scp" "src" "-m" "cohost.run" "--eval" "(println \"ok\")"]
+    "lpy" ["basilisp" "run" file]
+    "lpy-cohost" ["basilisp" "run" "-p" "src" "-c"
+                  "(require 'cohost.run) (cohost.run/-main \"--eval\" \"(println \\\"ok\\\")\")"]
+    "cljw" ["cljw" file]
+    "cljw-cohost" ["cljw" "-cp" "src" "-m" "cohost.run" "--eval" "(println \"ok\")"]
+    "phel" ["phel" "run" file]
+    "phel-cohost" ["phel" "run" "dev/phel_main.phel" "--" "--eval" "(println \"ok\")"]
+    "lg" ["lg" file]
+    "lg-cohost" ["lg" "-source-paths" "src" "dev/lg_main.lg" "--" "--eval" "(println \"ok\")"]
+    "cljs" ["clojure" "-M:cljs" "-m" "cljs.main" "-re" "node" file]
+    "cljs-cohost" (do (ensure-cljs-node!)
+                      ["node" "target/cljs-node/main.js" "--eval" "(println \"ok\")"])
+    "browser" (throw (ex-info "browser" {:err "cohost.run-browser only runs the battery or ?bench; the page has no --eval, and there is no own-core browser entry"}))
+    "browser-cohost" (throw (ex-info "browser" {:err "cohost.run-browser only runs the battery or ?bench; the page has no --eval"}))
     nil))
 
 (defn wall-run [id file]
@@ -243,7 +345,10 @@
 
 (defn report-wall [t p]
   (let [id (:id t)
-        runner-ok (#{"jvm" "jvm-cohost" "jank-jit" "jank-aot" "jank" "cljrs" "cljrs-cohost"} id)]
+        runner-ok (#{"jvm" "jvm-cohost" "jank-jit" "jank-aot" "jank" "cljrs" "cljrs-cohost"
+                     "jolt" "jolt-cohost" "lpy" "lpy-cohost" "cljw" "cljw-cohost"
+                     "phel" "phel-cohost" "lg" "lg-cohost" "cljs" "cljs-cohost"
+                     "browser" "browser-cohost"} id)]
     (if-not runner-ok
       (println (str "  PROGRAM first-output NOT-TIMED runner not written"))
       (let [cold (wall-run id (:file p))

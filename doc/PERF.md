@@ -605,4 +605,32 @@ The driver's line for the volatile failures is `class clojure.lang.Volatile cann
 
 `bb boot:jank` calls `jank-aot-dir` (`bb.edn` lines 14-15), which loads `dev/perf/jank_aot_ensure.clj`. The recompile is one command, `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot`, at `dev/perf/jank_aot_ensure.clj:68-69`. That `-O3` covers `cohost.run` and the namespaces it depends on, including `cohost.shim` and `cohost.hosts.jank-host`. The script requires `cohost/shim.o` and `cohost/hosts/jank_host.o` in that same cache. There is no environment variable for the level. jank's own flag is `-O` / `--optimization`, values 0 through 3. The boot does not read it from the environment. The level is the literal `-O3` on that line, so the default is already `-O3`. `bb bench:programs jank` loads those objects. A second target would repeat the same compile. Default and `-O3` are that run: fib median `126.469398` ms, and the geometric mean of cohost `-O3` / default is `1`.
 
-Absent on this box: `jolt` and `jolt-cohost` (no `jolt` on PATH), `lpy` and `lpy-cohost` (no `basilisp`), `cljw` and `cljw-cohost` (no `cljw`), `phel` and `phel-cohost` (no `phel`), `lg` and `lg-cohost` (no `lg`). `cljs`, `cljs-cohost`, `browser`, and `browser-cohost` have `node` but no ClojureScript jar in the local Maven repo, so the build cannot be compiled here.
+`jolt` is jolt 0.8.23's own core (`jolt run`). `jolt-cohost` is `bb boot:jolt` (`jolt -Scp src -m cohost.run --eval`). Boot: stock 466, host 199, natives 63, skipped 63, errors 0, battery 145/145, libraries 61/61. `bb bench:programs jolt` and `bb bench:programs jolt-cohost`. Every row printed SAME. Times are milliseconds.
+
+| program | jolt median | jolt cold | jolt/jvm | cohost median | cohost cold | cohost/jvm | result |
+|---|---:|---:|---:|---:|---:|---:|---|
+| fib | 9.332578 | 9.417227 | 1.763046 | 39.499601 | 39.743152 | 7.461989 | 832040 |
+| fib-hinted | 8.90545 | 9.138106 | 2.012526 | 251.79843 | 251.064143 | 56.903459 | 832040 |
+| tak | 0.246605 | 0.259483 | 0.180311 | 1.349508 | 1.343892 | 0.986722 | 7 |
+| tak-hinted | 0.185614 | 0.1982 | 0.164362 | 15.333638 | 15.341936 | 13.578026 | 7 |
+| nbody | 1.567588 | 1.609389 | 0.404371 | 3.243066 | 3.359114 | 0.836574 | -169027 |
+| nbody-hinted | 1.510234 | 1.474866 | 0.490469 | 3.283267 | 3.314992 | 1.066285 | -169027 |
+| spectral-norm | 2.952609 | 4.393105 | 4.452628 | 5.423403 | 5.590879 | 8.178664 | 784826 |
+| spectral-norm-hinted | 2.14092 | 2.649665 | 1.278389 | 15.692423 | 16.056846 | 9.370278 | 784826 |
+| mandelbrot | 0.59783 | 0.674659 | 1.344139 | 0.717242 | 0.759875 | 1.612621 | 608 |
+| mandelbrot-hinted | 0.110312 | 0.114599 | 0.515877 | 0.866126 | 0.90322 | 4.050460 | 608 |
+| binary-trees | 0.282292 | 0.275508 | 0.544325 | 0.54897 | 0.571791 | 1.058543 | 7083 |
+| binary-trees-hinted | 0.279242 | 0.284978 | 0.218671 | 1.061998 | 1.098512 | 0.831637 | 7083 |
+| fannkuch | 27.381871 | 20.717505 | 1.284342 | 26.733999 | 26.608502 | 1.253953 | -502 |
+| fannkuch-hinted | 19.117359 | 19.667614 | 0.932606 | 25.241029 | 27.179449 | 1.231338 | -502 |
+| nsieve | 1.525536 | 1.848063 | 1.825042 | 2.180737 | 2.278142 | 2.608877 | 564 |
+| nsieve-hinted | 1.393835 | 1.905298 | 1.362363 | 2.077267 | 2.211934 | 2.030364 | 564 |
+| k-nucleotide | 0.2435 | 0.283621 | 0.216375 | 0.572904 | 0.59383 | 0.509086 | 500 |
+| pipeline | 2.299106 | 2.213147 | 0.915832 | 2.015231 | 2.044342 | 0.802753 | 5995001 |
+| dispatch | 3.615562 | 3.442353 | 1.667386 | 5.354062 | 5.324077 | 2.469129 | 200183333 |
+| json | 0.015425 | 0.039097 | 0.105802 | 0.14983 | 0.224902 | 1.027704 | 580 |
+| first-output | 127.289412 | 155.165961 | 0.330518 | 2036.561343 | 1997.019663 | 5.288114 | ok |
+
+Geometric mean of the twenty-one jolt / JVM median ratios: `0.683374`. Geometric mean of the twenty-one jolt-cohost / JVM median ratios: `2.404439`.
+
+Installed, not measured yet: basilisp (`lpy`), ClojureWasm (`cljw`), Phel, let-go (`lg`), ClojureScript on Node, ClojureScript in Chromium.
