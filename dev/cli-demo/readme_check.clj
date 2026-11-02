@@ -2,7 +2,7 @@
 ;;
 ;; For each target (default: jvm), in a fresh temporary directory: every ```bash
 ;; block of README.md, in order, with bin/cohost first on PATH. `cd dir` moves
-;; the next commands; the README's `cohost -Tnew create ...` gets `:target <t>`
+;; the next commands; the README's `... -Tnew create ...` gets `:target <t>`
 ;; appended, so the project it makes is that target's. A command's expected
 ;; output is its `# => line` comments (inline, then the comment lines below it):
 ;; the command's non-blank stdout lines must equal them (trailing spaces
@@ -14,6 +14,14 @@
          '[clojure.string :as str])
 
 (def repo (str (fs/canonicalize ".")))
+
+(defn doc-files
+  "README.md, then, for bb docs:check (which defines docs?), the guide's pages
+   in order: one project, the pages' commands run after the README's."
+  []
+  (into ["README.md"]
+        (when (some-> (resolve 'docs?) deref)
+          (sort (map str (fs/glob "doc/guide" "*.md"))))))
 
 (defn blocks [md]
   (map second (re-seq #"(?s)```bash\n(.*?)```" md)))
@@ -46,12 +54,12 @@
         env {"PATH" (str repo "/bin:" (System/getenv "PATH"))}
         fails (atom 0)]
     (println (str "== target " target " in " dir))
-    (loop [[{:keys [cmd expect]} & more] (mapcat commands (filter #(run-block? % target) (blocks (slurp "README.md"))))
+    (loop [[{:keys [cmd expect]} & more] (mapcat commands (filter #(run-block? % target) (mapcat (comp blocks slurp) (doc-files))))
            cwd dir]
       (when cmd
         (if-let [[_ to] (re-matches #"cd\s+(\S+)" cmd)]
           (recur more (str (fs/path cwd to)))
-          (let [cmd' (if (re-find #"^cohost -Tnew create " cmd) (str cmd " :target " target) cmd)
+          (let [cmd' (if (re-find #"-Tnew create " cmd) (str cmd " :target " target) cmd)
                 proc (p/process ["bash" "-c" cmd'] {:dir cwd :extra-env env :out :string :err :string :in ""})
                 ;; a command that hangs is a FAIL, not a stalled check
                 r (let [x (deref proc 600000 ::timeout)]
@@ -73,5 +81,5 @@
 
 (let [targets (or (seq *command-line-args*) ["jvm"])
       fails (reduce + (map check-target targets))]
-  (println (str "readme:check: " fails " failing command(s) over " (count targets) " target(s)"))
+  (println (str (if (some-> (resolve 'docs?) deref) "docs:check: " "readme:check: ") fails " failing command(s) over " (count targets) " target(s)"))
   (System/exit (if (zero? fails) 0 1)))

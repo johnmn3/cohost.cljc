@@ -49,9 +49,9 @@ directory; the task prints `build: target/<name>/run`. Measured 2026-11-02 on `c
 | `:jolt` | `bin/cohost-jolt` (`jolt build -m cohost.cli`, 36 MB, 36 s), the stock sources, the source roots, `run` | nothing: ran with jolt off `PATH` | yes |
 | `:cljw` | a script bundle: cohost's sources, the stock sources, the source roots, `run` (`cljw -cp ... -m cohost.cli`) | cljw | yes (an argument with spaces and quotes too) |
 | `:lg` | a script bundle, `run` (`lg -source-paths ... lg_cli.lg`) | lg | yes (the same argument) |
-| `:lpy` | a script bundle, `run` (`basilisp run -p ... -c ...`) | basilisp | not on this box: the coordinator's |
-| `:phel` | a script bundle with `phel-config.php`, `run` (`phel run dev/phel_cli.phel` in the bundle's `cohost/`) | php + phel | not on this box: the coordinator's |
-| `:jank` | `run` itself: one native executable (`cohost.build-jank`, D-7): the booted core's snapshot and the project's namespaces compiled `-O3`, jank's static runtime; rebuilt when stale (state in `cohost-build/`) | nothing: it links only libc, libstdc++, libgcc_s, libm | yes (D-7: `Hello, you!` in 0.926 s, median of 3, from another directory) |
+| `:lpy` | a script bundle, `run` (`basilisp run -p ... -c ...`) | basilisp | yes (`bb readme:check lpy`, 2026-11-02) |
+| `:phel` | a script bundle with `phel-config.php`, `run` (`phel run dev/phel_cli.phel` in the bundle's `cohost/`) | php + phel | yes (`bb readme:check phel`, 2026-11-02) |
+| `:jank` | `run` itself: one native executable (`cohost.build-jank`): the booted core's snapshot and the project's namespaces compiled `-O3`, jank's static runtime; rebuilt when stale (state in `cohost-build/`) | nothing: it links only libc, libstdc++, libgcc_s, libm | yes (`Hello, you!` in 0.926 s, median of 3, from another directory) |
 | `:cljrs` | not yet: cohost's clojurust boot is parked and the CLI does not run it (`bin/cohost`: not wired) | | |
 
 Why cljw and lg ship a script bundle and not their own native packaging (measured on cohost.cli): `cljw build -m
@@ -135,7 +135,7 @@ the config names. `:jank` runs `jank -O3 --module-path <cohost's -O3 AOT objects
 run-main cohost.cli -- <config>`; the objects are `dev/perf/jank_aot_ensure.clj`'s, rebuilt
 when `src/cohost` or the jank binary changed (the first run after a change compiles them).
 
-## jank: where `cohost :jank` spends its time (D-8)
+## jank: where `cohost :jank` spends its time
 
 Measured 2026-11-02 ET in `dev/cli-demo` with a fresh snapshot, `bash dev/perf/jank_snapshot_cli_parts.sh`: each part is its own command, three runs, seconds (the jank parts run the launch's own `jank -O3 ... run-main cohost.cli` with a config that stops at that point).
 
@@ -157,14 +157,14 @@ What moved:
 
 - `-main` cost 2.36 s and loading the app 0.13 s: jank's lazy JIT compiled the app's functions at `-O3` on their first call, every run. A **project snapshot** compiles them once: `bin/cohost`'s jank launch records the main namespace's load on top of a snapshot boot, emits the project's library modules, `compile-module`s them `-O3` into `<project>/target/cohost-jank/` (keyed by the core snapshot's stamp, every file under the project's roots and the main namespace), and passes the module to `cohost.cli`, which registers it before running. When it is stale, the run builds it first (`cohost: jank: compiling the project's namespaces ahead (once per change)`; 37.2 s for the first run of the demo, the build included); `COHOST_JANK_PROJECT=none` turns it off. With it, loading and `-main` together are within the spread of a run that stops before them.
 - `cohost.cli` and its start cost 1.54 s more than the snapshot boot: `cohost.cli` was JIT-compiled from source every run. The snapshot's core module now requires it, so the snapshot's compile makes its object.
-- Not moved: the launcher (about 0.1 s with `.cpcache` hit), a jank process (0.62 s), cohost's objects (0.49 s; loading only `cohost.hosts.auto`, `cohost.boot` and `cohost.cli` instead of `cohost.run` measured the same, 1.197 / 1.208 / 1.062 against 1.204 / 1.118 / 1.218), the snapshot's replay (0.64 s). Under 1.485 s is jank's static executable (D-7: 0.911 s).
-- The stale case (26.26 s, D-5: the AOT boot of core.clj) lasts until `bb boot:jank-snapshot` rebuilds the core snapshot. That build records a boot (1 m 49 s in D-1), emits and compiles every module (4 m 56 s in D-1), and first recompiles cohost's AOT objects when `src/cohost` changed. Rebuilding only the modules whose source changed needs the emitter to keep unchanged files and jank's `compile-module` to skip them; whether it does is not measured, and a codemod change can change every recorded form. Not done in D-8.
+- Not moved: the launcher (about 0.1 s with `.cpcache` hit), a jank process (0.62 s), cohost's objects (0.49 s; loading only `cohost.hosts.auto`, `cohost.boot` and `cohost.cli` instead of `cohost.run` measured the same, 1.197 / 1.208 / 1.062 against 1.204 / 1.118 / 1.218), the snapshot's replay (0.64 s). Under 1.485 s is jank's static executable (0.911 s, "A native executable on jank" below).
+- The stale case (26.26 s: the AOT boot of core.clj) lasts until `bb boot:jank-snapshot` rebuilds the core snapshot. That build records a boot (1 m 49 s, measured 2026-11-02), emits and compiles every module (4 m 56 s, measured 2026-11-02), and first recompiles cohost's AOT objects when `src/cohost` changed. Rebuilding only the modules whose source changed needs the emitter to keep unchanged files and jank's `compile-module` to skip them; whether it does is not measured, and a codemod change can change every recorded form. Not done yet.
 
 The fix this needed (any snapshot): a library module loaded inside another library's load now restores what was loading when it began (`snap-lib-begin!` pushes `:loading`, `snap-lib-end!` pops it) instead of the parent recorded at snapshot time.
 
-## A native executable on jank (D-7)
+## A native executable on jank
 
-`cohost.build-jank/build!` (src/cohost/build_jank.clj) makes one native executable of a project's app on jank: the booted core's snapshot plus the app's namespaces, compiled `-O3` and linked by `jank compile --runtime static`, with the app's `-main` as its entry. Lane C's `cohost.build` (tools.build: `cohost -T:build jank-exe`) calls it; in this repo, `bb build:jank <project-dir> <main-ns> [name]` does (the roots are what `bin/cohost :jank -Spath` prints).
+`cohost.build-jank/build!` (src/cohost/build_jank.clj) makes one native executable of a project's app on jank: the booted core's snapshot plus the app's namespaces, compiled `-O3` and linked by `jank compile --runtime static`, with the app's `-main` as its entry. `cohost.build` (tools.build: `cohost -T:build jank-exe`) calls it; in this repo, `bb build:jank <project-dir> <main-ns> [name]` does (the roots are what `bin/cohost :jank -Spath` prints).
 
 1. cohost's own namespaces as `-O3` AOT objects;
 2. a boot with record mode on: the project's source roots added, the twelve libraries and the app's main namespace loaded through cohost's loader (so the app, its `:local/root` libraries and its Maven jars are rewritten as every other namespace is);
