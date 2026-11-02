@@ -1392,3 +1392,18 @@
   "The report of the boot a loaded snapshot restored, or nil."
   []
   (when (:snapshot? @state) (:report @state)))
+
+(defn boot-from-snapshot!
+  "boot! from a snapshot: require its cohost.core module (it replays the
+   recorded boot and restores its state) unless one is loaded. root: the
+   stock root later loads read (the snapshot recorded the one it was built
+   with, relative to the repo). The caller checked that the snapshot on the
+   module path is fresh (jank: dev/perf/jank_snapshot_cli.clj). -> the
+   boot's report."
+  [{:keys [root]}]
+  (when-not (snapshot-report) (host/require-host! core-ns))
+  (let [r (snapshot-report)]
+    (when-not r
+      (throw (host/ex* 'java.lang.Exception (str core-ns " loaded, but it is not a snapshot"))))
+    (when root (swap! state assoc :root root))
+    r))
