@@ -39,7 +39,7 @@
 ;; snapshot loadable: the stamp is written last. COHOST_JANK_REBUILD=0: no
 ;; background rebuild, the command is printed instead. The rebuild runs nice'd
 ;; (the run beside it keeps the CPU it needs).
-(defn- pid-alive? [pid] (and pid (fs/exists? (str "/proc/" pid))))
+(defn pid-alive? [pid] (and pid (fs/exists? (str "/proc/" pid))))
 
 (defn rebuild-in-background!
   "Start the snapshot's rebuild in repo unless one is running; one stderr line
@@ -104,12 +104,16 @@
     (.update d (.getBytes s "UTF-8"))
     (apply str (map #(format "%02x" (bit-and % 0xff)) (.digest d)))))
 
-(defn- project-key [repo roots main]
+(defn project-key
+  "A project's compiled namespaces' key: the core snapshot's stamp (core-stamp,
+   default jank's), every file under the project's roots, and the scripts that
+   make them."
+  [repo roots _main & [core-stamp]]
   (let [files (sort (mapcat source-files roots))
         sums (if (seq files)
                (:out (p/shell {:out :string :in (str/join "\n" files)} "xargs" "-d" "\n" "sha256sum"))
                "")]
-    (sha256-of (str (slurp (str repo "/target/jank-snapshot/stamp"))
+    (sha256-of (str (slurp (or core-stamp (str repo "/target/jank-snapshot/stamp")))
                     sums
                     (:out (p/shell {:out :string} "sha256sum" (str repo "/dev/perf/jank_snapshot_cli.clj")
                                    (str repo "/dev/perf/jank_snapshot_project_record.jank")
@@ -189,7 +193,7 @@
                  (binding [*out* *err*]
                    (println (str "cohost: jank: compiling the project's namespaces in the background for the next run ("
                                  dir "/build.log)"))))))})))))
-(defn- project-namespaces
+(defn project-namespaces
   "The namespaces under the project's own source roots (those inside the
    project directory: its :paths, not its dependencies'), from their files."
   [project roots]

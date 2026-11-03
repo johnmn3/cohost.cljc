@@ -238,6 +238,17 @@
                ((resolve 'jank-project-launch) repo cwd roots main-ns (:module-path l) (:env l)))]
     (merge l proj)))
 
+(defn lpy-launch
+  "basilisp (D-10): the cached core when fresh (else boot!, and it builds in
+   the background), and the project's compiled namespaces when fresh (else
+   this run records them and they compile after it): lane D's
+   dev/perf/lpy_snapshot_cli.clj."
+  [cwd roots]
+  (load-file (str repo "/dev/perf/lpy_snapshot_cli.clj"))
+  (let [l ((resolve 'lpy-cli-launch) repo)
+        proj (when (:snapshot? l) ((resolve 'lpy-project-launch) repo cwd roots (first (:paths l))))]
+    (merge l proj {:paths (vec (concat (:paths l) (:paths proj)))})))
+
 (defn launch! [host cwd config & [jank]]
   (let [cfg (str config)
         src (str repo "/src")]
@@ -249,8 +260,8 @@
       "phel" (run-inherit repo ["phel" "run" "dev/phel_cli.phel" cfg])
       "jolt" (run-inherit cwd ["jolt" "-Scp" src "-m" "cohost.cli" cfg])
       "cljw" (run-inherit cwd ["cljw" "-cp" src "-m" "cohost.cli" cfg])
-      "lpy" (run-inherit cwd ["basilisp" "run" "-p" src "-c"
-                              (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])
+      "lpy" (run-inherit cwd (vec (concat ["basilisp" "run"] (mapcat (fn [d] ["-p" d]) (:paths jank)) ["-p" src "-c"
+                              (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])))
       "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg])
       ;; the booted core from a fresh snapshot (else cohost's -O3 AOT objects
       ;; and a boot of core.clj), cohost.cli and the program JIT-compiled at -O3
@@ -298,15 +309,21 @@
                               (println (str "cohost: prepared " (count roots) " source roots under " cache-dir)))
                             ;; jank (D-10): -P is the install step: the core
                             ;; snapshot and the project's namespaces, compiled
-                            (when (= host "jank")
-                              (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
-                              (System/exit ((resolve 'jank-prepare!) repo cwd roots))))
+                            (case host
+                              "jank" (do (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
+                                         (System/exit ((resolve 'jank-prepare!) repo cwd roots)))
+                              "lpy" (do (load-file (str repo "/dev/perf/lpy_snapshot_cli.clj"))
+                                        (System/exit ((resolve 'lpy-prepare!) repo cwd roots)))
+                              nil))
           :else
           (let [run (if (= mode :X)
                       {:inits [] :main (exec-config (:main o) argmap)}
                       (main-config cwd (concat (when (= mode :M) (:main-opts argmap)) (:main o))))
                 cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))
-                jank (when (= host "jank") (jank-launch cwd roots run))]
+                jank (case host
+                       "jank" (jank-launch cwd roots run)
+                       "lpy" (lpy-launch cwd roots)
+                       nil)]
             (fs/create-dirs (fs/parent cfg-file))
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
                                                :verbose (boolean (System/getenv "COHOST_VERBOSE"))}
