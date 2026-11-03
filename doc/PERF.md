@@ -1436,6 +1436,67 @@ boot (AOT) maxrss 1776172 -> 2166628 KB (1.22x), binary-trees-14 80.86 -> 56.19 
 Lane D's D-4 (cohost's mainline, not yet in `max/main`) chose the same 512M on another box for the CLI launch
 (`dev/perf/jank_snapshot_cli.clj`); when `max/main` takes the mainline, that literal should read `(jank-gc-env)`.
 
+### The collector settings against cohost's live heap (jank-MAX A1-2)
+
+A1 set `GC_INITIAL_HEAP_SIZE=512M`. This is the matrix since then: GC_INITIAL_HEAP_SIZE {512M, 1G, 2G} x
+GC_FREE_SPACE_DIVISOR {3 (bdwgc's default), 1}, plus `GC_ENABLE_INCREMENTAL=1` at 512M. It was measured with
+`bb bench:programs jank` (cohost on jank) on k-nucleotide, keyword-map, binary-trees-14, lazy-pipeline and json, in
+both columns: UNPATCHED apt 0.1-noble and PATCHED `/home/user/int-a/jank-inst` (the 21-patch series). Each cell is the
+median of 3 rounds of MEDIAN-MS, with the min-max of the rounds in brackets. Each leg set its own `GC_*` environment,
+so the launcher added nothing. maxrss is the largest process of the leg, a cohost-on-jank process.
+
+The rounds ran 2026-11-03, 5:30-7:00 AM ET, on max/x3 `6ef471f`, on int-a's box (4 CPUs, 15 GB, shared). Each round
+rotated the order of the 7 settings x 2 columns, and every leg started under the gate (1-minute load 3.8-7.7, free
+memory above 4 GB), one jank process at a time.
+
+UNPATCHED (apt), ms:
+
+| row | 512M:3 | 512M:1 | 1G:3 | 1G:1 | 2G:3 | 2G:1 | 512M:inc |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| k-nucleotide | 467.5 (457-590) | 432.3 (427-476) | 475.4 (461-578) | 491.7 (478-650) | - | - | 710.5 (583-779) |
+| keyword-map | 358.9 (340-400) | 343.3 (324-449) | 274.3 (273-357) | 346.4 (279-377) | - | - | 391.9 (343-420) |
+| binary-trees-14 | 114.0 (113-143) | 122.7 (110-157) | 87.0 (75-101) | 91.3 (76-142) | - | - | 151.3 (112-186) |
+| lazy-pipeline | 175.3 (174-177) | 127.8 (118-199) | 72.7 (70-76) | 92.0 (73-121) | - | - | 162.3 (150-177) |
+| json | 1250.8 (1238-1580) | 1266.1 (1207-1352) | 1514.6 (1175-1620) | 1570.8 (1221-2000) | - | - | 1771.6 (1330-2065) |
+| maxrss KB | 1273428.0 (1273172-1273432) | 1273360.0 (1272916-1273708) | 1841544.0 (1841288-1842056) | 1841632.0 (1841616-1841824) | 278684.0 (278520-278712) | 278568.0 (278508-278736) | 1273176.0 (1272984-1273484) |
+
+PATCHED (21-patch series), ms:
+
+| row | 512M:3 | 512M:1 | 1G:3 | 1G:1 | 2G:3 | 2G:1 | 512M:inc |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| k-nucleotide | 426.8 (426-602) | 439.4 (397-445) | 454.8 (412-477) | 478.2 (388-713) | - | - | 607.7 (590-633) |
+| keyword-map | 245.6 (236-298) | 247.4 (244-248) | 183.4 (182-338) | 181.7 (177-300) | - | - | 248.2 (239-384) |
+| binary-trees-14 | 19.3 (19-20) | 19.6 (19-34) | 19.3 (19-21) | 19.7 (19-25) | - | - | 35.2 (19-39) |
+| lazy-pipeline | 36.7 (36-38) | 37.3 (36-39) | 36.5 (36-65) | 45.1 (35-60) | - | - | 35.2 (35-74) |
+| json | 773.4 (771-776) | 760.1 (748-1156) | 752.3 (737-917) | 935.2 (748-1000) | - | - | 821.7 (792-1162) |
+| maxrss KB | 1377932.0 (1377900-1378012) | 1378020.0 (1377752-1378204) | 1946372.0 (1946184-1946668) | 1946332.0 (1946324-1946356) | 285732.0 (285568-285832) | 285712.0 (285712-285716) | 1377900.0 (1377860-1377988) |
+
+Against A1's 512M:3:
+
+- apt 512M:1 vs 512M:3: k-nucleotide -8%, keyword-map -4%, binary-trees-14 +8%, lazy-pipeline -27%, json +1% | wins>=10%: 1 losses>5%: ['binary-trees-14'] | maxrss x1.00
+- apt 1G:3 vs 512M:3: k-nucleotide +2%, keyword-map -24%, binary-trees-14 -24%, lazy-pipeline -59%, json +21% | wins>=10%: 3 losses>5%: ['json'] | maxrss x1.45
+- apt 1G:1 vs 512M:3: k-nucleotide +5%, keyword-map -3%, binary-trees-14 -20%, lazy-pipeline -48%, json +26% | wins>=10%: 2 losses>5%: ['k-nucleotide', 'json'] | maxrss x1.45
+- apt 512M:inc vs 512M:3: k-nucleotide +52%, keyword-map +9%, binary-trees-14 +33%, lazy-pipeline -7%, json +42% | wins>=10%: 0 losses>5%: ['k-nucleotide', 'keyword-map', 'binary-trees-14', 'json'] | maxrss x1.00
+- patched 512M:1 vs 512M:3: k-nucleotide +3%, keyword-map +1%, binary-trees-14 +1%, lazy-pipeline +2%, json -2% | wins>=10%: 0 losses>5%: [] | maxrss x1.00
+- patched 1G:3 vs 512M:3: k-nucleotide +7%, keyword-map -25%, binary-trees-14 +0%, lazy-pipeline -0%, json -3% | wins>=10%: 1 losses>5%: ['k-nucleotide'] | maxrss x1.41
+- patched 1G:1 vs 512M:3: k-nucleotide +12%, keyword-map -26%, binary-trees-14 +2%, lazy-pipeline +23%, json +21% | wins>=10%: 1 losses>5%: ['k-nucleotide', 'lazy-pipeline', 'json'] | maxrss x1.41
+- patched 512M:inc vs 512M:3: k-nucleotide +42%, keyword-map +1%, binary-trees-14 +82%, lazy-pipeline -4%, json +6% | wins>=10%: 0 losses>5%: ['k-nucleotide', 'binary-trees-14', 'json'] | maxrss x1.00
+
+**Decision: A1 stays 512M.** No setting meets the bar in either column (at least 10% better on three rows, nothing
+more than 5% worse, maxrss under 2x):
+- The closest is apt 1G:3: keyword-map -24%, binary-trees-14 -24% and lazy-pipeline -59%, but json +21%, at 1.45x
+  maxrss. On the series, the same setting wins only keyword-map (-25%) and loses k-nucleotide (+7%).
+- A default reaches both binaries through the launcher, so a setting that wins on one and loses on the other is not
+  taken.
+- Incremental marking loses everywhere except lazy-pipeline (k-nucleotide +52% / +42%, binary-trees-14 +33% / +82%).
+- Every program that ran printed the JVM's RESULT (SAME).
+
+**2G does not run.** At `GC_INITIAL_HEAP_SIZE=2G` every program fails on both binaries, in all 3 rounds: "JIT session
+error: In graph .../cohost/hosts/jank_host.o, section .eh_frame: relocation target ... (DW.ref.__gxx_personality_v0)
+is out of range of Delta32 fixup". The 2 GB initial heap puts the JIT's object mapping more than 2 GB from the
+runtime's code, beyond the reach of a 32-bit relocation. The 2G maxrss column (about 280 MB) is that failing process.
+So the launcher's default must stay below that, and a user's `GC_INITIAL_HEAP_SIZE` of 2G breaks cohost on jank.
+
 ## cohost-max: unpatched and patched
 
 The jank-MAX fleet's scoreboard in two columns: UNPATCHED is apt jank 0.1-noble with cohost's launcher (A1's
