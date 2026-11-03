@@ -1,7 +1,8 @@
 # Choosing a runtime
 
 *2026-11-02. Core and library batteries: the coordinator's check of cohost coord/b13 @ f9ee475,
-whose code this release (max/integrate @ 6eec4e2) carries with the battery's rows reordered.
+whose code this release carries (max/integrate @ 6eec4e2, with the battery's rows reordered) plus the
+jank sort fix (max/release-sort-fix @ bddd2d1: on apt jank, battery and libraries unchanged).
 Speed: doc/PERF.md, "Programs against JVM Clojure" (cf1046e; jank's first
 output from its snapshot: 5d02b93).*
 
@@ -37,6 +38,8 @@ cohost also carries a patch series against jank under `upstream/jank/` for its o
   jank 0.1 computes `+` and `*` of two values that both fit in 32 bits in 32 bits, so a sum
   past 2^31 wraps there (the programs `pipeline` and `dispatch` give the JVM's answer modulo
   2^32 on jank).
+- **Sorting on jank 0.1 (apt).** `sort` and `sort-by` are cohost's own there (jank's own sort result
+  walks quadratically on that build; a boot probe picks), and the metadata of a sorted result is nil.
 - **Characters.** jank's strings are bytes: under the C locale a character above ASCII reads
   back as `?`.
 - **Regex groups.** ClojureWasm's and let-go's regex matchers give no group positions
