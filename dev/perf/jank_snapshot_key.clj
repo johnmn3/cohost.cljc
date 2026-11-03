@@ -18,7 +18,20 @@
          '[clojure.string :as str])
 (load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_inputs.clj"))
 
-(def ^:private root "target/jank-snapshot")
+;; X1-7: the jank binary is JANK_BIN when set (default jank on PATH), as for the AOT
+;; objects (dev/perf/jank_aot_ensure.clj): a JANK_BIN binary's snapshot lives under its
+;; own root (suffix: sha256 of the binary's real path, 12 hex), and its key's version
+;; line also carries the binary's real path, size and mtime (print-binary-version does
+;; not move when a patch changes the compiler). The default jank keeps its root and key.
+(def ^:private snap-bin
+  (let [b (System/getenv "JANK_BIN")] (if (str/blank? b) "jank" b)))
+(def ^:private snap-bin-path
+  (when-not (= "jank" snap-bin) (str (fs/real-path snap-bin))))
+(def ^:private root
+  (if snap-bin-path
+    (str "target/jank-snapshot-"
+         (subs (-> (shell {:out :string :in snap-bin-path} "sha256sum") :out str/trim) 0 12))
+    "target/jank-snapshot"))
 (def ^:private src-dir (str root "/src"))
 (def ^:private aot-dir (str root "/aot"))
 
@@ -28,7 +41,10 @@
                      (source-files "dev/perf" "jank_{inputs.clj,snapshot_record.jank,snapshot_emit.clj,snapshot_key.clj,snapshot_ensure.clj,snapshot_run.jank}")))))
 
 (defn- jank-version []
-  (str/trim (:out (shell {:out :string} "jank" "print-binary-version"))))
+  (let [v (str/trim (:out (shell {:out :string} snap-bin "print-binary-version")))]
+    (if snap-bin-path
+      (str v " " snap-bin-path " " (fs/size snap-bin-path) " " (.toMillis (fs/last-modified-time snap-bin-path)))
+      v)))
 
 (defn snapshot-key []
   (let [files (input-files)
@@ -66,11 +82,12 @@
     (fs/delete-tree root)
     (fs/create-dirs aot-dir)
     ;; 1. record: a boot with record mode on, and the twelve libraries
-    (shell "jank" "--module-path" (str stage1 ":src") "run" "dev/perf/jank_snapshot_record.jank")
+    (shell snap-bin "--module-path" (str stage1 ":src") "run" "dev/perf/jank_snapshot_record.jank"
+           "--" "--out" (str root "/events.edn"))
     ;; 2. emit one module per namespace
-    (shell "bb" "dev/perf/jank_snapshot_emit.clj")
+    (shell "bb" "dev/perf/jank_snapshot_emit.clj" "--events" (str root "/events.edn") "--out" src-dir)
     ;; 3. compile them all through the entry module, -O3
-    (shell "jank" "--module-path" (str src-dir ":src") "compile-module" "cohost.snapshot"
+    (shell snap-bin "--module-path" (str src-dir ":src") "compile-module" "cohost.snapshot"
            "-O3" "--target-dir" aot-dir)
     (let [cache (cache-dir)]
       (when-not (objects-present? cache)
