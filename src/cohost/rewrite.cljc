@@ -975,6 +975,8 @@
   [fn-hint params]
   (or (primitive-hint (:tag (meta params))) fn-hint))
 
+(declare self-call-block-arg?)
+
 (defn- emit-arity
   "One fn* arity. A primitive hint is coerced on every host, so the value
    matches the JVM: a parameter's on entry, a return's on exit (the JVM's
@@ -1018,7 +1020,7 @@
                                          (carry-meta p p)))
                                      params hints)
                            rsp (when ret-hint (get spells ret-hint))
-                           inner (apply list 'fn* (concat (when (and single? nm) [(bare-sym nm)])
+                           inner (apply list 'fn* (concat (when (and single? nm (not (self-call-block-arg? nm body'))) [(bare-sym nm)])
                                                           [(cons (carry-meta ips params) body')]))
                            inner (if rsp (with-meta inner {:rettag (list 'quote rsp)}) inner)]
                        [(apply list inner (map bare-sym params))])
@@ -1279,6 +1281,31 @@
                                        (some #(and (symbol? %) (primitive-hint (:tag (meta %)))) params))))
                             arities))))))
 
+(defn- block-inside?
+  "True when form holds a let*, loop*, letfn* or try outside a quote."
+  [form]
+  (cond (seq? form) (and (not= 'quote (first form))
+                         (or (contains? '#{let* loop* letfn* try let loop letfn} (first form))
+                             (boolean (some block-inside? form))))
+        (coll? form) (boolean (some block-inside? form))
+        :else false))
+
+(defn- self-call-block-arg?
+  "True when a rewritten body calls nm with an argument holding a let*,
+   loop*, letfn* or try. jank on apt (0.1-noble) emits a self-named fn*'s
+   self-call with such an argument after the argument's C++ block has closed:
+   the call names an undeclared variable and the module fails to compile
+   ((defn f [n] (if (< n 1) 0 (f (let [m (dec n)] (if (pos? m) m 0))))),
+   max/collate and max/main alike). An if argument compiles."
+  [nm form]
+  (cond (seq? form) (and (not= 'quote (first form))
+                         (or (and (symbol? (first form)) (= (name nm) (name (first form)))
+                                  (nil? (namespace (first form)))
+                                  (boolean (some block-inside? (rest form))))
+                             (boolean (some #(self-call-block-arg? nm %) form))))
+        (coll? form) (boolean (some #(self-call-block-arg? nm %) form))
+        :else false))
+
 (defn- self-named-init
   "On a host that compiles native hints, a def whose init is a hinted anonymous
    fn gets the var's name as the fn's own name, as jank's defn does: the hinted
@@ -1292,7 +1319,8 @@
              ;; fn*, and a self-named fn* holding closures breaks jank's
              ;; compile-module codegen (see fn*-inside?)
              (not (some #{\.} (str nm)))
-             (not (some fn*-inside? (rest init))))
+             (not (some fn*-inside? (rest init)))
+             (not (self-call-block-arg? nm (rest init))))
       (concat (butlast more)
               [(with-meta (apply list (first init) (bare-sym nm) (rest init)) (meta init))])
       more)))
@@ -1326,7 +1354,8 @@
                        ;; and no closure inside: a self-named fn*
                        ;; holding closures breaks jank's compile-module
                        ;; codegen (see fn*-inside?)
-                       (not (some fn*-inside? (rest (last more')))))
+                       (not (some fn*-inside? (rest (last more'))))
+                       (not (self-call-block-arg? nm (rest (last more')))))
                 (concat (butlast more')
                         [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
                 more')]

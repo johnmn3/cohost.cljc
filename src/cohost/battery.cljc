@@ -22,6 +22,7 @@
    ["doseq + atom" "(let [a (atom [])] (doseq [x (range 3) y [:a :b]] (swap! a conj [x y])) @a)" [[0 :a] [0 :b] [1 :a] [1 :b] [2 :a] [2 :b]]]
    ["dotimes while" "(let [a (atom 0)] (dotimes [_ 4] (swap! a inc)) (while (< @a 10) (swap! a inc)) @a)" 10]
    ["lazy-seq infinite" "(take 5 (iterate (partial * 2) 1))" '(1 2 4 8 16)]
+   ["a self-call with a let argument" "(do (defn sc-let [n] (if (< n 1) 0 (+ 1 (sc-let (let [m (dec n)] (if (pos? m) m 0)))))) (defn sc-loop [n acc] (if (< n 1) acc (sc-loop (dec n) (loop [k 0] (if (< k 2) (recur (inc k)) (+ acc k)))))) [(sc-let 3) (sc-loop 3 0)])" [3 6]]
    ["lazy-seq user" "(do (defn nats ([] (nats 0)) ([n] (lazy-seq (cons n (nats (inc n)))))) (take 4 (drop 2 (nats))))" '(2 3 4 5)]
    ["lazy-cat concat mapcat" "[(take 4 (lazy-cat [1 2] (range))) (mapcat reverse [[1 2] [3 4]])]" [[1 2 0 1] [2 1 4 3]]]
    ["partition group-by frequencies" "[(partition 2 1 [1 2 3 4]) (partition-all 3 (range 7)) (group-by odd? (range 5)) (frequencies \"abca\")]" ['((1 2) (2 3) (3 4)) '((0 1 2) (3 4 5) (6)) {true [1 3] false [0 2 4]} {\a 2 \b 1 \c 1}]]
