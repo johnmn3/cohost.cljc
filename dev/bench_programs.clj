@@ -30,7 +30,7 @@
 ;; lg-built, lpy-built, phel-built) measure the compiled build: what `cohost
 ;; -T:build build` makes for <t>, run as target/<name>/run, the same method.
 (require '[babashka.fs :as fs]
-         '[babashka.process :refer [shell]]
+         '[babashka.process :as bp :refer [shell]]
          '[clojure.string :as str])
 
 ;; JANK_BIN=<path> runs the jank targets on that binary (default: jank on
@@ -185,8 +185,16 @@
 (defn cohost-source [src clock arg]
   (str (harness src clock false) "(__bench " (pr-str arg) ")\n"))
 
-(defn run! [cmd & [opts]]
-  (apply shell (merge {:out :string :err :string :continue true :timeout timeout-ms} opts) cmd))
+(defn run!
+  "cmd's process, killed with its children when it runs past timeout-ms
+   (babashka.process's shell has no :timeout of its own)."
+  [cmd & [opts]]
+  (let [proc (apply babashka.process/process (merge {:out :string :err :string} opts) cmd)
+        r (deref proc timeout-ms ::timeout)]
+    (if (= r ::timeout)
+      (do (babashka.process/destroy-tree proc)
+          {:exit -1 :out "" :err (str "timeout after " (quot timeout-ms 1000) " s")})
+      r)))
 
 (def pid (.pid (java.lang.ProcessHandle/current)))
 
