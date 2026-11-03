@@ -8,11 +8,30 @@
 ;; Loading this file recompiles when the stamp is stale and returns the
 ;; cache directory (the value of the trailing ensure! call).
 ;;   bb -e '(println (load-file "dev/perf/jank_aot_ensure.clj"))'
+;;
+;; JANK_BIN=<path> picks the jank binary (default: jank on PATH). A JANK_BIN
+;; binary gets its own cache root, target/jank-aot-<sha256 of its real path,
+;; 12 hex>, so runs that alternate the apt jank and a source build never load
+;; each other's objects, and its stamp's version line also carries the binary's
+;; real path, size and mtime: print-binary-version does not change when a
+;; patch changes the compiler, a rebuild does change those.
 (require '[babashka.fs :as fs]
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
 
-(def ^:private aot-root "target/jank-aot")
+(def jank-bin
+  (let [b (System/getenv "JANK_BIN")]
+    (if (str/blank? b) "jank" b)))
+
+(defn- jank-bin-path []
+  (when-not (= "jank" jank-bin)
+    (str (fs/real-path jank-bin))))
+
+(def ^:private aot-root
+  (if-let [p (jank-bin-path)]
+    (str "target/jank-aot-"
+         (subs (-> (shell {:out :string :in p} "sha256sum") :out str/trim) 0 12))
+    "target/jank-aot"))
 
 (defn- cohost-files []
   (->> (fs/glob "src/cohost" "**")
@@ -33,7 +52,10 @@
         first)))
 
 (defn jank-version []
-  (str/trim (:out (shell {:out :string} "jank" "print-binary-version"))))
+  (let [v (str/trim (:out (shell {:out :string} jank-bin "print-binary-version")))]
+    (if-let [p (jank-bin-path)]
+      (str v " " p " " (fs/size p) " " (.toMillis (fs/last-modified-time p)))
+      v)))
 
 (defn- run-objects []
   (mapv str (fs/glob aot-root "**/cohost/run.o")))
@@ -65,7 +87,7 @@
   (when (fs/exists? (fs/path aot-root "_cache"))
     (fs/delete-tree (fs/path aot-root "_cache")))
   (fs/create-dirs aot-root)
-  (shell "jank" "--module-path" "src" "compile-module" "cohost.run"
+  (shell jank-bin "--module-path" "src" "compile-module" "cohost.run"
          "-O3" "--target-dir" aot-root)
   (let [runs (run-objects)]
     (when-not (= 1 (count runs))

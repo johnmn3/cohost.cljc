@@ -1,0 +1,898 @@
+jank-34: the call site calls a variadic fn's variadic arity directly, and computes a multimethod's
+dispatch and method lookup inline (cohost doc/upstream/jank-34-callsite-variadic-multi.md; lane U7,
+order U7-4)
+
+Base: jank-lang/jank f3d82d65499920f81216e9235bd5d3a34a968e3f with the series before it in
+upstream/jank/patches/series (... 27, 28, 30, 29, 32). Apply from the clone's root: git apply <this file>.
+
+Builds on 24-direct-calls (call_fast) and 29-variadic-multi (stack rest args, the multimethod cache
+fix, keyword dispatch inline).
+
+Files:
+- compiler+runtime/src/cpp/jank/analyze/processor.cpp, include .../analyze/expr/call.hpp:
+  - a registry of each var's variadic shape as of its last analyzed def (the variadic arity's
+    required count, the fixed arities). A call whose head is such a var, with at least the
+    required args and no fixed arity of its count, is marked variadic_direct.
+  - a call whose head var holds a multimethod when the call is analyzed is marked multi_direct.
+  - both only at -Odirect-call (the -O3 default); -Ono-direct-call turns both off.
+- compiler+runtime/src/cpp/jank/ir/{processor,builder}.cpp, include .../ir/{builder,instruction}.hpp:
+  the marks ride on inst::dynamic_call.
+- compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp: emits
+  jank::runtime::call_variadic_direct<P>(f, args...) or jank::runtime::call_multi_direct(f, args...)
+  in place of call_fast.
+- compiler+runtime/include/cpp/jank/runtime/core/call_direct.hpp (new; included from prelude.hpp):
+  - call_variadic_direct<P>: when the fn object read at the call is a jit_variadic_function (a
+    realized deferred fn's compiled one) whose variadic arity still takes P required params (and,
+    for exactly P args, has no fixed arity of P), it calls arity_{P+1} directly with the fixed args
+    and the rest sequence: on the caller's stack when 29's rest_noescape bit is set, else one packed
+    allocation. No arity switch, no virtual call. Anything else (a redefinition, with-redefs, a
+    binding, a closure) takes call_fast.
+  - call_multi_direct: when the object is a multi_function, the dispatch value of a one-argument
+    call is computed inline (a get of the dispatch key, or the dispatch constant), else the dispatch
+    fn is called through call_fast. The method is read from the cache entries under the hierarchy
+    compare (identical dispatch value), else from get_fn, and called through call_fast.
+- compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp, src/.../multi_function.cpp:
+  - dispatch_kind / dispatch_key: a keyword dispatch fn is kind key (as 29 computed it); a new
+    constructor takes a shape from defmulti.
+  - the one-entry method cache is two entries, so two alternating dispatch values both hit. A miss
+    fills only an empty or stale entry (no allocation per call, three or more values stay on the
+    map).
+- compiler+runtime/src/jank/clojure/core.jank (defmulti), include .../runtime/core.hpp,
+  src/.../runtime/core.cpp (a multi_fn overload): defmulti reads the dispatch form. A one-param fn
+  returning a literal ((fn [x] 0)) is :constant; one getting a keyword from its param ((fn [x] (:k x)),
+  (fn [x] (get x :k))) is :key. Anything else is unchanged.
+
+Measured (lane U7-4; box shared, no lock, load 3.8-4.6; 3 interleaved rounds vs the series without
+34, built on the series through 32 without 31; the whole series applies clean with 31):
+- run.sh 34-callsite, medians ns per 1e7, series / +34: call-variadic 84071982 / 66802207 (2.10x
+  call-2, bar 3x); multi-one-method 108766633 / 53802477 (1.68x fn-call, bar 2x);
+  multi-two-methods-alternating 215406823 / 96621896 (3.02x fn-call, bar 2x not met: an arbitrary
+  dispatch fn is still called); multi-keyword-alternating 222806755 / 118583975. Every correctness
+  line Clojure's values on both.
+- -Ono-direct-call: call-variadic 360843495 (the stack and direct paths off); values unchanged.
+- run.sh 29, 24, 22, 20: value lines unchanged. bb boot:jank 542/171/78/0, battery 147/149 (as the
+  series), libraries 61/61.
+
+diff --git a/compiler+runtime/include/cpp/jank/analyze/expr/call.hpp b/compiler+runtime/include/cpp/jank/analyze/expr/call.hpp
+index af343939..9e3012bd 100644
+--- a/compiler+runtime/include/cpp/jank/analyze/expr/call.hpp
++++ b/compiler+runtime/include/cpp/jank/analyze/expr/call.hpp
+@@ -32,6 +32,11 @@ namespace jank::analyze::expr
+     jtl::ptr<void> native_return_type{};
+     native_vector<jtl::ptr<void>> native_param_types;
+     u64 native_sig{};
++    /* jank-34: non-zero, the callee var's variadic arity's required param count plus one:
++     * the call site calls that arity's entry directly (guarded on the fn's arity flags). */
++    u8 variadic_direct{};
++    /* jank-34: the callee var held a multimethod when this call was analyzed. */
++    bool multi_direct{};
+ 
+     /* Var, local, or callable. */
+     expression_ref source_expr;
+diff --git a/compiler+runtime/include/cpp/jank/ir/builder.hpp b/compiler+runtime/include/cpp/jank/ir/builder.hpp
+index 5eacc589..330caebb 100644
+--- a/compiler+runtime/include/cpp/jank/ir/builder.hpp
++++ b/compiler+runtime/include/cpp/jank/ir/builder.hpp
+@@ -98,7 +98,9 @@ namespace jank::ir
+                             native_vector<identifier> &&args,
+                             jtl::ptr<void> const native_return_type = {},
+                             native_vector<jtl::ptr<void>> &&native_param_types = {},
+-                            u64 const native_sig = 0);
++                            u64 const native_sig = 0,
++                            u8 const variadic_direct = 0,
++                            bool const multi_direct = false);
+     identifier named_recursion(analyze::expression_position const pos,
+                                identifier const &fn,
+                                jtl::immutable_string const &fn_base_name,
+diff --git a/compiler+runtime/include/cpp/jank/ir/instruction.hpp b/compiler+runtime/include/cpp/jank/ir/instruction.hpp
+index 4245aca8..67758656 100644
+--- a/compiler+runtime/include/cpp/jank/ir/instruction.hpp
++++ b/compiler+runtime/include/cpp/jank/ir/instruction.hpp
+@@ -393,6 +393,13 @@ namespace jank::ir
+        * the args have native_param_types and this instruction's type is the native return. */
+       u64 native_sig{};
+       native_vector<jtl::ptr<void>> native_param_types;
++      /* jank-34: non-zero, the callee's variadic arity's required param count plus one: call
++       * runtime::call_variadic_direct. */
++      u8 variadic_direct{};
++      /* jank-34: the callee var held a multimethod at compile time: call
++       * runtime::call_multi_direct, which computes the dispatch value and reads the method
++       * cache inline. */
++      bool multi_direct{};
+     };
+ 
+     using dynamic_call_ref = jtl::ref<dynamic_call>;
+diff --git a/compiler+runtime/include/cpp/jank/prelude.hpp b/compiler+runtime/include/cpp/jank/prelude.hpp
+index 42e6200e..aed04c18 100644
+--- a/compiler+runtime/include/cpp/jank/prelude.hpp
++++ b/compiler+runtime/include/cpp/jank/prelude.hpp
+@@ -12,6 +12,7 @@
+ #include <jank/runtime/core/equal.hpp>
+ #include <jank/runtime/core/call.hpp>
+ #include <jank/runtime/core.hpp>
++#include <jank/runtime/core/call_direct.hpp>
+ #include <jank/codegen/api.hpp>
+ #include <jank/util/scope_exit.hpp>
+ #include <jank/c_api.h>
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core.hpp b/compiler+runtime/include/cpp/jank/runtime/core.hpp
+index fb4e5521..d64c0265 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/core.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/core.hpp
+@@ -85,6 +85,15 @@ namespace jank::runtime
+                       object_ref const dispatch_fn,
+                       object_ref const default_,
+                       object_ref const hierarchy);
++  /* jank-34: with the dispatch fn's shape, as defmulti read it from the dispatch form:
++   * dispatch_kind :key (dispatch_key a keyword the dispatch fn gets from its argument) or
++   * :constant (dispatch_key the literal it returns); anything else is ignored. */
++  object_ref multi_fn(object_ref const name,
++                      object_ref const dispatch_fn,
++                      object_ref const default_,
++                      object_ref const hierarchy,
++                      object_ref const dispatch_kind,
++                      object_ref const dispatch_key);
+   object_ref
+   defmethod(object_ref const multifn, object_ref const dispatch_val, object_ref const fn);
+   object_ref remove_all_methods(object_ref const multifn);
+diff --git a/compiler+runtime/include/cpp/jank/runtime/core/call_direct.hpp b/compiler+runtime/include/cpp/jank/runtime/core/call_direct.hpp
+new file mode 100644
+index 00000000..71780459
+--- /dev/null
++++ b/compiler+runtime/include/cpp/jank/runtime/core/call_direct.hpp
+@@ -0,0 +1,199 @@
++#pragma once
++
++#include <tuple>
++#include <utility>
++
++#include <jank/runtime/core/call.hpp>
++#include <jank/runtime/core/seq.hpp>
++#include <jank/runtime/var.hpp>
++#include <jank/runtime/rtti.hpp>
++#include <jank/runtime/obj/jit_function.hpp>
++#include <jank/runtime/obj/jit_variadic_function.hpp>
++#include <jank/runtime/obj/multi_function.hpp>
++#include <jank/runtime/obj/native_array_sequence.hpp>
++
++/* jank-34: the call sites compiled code makes, at -Odirect-call, to a var whose def the
++ * analyzer saw: a variadic fn (call_variadic_direct) or a multimethod (call_multi_direct).
++ * Both read the fn object at every call and check its shape there, so a redefined var, a
++ * with-redefs or a binding to anything else takes call_fast, as before. */
++namespace jank::runtime
++{
++  namespace detail
++  {
++    template <usize N>
++    [[gnu::always_inline]]
++    inline auto variadic_arity(obj::jit_variadic_function const * const fn)
++    {
++      if constexpr(N == 1) { return fn->arity_1; }
++      else if constexpr(N == 2) { return fn->arity_2; }
++      else if constexpr(N == 3) { return fn->arity_3; }
++      else if constexpr(N == 4) { return fn->arity_4; }
++      else if constexpr(N == 5) { return fn->arity_5; }
++      else if constexpr(N == 6) { return fn->arity_6; }
++      else if constexpr(N == 7) { return fn->arity_7; }
++      else if constexpr(N == 8) { return fn->arity_8; }
++      else if constexpr(N == 9) { return fn->arity_9; }
++      else { return fn->arity_10; }
++    }
++
++    /* The rest args of one call on the caller's stack (29's stack_rest_args, here so a call
++     * site can build it): alive until the call returns. */
++    template <usize N>
++    struct direct_stack_rest
++    {
++      template <typename... Args>
++      explicit direct_stack_rest(Args const &...args)
++        : storage{ object_ref{ args }... }
++        , seq{ storage, N }
++      {
++      }
++
++      direct_stack_rest(direct_stack_rest const &) = delete;
++      direct_stack_rest(direct_stack_rest &&) = delete;
++
++      object_ref ref() const
++      {
++        return runtime::detail::untagged(&seq);
++      }
++
++      object_ref storage[N];
++      obj::native_array_sequence seq;
++    };
++
++    template <std::size_t P, typename F, typename Tuple, std::size_t... I, std::size_t... J>
++    [[gnu::always_inline]]
++    inline object_ref call_variadic_split(F const arity,
++                                          object_ref const self,
++                                          callable_arity_flags const flags,
++                                          Tuple const &args,
++                                          std::index_sequence<I...>,
++                                          std::index_sequence<J...>)
++    {
++      if constexpr(sizeof...(J) == 0)
++      {
++        return arity(self, object_ref{ std::get<I>(args) }..., object_ref{});
++      }
++      else
++      {
++        if(is_rest_noescape(flags))
++        {
++          direct_stack_rest<sizeof...(J)> const rest{ std::get<P + J>(args)... };
++          return arity(self, object_ref{ std::get<I>(args) }..., rest.ref());
++        }
++        return arity(self,
++                     object_ref{ std::get<I>(args) }...,
++                     object_ref{ obj::native_array_sequence::create_packed(
++                       object_ref{ std::get<P + J>(args) }...) });
++      }
++    }
++  }
++
++  /* A call to a var whose def is a variadic fn with P required params, with at least P args
++   * and no fixed arity of this count (the analyzer checked its def): when the fn object is a
++   * jit_variadic_function whose variadic arity still takes P required params (and, for
++   * exactly P args, has no fixed arity of P), call that arity's entry directly with the fixed
++   * args and the rest sequence (on the stack when the rest param does not escape, 29's), with
++   * no arity switch and no virtual call. Anything else takes call_fast. */
++  template <u8 P, typename... Args>
++  [[gnu::always_inline]]
++  inline object_ref call_variadic_direct(object_ref const f, Args const &...args)
++  {
++    constexpr usize n{ sizeof...(Args) };
++    static_assert(P <= n && n <= 10 && P < 10);
++    auto target{ f };
++    if(detail::is_tagged_pointer(target.raw()))
++    {
++      auto t{ target.ptr()->type };
++      if(t == object_type::deferred_cpp_function)
++      {
++        auto const deferred{ static_cast<obj::deferred_cpp_function *>(target.ptr()) };
++        if(deferred->realized.load(std::memory_order_acquire))
++        {
++          target = deferred->compiled_fn;
++          t = detail::is_tagged_pointer(target.raw()) ? target.ptr()->type : object_type::nil;
++        }
++      }
++      if(t == object_type::jit_variadic_function)
++      {
++        auto const fn{ static_cast<obj::jit_variadic_function *>(target.ptr()) };
++        auto const flags{ fn->arity_flags };
++        if(extract_variadic_arity_mask(flags) == mask_variadic_arity(P)
++           && (n > P || !is_variadic_ambiguous(flags)))
++        {
++          auto const arity{ detail::variadic_arity<P + 1>(fn) };
++          if(arity)
++          {
++            return detail::call_variadic_split<P>(arity,
++                                                  target,
++                                                  flags,
++                                                  std::forward_as_tuple(args...),
++                                                  std::make_index_sequence<P>{},
++                                                  std::make_index_sequence<n - P>{});
++          }
++        }
++      }
++    }
++    return call_fast(f, args...);
++  }
++
++  /* A call to a var that held a multimethod when the call was analyzed: when the fn object
++   * is a multi_function, the dispatch value is computed here (a get or a constant for a
++   * one-argument call whose defmulti dispatch is a keyword, a one-key get or a literal; the
++   * dispatch fn through call_fast otherwise), the method is read from the two cache entries
++   * when the hierarchy is the one the cache was built against and the dispatch value is the
++   * entry's (identical), else from multi_function::get_fn, and called through call_fast:
++   * one dynamic call per multimethod call. Anything else takes call_fast. */
++  template <typename... Args>
++  [[gnu::always_inline]]
++  inline object_ref call_multi_direct(object_ref const f, Args const &...args)
++  {
++    constexpr usize n{ sizeof...(Args) };
++    if constexpr(n >= 1 && n <= 10)
++    {
++      if(detail::is_tagged_pointer(f.raw()) && f.ptr()->type == object_type::multi_function)
++      {
++        auto const mf{ static_cast<obj::multi_function *>(f.ptr()) };
++        object_ref dispatch_val;
++        if constexpr(n == 1)
++        {
++          if(mf->dispatch_kind == obj::multi_function::dispatch_kind_key)
++          {
++            dispatch_val = runtime::get(object_ref{ std::get<0>(std::forward_as_tuple(args...)) },
++                                        mf->dispatch_key);
++          }
++          else if(mf->dispatch_kind == obj::multi_function::dispatch_kind_constant)
++          {
++            dispatch_val = mf->dispatch_key;
++          }
++          else
++          {
++            dispatch_val = call_fast(mf->dispatch, args...);
++          }
++        }
++        else
++        {
++          dispatch_val = call_fast(mf->dispatch, args...);
++        }
++
++        auto const h{ mf->hierarchy };
++        auto const current_hierarchy{ h.get_type() == object_type::var
++                                        ? expect_object<var>(h)->deref_inline()
++                                        : h.deref() };
++        if(mf->cached_hierarchy == current_hierarchy)
++        {
++          auto const cache(mf->method_cache);
++          for(auto const &slot : mf->last_method)
++          {
++            auto const last(slot.load(std::memory_order_acquire));
++            if(last && last->cache == cache && last->dispatch_val == dispatch_val)
++            {
++              return call_fast(last->method, args...);
++            }
++          }
++        }
++        return call_fast(mf->get_fn(dispatch_val), args...);
++      }
++    }
++    return call_fast(f, args...);
++  }
++}
+diff --git a/compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp b/compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp
+index 5a96f159..ba272936 100644
+--- a/compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp
++++ b/compiler+runtime/include/cpp/jank/runtime/obj/multi_function.hpp
+@@ -22,6 +22,15 @@ namespace jank::runtime::obj
+                    object_ref const dispatch,
+                    object_ref const default_,
+                    object_ref const hierarchy);
++    /* jank-34: with the dispatch fn's shape, as defmulti read it from the dispatch form:
++     * dispatch_kind_key with a keyword ((fn [x] (:k x)), (fn [x] (get x :k))), or
++     * dispatch_kind_constant with a literal ((fn [x] 0)). */
++    multi_function(object_ref const name,
++                   object_ref const dispatch,
++                   object_ref const default_,
++                   object_ref const hierarchy,
++                   u8 const dispatch_kind,
++                   object_ref const dispatch_key);
+ 
+     /* behavior::callable */
+     object_ref call() const override;
+@@ -90,7 +99,17 @@ namespace jank::runtime::obj
+     object_ref get_method(object_ref const dispatch_val) const;
+     object_ref find_and_cache_best_method(object_ref const dispatch_val);
+ 
++    /* jank-34: how a one-argument call computes its dispatch value without calling the
++     * dispatch fn: a get of dispatch_key on the argument (a keyword dispatch fn, or a fn
++     * defmulti saw was one), or dispatch_key itself (a fn returning a literal). Anything else
++     * calls the dispatch fn. */
++    static constexpr u8 dispatch_kind_call{ 0 };
++    static constexpr u8 dispatch_kind_key{ 1 };
++    static constexpr u8 dispatch_kind_constant{ 2 };
++
+     /*** XXX: Everything here is immutable after initialization. ***/
++    u8 dispatch_kind{ dispatch_kind_call };
++    object_ref dispatch_key{};
+     object_ref dispatch{};
+     object_ref default_dispatch_value{};
+     object_ref hierarchy{};
+@@ -119,6 +138,9 @@ namespace jank::runtime::obj
+                          object_ref const dispatch_val,
+                          object_ref const method) const;
+ 
+-    mutable std::atomic<last_method_entry *> last_method{};
++    /* jank-34: two entries, so two dispatch values alternating both hit without the map
++     * lookup. A miss fills an empty or stale entry only (never evicts a live one), so three or
++     * more values keep two in the entries and the rest on the map, with no allocation per call. */
++    mutable std::atomic<last_method_entry *> last_method[2]{};
+   };
+ }
+diff --git a/compiler+runtime/src/cpp/jank/analyze/processor.cpp b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
+index 2bb3984e..769e3c1a 100644
+--- a/compiler+runtime/src/cpp/jank/analyze/processor.cpp
++++ b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
+@@ -26,6 +26,7 @@
+ #include <jank/util/scope_exit.hpp>
+ #include <jank/util/fmt/print.hpp>
+ #include <jank/util/try.hpp>
++#include <jank/util/cli.hpp>
+ #include <jank/util/string.hpp>
+ #include <jank/util/escape.hpp>
+ #include <jank/error/analyze.hpp>
+@@ -159,6 +160,29 @@ namespace jank::analyze
+     return registry;
+   }
+ 
++  /* jank-34: the shape of each var's variadic fn, as of the var's last analyzed def: the
++   * variadic arity's required param count and which fixed arities exist. A call site whose
++   * head is such a var, with at least that many args and no fixed arity of its count, calls
++   * the variadic arity's entry directly (runtime::call_variadic_direct). Codegen guards the
++   * call on the fn object's arity flags, so a stale entry only costs call_fast. */
++  struct variadic_shape
++  {
++    u8 required{};
++    u32 fixed_mask{};
++  };
++
++  struct variadic_shape_registry
++  {
++    std::mutex mutex;
++    native_unordered_map<runtime::var_ref, variadic_shape> entries;
++  };
++
++  static variadic_shape_registry &variadic_shapes()
++  {
++    static variadic_shape_registry registry;
++    return registry;
++  }
++
+   static jtl::result<expression_ref, error_ref>
+   apply_implicit_conversion(expression_ref const expr,
+                             jtl::ptr<void> expr_type,
+@@ -1314,6 +1338,44 @@ namespace jank::analyze
+       {
+         registry.entries.insert_or_assign(var_res.expect_ok(), jtl::move(natives));
+       }
++
++      /* jank-34: record (or clear) the var's variadic shape for direct variadic calls. */
++      jtl::option<variadic_shape> shape;
++      if(value_expr.unwrap()->kind == expression_kind::function)
++      {
++        auto const fn_expr(llvm::cast<expr::function>(value_expr.unwrap().data));
++        if(fn_expr->is_variadic)
++        {
++          variadic_shape vs;
++          bool found{};
++          for(auto const &arity : fn_expr->arities)
++          {
++            if(arity.fn_ctx->is_variadic)
++            {
++              vs.required = static_cast<u8>(arity.fn_ctx->param_count - 1);
++              found = true;
++            }
++            else if(arity.fn_ctx->param_count < 32)
++            {
++              vs.fixed_mask |= (1u << arity.fn_ctx->param_count);
++            }
++          }
++          if(found)
++          {
++            shape = vs;
++          }
++        }
++      }
++      auto &shapes(variadic_shapes());
++      std::lock_guard<std::mutex> const shape_lock{ shapes.mutex };
++      if(shape.is_some())
++      {
++        shapes.entries.insert_or_assign(var_res.expect_ok(), shape.unwrap());
++      }
++      else
++      {
++        shapes.entries.erase(var_res.expect_ok());
++      }
+     }
+ 
+     if(has_docstring)
+@@ -4223,6 +4285,43 @@ namespace jank::analyze
+       }
+     }
+ 
++    /* jank-34: a call to a var whose def is a variadic fn, with at least its required args
++     * and no fixed arity of this count: the call site calls the variadic arity directly. */
++    u8 variadic_direct{};
++    if(!native_target && native_callee.is_none() && arg_count <= runtime::max_params
++       && util::cli::opts.direct_call)
++    {
++      if(auto const vd = llvm::dyn_cast<expr::var_deref>(source.data))
++      {
++        auto &shapes(variadic_shapes());
++        std::lock_guard<std::mutex> const lock{ shapes.mutex };
++        auto const found(shapes.entries.find(vd->var));
++        if(found != shapes.entries.end() && arg_count >= found->second.required
++           && found->second.required < runtime::max_params
++           && !(found->second.fixed_mask & (1u << arg_count)))
++        {
++          variadic_direct = found->second.required + 1;
++        }
++      }
++    }
++
++    /* jank-34: a call to a var that holds a multimethod now: the call site computes the
++     * dispatch value and reads the method cache inline (runtime::call_multi_direct, which
++     * checks the object's type at run time, so a redefined var only costs call_fast). */
++    bool multi_direct{};
++    if(!native_target && native_callee.is_none() && !variadic_direct && arg_count >= 1
++       && arg_count <= runtime::max_params && util::cli::opts.direct_call)
++    {
++      if(auto const vd = llvm::dyn_cast<expr::var_deref>(source.data))
++      {
++        if(vd->var->is_bound())
++        {
++          auto const root(vd->var->get_root());
++          multi_direct = root.is_some() && root.get_type() == runtime::object_type::multi_function;
++        }
++      }
++    }
++
+     native_vector<expression_ref> arg_exprs;
+     arg_exprs.reserve(std::min(arg_count, runtime::max_params + 1));
+ 
+@@ -4405,6 +4504,8 @@ namespace jank::analyze
+         ret->native_param_types = callee.param_types;
+         ret->native_sig = cpp_util::native_signature_id(callee.return_type, callee.param_types);
+       }
++      ret->variadic_direct = variadic_direct;
++      ret->multi_direct = multi_direct;
+       return ret;
+     }
+   }
+diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+index 6b75c375..8bdaec32 100644
+--- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
++++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+@@ -682,7 +682,26 @@ namespace jank::codegen
+       return inst->name;
+     }
+     bool need_comma{};
+-    if(util::cli::opts.direct_call)
++    if(util::cli::opts.direct_call && inst->variadic_direct)
++    {
++      /* jank-34: the callee's variadic arity, called directly (guarded on its arity flags). */
++      util::format_to(b.body_buffer,
++                      "auto const {}(jank::runtime::call_variadic_direct<{}>({}",
++                      inst->name,
++                      inst->variadic_direct - 1,
++                      inst->fn);
++      need_comma = true;
++    }
++    else if(util::cli::opts.direct_call && inst->multi_direct)
++    {
++      /* jank-34: the multimethod's dispatch and method cache, inline at the call site. */
++      util::format_to(b.body_buffer,
++                      "auto const {}(jank::runtime::call_multi_direct({}",
++                      inst->name,
++                      inst->fn);
++      need_comma = true;
++    }
++    else if(util::cli::opts.direct_call)
+     {
+       util::format_to(b.body_buffer, "auto const {}(jank::runtime::call_fast({}", inst->name, inst->fn);
+       need_comma = true;
+diff --git a/compiler+runtime/src/cpp/jank/ir/builder.cpp b/compiler+runtime/src/cpp/jank/ir/builder.cpp
+index 0e2ac988..26b83b6c 100644
+--- a/compiler+runtime/src/cpp/jank/ir/builder.cpp
++++ b/compiler+runtime/src/cpp/jank/ir/builder.cpp
+@@ -340,7 +340,9 @@ namespace jank::ir
+                                    native_vector<identifier> &&args,
+                                    jtl::ptr<void> const native_return_type,
+                                    native_vector<jtl::ptr<void>> &&native_param_types,
+-                                   u64 const native_sig)
++                                   u64 const native_sig,
++                                   u8 const variadic_direct,
++                                   bool const multi_direct)
+   {
+     auto name{ next_ident() };
+     auto const type{ native_sig ? native_return_type : untyped_object_ref_type() };
+@@ -350,6 +352,8 @@ namespace jank::ir
+       inst->native_sig = native_sig;
+       inst->native_param_types = jtl::move(native_param_types);
+     }
++    inst->variadic_direct = variadic_direct;
++    inst->multi_direct = multi_direct;
+     current_function()->blocks[block_index].instructions.emplace_back(inst);
+     if(pos == analyze::expression_position::tail)
+     {
+diff --git a/compiler+runtime/src/cpp/jank/ir/processor.cpp b/compiler+runtime/src/cpp/jank/ir/processor.cpp
+index 309a35a4..28c25fa9 100644
+--- a/compiler+runtime/src/cpp/jank/ir/processor.cpp
++++ b/compiler+runtime/src/cpp/jank/ir/processor.cpp
+@@ -127,7 +127,14 @@ namespace jank::ir
+                             jtl::move(param_types),
+                             expr->native_sig);
+     }
+-    return b.dynamic_call(expr->position, fn_ident, jtl::move(arg_idents));
++    return b.dynamic_call(expr->position,
++                          fn_ident,
++                          jtl::move(arg_idents),
++                          {},
++                          {},
++                          0,
++                          expr->variadic_direct,
++                          expr->multi_direct);
+   }
+ 
+   jtl::option<identifier> gen(analyze::expr::primitive_literal_ref const expr, builder &b)
+diff --git a/compiler+runtime/src/cpp/jank/runtime/core.cpp b/compiler+runtime/src/cpp/jank/runtime/core.cpp
+index ebea5353..b95318cc 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/core.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/core.cpp
+@@ -583,6 +583,27 @@ namespace jank::runtime
+     return make_box<obj::multi_function>(name, dispatch_fn, default_, hierarchy);
+   }
+ 
++  object_ref multi_fn(object_ref const name,
++                      object_ref const dispatch_fn,
++                      object_ref const default_,
++                      object_ref const hierarchy,
++                      object_ref const dispatch_kind,
++                      object_ref const dispatch_key)
++  {
++    static object_ref const key_kw{ __rt_ctx->intern_keyword("key").expect_ok() };
++    static object_ref const constant_kw{ __rt_ctx->intern_keyword("constant").expect_ok() };
++    u8 kind{ obj::multi_function::dispatch_kind_call };
++    if(equal(dispatch_kind, key_kw))
++    {
++      kind = obj::multi_function::dispatch_kind_key;
++    }
++    else if(equal(dispatch_kind, constant_kw))
++    {
++      kind = obj::multi_function::dispatch_kind_constant;
++    }
++    return make_box<obj::multi_function>(name, dispatch_fn, default_, hierarchy, kind, dispatch_key);
++  }
++
+   object_ref defmethod(object_ref const multifn, object_ref const dispatch_val, object_ref const fn)
+   {
+     return try_object<obj::multi_function>(multifn)->add_method(dispatch_val, fn);
+diff --git a/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp b/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
+index 116dcca5..2227c464 100644
+--- a/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
++++ b/compiler+runtime/src/cpp/jank/runtime/obj/multi_function.cpp
+@@ -25,21 +25,52 @@ namespace jank::runtime::obj
+     , method_table{ persistent_hash_map::empty() }
+     , prefer_table{ persistent_hash_map::empty() }
+   {
++    if(runtime::detail::is_tagged_pointer(dispatch.raw())
++       && dispatch.ptr()->type == object_type::keyword)
++    {
++      dispatch_kind = dispatch_kind_key;
++      dispatch_key = dispatch;
++    }
++  }
++
++  multi_function::multi_function(object_ref const name,
++                                 object_ref const dispatch,
++                                 object_ref const default_,
++                                 object_ref const hierarchy,
++                                 u8 const dispatch_kind,
++                                 object_ref const dispatch_key)
++    : multi_function{ name, dispatch, default_, hierarchy }
++  {
++    if(this->dispatch_kind == dispatch_kind_call
++       && (dispatch_kind == dispatch_kind_constant
++           || (dispatch_kind == dispatch_kind_key
++               && runtime::detail::is_tagged_pointer(dispatch_key.raw())
++               && dispatch_key.ptr()->type == object_type::keyword)))
++    {
++      this->dispatch_kind = dispatch_kind;
++      this->dispatch_key = dispatch_key;
++    }
+   }
+ 
+-  /* The dispatch value: a keyword dispatch fn (`(defmulti area :shape)`) is a get on the first
+-   * argument, computed here with no call; anything else is called through call_fast. */
++  /* The dispatch value of a one-argument call: a get on the argument (a keyword dispatch fn,
++   * or one defmulti saw was a one-key get) or a constant (jank-34), computed here with no call;
++   * anything else is called through call_fast. */
+   template <typename... Args>
+   [[gnu::always_inline]]
+-  static inline object_ref
+-  compute_dispatch(object_ref const dispatch, object_ref const first, Args const &...rest)
++  static inline object_ref compute_dispatch(multi_function const * const mf,
++                                            object_ref const dispatch,
++                                            object_ref const first,
++                                            Args const &...rest)
+   {
+     if constexpr(sizeof...(Args) == 0)
+     {
+-      if(runtime::detail::is_tagged_pointer(dispatch.raw())
+-         && dispatch.ptr()->type == object_type::keyword)
++      if(mf->dispatch_kind == multi_function::dispatch_kind_key)
+       {
+-        return runtime::get(first, dispatch);
++        return runtime::get(first, mf->dispatch_key);
++      }
++      if(mf->dispatch_kind == multi_function::dispatch_kind_constant)
++      {
++        return mf->dispatch_key;
+       }
+     }
+     return call_fast(dispatch, first, rest...);
+@@ -52,18 +83,18 @@ namespace jank::runtime::obj
+ 
+   object_ref multi_function::call(object_ref const a1) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1)), a1);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1)), a1);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1, object_ref const a2) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1, a2)), a1, a2);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1, a2)), a1, a2);
+   }
+ 
+   object_ref
+   multi_function::call(object_ref const a1, object_ref const a2, object_ref const a3) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1, a2, a3)), a1, a2, a3);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1, a2, a3)), a1, a2, a3);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -71,7 +102,7 @@ namespace jank::runtime::obj
+                                   object_ref const a3,
+                                   object_ref const a4) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1, a2, a3, a4)), a1, a2, a3, a4);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1, a2, a3, a4)), a1, a2, a3, a4);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -80,7 +111,7 @@ namespace jank::runtime::obj
+                                   object_ref const a4,
+                                   object_ref const a5) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1, a2, a3, a4, a5)), a1, a2, a3, a4, a5);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1, a2, a3, a4, a5)), a1, a2, a3, a4, a5);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -90,7 +121,7 @@ namespace jank::runtime::obj
+                                   object_ref const a5,
+                                   object_ref const a6) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1, a2, a3, a4, a5, a6)), a1, a2, a3, a4, a5, a6);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1, a2, a3, a4, a5, a6)), a1, a2, a3, a4, a5, a6);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -101,7 +132,7 @@ namespace jank::runtime::obj
+                                   object_ref const a6,
+                                   object_ref const a7) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1, a2, a3, a4, a5, a6, a7)), a1, a2, a3, a4, a5, a6, a7);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1, a2, a3, a4, a5, a6, a7)), a1, a2, a3, a4, a5, a6, a7);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -113,7 +144,7 @@ namespace jank::runtime::obj
+                                   object_ref const a7,
+                                   object_ref const a8) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1, a2, a3, a4, a5, a6, a7, a8)), a1, a2, a3, a4, a5, a6, a7, a8);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1, a2, a3, a4, a5, a6, a7, a8)), a1, a2, a3, a4, a5, a6, a7, a8);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -126,7 +157,7 @@ namespace jank::runtime::obj
+                                   object_ref const a8,
+                                   object_ref const a9) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1, a2, a3, a4, a5, a6, a7, a8, a9)), a1, a2, a3, a4, a5, a6, a7, a8, a9);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1, a2, a3, a4, a5, a6, a7, a8, a9)), a1, a2, a3, a4, a5, a6, a7, a8, a9);
+   }
+ 
+   object_ref multi_function::call(object_ref const a1,
+@@ -140,7 +171,7 @@ namespace jank::runtime::obj
+                                   object_ref const a9,
+                                   object_ref const a10) const
+   {
+-    return call_fast(get_fn(compute_dispatch(dispatch, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10)), a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
++    return call_fast(get_fn(compute_dispatch(this, dispatch, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10)), a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
+   }
+ 
+   multi_function_ref multi_function::reset()
+@@ -269,8 +300,16 @@ namespace jank::runtime::obj
+                                        object_ref const dispatch_val,
+                                        object_ref const method) const
+   {
+-    last_method.store(new(UseGC) last_method_entry{ cache, dispatch_val, method },
+-                      std::memory_order_release);
++    for(auto &slot : last_method)
++    {
++      auto const entry(slot.load(std::memory_order_acquire));
++      if(!entry || entry->cache != cache)
++      {
++        slot.store(new(UseGC) last_method_entry{ cache, dispatch_val, method },
++                   std::memory_order_release);
++        return;
++      }
++    }
+   }
+ 
+   object_ref multi_function::get_method(object_ref const dispatch_val) const
+@@ -285,22 +324,22 @@ namespace jank::runtime::obj
+     }
+ 
+     auto const cache(method_cache);
+-    auto const last(last_method.load(std::memory_order_acquire));
+-    if(last && last->cache == cache
+-       && (last->dispatch_val == dispatch_val || runtime::equal(last->dispatch_val, dispatch_val)))
++    for(auto const &slot : last_method)
+     {
+-      return last->method;
++      auto const last(slot.load(std::memory_order_acquire));
++      if(last && last->cache == cache
++         && (last->dispatch_val == dispatch_val || runtime::equal(last->dispatch_val, dispatch_val)))
++      {
++        return last->method;
++      }
+     }
+ 
+     auto target(cache->get(dispatch_val));
+     if(target.is_some())
+     {
+-      /* Only refill a missing or stale entry: two values alternating then keep one of them
+-       * in the entry, and the other on the map lookup, with no allocation per call. */
+-      if(!last || last->cache != cache)
+-      {
+-        remember_method(cache, dispatch_val, target);
+-      }
++      /* remember_method only fills a missing or stale entry: two values alternating then
++       * both sit in the entries, more stay on the map lookup, with no allocation per call. */
++      remember_method(cache, dispatch_val, target);
+       return target;
+     }
+ 
+diff --git a/compiler+runtime/src/jank/clojure/core.jank b/compiler+runtime/src/jank/clojure/core.jank
+index da540d3b..7bfa7dd7 100644
+--- a/compiler+runtime/src/jank/clojure/core.jank
++++ b/compiler+runtime/src/jank/clojure/core.jank
+@@ -4145,15 +4145,47 @@
+         mm-name (with-meta mm-name m)]
+     (let [options (apply hash-map options)
+           default (get options :default :default)
+-          hierarchy (get options :hierarchy #'global-hierarchy)]
++          hierarchy (get options :hierarchy #'global-hierarchy)
++          ;; jank-34: a one-param dispatch fn that returns a literal, or gets a keyword from
++          ;; its param, lets a one-argument call compute the dispatch value with no call.
++          shape (when (and (seq? dispatch-fn)
++                           (contains? #{'fn 'fn* 'clojure.core/fn} (first dispatch-fn))
++                           (= 3 (count dispatch-fn))
++                           (vector? (second dispatch-fn))
++                           (= 1 (count (second dispatch-fn)))
++                           (symbol? (first (second dispatch-fn)))
++                           (not= '& (first (second dispatch-fn))))
++                  (let [p (first (second dispatch-fn))
++                        body (nth dispatch-fn 2)]
++                    (cond
++                      (or (keyword? body) (number? body) (string? body)
++                          (nil? body) (true? body) (false? body))
++                      [:constant body]
++                      (and (seq? body) (= 2 (count body)) (keyword? (first body))
++                           (= p (second body)))
++                      [:key (first body)]
++                      (and (seq? body) (= 3 (count body))
++                           (contains? #{'get 'clojure.core/get} (first body))
++                           (= p (second body)) (keyword? (nth body 2)))
++                      [:key (nth body 2)]
++                      :else nil)))]
+       (check-valid-options options :default :hierarchy)
+       ; TODO: This returns nil, due to an issue with let*. Why?
+-      `(let [v# (def ~mm-name)]
+-         (when-not (cpp/jank.runtime.is_multi_fn (deref v#))
+-           (def ~mm-name (cpp/jank.runtime.multi_fn '~(symbol *ns* mm-name)
+-                                                    ~dispatch-fn
+-                                                    ~default
+-                                                    ~hierarchy)))))))
++      (if shape
++        `(let [v# (def ~mm-name)]
++           (when-not (cpp/jank.runtime.is_multi_fn (deref v#))
++             (def ~mm-name (cpp/jank.runtime.multi_fn '~(symbol *ns* mm-name)
++                                                      ~dispatch-fn
++                                                      ~default
++                                                      ~hierarchy
++                                                      ~(first shape)
++                                                      '~(second shape)))))
++        `(let [v# (def ~mm-name)]
++           (when-not (cpp/jank.runtime.is_multi_fn (deref v#))
++             (def ~mm-name (cpp/jank.runtime.multi_fn '~(symbol *ns* mm-name)
++                                                      ~dispatch-fn
++                                                      ~default
++                                                      ~hierarchy))))))))
+ 
+ (defn- defmethod*
+   [multifn dispatch-val f]

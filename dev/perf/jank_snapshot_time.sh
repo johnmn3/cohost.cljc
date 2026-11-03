@@ -15,7 +15,7 @@ read_ms() {
 }
 aot=(); snap=()
 for i in 1 2 3; do
-  jank --module-path "$aotdir:src" run-main cohost.run -- --bench --quick >/dev/null 2>&1
+  "${JANK_BIN:-jank}" --module-path "$aotdir:src" run-main cohost.run -- --bench --quick >/dev/null 2>&1
   a=$(read_ms); echo "RUN aot $i boot-ms libs-ms sum: $a"; aot+=("$a")
   out=$(bb bench:jank --quick 2>&1)
   grep -q '^SNAPSHOT-FRESH' <<<"$out" || { echo "bench:jank did not boot from a fresh snapshot"; exit 1; }

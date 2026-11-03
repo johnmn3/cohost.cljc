@@ -807,6 +807,17 @@
 
 (def adapter
   {:name :phel
+   ;; X3-2: sort with the host's compare for the stock one (adapter.cljc); bb bench:phel --quick,
+   ;; key nil vs true on max/main 4698b55, 6 interleaved rounds: sort stock 1200.53 [1010.93-1753.69]
+   ;; -> 807.75 [746.68-928.35] ms (every true round below every nil round), geomean x4.31 -> x4.17,
+   ;; no case's true median above its nil max; battery 149/149 and libraries 61/61 both ways
+   :sort-host-compare? true
+   ;; X3-1: the shim's MultiFn with its one-entry cache (adapter.cljc); bb
+   ;; bench:phel --quick, 9 interleaved rounds on max/main aeac81b: multimethod
+   ;; stock 813.96 [517.76-968.47] -> 391.87 [267.88-522.38] ms (true below nil
+   ;; in 9 of 9 rounds), geomean x4.37 -> x4.36, no case's true median above its
+   ;; nil max; battery 149/149 and libraries 61/61 both ways
+   :multimethod-cache? true
    :core-ns 'phel.core
    :catch-all 'Throwable
    :read-forms read-forms

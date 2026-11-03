@@ -6,7 +6,7 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
-jank compile-module h0.codegen --module-path dev/perf -O3 --output-target cpp --target-dir target/jank-h0
+"${JANK_BIN:-jank}" compile-module h0.codegen --module-path dev/perf -O3 --output-target cpp --target-dir target/jank-h0
 python3 - << 'PY'
 import pathlib
 p = next(pathlib.Path("target/jank-h0").rglob("codegen.cpp"))

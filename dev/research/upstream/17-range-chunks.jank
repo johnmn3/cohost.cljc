@@ -8,3 +8,11 @@
 (timed "count (filter odd? (map inc (vec (range 1e6))))" (fn [] (count (filter odd? (map inc (vec (range n)))))))
 (timed "transduce (comp (map inc) (filter odd?)) + (range 1e6)" (fn [] (transduce (comp (map inc) (filter odd?)) + 0 (range n))))
 (timed "loop equivalent" (fn [] (loop [i 0 c 0] (if (< i n) (recur (inc i) (if (odd? (inc i)) (inc c) c)) c))))
+;; laziness: a chunked map/filter realizes one chunk (32) at a time; f and pred run once per element of that chunk.
+(let [calls (atom 0) s (map (fn [x] (swap! calls inc) x) (range 100))] (first s) (println "map: f calls after (first s) over (range 100) =>" @calls))
+(let [calls (atom 0) s (map (fn [x] (swap! calls inc) x) (vec (range 100)))] (nth s 40) (println "map: f calls after (nth s 40) over a vector of 100 =>" @calls))
+(let [calls (atom 0) s (filter (fn [x] (swap! calls inc) (odd? x)) (range 100))] (first s) (println "filter: pred calls after (first s) over (range 100) =>" @calls))
+(let [calls (atom 0) s (filter (fn [x] (swap! calls inc) (> x 40)) (range 100))] (first s) (println "filter: pred calls when the first chunk keeps nothing =>" @calls))
+(println "map nil/false values =>" (take 5 (map (fn [x] (when (odd? x) false)) (range 10))))
+(println "filter over all-dropped chunks =>" (filter #(> % 90) (range 100)) (filter odd? (vec (range 0 64 2))))
+(println "map/filter results =>" (= (doall (filter odd? (map inc (range 1000)))) (loop [i 0 a []] (if (< i 1000) (recur (inc i) (if (odd? (inc i)) (conj a (inc i)) a)) a))))

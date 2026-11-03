@@ -1,0 +1,171 @@
+jank-26: native numerics without hints: a native loop local stays native only while recur keeps it
+native, else it is boxed (Clojure's auto-boxed loop arg)
+(cohost doc/upstream/jank-26-native-inference.md; lane U6, order U6-2)
+
+Base: jank-lang/jank f3d82d65499920f81216e9235bd5d3a34a968e3f with the series before it in
+upstream/jank/patches/series (11, 13, 14, 12-21, 18, 19, 15a-16, 15b-17, 22, 20). Apply from the
+clone's root: git apply <this file>.
+
+What the base already infers without hints (12-21 and 20; nothing here changes it): a loop or let
+local initialized from an integer or real literal is native (i64 / f64); a let local from a native
+expression is native; an if whose branches are native (or one branch recurs) keeps the native type;
++ - * / inc dec on native operands stay native and checked; a fn with untyped params gets native
+loops inside it.
+
+Merge note (coordinator, 2026-11-02 3:00 PM ET): var::deref_inline and the generated deref_inline call
+(var.hpp, cpp_processor.cpp) were implemented identically by 24-direct-calls, which precedes this
+patch in the series; those two hunks are dropped here and 24 carries them. This patch is the
+loop-widening change (3 files).
+
+Files:
+- compiler+runtime/src/cpp/jank/analyze/processor.cpp, include .../analyze/expr/let.hpp,
+  .../analyze/processor.hpp: a native loop binding stays native only while every recur argument
+  for it is a native number of the same kind (integer for an integer, real for a real). Otherwise
+  analyze_recur flags the binding (expr::let::loop_box_bindings) and analyze_loop analyzes the
+  loop again with the flagged bindings boxed (Clojure's auto-boxed loop arg); each round boxes at
+  least one more binding, so it ends. Before, the argument was converted into the native type: a
+  real truncated into an integer local ((loop [s 0] ... (recur (+ s 1.5))) gave 3 for 4.5), an
+  object unboxed with a throw ("An object of type integer was expected here, but a small_real was
+  provided"), and (recur nil) or a string failed to compile (from_object ambiguous).
+- (not in this patch: var::deref_inline and the generated deref_inline call are 24-direct-calls';
+  see the merge note above. The P2/H0 call rows below were measured with them.)
+
+Measured (cohost dev/research; control = f3d82d65 + series through 20, patched = the same + U6-2's
+rev 2 of this patch, which also carried the deref_inline hunks now in 24; same recipe;
+A/B/A/B/A/B on a shared 4-CPU box at load 10-15, medians of 3, ns). The loop-only and call rows
+are deref_inline's (24's change, measured on that build); the recur-widening line is this patch's:
+- run-jank.sh p2_call_path jit: loop-only 16309078 -> 3621578 (4.50x); call-var-same-ns 61566980 ->
+  27660443; call-var-other-ns 63210558 -> 31722594; call-2 62064959 -> 22960277; call-cpp-objref
+  23151485 -> 6335453; call-multi 177299385 -> 134072675. (apt 0.1-noble loop-only: 13345444.)
+- run.sh 26-native-inference: loop-only 20593287 -> 3440315; sum-range, sum-dbl, vsum unchanged
+  (already native on the base, or boxed by their elements); recur widening: control
+  "3 throws [3 2 1] 6 throws throws 2.5", patched "4.5 3.5 [3 2 1] 6 x3 nil 2.5" (Clojure's).
+- dev/perf/jank_h0_bench.jank: every call through a var 1.5-3.5x (call-long-hinted 11380665 ->
+  3443052, call-double-plain 16555892 -> 6943495); locals and sum-double plain already equal to
+  their hinted twins on the base; down-double-plain 4417391 -> 4892706 (0.90x: its acc's recur
+  argument is an object, so acc is boxed now, as Clojure boxes it); down-long-plain (a loop started
+  from an untyped param) stays boxed: 46852122 -> 41318249.
+- run-jank.sh p7_native_entry: kernel plain equals kernel ^long on both builds (both native since
+  20); tak unchanged.
+- run-jank.sh p1_fib_floor jit: fib-var 9004524 -> 9036410 (unchanged: untyped params, nothing to
+  infer without speculation); fib-hinted-leaf 5441775 -> 3729138.
+- run.sh 20-native-returns, 12-i32-add, 21-int32-loop-local: unchanged (every Expected line).
+- bb boot:jank: 542/171/78/0, battery 147/149, libraries 61/61.
+
+diff --git a/compiler+runtime/include/cpp/jank/analyze/expr/let.hpp b/compiler+runtime/include/cpp/jank/analyze/expr/let.hpp
+index 5a2f0189..14b6d086 100644
+--- a/compiler+runtime/include/cpp/jank/analyze/expr/let.hpp
++++ b/compiler+runtime/include/cpp/jank/analyze/expr/let.hpp
+@@ -44,5 +44,11 @@ namespace jank::analyze::expr
+     native_vector<pair_type> pairs;
+     do_ref body;
+     loop_kind loop_kind{ loop_kind::normal };
++    /* jank-26: per loop binding, set by recur when the binding is a native number and a recur
++     * argument for it is not a native number of the same kind (an object, or a real for an
++     * integer). analyze_loop then analyzes the loop again with those bindings boxed, as
++     * Clojure auto-boxes the loop arg, instead of converting the argument into the native
++     * type (a truncating cast, or an unbox that throws). */
++    native_vector<bool> loop_box_bindings;
+   };
+ }
+diff --git a/compiler+runtime/include/cpp/jank/analyze/processor.hpp b/compiler+runtime/include/cpp/jank/analyze/processor.hpp
+index d447bb94..aef420d6 100644
+--- a/compiler+runtime/include/cpp/jank/analyze/processor.hpp
++++ b/compiler+runtime/include/cpp/jank/analyze/processor.hpp
+@@ -246,5 +246,7 @@ namespace jank::analyze
+     local_frame_ptr root_frame;
+     native_vector<runtime::object_ref> macro_expansions;
+     jtl::option<expr::let_ptr> loop_details;
++    /* jank-26: the bindings the next loop* analysis boxes (see expr::let::loop_box_bindings). */
++    native_vector<bool> next_loop_box_bindings;
+   };
+ }
+diff --git a/compiler+runtime/src/cpp/jank/analyze/processor.cpp b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
+index f270829f..89080246 100644
+--- a/compiler+runtime/src/cpp/jank/analyze/processor.cpp
++++ b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
+@@ -2236,6 +2236,22 @@ namespace jank::analyze
+         expected_type
+           = cpp_util::mutable_type(loop_details.unwrap()->pairs[arg_index].second->get_type());
+ 
++        /* jank-26: a native number binding stays native only while every recur argument for
++         * it is a native number of the same kind; otherwise analyze_loop boxes it. */
++        if(cpp_util::is_native_number(expected_type))
++        {
++          auto const arg_type{ cpp_util::expression_type(arg_expr.expect_ok()) };
++          auto const same_kind{ cpp_util::is_native_number(arg_type)
++                                && cppinterop::is_integral(arg_type)
++                                  == cppinterop::is_integral(expected_type) };
++          if(!same_kind)
++          {
++            auto &flags{ loop_details.unwrap()->loop_box_bindings };
++            flags.resize(loop_details.unwrap()->pairs.size());
++            flags[arg_index] = true;
++          }
++        }
++
+         /* Check if op = can be used, since we'll be using it to update the loop values. */
+         auto const op_equal_sym{ make_box<obj::symbol>("cpp", "=") };
+         auto const op_equal_call{ analyze_call(
+@@ -2383,10 +2399,13 @@ namespace jank::analyze
+ 
+     static auto const loop_kw{ make_box<obj::symbol>("loop*") };
+     bool is_loop{};
++    native_vector<bool> forced_boxes;
+     if(loop_details.is_some() && runtime::equal(o->first(), loop_kw))
+     {
+       is_loop = true;
+       loop_details = ret.data;
++      forced_boxes = jtl::move(next_loop_box_bindings);
++      next_loop_box_bindings.clear();
+     }
+ 
+     for(usize i{}; i < binding_parts; i += 2)
+@@ -2439,6 +2458,11 @@ namespace jank::analyze
+       {
+         auto const old_type{ expr_type };
+         expr_type = cpp_util::mutable_type(expr_type);
++        /* jank-26: recur gives this binding another kind of value: box it. */
++        if(i / 2 < forced_boxes.size() && forced_boxes[i / 2] && !cpp_util::is_any_object(expr_type))
++        {
++          expr_type = cpp_util::untyped_object_ref_type();
++        }
+         /* If old type is not an object and new type is, we need a conversion. */
+         if(!cpp_util::is_any_object(old_type) && cpp_util::is_any_object(expr_type))
+         {
+@@ -2662,6 +2686,35 @@ namespace jank::analyze
+       return let_res;
+     }
+ 
++    /* A native loop binding that recur gives a value of another kind is boxed: analyze the
++     * loop again with it boxed. Each round boxes at least one more binding, so this ends. */
++    native_vector<bool> boxed;
++    while(true)
++    {
++      auto const attempt{ static_box_cast<expr::let>(let_res.expect_ok()) };
++      bool more{};
++      boxed.resize(attempt->pairs.size());
++      for(usize i{}; i < attempt->loop_box_bindings.size() && i < boxed.size(); ++i)
++      {
++        if(attempt->loop_box_bindings[i] && !boxed[i])
++        {
++          boxed[i] = true;
++          more = true;
++        }
++      }
++      if(!more)
++      {
++        break;
++      }
++      loop_details = some(nullptr);
++      next_loop_box_bindings = boxed;
++      let_res = analyze_let(list, current_frame, expression_position::tail, fn_ctx, true);
++      if(let_res.is_err())
++      {
++        return let_res;
++      }
++    }
++
+     auto const let{ static_box_cast<expr::let>(let_res.expect_ok()) };
+     let->propagate_position(position);
+ 
