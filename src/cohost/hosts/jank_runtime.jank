@@ -100,6 +100,19 @@ namespace cohost_rt {
                                        tail);
   }
 
+  /* A4-2 (u3): a chunked_cons over a whole chunk whose rest is nil or known non-empty (map's
+   * rest over a source that still has elements: map keeps emptiness), so apt's
+   * chunked_cons::next, which hands the raw tail back, never meets an empty lazy tail and the
+   * chunk is not cut (chunk-first counts 32, as Clojure's). An empty chunk gives rest. */
+  inline object_ref chunk_cons_whole(object_ref const chunk, object_ref const rest) {
+    if(chunk.get_type() != object_type::array_chunk) {
+      return jank::runtime::chunk_cons(chunk, rest);
+    }
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    if(buf(c->buffer).size() == c->offset) { return rest; }
+    return make_box<obj::chunked_cons>(chunk, rest);
+  }
+
   /* The stock chunked branch of map / filter in one C++ loop over a chunk: f (pred) called once
    * per element in order, the results in a new chunk (u5's 23-chunk-branch, adapter-side). */
   inline object_ref chunk_map(object_ref const f, object_ref const chunk) {
@@ -388,7 +401,12 @@ namespace cohost_leaf {
    (lazy-seq
      (when-let [s (seq coll)]
        (if (chunked-seq? s)
-         (chunk-cons (cpp/cohost_rt.chunk_map f (chunk-first s)) (map f (chunk-rest s)))
+         ;; A4-2: the source's rest is seq'd here (a range or vector seq: free; a chunked map
+         ;; source: its next chunk, one chunk ahead of the JVM, at that inner level only), so
+         ;; the rest is nil or a non-empty map and the chunk stays whole
+         (let [c (cpp/cohost_rt.chunk_map f (chunk-first s))
+               r (seq (chunk-rest s))]
+           (cpp/cohost_rt.chunk_cons_whole c (when r (map f r))))
          (cons (f (first s)) (map f (rest s)))))))
   ([f c1 c2] (clojure.core/map f c1 c2))
   ([f c1 c2 c3] (clojure.core/map f c1 c2 c3))
@@ -402,7 +420,14 @@ namespace cohost_leaf {
    (lazy-seq
      (when-let [s (seq coll)]
        (if (chunked-seq? s)
-         (chunk-cons (cpp/cohost_rt.chunk_filter pred (chunk-first s)) (filter pred (chunk-rest s)))
+         ;; A4-2: the chunk stays whole when the source has nothing left (the rest is nil);
+         ;; otherwise filter's rest may realize empty, so chunk-cons's rule applies (the chunk's
+         ;; last element moves into a cons in front of the rest: chunk-first one short)
+         (let [c (cpp/cohost_rt.chunk_filter pred (chunk-first s))
+               r (seq (chunk-rest s))]
+           (if r
+             (chunk-cons c (filter pred r))
+             (cpp/cohost_rt.chunk_cons_whole c nil)))
          (let [f (first s) r (rest s)]
            (if (pred f) (cons f (filter pred r)) (filter pred r))))))))
 
