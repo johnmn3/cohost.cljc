@@ -564,6 +564,25 @@ namespace cohost_var {
                     (list 'let* [n a]
                           (list 'if (list 'cpp/jank.runtime.is_integer n) (list op n) (list stock-head n))))))))
 
+;; A6-3 (u3): (mod a b) on two integers inside (-2^31, 2^31) with b nonzero is jank's own mod,
+;; whose body is Clojure's (rem, zero?, pos?, = and +, jank's ops inline on integers); in that
+;; range jank's + cannot wrap on apt (|m| < |b| < 2^31, opposite signs). Anything else, a
+;; zero divisor included, is the stock mod. A literal integer divisor in range is not re-tested.
+(defn- mod-expansion [stock-head args]
+  (when (= 2 (count args))
+    (let [[x y] args
+          a (gensym "moda") b (gensym "modb")
+          in32 (fn [s] (list 'if (list 'clojure.core/< -2147483648 s) (list 'clojure.core/< s 2147483648) false))
+          lit-b? (and (integer? y) (cpp/jank.runtime.is_integer y) (< -2147483648 y 2147483648) (not= 0 y))
+          test-b (if lit-b? true
+                   (list 'if (list 'cpp/jank.runtime.is_integer b)
+                         (list 'if (in32 b) (list 'if (list 'clojure.core/= b 0) false true) false)
+                         false))]
+      (list 'let* [a x b y]
+            (list 'if (list 'if (list 'cpp/jank.runtime.is_integer a) (list 'if (in32 a) test-b false) false)
+                  (list 'clojure.core/mod a b)
+                  (list stock-head a b))))))
+
 ;; A5-2: jank's / on two integers truncates ((/ 6 4) is 1 on apt and on the
 ;; series build alike) and wraps at 32 bits on apt; Clojure's is the exact
 ;; quotient or a ratio. The probe runs jank's own / at boot; where it is wrong,
@@ -2066,7 +2085,8 @@ namespace cohost_assoc {
    ;; is jank's op on a host long (is_integer: integer and small_integer; a
    ;; native long boxes into it) and the stock fn on anything else (a bigint,
    ;; a real, a non-number); an integer literal is jank's op directly
-   :core-expansions {'odd? (fn [stock-head args] (parity-expansion 'clojure.core/odd? stock-head args))
+   :core-expansions {'mod mod-expansion
+                     'odd? (fn [stock-head args] (parity-expansion 'clojure.core/odd? stock-head args))
                      'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))}
    :syntax-quote-source? true
    :loop-rebind-shadow? true
