@@ -653,6 +653,22 @@ namespace cohost_var {
   (when int-div-wrong?
     (fn [x y] (let [r (cpp/cohost_num.div x y)] (if (nil? r) (cpp/cohost_num.ratio_int x y (clojure.core// x y)) r)))))
 
+;; A5-7: a division the codemod can see is of doubles goes to jank's own / (after the zero
+;; test), not num-divide: a double literal, a local the codemod types real (A5-3's
+;; *native-reals*, bound while it rewrites), a (double x) cast, or + - * / with such an operand
+;; (Clojure's contagion). spectral-norm's (/ 1.0 (* ...)) per element paid num-divide's call
+;; on both builds (int-div-wrong? is true on the series build too: its / truncates as well).
+(defn- known-double? [x]
+  (cond (float? x) true
+        (symbol? x) (contains? (or (some-> (resolve 'cohost.rewrite/*native-reals*) deref) #{}) x)
+        (seq? x) (let [h (first x)]
+                   (and (symbol? h)
+                        (let [n (name h)]
+                          (cond (contains? #{"double" "RT-doubleCast"} n) true
+                                (contains? #{"+" "-" "*" "/"} n) (boolean (some known-double? (rest x)))
+                                :else false))))
+        :else false))
+
 ;; A5-2: quot and rem. Two integers in i64 (cohost_num::quot / rem; jank's own
 ;; traps on i32 min by -1 on apt); jank's quot of a double is an integer
 ;; ((quot 7.5 2) is 3) where Clojure's is the double 3.0. The probe sees the
@@ -2167,6 +2183,16 @@ namespace cohost_assoc {
    ;; C++ int unpatched jank gives it (recur wrapped it at 32 bits); nil on the
    ;; series build, whose literals are already 64 bit
    :loop-int-init (when int-wraps? (fn [n] (list 'cpp/long n)))
+   ;; U6-10: a let* local started from (count x) is a native long (to_int of
+   ;; jank's count, always an integer), beside A5's literal-started loop locals
+   :native-long-inits (when int-wraps? '#{count})
+   ;; A7-1: a vector literal of 1..4 elements is one GC block (jank-rt/vec1..vec4) where jank's
+   ;; own literal builds a transient (apt); the series build's own literals are one block already
+   ;; OFF until A7-1's two FAILs are fixed (a redefined record's protocol dispatch; spec's
+   ;; "or alt nilable"): the emission is (when false ...)
+   :vector-literal (when (and false (not (jank-rt/own-small-vectors?)))
+                     '{1 cohost.hosts.jank-runtime/vec1 2 cohost.hosts.jank-runtime/vec2
+                       3 cohost.hosts.jank-runtime/vec3 4 cohost.hosts.jank-runtime/vec4})
    :core-ns 'clojure.core
    :catch-all 'cpp/jank.runtime.object_ref
    :read-forms read-forms
@@ -2308,7 +2334,9 @@ namespace cohost_assoc {
                                          (list 'let* [a (first args) b (second args)]
                                                (list 'if (list 'clojure.core/zero? b)
                                                      (list 'cohost.shim/Numbers-divide a b)
-                                                     (if int-div-wrong?
+                                                     (if (and int-div-wrong?
+                                                              (not (known-double? (first args)))
+                                                              (not (known-double? (second args))))
                                                        (list 'cohost.hosts.jank-host/num-divide a b)
                                                        (list 'clojure.core// a b)))))))}
    ;; U6-9: the call heads the stock :inline does not reach (not=, and the
@@ -2454,6 +2482,8 @@ namespace cohost_assoc {
    :var-set! (fn [v val] (cpp/cohost_var.set_var v val))
    ;; standin exceptions print as their class (the shim asks this first);
    ;; jank's own str of an exception is its #error dump
+   ;; A5-5: jank's str of a double is C's (3e+10, 1e-04); the JVM's is Double.toString
+   :double-str jank-rt/double-str
    :exception-string (fn [e] (let [c (or (get (ex-data e) :cohost/class)
                                          (adapter/exception-class e))]
                                (str c

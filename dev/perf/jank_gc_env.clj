@@ -21,7 +21,34 @@
 ;; snapshot path, 1.22x on the AOT path.
 (def jank-gc-defaults {"GC_INITIAL_HEAP_SIZE" "512M"})
 
+;; A1-3: a GC_INITIAL_HEAP_SIZE of 2G or more breaks every cohost program on jank, apt and the
+;; series alike: "JIT session error: In graph .../cohost/hosts/jank_host.o, section .eh_frame:
+;; relocation target ... (DW.ref.__gxx_personality_v0) is out of range of Delta32 fixup" (A1-2,
+;; doc/PERF.md, all 3 rounds of both binaries). So the launcher clamps a user's value at or above
+;; 2G to 1G (the largest measured working value) with one line on stderr. bdwgc's spelling is
+;; parsed: digits, then an optional k, m or g suffix (any case), else bytes. COHOST_JANK_GC=none
+;; passes the user's value through untouched.
+(def jank-gc-heap-limit (* 2 1024 1024 1024))
+(def jank-gc-heap-clamp "1G")
+
+(defn jank-gc-parse-size
+  "bdwgc's size spelling -> bytes, or nil when it is not one."
+  [s]
+  (when-let [[_ n u] (re-matches #"\s*(\d+)\s*([kKmMgG]?)\s*" (or s ""))]
+    (* (parse-long n)
+       (case (clojure.string/lower-case u) "" 1 "k" 1024 "m" (* 1024 1024) "g" (* 1024 1024 1024)))))
+
 (defn jank-gc-env []
   (if (= "none" (System/getenv "COHOST_JANK_GC"))
     {}
-    (into {} (remove (fn [[k _]] (System/getenv k)) jank-gc-defaults))))
+    (let [env (into {} (remove (fn [[k _]] (System/getenv k)) jank-gc-defaults))
+          user (System/getenv "GC_INITIAL_HEAP_SIZE")
+          bytes (jank-gc-parse-size user)]
+      (if (and bytes (>= bytes jank-gc-heap-limit))
+        (do (binding [*out* *err*]
+              (println (str "cohost: GC_INITIAL_HEAP_SIZE=" user " clamped to " jank-gc-heap-clamp
+                            ": with an initial heap of 2G or more jank's JIT cannot link cohost's objects"
+                            " (\"relocation ... out of range of Delta32 fixup\"; doc/PERF.md A1-2)."
+                            " COHOST_JANK_GC=none passes it through.")))
+            (assoc env "GC_INITIAL_HEAP_SIZE" jank-gc-heap-clamp))
+        env))))

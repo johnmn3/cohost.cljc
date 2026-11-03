@@ -2069,8 +2069,33 @@
                                              (partition 2 bvec') pairs))
                                 bvec')
                     bvec')
-            natives (into (apply disj *native-ints* syms)
-                          (keep (fn [p] (when (int-init? p) (*plain* (first p))))) pairs)
+            ;; U6-10: a let* local started from a call that always returns a long
+            ;; (the adapter's :native-long-inits, jank on apt: count) gets the host's
+            ;; native conversion at its init and joins *native-ints*; one started from
+            ;; arithmetic over native longs (native-int-form?) joins them as it is (its
+            ;; emitted form is already a native long). In order: an init sees the
+            ;; locals typed before it. Not a loop* local: its recur may pass anything
+            ;; ((loop [i (count xs)] ... (recur (str i))): typing it is a native error)
+            long-inits (when (and (= h 'let*) (seq (:native-int-aliases ctx))) (host/native-long-inits))
+            long-call? (fn [v] (and (seq? v) (symbol? (first v))
+                                    (not (contains? *locals* (*plain* (first v))))
+                                    (contains? #{nil "clojure.core" "cohost.core"} (namespace (first v)))
+                                    (contains? long-inits (symbol (name (first v))))))
+            [natives casts] (reduce (fn [[acc cs] [b v :as p]]
+                                      (let [k (when (symbol? b) (*plain* b))]
+                                        (cond (nil? k) [acc cs]
+                                              (int-init? p) [(conj acc k) cs]
+                                              (or (empty? long-inits) (some? (:tag (meta b)))) [(disj acc k) cs]
+                                              (long-call? v) [(conj acc k) (conj cs k)]
+                                              (and (not (integer? v)) (binding [*native-ints* acc] (native-int-form? v)))
+                                              [(conj acc k) cs]
+                                              :else [(disj acc k) cs])))
+                                    [(apply disj *native-ints* syms) #{}] pairs)
+            bvec' (if-let [cast (and (seq casts) (get (host/native-local-casts) 'long))]
+                    (carry-meta (vec (mapcat (fn [[b v]] [b (if (and (symbol? b) (contains? casts (*plain* b))) (list cast v) v)])
+                                             (partition 2 bvec')))
+                                bvec')
+                    bvec')
             ;; an empty body is nil: ClojureWasm's let*, loop* and letfn* take
             ;; no empty one
             body' (binding [*native-ints* natives *native-reals* reals *num-env* body-env] (or (seq (doall (rw-all ctx body))) [nil]))]
@@ -2893,10 +2918,20 @@
                                 (apply list (or (core-alias ctx h) (rw ctx h)) (or args' (rw-all ctx args)))))))))]
       (carry-meta out form))))
 
+;; A7-1: the adapter's fn for a vector literal of this size (:vector-literal), when the literal
+;; carries no metadata but its reader position
+(def ^:private reader-position-keys #{:line :column :end-line :end-column :file :source :jank/source})
+(defn- vector-literal-fn [form]
+  (when-let [m (host/vector-literal)]
+    (when (every? reader-position-keys (keys (meta form)))
+      (get m (count form)))))
+
 (defn rw [ctx form]
   (cond
     (seq? form) (rw-list ctx form)
-    (vector? form) (carry-meta (vec (rw-all ctx form)) form)
+    (vector? form) (if-let [f (vector-literal-fn form)]
+                     (cons f (rw-all ctx form))
+                     (carry-meta (vec (rw-all ctx form)) form))
     (map? form) (rw-map ctx form)
     (set? form) (carry-meta (into #{} (rw-all ctx form)) form)
     (symbol? form) (rw-symbol ctx form)
