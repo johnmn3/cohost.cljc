@@ -214,10 +214,15 @@
   ;; cohost's own namespaces AOT (G-12), rebuilt when stale.
   (load-file "dev/perf/jank_aot_ensure.clj"))
 
+(load-file "dev/perf/jank_gc_env.clj")
+
 (defn run-jank-cohost [_ src arg]
   ;; cohost's jank boot has no load-file; --eval reads every form of its argument.
+  ;; jank-MAX A1: cohost's collector environment (dev/perf/jank_gc_env.clj). jank's own
+  ;; targets (jank-jit, jank-aot) keep jank's defaults: they measure jank as shipped.
   (run! [jank-bin "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--"
-         "--eval" (cohost-source src (clock "jank") arg)]))
+         "--eval" (cohost-source src (clock "jank") arg)]
+        {:extra-env (jank-gc-env)}))
 
 (defn run-cljrs [id src arg]
   (let [f (tmp (str (name id) ".clj"))]

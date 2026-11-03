@@ -28,8 +28,14 @@
           (defn jank-o []
             (let [o (System/getenv "COHOST_JANK_O")]
               (cond (nil? o) ["-O3"] (= "none" o) [] :else [o])))
+          ;; jank-MAX A1: the collector environment of every jank process these tasks
+          ;; start (dev/perf/jank_gc_env.clj; the user's GC_* win, COHOST_JANK_GC=none
+          ;; sets nothing)
+          (load-file "dev/perf/jank_gc_env.clj")
+          (defn jank-shell [& args]
+            (apply babashka.process/shell {:extra-env (jank-gc-env)} args))
           (defn jank! [& args]
-            (apply babashka.process/shell (concat [jank-bin] (jank-o) args)))
+            (apply jank-shell (concat [jank-bin] (jank-o) args)))
           (defn jank-snapshot-path []
             (when (= "jank" jank-bin)
               (load-file "dev/perf/jank_snapshot_key.clj")
@@ -123,7 +129,7 @@
   ;; jank-FAST Step 2. Phase timers inside boot! ({:profile? true} only) plus
   ;; the twelve libraries. One run. Median of three: dev/perf/jank_boot_profile.sh
   boot:jank-profile {:doc "jank boot with phase timers (doc/perf/jank.md, Boot profile). One run."
-                     :task (shell jank-bin "--module-path" "src" "run" "dev/perf/jank_boot_profile.jank")}
+                     :task (jank-shell jank-bin "--module-path" "src" "run" "dev/perf/jank_boot_profile.jank")}
   ;; Same profile after the AOT modules boot:jank loads. Median of three:
   ;; dev/perf/jank_aot_profile.sh
   boot:jank-aot-profile {:doc "jank boot profile with cohost namespaces AOT'd -O3. One run."
@@ -136,7 +142,7 @@
   ;; inward and the module can be compiled with the rest of cohost.run.
   ;; Load-time medians: dev/perf/jank_aot_time.sh
   boot:jank-aot {:doc "jank: AOT cohost's namespaces (-O3, including cohost.hosts.jank-host and cohost.shim) and boot through the load stamp. See dev/perf/jank_aot_time.sh."
-                 :task (apply shell jank-bin "--module-path" (str (jank-aot-dir) ":src")
+                 :task (apply jank-shell jank-bin "--module-path" (str (jank-aot-dir) ":src")
                               "run" "dev/perf/jank_aot_load.jank" "--" *command-line-args*)}
   ;; jank-FAST Step 6 stage 2. Boot from the AOT snapshot of the booted core
   ;; and libraries (target/jank-snapshot/, generated, not committed). The
