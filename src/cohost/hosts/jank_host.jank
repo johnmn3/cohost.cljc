@@ -1226,6 +1226,31 @@ namespace cohost_assoc {
                        (let [bad (cpp/cohost_assoc.oob m k kvs)]
                          (if (nil? bad) (apply @host-assoc m k v kvs) (assoc-oob bad)))))))
 
+;; ---------------------------------------------------------------------------
+;; A6-2 cohost_json: the json program's per-operation costs on jank (dev/research/a6/json_*).
+;; conj: the stock conj is a var call to RT-conj (the shim's cohost-type check) and then
+;; jank's conj, three dynamic calls per element (p08 conj+into: +170 ms per 1e6 over plain
+;; jank on the series build). A jank collection takes jank's conj directly; a cohost
+;; instance the shim's RT-conj, as the stock path does (its descriptor's :conj, or the
+;; ClassCastException).
+(def ^:private shim-RT-conj (delay (var-get (resolve 'cohost.shim/RT-conj))))
+(def ^:private host-conj (delay @(get (ns-publics 'clojure.core) 'conj)))
+(def ^:private native-conj
+  (fn ([] [])
+      ([c] c)
+      ([c x] (if (cpp/cohost_obj.is_cohost c) (@shim-RT-conj c x) (@host-conj c x)))
+      ([c x & xs] (if (cpp/cohost_obj.is_cohost c)
+                    (reduce (fn [cc y] (@shim-RT-conj cc y)) (@shim-RT-conj c x) xs)
+                    (apply @host-conj c x xs)))))
+
+;; A6-2 cohost_json: map? / vector? (chunks' cond chain): a cohost instance (a record is a
+;; map on the JVM, a deftype may implement IPersistentVector) takes the booted stock fn; any
+;; other value jank's own, whose answer is the stock fn's on jank's collections
+(def ^:private stock-map? (delay (var-get (resolve 'cohost.core/map?))))
+(def ^:private stock-vector? (delay (var-get (resolve 'cohost.core/vector?))))
+(defn map?* [x] (if (cpp/cohost_obj.is_cohost x) (@stock-map? x) (map? x)))
+(defn vector?* [x] (if (cpp/cohost_obj.is_cohost x) (@stock-vector? x) (vector? x)))
+
 (defn type-key
   "The protocol dispatch key of a value."
   [x]
@@ -1886,6 +1911,14 @@ namespace cohost_assoc {
 
 (def adapter
   {:name :jank
+   ;; a thrown jank value no cohost type made: jank's checked integer ops throw
+   ;; a string -- the series build's + - * "integer overflow" (runtime/core/
+   ;; math.cpp throw_integer_overflow), inc and dec on a native long "Overflow on
+   ;; increment." (math.hpp, both builds) -- which is the JVM's
+   ;; ArithmeticException; any other is the default's RuntimeException
+   :exception-class (fn [e] (if (contains? #{"integer overflow" "Overflow on increment." "Overflow on decrement."} e)
+                              'java.lang.ArithmeticException
+                              'RuntimeException))
    ;; A4 (a): jank's own chunk fns, but a chunk-cons that keeps its rest lazy (jank's realizes it:
    ;; a chunked pipeline overflows the stack near 1e6 on apt), plus IChunk.reduce over jank's
    ;; array_chunk; and the integer range as a chunked seq of jank's own chunked_cons
@@ -2022,7 +2055,28 @@ namespace cohost_assoc {
    ;; Math/round, abs, pow keep the shim: round is floor(a+1/2) (std::llround
    ;; rounds -2.5 to -3), abs of Long/MIN_VALUE and pow's argument kinds are
    ;; the shim's already.
-   :math-aliases {"Math-sqrt" (fn [args]
+   :math-aliases {;; A6-2 cohost_json: (nil? x) inlines to (Util/identical x nil), the shim's
+                  ;; wrapper (a keyword pair compares by =); against a literal nil, true or false
+                  ;; it is jank's own nil? / true? / false? (jank 0.1's identical? on a literal
+                  ;; does not compile: a C++ == of two object_refs)
+                  ;; A6-2 cohost_json: (int c) of a char (every json read: (int (nth s i))) is
+                  ;; jank's int, the char's code point (the adapter's :char-code); anything else
+                  ;; keeps the shim's RT-intCast (A5-2's range check)
+                  "RT-intCast" (fn [args]
+                                 (when (= 1 (count args))
+                                   (let [c (gensym "ic")]
+                                     (list 'let* [c (first args)]
+                                           (list 'if (list 'clojure.core/char? c)
+                                                 (list 'clojure.core/int c)
+                                                 (list 'cohost.shim/RT-intCast c))))))
+                  "Util-identical" (fn [args]
+                                     (when (= 2 (count args))
+                                       (let [[a b] args]
+                                         (cond (nil? b) (list 'clojure.core/nil? a)
+                                               (true? b) (list 'clojure.core/true? a)
+                                               (false? b) (list 'clojure.core/false? a)
+                                               (nil? a) (list 'clojure.core/nil? b)))))
+                  "Math-sqrt" (fn [args]
                                 (when (= 1 (count args))
                                   (let [d (gensym "msqrt")]
                                     (list 'let* [d (list 'cpp/jank.runtime.to_real (first args))]
@@ -2049,7 +2103,10 @@ namespace cohost_assoc {
    ;; (dev/research/u4/edges.sh: integers, Long/MAX/MIN, reals, NaN, -0.0, a
    ;; bigint, the shim's integer "ratio", a non-number): every row equal
    ;; A6-1 (u3): = joins them: it is jank's own here ('clojure.core/= :host in :natives)
-   :core-aliases '#{not not= = < > <= >= ==}
+   ;; A6-2 cohost_json: true? false? string? are jank's own too (no :inline in the stock
+   ;; core, so each was a var call; jank's answer on nil, the booleans, a computed boolean,
+   ;; a string, a char, a keyword, a number, a vector: the stock fn's)
+   :core-aliases '#{not not= = < > <= >= == true? false? string?}
    ;; U6-9: a booted stock fn passed as a value ((map inc xs), (filter odd? xs))
    ;; is jank's own fn: the stock inc/pos?/</... bodies already are jank's op
    ;; (their :inline reaches it), so the value differs only by the var call.
@@ -2059,14 +2116,20 @@ namespace cohost_assoc {
                          pos? clojure.core/pos? neg? clojure.core/neg? zero? clojure.core/zero?
                          < clojure.core/< > clojure.core/> <= clojure.core/<= >= clojure.core/>= == clojure.core/==
                          = clojure.core/= not= clojure.core/not= not clojure.core/not
-                         odd? cohost.hosts.jank-host/odd?* even? cohost.hosts.jank-host/even?*}
+                         odd? cohost.hosts.jank-host/odd?* even? cohost.hosts.jank-host/even?*
+                         ;; A6-2 cohost_json
+                         nil? clojure.core/nil? true? clojure.core/true? false? clojure.core/false? string? clojure.core/string?
+                         map? cohost.hosts.jank-host/map?* vector? cohost.hosts.jank-host/vector?*}
    ;; U6-9: jank's own odd?/even? of a non-integer raise a native C++ exception
    ;; (no catch reaches it; Clojure's is IllegalArgumentException), so a call
    ;; is jank's op on a host long (is_integer: integer and small_integer; a
    ;; native long boxes into it) and the stock fn on anything else (a bigint,
    ;; a real, a non-number); an integer literal is jank's op directly
    :core-expansions {'odd? (fn [stock-head args] (parity-expansion 'clojure.core/odd? stock-head args))
-                     'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))}
+                     'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))
+                     ;; A6-2 cohost_json: map? / vector? through the guarded map?* / vector?*
+                     'map? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/map?* (first args))))
+                     'vector? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/vector?* (first args))))}
    :syntax-quote-source? true
    :loop-rebind-shadow? true
    :lazy-seq (fn [f] (lazy-seq (f)))
@@ -2245,6 +2308,8 @@ namespace cohost_assoc {
              ;; A6-1: a vector assoc (up to three pairs) in one C++ call per pair
              ;; (jank-rt/assoc-with); maps, cohost instances, bounds errors as before
              'clojure.core/assoc (jank-rt/assoc-with native-assoc)
+             ;; A6-2 cohost_json: conj without the stock layers (native-conj above)
+             'clojure.core/conj native-conj
              ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
              ;; at a time (cohost.hosts.jank-runtime)
              'clojure.core/range jank-rt/range

@@ -1,0 +1,17 @@
+;; X1-10: print what cohost hands jank for a program (the form at the adapter's :eval
+;; capability, after cohost.rewrite), then evaluate it as usual.
+;;   bash dev/research/x1/dump_rewrite.sh bench/programs/fib_hinted.clj
+(require 'cohost.run)
+(require 'cohost.adapter)
+(require 'cohost.boot)
+(let [src (first *command-line-args*)]
+  (cohost.boot/boot! {:root "resources/cohost/clojure-1.12.0" :verbose false})
+  (cohost.boot/make-user-ns!)
+  (let [m (cohost.adapter/current)
+        ev (:eval m)]
+    (cohost.adapter/install!
+     (assoc m :eval (fn [form]
+                      (println "=== FORM")
+                      (binding [*print-meta* true] (prn form))
+                      (ev form)))))
+  (println "=== RESULT" (pr-str (cohost.boot/eval-str src))))

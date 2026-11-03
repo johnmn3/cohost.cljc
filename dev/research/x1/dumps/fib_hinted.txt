@@ -1,0 +1,5 @@
+=== FORM
+(def fib (fn* fib ([n] (let* [n (if (cpp/jank.runtime.is_integer n) n (if (number? n) (long n) (if (nil? n) (throw (cohost.shim/new-NullPointerException "Cannot invoke \"java.lang.Number.longValue()\" because the argument is null")) (throw (cohost.shim/new-ClassCastException "class java.lang.Object cannot be cast to class java.lang.Number")))))] (let* [cohost_user$ret___1 ((fn* fib ([n] (if (clojure.core/< n 2) n (cohost.shim/Numbers-add (fib (cohost.shim/Numbers-minus n 1)) (fib (cohost.shim/Numbers-minus n 2)))))) n)] (if (cpp/jank.runtime.is_integer cohost_user$ret___1) cohost_user$ret___1 (if (number? cohost_user$ret___1) (long cohost_user$ret___1) (if (nil? cohost_user$ret___1) (throw (cohost.shim/new-NullPointerException "Cannot invoke \"java.lang.Number.longValue()\" because the argument is null")) (throw (cohost.shim/new-ClassCastException "class java.lang.Object cannot be cast to class java.lang.Number"))))))))))
+=== FORM
+(def -run (fn* -run ([s] (fib (parse-long s)))))
+=== RESULT #'cohost.user/-run
