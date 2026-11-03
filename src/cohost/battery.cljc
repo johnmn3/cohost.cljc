@@ -75,6 +75,11 @@
    ;; ^:redef keeps the var call on a :defn-fn-name? host (Clojure's direct
    ;; linking opt-out): a redefinition mid-recursion is seen, on every host
    ["^:redef: a redefinition during its own recursion is seen" "(do (defn bt-dl2 [x] :new) (defn ^:redef bt-dlr [n] (if (zero? n) :base (do (when (= n 2) (alter-var-root (var bt-dlr) (constantly bt-dl2))) (bt-dlr (dec n))))) (bt-dlr 3))" :new]
+   ;; A7-4: a call to a fn var of the namespace being compiled is direct on
+   ;; jank (adapter :direct-var-calls) and reads the var at every call: a
+   ;; caller sees its callee redefined, with-redefs'd and alter-var-root'd
+   ["A7-4: a caller sees its callee's redefinition, with-redefs and alter-var-root" "(defn a74-c [x] (+ x 1)) (defn a74-k [x] (a74-c x)) (def a74-r (a74-k 1)) (defn a74-c [x] (* x 10)) [a74-r (a74-k 2) (with-redefs [a74-c (fn [x] [:wr x])] (a74-k 3)) (a74-k 4) (do (alter-var-root (var a74-c) (constantly (fn [x] [:avr x]))) (a74-k 5))]" [2 20 [:wr 3] 40 [:avr 5]]]
+   ["A7-4: direct calls to variadic, multi-arity, non-fn and ^:dynamic vars" "(defn a74-v [x & ys] [x ys]) (defn a74-m ([] 0) ([a] a) ([a b] (+ a b))) (def a74-map {:a 1}) (defn ^:dynamic a74-d [] :root) (defn a74-u [] [(a74-v 1) (a74-v 1 2 3) (a74-m) (a74-m 5) (a74-m 1 2) (a74-map :a) (a74-d) (binding [a74-d (fn [] :bound)] (a74-d))]) (a74-u)" [[1 nil] [1 '(2 3)] 0 5 3 1 :root :bound]]
    ["alter-var-root var-get" "(do (def vr 1) (alter-var-root #'vr inc) [vr (var-get #'vr) (:name (meta #'vr))])" [2 2 'vr]]
    ["try/catch/finally ex-info" "(let [log (atom [])] [(try (throw (ex-info \"boom\" {:k 1})) (catch Exception e (swap! log conj :caught) (:k (ex-data e))) (finally (swap! log conj :fin))) @log])" [1 [:caught :fin]]]
    ["ex-message ex-cause" "(let [e (ex-info \"outer\" {} (ex-info \"inner\" {}))] [(ex-message e) (ex-message (ex-cause e))])" ["outer" "inner"]]
