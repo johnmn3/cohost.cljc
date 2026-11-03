@@ -1813,8 +1813,10 @@ namespace cohost_obj {
                   ;; the IEEE infinity/NaN for a double; jank's own 0.0/0 gives a
                   ;; negative-signed NaN, which segfaults when boxed); any other
                   ;; divisor is jank's / (its native and boxed arithmetic)
+                  ;; (A5: not where jank's integer arithmetic wraps: there the
+                  ;; wrapper stays the one call, as before)
                   "Numbers-divide" (fn [args]
-                                     (when (= 2 (count args))
+                                     (when (and (not int-wraps?) (= 2 (count args)))
                                        (let [a (gensym "dva") b (gensym "dvb")]
                                          (list 'let* [a (first args) b (second args)]
                                                (list 'if (list 'clojure.core/zero? b)
