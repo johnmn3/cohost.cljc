@@ -309,8 +309,55 @@ namespace cohost_sort {
 // sequence walk (runtime::reduce allocates a seq step per element: draft
 // jank-15). The same elements in the same order, the same reduced handling;
 // any other coll goes to runtime::reduce itself. Removed when jank-15 lands.
+#include <jank/runtime/obj/chunked_cons.hpp>
+#include <jank/runtime/obj/array_chunk.hpp>
+#include <jank/runtime/obj/lazy_sequence.hpp>
 namespace cohost_reduce {
   using namespace jank::runtime;
+  // A7-2 (u3): a chunk's buffer on both builds (the series' array_chunk::buffer is a shared
+  // jtl::ref, patch 11; apt's a plain vector).
+  template <class B>
+  inline auto const &cbuf(B const &b) {
+    if constexpr(requires { b->size(); }) { return *b; } else { return b; }
+  }
+  // A7-2: the walk for every coll the fast paths below do not take (15a/15b's walk, adapter-
+  // side): a jank chunked_cons is walked a chunk at a time by index (apt's chunk_next copies
+  // the chunk per element), a lazy_sequence is realized in place of itself, anything else steps
+  // by first / next. The same elements in the same order as jank's reduce, the same reduced.
+  // A7-2: the types jank's transient takes (stock into's IEditableCollection test)
+  inline bool is_editable(object_ref const o) {
+    auto const t(o.get_type());
+    return t == object_type::persistent_vector || t == object_type::persistent_array_map
+      || t == object_type::persistent_hash_map || t == object_type::persistent_hash_set;
+  }
+  inline object_ref walk_reduce(object_ref f, object_ref init, object_ref coll) {
+    object_ref res{ init };
+    object_ref s{ coll.is_nil() ? coll : jank::runtime::seq(coll) };
+    while(s.is_some()) {
+      auto const t(s.get_type());
+      if(t == object_type::chunked_cons) {
+        auto const *cc = static_cast<obj::chunked_cons const *>(s.ptr());
+        if(cc->head.get_type() == object_type::array_chunk) {
+          auto const *c = static_cast<obj::array_chunk const *>(cc->head.ptr());
+          auto const &b(cbuf(c->buffer));
+          for(auto i(c->offset); i < b.size(); ++i) {
+            res = f.call(res, b[i]);
+            if(res.get_type() == object_type::reduced) { return expect_object<obj::reduced>(res)->val; }
+          }
+          s = cc->tail.is_nil() ? cc->tail : jank::runtime::seq(cc->tail);
+          continue;
+        }
+      }
+      else if(t == object_type::lazy_sequence) {
+        s = jank::runtime::seq(s);
+        continue;
+      }
+      res = f.call(res, jank::runtime::first(s));
+      if(res.get_type() == object_type::reduced) { return expect_object<obj::reduced>(res)->val; }
+      s = jank::runtime::next(s);
+    }
+    return res;
+  }
   // A4 (a): the adapter's integer range is jank's obj::range (chunked); its integer start, step
   // and count, or false for any other range.
   inline bool int_range(object_ref coll, jank::i64 &a, jank::i64 &st, jank::i64 &n) {
@@ -359,6 +406,12 @@ namespace cohost_reduce {
         }
         return res;
       }
+      case object_type::chunked_cons:
+      case object_type::lazy_sequence:
+      case object_type::cons:
+      case object_type::persistent_vector_sequence:
+      case object_type::range:
+        return walk_reduce(f, init, coll);
       default:
         return jank::runtime::reduce(f, init, coll);
     }
@@ -1105,15 +1158,30 @@ namespace cohost_obj {
 (def ^:private host-into (delay @(get (ns-publics 'clojure.core) 'into)))
 (def ^:private host-transduce (delay @(get (ns-publics 'clojure.core) 'transduce)))
 
+;; A7-2: helpers for into / frequencies / group-by over reduce-init (host-get and host-conj
+;; proper are defined further down)
+(def ^:private host-get* (delay @(get (ns-publics 'clojure.core) 'get)))
+(def ^:private host-conj* (delay @(get (ns-publics 'clojure.core) 'conj)))
+(defn- editable? [to] (cpp/cohost_reduce.is_editable to))
+(defn- keep-meta [to r] (if-let [m (meta to)] (with-meta r m) r))
 (def ^:private native-into
+  ;; A7-2: a host to and from reduce through reduce-init (cohost_reduce: by index over a range
+  ;; or vector, a chunk at a time over a chunked seq) into a transient where to is editable,
+  ;; as stock into does; meta kept
   (fn ([to from]
        (if (or (cpp/cohost_obj.is_cohost to) (cpp/cohost_obj.is_cohost from))
          (@stock-reduce @stock-conj to from)
-         (@host-into to from)))
+         (if (editable? to)
+           (keep-meta to (@host-persistent! (reduce-init (fn [t x] (@host-conj! t x)) (@host-transient to) from)))
+           (reduce-init (fn [c x] (@host-conj* c x)) to from))))
       ([to xform from]
        (if (or (cpp/cohost_obj.is_cohost to) (cpp/cohost_obj.is_cohost from))
          (@stock-reduce @stock-conj to (@stock-eduction xform from))
-         (@host-into to xform from)))))
+         (if (editable? to)
+           (let [rf (xform (fn ([t] t) ([t x] (@host-conj! t x))))]
+             (keep-meta to (@host-persistent! (rf (reduce-init rf (@host-transient to) from)))))
+           (let [rf (xform (fn ([c] c) ([c x] (@host-conj* c x))))]
+             (rf (reduce-init rf to from))))))))
 
 (def ^:private native-transduce
   (fn transduce*
@@ -1121,7 +1189,8 @@ namespace cohost_obj {
     ([xform f init coll]
      (if (cpp/cohost_obj.is_cohost coll)
        (@stock-reduce (xform f) init coll)
-       (@host-transduce xform f init coll)))))
+       ;; A7-2: stock transduce's body over reduce-init
+       (let [rf (xform f)] (rf (reduce-init rf init coll)))))))
 
 ;; sort, sort-by, set, frequencies, group-by (M-5): the same guard one
 ;; level up -- a cohost-instance SOURCE is first materialized into a host
@@ -1151,10 +1220,15 @@ namespace cohost_obj {
       ([keyfn comp coll] (let [d (host-data coll)] (sorted-of d (@host-sort-by keyfn comp d))))))
 (def ^:private native-set
   (fn [coll] (@host-set (host-data coll))))
+;; A7-2: stock frequencies / group-by bodies over reduce-init into a transient map
 (def ^:private native-frequencies
-  (fn [coll] (@host-frequencies (host-data coll))))
+  (fn [coll] (@host-persistent!
+              (reduce-init (fn [counts x] (@host-assoc! counts x (inc (@host-get* counts x 0))))
+                           (@host-transient {}) (host-data coll)))))
 (def ^:private native-group-by
-  (fn [f coll] (@host-group-by f (host-data coll))))
+  (fn [f coll] (@host-persistent!
+                (reduce-init (fn [ret x] (let [k (f x)] (@host-assoc! ret k (@host-conj* (@host-get* ret k []) x))))
+                             (@host-transient {}) (host-data coll)))))
 
 ;; assoc, get, nth, count (M-5): one is_cohost test decides. A cohost
 ;; instance goes to the shim's RT fn for the op (that is where instance
