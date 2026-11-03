@@ -1334,21 +1334,6 @@ namespace cohost_assoc {
 
 ;; ---------------------------------------------------------------------------
 ;; A6-2 cohost_json: the json program's per-operation costs on jank (dev/research/a6/json_*).
-;; conj: the stock conj is a var call to RT-conj (the shim's cohost-type check) and then
-;; jank's conj, three dynamic calls per element (p08 conj+into: +170 ms per 1e6 over plain
-;; jank on the series build). A jank collection takes jank's conj directly; a cohost
-;; instance the shim's RT-conj, as the stock path does (its descriptor's :conj, or the
-;; ClassCastException).
-(def ^:private shim-RT-conj (delay (var-get (resolve 'cohost.shim/RT-conj))))
-(def ^:private host-conj (delay @(get (ns-publics 'clojure.core) 'conj)))
-(def ^:private native-conj
-  (fn ([] [])
-      ([c] c)
-      ([c x] (if (cpp/cohost_obj.is_cohost c) (@shim-RT-conj c x) (@host-conj c x)))
-      ([c x & xs] (if (cpp/cohost_obj.is_cohost c)
-                    (reduce (fn [cc y] (@shim-RT-conj cc y)) (@shim-RT-conj c x) xs)
-                    (apply @host-conj c x xs)))))
-
 ;; A6-2 cohost_json: map? / vector? (chunks' cond chain): a cohost instance (a record is a
 ;; map on the JVM, a deftype may implement IPersistentVector) takes the booted stock fn; any
 ;; other value jank's own, whose answer is the stock fn's on jank's collections
@@ -1356,6 +1341,48 @@ namespace cohost_assoc {
 (def ^:private stock-vector? (delay (var-get (resolve 'cohost.core/vector?))))
 (defn map?* [x] (if (cpp/cohost_obj.is_cohost x) (@stock-map? x) (map? x)))
 (defn vector?* [x] (if (cpp/cohost_obj.is_cohost x) (@stock-vector? x) (vector? x)))
+
+;; ---------------------------------------------------------------------------
+;; A6-4: get-in / assoc-in / update-in (the pipeline program; dev/research/a6/pipeline_probe:
+;; update-in with (fnil + 0) 1416 ms per 1e6 under cohost vs 828 plain jank on apt, assoc-in
+;; 903 vs 642, get-in 250 vs 131). The stock fns destructure [k & ks] and apply f at every
+;; level through var calls. These walk the keys once, over cohost.core's own get and assoc
+;; (the installed natives: a cohost record or map at any level is handled there), with fixed
+;; arities for f's extra arguments. A key collection that is a cohost instance walks through
+;; the booted seq / first / next.
+(def ^:private a64-get (delay (var-get (resolve 'cohost.core/get))))
+(def ^:private a64-assoc (delay (var-get (resolve 'cohost.core/assoc))))
+(def ^:private a64-seq (delay (var-get (resolve 'cohost.core/seq))))
+(def ^:private a64-first (delay (var-get (resolve 'cohost.core/first))))
+(def ^:private a64-next (delay (var-get (resolve 'cohost.core/next))))
+(def ^:private a64-none (volatile! :a64-none))
+(defn- a64-keys [ks] (if (cpp/cohost_obj.is_cohost ks) (@a64-seq ks) (seq ks)))
+(defn- a64-fst [s] (if (cpp/cohost_obj.is_cohost s) (@a64-first s) (first s)))
+(defn- a64-nxt [s] (if (cpp/cohost_obj.is_cohost s) (@a64-next s) (next s)))
+(defn- a64-up [m s g]
+  (let [k (a64-fst s) r (a64-nxt s)]
+    (if r
+      (@a64-assoc m k (a64-up (@a64-get m k) r g))
+      (@a64-assoc m k (g (@a64-get m k))))))
+(defn- a64-ai [m s v]
+  (let [k (a64-fst s) r (a64-nxt s)]
+    (if r
+      (@a64-assoc m k (a64-ai (@a64-get m k) r v))
+      (@a64-assoc m k v))))
+(def ^:private native-get-in
+  (fn ([m ks] (loop [m m s (a64-keys ks)] (if s (recur (@a64-get m (a64-fst s)) (a64-nxt s)) m)))
+      ([m ks nf] (loop [m m s (a64-keys ks)]
+                   (if s
+                     (let [v (@a64-get m (a64-fst s) a64-none)]
+                       (if (identical? v a64-none) nf (recur v (a64-nxt s))))
+                     m)))))
+(def ^:private native-assoc-in (fn [m ks v] (a64-ai m (a64-keys ks) v)))
+(def ^:private native-update-in
+  (fn ([m ks f] (a64-up m (a64-keys ks) f))
+      ([m ks f a] (a64-up m (a64-keys ks) (fn [o] (f o a))))
+      ([m ks f a b] (a64-up m (a64-keys ks) (fn [o] (f o a b))))
+      ([m ks f a b c] (a64-up m (a64-keys ks) (fn [o] (f o a b c))))
+      ([m ks f a b c & more] (a64-up m (a64-keys ks) (fn [o] (apply f o a b c more))))))
 
 (defn type-key
   "The protocol dispatch key of a value."
@@ -2467,6 +2494,10 @@ namespace cohost_assoc {
              ;; (jank-rt/get-with, jank-rt/conj-with); everything else as before (conj: the
              ;; shim's RT-conj, which stock conj calls)
              'clojure.core/get (jank-rt/get-with native-get)
+             ;; A6-4: get-in / assoc-in / update-in in one walk (native-get-in above)
+             'clojure.core/get-in native-get-in
+             'clojure.core/assoc-in native-assoc-in
+             'clojure.core/update-in native-update-in
              'clojure.core/conj (jank-rt/conj-with (fn [c x] (@shim-RT-conj c x)))
              ;; A6-1: a vector assoc (up to three pairs) in one C++ call per pair
              ;; (jank-rt/assoc-with); maps, cohost instances, bounds errors as before
