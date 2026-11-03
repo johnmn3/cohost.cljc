@@ -116,31 +116,74 @@
                                    (str repo "/dev/perf/jank_snapshot_emit.clj")))
                     "main " main "\n"))))
 
-(defn jank-project-launch [repo project roots main core-path env]
-  (when (and main (not= "none" (System/getenv "COHOST_JANK_PROJECT")))
+(defn jank-project-build!
+  "D-10: compile what a run recorded (dir/events.edn) into the project's
+   modules: emit (jank_snapshot_emit.clj --project; an unchanged module file
+   keeps its mtime, so jank recompiles only what changed, D-9), compile-module
+   -O3, then the stamp, last. A different core snapshot (dir/core-stamp)
+   deletes the old objects first: their macros came from it. -> true when built."
+  [repo dir core-path k env]
+  (let [stamp (str dir "/stamp") src (str dir "/src") aot (str dir "/aot") events (str dir "/events.edn")
+        core-stamp (str repo "/target/jank-snapshot/stamp")
+        core (when (fs/exists? core-stamp) (slurp core-stamp))
+        run (fn [& cmd] (apply p/shell {:dir repo :out :string :err :string :continue true :extra-env env} cmd))]
+    (fs/delete-if-exists stamp)
+    (when (not= core (when (fs/exists? (str dir "/core-stamp")) (slurp (str dir "/core-stamp"))))
+      (fs/delete-tree src) (fs/delete-tree aot))
+    (fs/create-dirs aot)
+    (let [r2 (run "bb" (str repo "/dev/perf/jank_snapshot_emit.clj") "--project" "--events" events "--out" src)
+          r3 (when (zero? (:exit r2))
+               (run "jank" "-O3" "--module-path" (str src ":" core-path) "compile-module" "cohost.project-build"
+                    "--target-dir" aot))
+          ok (and r3 (zero? (:exit r3)) (seq (fs/glob aot "_cache/*")))]
+      (if ok
+        (do (when core (spit (str dir "/core-stamp") core))
+            (spit stamp (str k "\n"))
+            (println "PROJECT-BUILT" k))
+        (println "PROJECT-BUILD-FAILED" (:err (or r3 r2))))
+      (boolean ok))))
+
+(defn jank-project-launch
+  "D-8, D-10: a project's namespaces, compiled. Fresh (the stamp is this
+   key) -> its module path and entry: every project namespace loads from its
+   module. Stale -> {:record-libs <events file>}: this run records the
+   libraries it loads from source (cohost.cli, D-10), and :after-run starts
+   jank-project-build! in the background when the run has ended (one at a
+   time, nice'd; <dir>/build.log), so the next run loads them compiled. No
+   separate recording pass before the run any more (D-8 took 37 s). While a
+   build is running, a run neither records nor waits. COHOST_COMPILE=0 or
+   COHOST_JANK_PROJECT=none: never."
+  [repo project roots main core-path env]
+  (when (and main (not= "none" (System/getenv "COHOST_JANK_PROJECT")) (not= "0" (System/getenv "COHOST_COMPILE")))
     (let [dir (str (fs/absolutize (fs/path project "target/cohost-jank")))
           stamp (str dir "/stamp") src (str dir "/src") aot (str dir "/aot")
+          lock (str dir "/build.lock")
           k (project-key repo roots main)
           cache (fn [] (first (map str (fs/glob aot "_cache/*"))))
-          fresh? (and (fs/exists? stamp) (= k (str/trim (slurp stamp))) (cache))]
-      (when-not fresh?
-        (binding [*out* *err*] (println "cohost: jank: compiling the project's namespaces ahead (once per change)"))
-        (fs/delete-tree dir)
-        (fs/create-dirs dir)
-        (let [run (fn [& cmd] (apply p/shell {:dir repo :out :string :err :string :continue true :extra-env env} cmd))
-              events (str dir "/events.edn")
-              r1 (apply run "jank" "--module-path" core-path "run" (str repo "/dev/perf/jank_snapshot_project_record.jank")
-                        "--" "--stock" (str repo "/resources/cohost/clojure-1.12.0") "--out" events "--lib" (str main)
-                        (mapcat (fn [r] ["--root" r]) roots))
-              r2 (when (zero? (:exit r1))
-                   (run "bb" (str repo "/dev/perf/jank_snapshot_emit.clj") "--project" "--events" events "--out" src))
-              r3 (when (and r2 (zero? (:exit r2)))
-                   (run "jank" "-O3" "--module-path" (str src ":" core-path) "compile-module" "cohost.project-build"
-                        "--target-dir" aot))]
-          (if (and r3 (zero? (:exit r3)) (cache))
-            (spit stamp (str k "\n"))
-            (binding [*out* *err*]
-              (println "cohost: jank: the project's ahead-of-time build failed; running without it")
-              (println (:err (or r3 r2 r1)))))))
-      (when (and (fs/exists? stamp) (cache))
-        {:module-path (str (cache) ":" src ":" core-path) :project-snapshot "cohost.project"}))))
+          held (when (fs/exists? lock) (str/trim (slurp lock)))]
+      (cond
+        (and (fs/exists? stamp) (= k (str/trim (slurp stamp))) (cache))
+        {:module-path (str (cache) ":" src ":" core-path) :project-snapshot "cohost.project"}
+
+        (and (seq held) (pid-alive? held))
+        (binding [*out* *err*] (println (str "cohost: jank: the project's namespaces are being compiled (" dir "/build.log); this run loads them from source")) nil)
+
+        :else
+        (let [events (str dir "/events.edn")]
+          (fs/create-dirs dir)
+          (fs/delete-if-exists events)
+          {:record-libs events
+           :after-run
+           (fn []
+             (when (fs/exists? events)
+               (let [proc (p/process {:dir repo :out (java.io.File. (str dir "/build.log")) :err :out :in nil
+                                      :extra-env env}
+                                     "nice" "-n" "10" "bb" "-e"
+                                     (str "(load-file " (pr-str (str repo "/dev/perf/jank_snapshot_cli.clj")) ")"
+                                          "(jank-project-build! " (pr-str repo) " " (pr-str dir) " " (pr-str core-path) " "
+                                          (pr-str k) " " (pr-str env) ")"
+                                          "(babashka.fs/delete-if-exists " (pr-str lock) ")"))]
+                 (spit lock (str (.pid ^java.lang.Process (:proc proc)) "\n"))
+                 (binding [*out* *err*]
+                   (println (str "cohost: jank: compiling the project's namespaces in the background for the next run ("
+                                 dir "/build.log)"))))))})))))

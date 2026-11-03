@@ -214,6 +214,14 @@ namespace cohost_io {
     (boot/make-user-ns!)
     (boot/make-user-ns! 'user)
     (boot/eval-str "(in-ns 'user)")
-    (exit! (run-cli! cfg))))
+    ;; :record-libs -- the run records the libraries it loads from source
+    ;; (D-10: the project's namespaces) and writes the events there when it
+    ;; ends; the launcher compiles them after the run, so the next run loads
+    ;; them compiled
+    (when (:record-libs cfg) (boot/snapshot-start!))
+    (let [code (run-cli! cfg)]
+      (when-let [p (:record-libs cfg)]
+        (host/try-all (fn [] (host/spit-file p (pr-str (boot/snapshot-stop!)))) (fn [_] nil)))
+      (exit! code))))
 
 #?(:cljs (set! *main-cli-fn* -main))
