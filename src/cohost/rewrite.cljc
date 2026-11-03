@@ -1150,6 +1150,9 @@
   (let [init (last more)
         opt-out? (let [m (meta nm)] (or (:redef m) (:dynamic m)))]
     (if (and (symbol? nm)
+             ;; a name with a dot (a deftype's Box. constructor var) is not a
+             ;; name jank's fn* can take: its codegen names the C++ function after it
+             (not (some #{"."} (map str (name nm))))
              (or (and (host/direct-linking?) (not opt-out?) (anonymous-fn-init? init))
                  (and (host/native-hints) (hinted-fn-init? init))))
       (concat (butlast more)
