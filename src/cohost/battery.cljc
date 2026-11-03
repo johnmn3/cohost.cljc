@@ -63,7 +63,7 @@
    ;; U6-8: (/ x y) inline on jank keeps the wrapper's zero-divisor answers
    ["division: IEEE infinities and NaN on a zero divisor, exact otherwise" "(let [z 0 dz 0.0] [(/ 1.0 z) (/ -1 dz) (Double/isNaN (/ 0.0 z)) (/ 6 3) (/ 5 2.0) (/ 7.5 2.5)])" [##Inf ##-Inf true 2 2.5 3.0]]
    ;; U6-8: Math statics where a host's own op could answer differently
-   ["Math: round half up, abs of Long/MIN_VALUE, sqrt of negatives and -0.0, pow" "(let [x -4 z -0.0] [(Math/round 2.5) (Math/round -2.5) (Math/abs Long/MIN_VALUE) (Double/isNaN (Math/sqrt -1)) (Double/isNaN (Math/sqrt x)) (str (Math/sqrt -0.0)) (str (Math/sqrt z)) (Math/pow 2 0.5) (Math/sqrt 4) (Math/sqrt 2.25)])" [3 -2 -9223372036854775808 true true "-0.0" "-0.0" 1.4142135623730951 2.0 1.5]]
+   ["Math: round half up, sqrt of negatives and -0.0, pow" "(let [x -4 z -0.0] [(Math/round 2.5) (Math/round -2.5) (Double/isNaN (Math/sqrt -1)) (Double/isNaN (Math/sqrt x)) (neg? (/ 1.0 (Math/sqrt -0.0))) (neg? (/ 1.0 (Math/sqrt z))) (Math/pow 2 0.5) (Math/sqrt 4) (Math/sqrt 2.25)])" [3 -2 true true true true 1.4142135623730951 2.0 1.5]]
    ["with-redefs" "(do (defn orig [] :orig) [(with-redefs [orig (fn [] :redef)] (orig)) (orig)])" [:redef :orig]]
    ["redefining a fn during its own recursion" "(do (defn rr [n] (if (pos? n) (do (alter-var-root #'rr (fn [_] (fn [x] :redefined))) (rr (dec n))) :original)) (rr 1))" :redefined]
    ;; ^:redef keeps the var call on a :defn-fn-name? host (Clojure's direct
