@@ -1158,7 +1158,11 @@
                                                                  (numeric-params params body))))
                                        tbody (when ptypes
                                                (binding [*local-tags* tags *local-classes* classes *marker-depth* depths
-                                                         *num-env* (merge fenv ptypes)]
+                                                         *num-env* (merge fenv ptypes)
+                                                         ;; the typed params join A5's native locals: a
+                                                         ;; long one is a native long, a double one a real
+                                                         *native-ints* (into *native-ints* (keep (fn [[p t]] (when (= 'long t) p))) ptypes)
+                                                         *native-reals* (into *native-reals* (keep (fn [[p t]] (when (= 'double t) p))) ptypes)]
                                                  (doall (rw-all ctx body))))
                                        body' (with-markers bs body')
                                        body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')
@@ -1381,7 +1385,11 @@ nil))
   (let [;; U6-7: the certain numeric types of the bindings (adapter
         ;; :static-types); an inferred one is marked like a hint so
         ;; with-hinted-locals gives it the host's native conversion
-        [types body-env] (if (and (infer-here?) (#{'let* 'loop*} h) (vector? bvec))
+        ;; not on a :native-int-aliases host (jank): there A5's *native-ints*
+        ;; and A5-3's *native-reals* type the literal-started and real locals
+        ;; in place, and a cast prelude would take the loop off that path
+        ;; (the coordinator's iloop: 0.26 -> 268 ms on apt)
+        [types body-env] (if (and (infer-here?) (not (seq (:native-int-aliases ctx))) (#{'let* 'loop*} h) (vector? bvec))
                            (infer-bindings h bvec body *num-env*)
                            [nil *num-env*])
         bvec (if (some some? types)
