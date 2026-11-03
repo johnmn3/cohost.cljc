@@ -158,9 +158,45 @@ What moved:
 - `-main` cost 2.36 s and loading the app 0.13 s: jank's lazy JIT compiled the app's functions at `-O3` on their first call, every run. A **project snapshot** compiles them once: `bin/cohost`'s jank launch records the main namespace's load on top of a snapshot boot, emits the project's library modules, `compile-module`s them `-O3` into `<project>/target/cohost-jank/` (keyed by the core snapshot's stamp, every file under the project's roots and the main namespace), and passes the module to `cohost.cli`, which registers it before running. When it is stale, the run builds it first (`cohost: jank: compiling the project's namespaces ahead (once per change)`; 37.2 s for the first run of the demo, the build included); `COHOST_JANK_PROJECT=none` turns it off. With it, loading and `-main` together are within the spread of a run that stops before them.
 - `cohost.cli` and its start cost 1.54 s more than the snapshot boot: `cohost.cli` was JIT-compiled from source every run. The snapshot's core module now requires it, so the snapshot's compile makes its object.
 - Not moved: the launcher (about 0.1 s with `.cpcache` hit), a jank process (0.62 s), cohost's objects (0.49 s; loading only `cohost.hosts.auto`, `cohost.boot` and `cohost.cli` instead of `cohost.run` measured the same, 1.197 / 1.208 / 1.062 against 1.204 / 1.118 / 1.218), the snapshot's replay (0.64 s). Under 1.485 s is jank's static executable (0.911 s, "A native executable on jank" below).
-- The stale case (26.26 s: the AOT boot of core.clj) lasts until `bb boot:jank-snapshot` rebuilds the core snapshot. That build records a boot (1 m 49 s, measured 2026-11-02), emits and compiles every module (4 m 56 s, measured 2026-11-02), and first recompiles cohost's AOT objects when `src/cohost` changed. Rebuilding only the modules whose source changed needs the emitter to keep unchanged files and jank's `compile-module` to skip them; whether it does is not measured, and a codemod change can change every recorded form. Not done yet.
+- The stale case: "jank: a stale snapshot" below.
 
 The fix this needed (any snapshot): a library module loaded inside another library's load now restores what was loading when it began (`snap-lib-begin!` pushes `:loading`, `snap-lib-end!` pops it) instead of the parent recorded at snapshot time.
+
+## jank: a stale snapshot
+
+After any change to the stock sources or `src/cohost`, the core snapshot is stale and is never loaded: `cohost :jank` boots core.clj on the AOT path instead (about 26 s for the demo, against about 2 s from the snapshot). Measured 2026-11-02 ET on this box.
+
+**What jank 0.1 lets us skip.** `compile-module` recompiles a module only when its source file is newer than its object, and never because a module it depends on changed. On a copy of a fresh snapshot: nothing changed, 2.3 s and no object written; a touched `cohost/zip.jank`, 8.1 s and `zip.o` alone; a touched `cohost/core.jank`, 44.7 s and `core.o` alone; a touched `src/cohost/shim.cljc`, 52.2 s and `shim.o` alone. (Its cache key, the directory name under `_cache/`, is the binary and its flags; it covers no header or source contents, so staleness has to be decided by us.) So the build decides what is stale and says so with the file's mtime:
+
+- the emitter keeps a module file as it is (bytes and mtime) when its text is unchanged and so is the text of every module loaded before it ended (cohost.core, the libraries before it, the ones it loads): those are the namespaces whose macros it can expand. Anything else is written again, so jank recompiles it. cohost's own sources are not dependencies of a module: they define no macros, and a module calls their fns through vars (jank 0.1 does not implement `-Odirect-call`), so a change there reaches a module only by changing its recorded text;
+- the build keeps the last build's objects (unless another jank binary made them; `COHOST_JANK_SNAPSHOT=full` deletes them first), compiles `cohost.run` into the snapshot's own cache (only the changed files recompile), records a boot from those objects, emits, and compiles.
+
+`bb boot:jank-snapshot` after a one-line docstring change, each applied and reverted twice (median of the first three); the full rebuild with each of the three changes, once:
+
+| one-line change in | full rebuild (before) | incremental (after) | modules recompiled | where the time goes |
+|---|---:|---:|---|---|
+| clojure.zip (`zip.clj`, a library loaded fifth) | 331.7 s | **99.1 s** (99.0 / 101.2 / 99.1) | 10 of 15 (zip and the 9 loaded after it) | compile 78 s, record 20 s |
+| cohost.core (`core.clj`) | 331.7 s | **155.0 s** (162.5 / 154.1 / 155.0) | 14 of 15 | compile 134 s, record 20 s |
+| the shim (`src/cohost/shim.cljc`) | 331.7 s | **62.3 s** (61.9 / 62.3 / 62.8) | 0 of 15 (`shim.o` alone) | `shim.o` 41 s, record 19 s, compile 2 s |
+
+The full rebuilds: 364.4 s (zip), 331.7 s (core), 329.1 s (shim); median 331.7 s. Before this change a rebuild was a record of 1 m 49 s plus emit and compile of 4 m 56 s plus, after a `src/cohost` change, the AOT objects' full recompile. The record now takes about 20 s: it boots from the snapshot cache's `-O3` objects. The battery was unchanged after every build (144/146, libraries 62/62; 152/154 on the release branch).
+
+**What `bin/cohost :jank` does with a stale snapshot.** It rebuilds it in the background and boots this run without it:
+
+    cohost: jank: rebuilding the snapshot in the background (pid 15750, .../target/jank-snapshot-rebuild.log); this run boots without it
+
+A run while the rebuild is going says so (`the snapshot is being rebuilt`) and starts no second one (a lock holds the pid). The rebuild runs `nice`d and writes its stamp last, so a half-built snapshot is never loaded. `COHOST_JANK_REBUILD=0` turns it off and prints the one command instead (`(cd <repo> && bb boot:jank-snapshot)`).
+
+The numbers that chose it, `cohost :jank -M -m demo.main jank-user` after the shim change:
+
+| | run (s) |
+|---|---|
+| fresh snapshot | 1.897 / 2.007 |
+| stale, during the background rebuild | 25.868 / 26.004 |
+| the rebuild (78.9 s, incremental), then | 34.257 (the project's own snapshot rebuilds once, keyed on the core's), 1.922 / 1.944 |
+| stale, `COHOST_JANK_REBUILD=0` | 68.299 (includes `shim.o`'s recompile for the AOT path), and about 26 s on every run after it until the command runs |
+
+The rebuild costs a run beside it nothing measurable (26.0 s against 26.0 s) and makes the CLI fast again a minute or two after a change; printing the command leaves every run about 24 s slower until someone runs a 62-155 s command. The AOT path's own objects (`target/jank-aot`) now recompile incrementally too (only the changed files); the first stale run after a large merge still recompiled most of them (189.6 s).
 
 ## A native executable on jank
 
