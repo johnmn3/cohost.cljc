@@ -127,6 +127,10 @@
    :defn-fn-name?   [[] "true when a def whose value is an unnamed fn* carries the def's name onto the fn* -- (def f (fn* f ...)) -- so self-recursion is a direct call, not a var deref (jank's own defn does this). Default false: the JVM's defn leaves the fn unnamed and recursion goes through the var."]
    :native-hints    [[] "nil (the default), or {hint-symbol host-type-symbol}: the primitive hints (long, double, int, boolean) this host compiles as native types. Positions: a fn* parameter (an arity that loops or calls itself: the coerced value goes to an inner fn* whose parameter carries the type; a leaf called from elsewhere stays untyped, H0 measured it losing on jank), a return (the inner fn*'s :rettag, the type the host spells for the arity's return hint), and a let*/loop* local through :native-local-casts. Every position is coerced as the JVM coerces on every host; nil leaves every other host's rewritten forms without native tags."]
    :static-types    [[] "nil (the default), :sound or :unit (U6-7): the codemod infers numeric types from the source and passes them to the host at the positions :native-hints takes. :sound types only what is certain: a let*/loop* local from a numeric literal, typed arithmetic (+ - * inc dec; / of doubles), count, an if whose branches agree, a primitive-hinted parameter or local; a loop* local only while every recur argument in its position has its type; an inferred local gets the host's native conversion (:native-local-casts) of a value already of that type, so nothing Clojure computes changes. And a guarded typed arity: an unhinted arity whose plain parameters are direct operands of numeric core fns runs (if (and (<kind test> p) ...) (let* [p (<conversion> p) ...] <the body, rewritten again with p typed>) <the body as written>), the kind double when, in one such call, a sibling operand is certainly double, else long; a non-number argument runs the body as written. Not for an arity that calls itself (its fn's name or its def's var): on apt jank a native-typed self-recursion measured 1.8x slower than M-9's named boxed one, and a var self-call with a native argument misses a redefinition mid-recursion. :unit (U6-9 (b)) adds, on top of :sound, a defn's parameter typed from call-site evidence within one compilation unit (one eval-str: the program text cohost compiles together; cohost.rewrite/unit-param-kinds): when every call site of a defn that is not ^:dynamic or ^:redef, defined once in the unit and never used as a value (an argument, apply, var, a mention inside a macro the walk does not read) passes a certainly-long (or certainly-double) value in a position, that parameter enters the fn through the host's native conversion (:native-local-casts) and is a native local in the body. A host at :sound gets :unit when the run opts in ((cohost.rewrite/static-types! :unit); the bench's COHOST_STATIC_TYPES=unit). :unit is UNSOUND outside the unit, exactly: a caller the unit did not contain (a later eval, the REPL, a redefinition of a caller) that passes another kind gets the host's native conversion instead of Clojure's arithmetic: on jank a real passed to a long parameter or a non-number to either raises a native error no catch reaches, where Clojure computes with the real or throws ClassCastException; a bigint passed to a long parameter is range-checked to a long. Inside the unit it is sound: a kind is recorded only from literals, hints, count, typed arithmetic (a double operand makes + - * / a double), loop locals whose every recur keeps the kind, and (map/mapv/filter... (fn [i] ...) (range n)) elements. Inferred in user code only (not cohost.core nor a clojure.* library)."]
+   :vector-literal  [[] "nil (the default), or {element-count fn-symbol}: a vector literal in code of that many elements, with no metadata but its reader position, is emitted as a call of the fn on its rewritten elements (jank on apt: one-block small vectors, A7-1). The fn must return the same vector the literal would"]
+   :native-long-inits [[] "nil (the default), or a set of core fn names (unqualified symbols) whose call always returns a long (jank on apt: #{count}): under :native-int-aliases, a let* local started from such a call gets the host's native conversion (:native-local-casts 'long) at its init and is a native long in its body; a let* local started from arithmetic over native longs is one as it is; never a loop* local, whose recur may pass anything (U6-10)"]
+   :native-self-calls? [[] "true when a fn* whose parameters carry native tags passes them natively on a self-call and honors its :rettag (jank with the series' patch 20: a native entry); false or nil when the host boxes every typed argument at the call and unboxes it at entry (apt jank 0.1: convert<long>::into_object / from_object per argument). With nil, a hinted fn that calls itself recurses through an untagged inner fn* when every self-call argument is certainly of its parameter's type (U6-11 (C)); with true, a fn hinted only on its return speculates a typed inner fn* for long arguments (U6-11 (D)). Default nil"]
+   :cpp-twins?      [[] "true when the host compiles C++ in a (cpp/raw \"...\") form (jank): a self-recursive arity whose parameters are all ^long and whose body is in the numeric subset (long literals, the params, + - * inc dec, comparisons, not, zero? pos? neg?, if, self-calls) gets a C++ twin in a cpp/raw block before its def, called under the long guard; its + - * are checked (__builtin_*_overflow), and an overflow or a non-long argument runs the arity as written (U6-12). Default nil"]
    :native-local-casts [[] "nil (the default), or {hint-symbol conversion-fn-symbol}: for a ^long / ^double let* or loop* local, the host's conversion whose result the host types natively (jank: cpp/jank.runtime.to_int); the codemod emits (conversion <the JVM's coercion of the init>) as the binding's init. nil binds the coerced value only."]
    :chunks          [[] "the host's chunked seqs, or nil: {:chunked-seq? :chunk-first :chunk-rest :chunk-next :chunk-buffer :chunk-append :chunk :chunk-cons}, plus :chunk? and :chunk-reduce when the host's reduce cannot walk one of its chunks (the JVM's ArrayChunk); :chunk-reduce keeps IChunk.reduce's contract: a reduced result returned unopened. The stock chunked branches (map, filter, concat, doseq, for, reduce1) then run over the host's own chunks; with nil, no host seq is chunked to stock code. Default: the host core's fns of those names, when it has them all"]
    :host-data?      [['x] "a cheap test, asked at every (.m x args) before the type is looked up: true only when x is certainly the host's own data, never a user type (jolt: its transients, atoms, fns, strings, numbers ...); default: never true"]
@@ -143,6 +147,7 @@
    :new-exception   [['klass 'msg 'cause] "a host exception of the JVM class klass (a full class symbol), message msg and cause (each nil for none), as the shim raises one: the host's own class where it has one, or an object of its own that prints and reports as that class; nil (the default) when it has neither, and the shim raises an ex-info carrying {:cohost/class klass}"]
    :ex-info?        [['x] "is x an ExceptionInfo as user code sees one? (default: a host exception whose ex-data is not just the shim's class marker)"]
    :exception-string [['e] "Throwable.toString of a host exception as the JVM writes it (the class's full name, then \": message\" when it has one), or nil (the default) when the host's str already does"]
+   :double-str      [['d] "Double.toString of a double as the JVM writes it (3.0E10, 1.0E-4, 0.001), or nil (the default) when the host's str already does"]
    :exception-message [['e] "Throwable.getMessage: e's message, nil when it has none (default: ex-message)"]
    :exception-cause [['e] "Throwable.getCause (default: ex-cause)"]
    ;; host facts
@@ -368,6 +373,10 @@ namespace cohost_err {
     :prim-kind-test nil
     :defn-fn-name? false
     :native-local-casts nil
+    :native-long-inits nil
+    :vector-literal nil
+    :native-self-calls? nil
+    :cpp-twins? nil
     :static-types nil
     :host-aliases? true
     :static-aliases {}
@@ -461,6 +470,7 @@ namespace cohost_err {
     :ex-info? (fn [x] (and ((cap :exception?) x)
                            (let [d (ex-data x)] (and (some? d) (not (contains? d :cohost/class))))))
     :exception-string nil
+    :double-str nil
     :exception-message (fn [e] (ex-message e))
     :exception-cause (fn [e] (ex-cause e))
     :to-array (fn [coll] (to-array coll))
@@ -646,6 +656,16 @@ namespace cohost_err {
    default, and an uninstalled adapter) keeps the shim call."
   []
   (when-let [m (current)] (:prim-kind-test m)))
+(defn cpp-twins?
+  "U6-12: does the host compile C++ twins from cpp/raw?"
+  []
+  (boolean (when-let [m (current)] (:cpp-twins? m))))
+
+(defn native-self-calls?
+  "U6-11: does the host pass native-tagged arguments natively on a self-call?"
+  []
+  (boolean (when-let [m (current)] (:native-self-calls? m))))
+
 (defn native-local-casts
   "nil, or {hint-symbol conversion-fn-symbol}: the host conversion a ^long /
    ^double let*/loop* local's coerced init goes through so the host types the
@@ -654,6 +674,8 @@ namespace cohost_err {
   (when-let [m (current)] (:native-local-casts m)))
 (defn host-aliases? [] (boolean (cap :host-aliases?)))
 (defn loop-int-init "The adapter's :loop-int-init fn, or nil." [] (get @installed :loop-int-init))
+(defn native-long-inits "The adapter's :native-long-inits set, or nil (U6-10)." [] (get @installed :native-long-inits))
+(defn vector-literal "The adapter's :vector-literal map, or nil (A7-1)." [] (get @installed :vector-literal))
 (defn static-aliases [] (or (cap :static-aliases) {}))
 (defn math-aliases [] (or (cap :math-aliases) {}))
 (defn int-op-aliases [] (or (cap :int-op-aliases) {}))

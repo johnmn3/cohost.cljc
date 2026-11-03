@@ -395,6 +395,16 @@
    (U6-7, :static-types): a primitive-hinted fn* parameter (coerced on entry),
    a hinted let/loop local, and a local inferred from its init."
   {})
+(def ^:dynamic *cpp-twins*
+  "U6-12: while a def is rewritten, an atom of the cpp/raw C++ source its fn's
+   twins need (emitted beside the def); nil elsewhere."
+  nil)
+
+(def ^:dynamic *num-fns*
+  "{fn-name long|double}: the return type assumed for a fn's own name while
+   its self-calls are checked (U6-11)."
+  {})
+
 (def ^:dynamic *def-name*
   "The plain name of the var whose def init is being rewritten (U6-7): a fn
    calling it calls itself."
@@ -1392,6 +1402,129 @@
       (run! #(walk env0 %) body)
       @kinds)))
 
+(defn- self-call-args
+  "Every occurrence of nm in body: a vector of each call's argument list, or
+   nil when nm also occurs other than as a call head (a value, a nested fn's
+   own binding of the name) -- then nothing is assumed."
+  [nm body]
+  (letfn [(walk [x]
+            (cond
+              (= nm x) [::escapes]
+              (not (branch? x)) []
+              (seq? x)
+              (let [h (first x) n (when (symbol? h) (name (*plain* h)))]
+                (cond
+                  (= "quote" n) []
+                  (= nm (when (symbol? h) (*plain* h)))
+                  (let [inner (mapcat walk (rest x))]
+                    (if (some #{::escapes} inner) [::escapes] (cons (vec (rest x)) inner)))
+                  :else (mapcat walk x)))
+              :else (mapcat walk (seq x))))]
+    (let [r (doall (walk body))]
+      (when-not (some #{::escapes} r) (vec r)))))
+
+(defn- self-typed?
+  "U6-11: with nm's parameters of the types ptypes (a vector, one per
+   parameter) and nm's own result assumed of type ret (or nil: not assumed),
+   is every self-call's and every fn-level recur's argument certainly of its
+   parameter's type, and (when ret) the body's tail certainly of type ret?"
+  [nm ptypes ret body']
+  (let [nm (*plain* (bare-sym nm))
+        names (mapv first ptypes)
+        env (reduce (fn [e [p t]] (if t (assoc e p t) e)) (apply dissoc *num-env* nm names) ptypes)
+        calls (self-call-args nm body')]
+    (boolean
+      (and (seq calls)
+           (binding [*num-fns* (if ret (assoc *num-fns* nm ret) (dissoc *num-fns* nm))
+                     *locals* (into *locals* (conj names nm))]
+             (and (every? (fn [args] (and (= (count args) (count names))
+                                          (every? true? (map (fn [a [_ t]] (or (nil? t) (= t (infer-num env a)))) args ptypes))))
+                          (concat calls (loop-recurs body')))
+                  (or (nil? ret) (= ret (infer-num env (last body'))))))))))
+
+(def ^:private twin-count (atom 0))
+
+(defn- twin-name
+  "U6-12: a C++ identifier for nm's twin, unique in the process: the namespace
+   and the name with every other character an underscore, and a counter (a
+   gensym's name can carry a $ that cpp/ symbol resolution does not take)."
+  [nm]
+  (let [alnum (fn [x] (apply str (map (fn [c] (if (or (<= (int \a) (int c) (int \z)) (<= (int \A) (int c) (int \Z))
+                                                        (<= (int \0) (int c) (int \9)))
+                                                  c \_))
+                                       (str x))))]
+    (str "cohost_twin_" (alnum *current-ns*) "_" (alnum (name (*plain* (bare-sym nm)))) "_" (swap! twin-count inc))))
+
+(defn- twin-cpp
+  "U6-12: the C++ of a self-recursive hinted arity in the numeric subset, or
+   nil. pnames are the ^long parameters (plain symbols), nm the fn's name, f
+   the C++ function name. The subset: long literals, the params, + - * inc dec
+   (each checked: __builtin_*_overflow throws ovf, the entry returns nil and the
+   arity runs its boxed body), < > <= >= = ==, not, zero? pos? neg?, if with
+   both branches, and calls of nm with its arity. Anything else: nil."
+  [nm pnames f body]
+  (let [cs (into {} (map-indexed (fn [i p] [p (str "p" i)]) pnames))
+        nm (*plain* (bare-sym nm))
+        fold (fn [op unit xs] (cond (empty? xs) unit
+                                    (= 1 (count xs)) (first xs)
+                                    :else (reduce (fn [a b] (str op "(" a ", " b ")")) xs)))]
+    (letfn [(L [x]
+              (cond
+                (and (int? x) (<= -9223372036854775807 x 9223372036854775807)) (str "INT64_C(" x ")")
+                (symbol? x) (get cs (*plain* x))
+                (and (seq? x) (seq x))
+                (let [h (first x) args (rest x)
+                      self? (and (symbol? h) (nil? (namespace h)) (= nm (*plain* h)))
+                      op (when-not self? (core-op h))]
+                  (cond
+                    self? (when (= (count args) (count pnames))
+                            (let [as (map L args)] (when (every? some? as) (str f "(" (apply str (interpose ", " as)) ")"))))
+                    (= "if" (name (*plain* h)))
+                    (when (= 3 (count args))
+                      (let [[c a b] (map-indexed (fn [i y] (if (zero? i) (B y) (L y))) args)]
+                        (when (and c a b) (str "(" c " ? " a " : " b ")"))))
+                    :else
+                    (let [as (map L args)]
+                      (when (every? some? as)
+                        (case op
+                          "+" (fold "tw_add" "INT64_C(0)" as)
+                          "*" (fold "tw_mul" "INT64_C(1)" as)
+                          "-" (cond (empty? as) nil
+                                    (= 1 (count as)) (str "tw_sub(INT64_C(0), " (first as) ")")
+                                    :else (fold "tw_sub" nil as))
+                          "inc" (when (= 1 (count as)) (str "tw_add(" (first as) ", INT64_C(1))"))
+                          "dec" (when (= 1 (count as)) (str "tw_sub(" (first as) ", INT64_C(1))"))
+                          nil)))))
+                :else nil))
+            (B [x]
+              (cond
+                (true? x) "true"
+                (false? x) "false"
+                (and (seq? x) (seq x) (symbol? (first x)))
+                (let [h (first x) args (rest x) op (core-op h)]
+                  (cond
+                    (= "not" op) (when (= 1 (count args)) (when-let [c (B (first args))] (str "!(" c ")")))
+                    (contains? #{"zero?" "pos?" "neg?"} op)
+                    (when (= 1 (count args))
+                      (when-let [a (L (first args))] (str "(" a ({"zero?" " == 0" "pos?" " > 0" "neg?" " < 0"} op) ")")))
+                    (contains? #{"<" ">" "<=" ">=" "=" "=="} op)
+                    (when (= 2 (count args))
+                      (let [[a b] (map L args)]
+                        (when (and a b) (str "(" a ({"<" " < " ">" " > " "<=" " <= " ">=" " >= " "=" " == " "==" " == "} op) b ")"))))
+                    :else nil))
+                :else nil))]
+      (when (and (= 1 (count body)) (seq pnames))
+        (when-let [e (L (first body))]
+          (let [ps (apply str (interpose ", " (map #(str "std::int64_t " (cs %)) pnames)))
+                as (apply str (interpose ", " (map cs pnames)))]
+            (str "namespace " f "_ns { struct ovf {};\n"
+                 "inline std::int64_t tw_add(std::int64_t a, std::int64_t b) { std::int64_t r; if(__builtin_add_overflow(a, b, &r)) { throw ovf{}; } return r; }\n"
+                 "inline std::int64_t tw_sub(std::int64_t a, std::int64_t b) { std::int64_t r; if(__builtin_sub_overflow(a, b, &r)) { throw ovf{}; } return r; }\n"
+                 "inline std::int64_t tw_mul(std::int64_t a, std::int64_t b) { std::int64_t r; if(__builtin_mul_overflow(a, b, &r)) { throw ovf{}; } return r; }\n"
+                 "inline std::int64_t " f "(" ps ") { return " e "; }\n"
+                 "inline jank::runtime::object_ref " f "_entry(" ps ") { try { return jank::runtime::make_box(" f "(" as ")); } catch(ovf const &) { return jank::runtime::jank_nil; } }\n"
+                 "}")))))))
+
 (defn- emit-arity
   "One fn* arity. A primitive hint is coerced on every host, so the value
    matches the JVM: a parameter's on entry, a return's on exit (the JVM's
@@ -1406,7 +1539,8 @@
    named recursion; the return hint becomes the inner fn*'s :rettag."
   ([params body'] (emit-arity nil false nil params body' nil))
   ([nm single? ret-hint params body'] (emit-arity nm single? ret-hint params body' nil))
-  ([nm single? ret-hint params body' typed]
+  ([nm single? ret-hint params body' typed] (emit-arity nm single? ret-hint params body' typed nil))
+  ([nm single? ret-hint params body' typed hinted]
    (let [hints (mapv (fn [p] (when (symbol? p) (primitive-hint (:tag (meta p))))) params)]
      (if-not (or (some some? hints) ret-hint)
        (if-let [[ptypes tbody] typed]
@@ -1436,22 +1570,63 @@
              ;; whose self-calls stay inside the typed inner fn* (fib 32 in
              ;; this shape 24-25 ms vs 27-28 on apt; 9 vs 25 on the series)
              self-calls? (and single? nm (mentions-sym? (bare-sym nm) body'))
-             native? (and spells
+             ;; U6-11 (E): the hinted params as native locals (rw-fn*'s second
+             ;; rewrite), unless the arity calls itself (the inner fn* paths)
+             ;; nor with a recur to the arity, whose argument the native local
+             ;; would take uncoerced
+             [htypes hbody] (when (and hinted (not self-calls?) (not (fn-level-recur? body'))) hinted)
+             binds (if htypes
+                     (into binds (mapcat (fn [p] (let [s (bare-sym p)]
+                                                   (when-let [t (get htypes (*plain* s))]
+                                                     [s (list (get (host/native-local-casts) t) s)])))
+                                         params))
+                     binds)
+             body' (if htypes (or (seq hbody) '(nil)) body')
+             native? (and (not htypes) spells
                           (or (arity-loops? body') self-calls?)
                           (every? #(and (symbol? %) (not= '& (*plain* %))) params)
                           (some (fn [h] (when h (get spells h))) hints))
-             forms (if native?
+             named-inner? (and single? nm (not (self-call-block-arg? nm body')))
+             ;; U6-11 (C): a host that boxes typed arguments at every call (apt:
+             ;; into_object / from_object per argument) recurses faster untagged;
+             ;; the inner fn* drops its tags when every self-call's argument is
+             ;; certainly of its parameter's type and the tail of the return's,
+             ;; so the coerced entry and exit keep the JVM's values
+             untagged? (and native? named-inner? self-calls? (not (host/native-self-calls?))
+                            (every? #(contains? #{nil 'long 'double} %) hints)
+                            (contains? #{nil 'long 'double} ret-hint)
+                            (self-typed? nm (mapv (fn [p h] [(*plain* (bare-sym p)) h]) params hints)
+                                         ret-hint body'))
+             ;; U6-11 (D): a fn hinted on its return alone, on a host whose
+             ;; native entries take natives (the series): long arguments run a
+             ;; typed inner fn* with :rettag (its self-calls native), any other
+             ;; runs the body as written; the return is coerced once, outside
+             spec? (and (not native?) (= 'long ret-hint) (host/native-self-calls?) spells (get spells 'long)
+                        named-inner? self-calls? (seq params) (not (fn-level-recur? body'))
+                        (every? #(and (symbol? %) (not= '& (*plain* %))) params)
+                        (every? nil? hints)
+                        (self-typed? nm (mapv (fn [p] [(*plain* (bare-sym p)) 'long]) params) 'long body'))
+             forms (cond
+                     spec?
+                     (let [sp (get spells 'long)
+                           ips (mapv #(with-meta (bare-sym %) {:tag (list 'quote sp)}) params)
+                           inner (with-meta (list 'fn* (bare-sym nm) (cons ips body')) {:rettag (list 'quote sp)})
+                           guard (apply list 'and (map #(kind-test 'long (bare-sym %)) params))]
+                       [(list 'if guard
+                              (apply list inner (map bare-sym params))
+                              (if (next body') (apply list 'do body') (first body')))])
+                     native?
                      (let [ips (mapv (fn [p h]
-                                       (if-let [sp (and h (get spells h))]
+                                       (if-let [sp (and h (not untagged?) (get spells h))]
                                          (with-meta (bare-sym p) {:tag (list 'quote sp)})
                                          (carry-meta p p)))
                                      params hints)
-                           rsp (when ret-hint (get spells ret-hint))
-                           inner (apply list 'fn* (concat (when (and single? nm (not (self-call-block-arg? nm body'))) [(bare-sym nm)])
+                           rsp (when (and ret-hint (not untagged?)) (get spells ret-hint))
+                           inner (apply list 'fn* (concat (when named-inner? [(bare-sym nm)])
                                                           [(cons (carry-meta ips params) body')]))
                            inner (if rsp (with-meta inner {:rettag (list 'quote rsp)}) inner)]
                        [(apply list inner (map bare-sym params))])
-                     body')
+                     :else body')
              forms (if-not ret-hint
                      forms
                      (let [r (gensym "ret__")
@@ -1537,6 +1712,24 @@
                                                          *native-ints* (into *native-ints* (keep (fn [[p t]] (when (= 'long t) p))) ptypes)
                                                          *native-reals* (into *native-reals* (keep (fn [[p t]] (when (= 'double t) p))) ptypes)]
                                                  (doall (rw-all ctx body))))
+                                       ;; U6-11 (E): on a host with native casts (jank, both columns), a
+                                       ;; ^long / ^double param takes the path an untyped one gets: coerced, then the
+                                       ;; host's native conversion at entry, and the body rewritten with
+                                       ;; it in A5's native sets -- no inner fn*, no boxed param (x1's
+                                       ;; X1-11: the wrapper cost every hinted twin on apt; on the
+                                       ;; series the inner fn* was still allocated per call, codegen
+                                       ;; of md-inside-h: _jank_fn(2) and call_fast per call)
+                                       htypes (when (and casts (get casts 'long) (get casts 'double)
+                                                         (not (some #(= '& (*plain* %)) ps0)))
+                                                (not-empty (into {} (keep (fn [p] (let [h (primitive-hint (:tag (meta p)))]
+                                                                                    (when (#{'long 'double} h) [(*plain* (bare-sym p)) h]))))
+                                                                 ps0)))
+                                       hbody (when htypes
+                                               (binding [*local-tags* tags *local-classes* classes *marker-depth* depths
+                                                         *num-env* fenv
+                                                         *native-ints* (into *native-ints* (keep (fn [[p t]] (when (= 'long t) p))) htypes)
+                                                         *native-reals* (into *native-reals* (keep (fn [[p t]] (when (= 'double t) p))) htypes)]
+                                                 (doall (rw-all ctx body))))
                                        body' (with-markers bs body')
                                        body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')
                                        rest-arg (second (drop-while #(not= '& %) params))
@@ -1546,9 +1739,36 @@
                                                       (not= "_" (name rest-arg)))
                                                [(apply list 'let* [rest-arg (list (shim-fn "RT-seq") rest-arg)] body')]
                                                body')]
-                                   (emit-arity nm one-arity? (return-hint fn-ret params) params body'
-                                               (when (and ptypes (empty? bs) (not (:loop-variadic-recur? ctx)))
-                                                 [ptypes tbody]))))
+                                   (let [arity (emit-arity nm one-arity? (return-hint fn-ret params) params body'
+                                                           (when (and ptypes (empty? bs) (not (:loop-variadic-recur? ctx)))
+                                                             [ptypes tbody])
+                                                           (when (and htypes (empty? bs) (not (:loop-variadic-recur? ctx))
+                                                                      (not (and (:vector-rest-args? ctx) (symbol? rest-arg))))
+                                                             [htypes hbody]))
+                                         ;; U6-12: a self-recursive ^long arity in the numeric
+                                         ;; subset gets a C++ twin, called under the long guard;
+                                         ;; nil (an overflow) or a non-long argument runs the arity
+                                         pn (mapv #(*plain* (bare-sym %)) params)
+                                         f (when (and *cpp-twins* (host/cpp-twins?) one-arity? nm
+                                                      (contains? #{nil 'long} (return-hint fn-ret params))
+                                                      (seq params)
+                                                      (every? #(and (symbol? %) (not= '& (*plain* %))
+                                                                    (= 'long (primitive-hint (:tag (meta %)))))
+                                                              params)
+                                                      (mentions-sym? (*plain* (bare-sym nm)) body))
+                                             (twin-name nm))
+                                         code (when f (twin-cpp nm pn f body))]
+                                     (if-not code
+                                       arity
+                                       (let [_ (swap! *cpp-twins* conj code)
+                                             [ps & fs] arity
+                                             r (gensym "twin__")
+                                             call (apply list (symbol "cpp" (str f "_ns." f "_entry"))
+                                                         (map (fn [p] (list 'cpp/jank.runtime.to_int (bare-sym p))) params))]
+                                         (list ps (list 'let* [r (list 'if (apply list 'and (map #(kind-test 'long (bare-sym %)) params)) call nil)]
+                                                        (list 'if (list 'nil? r)
+                                                              (if (next fs) (apply list 'do fs) (first fs))
+                                                              r))))))))
                                arities)))]
     (if (and nm (not (:named-fn*? ctx)))
       (list 'letfn* [nm (apply list (carry-meta 'fn* (first form)) (if single? (first arities') arities'))] nm)
@@ -1636,7 +1856,18 @@
                    ta (infer-num env a) tb (when (some? b) (infer-num env b))]
                (when (and ta (= ta tb)) ta))
         "do" (when (seq args) (infer-num env (last args)))
-nil))
+        (let [h (first x)]
+          (cond
+            ;; A5's literal-started loop local init, and the shim's
+            ;; checked arithmetic the codemod emits for + - * inc dec
+            (= 'cpp/long h) 'long
+            (and (symbol? h) (= "cohost.shim" (namespace h))
+                 (contains? #{"Numbers-add" "Numbers-minus" "Numbers-multiply"} (name h)))
+            (when (and (seq args) (every? some? ts)) (if (some #{'double} ts) 'double 'long))
+            (and (symbol? h) (= "cohost.shim" (namespace h)) (contains? #{"Numbers-inc" "Numbers-dec"} (name h)))
+            (when (= 1 (count args)) (first ts))
+            (and (symbol? h) (nil? (namespace h))) (get *num-fns* (*plain* h))
+            :else nil))))
     :else nil))
 
 (defn- loop-recurs
@@ -1754,6 +1985,42 @@ nil))
                 lbs (vec (mapcat (fn [s hint inf] [s (if hint (hinted-local-init hint s inf) s)]) syms hints infs))]
             (list 'let* pre (apply list h lbs body))))))))
 
+;; A5-8: which literal-started loop* locals stay native longs. A recur of this loop (not one
+;; inside a nested loop*/loop/fn*/fn/letfn*, nor quoted) must pass, in each such local's
+;; position, an int-safe form: an integer literal, one of the candidate locals or an outer
+;; native long, a stock + - * inc dec (or unchecked-inc / -dec / -add / -subtract / -multiply /
+;; -negate: longs too, dotimes' step) of int-safe forms, or an if whose branches both are.
+;; A local whose recur passes anything else (a double: (recur (+ x 0.5)); a call result)
+;; stays boxed, as Clojure's would be. Iterated to a fixpoint: dropping one local can make
+;; another's recur argument unsafe. The recurs are U6-7's loop-recurs (above).
+(defn- int-safe? [natives x]
+  (cond (integer? x) true
+        (symbol? x) (or (contains? natives (*plain* x)) (contains? *native-ints* (*plain* x)))
+        (seq? x) (let [h (first x)]
+                   (and (symbol? h)
+                        (not (contains? *locals* (*plain* h)))
+                        (let [n (name h)]
+                          (cond (= n "if") (and (nil? (namespace h)) (= 4 (count x))
+                                                (int-safe? natives (nth x 2)) (int-safe? natives (nth x 3)))
+                                (contains? #{nil "clojure.core" "cohost.core"} (namespace h))
+                                (and (contains? #{"+" "-" "*" "inc" "dec" "unchecked-inc" "unchecked-dec"
+                                                  "unchecked-add" "unchecked-subtract" "unchecked-multiply"
+                                                  "unchecked-negate"} n)
+                                     (seq (rest x))
+                                     (every? #(int-safe? natives %) (rest x)))
+                                :else false))))
+        :else false))
+
+(defn- loop-int-safe [bvec body cands]
+  (let [syms (mapv (fn [[b _]] (when (symbol? b) (*plain* b))) (partition 2 bvec))
+        recurs (loop-recurs body)]
+    (loop [natives (set (map (comp *plain* first) cands))]
+      (let [natives' (set (filter (fn [k]
+                                    (let [i (first (keep-indexed (fn [j s] (when (= s k) j)) syms))]
+                                      (every? (fn [r] (and i (< i (count r)) (int-safe? natives (nth r i)))) recurs)))
+                                  natives))]
+        (if (= natives' natives) natives (recur natives'))))))
+
 (defn- rw-let* [ctx [h bvec & body]]
   (if-let [form' (and (= h 'loop*) (:loop-rebind-shadow? ctx) (loop-rebind bvec body))]
     (rw-let* ctx form')
@@ -1788,8 +2055,12 @@ nil))
     (binding [*locals* (into *locals* syms)
               *local-tags* tags *local-classes* classes *marker-depth* depths
               *loop-locals* (if (and (= h 'loop*) (:loop-rebind-shadow? ctx)) (into *loop-locals* syms) *loop-locals*)]
-      (let [int-init? (fn [[b v]] (and (= h 'loop*) (:loop-int-init ctx) (integer? v) (symbol? b) (nil? (:tag (meta b)))))
-            pairs (partition 2 bvec)
+      (let [pairs (partition 2 bvec)
+            lit-init? (fn [[b v]] (and (= h 'loop*) (:loop-int-init ctx) (integer? v) (symbol? b) (nil? (:tag (meta b)))))
+            ;; A5-8: a literal-started loop local is a native long only when every recur
+            ;; of this loop passes an int-safe value in its position (loop-int-safe)
+            safe (when (some lit-init? pairs) (loop-int-safe bvec body (filter lit-init? pairs)))
+            int-init? (fn [[b v :as p]] (and (lit-init? p) (contains? safe (*plain* b))))
             ;; inits see the names bound before them: drop every name this form binds,
             ;; then add the literal-started loop locals for the body
             bvec' (binding [*native-ints* (apply disj *native-ints* syms)
@@ -1805,12 +2076,42 @@ nil))
                             (apply disj *native-reals* syms) pairs)
                     (apply disj *native-reals* syms))
             bvec' (if-let [f (and (= h 'loop*) (:loop-int-init ctx))]
-                    (carry-meta (vec (mapcat (fn [[b v] [b0 v0]] [b (if (int-init? [b0 v0]) (f v) v)])
+                    ;; A5-8: a literal-started local that is not int-safe starts from a boxed
+                    ;; value: jank types a loop local from a bare literal init itself (a C++
+                    ;; integer the recur converts into), so the literal goes through identity
+                    (carry-meta (vec (mapcat (fn [[b v] [b0 v0]] [b (cond (int-init? [b0 v0]) (f v)
+                                                                          (lit-init? [b0 v0]) (list 'clojure.core/identity v)
+                                                                          :else v)])
                                              (partition 2 bvec') pairs))
                                 bvec')
                     bvec')
-            natives (into (apply disj *native-ints* syms)
-                          (keep (fn [p] (when (int-init? p) (*plain* (first p))))) pairs)
+            ;; U6-10: a let* local started from a call that always returns a long
+            ;; (the adapter's :native-long-inits, jank on apt: count) gets the host's
+            ;; native conversion at its init and joins *native-ints*; one started from
+            ;; arithmetic over native longs (native-int-form?) joins them as it is (its
+            ;; emitted form is already a native long). In order: an init sees the
+            ;; locals typed before it. Not a loop* local: its recur may pass anything
+            ;; ((loop [i (count xs)] ... (recur (str i))): typing it is a native error)
+            long-inits (when (and (= h 'let*) (seq (:native-int-aliases ctx))) (host/native-long-inits))
+            long-call? (fn [v] (and (seq? v) (symbol? (first v))
+                                    (not (contains? *locals* (*plain* (first v))))
+                                    (contains? #{nil "clojure.core" "cohost.core"} (namespace (first v)))
+                                    (contains? long-inits (symbol (name (first v))))))
+            [natives casts] (reduce (fn [[acc cs] [b v :as p]]
+                                      (let [k (when (symbol? b) (*plain* b))]
+                                        (cond (nil? k) [acc cs]
+                                              (int-init? p) [(conj acc k) cs]
+                                              (or (empty? long-inits) (some? (:tag (meta b)))) [(disj acc k) cs]
+                                              (long-call? v) [(conj acc k) (conj cs k)]
+                                              (and (not (integer? v)) (binding [*native-ints* acc] (native-int-form? v)))
+                                              [(conj acc k) cs]
+                                              :else [(disj acc k) cs])))
+                                    [(apply disj *native-ints* syms) #{}] pairs)
+            bvec' (if-let [cast (and (seq casts) (get (host/native-local-casts) 'long))]
+                    (carry-meta (vec (mapcat (fn [[b v]] [b (if (and (symbol? b) (contains? casts (*plain* b))) (list cast v) v)])
+                                             (partition 2 bvec')))
+                                bvec')
+                    bvec')
             ;; an empty body is nil: ClojureWasm's let*, loop* and letfn* take
             ;; no empty one
             body' (binding [*native-ints* natives *native-reals* reals *num-env* body-env] (or (seq (doall (rw-all ctx body))) [nil]))]
@@ -1996,8 +2297,10 @@ nil))
         ua (when (and *unit-params* (not var-call?) (seq more)
                       (let [i (last more)] (and (seq? i) (symbol? (*plain* (first i))) (contains? #{"fn" "fn*"} (name (*plain* (first i)))))))
              (get *unit-params* (bare-sym nm)))
+        twins (atom [])
         more' (binding [*def-name* (when (symbol? nm) (*plain* (bare-sym nm)))
-                        *unit-arities* ua]
+                        *unit-arities* ua
+                        *cpp-twins* twins]
                 (doall (rw-all ctx more)))
         ;; a host whose defn names its fn (jank's own does): carry the
         ;; def's name onto an unnamed fn* value, so self-recursion is a
@@ -2021,8 +2324,12 @@ nil))
                        (not (self-call-block-arg? nm (rest (last more')))))
                 (concat (butlast more')
                         [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
-                more')]
-    (apply list 'def nm more')))
+                more')
+        d (apply list 'def nm more')]
+    ;; U6-12: the C++ twins the def's fn calls, in a cpp/raw block before it
+    (if (seq @twins)
+      (apply list 'do (concat (map #(list 'cpp/raw %) @twins) [d]))
+      d)))
 
 (defn- rw-map
   "A map literal is data: its keys and values are rewritten, nothing is
@@ -2627,10 +2934,20 @@ nil))
                                 (apply list (or (core-alias ctx h) (rw ctx h)) (or args' (rw-all ctx args)))))))))]
       (carry-meta out form))))
 
+;; A7-1: the adapter's fn for a vector literal of this size (:vector-literal), when the literal
+;; carries no metadata but its reader position
+(def ^:private reader-position-keys #{:line :column :end-line :end-column :file :source :jank/source})
+(defn- vector-literal-fn [form]
+  (when-let [m (host/vector-literal)]
+    (when (every? reader-position-keys (keys (meta form)))
+      (get m (count form)))))
+
 (defn rw [ctx form]
   (cond
     (seq? form) (rw-list ctx form)
-    (vector? form) (carry-meta (vec (rw-all ctx form)) form)
+    (vector? form) (if-let [f (vector-literal-fn form)]
+                     (cons f (rw-all ctx form))
+                     (carry-meta (vec (rw-all ctx form)) form))
     (map? form) (rw-map ctx form)
     (set? form) (carry-meta (into #{} (rw-all ctx form)) form)
     (symbol? form) (rw-symbol ctx form)

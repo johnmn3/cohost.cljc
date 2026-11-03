@@ -1638,3 +1638,86 @@ The causes, each with its probe rows and an owner:
 - **On the patched build every twin costs the same (0.86 / 0.07), except fib-ret** (return hint only, 3.1-7.1 against
   0.86): the per-call return coercion there defeats the series' native returns (patch 20). For **u5**, the same
   wrapper: no bench program has a return hint alone, so it does not show in the table.
+
+### The ^double and other hinted twins (X1-11, 2026-11-03)
+
+Same pattern as above, on max/main `43825f0`. Dumps: `dev/research/x1/dumps/{mandelbrot,spectral_norm,nbody,binary_trees}{,_hinted}.txt`.
+Probe: `dev/research/x1/p15_hinted2.clj`, one variant per form that differs, run by `p15_run.sh`. It ran 3 rounds,
+apt then patched per round, every leg under the load gate (load 5.5-7.5, free memory 5-7 GB), JANK_O=3. Each cell is
+the median of the three rounds' medians, with their min-max, in ms. Plain jank on apt cannot compile the probe module
+(`use of undeclared identifier 's33'`, the inner-loop rebinding), so that column is ABSENT.
+
+| probe variant (the form it isolates) | cohost apt | cohost patched | plain jank patched |
+|---|---:|---:|---:|
+| md-plain: mandelbrot's inside?, untyped params, 120x120 grid | 3.96 (3.81-5.05) | 1.59 | 3.77 |
+| md-param: the same with `^double cr ci` | 12.56 (4.64-16.65) | 6.34 (2.72-6.94) | 1.43 |
+| ea-plain: spectral-norm's eval-a, untyped, 300x300 | 2.96 (2.93-2.99) | 2.41 | 0.77 |
+| ea-param: the same with `^long i j` | 5.54 (4.72-5.62) | 3.08 | 0.73 |
+| sv-plain: `(* 0.5 (nth v j))` over 1e5 | 2.60 (2.56-3.71) | 1.18 | 1.02 |
+| sv-double: the read bound through `(double (nth v j))` | 3.14 (3.03-4.21) | 1.39 | 1.29 |
+| nb-plain: `(* dx dx)`, dx a difference of two reads | 5.48 (5.36-5.52) | 2.25 | 1.75 |
+| nb-double: dx bound through `(double (- ..))` | 8.44 (5.80-9.91) | 2.45 | 1.93 |
+| bt-dec: binary-trees' build, `dec`, depth 14 + count | 5.42 (5.02-5.44) | 1.19 | 0.94 |
+| bt-minus: `(- d 1)` | 4.55 (4.33-5.16) | 1.12 | 0.95 |
+| bt-param: `^long d`, `(- d 1)` (the twin) | 5.53 (5.42-13.25) | 1.09 | 1.01 |
+| bt-param-dec: `^long d`, `dec` | 5.48 (4.56-16.14) | 1.11 | 0.96 |
+
+nbody re-measured after A6-1 on `e357cec`: `bb bench:programs jank`, apt then patched, 3 gated rounds, the JVM once.
+Cohost, median ms (min-max):
+
+| | apt | patched | JVM |
+|---|---:|---:|---:|
+| nbody | 1034.3 (932.9-1207.8) | 952.7 (925.8-1071.0) | 152.4 |
+| nbody-hinted | 1483.2 (1116.2-1524.5) | 958.7 (908.2-1191.3) | 187.4 |
+
+A6-1 moved nbody from 5089 ms to about 1000. The hinted twin is now x1.43 the plain one on apt, and level with it on
+the patched build.
+
+The cause per program, with its probe and owner:
+
+- **mandelbrot-hinted (1140 vs 721): the ^double param coercion wrapper. md-plain -> md-param is x3.2 (3.96 -> 12.56).**
+  - The plain inside? gets cohost's `(if (and (is_real cr) (is_real ci)) (let* [cr (to_real cr) ci (to_real ci)]
+    LOOP) LOOP)` arm, so cr and ci are native doubles in the loop.
+  - The ^double twin gets the coercion wrapper instead: `(double cr)`, a boxed double, then an inner `(fn* inside?
+    …)`.
+  - inside? is not recursive, so that closure is allocated on every call: 1500^2 times per run, against tak's once per
+    top call.
+  - Both halves are the typed-param rule's output. Owner: **u5**.
+  - Direction: for a ^double / ^long param, emit the native arm (`to_real` / `to_int`) the untyped param already
+    gets, with the coercion only on its fallback, and no inner fn.
+  - The patched build pays it too (1.59 -> 6.34). On plain jank the hint helps (3.77 -> 1.43), so it is cohost's own.
+- **spectral-norm-hinted (1550 vs 1145): the ^long param wrapper on eval-a. ea-plain -> ea-param is x1.87 (2.96 ->
+  5.54).**
+  - The plain eval-a gets an `is_integer -> to_int` native arm with inline checked i64 + and *.
+  - The ^long twin's wrapper leaves boxed longs, which `int-op-operand?` then excludes, so + and * on i and j become
+    `cohost.shim/Numbers-add` / `Numbers-multiply`. This is X1-10's cause (A), for + and *.
+  - Owner: **u5** for the wrapper (as mandelbrot), **u1** for the int-op admission (as X1-10 (A)). Either one fixes
+    eval-a: a native arm makes A5-4's checked-native clause apply; an admitted boxed local takes the int-op path.
+  - Second, smaller: the twin's `(double (nth v j))`. sv-plain -> sv-double is x1.21 (2.60 -> 3.14): a
+    `clojure.core/double` call per element on a value that is already a double. Owner: **u1**, the numeric casts.
+    Direction: `(double x)` emitted as an inline `is_real ? x : to_real` like the param arm.
+- **nbody-hinted (1483 vs 1034 after A6-1): the `(double (- ..))` locals. nb-plain -> nb-double is x1.54 (5.48 ->
+  8.44).**
+  - The twin binds ten locals through `clojure.core/double`, the same call as sv-double.
+  - `(* dx dx)` on such a local then gets the int-op guard emitted twice, nested: `(if (is_integer dx) (if (is_integer
+    dx) (if (< -2147483649 dx) (if (< dx 2147483648) (if (< -2147483649 dx) …`. That is the A5-3 expansion applied
+    to an already-expanded operand. The plain twin's `(* dx dx)` has the same nested guard, so the difference is the
+    `double` call.
+  - The local is a double. A real-typed local would skip the integer guards; the codemod does not record `(double
+    …)`'s result as real.
+  - Owner: **u1** (the casts, and the int-op guard's double emission). For **u5**: `(double e)` as a local's init
+    could join `*num-env*` as :real, as U6-7 does for literals.
+  - `^double dt` on advance is the wrapper once per call (5e4 calls). It is below this probe's resolution.
+- **binary-trees-14-hinted (184 vs 141): no form cost established.**
+  - bt-dec 5.42, bt-param 5.53 and bt-param-dec 5.48 lie inside each other's ranges. The rounds' ranges reach 13-16 ms
+    (allocation and GC).
+  - X1-6's bench rows overlap too: 141.2 (92.0-189.5) against 183.7 (127.5-207.7).
+  - build's hinted wrapper runs once per top call, and its `(- d 1)` -> Numbers-minus is X1-10's (A), but on a
+    builder that allocates two vectors per node it does not show.
+  - No owner. Re-measure after X1-10 (A) lands.
+
+Common root: on apt, a hinted param becomes a boxed value inside a wrapper. The rest of the codemod treats a hinted local
+as if it were native. It excludes the local from the int-op path, and does not give it the untyped param's native arm.
+So every hinted twin pays the boxed shim op that neither the untyped nor the native path pays. One change at the
+wrapper would address mandelbrot, spectral-norm and X1-10's fib and tak together: a native arm for typed params (u5),
+or admission of boxed hinted locals to the int-op path (u1).

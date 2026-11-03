@@ -1,0 +1,11 @@
+;; U6-11 (D): does this jank honor a fn*'s :rettag (patch 20's native returns)?
+;; A native long return converts what the body returns; a boxed one hands it back as is.
+(let [f (^{:rettag 'long} fn* ([x] x))
+      fr (^{:rettag 'long} fn* fr ([x] (if (pos? x) x (fr 1.5))))
+      fl (^{:rettag 'long} fn* fl ([^long n x] (if (pos? n) x (fl 1 x))))
+      g (fn* ([x] x))]
+  (println "RETTAG-PROBE anon" (try (pr-str (f 2.5)) (catch :default e "threw")) "plain" (pr-str (g 2.5))
+           "named-recursive" (try (pr-str (fr 2.5)) (catch :default e "threw"))
+           "named-typed-param" (try (pr-str (fl 0 2.5)) (catch :default e "threw"))))
+(def ^{:rettag 'long} dv (fn* dv ([x] x)))
+(println "RETTAG-PROBE def" (try (pr-str (dv 2.5)) (catch :default e "threw")))
