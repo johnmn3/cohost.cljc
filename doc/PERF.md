@@ -18,7 +18,7 @@ on the JVM measured on the same box, so ratios compare across boxes and millisec
 | cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | 8.9 s | x9.1 (28) | x3.9 (25) |
 | ClojureScript in Chromium | | not measured | x3.0 (25) |
 | cohost `:lg` (let-go 1.13.0, Go) | 15.4 s | not yet measured | x46.6 (11 of 28 so far) |
-| cohost `:phel` (Phel 0.54.0, PHP 8.5) | 47.0 s | not yet measured | not yet measured |
+| cohost `:phel` (Phel 0.54.0, PHP 8.5) | 47.0 s | not yet measured | x23.7 (15 of 28) |
 | cohost `:lpy` (basilisp 0.5.1, Python) | 88.6 s | not yet measured | not yet measured |
 | cohost `:cljw` (ClojureWasm 1.15.4) | 94.0 s | not yet measured | x20.5 (28) |
 
@@ -204,40 +204,43 @@ ClojureWasm's own core, all 28 programs (2026-11-03 12:39 to 1:19 AM ET). Median
 
 Box 4: 4 CPUs (Intel Xeon, 2.10 GHz), Linux, let-go 1.13.0, PHP 8.3.6; the JVM column is this box's own
 (2026-11-03 1:18 AM ET). `lg` is let-go's own core, 11 of the 28 programs so far (1:20 to 1:42 AM ET, 10 timed calls
-each); the rest, cohost on let-go (`lg-cohost`), and Phel on its own core and through cohost are measured next, with
-the 15 s budget. Records: `doc/perf/box4/`.
+each; the full column is being rerun). `phel` is Phel's own core, all 28 programs (2:29 to 2:43 AM ET, the 15 s
+budget, ffcc0cb): 15 run with the JVM's answer, `json` gives another answer, and 12 fail on Phel's own dialect
+(type hints, Java's `Math`, the unresolved symbol `w` in `dispatch`, a crash in `lazy-pipeline`). Phel and let-go
+through cohost are being measured.
+Records: `doc/perf/box4/`.
 
-| program | jvm | lg |
-|---|---:|---:|
-| binary-trees | 246.8 | 10137.5 (x41.07) |
-| binary-trees-14 | 10.4 | not yet measured |
-| binary-trees-14-hinted | 14.2 | not yet measured |
-| binary-trees-hinted | 239.7 | not yet measured |
-| dispatch | 152.8 | not yet measured |
-| fannkuch | 142.1 | not yet measured |
-| fannkuch-hinted | 163.1 | not yet measured |
-| fib | 121.8 | 4638.3 (x38.09) |
-| fib-hinted | 76.3 | 4952.0 (x64.89) |
-| first-output | 804.7 | not yet measured |
-| json | 219.9 | not yet measured |
-| k-nucleotide | 128.6 | not yet measured |
-| keyword-map | 95.1 | not yet measured |
-| lazy-pipeline | 34.1 | not yet measured |
-| mandelbrot | 187.9 | 20880.5 (x111.14) |
-| mandelbrot-hinted | 174.6 | 21376.8 (x122.40) |
-| nbody | 212.9 | 2280.9 (x10.72) |
-| nbody-hinted | 212.5 | 2278.5 (x10.72) |
-| nsieve | 212.5 | not yet measured |
-| nsieve-hinted | 180.2 | not yet measured |
-| pipeline | 141.0 | not yet measured |
-| sort | 37.3 | not yet measured |
-| spectral-norm | 222.3 | 8078.9 (x36.34) |
-| spectral-norm-hinted | 133.8 | 9240.4 (x69.04) |
-| sum-overflow | 12.9 | not yet measured |
-| sum-overflow-hinted | 0.5 | not yet measured |
-| tak | 260.0 | 15141.9 (x58.23) |
-| tak-hinted | 162.0 | 15874.0 (x97.97) |
-| **geomean xJVM** (programs that ran) | 1 | **x46.64** (11) |
+| program | jvm | lg | phel |
+|---|---:|---:|---:|
+| binary-trees | 246.8 | 10137.5 (x41.07) | 16357.1 (x66.27) |
+| binary-trees-14 | 10.4 | not yet measured | 661.5 (x63.90) |
+| binary-trees-14-hinted | 14.2 | not yet measured | error |
+| binary-trees-hinted | 239.7 | not yet measured | error |
+| dispatch | 152.8 | not yet measured | error |
+| fannkuch | 142.1 | not yet measured | 3792.0 (x26.69) |
+| fannkuch-hinted | 163.1 | not yet measured | 3640.5 (x22.32) |
+| fib | 121.8 | 4638.3 (x38.09) | 3169.3 (x26.03) |
+| fib-hinted | 76.3 | 4952.0 (x64.89) | error |
+| first-output | 804.7 | not yet measured | 91.9 (x0.11) |
+| json | 219.9 | not yet measured | 4746.0, differs |
+| k-nucleotide | 128.6 | not yet measured | 4974.2 (x38.68) |
+| keyword-map | 95.1 | not yet measured | 4304.8 (x45.27) |
+| lazy-pipeline | 34.1 | not yet measured | error |
+| mandelbrot | 187.9 | 20880.5 (x111.14) | 103936.6 (x553.21) |
+| mandelbrot-hinted | 174.6 | 21376.8 (x122.40) | error |
+| nbody | 212.9 | 2280.9 (x10.72) | error |
+| nbody-hinted | 212.5 | 2278.5 (x10.72) | error |
+| nsieve | 212.5 | not yet measured | 3843.8 (x18.08) |
+| nsieve-hinted | 180.2 | not yet measured | 3914.8 (x21.72) |
+| pipeline | 141.0 | not yet measured | 5146.2 (x36.49) |
+| sort | 37.3 | not yet measured | 120.5 (x3.23) |
+| spectral-norm | 222.3 | 8078.9 (x36.34) | error |
+| spectral-norm-hinted | 133.8 | 9240.4 (x69.04) | error |
+| sum-overflow | 12.9 | not yet measured | 774.5 (x60.04) |
+| sum-overflow-hinted | 0.5 | not yet measured | error |
+| tak | 260.0 | 15141.9 (x58.23) | 5406.7 (x20.79) |
+| tak-hinted | 162.0 | 15874.0 (x97.97) | error |
+| **geomean xJVM** (programs that ran) | 1 | **x46.64** (11) | **x23.71** (15) |
 
 basilisp is measured on Box 1; its rows go in as each column finishes.
 
