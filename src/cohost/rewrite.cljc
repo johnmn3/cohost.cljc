@@ -1857,6 +1857,42 @@
                 lbs (vec (mapcat (fn [s hint inf] [s (if hint (hinted-local-init hint s inf) s)]) syms hints infs))]
             (list 'let* pre (apply list h lbs body))))))))
 
+;; A5-8: which literal-started loop* locals stay native longs. A recur of this loop (not one
+;; inside a nested loop*/loop/fn*/fn/letfn*, nor quoted) must pass, in each such local's
+;; position, an int-safe form: an integer literal, one of the candidate locals or an outer
+;; native long, a stock + - * inc dec (or unchecked-inc / -dec / -add / -subtract / -multiply /
+;; -negate: longs too, dotimes' step) of int-safe forms, or an if whose branches both are.
+;; A local whose recur passes anything else (a double: (recur (+ x 0.5)); a call result)
+;; stays boxed, as Clojure's would be. Iterated to a fixpoint: dropping one local can make
+;; another's recur argument unsafe. The recurs are U6-7's loop-recurs (above).
+(defn- int-safe? [natives x]
+  (cond (integer? x) true
+        (symbol? x) (or (contains? natives (*plain* x)) (contains? *native-ints* (*plain* x)))
+        (seq? x) (let [h (first x)]
+                   (and (symbol? h)
+                        (not (contains? *locals* (*plain* h)))
+                        (let [n (name h)]
+                          (cond (= n "if") (and (nil? (namespace h)) (= 4 (count x))
+                                                (int-safe? natives (nth x 2)) (int-safe? natives (nth x 3)))
+                                (contains? #{nil "clojure.core" "cohost.core"} (namespace h))
+                                (and (contains? #{"+" "-" "*" "inc" "dec" "unchecked-inc" "unchecked-dec"
+                                                  "unchecked-add" "unchecked-subtract" "unchecked-multiply"
+                                                  "unchecked-negate"} n)
+                                     (seq (rest x))
+                                     (every? #(int-safe? natives %) (rest x)))
+                                :else false))))
+        :else false))
+
+(defn- loop-int-safe [bvec body cands]
+  (let [syms (mapv (fn [[b _]] (when (symbol? b) (*plain* b))) (partition 2 bvec))
+        recurs (loop-recurs body)]
+    (loop [natives (set (map (comp *plain* first) cands))]
+      (let [natives' (set (filter (fn [k]
+                                    (let [i (first (keep-indexed (fn [j s] (when (= s k) j)) syms))]
+                                      (every? (fn [r] (and i (< i (count r)) (int-safe? natives (nth r i)))) recurs)))
+                                  natives))]
+        (if (= natives' natives) natives (recur natives'))))))
+
 (defn- rw-let* [ctx [h bvec & body]]
   (if-let [form' (and (= h 'loop*) (:loop-rebind-shadow? ctx) (loop-rebind bvec body))]
     (rw-let* ctx form')
@@ -1891,8 +1927,12 @@
     (binding [*locals* (into *locals* syms)
               *local-tags* tags *local-classes* classes *marker-depth* depths
               *loop-locals* (if (and (= h 'loop*) (:loop-rebind-shadow? ctx)) (into *loop-locals* syms) *loop-locals*)]
-      (let [int-init? (fn [[b v]] (and (= h 'loop*) (:loop-int-init ctx) (integer? v) (symbol? b) (nil? (:tag (meta b)))))
-            pairs (partition 2 bvec)
+      (let [pairs (partition 2 bvec)
+            lit-init? (fn [[b v]] (and (= h 'loop*) (:loop-int-init ctx) (integer? v) (symbol? b) (nil? (:tag (meta b)))))
+            ;; A5-8: a literal-started loop local is a native long only when every recur
+            ;; of this loop passes an int-safe value in its position (loop-int-safe)
+            safe (when (some lit-init? pairs) (loop-int-safe bvec body (filter lit-init? pairs)))
+            int-init? (fn [[b v :as p]] (and (lit-init? p) (contains? safe (*plain* b))))
             ;; inits see the names bound before them: drop every name this form binds,
             ;; then add the literal-started loop locals for the body
             bvec' (binding [*native-ints* (apply disj *native-ints* syms)
@@ -1908,7 +1948,12 @@
                             (apply disj *native-reals* syms) pairs)
                     (apply disj *native-reals* syms))
             bvec' (if-let [f (and (= h 'loop*) (:loop-int-init ctx))]
-                    (carry-meta (vec (mapcat (fn [[b v] [b0 v0]] [b (if (int-init? [b0 v0]) (f v) v)])
+                    ;; A5-8: a literal-started local that is not int-safe starts from a boxed
+                    ;; value: jank types a loop local from a bare literal init itself (a C++
+                    ;; integer the recur converts into), so the literal goes through identity
+                    (carry-meta (vec (mapcat (fn [[b v] [b0 v0]] [b (cond (int-init? [b0 v0]) (f v)
+                                                                          (lit-init? [b0 v0]) (list 'clojure.core/identity v)
+                                                                          :else v)])
                                              (partition 2 bvec') pairs))
                                 bvec')
                     bvec')
