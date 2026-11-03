@@ -14,7 +14,7 @@ command. The same source runs on each; what differs is the host underneath.
 | `:jolt` | jolt 0.8.23 (Chez Scheme) | 167/167 | 62/62 | `dev/install/jolt.sh` |
 | `:jank` | jank 0.1 (C++/LLVM) | 165/167 | 62/62 | `dev/install/jank.sh` |
 | `:cljs` | ClojureScript 1.12.42, self-hosted, on Node | 165/167 | 62/62 | Node |
-| `:lpy` | basilisp 0.5.1 (Python) | 166/167 | 62/62 | `dev/install/basilisp.sh` |
+| `:lpy` | basilisp 0.5.1 (Python) | 165/167 | 62/62 | `dev/install/basilisp.sh` |
 | `:cljw` | ClojureWasm 1.15.4 | 165/167 | 62/62 | `dev/install/cljw.sh` |
 | `:phel` | Phel 0.54.0 (PHP 8.5) | 166/167 | 62/62 | `dev/install/phel.sh` |
 | `:lg` | let-go 1.13.0 (Go) | 165/167 | 62/62 | `dev/install/lg.sh` |
