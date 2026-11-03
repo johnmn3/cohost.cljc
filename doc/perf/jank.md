@@ -1358,3 +1358,128 @@ ABSENT rows (six hinted programs were absent), tak-hinted's warm median
 0.60 ms beats tak's 2.39, and fib-hinted runs (86.5 median, unsettled spread,
 vs fib 10.95). `bb boot:jvm` battery 144/145 (the eduction row above fails
 on the base too), libraries 61/61; `bb boot:jank` 143/145, 61/61.
+
+## Programs on cohost-on-jank
+
+C-2 (jank-FAST Step 8). nbody, mandelbrot, fannkuch and nsieve fail on cohost on jank, and they fail the same way on
+jank's own core (`jank -O3 run`, and `compile-module -O3`): this is not a cohost bug but jank 0.1's, and cohost can
+work around it in its codemod. Measured 2026-11-02 on jank 0.1-noble, cohost at `c499930`; programs from
+`c/bench-programs` (`bb bench:programs jank`, doc/PERF.md "Programs against JVM Clojure").
+
+**The cause (all four).** jank 0.1's C++ codegen fails on a `loop*` that binds a name an enclosing `loop*` binds:
+`error: use of undeclared identifier 'sNN'`. The init does not matter (`(loop [a a] ...)`, `(loop [a (inc a)] ...)`,
+`(loop [b 0 a a] ...)` all fail); `let` shadowing, and a `loop` rebinding a fn parameter, compile. Each program has
+one such inner loop. The same form rebound through a fresh name, `(loop [x__1 x] (let [x x__1] ...))`, compiles and
+gives the JVM's answer on raw jank and on cohost (one form per process: after a failed C++ compile, later forms in the
+same cohost process failed to link, `JIT session error: Symbols not found: [ ...try_object... ]`, then `Failed to
+find symbol: 'cohost_user$let_73_0'`).
+
+**The owning file.** cohost's codemod: `src/cohost/rewrite.cljc`, `rw-let*` (every `loop*` cohost evaluates passes
+through it, the user's `loop` after the stock macro expands it). The fix needs a capability, so it touches the shared
+layer: `src/cohost/adapter.cljc` (`:loop-rebind-shadow?`, doc, default `false`, accessor), `src/cohost/boot.cljc`
+(passes it to the rewrite options), and one key in `src/cohost/hosts/jank_host.jank` (lane M's file):
+`:loop-rebind-shadow? true`. With it set, `rw-let*` rewrites `(loop* [a init ...] body)`, `a` bound by an enclosing
+`loop*`, to `(loop* [a__N init ...] (let* [a a__N] body))` (recur is positional, so the loop is the same; the hint
+meta moves to `a__N`). Every other host's default leaves its forms byte-identical. The patch is the commit
+"C-2 proposed fix" on `c/jank-programs`, for the coordinator to order where it lands; with it:
+`bb boot:jank` -> stock 542, host 171, skipped 78, errors 0; battery 143/145; libraries 61/61 (unchanged), and the
+four programs run on cohost on jank with the JVM's results (below, small sizes: `bb bench:programs jank
+"nbody:200,mandelbrot:40,fannkuch:6,nsieve:12"` -> -169027, 967, -77, 564, the same as `bb bench:programs jvm` at
+those sizes).
+
+### nbody
+
+- Error (cohost on jank, `bb bench:programs jank nbody`): `Unable to compile C++ source. -- nil:7:1: error: use of
+  undeclared identifier 's34'` (nbody-hinted the same). jank's own core first fails on `Math/sqrt` (`The symbol
+  'Math/sqrt' could not be resolved`), so the G-13 note "runs on jank's own core" did not hold.
+- The loops: `energy`'s `(loop [j (inc i) e e] ...)` inside `(loop [i 0 e 0.0] ...)`, and `advance`'s
+  `(loop [j (inc i) bs bs b b] ...)` inside `(loop [i 0 bs bs] ...)`.
+- Repro: `(loop [i 0 e 0.0] (if (= i 2) e (recur (inc i) (loop [j 0 e e] (if (= j 2) e (recur (inc j) (+ e 1.0)))))))`
+  -> JVM `4.0`; raw jank `error: use of undeclared identifier 's31'`; cohost on jank the same.
+- With the fix: -169027 at size 200, the JVM's.
+
+### mandelbrot
+
+- Error: `Unable to compile C++ source. -- nil:7:1: error: use of undeclared identifier 's36'` (hinted `'s38'`);
+  jank's own core `use of undeclared identifier 's35'`.
+- The loop: `(loop [x 0 acc acc] ...)` inside `(loop [y 0 acc 0] ...)`.
+- Repro: `(loop [y 0 acc 0] (if (= y 2) acc (recur (inc y) (loop [x 0 acc acc] (if (= x 2) acc (recur (inc x) (inc acc)))))))`
+  -> JVM `4`; raw jank `'s31'`; cohost on jank the same. Rebound: `4` on both.
+- With the fix: 967 at size 40, the JVM's.
+
+### fannkuch
+
+- Error: `Unable to compile C++ source. -- nil:6:1: error: use of undeclared identifier 's28'` (hinted `'s30'`);
+  jank's own core `'s28'`.
+- The loop: `flips`' `(loop [p p i 0 j k] ...)` inside `(loop [p (vec p) f 0] ...)`.
+- Repro: `(loop [p [1 0] f 0] (if (zero? (p 0)) f (recur (loop [p p i 0] (if (< i 1) (recur (assoc p 0 (p 1) 1 (p 0)) (inc i)) p)) (inc f))))`
+  -> JVM `1`; raw jank `'s27'`; cohost on jank the same.
+- With the fix: -77 at size 6, the JVM's.
+
+### nsieve
+
+- Error: `Unable to compile C++ source. -- nil:10:1: error: use of undeclared identifier 's61'` (hinted `'s63'`);
+  jank's own core `'s56'`.
+- The loop: `(loop [j (+ i i) flags flags] ...)` inside `(loop [i 2 cnt 0 flags flags] ...)`.
+- Repro: `(loop [i 0 flags [true true]] (if (= i 2) flags (recur (inc i) (loop [j i flags flags] (if (>= j 2) flags (recur (+ j 2) (assoc flags j false)))))))`
+  -> JVM `[false false]`; raw jank `'s30'`; cohost on jank the same.
+- With the fix: 564 at size 12, the JVM's.
+
+No bench program changes: the programs are portable Clojure; the failure is the host's, and the codemod is where
+cohost absorbs it. Upstream: no draft in doc/upstream/ names this codegen bug yet (Step 7).
+
+## Step 5 H1, the inline test (M-6b, 2026-11-02)
+
+The kind test is emitted inline on jank through the `:prim-kind-test`
+capability (default nil; every other host keeps the shim call):
+`jank.runtime.is_integer` for a long hint, `jank.runtime.is_real` for a
+double hint -- jank's own runtime predicates, visible from every module,
+with exactly the kind semantics (a host long, never a bigint; a host
+double, never a decimal). `bb bench:programs jank`, the one quiet run:
+fib 262.26, fib-hinted 326.88 (x1.25; was x2.14 with the shim call);
+tak 19.44, tak-hinted 21.68 (x1.12; was x2.13). The residual is the
+`is_integer` call itself, ~24 ns per entry: it is a runtime-library
+call, not an inlined tag read. The true inline read exists --
+`(cpp/.get_type x)` returns the `object_type` -- but comparing it
+through Clojure measured 4x slower than the call (the tag boxes on the
+way into a Clojure value), and the enum-cast spellings resisted six
+attempts. An emitted cpp call cannot name the adapter's cpp/raw block
+either: a cpp namespace is visible only in its own module.
+
+## Emission gaps (M-9, 2026-11-02)
+
+A def whose value is an unnamed `fn*` carries the def's name onto the
+`fn*` on jank (the `:defn-fn-name?` capability; jank's own `defn` emits
+the same shape), so self-recursion is a direct call instead of a var
+deref and a dynamic call. R's P6 (`JANK_O=3`, medians of 5): fib-stock
+73,445,800 ns -> 19,823,645; fib-stock / fib-fn-def x3.57 -> x1.00.
+Dotted def names are skipped (deftype's `Box.` constructor is not a fn
+name; jank's codegen rejects it on a `fn*`). The semantic price is
+pinned by the battery row "redefining a fn during its own recursion":
+the JVM answers `:redefined` (the recursion goes through the var),
+jank answers `:original` -- raw jank's own `defn` answer -- and the row
+stands as a documented host fact. One codemod lesson from the same
+work: a raw `(.method ...)` form inside rewrite.cljc breaks the boot
+(the file is rewritten by itself); plain fn calls only there.
+
+Of the shim statics, `Numbers-minus` is now the host's `-` on jank:
+the wrapper checked nothing (the host's `-` throws on nil and on a
+non-number, as the JVM's static does), so the static is the twin and
+`host-aliases` fires. The divide family keeps its wrappers -- jank's
+own `quot`/`rem`/`/` die with SIGFPE on a zero divisor where the JVM
+throws `ArithmeticException` -- and max/min keep theirs (jank's
+`(min 1 ##NaN)` answers 1.0; the JVM's static answers NaN).
+
+`bb bench:jank` after all of it (two runs, host ms constant, stock ms
+as printed): transient-vector x5.07 / x5.37 (was x14.07 in Step 4's
+bench), transduce x11.28 / x11.14, into-vector x5.51 / x5.88,
+set-build x4.22 / x4.34, group-by x1.97 / x2.60, frequencies x2.39 /
+x2.25. Read with care: the bench's stock side still carries first-use
+JIT compilation inside its timed loops (Step 3's profile put it at
+12-34% of a case), and which case pays it moves when the emitted shape
+of every stock fn changes -- into-vector's stock ms went 10.26 ->
+~38 while its host ms never moved. The remaining gap in the
+collection cases is the per-element call path through stock
+`reduce`/transducer step fns, which neither the name nor the twins
+reach; a steady-state per-case method (Step 8) is the instrument that
+can price what is left.

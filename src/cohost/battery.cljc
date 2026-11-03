@@ -61,10 +61,7 @@
    ["gensym unique" "(let [a (gensym \"g\") b (gensym \"g\")] (and (symbol? a) (not= a b)))" true]
    ["binding dynamic" "(do (def ^:dynamic *d* 1) (defn rd [] *d*) [(rd) (binding [*d* 2] (rd)) (rd)])" [1 2 1]]
    ["with-redefs" "(do (defn orig [] :orig) [(with-redefs [orig (fn [] :redef)] (orig)) (orig)])" [:redef :orig]]
-   ;; Clojure's direct linking (adapter :direct-linking?): a ^:redef fn redefined
-   ;; mid-recursion is seen by its own recursive calls; a plain one is not under
-   ;; the key, and is without it
-   ["direct linking: ^:redef seen, plain per :direct-linking?" "(do (defn ^:redef bt-dlr [n] (if (zero? n) :base (do (when (= n 2) (defn ^:redef bt-dlr [n] :new)) (bt-dlr (dec n))))) (defn bt-dlp [n] (if (zero? n) :base (do (when (= n 2) (defn bt-dlp [n] :new)) (bt-dlp (dec n))))) [(bt-dlr 3) (bt-dlp 3)])" (fn [] [:new (if (host/direct-linking?) :base :new)])]
+   ["redefining a fn during its own recursion" "(do (defn rr [n] (if (pos? n) (do (alter-var-root #'rr (fn [_] (fn [x] :redefined))) (rr (dec n))) :original)) (rr 1))" :redefined]
    ["alter-var-root var-get" "(do (def vr 1) (alter-var-root #'vr inc) [vr (var-get #'vr) (:name (meta #'vr))])" [2 2 'vr]]
    ["try/catch/finally ex-info" "(let [log (atom [])] [(try (throw (ex-info \"boom\" {:k 1})) (catch Exception e (swap! log conj :caught) (:k (ex-data e))) (finally (swap! log conj :fin))) @log])" [1 [:caught :fin]]]
    ["ex-message ex-cause" "(let [e (ex-info \"outer\" {} (ex-info \"inner\" {}))] [(ex-message e) (ex-message (ex-cause e))])" ["outer" "inner"]]

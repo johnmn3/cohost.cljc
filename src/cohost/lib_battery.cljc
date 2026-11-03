@@ -71,7 +71,8 @@
     :cases
     [["deftest attaches :test" "(do (ct/deftest probe-t1 (ct/is (= 1 1))) (fn? (:test (meta (var probe-t1)))))" true]
      ["a failing is reports FAIL" "(do (ct/deftest probe-t2 (ct/is (= 1 2))) (boolean (re-find #\"FAIL\" (with-out-str (binding [ct/*test-out* *out*] (ct/test-var (var probe-t2)))))))" true]
-     ["thrown? are testing" "(do (ct/deftest probe-t3 (ct/testing \"ctx\" (ct/is (thrown? clojure.lang.ExceptionInfo (throw (ex-info \"x\" {})))) (ct/are [x y] (= x y) 1 1 2 2))) (let [r (atom nil)] (with-out-str (binding [ct/*test-out* *out*] (reset! r (ct/run-test-var (var probe-t3))))) [(:pass @r) (:fail @r) (:error @r)]))" (quote [3 0 0])]]}
+     ["thrown? are testing" "(do (ct/deftest probe-t3 (ct/testing \"ctx\" (ct/is (thrown? clojure.lang.ExceptionInfo (throw (ex-info \"x\" {})))) (ct/are [x y] (= x y) 1 1 2 2))) (let [r (atom nil)] (with-out-str (binding [ct/*test-out* *out*] (reset! r (ct/run-test-var (var probe-t3))))) [(:pass @r) (:fail @r) (:error @r)]))" (quote [3 0 0])]
+     ["ns-interns' var carries deftest's :test (run-tests finds it)" "(do (ct/deftest probe-t4 (ct/is true)) (fn? (:test (meta (get (ns-interns *ns*) (quote probe-t4))))))" true]]}
    {:lib 'clojure.math :alias 'm
     :cases
     [["sqrt pow cbrt hypot" "[(m/sqrt 4.0) (m/pow 2.0 10.0) (m/cbrt 27.0) (m/hypot 3.0 4.0)]" (quote [2.0 1024.0 3.0 5.0])]

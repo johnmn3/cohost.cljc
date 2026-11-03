@@ -8,6 +8,8 @@
 ;;   {:stock-root "/abs/resources/cohost/clojure-1.12.0"
 ;;    :roots      ["/abs/project/src" "/abs/cache/jar-dir" ...]  ; tools.deps order
 ;;    :cwd        "/abs/project"
+;;    :snapshot?  true      ; jank: boot from the fresh snapshot on the module path
+;;    :project-snapshot "cohost.project"  ; jank: the project's snapshot entry, when fresh
 ;;    :inits      [[:e "(src)"] [:i "/abs/init.clj"] ...]       ; in the order given
 ;;    :main       {:type :main :ns "demo.main" :args ["a"]}     ; -m
 ;;              | {:type :script :path "/abs/s.clj" :args [...]}
@@ -33,12 +35,10 @@
      :phel (php/fwrite php/STDERR (str s "\n"))
      :default (binding [*out* *err*] (println s))))
 
-(defn- exit! [code]
-  #?(:cljs (.exit js/process code)
-     :lpy (python/exit code)
-     :phel (php/exit code)
-     :lg (os/exit code)
-     :default (do (flush) (System/exit code))))
+(defn- exit!
+  "System/exit: the adapter's :exit (each host's own process exit)."
+  [code]
+  (host/exit code))
 
 (defn- read-stdin
   "Standard input, read whole (Phel's slurp takes files alone)."
@@ -71,15 +71,88 @@
                         "(try (set! *command-line-args* " q ") (catch Throwable _ nil))")
                    {:session? false})))
 
+#?(:jank (cpp/raw "#include <iostream>
+#include <string>
+namespace cohost_io {
+  using namespace jank::runtime;
+  inline object_ref read_line() {
+    std::string s;
+    if(!std::getline(std::cin, s)) { return jank_nil; }
+    return make_box<obj::persistent_string>(jtl::immutable_string(s));
+  }
+}"))
+
+(defn- read-line*
+  "One line of standard input without its newline, or nil at its end."
+  []
+  #?(:cljs (let [fs (js/require "fs")
+                 buf (js/Buffer.alloc 1)
+                 text (fn [acc] (.toString (.from js/Buffer (into-array acc)) "utf8"))]
+             (loop [acc []]
+               (let [n (try (.readSync fs 0 buf 0 1 nil)
+                            (catch :default e (if (= "EAGAIN" (.-code e)) -1 0)))]
+                 (cond (neg? n) (recur acc)
+                       (zero? n) (when (seq acc) (text acc))
+                       (= 10 (aget buf 0)) (text acc)
+                       :else (recur (conj acc (aget buf 0)))))))
+     :phel (let [l (php/fgets php/STDIN)] (if (= l false) nil (php/rtrim l "\r\n")))
+     ;; jank 0.1's read-line throws "TODO: port read-line"
+     :jank (cpp/cohost_io.read_line)
+     :default (read-line)))
+
+(defn- prompt!
+  "The prompt, with no newline after it."
+  [s]
+  #?(:cljs (.write (.-stdout js/process) s)
+     ;; jank 0.1's flush throws "TODO: port flesh"
+     :jank (print s)
+     :phel (print s)
+     ;; let-go has no flush
+     :lg (print s)
+     :default (do (print s) (flush))))
+
+(defn- complete?
+  "Do the lines read so far end outside every string and bracket, with a
+   form in them? (A comment runs to the line's end; a backslash starts a character.)"
+  [s]
+  (let [n (count s)]
+    (loop [i 0 depth 0 in-str? false form? false]
+      (if (>= i n)
+        (and form? (not in-str?) (<= depth 0))
+        (let [c (subs s i (inc i))]
+          (cond
+            in-str? (cond (= c "\\") (recur (+ i 2) depth true form?)
+                          (= c "\"") (recur (inc i) depth false form?)
+                          :else (recur (inc i) depth true form?))
+            (= c "\"") (recur (inc i) depth true true)
+            (= c "\\") (recur (+ i 2) depth false true)
+            (= c ";") (recur (loop [j i] (if (or (>= j n) (= "\n" (subs s j (inc j)))) j (recur (inc j))))
+                             depth false form?)
+            (contains? #{"(" "[" "{"} c) (recur (inc i) (inc depth) false true)
+            (contains? #{")" "]" "}"} c) (recur (inc i) (dec depth) false true)
+            (contains? #{" " "\n" "\t" "\r" ","} c) (recur (inc i) depth false form?)
+            :else (recur (inc i) depth false true)))))))
+
 (defn- repl!
-  "A REPL over standard input read whole: each form's value after its
-   namespace's prompt, as `clojure` prints them for input it is piped."
+  "clojure.main's REPL, a line at a time: a prompt, lines read until they
+   hold whole forms, each form's value printed (the forms of one line under
+   one prompt, as `clojure` prints them); an error is reported and the REPL
+   goes on; the end of input ends it."
   []
   (println "Clojure 1.12.0")
-  (let [last-ns (atom 'user)]
-    (boot/eval-str (read-stdin)
-                   {:on-value (fn [v ns] (print (str ns "=> ")) (stock-prn v) (reset! last-ns ns))})
-    (println (str @last-ns "=> "))))
+  (loop [buf "" prompt? true ns 'user]
+    (when prompt? (prompt! (str ns "=> ")))
+    (let [line (read-line*)]
+      (if (nil? line)
+        (println)
+        (let [buf (str buf line "\n")]
+          (if (complete? buf)
+            (let [last-ns (atom ns)]
+              (host/try-all
+               (fn [] (boot/eval-str buf {:on-value (fn [v n] (stock-prn v) (reset! last-ns n))}))
+               (fn [e] (report-error! e)))
+              (recur "" true @last-ns))
+            (recur buf false ns)))))))
 
 (defn- run-main!
   "-> the exit code."
@@ -123,9 +196,17 @@
     #?(:cljs (when (:cwd cfg) (js/process.chdir (:cwd cfg)))
        :phel (when (:cwd cfg) (php/chdir (:cwd cfg)))
        :default nil)
-    (let [report (boot/boot! {:root (:stock-root cfg) :verbose (boolean (:verbose cfg))})]
+    ;; :snapshot? -- the launcher found a fresh snapshot of the booted core on
+    ;; the module path (jank: bin/cohost through dev/perf/jank_snapshot_cli.clj)
+    (let [report (if (:snapshot? cfg)
+                   (boot/boot-from-snapshot! {:root (:stock-root cfg)})
+                   (boot/boot! {:root (:stock-root cfg) :verbose (boolean (:verbose cfg))}))]
       (when (:verbose cfg) (boot/print-report report)))
     (doseq [r (:roots cfg)] (boot/add-source-root! r))
+    ;; :project-snapshot -- the module of a fresh per-project snapshot (the
+    ;; project's namespaces compiled ahead, bin/cohost's jank launch): its
+    ;; libraries load from their modules
+    (when-let [m (:project-snapshot cfg)] (host/require-host! (symbol m)))
     ;; clojure.main's namespace: user, seeing the stock core (a session
     ;; starts in cohost.user, and moves there)
     (boot/make-user-ns!)

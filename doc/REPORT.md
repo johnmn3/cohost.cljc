@@ -634,6 +634,17 @@ arose (measured 2026-10-31 ET):
 
 ## Core battery cases that fail, and why (host facts)
 
+- Redefining a fn during its own recursion, on jank: cohost carries the
+  def's name onto its fn* there (jank's own `defn` does the same), so a
+  self-call is a direct call, not a var deref -- but only for a fn whose
+  body holds no closure (a self-named fn* with closures inside breaks
+  jank's compile-module codegen, so the name is withheld there). An
+  in-flight recursion of a closure-free fn therefore keeps the fn it
+  started with. The battery row's fn holds closures, so it is unnamed
+  and the row passes on jank too; the divergence stands for the
+  closure-free shape, which is raw jank's own answer for its `defn`,
+  and the price of the direct-call shape (M-9).
+
 - `(= 1 1.0)` is `true` on ClojureScript (one number type) and on basilisp
   (Python `1 == 1.0`).
 - `Matcher.start(g)` / `end(g)` on ClojureWasm: its `java.util.regex.Matcher` has
@@ -679,6 +690,12 @@ arose (measured 2026-10-31 ET):
   distinction (a CJK ideograph has none); glibc's wide classification under
   C.UTF-8 agrees with Java on letters but is likewise ASCII-only for
   digits, so no host static closes the row.
+- jank's own `clojure.core/format` is a stub: `(format "%5.2f|%,d" 3.14159
+  1234567)` returns the format string itself, unformatted. It does not
+  implement java.util.Formatter, so it is not opted in as a Step 4 native
+  (the shim's format carries the battery row "format is
+  java.util.Formatter's"); a native that diverges is a host fact, not a
+  native.
 
 ## The design that fell out
 

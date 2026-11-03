@@ -163,6 +163,12 @@
   []
   (let [ev @snapshot-log] (reset! snapshot-log nil) ev))
 
+(defn snapshot-start!
+  "Record mode from here on, after a boot (a project's snapshot records what
+   it loads on top of a booted, or snapshot-booted, core)."
+  []
+  (reset! snapshot-log []))
+
 (def ^:private snap-drop-meta
   "Reader metadata the host adds again when it reads the snapshot's source."
   #{:line :column :end-line :end-column :file :source-span :jank/source})
@@ -367,6 +373,7 @@
                 :move-methods? (= :protocols (host/type-method-style))
                 :cohost-types? (= :cohost-types (host/type-method-style))
                 :syntax-quote-source? (host/syntax-quote-source?)
+                :loop-rebind-shadow? (host/loop-rebind-shadow?)
                 :host-method host/host-method
                 :var-form (fn [x] (when (host/var?* x)
                                     (let [n (host/var-ns x) n (if (host/namespace? n) (host/ns-name* n) n)]
@@ -652,7 +659,7 @@
   "Intern a native as ns-sym/nm in place of the stock def form, marked
    :cohost/native, with the stock definition's documentation (else the host
    var's, for a :host native)."
-  [ns-sym nm [v hv] form]
+  [ns-sym nm [v hv] form lib]
   ;; the name without the form's reader metadata (unevaluated: an :arglists
   ;; of (quote ...) the JVM compiler would read as the arglists)
   (let [h (host/intern! ns-sym (symbol (name nm)) v)
@@ -660,7 +667,8 @@
                         (def-form-meta form)
                         {:cohost/native true :cohost/wrapped true})]
     (host/alter-var-meta! h merge meta-map)
-    (snap! {:op :native :ns ns-sym :sym nm :meta (select-keys meta-map [:doc :arglists :cohost/native :cohost/wrapped])})
+    (snap! {:op :native :ns ns-sym :sym nm :lib lib
+            :meta (select-keys meta-map [:doc :arglists :cohost/native :cohost/wrapped])})
     h))
 
 (def ^:private policy-lists
@@ -679,7 +687,7 @@
         def-form (if (= :replace action) replacement form)
         native (when (contains? #{:eval :replace} action) (native-of "clojure.core" def-form))
         evaluated (case (if native :native action)
-                    :native (do (intern-native! core-ns nm native def-form) (record! report :native {:name nm}) nil)
+                    :native (do (intern-native! core-ns nm native def-form "clojure.core") (record! report :native {:name nm}) nil)
                     :skip (do (record! report :skipped {:name nm :reason reason}) nil)
                     :host (when-not (take-from-host! report nm)
                             (if (contains? policy/host-only-names nm)
@@ -1180,7 +1188,7 @@
                    (fn []
                      (case (if (and (= :eval action) (native-of (str lib) form)) :native action)
                        :skip (note! :skipped {:name nm})
-                       :native (do (intern-native! cur nm (native-of (str lib) form) form) (note! :native {:name nm}))
+                       :native (do (intern-native! cur nm (native-of (str lib) form) form (str lib)) (note! :native {:name nm}))
                        (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form) true)]
                          (when (not= ns' cur) (host/set-current-ns! ns'))
                          (note! :ok {:name nm}))))
@@ -1344,6 +1352,17 @@
   (shim/install-missing-dot! m)
   nil)
 
+(defn snap-native!
+  "A native the boot interned in place of a stock def form: the adapter's
+   :natives entry for lib/nm (the host core's own var root for :host, else
+   the adapter's fn), as intern-native! found it, with the recorded meta."
+  [ns-sym nm lib m]
+  (let [impl (get (host/natives) (symbol lib (name nm)))
+        v (if (= :host impl) (host/var-root (host/resolve-core nm)) impl)
+        h (host/intern! ns-sym (symbol (name nm)) v)]
+    (host/alter-var-meta! h merge m)
+    nil))
+
 (defn snap-inline! "The :inline fn the codemod applies for nm: [f arities]." [nm v]
   (swap! state assoc-in [:inlines nm] v)
   nil)
@@ -1374,6 +1393,9 @@
 (defn snap-lib-begin!
   "A library module, first: what load-lib! does before the source."
   [lib target path parent]
+  ;; what is loading now (not the recorded parent: a module can load inside
+  ;; another library's load at run time), restored by snap-lib-end!
+  (swap! state update ::snap-outer (fnil conj []) (:loading @state))
   (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
   (swap! (:renames (ctx)) assoc (str lib) (str target))
   (swap! state assoc :loading lib)
@@ -1384,10 +1406,33 @@
   [lib entry data parent]
   (snap-restore! data)
   (swap! state assoc-in [:libs lib] entry)
-  (swap! state assoc :loading parent)
+  (let [outer (peek (::snap-outer @state))]
+    (swap! state (fn [st] (-> st (assoc :loading outer) (update ::snap-outer pop)))))
+  nil)
+
+(defn register-snapshot-libs!
+  "A project snapshot's entry: {lib module} of its library modules, which
+   load-lib! then requires instead of loading the sources."
+  [libs]
+  (swap! state update :snapshot-libs merge libs)
   nil)
 
 (defn snapshot-report
   "The report of the boot a loaded snapshot restored, or nil."
   []
   (when (:snapshot? @state) (:report @state)))
+
+(defn boot-from-snapshot!
+  "boot! from a snapshot: require its cohost.core module (it replays the
+   recorded boot and restores its state) unless one is loaded. root: the
+   stock root later loads read (the snapshot recorded the one it was built
+   with, relative to the repo). The caller checked that the snapshot on the
+   module path is fresh (jank: dev/perf/jank_snapshot_cli.clj). -> the
+   boot's report."
+  [{:keys [root]}]
+  (when-not (snapshot-report) (host/require-host! core-ns))
+  (let [r (snapshot-report)]
+    (when-not r
+      (throw (host/ex* 'java.lang.Exception (str core-ns " loaded, but it is not a snapshot"))))
+    (when root (swap! state assoc :root root))
+    r))

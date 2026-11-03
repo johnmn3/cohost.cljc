@@ -145,6 +145,10 @@
   "{fn-name long|double}: during a speculation check, the return type assumed
    for the fn's own name (U6-7)."
   {})
+(def ^:dynamic *loop-locals*
+  "Names bound by the loop* forms enclosing the form being rewritten (only
+   tracked when the host sets :loop-rebind-shadow?)."
+  #{})
 
 (def ^:dynamic *local-tags*
   "{local hint} of the enclosing locals hinted with a class whose checkcast
@@ -402,7 +406,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? cohost-types? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source?]
+           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source? loop-rebind-shadow?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:plain-symbol (or plain-symbol identity)
    :shim-names shim-names
@@ -472,6 +476,7 @@
    ;; read is a member call the shim dispatches, not the host's own access
    :cohost-types? (boolean cohost-types?)
    :syntax-quote-source? (boolean syntax-quote-source?)
+   :loop-rebind-shadow? (boolean loop-rebind-shadow?)
    :host-method host-method
    ;; record?: is a form a record instance (a reader literal); protocol-var?:
    ;; (fn [ns-sym name-sym]) is that var a protocol; interned?: (fn [sym]) is
@@ -801,6 +806,14 @@
               :else (boolean (some hit? x))))]
     (boolean (some hit? body))))
 
+(defn- kind-test
+  "The form testing whether sym is already of the hinted kind (long or
+   double): the host's own test (:prim-kind-test, inlined by jank), else the
+   shim's."
+  [hint sym]
+  (or (when-let [pkt (host/prim-kind-test)] (pkt hint sym))
+      (list (shim-fn (if (= 'double hint) "double-kind?" "long-kind?")) sym)))
+
 (defn- coerce-form
   "The JVM's coercion of a primitive fn* parameter, in front of any native
    conversion. jank's long throws on a real and its double throws on an
@@ -823,7 +836,7 @@
       ;; call: hinted code must not be slower than unhinted (Step 5 H1)
       (if (= 'int hint)
         convert
-        (list 'if (list (shim-fn (if (= 'double hint) "double-kind?" "long-kind?")) sym)
+        (list 'if (kind-test hint sym)
               sym
               convert)))))
 
@@ -996,7 +1009,7 @@
                 ;; the tail is long under the assumption: the inner fn*'s
                 ;; native return (:rettag, as a hinted return's)
                 inner (with-meta (list 'fn* nm (cons ips body')) {:rettag (list 'quote sp)})
-                guard (apply list 'and (map #(list (shim-fn "long-kind?") %) names))]
+                guard (apply list 'and (map #(kind-test 'long %) names))]
             [(list 'if guard (apply list inner names) (if (next body') (apply list 'do body') (first body')))]))))))
 
 (defn- emit-arity
@@ -1023,7 +1036,7 @@
            ;; the typed body binds them through the host's native conversion
            ;; (its locals infer from them), anything else runs the body as is
            (let [casts (host/native-local-casts)
-                 guard (apply list 'and (map (fn [[p t]] (list (shim-fn (if (= 'double t) "double-kind?" "long-kind?")) p)) ptypes))
+                 guard (apply list 'and (map (fn [[p t]] (kind-test t p)) ptypes))
                  binds (vec (mapcat (fn [[p t]] [p (list (get casts t) p)]) ptypes))]
              (apply list (rw-params params)
                     [(list 'if guard
@@ -1131,6 +1144,24 @@
                            (partition 2 bvec)))
               bvec))
 
+(defn- loop-rebind
+  "(loop* [a init ...] body) where an enclosing loop* binds a ->
+   (loop* [a__N init ...] (let* [a a__N] body)): jank 0.1's C++ codegen fails
+   on the shadowing loop* (`use of undeclared identifier 'sNN'`) and compiles
+   the let* one. recur is positional, so the loop is the same. nil when no
+   binding shadows."
+  [bvec body]
+  (let [pairs (partition 2 bvec)
+        hit (fn [b] (and (symbol? b) (contains? *loop-locals* (*plain* b))))]
+    (when (some (comp hit first) pairs)
+      (let [fresh (map (fn [[b _]] (when (hit b) (with-meta (gensym (str (name (*plain* b)) "__")) (meta b)))) pairs)]
+        (list 'loop*
+              (vec (mapcat (fn [[b v] g] [(or g b) v]) pairs fresh))
+              (apply list 'let*
+                     (vec (mapcat (fn [[b _] g] (when g [(*plain* b) g])) pairs fresh))
+                     (or (seq body) [nil])))))))
+
+(declare rw-let*')
 (defn- hinted-local-init
   "A ^long / ^double / ^int / ^boolean let*/loop* local's init: the JVM's
    coercion of the bound value (coerce-form), through the host's native
@@ -1303,6 +1334,11 @@
             (list 'let* pre (apply list h lbs body))))))))
 
 (defn- rw-let* [ctx [h bvec & body]]
+  (if-let [form' (and (= h 'loop*) (:loop-rebind-shadow? ctx) (loop-rebind bvec body))]
+    (rw-let* ctx form')
+    (rw-let*' ctx h bvec body)))
+
+(defn- rw-let*' [ctx h bvec body]
   (let [;; U6-7: the certain numeric types of the bindings (adapter
         ;; :static-types); an inferred one is marked like a hint so
         ;; with-hinted-locals gives it the host's native conversion
@@ -1325,7 +1361,8 @@
         classes (class-tags *local-classes* (filter (comp symbol? first) (partition 2 bvec)))
         [bs depths] (markers-for syms tags classes)]
     (binding [*locals* (into *locals* syms)
-              *local-tags* tags *local-classes* classes *marker-depth* depths]
+              *local-tags* tags *local-classes* classes *marker-depth* depths
+              *loop-locals* (if (and (= h 'loop*) (:loop-rebind-shadow? ctx)) (into *loop-locals* syms) *loop-locals*)]
       (let [bvec' (rw-bindings ctx bvec)
             ;; an empty body is nil: ClojureWasm's let*, loop* and letfn* take
             ;; no empty one
@@ -1413,6 +1450,19 @@
    deftest's :test fn, core.clj's :inline fns."
   [:test :inline :inline-arities])
 
+(defn- fn*-inside?
+  "True when a rewritten fn* body holds a nested fn/fn* form (a closure)
+   anywhere outside a quote. jank's compile-module codegen mishandles a
+   self-named fn* whose body holds closures: the generated C++ calls the
+   fn with an undeclared capture (cohost.spec.alpha's op-explain and
+   re-gen, found by the snapshot build; the JIT path never hits it). A
+   named fn* with no closure inside compiles on both paths."
+  [form]
+  (cond (seq? form) (and (not= 'quote (first form))
+                         (or (#{'fn 'fn*} (first form))
+                             (boolean (some fn*-inside? form))))
+        (coll? form) (boolean (some fn*-inside? form))
+        :else false))
 (defn- anonymous-fn-init?
   "An anonymous (fn ...) or (fn* ...): no name of its own."
   [x]
@@ -1423,22 +1473,22 @@
 (defn- self-named-init
   "A def whose init is an anonymous fn gets the var's name as the fn's own
    name, as jank's defn does, so its self-calls are the host's named
-   recursion (its native entry) rather than calls through the var:
-   on a :direct-linking? host only, every such def except a ^:redef or
-   ^:dynamic var's (Clojure's direct linking: a redefinition no longer reaches
-   the fn's own recursive calls; ^:redef and ^:dynamic opt out). A hinted
-   arity's self-calls then reach its native entry (emit-arity's inner fn*),
-   and an unhinted one's its guarded speculation (U6-7)."
+   recursion rather than calls through the var: on a :defn-fn-name? host
+   only (the key is the only gate: off it, Clojure calls through the var,
+   hinted or not, so a redefinition is seen), with M-9's guards. Done before
+   the rewrite, so the fn's arities know their name: a hinted arity's
+   self-calls reach its native entry (emit-arity's inner fn*), an unhinted
+   one's its guarded speculation (U6-7). rw-def's own naming (M-9) then finds
+   the fn named."
   [nm more]
-  (let [init (last more)
-        opt-out? (let [m (meta nm)] (or (:redef m) (:dynamic m)))]
-    (if (and (symbol? nm)
-             ;; a name with a dot (a deftype's Box. constructor var) is not a
-             ;; name jank's fn* can take: its codegen names the C++ function after it
-             (not (some #{"."} (map str (name nm))))
-             ;; the key is the only gate (u1/u5, 2026-11-02): off it, Clojure
-             ;; calls through the var, hinted or not, so a redefinition is seen
-             (host/direct-linking?) (not opt-out?) (anonymous-fn-init? init))
+  (let [init (last more)]
+    (if (and (host/defn-fn-name?) (symbol? nm) (anonymous-fn-init? init)
+             ;; M-9's guards: a dotted name is a class or constructor
+             ;; pseudo-name jank's codegen rejects on a fn*, and a self-named
+             ;; fn* holding closures breaks jank's compile-module codegen
+             ;; (see fn*-inside?)
+             (not (some #{\.} (str nm)))
+             (not (some fn*-inside? (rest init))))
       (concat (butlast more)
               [(with-meta (apply list (first init) (bare-sym nm) (rest init)) (meta init))])
       more)))
@@ -1449,8 +1499,30 @@
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
              nm)
-        nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)]
-    (apply list 'def nm (rw-all ctx more))))
+        nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)
+        more' (rw-all ctx more)
+        ;; a host whose defn names its fn (jank's own does): carry the
+        ;; def's name onto an unnamed fn* value, so self-recursion is a
+        ;; direct call instead of a var deref and a dynamic call. The
+        ;; semantic price is pinned by a battery row: an in-flight
+        ;; recursion no longer sees a redefinition of the var.
+        more' (if (and (host/defn-fn-name?)
+                       ;; a dotted name is a class or a constructor
+                       ;; pseudo-name (deftype's Box.), not a fn name:
+                       ;; jank's codegen rejects it on a fn*
+                       (not (some #{\.} (str nm)))
+                       (seq more')
+                       (seq? (last more'))
+                       (= 'fn* (first (last more')))
+                       (not (symbol? (second (last more'))))
+                       ;; and no closure inside: a self-named fn*
+                       ;; holding closures breaks jank's compile-module
+                       ;; codegen (see fn*-inside?)
+                       (not (some fn*-inside? (rest (last more')))))
+                (concat (butlast more')
+                        [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
+                more')]
+    (apply list 'def nm more')))
 
 (defn- rw-map
   "A map literal is data: its keys and values are rewritten, nothing is
