@@ -919,28 +919,46 @@
 (defn- numeric-params
   "U6-7: {param type} of the unhinted plain parameters the raw body uses as a
    direct operand of a numeric core fn (outside nested fns and quoted forms):
-   double when the body holds a double literal, else long. A guess only: the
-   arity runs it under a guard on the arguments' kinds (guarded-arity)."
+   double when, in one such call, a sibling operand is a double (a literal, or
+   a form or local certainly double: let/loop locals are followed in order,
+   the params themselves unknown), else long. A guess only: the arity runs it
+   under a guard on the arguments' kinds (guarded-arity)."
   [params body]
   (let [ps (set (keep #(when (and (symbol? %) (not= '& (*plain* %)) (nil? (primitive-hint (:tag (meta %)))))
                          (*plain* (bare-sym %)))
                       params))
-        used (volatile! #{})
-        dbl? (volatile! false)]
-    (letfn [(walk [x]
+        kinds (volatile! {})
+        env0 (apply dissoc *num-env* ps)]
+    (letfn [(walk [env x]
               (cond
-                (double? x) (vreset! dbl? true)
                 (not (branch? x)) nil
                 (seq? x)
                 (let [h (first x) n (when (symbol? h) (name (*plain* h)))]
-                  (when-not (contains? #{"quote" "fn" "fn*" "letfn*"} n)
-                    (when (contains? numeric-ops (core-op h))
-                      (doseq [a (rest x)]
-                        (when (and (symbol? a) (contains? ps (*plain* a))) (vswap! used conj (*plain* a)))))
-                    (run! walk x)))
-                :else (run! walk (seq x))))]
-      (run! walk body)
-      (into {} (map (fn [p] [p (if @dbl? 'double 'long)])) @used))))
+                  (cond
+                    (contains? #{"quote" "fn" "fn*" "letfn*"} n) nil
+                    (and (contains? #{"let" "let*" "loop" "loop*"} n) (vector? (second x)))
+                    (let [env' (reduce (fn [e [b v]]
+                                         (walk e v)
+                                         (if (symbol? b)
+                                           (let [sym (*plain* (bare-sym b))
+                                                 t (binding [*locals* (conj *locals* sym)] (infer-num e v))]
+                                             (if t (assoc e sym t) (dissoc e sym)))
+                                           e))
+                                       env (partition 2 (second x)))]
+                      (run! #(walk env' %) (drop 2 x)))
+                    :else
+                    (do
+                      (when (contains? numeric-ops (core-op h))
+                        (let [args (vec (rest x))
+                              ts (mapv #(infer-num env %) args)]
+                          (doseq [[i a] (map-indexed vector args)]
+                            (when (and (symbol? a) (contains? ps (*plain* a)))
+                              (let [dbl (some (fn [j] (and (not= i j) (= 'double (nth ts j)))) (range (count args)))]
+                                (vswap! kinds update (*plain* a) #(if (or dbl (= % 'double)) 'double 'long)))))))
+                      (run! #(walk env %) x))))
+                :else (run! #(walk env %) (seq x))))]
+      (run! #(walk env0 %) body)
+      @kinds)))
 
 (defn- speculation
   "U6-7, :static-types on a :native-hints host: an unhinted single-arity fn
