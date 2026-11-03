@@ -381,6 +381,8 @@ namespace cohost_reduce {
 // else (reals, ratios, big numbers) jank's own arm.
 #include <jank/runtime/core/math.hpp>
 #include <jank/runtime/core/make_box.hpp>
+#include <jank/runtime/obj/ratio.hpp>
+#include <limits>
 namespace cohost_num {
   using namespace jank::runtime;
   inline bool int_operand(object_ref const x) {
@@ -420,6 +422,41 @@ namespace cohost_num {
     }
     return jank::runtime::mul(a, b);
   }
+  // A5-2: Clojure's / on two integers (Numbers.divide): the exact quotient when
+  // the divisor divides, else a ratio. jank's own / divides integers as C++ does
+  // (truncating: (/ 6 4) is 1) and, on apt, in i32 ((/ -2147483648 -1) wraps).
+  // nil back for anything that is not two integers (the caller uses jank's /)
+  // and for a zero divisor (the caller's wrapper throws, as before).
+  inline object_ref div(object_ref a, object_ref b) {
+    if (!(int_operand(a) && int_operand(b))) { return make_box<obj::nil>(); }
+    jank::i64 const x{ to_int(a) };
+    jank::i64 const y{ to_int(b) };
+    if (y == 0) { return make_box<obj::nil>(); }
+    if (y == -1 && x == std::numeric_limits<jank::i64>::min()) { return obj::ratio::create(x, y); }
+    if (x % y == 0) { return make_box(x / y); }
+    return obj::ratio::create(x, y);
+  }
+  // A5-2: quot and rem of two integers in i64 (Numbers.quotient / remainder on
+  // longs). jank's own computes two small integers in i32, where i32 min by -1
+  // traps (SIGFPE kills the process). Long.MIN_VALUE quot -1 is Long.MIN_VALUE,
+  // as Java's long division gives. nil back for anything else (and a zero
+  // divisor, which the caller's wrapper has already thrown on).
+  inline object_ref quot(object_ref a, object_ref b) {
+    if (!(int_operand(a) && int_operand(b))) { return make_box<obj::nil>(); }
+    jank::i64 const x{ to_int(a) };
+    jank::i64 const y{ to_int(b) };
+    if (y == 0) { return make_box<obj::nil>(); }
+    if (y == -1) { return make_box(static_cast<jank::i64>(0ull - static_cast<unsigned long long>(x))); }
+    return make_box(x / y);
+  }
+  inline object_ref rem(object_ref a, object_ref b) {
+    if (!(int_operand(a) && int_operand(b))) { return make_box<obj::nil>(); }
+    jank::i64 const x{ to_int(a) };
+    jank::i64 const y{ to_int(b) };
+    if (y == 0) { return make_box<obj::nil>(); }
+    if (y == -1) { return make_box(static_cast<jank::i64>(0)); }
+    return make_box(x % y);
+  }
 }
 namespace cohost_var {
   using namespace jank::runtime;
@@ -456,6 +493,33 @@ namespace cohost_var {
 (def num-multiply
   (when int-wraps?
     (fn ([x y] (let [r (cpp/cohost_num.mul x y)] (if (nil? r) (int-overflow) r))))))
+
+;; A5-2: jank's / on two integers truncates ((/ 6 4) is 1 on apt and on the
+;; series build alike) and wraps at 32 bits on apt; Clojure's is the exact
+;; quotient or a ratio. The probe runs jank's own / at boot; where it is wrong,
+;; num-divide is the shim's Numbers-divide for a nonzero divisor (and the
+;; codemod's inline / below), two integers through cohost_num::div, anything
+;; else jank's own /.
+(def ^:private int-div-wrong? (not (ratio? (/ (identity 6) 4))))
+(def num-divide
+  (when int-div-wrong?
+    (fn [x y] (let [r (cpp/cohost_num.div x y)] (if (nil? r) (clojure.core// x y) r)))))
+
+;; A5-2: quot and rem. Two integers in i64 (cohost_num::quot / rem; jank's own
+;; traps on i32 min by -1 on apt); jank's quot of a double is an integer
+;; ((quot 7.5 2) is 3) where Clojure's is the double 3.0. The probe sees the
+;; double case; the shim's Numbers-quotient / remainder use these for a nonzero
+;; divisor on jank.
+(def ^:private quot-wrong? (not (float? (quot (identity 7.5) 2))))
+(def num-quotient
+  (when (or int-wraps? quot-wrong?)
+    (fn [x y] (let [r (cpp/cohost_num.quot x y)]
+                (if (nil? r)
+                  (let [q (clojure.core/quot x y)] (if (or (float? x) (float? y)) (double q) q))
+                  r)))))
+(def num-remainder
+  (when int-wraps?
+    (fn [x y] (let [r (cpp/cohost_num.rem x y)] (if (nil? r) (clojure.core/rem x y) r)))))
 
 ;; X4-1: the shim's reduce with and without an init (the stock reduce's IReduceInit and
 ;; coll-reduce paths, so transduce and into too) over a range or a vector,
@@ -1819,7 +1883,9 @@ namespace cohost_obj {
                                          (list 'let* [a (first args) b (second args)]
                                                (list 'if (list 'clojure.core/zero? b)
                                                      (list 'cohost.shim/Numbers-divide a b)
-                                                     (list 'clojure.core// a b))))))}
+                                                     (if int-div-wrong?
+                                                       (list 'cohost.hosts.jank-host/num-divide a b)
+                                                       (list 'clojure.core// a b)))))))}
    :core-aliases '#{not}
    :syntax-quote-source? true
    :loop-rebind-shadow? true

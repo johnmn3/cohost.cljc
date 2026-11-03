@@ -687,7 +687,17 @@
 ;; (int \\a) is the char's code; where chars are one-character strings the
 ;; host's int would parse the string instead
 (defn- char-aware [f] (fn [x] (if (h-char? x) (h-char-code x) (f x))))
-(def RT-intCast (char-aware (host-fn 'int int)))
+(def RT-intCast #?(:jank (let [c (char-aware (host-fn 'int int))]
+                           ;; A5-2: jank's int keeps a long past i32 ((int 2147483648) is
+                           ;; 2147483648); RT.intCast throws, as the JVM's does: a long is
+                           ;; Math.toIntExact's ArithmeticException, a double the range check's
+                           (fn [x] (let [r (c x)]
+                                     (if (and (integer? r) (or (< 2147483647 r) (< r -2147483648)))
+                                       (throw (if (integer? x)
+                                                (host/ex* 'java.lang.ArithmeticException "integer overflow")
+                                                (host/ex* 'java.lang.IllegalArgumentException (str "Value out of range for int: " x))))
+                                       r))))
+                  :default (char-aware (host-fn 'int int))))
 (def RT-longCast (char-aware (host-fn 'long (host-fn 'int identity))))
 (def RT-doubleCast (host-fn 'double (host-fn 'float identity)))
 (def RT-floatCast (host-fn 'float identity))
@@ -778,7 +788,7 @@
 ;; an exact zero divisor is the JVM's ArithmeticException "Divide by zero",
 ;; not the host's own error (PHP's "Division by zero", Python's
 ;; ZeroDivisionError)
-(def Numbers-divide (let [h /] (fn [x y] (if (zero? y)
+(def Numbers-divide (let [h #?(:jank (or (jank-int-arith "num-divide") /) :default /)] (fn [x y] (if (zero? y)
                                            (if (or (float? x) (float? y)) (ieee-div-zero x y) (throw (divide-by-zero)))
                                            (h x y)))))
 (def Numbers-inc inc)
@@ -794,8 +804,12 @@
 (def Numbers-isPos pos?)
 (def Numbers-isNeg neg?)
 ;; Numbers.quotient / remainder check the divisor for every operand type
-(def Numbers-quotient (fn [x y] (if (zero? y) (throw (divide-by-zero)) (quot x y))))
-(def Numbers-remainder (fn [x y] (if (zero? y) (throw (divide-by-zero)) (rem x y))))
+;; (jank, A5-2: the adapter's i64 num-quotient / num-remainder where jank's own
+;; are wrong: i32 traps on apt, an integer quot of a double)
+(def Numbers-quotient (let [q #?(:jank (or (jank-int-arith "num-quotient") quot) :default quot)]
+                        (fn [x y] (if (zero? y) (throw (divide-by-zero)) (q x y)))))
+(def Numbers-remainder (let [r #?(:jank (or (jank-int-arith "num-remainder") rem) :default rem)]
+                         (fn [x y] (if (zero? y) (throw (divide-by-zero)) (r x y)))))
 ;; Numbers.max / min: a NaN argument wins; a tie is the second argument
 (def Numbers-max (fn [x y] (cond (h-nan? x) x (h-nan? y) y (> x y) x :else y)))
 (def Numbers-min (fn [x y] (cond (h-nan? x) x (h-nan? y) y (< x y) x :else y)))
