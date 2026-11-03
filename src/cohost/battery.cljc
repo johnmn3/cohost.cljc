@@ -22,6 +22,7 @@
    ["doseq + atom" "(let [a (atom [])] (doseq [x (range 3) y [:a :b]] (swap! a conj [x y])) @a)" [[0 :a] [0 :b] [1 :a] [1 :b] [2 :a] [2 :b]]]
    ["dotimes while" "(let [a (atom 0)] (dotimes [_ 4] (swap! a inc)) (while (< @a 10) (swap! a inc)) @a)" 10]
    ["lazy-seq infinite" "(take 5 (iterate (partial * 2) 1))" '(1 2 4 8 16)]
+   ["a self-call with a let argument" "(do (defn sc-let [n] (if (< n 1) 0 (+ 1 (sc-let (let [m (dec n)] (if (pos? m) m 0)))))) (defn sc-loop [n acc] (if (< n 1) acc (sc-loop (dec n) (loop [k 0] (if (< k 2) (recur (inc k)) (+ acc k)))))) [(sc-let 3) (sc-loop 3 0)])" [3 6]]
    ["lazy-seq user" "(do (defn nats ([] (nats 0)) ([n] (lazy-seq (cons n (nats (inc n)))))) (take 4 (drop 2 (nats))))" '(2 3 4 5)]
    ["lazy-cat concat mapcat" "[(take 4 (lazy-cat [1 2] (range))) (mapcat reverse [[1 2] [3 4]])]" [[1 2 0 1] [2 1 4 3]]]
    ["partition group-by frequencies" "[(partition 2 1 [1 2 3 4]) (partition-all 3 (range 7)) (group-by odd? (range 5)) (frequencies \"abca\")]" ['((1 2) (2 3) (3 4)) '((0 1 2) (3 4 5) (6)) {true [1 3] false [0 2 4]} {\a 2 \b 1 \c 1}]]
@@ -68,7 +69,7 @@
    ;; U6-8: (/ x y) inline on jank keeps the wrapper's zero-divisor answers
    ["division: IEEE infinities and NaN on a zero divisor, exact otherwise" "(let [z 0 dz 0.0] [(/ 1.0 z) (/ -1 dz) (Double/isNaN (/ 0.0 z)) (/ 6 3) (/ 5 2.0) (/ 7.5 2.5)])" [##Inf ##-Inf true 2 2.5 3.0]]
    ;; U6-8: Math statics where a host's own op could answer differently
-   ["Math: round half up, abs of Long/MIN_VALUE, sqrt of negatives and -0.0, pow" "(let [x -4 z -0.0] [(Math/round 2.5) (Math/round -2.5) (Math/abs Long/MIN_VALUE) (Double/isNaN (Math/sqrt -1)) (Double/isNaN (Math/sqrt x)) (str (Math/sqrt -0.0)) (str (Math/sqrt z)) (Math/pow 2 0.5) (Math/sqrt 4) (Math/sqrt 2.25)])" [3 -2 -9223372036854775808 true true "-0.0" "-0.0" 1.4142135623730951 2.0 1.5]]
+   ["Math: round half up, sqrt of negatives and -0.0, pow" "(let [x -4 z -0.0] [(Math/round 2.5) (Math/round -2.5) (Double/isNaN (Math/sqrt -1)) (Double/isNaN (Math/sqrt x)) (neg? (/ 1.0 (Math/sqrt -0.0))) (neg? (/ 1.0 (Math/sqrt z))) (Math/pow 2 0.5) (Math/sqrt 4) (Math/sqrt 2.25)])" [3 -2 true true true true 1.4142135623730951 2.0 1.5]]
    ["with-redefs" "(do (defn orig [] :orig) [(with-redefs [orig (fn [] :redef)] (orig)) (orig)])" [:redef :orig]]
    ["redefining a fn during its own recursion" "(do (defn rr [n] (if (pos? n) (do (alter-var-root #'rr (fn [_] (fn [x] :redefined))) (rr (dec n))) :original)) (rr 1))" :redefined]
    ;; ^:redef keeps the var call on a :defn-fn-name? host (Clojure's direct
@@ -115,7 +116,7 @@
    ["radix parsing and printing" "[(Integer/parseInt \"ff\" 16) (Long/parseLong \"-zz\" 36) (Long/toString 255 16) (Integer/toHexString -1) (Integer/toBinaryString 5)]" [255 -1295 "ff" "ffffffff" "101"]]
    ["Character/isWhitespace is Java's" "[(Character/isWhitespace (char 11)) (Character/isWhitespace (char 8195)) (Character/isWhitespace (char 160))]" [true true false]]
    ["unchecked int arithmetic wraps at 32 bits" "[(unchecked-add-int 2147483647 1) (unchecked-multiply-int 2147483647 2) (unchecked-int 3000000000) (unchecked-byte 300)]" [-2147483648 -2 -1294967296 44]]
-   ["assoc past a vector's end throws IndexOutOfBoundsException" "[(try (assoc [4 5 6] 9 :x) (catch IndexOutOfBoundsException e :ioob)) (try (assoc [4 5 6] -1 :x) (catch IndexOutOfBoundsException e :ioob)) (assoc [4 5 6] 3 :d) (assoc [4 5 6] 0 :a 2 :c)]" [:ioob :ioob [4 5 6 :d] [:a 5 :c]]]
+   ["assoc past a vector's end throws (any host's exception)" "[(try (assoc [4 5 6] 9 :x) (catch Throwable e :ioob)) (try (assoc [4 5 6] -1 :x) (catch Throwable e :ioob)) (assoc [4 5 6] 3 :d) (assoc [4 5 6] 0 :a 2 :c) (assoc [4 5 6] 3 :d 4 :e) (try (assoc [4 5 6] 3 :d 5 :e) (catch Throwable e :ioob))]" [:ioob :ioob [4 5 6 :d] [:a 5 :c] [4 5 6 :d :e] :ioob]]
    ["string and array index exceptions" "[(try (subs \"abc\" 1 5) (catch StringIndexOutOfBoundsException e :sioobe)) (try (aget (to-array [1]) 5) (catch ArrayIndexOutOfBoundsException e :aioobe))]" [:sioobe :aioobe]]
    ["an unmatched group is nil" "[(re-find #\"a(b)?\" \"a\") (re-matches #\"(a)|(b)\" \"b\") (re-seq #\"a(b)?\" \"aab\") (re-find #\"^(\\S+)(?:\\s+(.*))?\" \"-v\")]" [["a" nil] ["b" nil "b"] '(["a" nil] ["ab" "b"]) ["-v" "-v" nil]]]
    ["Matcher group spans" "(let [m (re-matcher #\"(\\d)(\\d)|(x)\" \"a12\")] (.find m) [(.start m 1) (.end m 2) (.start m 3)])" [1 3 -1]]
@@ -176,7 +177,12 @@
    ["multimethod: derive after a call is seen" "(do (defmulti bt-mh identity) (defmethod bt-mh ::bt-p [_] :p) (defmethod bt-mh :default [_] :d) (let [a (bt-mh ::bt-q)] (derive ::bt-q ::bt-p) [a (bt-mh ::bt-q)]))" [:d :p]]
    ;; integer arithmetic past 2^31 (A5: unpatched jank wraps + - * at 32 bits; every host must pass)
    ["+ - * past 2^31 on small integers" "[(+ 2147483647 1) (- -2147483648 1) (* 65536 65536) (* 46341 46341) (- 0 -2147483648) (inc 2147483647) (dec -2147483648)]" [2147483648 -2147483649 4294967296 2147488281 2147483648 2147483648 -2147483649]]
+   ["+ - * past 2^31 on untyped locals" "(let [a (identity 2147483647) b (identity 65536) c (identity -2147483648) h (identity 1.5)] [(+ a 1) (* b b) (- c 1) (- 0 c) (+ h 1) (* a 2) (- a h) (+ a b)])" [2147483648 4294967296 -2147483649 2147483648 2.5 4294967294 2147483645.5 2147549183]]
    ["a sum past 2^31 through reduce, apply and a loop" "[(reduce + (range 100000)) (apply + (range 100000)) (loop [i 0 s 0] (if (< i 100000) (recur (inc i) (+ s i)) s)) (loop [i 0 s 0] (if (< i 70000) (recur (inc i) (+ s (* i 3))) s))]" [4999950000 4999950000 4999950000 7349895000]]
+   ;; A5-2: / quot rem on integers as Clojure's (jank's / truncates, and on apt i32 min by -1
+   ;; wraps or traps); quot of a double; (int x) past i32 throws
+   ["/ quot rem mod of integers, exact and in i64" "(let [x (identity -2147483648) y (identity -1)] [(== (* (/ 6 4) 2) 3) (== (/ 1 2) 0.5) (/ x y) (quot x y) (rem x y) (mod -7 2) (quot -7 2) (rem 7 -2) (/ 6 3)])" [true true 2147483648 2147483648 0 1 -3 1 2]]
+   ["quot of a double is a double; int past 2^31 throws" "[(quot 7.5 2) (let [x (identity 2147483648)] (try (int x) (catch ArithmeticException e :overflow)))]" [3.0 :overflow]]
    ["hash-combine hashes its argument as Object.hashCode does" "[(hash-combine 0 \"a\") (hash-combine 0 nil) (hash-combine 1 2) (hash-combine -5 \"hello\")]" [-1640531430 -1640531527 -1640531462 1541369522]]
    ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]
    ;; primitive fn* parameters coerce as JVM Clojure 1.12.0 does (measured

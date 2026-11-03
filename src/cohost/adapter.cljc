@@ -116,6 +116,7 @@
    :with-meta       [['x 'm] "x with its metadata replaced by m: the host's with-meta (the default), or the type's own on a :cohost-types host, whose instances the host's with-meta cannot touch"]
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
+   :int-op-aliases  [[] "{shim static name (\"Numbers-add\", \"Numbers-minus\", \"Numbers-multiply\") -> (fn [args checked]) returning the form a call of two untyped operands (locals or integer literals, which it may name twice) becomes; checked is the shim static's symbol}: where the host's own integer ops wrap and the shim's are a checked call (A5, jank on apt), the host's own promoting op inline, with the shim's checked call only when two integers overflow (A5-3). Default {}"]
    :math-aliases    [[] "{shim static name (a string, \"Math-sqrt\") -> (fn [args]) returning the form a call (Math/sqrt x) becomes on this host, or nil to keep the shim call}: the host's own math op at the call head, where its value is the JVM's for every argument (a probe per op; ops whose semantics differ keep the shim wrapper). Default {}"]
    :static-aliases  [[] "{shim static name (a string) -> the host core's symbol}: statics the host-aliases? scan cannot match because the shim's value is a wrapper with its own body, where that wrapper's semantics are the host op's on this host (jank: Numbers-minus is jank's -). Merged over the scan's aliases. Default {}"]
    :core-aliases    [[] "#{stock core name}: calls of these booted stock core fns are emitted as the host core's fn of that name, whose semantics are the stock fn's on this host, so the host's compiler sees (and may inline) its own op; the stock fn stays booted for every other use (apply, a value, with-redefs of the booted var). Default #{}"]
@@ -365,6 +366,7 @@ namespace cohost_err {
     :host-aliases? true
     :static-aliases {}
     :math-aliases {}
+    :int-op-aliases {}
     :core-aliases #{}
     :core-value-aliases {}
     :core-expansions {}
@@ -648,6 +650,7 @@ namespace cohost_err {
 (defn loop-int-init "The adapter's :loop-int-init fn, or nil." [] (get @installed :loop-int-init))
 (defn static-aliases [] (or (cap :static-aliases) {}))
 (defn math-aliases [] (or (cap :math-aliases) {}))
+(defn int-op-aliases [] (or (cap :int-op-aliases) {}))
 (defn core-aliases [] (or (cap :core-aliases) #{}))
 (defn core-value-aliases [] (or (cap :core-value-aliases) {}))
 (defn core-expansions [] (or (cap :core-expansions) {}))
