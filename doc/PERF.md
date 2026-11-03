@@ -2096,3 +2096,53 @@ Rows moved by more than 20% against X1-5/X1-6, cohost on jank:
 jank-aot moved too: slower are lazy-pipeline PATCHED x1.59 (21.2 -> 33.8 ms), first-output UNPATCHED x1.37, binary-trees
 UNPATCHED x1.25 and binary-trees-hinted UNPATCHED x1.33; faster are lazy-pipeline UNPATCHED x0.71, binary-trees-hinted
 PATCHED x0.79 and binary-trees-14-hinted UNPATCHED x0.79.
+
+### X1-13: the tip ec07bac on int-b's box
+
+Measured 2026-11-03, 7:18 AM to 8:37 AM ET, on int-b's box (4 CPUs, 15 GB RAM), shared with lane u4. One-minute load was 1.09 3.39 (min, max). The method is X1-8's: one JVM run, then 3 interleaved rounds, per program UNPATCHED (apt 0.1-noble) then PATCHED (jank-main, the 21-patch series), jank-aot then cohost-on-jank. A cell is the median of the 3 round medians, with xJVM and the min-max over all 3 rounds. The tree is max/main **ec07bac** (A5-8, A7-2, A6-3, A6-4, U6-11 + the series delta, A5-6, A5-4). The last column is cohost's change from X1-5, as in X1-8; the changes from X1-8 are listed below the table. spectral-norm(-hinted)'s PATCHED cells are **pre-A5-7**; the post-A5-7 cell on f9b77a1 follows. Raw data: `/home/user/logs/intb-x113.log`.
+
+| program | jvm | jank-aot UNPATCHED | jank-aot PATCHED | cohost UNPATCHED | cohost PATCHED | cohost vs X1-5 (UNPATCHED / PATCHED) |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 98.8 | 75.9 (x0.77; 72.7-89.8) | 50.2 (x0.51; 49.3-54.3) | 147.3 (x1.49; 142.0-157.0) | 64.0 (x0.65; 62.2-76.8) | -68% / -2% (457.4 / 65.4) |
+| fib-hinted | 64.4 | 133.4 (x2.07; 127.4-178.1) | 50.6 (x0.79; 49.3-52.4) | 288.4 (x4.48; 273.5-341.0) | 65.5 (x1.02; 62.8-68.8) | -58% / +0% (689.8 / 65.3) |
+| tak | 218.9 | 453.7 (x2.07; 434.5-511.3) | 117.3 (x0.54; 113.8-170.3) | 473.9 (x2.16; 459.7-521.0) | 110.9 (x0.51; 108.5-114.1) | -2% / -3% (483.1 / 114.3) |
+| tak-hinted | 120.5 | 776.1 (x6.44; 755.9-845.5) | 119.6 (x0.99; 113.7-151.2) | 1025.9 (x8.51; 981.1-1121.0) | 113.4 (x0.94; 107.5-131.4) | -31% / +1% (1490.0 / 112.3) |
+| mandelbrot | 149.1 | ABSENT | 551.3 (x3.70; 537.2-635.0) | 601.6 (x4.03; 580.1-653.2) | 238.1 (x1.60; 228.4-286.2) | +0% / -49% (599.0 / 467.1) |
+| mandelbrot-hinted | 145.2 | ABSENT | 224.0 (x1.54; 216.9-274.9) | 572.2 (x3.94; 551.3-701.3) | 224.9 (x1.55; 207.6-281.9) | -27% / -71% (781.2 / 762.9) |
+| spectral-norm | 165.2 | 1785.2 (x10.81; 1685.5-1981.8) | 214.4 (x1.30; 202.8-272.3) | 811.8 (x4.91; 770.5-870.2) | 660.1 (x4.00; 605.8-718.7) | +24% / +54% (656.4 / 427.6) |
+| spectral-norm-hinted | 106.2 | 1904.6 (x17.93; 1832.7-2078.1) | 197.7 (x1.86; 191.8-214.5) | 1038.7 (x9.78; 982.7-1153.4) | 743.7 (x7.00; 689.3-812.2) | -18% / +28% (1263.1 / 579.1) |
+| nbody | 148.1 | ABSENT | 826.4 (x5.58; 785.1-906.1) | 751.6 (x5.07; 682.8-834.1) | 578.9 (x3.91; 533.4-634.4) | -85% / -85% (5114.7 / 3808.7) |
+| sum-overflow | 10.1 | 61.6 (x6.13; 57.6-70.1) DIFFER | 6.2 (x0.62; 6.0-6.5) | 19.8 (x1.97; 18.8-75.4) | 5.2 (x0.51; 5.0-5.3) | -8% / +3% (21.4 / 5.0) |
+| sum-overflow-hinted | 0.6 | 8.6 (x13.56; 8.1-8.9) DIFFER | 1.9 (x2.93; 1.8-2.2) | 8.5 (x13.39; 8.0-13.4) | 2.5 (x4.00; 2.5-2.7) | -5% / -69% (8.9 / 8.2) |
+| sort | 30.5 | 18014.6 (x590.49; 9912.9-24858.4) | 21.9 (x0.72; 18.7-45.0) | 29.7 (x0.97; 27.2-97.7) | 28.1 (x0.92; 21.8-61.5) | -7% / -11% (31.9 / 31.7) |
+| lazy-pipeline | 27.2 | 706.2 (x25.98; 553.5-1082.8) | 22.4 (x0.82; 21.0-97.9) | 112.6 (x4.14; 71.2-177.4) | 36.8 (x1.35; 35.0-222.5) | -33% / -48% (167.1 / 70.2) |
+| pipeline | 97.2 | 802.7 (x8.26; 777.3-941.6) DIFFER | 633.5 (x6.52; 584.6-744.7) | 689.2 (x7.09; 604.7-825.5) | 540.5 (x5.56; 504.1-612.0) | -27% / -43% (941.2 / 951.8) |
+| json | 163.4 | 1385.8 (x8.48; 1305.3-1741.0) | 546.8 (x3.35; 512.4-625.5) | 1108.4 (x6.78; 1045.8-1278.3) | 748.5 (x4.58; 688.6-881.0) | -18% / -20% (1356.2 / 931.2) |
+- cohost on jank PATCHED: geomean xJVM 1.777 over 15 programs
+- cohost on jank UNPATCHED: geomean xJVM 4.225 over 15 programs
+- jank-aot PATCHED: geomean xJVM 1.486 over 15 programs
+- jank-aot UNPATCHED: geomean xJVM 9.329 over 9 programs
+
+Change from X1-8 (b33cfd0, the table above), cohost median ms, UNPATCHED / PATCHED; rows that moved more than 20% are in bold:
+
+- fib-hinted: **689.1 -> 288.4 (-58%)** / 66.0 -> 65.5 (-1%)
+- fib: **393.7 -> 147.3 (-63%)** / 66.3 -> 64.0 (-3%)
+- json: **1482.4 -> 1108.4 (-25%)** / **942.3 -> 748.5 (-21%)**
+- lazy-pipeline: **160.7 -> 112.6 (-30%)** / **64.9 -> 36.8 (-43%)**
+- mandelbrot-hinted: **761.6 -> 572.2 (-25%)** / **786.7 -> 224.9 (-71%)**
+- mandelbrot: 605.3 -> 601.6 (-1%) / **469.2 -> 238.1 (-49%)**
+- nbody: **2572.2 -> 751.6 (-71%)** / **2198.7 -> 578.9 (-74%)**
+- pipeline: **1016.9 -> 689.2 (-32%)** / **994.3 -> 540.5 (-46%)**
+- sort: **42.6 -> 29.7 (-30%)** / 32.7 -> 28.1 (-14%)
+- spectral-norm-hinted: **1302.0 -> 1038.7 (-20%)** / 899.2 -> 743.7 (-17%)
+- spectral-norm: 679.3 -> 811.8 (+20%) / 733.6 -> 660.1 (-10%)
+- sum-overflow-hinted: 9.0 -> 8.5 (-5%) / **8.1 -> 2.5 (-69%)**
+- sum-overflow: **27.6 -> 19.8 (-28%)** / 5.1 -> 5.2 (+2%)
+- tak-hinted: **1498.7 -> 1025.9 (-32%)** / 113.9 -> 113.4 (-0%)
+- tak: 491.1 -> 473.9 (-4%) / 113.8 -> 110.9 (-3%)
+
+Post-A5-7 cell (max/main **f9b77a1**, u2's A5-7: the inline `/` keeps jank's own `/` with a known double operand),
+PATCHED only, 3 rounds, 8:38-8:55 AM ET, load about 2 (u4's probe beside it): spectral-norm **339.2 ms** (338.4 /
+339.2 / 350.4), spectral-norm-hinted **412.9 ms** (412.4 / 412.9 / 427.3), RESULT 784791 SAME. That beats the
+ec07bac rows above (660.1 / 743.7 ms, pre-A5-7) and X1-5's 427.6 / 579.1; the regression X1-12 found is closed (bar
+<= 430 ms met). Raw data: `/home/user/logs/intb-x113sn.log`.
