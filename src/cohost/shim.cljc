@@ -687,7 +687,17 @@
 ;; (int \\a) is the char's code; where chars are one-character strings the
 ;; host's int would parse the string instead
 (defn- char-aware [f] (fn [x] (if (h-char? x) (h-char-code x) (f x))))
-(def RT-intCast (char-aware (host-fn 'int int)))
+(def RT-intCast #?(:jank (let [c (char-aware (host-fn 'int int))]
+                           ;; A5-2: jank's int keeps a long past i32 ((int 2147483648) is
+                           ;; 2147483648); RT.intCast throws, as the JVM's does: a long is
+                           ;; Math.toIntExact's ArithmeticException, a double the range check's
+                           (fn [x] (let [r (c x)]
+                                     (if (and (integer? r) (or (< 2147483647 r) (< r -2147483648)))
+                                       (throw (if (integer? x)
+                                                (host/ex* 'java.lang.ArithmeticException "integer overflow")
+                                                (host/ex* 'java.lang.IllegalArgumentException (str "Value out of range for int: " x))))
+                                       r))))
+                  :default (char-aware (host-fn 'int int))))
 (def RT-longCast (char-aware (host-fn 'long (host-fn 'int identity))))
 (def RT-doubleCast (host-fn 'double (host-fn 'float identity)))
 (def RT-floatCast (host-fn 'float identity))
@@ -747,7 +757,11 @@
 ;; ---------------------------------------------------------------------------
 ;; Numbers
 
-(def Numbers-add +)
+;; (jank: where unpatched jank's + - * wrap at 32 bits, the adapter's checked
+;; i64 entries, A5; nil elsewhere, and on every other host these are the host's own)
+#?(:jank (def ^:private jank-int-arith
+           (fn [nm] (some-> (resolve (symbol "cohost.hosts.jank-host" nm)) var-get))))
+(def Numbers-add #?(:jank (or (jank-int-arith "num-add") +) :default +))
 (def Numbers-addP (host-fn '+' +))
 ;; on jank the wrapper IS the host's - with an extra hop: it checks
 ;; nothing (the host's - throws on nil and on a non-number, as the JVM's
@@ -755,11 +769,12 @@
 ;; fires. The quotient/remainder/divide wrappers stay: jank's own die
 ;; with SIGFPE on a zero divisor where the JVM throws ArithmeticException.
 ;; max/min stay: jank's min answers the number for (min 1 ##NaN) where
-;; the JVM's static answers NaN.
-(def Numbers-minus #?(:jank -
+;; the JVM's static answers NaN. (A5: where unpatched jank's - wraps at 32
+;; bits, the adapter's checked num-minus instead, and host-aliases does not fire.)
+(def Numbers-minus #?(:jank (or (jank-int-arith "num-minus") -)
                       :default (fn ([x] (- x)) ([x y] (- x y)))))
 (def Numbers-minusP (host-fn '-' -))
-(def Numbers-multiply *)
+(def Numbers-multiply #?(:jank (or (jank-int-arith "num-multiply") *) :default *))
 (def Numbers-multiplyP (host-fn '*' *))
 ;; a double divided by zero is an infinity or NaN, as IEEE 754 and the JVM
 ;; say (jolt's / as a value and basilisp's Python division throw instead)
@@ -773,7 +788,7 @@
 ;; an exact zero divisor is the JVM's ArithmeticException "Divide by zero",
 ;; not the host's own error (PHP's "Division by zero", Python's
 ;; ZeroDivisionError)
-(def Numbers-divide (let [h /] (fn [x y] (if (zero? y)
+(def Numbers-divide (let [h #?(:jank (or (jank-int-arith "num-divide") /) :default /)] (fn [x y] (if (zero? y)
                                            (if (or (float? x) (float? y)) (ieee-div-zero x y) (throw (divide-by-zero)))
                                            (h x y)))))
 (def Numbers-inc inc)
@@ -789,8 +804,12 @@
 (def Numbers-isPos pos?)
 (def Numbers-isNeg neg?)
 ;; Numbers.quotient / remainder check the divisor for every operand type
-(def Numbers-quotient (fn [x y] (if (zero? y) (throw (divide-by-zero)) (quot x y))))
-(def Numbers-remainder (fn [x y] (if (zero? y) (throw (divide-by-zero)) (rem x y))))
+;; (jank, A5-2: the adapter's i64 num-quotient / num-remainder where jank's own
+;; are wrong: i32 traps on apt, an integer quot of a double)
+(def Numbers-quotient (let [q #?(:jank (or (jank-int-arith "num-quotient") quot) :default quot)]
+                        (fn [x y] (if (zero? y) (throw (divide-by-zero)) (q x y)))))
+(def Numbers-remainder (let [r #?(:jank (or (jank-int-arith "num-remainder") rem) :default rem)]
+                         (fn [x y] (if (zero? y) (throw (divide-by-zero)) (r x y)))))
 ;; Numbers.max / min: a NaN argument wins; a tie is the second argument
 (def Numbers-max (fn [x y] (cond (h-nan? x) x (h-nan? y) y (> x y) x :else y)))
 (def Numbers-min (fn [x y] (cond (h-nan? x) x (h-nan? y) y (< x y) x :else y)))
@@ -2270,8 +2289,15 @@
 (def -append (fn [sb x] (h-sb-append! sb (if (nil? x) "null" x))))
 (def -close host/close!)
 (def -flush (fn [_] nil))
-(def -numerator (host-fn 'numerator identity))
-(def -denominator (host-fn 'denominator (constantly 1)))
+(def -numerator (let [h (host-fn 'numerator identity)]
+                  ;; (jank, A5-2: Ratio's numerator and denominator are BigIntegers, which
+                  ;; print with no N on the JVM; jank's are its BigInt, which prints 3N: a
+                  ;; part that fits a long comes back as the long)
+                  #?(:jank (fn [r] (let [n (h r)] (if (< -9223372036854775808 n 9223372036854775807) (long n) n)))
+                     :default h)))
+(def -denominator (let [h (host-fn 'denominator (constantly 1))]
+                    #?(:jank (fn [r] (let [n (h r)] (if (< -9223372036854775808 n 9223372036854775807) (long n) n)))
+                       :default h)))
 (def -bigIntegerValue identity)
 (def -toBigInteger identity)
 (def -doubleValue RT-doubleCast)

@@ -1,0 +1,41 @@
+;; A5: cohost's integer arithmetic past 2^31 (run: bash dev/research/run-cohost-jank.sh dev/research/a5/int_arith.clj;
+;; the same file under JVM Clojure prints the reference values). jank-12's shapes plus the order's.
+(defn shapes []
+  [(+ 2147483647 1) (inc 2147483647) (+ 2147483647 2147483647) (- -2147483648 1) (dec -2147483648)
+   (* 65536 65536) (* 46341 46341) (- 0 -2147483648) (+ 2147483648 2147483648)
+   (reduce + (range 1000000)) (apply + (range 100000)) (let [x 3000000000] (+ x 1))
+   (try (+ 9223372036854775807 1) (catch Exception e :overflow)) (+ 1.5 2) (+ 1 2) (- 5) (* 3 4)])
+;; A5-2: / quot rem mod and the ratio semantics, compare, max/min on mixed ints, bit ops, abs,
+;; casts and hashes past i32 (orders/u2.md A5-2).
+(defn shapes2 []
+  [(/ -2147483648 -1) (/ 6 4) (/ 6 3) (/ 1 3) (/ -6 4) (/ 6 -4) (/ 4611686018427387904 2) (/ 9223372036854775807 3)
+   (/ 3000000000 4) (/ 0 5) (/ -2147483648 2) (/ -9223372036854775807 -1)
+   (quot 7 2) (quot -7 2) (quot -2147483648 -1) (quot 3000000000 7) (quot 1 3)
+   (rem -7 2) (rem 7 -2) (rem 3000000000 7) (rem -2147483648 -1)
+   (mod -7 2) (mod 7 -2) (mod -2147483648 3) (mod 3000000000 -7)
+   (+ (/ 1 2) (/ 1 3)) (* (/ 1 2) 4) (* (/ 1 3) 3) (= (/ 1 2) 0.5) (== (/ 1 2) 0.5) (< (/ 1 3) (/ 1 2))
+   (ratio? (/ 1 2)) (numerator (/ 6 4)) (denominator (/ 6 4)) (pr-str (/ 6 4)) (str (/ -6 4)) (integer? (/ 6 3))
+   (compare 2147483648 2147483647) (compare -2147483649 0) (< 2147483647 2147483648) (> 3000000000 -3000000000)
+   (max 2147483647 2147483648) (min -2147483649 1) (max 1 2.5) (min 3000000000 2)
+   (bit-and 2147483647 4294967295) (bit-or 2147483648 1) (bit-xor -1 2147483647) (bit-shift-left 1 31)
+   (bit-shift-left 1 40) (bit-shift-right -2147483648 1) (bit-not 2147483647) (unsigned-bit-shift-right -1 60)
+   (bit-shift-left 65536 16) (bit-and -2147483648 -1)
+   (Math/abs -2147483648) (abs -2147483648) (long 3000000000) (int 2147483647)
+   (try (int 2147483648) (catch Exception e :int-range)) (long 2.9) (int -2.9)
+   (hash 2147483648) (hash 3000000000) (hash -2147483649) (hash 1) (hash -1)
+   (= 2147483648 (+ 2147483647 1)) (= (hash 2147483648) (hash (+ 2147483647 1)))
+   (try (/ 1 0) (catch ArithmeticException e :div0)) (try (quot 1 0) (catch ArithmeticException e :div0))
+   (try (rem 1 0) (catch ArithmeticException e :div0)) (try (mod 1 0) (catch ArithmeticException e :div0))
+   (/ 1.0 0) (/ 7 2.0) (quot 7.5 2) (rem 7.5 2) (mod -7.5 2)])
+(def n 1000000)
+(def v (vec (range n)))
+(defn sum-loop [] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s i)) s)))
+(defn small-loop [] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s 1)) s)))
+(defn mul-loop [] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (* i 3))) s)))
+(defn run []
+  (println "shapes" (pr-str (shapes)))
+  (println "shapes2" (pr-str (shapes2)))
+  (bench "sum-loop past 2^31" sum-loop)
+  (bench "small-loop inside i32" small-loop)
+  (bench "mul-loop" mul-loop)
+  (bench "reduce + v" (fn [] (reduce + v))))

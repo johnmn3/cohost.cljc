@@ -11,6 +11,7 @@
 (ns cohost.hosts.jank-host
   (:require [cohost.adapter :as adapter]
             [cohost.scan :as scan]
+            [cohost.hosts.jank-runtime :as jank-rt]
             [clojure.string :as string]))
 
 ;; ---------------------------------------------------------------------------
@@ -179,6 +180,7 @@ namespace cohost_math {
 #include <jank/runtime/core/math.hpp>
 #include <jank/runtime/core/truthy.hpp>
 #include <jank/runtime/obj/integer_range.hpp>
+#include <jank/runtime/obj/range.hpp>
 #include <jank/runtime/obj/persistent_vector.hpp>
 #include <jank/runtime/obj/reduced.hpp>
 #include <jank/runtime/obj/persistent_string.hpp>
@@ -309,8 +311,32 @@ namespace cohost_sort {
 // any other coll goes to runtime::reduce itself. Removed when jank-15 lands.
 namespace cohost_reduce {
   using namespace jank::runtime;
+  // A4 (a): the adapter's integer range is jank's obj::range (chunked); its integer start, step
+  // and count, or false for any other range.
+  inline bool int_range(object_ref coll, jank::i64 &a, jank::i64 &st, jank::i64 &n) {
+    if(coll.get_type() != object_type::range) { return false; }
+    auto const *r = static_cast<obj::range const *>(coll.ptr());
+    if(!is_integer(r->start) || !is_integer(r->end) || !is_integer(r->step)) { return false; }
+    a = to_int(r->start);
+    st = to_int(r->step);
+    auto const e(to_int(r->end));
+    if(st == 0) { return false; }
+    n = st > 0 ? (e - a + st - 1) / st : (e - a + st + 1) / st;
+    if(n < 0) { n = 0; }
+    return true;
+  }
   inline object_ref reduce_init(object_ref f, object_ref init, object_ref coll) {
     object_ref res{ init };
+    jank::i64 ra{}, rst{}, rn{};
+    if(int_range(coll, ra, rst, rn)) {
+      for(jank::i64 k{}; k < rn; ++k) {
+        res = f.call(res, make_box(ra + k * rst));
+        if(res.get_type() == object_type::reduced) {
+          return expect_object<obj::reduced>(res)->val;
+        }
+      }
+      return res;
+    }
     switch(coll.get_type()) {
       case object_type::integer_range: {
         auto const *r = static_cast<obj::integer_range const *>(coll.ptr());
@@ -343,9 +369,23 @@ namespace cohost_reduce {
   // other coll to jank's own reduce.
   inline bool reduce_fast(object_ref coll) {
     auto const t(coll.get_type());
-    return t == object_type::integer_range || t == object_type::persistent_vector;
+    jank::i64 a{}, st{}, n{};
+    return t == object_type::integer_range || t == object_type::persistent_vector
+      || int_range(coll, a, st, n);
   }
   inline object_ref reduce_noinit(object_ref f, object_ref coll) {
+    jank::i64 ra{}, rst{}, rn{};
+    if(int_range(coll, ra, rst, rn)) {
+      if(rn == 0) { return f.call(); }
+      object_ref res{ make_box(ra) };
+      for(jank::i64 k{ 1 }; k < rn; ++k) {
+        res = f.call(res, make_box(ra + k * rst));
+        if(res.get_type() == object_type::reduced) {
+          return expect_object<obj::reduced>(res)->val;
+        }
+      }
+      return res;
+    }
     if(coll.get_type() == object_type::integer_range) {
       auto const *r = static_cast<obj::integer_range const *>(coll.ptr());
       jank::usize const n{ r->count() };
@@ -372,6 +412,101 @@ namespace cohost_reduce {
     return res;
   }
 }
+// A5: + - * on unpatched jank wrap at 32 bits on two small integers (jank's
+// small_integer payload is i32 and its add/sub/mul arms compute in it: draft
+// jank-12). These are the shim's Numbers-add/minus/multiply on jank when the
+// boot probe sees the wrap: two small integers in i64 (no overflow possible),
+// two integers checked in i64 (nil back on overflow: the caller throws
+// ArithmeticException integer overflow, as Clojure's Numbers does), anything
+// else (reals, ratios, big numbers) jank's own arm.
+#include <jank/runtime/core/math.hpp>
+#include <jank/runtime/core/make_box.hpp>
+#include <jank/runtime/obj/ratio.hpp>
+#include <jank/runtime/obj/big_integer.hpp>
+#include <limits>
+namespace cohost_num {
+  using namespace jank::runtime;
+  inline bool int_operand(object_ref const x) {
+    auto const t(x.get_type());
+    return t == object_type::small_integer || t == object_type::integer;
+  }
+  // A5-2: an integral result of ratio arithmetic is a BigInt, as Clojure's Ratio
+  // ops give ((* 1/2 4) is 2N); jank's gives a long.
+  inline object_ref ratio_int(object_ref a, object_ref b, object_ref r) {
+    if (int_operand(r) && (a.get_type() == object_type::ratio || b.get_type() == object_type::ratio)) {
+      return make_box<obj::big_integer>(to_int(r));
+    }
+    return r;
+  }
+  inline object_ref add(object_ref a, object_ref b) {
+    if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
+      return make_box(static_cast<jank::i64>(detail::as_integer(a.raw())) + static_cast<jank::i64>(detail::as_integer(b.raw())));
+    }
+    if (int_operand(a) && int_operand(b)) {
+      jank::i64 r{};
+      if (__builtin_add_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
+      return make_box(r);
+    }
+    return ratio_int(a, b, jank::runtime::add(a, b));
+  }
+  inline object_ref sub(object_ref a, object_ref b) {
+    if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
+      return make_box(static_cast<jank::i64>(detail::as_integer(a.raw())) - static_cast<jank::i64>(detail::as_integer(b.raw())));
+    }
+    if (int_operand(a) && int_operand(b)) {
+      jank::i64 r{};
+      if (__builtin_sub_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
+      return make_box(r);
+    }
+    return ratio_int(a, b, jank::runtime::sub(a, b));
+  }
+  inline object_ref mul(object_ref a, object_ref b) {
+    if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
+      return make_box(static_cast<jank::i64>(detail::as_integer(a.raw())) * static_cast<jank::i64>(detail::as_integer(b.raw())));
+    }
+    if (int_operand(a) && int_operand(b)) {
+      jank::i64 r{};
+      if (__builtin_mul_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
+      return make_box(r);
+    }
+    return ratio_int(a, b, jank::runtime::mul(a, b));
+  }
+  // A5-2: Clojure's / on two integers (Numbers.divide): the exact quotient when
+  // the divisor divides, else a ratio. jank's own / divides integers as C++ does
+  // (truncating: (/ 6 4) is 1) and, on apt, in i32 ((/ -2147483648 -1) wraps).
+  // nil back for anything that is not two integers (the caller uses jank's /)
+  // and for a zero divisor (the caller's wrapper throws, as before).
+  inline object_ref div(object_ref a, object_ref b) {
+    if (!(int_operand(a) && int_operand(b))) { return make_box<obj::nil>(); }
+    jank::i64 const x{ to_int(a) };
+    jank::i64 const y{ to_int(b) };
+    if (y == 0) { return make_box<obj::nil>(); }
+    if (y == -1 && x == std::numeric_limits<jank::i64>::min()) { return obj::ratio::create(x, y); }
+    if (x % y == 0) { return make_box(x / y); }
+    return obj::ratio::create(x, y);
+  }
+  // A5-2: quot and rem of two integers in i64 (Numbers.quotient / remainder on
+  // longs). jank's own computes two small integers in i32, where i32 min by -1
+  // traps (SIGFPE kills the process). Long.MIN_VALUE quot -1 is Long.MIN_VALUE,
+  // as Java's long division gives. nil back for anything else (and a zero
+  // divisor, which the caller's wrapper has already thrown on).
+  inline object_ref quot(object_ref a, object_ref b) {
+    if (!(int_operand(a) && int_operand(b))) { return make_box<obj::nil>(); }
+    jank::i64 const x{ to_int(a) };
+    jank::i64 const y{ to_int(b) };
+    if (y == 0) { return make_box<obj::nil>(); }
+    if (y == -1) { return make_box(static_cast<jank::i64>(0ull - static_cast<unsigned long long>(x))); }
+    return make_box(x / y);
+  }
+  inline object_ref rem(object_ref a, object_ref b) {
+    if (!(int_operand(a) && int_operand(b))) { return make_box<obj::nil>(); }
+    jank::i64 const x{ to_int(a) };
+    jank::i64 const y{ to_int(b) };
+    if (y == 0) { return make_box<obj::nil>(); }
+    if (y == -1) { return make_box(static_cast<jank::i64>(0)); }
+    return make_box(x % y);
+  }
+}
 namespace cohost_var {
   using namespace jank::runtime;
   inline object_ref set_dynamic(object_ref v) {
@@ -389,6 +524,56 @@ namespace cohost_var {
   }
 }
 ")
+
+;; A5: integer + - * correct past 2^31 on unpatched jank. The probe runs jank's
+;; own + at boot: where it wraps (apt 0.1-noble) the shim's Numbers-add /
+;; minus / multiply are these (the C++ above, one call); where it does not (the
+;; series build, 12-21), they stay nil and the shim keeps jank's own fns, which
+;; the codemod then aliases inline.
+(def ^:private int-wraps? (not= 2147483648 (+ (identity 2147483647) 1)))
+;; true where jank's own sort result is a native_vector_sequence whose next copies
+;; its buffer (apt 0.1-noble): (rest (sort [3 1 2])) prints (1 2 3) there.
+;; pr-str, not =: on apt the broken sequence's = walks right while its print,
+;; count and nth read from index 0 (jank-11: equal/hash/to_string ignore the index).
+(def ^:private sort-walk-broken? (not= "(2 3)" (pr-str (rest (sort [3 1 2])))))
+(defn- int-overflow [] (throw (adapter/ex* 'java.lang.ArithmeticException "integer overflow")))
+(def num-add
+  (when int-wraps?
+    (fn ([x y] (let [r (cpp/cohost_num.add x y)] (if (nil? r) (int-overflow) r))))))
+(def num-minus
+  (when int-wraps?
+    (fn ([x] (let [r (cpp/cohost_num.sub 0 x)] (if (nil? r) (int-overflow) r)))
+        ([x y] (let [r (cpp/cohost_num.sub x y)] (if (nil? r) (int-overflow) r))))))
+(def num-multiply
+  (when int-wraps?
+    (fn ([x y] (let [r (cpp/cohost_num.mul x y)] (if (nil? r) (int-overflow) r))))))
+
+;; A5-2: jank's / on two integers truncates ((/ 6 4) is 1 on apt and on the
+;; series build alike) and wraps at 32 bits on apt; Clojure's is the exact
+;; quotient or a ratio. The probe runs jank's own / at boot; where it is wrong,
+;; num-divide is the shim's Numbers-divide for a nonzero divisor (and the
+;; codemod's inline / below), two integers through cohost_num::div, anything
+;; else jank's own /.
+(def ^:private int-div-wrong? (not (ratio? (/ (identity 6) 4))))
+(def num-divide
+  (when int-div-wrong?
+    (fn [x y] (let [r (cpp/cohost_num.div x y)] (if (nil? r) (cpp/cohost_num.ratio_int x y (clojure.core// x y)) r)))))
+
+;; A5-2: quot and rem. Two integers in i64 (cohost_num::quot / rem; jank's own
+;; traps on i32 min by -1 on apt); jank's quot of a double is an integer
+;; ((quot 7.5 2) is 3) where Clojure's is the double 3.0. The probe sees the
+;; double case; the shim's Numbers-quotient / remainder use these for a nonzero
+;; divisor on jank.
+(def ^:private quot-wrong? (not (float? (quot (identity 7.5) 2))))
+(def num-quotient
+  (when (or int-wraps? quot-wrong?)
+    (fn [x y] (let [r (cpp/cohost_num.quot x y)]
+                (if (nil? r)
+                  (let [q (clojure.core/quot x y)] (if (or (float? x) (float? y)) (double q) q))
+                  r)))))
+(def num-remainder
+  (when int-wraps?
+    (fn [x y] (let [r (cpp/cohost_num.rem x y)] (if (nil? r) (clojure.core/rem x y) r)))))
 
 ;; X4-1: the shim's reduce with and without an init (the stock reduce's IReduceInit and
 ;; coll-reduce paths, so transduce and into too) over a range or a vector,
@@ -919,19 +1104,16 @@ namespace cohost_obj {
     (@stock-reduce @stock-conj [] coll)
     coll))
 
-;; true where jank's own sort result is a native_vector_sequence whose next
-;; copies its buffer (apt 0.1-noble): (rest (sort [3 1 2])) prints (1 2 3)
-;; there. Probed once at boot; the series' 11-sorted-walk makes it false.
-;; pr-str, not =: on apt the broken sequence's = walks right while its print,
-;; count and nth read from index 0 (jank-11: equal/hash/to_string ignore the index).
-(def ^:private sort-walk-broken? (not= "(2 3)" (pr-str (rest (sort [3 1 2])))))
-
+;; A4 (c): jank's sort result walked through jank-rt/sorted-seq (on apt its next restarts at
+;; the first element and copies the buffer: (rest (sort [3 1 2])) was (1 2 3), any walk of a
+;; sort result quadratic); the series build's result passes untouched.
+(defn- sorted-of [d r] (jank-rt/sorted-seq r (meta d)))
 (def ^:private native-sort
-  (fn ([coll] (@host-sort (host-data coll)))
-      ([comp coll] (@host-sort comp (host-data coll)))))
+  (fn ([coll] (let [d (host-data coll)] (sorted-of d (@host-sort d))))
+      ([comp coll] (let [d (host-data coll)] (sorted-of d (@host-sort comp d))))))
 (def ^:private native-sort-by
-  (fn ([keyfn coll] (@host-sort-by keyfn (host-data coll)))
-      ([keyfn comp coll] (@host-sort-by keyfn comp (host-data coll)))))
+  (fn ([keyfn coll] (let [d (host-data coll)] (sorted-of d (@host-sort-by keyfn d))))
+      ([keyfn comp coll] (let [d (host-data coll)] (sorted-of d (@host-sort-by keyfn comp d))))))
 (def ^:private native-set
   (fn [coll] (@host-set (host-data coll))))
 (def ^:private native-frequencies
@@ -977,15 +1159,56 @@ namespace cohost_obj {
       ([m k nf] (if (cpp/cohost_obj.is_cohost m)
                   (let [e (@shim-RT-find m k)] (if e (val e) nf))
                   (@host-get m k nf)))))
+(cpp/raw "
+#include <jank/runtime/obj/persistent_vector.hpp>
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/core/make_box.hpp>
+namespace cohost_assoc {
+  using namespace jank::runtime;
+  // assoc's keys k, then every other element of kvs, on jank's vector m:
+  // nil when each integer key is in [0, n] (n grows by one at each append),
+  // else [key n] for the first one outside it. m not a vector: nil.
+  inline object_ref oob(object_ref m, object_ref k, object_ref kvs) {
+    if (m.is_nil() || m.get_type() != object_type::persistent_vector) { return make_box<obj::nil>(); }
+    jank::i64 n = static_cast<jank::i64>(static_cast<obj::persistent_vector const *>(m.ptr())->data.size());
+    object_ref key{ k };
+    object_ref rest{ kvs };
+    while (true) {
+      auto const t(key.get_type());
+      if (t == object_type::small_integer || t == object_type::integer) {
+        jank::i64 const i{ to_int(key) };
+        if (i < 0 || i > n) { return make_box<obj::persistent_vector>(std::in_place, key, make_box(n)); }
+        if (i == n) { ++n; }
+      }
+      if (rest.is_nil()) { break; }
+      key = jank::runtime::first(rest);
+      rest = jank::runtime::next(rest);
+      if (rest.is_nil()) { break; }
+      rest = jank::runtime::next(rest);
+    }
+    return make_box<obj::nil>();
+  }
+}
+")
+(defn- assoc-oob [[k n]]
+  (throw (adapter/ex* 'java.lang.IndexOutOfBoundsException
+                      (str "Index " k " out of bounds for length " n))))
+;; jank's own assoc on its vector raises a native C++ exception for an
+;; index past the end; Clojure throws IndexOutOfBoundsException. Index
+;; (count v) is the append and stays jank's assoc; a negative index or
+;; one past (count v) throws Clojure's exception, the same guard nth has.
+;; One C++ call checks every key (nbody's variadic assoc is the hot path).
 (def ^:private native-assoc
   (fn ([m k v] (if (cpp/cohost_obj.is_cohost m)
                  (@shim-RT-assoc m k v)
-                 (@host-assoc m k v)))
+                 (let [bad (cpp/cohost_assoc.oob m k nil)]
+                   (if (nil? bad) (@host-assoc m k v) (assoc-oob bad)))))
       ([m k v & kvs] (if (cpp/cohost_obj.is_cohost m)
                        (reduce (fn [mm [kk vv]] (@shim-RT-assoc mm kk vv))
                                (@shim-RT-assoc m k v)
                                (partition 2 kvs))
-                       (apply @host-assoc m k v kvs)))))
+                       (let [bad (cpp/cohost_assoc.oob m k kvs)]
+                         (if (nil? bad) (apply @host-assoc m k v kvs) (assoc-oob bad)))))))
 
 (defn type-key
   "The protocol dispatch key of a value."
@@ -1305,10 +1528,12 @@ namespace cohost_obj {
    ;; shim's, which branch on a ref into the LockingTransaction machinery
    ;; cohost.core/str is jank's str, whose rendering of an ex-info is
    ;; its #error dump: a standin exception prints as its class instead
-   'str (fn [& args] (apply str (map (fn [x] (if (adapter/exception? x)
-                                               ((adapter/capability :exception-string) x)
-                                               x))
-                                     args)))
+   ;; A4 (d): fixed arities and one C++ string builder (jank-rt/str-with); a value that is
+   ;; not nil / a string / a number / a keyword / a symbol / a character / a boolean goes
+   ;; through the one-argument render below, as before
+   'str (jank-rt/str-with (fn [x] (if (adapter/exception? x)
+                                    ((adapter/capability :exception-string) x)
+                                    (str x))))
    ;; jank's own newline is a TODO stub that throws ("TODO: port
    ;; newline"); clojure.stacktrace's print-throwable calls it
    'newline (fn [] (print "\n"))
@@ -1645,8 +1870,20 @@ namespace cohost_obj {
 
 (def adapter
   {:name :jank
+   ;; A4 (a): jank's own chunk fns, but a chunk-cons that keeps its rest lazy (jank's realizes it:
+   ;; a chunked pipeline overflows the stack near 1e6 on apt), plus IChunk.reduce over jank's
+   ;; array_chunk; and the integer range as a chunked seq of jank's own chunked_cons
+   ;; (cohost.hosts.jank-runtime). Both are reached only through these keys.
+   :chunks (fn [] {:chunked-seq? chunked-seq? :chunk-first chunk-first :chunk-rest chunk-rest
+                   :chunk-next chunk-next :chunk-buffer chunk-buffer :chunk-append chunk-append
+                   :chunk chunk :chunk-cons jank-rt/chunk-cons
+                   :chunk? jank-rt/chunk? :chunk-reduce jank-rt/chunk-reduce})
    ;; the shim's stock multimethod behind a one-entry cache (X2-1, doc/research/jank-dispatch.md)
    :multimethod-cache? mm-hit
+   ;; A5: a loop local started from an integer literal is a native long, not the
+   ;; C++ int unpatched jank gives it (recur wrapped it at 32 bits); nil on the
+   ;; series build, whose literals are already 64 bit
+   :loop-int-init (when int-wraps? (fn [n] (list 'cpp/long n)))
    :core-ns 'clojure.core
    :catch-all 'cpp/jank.runtime.object_ref
    :read-forms read-forms
@@ -1662,8 +1899,12 @@ namespace cohost_obj {
    ;; the type layer above: deftype & friends are the adapter's own macros
    ;; and fns, marked as macros when they are interned into cohost.core
    :type-method-style :cohost-types
+   ;; chunk-cons: the stock chunked branches take core.clj's chunk fns from the host
+   ;; (policy/chunk-names); jank's own chunk-cons realizes its rest (A4 (a)), so cohost.core
+   ;; gets the lazy one instead
    :core-extras (assoc type-core-extras 'eduction eduction*
-                                        'read-string jank-read-string)
+                                        'read-string jank-read-string
+                                        'chunk-cons jank-rt/chunk-cons)
    :intern! (fn [ns-sym sym val]
               (let [v (intern ns-sym sym val)]
                 (when (and (= 'cohost.core ns-sym) (contains? type-macro-names sym))
@@ -1726,7 +1967,66 @@ namespace cohost_obj {
    ;; -remainder keep their wrapper: jank's quot and rem by zero throw without
    ;; the JVM's "Divide by zero"; Numbers-max and -min keep theirs: jank's
    ;; (max 1 ##NaN) is 1.0, the JVM's NaN.
-   :static-aliases {"Numbers-minus" 'clojure.core/-}
+   ;; (A5: not where jank's - wraps at 32 bits: there Numbers-minus is the
+   ;; checked num-minus, and aliasing it back to jank's - would undo it)
+   :static-aliases (if int-wraps? {} {"Numbers-minus" 'clojure.core/-})
+   ;; A5-3: where jank's + - * wrap (apt), two untyped operands (a local or an
+   ;; integer literal; rewrite.cljc's int-op-operand?) take jank's promoting op
+   ;; inline -- i64 arithmetic, and reals, ratios and big integers as jank's own
+   ;; op gives them -- unless both are integers and one is outside 32 bits: only
+   ;; there can the i64 op overflow, and only that case calls the shim's checked
+   ;; op (Clojure's ArithmeticException). Before, every such op was a dynamic
+   ;; call of the checked op. No let*: the operands are named twice as they are.
+   :int-op-aliases (if int-wraps?
+                     (into {}
+                           (map (fn [[nm op]]
+                                  [nm (fn [[x y] checked]
+                                        (let [fast (list op x y)
+                                              slow (list checked x y)
+                                              ;; a literal's test is decided here, a local's inline
+                                              int-test (fn [v then else]
+                                                         (if (integer? v) then
+                                                             (list 'if (list 'cpp/jank.runtime.is_integer v) then else)))
+                                              small (fn [v then else]
+                                                      (if (integer? v)
+                                                        (if (< -2147483649 v 2147483648) then else)
+                                                        (list 'if (list 'clojure.core/< -2147483649 v)
+                                                              (list 'if (list 'clojure.core/< v 2147483648) then else)
+                                                              else)))]
+                                          (int-test x (int-test y (small x (small y fast slow) slow) fast) fast)))]))
+                           [["Numbers-add" 'cpp/jank.runtime.promoting_add]
+                            ["Numbers-minus" 'cpp/jank.runtime.promoting_sub]
+                            ["Numbers-multiply" 'cpp/jank.runtime.promoting_mul]])
+                     {})
+   ;; U6-8: Math/sqrt at the call head is jank's runtime sqrt on the double,
+   ;; inline. A negative argument is the JVM's NaN as a literal: std::sqrt gives
+   ;; a negative-signed NaN, and boxing one crashes jank (probe: (let* [r
+   ;; (cpp/jank.runtime.sqrt -4.0)] (== r r)) segfaults; the shim's sqrt_
+   ;; canonicalizes for the same reason). -0.0 stays -0.0, as on the JVM.
+   ;; Math/round, abs, pow keep the shim: round is floor(a+1/2) (std::llround
+   ;; rounds -2.5 to -3), abs of Long/MIN_VALUE and pow's argument kinds are
+   ;; the shim's already.
+   :math-aliases {"Math-sqrt" (fn [args]
+                                (when (= 1 (count args))
+                                  (let [d (gensym "msqrt")]
+                                    (list 'let* [d (list 'cpp/jank.runtime.to_real (first args))]
+                                          (list 'if (list 'clojure.core/< d 0.0)
+                                                ##NaN
+                                                (list 'cpp/jank.runtime.sqrt d))))))
+                  ;; (/ x y) (Numbers.divide): the shim's wrapper inline. A zero
+                  ;; divisor keeps the wrapper (the JVM's ArithmeticException, or
+                  ;; the IEEE infinity/NaN for a double; jank's own 0.0/0 gives a
+                  ;; negative-signed NaN, which segfaults when boxed); any other
+                  ;; divisor is jank's / (its native and boxed arithmetic)
+                  "Numbers-divide" (fn [args]
+                                     (when (= 2 (count args))
+                                       (let [a (gensym "dva") b (gensym "dvb")]
+                                         (list 'let* [a (first args) b (second args)]
+                                               (list 'if (list 'clojure.core/zero? b)
+                                                     (list 'cohost.shim/Numbers-divide a b)
+                                                     (if int-div-wrong?
+                                                       (list 'cohost.hosts.jank-host/num-divide a b)
+                                                       (list 'clojure.core// a b)))))))}
    :core-aliases '#{not}
    :syntax-quote-source? true
    :loop-rebind-shadow? true
@@ -1886,26 +2186,41 @@ namespace cohost_obj {
              'clojure.core/into native-into
              'clojure.core/transduce native-transduce
              ;; sort / sort-by are natives only where jank's sort result walks
-             ;; linearly (sort-walk-broken? below): on apt 0.1-noble
-             ;; native_vector_sequence::next copies its buffer per step, so
-             ;; every walk of a sorted seq is quadratic and (rest (sort [3 1 2]))
-             ;; prints (1 2 3); the stock sort over the shim's Arrays-sort is
-             ;; right there. A jank whose sort result walks linearly keeps the
-             ;; native (sort 1.3x the JVM instead of ~5x).
+             ;; linearly: on apt 0.1-noble native_vector_sequence::next copies its
+             ;; buffer per step (quadratic walks, and (rest (sort [3 1 2])) prints
+             ;; (1 2 3)); the series' 11-sorted-walk fixes it. Probed at boot.
              'clojure.core/set native-set
              'clojure.core/frequencies native-frequencies
              'clojure.core/group-by native-group-by
-             'clojure.core/count native-count
-             'clojure.core/nth native-nth
+             ;; A4 (a): an integer range and a chunked seq counted in O(1) / a chunk at a time,
+             ;; everything else native-count
+             ;; A4 (d): a vector, string or nil counted, a string or vector nth'd, in one C++
+             ;; call (jank-rt/count-fast-with, jank-rt/nth-with); the rest as before
+             'clojure.core/count (jank-rt/count-fast-with (jank-rt/count-with native-count))
+             'clojure.core/nth (jank-rt/nth-with native-nth)
+             ;; A4 (d): stock = is (Util/equiv x y), and Util-equiv on jank is jank's own =
+             ;; (shim.cljc), so jank's = is the same function minus the stock layers
+             ;; (~160 ns per char comparison on apt)
+             'clojure.core/= :host
              'clojure.core/get native-get
-             'clojure.core/assoc native-assoc}
-              (not sort-walk-broken?) (assoc 'clojure.core/sort native-sort 'clojure.core/sort-by native-sort-by))
+             'clojure.core/assoc native-assoc
+             ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
+             ;; at a time (cohost.hosts.jank-runtime)
+             'clojure.core/range jank-rt/range
+             'clojure.core/map jank-rt/map
+             'clojure.core/filter jank-rt/filter}
+              ;; A4 (c): sort / sort-by are natives on both builds: where jank's own sort result
+              ;; walks wrong (apt: sort-walk-broken?), native-sort hands it through jank-rt/sorted-seq,
+              ;; which copies it once into a linear seq
+              true (assoc 'clojure.core/sort native-sort 'clojure.core/sort-by native-sort-by))
    ;; str is NOT a native here: policy owns str on every host -- an
    ;; exception's str must reach the shim's toString (JVM rendering), and
    ;; jank's own str writes jank's. See policy.cljc.
    ;; a ^long / ^double let*/loop* local: jank types a local by its init, and
    ;; these return i64 / f64 (runtime/core/math.hpp, always inline)
    :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
+   ;; U6-7: infer what is certain (adapter :static-types)
+   :static-types :sound
 })
 
 

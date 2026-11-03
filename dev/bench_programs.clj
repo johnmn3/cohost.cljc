@@ -219,12 +219,37 @@
     (spit f (str (harness src (clock "jank-jit") true) "(apply -main *command-line-args*)\n"))
     (run! [jank-bin "-O3" "run" f "--" arg])))
 
+(def jank-raw-round
+  "Math.round for the raw jank twin: floor(a + 1/2) as the JVM computes it
+   (exact: the fraction is compared, not added), NaN 0."
+  "(defn __round [a] (let [a (double a)] (if (NaN? a) 0 (let [t (long a) f (if (< a t) (dec t) t)] (if (>= (- a f) 0.5) (inc f) f)))))\n")
+
+(defn jank-raw-math
+  "U6-8: the raw program as jank compiles it on its own: jank has no
+   java.lang.Math, so Math/sqrt is jank's runtime sqrt (cpp/jank.runtime.sqrt,
+   any number, a double back) and Math/round the JVM's rounding above. The
+   cohost column reads the program as written."
+  [src]
+  (if (or (str/includes? src "Math/sqrt") (str/includes? src "Math/round"))
+    (str jank-raw-round
+         (-> src
+             (str/replace "Math/sqrt" "cpp/jank.runtime.sqrt")
+             (str/replace "Math/round" "__round")))
+    src))
+
+(def jank-bin-stamp
+  "The jank binary's real path, size and mtime: a rebuilt jank recompiles the
+   twins (the stamp held only the source, so a rebuild reused stale modules)."
+  (if-let [p (try (str (fs/real-path (fs/which jank-bin))) (catch Exception _ nil))]
+    (str ";; jank " p " " (fs/size p) " " (fs/file-time->millis (fs/last-modified-time p)) "\n")
+    ""))
+
 (defn aot-dir [id src]
   (let [root (str "target/bench-programs/aot-" (name id) jank-tag)
         file (str root "/src/bench/prog.jank")
         stamp (str root "/stamp")
-        body (str "(ns bench.prog)\n" (harness src (clock "jank-aot") true))]
-    (when-not (and (fs/exists? stamp) (= (slurp stamp) body) (seq (fs/glob root "**/bench/prog.o")))
+        body (str "(ns bench.prog)\n" (harness (jank-raw-math src) (clock "jank-aot") true))]
+    (when-not (and (fs/exists? stamp) (= (slurp stamp) (str jank-bin-stamp body)) (seq (fs/glob root "**/bench/prog.o")))
       (fs/delete-tree root)
       (fs/create-dirs (str root "/src/bench"))
       (spit file body)
@@ -232,7 +257,7 @@
                      "-O3" "--target-dir" root])]
         (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/prog.o")))
           (throw (ex-info "aot-compile" {:err (str (:err c) "\n" (:out c))}))))
-      (spit stamp body))
+      (spit stamp (str jank-bin-stamp body)))
     {:cache (str (first (fs/glob root "_cache/*"))) :src (str root "/src")}))
 
 (defn run-jank-aot [id src arg]
@@ -269,8 +294,11 @@
                    "--" "--eval" code]
                   [jank-bin "-O3" "--module-path" module-path "run-main" "cohost.run" "--" "--eval" code])}))
     (do (reset! jank-boot :aot)
-        (reset! jank-env nil)
-        {:cmd [jank-bin "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" code]})))
+        ;; jank-MAX A1: cohost's collector environment (dev/perf/jank_gc_env.clj)
+        (load-file "dev/perf/jank_gc_env.clj")
+        (reset! jank-env ((resolve 'jank-gc-env)))
+        {:env @jank-env
+         :cmd [jank-bin "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" code]})))
 
 (defn run-jank-cohost [_ src arg]
   ;; cohost's jank boot has no load-file; --eval reads every form of its argument.

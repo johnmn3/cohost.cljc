@@ -25,6 +25,8 @@
          '[clojure.string :as str])
 (load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_inputs.clj"))
 (load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/sha256.clj"))
+;; jank-MAX A1: the collector environment, one definition for every jank launch
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_gc_env.clj"))
 
 (defn- abs-path [repo path]
   (str/join ":" (map (fn [x] (str (fs/absolutize (fs/path repo x)))) (str/split path #":"))))
@@ -79,9 +81,7 @@
                           (jank-check repo)
                           c))]
     {:module-path (abs-path repo path) :snapshot? (= "snapshot" kind)
-     :env (if (= "none" (System/getenv "COHOST_JANK_GC"))
-            {}
-            (into {} (remove (fn [[k _]] (System/getenv k)) {"GC_INITIAL_HEAP_SIZE" "512M"})))}))
+     :env (jank-gc-env)}))
 
 ;; D-8: a project's snapshot. The core's snapshot covers the stock core and
 ;; the twelve libraries; the project's own namespaces (its main ns and what it

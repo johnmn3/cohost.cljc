@@ -81,6 +81,7 @@
    :macro-def-style [[] ":meta when `(def ^:macro x (fn [&form &env ...]))` + mark-macro! makes a macro; :defmacro when only a defmacro form does"]
    :macro-wrap-style [[] ":root when a macro's fn can be replaced after definition (alter-var-root); :source when its body must be wrapped at definition"]
    :code-form       [['form] "nil (the default), or a fn making a macro's expansion code the host's compiler takes back: applied to every expansion the codemod rewrites (ClojureWasm re-analyses no array seq, which is what a fn's & rest args are there)"]
+   :loop-int-init   [['n] "nil (the default), or a fn of an integer literal -> the form a loop* binding started from that literal starts from instead. jank on unpatched apt: (cpp/long n), since jank types a literal-initialized loop local as a C++ int and recur converts back into it, wrapping at 32 bits (draft jank-21; A5). The series build (12-21) needs none: nil there"]
    :multimethod-cache? [[] "nil (the default): a stock multimethod looks its method up through its state atom's per-dispatch-value cache on every call; true: through a one-entry cache of (state, hierarchy) -> {dispatch value method} checked first, with no atom swap (cohost.shim mf-fast-method); or a fn [cell state-atom dv] -> the cached method or nil, the host's own one-call hit check of that cell ([state-value hierarchy-ref hierarchy-value {dv method}]), nil falling to mf-fast-method (jank's, a cpp/raw call; other hosts off until measured)"]
    :sort-host-compare? [[] "nil (the default): sort and a sorted coll's compare call the stock compare through the shim's comparator wrapper; true: when the comparator is the stock core's compare (whose body is the host's compare), the host's compare itself (X3-2; jank does this unconditionally, X4-1)"]
    :snapshot-emit   [['event] "nil (the default). When boot! runs with {:record? true}, each recorded event is passed to this fn if it is one. Off, and nil, do not call it"]
@@ -115,13 +116,15 @@
    :with-meta       [['x 'm] "x with its metadata replaced by m: the host's with-meta (the default), or the type's own on a :cohost-types host, whose instances the host's with-meta cannot touch"]
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
+   :int-op-aliases  [[] "{shim static name (\"Numbers-add\", \"Numbers-minus\", \"Numbers-multiply\") -> (fn [args checked]) returning the form a call of two untyped operands (locals or integer literals, which it may name twice) becomes; checked is the shim static's symbol}: where the host's own integer ops wrap and the shim's are a checked call (A5, jank on apt), the host's own promoting op inline, with the shim's checked call only when two integers overflow (A5-3). Default {}"]
+   :math-aliases    [[] "{shim static name (a string, \"Math-sqrt\") -> (fn [args]) returning the form a call (Math/sqrt x) becomes on this host, or nil to keep the shim call}: the host's own math op at the call head, where its value is the JVM's for every argument (a probe per op; ops whose semantics differ keep the shim wrapper). Default {}"]
    :static-aliases  [[] "{shim static name (a string) -> the host core's symbol}: statics the host-aliases? scan cannot match because the shim's value is a wrapper with its own body, where that wrapper's semantics are the host op's on this host (jank: Numbers-minus is jank's -). Merged over the scan's aliases. Default {}"]
    :core-aliases    [[] "#{stock core name}: calls of these booted stock core fns are emitted as the host core's fn of that name, whose semantics are the stock fn's on this host, so the host's compiler sees (and may inline) its own op; the stock fn stays booted for every other use (apply, a value, with-redefs of the booted var). Default #{}"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
-   :native-hints    [[] "nil (the default), or {hint-symbol host-type-symbol}: primitive fn* parameter hints this host compiles as native types (long, double, int, boolean). nil leaves every other host's rewritten forms without native tags."]
    :prim-kind-test  [[] "nil (the default), or a fn of [hint sym] returning the form that tests whether sym is already of the hinted kind, which the codemod emits in place of the shim's kind test (cohost.shim/long-kind? / double-kind?). jank's returns a cpp tag test, inlined by its compiler. nil keeps the shim call."]
    :defn-fn-name?   [[] "true when a def whose value is an unnamed fn* carries the def's name onto the fn* -- (def f (fn* f ...)) -- so self-recursion is a direct call, not a var deref (jank's own defn does this). Default false: the JVM's defn leaves the fn unnamed and recursion goes through the var."]
    :native-hints    [[] "nil (the default), or {hint-symbol host-type-symbol}: the primitive hints (long, double, int, boolean) this host compiles as native types. Positions: a fn* parameter (an arity that loops or calls itself: the coerced value goes to an inner fn* whose parameter carries the type; a leaf called from elsewhere stays untyped, H0 measured it losing on jank), a return (the inner fn*'s :rettag, the type the host spells for the arity's return hint), and a let*/loop* local through :native-local-casts. Every position is coerced as the JVM coerces on every host; nil leaves every other host's rewritten forms without native tags."]
+   :static-types    [[] "nil (the default), :sound or :unit (U6-7): the codemod infers numeric types from the source and passes them to the host at the positions :native-hints takes. :sound types only what is certain: a let*/loop* local from a numeric literal, typed arithmetic (+ - * inc dec; / of doubles), count, an if whose branches agree, a primitive-hinted parameter or local; a loop* local only while every recur argument in its position has its type; an inferred local gets the host's native conversion (:native-local-casts) of a value already of that type, so nothing Clojure computes changes. And a guarded typed arity: an unhinted arity whose plain parameters are direct operands of numeric core fns runs (if (and (<kind test> p) ...) (let* [p (<conversion> p) ...] <the body, rewritten again with p typed>) <the body as written>), the kind double when, in one such call, a sibling operand is certainly double, else long; a non-number argument runs the body as written. Not for an arity that calls itself (its fn's name or its def's var): on apt jank a native-typed self-recursion measured 1.8x slower than M-9's named boxed one, and a var self-call with a native argument misses a redefinition mid-recursion. :unit is reserved (call-site typing of params across one compilation unit): unimplemented, it types nothing more than :sound. Inferred in user code only (not cohost.core nor a clojure.* library)."]
    :native-local-casts [[] "nil (the default), or {hint-symbol conversion-fn-symbol}: for a ^long / ^double let* or loop* local, the host's conversion whose result the host types natively (jank: cpp/jank.runtime.to_int); the codemod emits (conversion <the JVM's coercion of the init>) as the binding's init. nil binds the coerced value only."]
    :chunks          [[] "the host's chunked seqs, or nil: {:chunked-seq? :chunk-first :chunk-rest :chunk-next :chunk-buffer :chunk-append :chunk :chunk-cons}, plus :chunk? and :chunk-reduce when the host's reduce cannot walk one of its chunks (the JVM's ArrayChunk); :chunk-reduce keeps IChunk.reduce's contract: a reduced result returned unopened. The stock chunked branches (map, filter, concat, doseq, for, reduce1) then run over the host's own chunks; with nil, no host seq is chunked to stock code. Default: the host core's fns of those names, when it has them all"]
    :host-data?      [['x] "a cheap test, asked at every (.m x args) before the type is looked up: true only when x is certainly the host's own data, never a user type (jolt: its transients, atoms, fns, strings, numbers ...); default: never true"]
@@ -357,8 +360,11 @@ namespace cohost_err {
     :prim-kind-test nil
     :defn-fn-name? false
     :native-local-casts nil
+    :static-types nil
     :host-aliases? true
     :static-aliases {}
+    :math-aliases {}
+    :int-op-aliases {}
     :core-aliases #{}
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
@@ -398,6 +404,7 @@ namespace cohost_err {
     :code-form nil
     :snapshot-emit nil
     :multimethod-cache? nil
+    :loop-int-init nil
     :sort-host-compare? nil
     :shim-ref nil
     :variadic-recur-style :jvm
@@ -617,6 +624,11 @@ namespace cohost_err {
    adapter) emits no native tag."
   []
   (when-let [m (current)] (:native-hints m)))
+(defn static-types
+  "nil, :sound or :unit: how far the codemod infers numeric types it then
+   passes to the host as hints (U6-7)."
+  []
+  (when-let [m (current)] (:static-types m)))
 (defn defn-fn-name? [] (boolean (cap :defn-fn-name?)))
 (defn prim-kind-test
   "nil, or a fn of [hint sym] -> the form testing whether sym is already of
@@ -631,7 +643,10 @@ namespace cohost_err {
   []
   (when-let [m (current)] (:native-local-casts m)))
 (defn host-aliases? [] (boolean (cap :host-aliases?)))
+(defn loop-int-init "The adapter's :loop-int-init fn, or nil." [] (get @installed :loop-int-init))
 (defn static-aliases [] (or (cap :static-aliases) {}))
+(defn math-aliases [] (or (cap :math-aliases) {}))
+(defn int-op-aliases [] (or (cap :int-op-aliases) {}))
 (defn core-aliases [] (or (cap :core-aliases) #{}))
 (defn env-locals "The local symbols of a macro's &env." [env]
   (try-all (fn [] (filter symbol? ((cap :env-locals) env)))))
