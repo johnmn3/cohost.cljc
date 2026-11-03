@@ -23,7 +23,7 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 | cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | being measured | 94.0 s | x85.2 (15 of 28 so far) | x20.5 (28) |
 | cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | | 8.9 s | x9.1 (28) | x3.9 (25) |
 | ClojureScript in Chromium | | | | | not measured | x3.0 (25) |
-| cohost `:phel` (Phel 0.54.0, PHP 8.5) | boots from source (`phel build -O 2`: in progress) | | | 47.0 s | not yet measured | x23.7 (15 of 28) |
+| cohost `:phel` (Phel 0.54.0, PHP 8.5) | the app compiled to PHP by `phel build` (OPcache + tracing JIT) | 1.3-2.0 s (Box 1) | being measured | 47.0 s | not yet measured | x23.7 (15 of 28) |
 | cohost `:lg` (let-go 1.13.0, Go) | boots from source (bytecode and Go: in progress) | | | 15.4 s | not yet measured | x46.6 (11 of 28 so far) |
 
 How to read it:
