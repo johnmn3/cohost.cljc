@@ -670,9 +670,10 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? loop-int-init native-int-aliases def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? cohost-types? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source? loop-rebind-shadow?]
+           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source? loop-rebind-shadow? def-tag?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:plain-symbol (or plain-symbol identity)
+   :def-tag? def-tag?
    :shim-names shim-names
    ;; {shim static name -> the host core's symbol} where the shim's static is
    ;; the host's own fn: emitted instead, so the host's compiler sees (and may
@@ -1554,6 +1555,14 @@
                  "inline jank::runtime::object_ref " f "_entry(" ps ") { try { return jank::runtime::make_box(" f "(" as ")); } catch(ovf const &) { return jank::runtime::jank_nil; } }\n"
                  "}")))))))
 
+(defn- ret-coerce-form
+  "A return hint is the JVM's UNCHECKED cast, not coerce-form's checked
+   one: a BigInt keeps its low 64 bits, a double saturates (NaN is 0),
+   a non-number is a ClassCastException and nil a NullPointerException
+   (M-11 step 3d; the corpus's return-hint rows measure exactly this)."
+  [hint sym]
+  (list (shim-fn (if (= 'double hint) "prim-ret-double" "prim-ret-long")) sym))
+
 (defn- emit-arity
   "One fn* arity. A primitive hint is coerced on every host, so the value
    matches the JVM: a parameter's on entry, a return's on exit (the JVM's
@@ -1662,7 +1671,7 @@
                            v (if (and (not native?) (fn-level-recur? forms))
                                (apply list 'loop* (vec (mapcat (fn [n] [n n]) names)) forms)
                                (if (next forms) (apply list 'do forms) (first forms)))]
-                       [(list 'let* [r v] (coerce-form ret-hint r))]))]
+                       [(list 'let* [r v] (ret-coerce-form ret-hint r))]))]
          (apply list (rw-params params) (if (seq binds) [(apply list 'let* binds forms)] forms)))))))
 
 (defn- rw-fn* [ctx form]
@@ -1673,7 +1682,8 @@
         ;; the fn's return hint: defn's :rettag on the form (the name's tag,
         ;; JVM and jank alike), or the name's own tag
         fn-ret (or (primitive-hint (:rettag (meta form)))
-                   (when (symbol? (second form)) (primitive-hint (:tag (meta (second form))))))
+                   (when (symbol? (second form)) (primitive-hint (:tag (meta (second form)))))
+                   (:ret-hint ctx))
         one-arity? (= 1 (count arities))
         names (into (if nm #{nm} #{})
                     (mapcat (fn [[params]] (filter #(and (symbol? %) (not= '& %)) params)) arities))
@@ -2320,7 +2330,26 @@
         ;; Clojure's direct linking (U6-6)
         var-call? (let [m (meta nm)] (or (:redef m) (:dynamic m)))
         more (if var-call? more (self-named-init nm more))
+        ;; the name's class tag is var data as well as a hint: .getTag
+        ;; and (meta var) read it back, so it survives the strip here.
+        ;; Only where the host's def keeps a name tag as inert data:
+        ;; the JVM and jolt store it in the var's meta, cljs keeps it
+        ;; as meta. jank reads it as the var's native type, basilisp
+        ;; cannot even analyse a dotted tag, phel/let-go break on it,
+        ;; and ClojureWasm's return-tagged defns (volatile!,
+        ;; chunk-buffer, chunk-first) lose their roots at boot.
+        ;; The choice is the ctx's :def-tag?, set by the boot from
+        ;; the adapter's host name -- a reader conditional cannot
+        ;; make it, because ClojureWasm reads this file as :clj,
+        ;; exactly like the JVM it differs from here.
+        ret-hint (primitive-hint (:tag (meta nm)))
+        nm-tag (when (:def-tag? ctx)
+                 (let [t (:tag (meta nm))]
+                   (when (or (symbol? t) (string? t)
+                             (and (seq? t) (= 'quote (first t)) (symbol? (second t))))
+                     t)))
         nm (carry-meta nm nm)
+        nm (if nm-tag (vary-meta nm assoc :tag nm-tag) nm)
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
              nm)
@@ -2333,7 +2362,10 @@
         more' (binding [*def-name* (when (symbol? nm) (*plain* (bare-sym nm)))
                         *unit-arities* ua
                         *cpp-twins* twins]
-                (doall (rw-all ctx more)))
+                (if (and ret-hint (seq more))
+                  (doall (concat (rw-all ctx (butlast more))
+                                 [(rw (assoc ctx :ret-hint ret-hint) (last more))]))
+                  (doall (rw-all ctx more))))
         ;; a host whose defn names its fn (jank's own does): carry the
         ;; def's name onto an unnamed fn* value, so self-recursion is a
         ;; direct call instead of a var deref and a dynamic call. The

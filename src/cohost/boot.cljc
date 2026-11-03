@@ -18,7 +18,11 @@
             [cohost.scan :as scan]))
 
 (def core-ns "The namespace the stock core.clj boots into." 'cohost.core)
-(def user-ns 'cohost.user)
+;; the session's user namespace is `user`, as a REPL's is -- except on
+;; ClojureWasm, whose own runtime lives in its `user` namespace: making
+;; that namespace bare breaks the host's later loads, so the session
+;; keeps the separate cohost.user there
+(def user-ns (if (= :cljw (host/try-all (fn [] (host/host-name)))) 'cohost.user 'user))
 
 (defonce state (atom {:ctx nil :report nil}))
 
@@ -352,7 +356,8 @@
                                 (filter #(let [s (str %)] (and (= "-" (subs s 0 1)) (> (count s) 1))) names)))
                          (into (shim/install-casts!
                                 (map (fn [c] [(rw/cast-name c) c]) (distinct (vals rw/checked-hints)))))))]
-  (rw/make-ctx {:shim-names shim-names
+  (rw/make-ctx {:def-tag? (contains? #{:clj :jolt :cljs} (host/host-name))
+                :shim-names shim-names
                 :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
                 :instance-fn (if-not @snapshot-log
                                shim/install-is!
@@ -1015,7 +1020,7 @@
 
 (def ^:private session-ns
   "The namespace the last eval-str left current, as a REPL's would be; nil
-   until an evaluation moves it (cohost.user)."
+   until an evaluation moves it (user)."
   (atom nil))
 
 (defn make-user-ns!
@@ -1317,7 +1322,7 @@
   "Read and eval every form of source text, each in the namespace the one
    before it left -- starting where the last eval-str ended (cohost.user at
    first), as a REPL session does; -> the last value. opts {:session? false}
-   evaluates in cohost.user without moving the session; {:on-value f} calls
+   evaluates in user without moving the session; {:on-value f} calls
    (f value ns) after each form, with the namespace it left."
   ([src] (eval-str src nil))
   ([src opts]

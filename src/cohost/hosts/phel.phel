@@ -877,6 +877,12 @@
                  'ns-interns ns-interns* 'ns-publics ns-publics*
                  'intern (fn ([ns sym] (or (var-of ns sym) (intern! ns sym unbound)))
                              ([ns sym val] (intern! ns sym val)))
+                 ;; phel.core's ns-interns hands back the registry's
+                 ;; definition entries, which are not vars: no meta, no
+                 ;; deref. The adapter's map carries the vars
+                 ;; themselves, as find-var returns them, so
+                 ;; clojure.test's run-tests finds the :test meta.
+                 'ns-interns (fn [ns] (ns-interns* (ns-name* ns)))
                  're-pattern re-pattern*
                  ;; which Phel lacks: its namespaces are their names
                  'all-ns (fn [] (seq (loaded-namespaces)))
