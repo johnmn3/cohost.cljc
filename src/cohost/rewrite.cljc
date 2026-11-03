@@ -684,13 +684,60 @@
            ;; U6-7's inferred long/double locals may be native
            (nil? (get *num-env* (*plain* x))))))
 
+;; A5-4: jank's + - * inc dec on two native longs wrap at 64 bits; Clojure's
+;; throw ArithmeticException "integer overflow". With both operands inside 32
+;; bits (or inc/dec away from the i64 ends) no i64 op can overflow: jank's own
+;; op, native. Otherwise the shim's checked op (A5's cohost_num, which throws
+;; on overflow) on the boxed operands, its result back to a native long so the
+;; if stays native (a boxed branch would box the loop local). No let*: the
+;; operands are native-int forms, pure, so naming one twice is safe, and a let*
+;; in a self-call argument does not compile on apt.
+(defn- checked-native [ctx nm op args' checked]
+  (let [core (namespace (val (first (:native-int-aliases ctx))))
+        lt (symbol core "<")
+        small? (fn [v] (if (integer? v)
+                         (< -2147483649 v 2147483648)
+                         (list 'if (list lt -2147483649 v) (list lt v 2147483648) false)))
+        slow (fn [f xs] (list 'cpp/jank.runtime.to_int (apply list f xs)))
+        guard (fn [tests then else]
+                (let [tests (remove true? tests)]
+                  (cond (some false? tests) else
+                        (empty? tests) then
+                        :else (reduce (fn [acc t] (list 'if t acc else)) then (reverse tests)))))]
+    (case nm
+      "Numbers-inc" (let [[a] args'] (list 'if (list lt a 9223372036854775807) (list (symbol core "inc") a)
+                                           (slow (static-sym 'clojure.lang.Numbers 'add) [a 1])))
+      "Numbers-dec" (let [[a] args'] (list 'if (list lt -9223372036854775807 a) (list (symbol core "dec") a)
+                                           (slow (static-sym 'clojure.lang.Numbers 'minus) [a 1])))
+      (if (= 2 (count args'))
+        (let [[a b] args'
+              plus (symbol core "+") minus (symbol core "-") le (symbol core "<=")
+              mn1 -9223372036854775807 mx 9223372036854775807
+              fast (apply list op args')]
+          (case nm
+            ;; a + b stays in i64 iff b < 0 ? a > MIN - b - 1 : a <= MAX - b
+            "Numbers-add" (list 'if (list 'if (list lt b 0)
+                                          (list lt (list minus (list minus mn1 b) 2) a)
+                                          (list le a (list minus mx b)))
+                                fast (slow checked args'))
+            ;; a - b stays in i64 iff b > 0 ? a > MIN + b - 1 : a <= MAX + b
+            "Numbers-minus" (list 'if (list 'if (list lt 0 b)
+                                            (list lt (list minus (list plus mn1 b) 2) a)
+                                            (list le a (list plus mx b)))
+                                  fast (slow checked args'))
+            (guard (map small? args') fast (slow checked args'))))
+        (apply list op args')))))
+
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
         nm (static-name c m)
         ;; A5-3: a real operand on a :native-int-aliases host
         real' (when (seq (:native-int-aliases ctx)) (real-static ctx nm args args'))]
     (cond (and (seq *native-ints*) (get (:native-int-aliases ctx) nm) (seq args) (every? native-int-form? args))
-          (apply list (get (:native-int-aliases ctx) nm) args')
+          (checked-native ctx nm (get (:native-int-aliases ctx) nm) args' (static-sym c m))
+          (and (seq *native-ints*) (seq (:native-int-aliases ctx)) (contains? #{"Numbers-inc" "Numbers-dec"} nm)
+               (= 1 (count args)) (native-int-form? (first args)))
+          (checked-native ctx nm nil args' (static-sym c m))
           real' real'
           (known? ctx nm) (or ;; A5-3: + - * of two unknown operands where the shim's are
                               ;; A5's checked call: the host's promoting op inline (nil: keep it)
