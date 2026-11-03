@@ -67,12 +67,18 @@
       (throw (ex-info (str "build: " (str/join " " cmd) " failed") {:out (:out r) :err (:err r)})))
     (:out r)))
 
-(defn- copy-tree! [from to]
+(defn- copy-tree!
+  "Copy a directory's files, keeping their modification times: a host's
+   bytecode cache (basilisp's .lpyc) is checked against its source's mtime."
+  [from to]
   (doseq [f (file-seq (io/file from)) :when (.isFile f)]
     (let [rel (subs (.getPath f) (inc (count (.getPath (io/file from)))))
           out (io/file to rel)]
       (io/make-parents out)
-      (io/copy f out))))
+      (java.nio.file.Files/copy (.toPath f) (.toPath out)
+                                (into-array java.nio.file.CopyOption
+                                            [java.nio.file.StandardCopyOption/REPLACE_EXISTING
+                                             java.nio.file.StandardCopyOption/COPY_ATTRIBUTES])))))
 
 (def ^:private run-js
   "// run.js: node run.js args... -> the project's -main on cohost's ClojureScript host
@@ -123,7 +129,7 @@ process.exit(r.status === null ? 1 : r.status);
   "The bundle's `run`: writes the config cohost.cli reads (absolute paths
    from its own directory, the arguments as EDN strings) and runs launch,
    a shell command line ending in the config path."
-  [main roots launch]
+  [main roots launch & [extra-cfg]]
   (str "#!/bin/sh\n"
        "# run [args...]: " main "'s -main on cohost (made by cohost.build)\n"
        "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
@@ -131,7 +137,7 @@ process.exit(r.status === null ? 1 : r.status);
        "args=''; for a in \"$@\"; do args=\"$args $(q \"$a\")\"; done\n"
        "roots=''; for r in " (str/join " " roots) "; do roots=\"$roots $(q \"$here/$r\")\"; done\n"
        "cfg=$(mktemp \"${TMPDIR:-/tmp}/cohost-run-XXXXXX\")\n"
-       "printf '{:stock-root %s :roots [%s] :cwd %s :inits [] :main {:type :main :ns %s :args [%s]}}' "
+       "printf '{:stock-root %s :roots [%s] :cwd %s :inits [] :main {:type :main :ns %s :args [%s]}" (or extra-cfg "") "}' "
        "\"$(q \"$here/stock\")\" \"$roots\" \"$(q \"$PWD\")\" \"$(q " (pr-str (str main)) ")\" \"$args\" > \"$cfg\"\n"
        launch " \"$cfg\"\n"
        "code=$?\nrm -f \"$cfg\"\nexit $code\n"))
@@ -160,6 +166,26 @@ process.exit(r.status === null ? 1 : r.status);
         (io/make-parents (io/file out "cohost" f))
         (io/copy (io/file home f) (io/file out "cohost" f)))
       (write-run! out (launcher main roots (script-launch t))))))
+
+(defn- lpy-native
+  "basilisp's own compiled form: the booted core's cached boot (lane D's D-6:
+   the recorded boot emitted as .lpy modules, with the .lpyc bytecode basilisp
+   compiled for them) ships in the bundle, and run boots from it, as
+   `cohost :lpy` does, instead of from Clojure's source."
+  [{:keys [main name]}]
+  (let [home (cohost-home)
+        out (io/file "target" name)
+        r (sh! home "bb" "-e" "(load-file \"dev/perf/lpy_snapshot_ensure.clj\") (println \"LPY-SRC\" ((resolve (quote lpy-ensure!))))")
+        snap (some #(second (re-matches #"LPY-SRC (.+)" %)) (str/split-lines r))]
+    (when-not snap (throw (ex-info "build: basilisp's cached boot did not build" {:out r})))
+    (sh! "." "rm" "-rf" (str out))
+    (let [roots (bundle-sources! home :lpy out)]
+      (copy-tree! (str home "/src") (io/file out "cohost/src"))
+      (copy-tree! (str (io/file home snap)) (io/file out "cohost/snapshot"))
+      (write-run! out (launcher main roots
+                                (str "basilisp run -p \"$here/cohost/snapshot\" -p \"$here/cohost/src\""
+                                     " -c \"(require 'cohost.cli) (cohost.cli/-main \\\"$cfg\\\")\" #")
+                                " :snapshot? true")))))
 
 (defn- jolt-native [{:keys [main name]}]
   (let [home (cohost-home)
@@ -199,7 +225,8 @@ process.exit(r.status === null ? 1 : r.status);
       :jvm (jvm-uber opts)
       :cljs (cljs-bundle opts)
       :jolt (jolt-native opts)
-      (:cljw :lg :lpy :phel) (script-bundle t opts)
+      :lpy (lpy-native opts)
+      (:cljw :lg :phel) (script-bundle t opts)
       :jank (jank-exe opts)
       (do (println (str "build: not yet on " t))
           (throw (ex-info (str "build: not yet on " t) {:target t}))))]
