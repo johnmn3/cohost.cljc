@@ -670,6 +670,20 @@
                       (list 'cpp/jank.runtime.to_real (list (static-sym 'clojure.lang.Numbers 'divide) a b))
                       (list (symbol core "/") a b))))))))
 
+(defn- int-op-operand?
+  "A5-3: an operand :int-op-aliases may name twice -- an integer literal, or a
+   local or var symbol the codemod has not typed (no native long, no real, no
+   hint), so its value is an object. A call or any other form is not: the
+   expansion would need a let* to name it, and a let* in an argument of a
+   jank self-call fails jank's C++ codegen on apt (see the battery row)."
+  [x]
+  (or (integer? x)
+      (and (symbol? x) (nil? (namespace x))
+           (not (native-int-form? x)) (not (real-form? x))
+           (nil? (get *local-tags* x)) (nil? (:tag (meta x)))
+           ;; U6-7's inferred long/double locals may be native
+           (nil? (get *num-env* (*plain* x))))))
+
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
         nm (static-name c m)
@@ -678,7 +692,12 @@
     (cond (and (seq *native-ints*) (get (:native-int-aliases ctx) nm) (seq args) (every? native-int-form? args))
           (apply list (get (:native-int-aliases ctx) nm) args')
           real' real'
-          (known? ctx nm) (or ;; U6-8: the adapter's own expansion of a Math static at
+          (known? ctx nm) (or ;; A5-3: + - * of two unknown operands where the shim's are
+                              ;; A5's checked call: the host's promoting op inline (nil: keep it)
+                              (when-let [f (and (= 2 (count args)) (every? int-op-operand? args)
+                                                (some symbol? args) (get (host/int-op-aliases) nm))]
+                                (f args' (or (get (:host-aliases ctx) nm) (static-sym c m))))
+                              ;; U6-8: the adapter's own expansion of a Math static at
                               ;; the call head (nil: keep the shim call)
                               (when-let [mf (get (host/math-aliases) nm)] (mf args'))
                               (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args'))
@@ -991,6 +1010,7 @@
   [fn-hint params]
   (or (primitive-hint (:tag (meta params))) fn-hint))
 
+(declare self-call-block-arg?)
 (declare infer-num loop-recurs core-op infer-here?)
 
 (def ^:private numeric-ops
@@ -1095,7 +1115,7 @@
                                          (carry-meta p p)))
                                      params hints)
                            rsp (when ret-hint (get spells ret-hint))
-                           inner (apply list 'fn* (concat (when (and single? nm) [(bare-sym nm)])
+                           inner (apply list 'fn* (concat (when (and single? nm (not (self-call-block-arg? nm body'))) [(bare-sym nm)])
                                                           [(cons (carry-meta ips params) body')]))
                            inner (if rsp (with-meta inner {:rettag (list 'quote rsp)}) inner)]
                        [(apply list inner (map bare-sym params))])
@@ -1551,6 +1571,31 @@ nil))
         (coll? form) (boolean (some source-fn-inside? form))
         :else false))
 
+(defn- block-inside?
+  "True when form holds a let*, loop*, letfn* or try outside a quote."
+  [form]
+  (cond (seq? form) (and (not= 'quote (first form))
+                         (or (contains? '#{let* loop* letfn* try let loop letfn} (first form))
+                             (boolean (some block-inside? form))))
+        (coll? form) (boolean (some block-inside? form))
+        :else false))
+
+(defn- self-call-block-arg?
+  "True when a rewritten body calls nm with an argument holding a let*,
+   loop*, letfn* or try. jank on apt (0.1-noble) emits a self-named fn*'s
+   self-call with such an argument after the argument's C++ block has closed:
+   the call names an undeclared variable and the module fails to compile
+   ((defn f [n] (if (< n 1) 0 (f (let [m (dec n)] (if (pos? m) m 0))))),
+   max/collate and max/main alike). An if argument compiles."
+  [nm form]
+  (cond (seq? form) (and (not= 'quote (first form))
+                         (or (and (symbol? (first form)) (= (name nm) (name (first form)))
+                                  (nil? (namespace (first form)))
+                                  (boolean (some block-inside? (rest form))))
+                             (boolean (some #(self-call-block-arg? nm %) form))))
+        (coll? form) (boolean (some #(self-call-block-arg? nm %) form))
+        :else false))
+
 (defn- self-named-init
   "A def whose init is an anonymous fn gets the var's name as the fn's own
    name, as jank's defn does, so its self-calls are the host's named
@@ -1573,7 +1618,8 @@ nil))
              ;; a macro that makes one (letfn, reify ...) -- any seq whose
              ;; head names fn or fn*, as the rewritten form's fn*-inside?
              ;; would see after expansion
-             (not (some source-fn-inside? (rest init))))
+             (not (some source-fn-inside? (rest init)))
+             (not (self-call-block-arg? nm (rest init))))
       (concat (butlast more)
               [(with-meta (apply list (first init) (bare-sym nm) (rest init)) (meta init))])
       more)))
@@ -1607,7 +1653,8 @@ nil))
                        ;; and no closure inside: a self-named fn*
                        ;; holding closures breaks jank's compile-module
                        ;; codegen (see fn*-inside?)
-                       (not (some fn*-inside? (rest (last more')))))
+                       (not (some fn*-inside? (rest (last more'))))
+                       (not (self-call-block-arg? nm (rest (last more')))))
                 (concat (butlast more')
                         [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
                 more')]
