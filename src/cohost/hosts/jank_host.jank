@@ -1689,6 +1689,9 @@ namespace cohost_obj {
    :sb-string (fn [sb] (apply str @(inst-field sb 0)))
    ;; H0 spellings: ^long ^double ^bool ^int. boolean does not resolve.
    :native-hints '{long long double double boolean bool int int}
+   ;; a ^long / ^double let*/loop* local: jank types a local by its init, and
+   ;; these return i64 / f64 (runtime/core/math.hpp, always inline)
+   :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
 })
 
 
