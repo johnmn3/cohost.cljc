@@ -160,7 +160,9 @@
    build is running, a run neither records nor waits. COHOST_COMPILE=0 or
    COHOST_JANK_PROJECT=none: never."
   [repo project roots main core-path env]
-  (when (and main (not= "none" (System/getenv "COHOST_JANK_PROJECT")) (not= "0" (System/getenv "COHOST_COMPILE")))
+  ;; any run, not only one with a main namespace (D-10: -e and scripts too,
+  ;; so (compile 'ns) from -e has the project's directory to write to)
+  (when (and (not= "none" (System/getenv "COHOST_JANK_PROJECT")) (not= "0" (System/getenv "COHOST_COMPILE")))
     (let [dir (str (fs/absolutize (fs/path project "target/cohost-jank")))
           stamp (str dir "/stamp") src (str dir "/src") aot (str dir "/aot")
           lock (str dir "/build.lock")

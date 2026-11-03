@@ -751,7 +751,7 @@ Three ways in, all writing the same files:
 | jank | 33.680 (35.273 / 33.622 / 33.680: D-8's recording pass before the run) | 1.820 (1.840 / 1.774 / 1.820) | **4.341** (4.258 / 4.341 / 4.567) | **1.945** (1.945 / 1.949 / 1.820) |
 | Basilisp | 70.078 (68.765 / 70.272 / 70.078: core.clj booted from source every run) | 69.702 (69.805 / 69.701 / 69.694) | **18.701** (18.438 / 18.701 / 18.736) | **7.084** (6.907 / 7.401 / 7.084) |
 
-`-P` from nothing compiled: jank 32.6 s, then runs of 1.994 / 1.872 / 1.870 s; Basilisp 30.5 s, then 7.124 / 7.124 / 6.893 s. `bb cli:check jank` and `bb cli:check lpy`: SAME in all 7 cases each.
+`-P` from nothing compiled: jank 32.6 s, then runs of 1.994 / 1.872 / 1.870 s; Basilisp 30.5 s, then 7.124 / 7.124 / 6.893 s. `cohost :<target> -e "(compile 'demo.main)"` (then a run): jank, nothing compiled, 31.8 s, then 1.829 s; Basilisp, on a fresh project 30.5 s then 7.038 s, nothing compiled 30.8 s then 6.718 / 6.893 s. `bb cli:check jank` and `bb cli:check lpy`: SAME in all 7 cases each.
 
 ## Basilisp, ClojureWasm, Phel, let-go
 
