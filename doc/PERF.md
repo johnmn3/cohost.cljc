@@ -734,6 +734,25 @@ The emitter's Basilisp dialect: `.lpy` files, `basilisp.core/ns` headers (the re
 
 17.8x on the boot. The battery's one failure is the same on both: numeric tower, `(= 1 1.0)` is `true` on Basilisp (doc/REPORT.md).
 
+## A project's compiled namespaces (D-10, 2026-11-02 ET)
+
+cohost keeps what it compiles, as Clojure keeps `ns__init.class`: a namespace loaded from source is recorded (cohost's record mode, every host), the record becomes the host's own compiled module (jank: an object file of the emitted module, `jank compile-module -O3`; Basilisp: the emitted `.lpy` module, which Python compiles once into `__pycache__/*.lpyc`), and a later run loads the module instead of the source. Per host and per project, under `<project>/target/cohost-<target>/`, keyed on the core snapshot's stamp and every file under the project's roots (a host's own cache never an input). The core and its twelve libraries are the same mechanism, applied once per checkout: the jank snapshot, and D-6's cached boot (which the CLI on Basilisp now boots from).
+
+Three ways in, all writing the same files:
+
+- **`cohost :<target> -P`** (the install step): after resolving the dependencies, as `clojure -P`, it builds the core snapshot when stale, then loads (never runs) every namespace under the project's own paths, recording them, and compiles them. The first run after it is already compiled.
+- **`(compile 'my.ns)`**: cohost's, in place of the host's: `my.ns` and every project library it loads are loaded again from source with recording on; when the command ends the launcher compiles them, before it returns.
+- **an ordinary run** with nothing compiled yet (or after an edit): the run records the namespaces it loads as it runs, and when it ends the launcher compiles them in the background (one at a time, `nice`d, `<dir>/build.log`), for the next run. `COHOST_COMPILE=0` turns it off.
+
+`cohost :<target> -M -m demo.main <target>-user` in `dev/cli-demo` (its namespaces: demo.main, greeter.core, and tools.cli's clojure.tools.cli; all three load from their modules on the second run). Seconds, median of 3; the first run with the compiled directory deleted before it (and the background compile awaited before the next):
+
+| target | before D-10: first run | before: second | after: first run | after: second |
+|---|---:|---:|---:|---:|
+| jank | 33.680 (35.273 / 33.622 / 33.680: D-8's recording pass before the run) | 1.820 (1.840 / 1.774 / 1.820) | **4.341** (4.258 / 4.341 / 4.567) | **1.945** (1.945 / 1.949 / 1.820) |
+| Basilisp | 70.078 (68.765 / 70.272 / 70.078: core.clj booted from source every run) | 69.702 (69.805 / 69.701 / 69.694) | **18.701** (18.438 / 18.701 / 18.736) | **7.084** (6.907 / 7.401 / 7.084) |
+
+`-P` from nothing compiled: jank 32.6 s, then runs of 1.994 / 1.872 / 1.870 s; Basilisp 30.5 s, then 7.124 / 7.124 / 6.893 s. `bb cli:check jank` and `bb cli:check lpy`: SAME in all 7 cases each.
+
 ## Basilisp, ClojureWasm, Phel, let-go
 
 Boots, 2026-11-02. basilisp `bb boot:lpy`: stock 529, host 130, natives 36, skipped 96, errors 0, battery 143/145, libraries 61/61. ClojureWasm `bb boot:cljw`: stock 555, host 145, skipped 91, errors 0, battery 143/145, libraries 61/61. Phel `bb boot:phel`: stock 591, host 73, skipped 127, errors 0, battery 145/145, libraries 61/61. let-go `bb boot:lg`: stock 569, host 105, skipped 117, errors 0, battery 143/145, libraries 61/61.
