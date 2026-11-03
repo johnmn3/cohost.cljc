@@ -161,7 +161,17 @@
    ["a ^long parameter rejects a non-number" "(let [f (fn [^long x] x)] (try (f \"a\") (catch ClassCastException e :cce)))" :cce]
    ["a ^long fn recurred from its loop truncates" "(let [f (fn [^long n] (loop [i n a 0] (if (pos? i) (recur (dec i) (+ a i)) a)))] [(f 3.9) (f 4)])" [6 10]]
    ["a ^long fn keeps its :pre" "(try ((fn [^long x] {:pre [(pos? x)]} x) -1) (catch AssertionError e :pre))" :pre]
-   ["a ^long fn destructures its other parameter" "((fn [^long x [a b]] (+ x a b)) 1 [2 3])" 6]])
+   ["a ^long fn destructures its other parameter" "((fn [^long x [a b]] (+ x a b)) 1 [2 3])" 6]
+   ;; U6-5: return and local hints are coerced too (and typed natively on jank)
+   ["a ^long return truncates a double" "(let [f (fn ^long [x] x)] [(f 1.9) (f -1.9) (f 4)])" [1 -1 4]]
+   ["a ^double return widens a long" "(let [f (fn ^double [x] x)] [(f 2) (f 1.5)])" [2.0 1.5]]
+   ["a ^long return rejects a non-number" "(let [f (fn ^long [x] x)] (try (f \"a\") (catch ClassCastException e :cce)))" :cce]
+   ["a ^long return of an arity that recurs" "(let [f (fn ^long [x] (if (pos? x) (recur (dec x)) x))] (f 2.5))" 0]
+   ["a hinted fn recurring on its own name" "(let [f (fn fib ^long [^long n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))] [(f 20) (f 20.7)])" [6765 6765]]
+   ["a ^long let local is a long to arithmetic" "(let [^long x (identity 1.9)] (inc x))" 2]
+   ["a ^long let local rejects a non-number" "(try (let [^long x (identity \"a\")] (inc x)) (catch ClassCastException e :cce))" :cce]
+   ["a ^double let local" "(let [^double x (identity 2)] (+ x 0.5))" 2.5]
+   ["a ^long loop local is a long to arithmetic" "(loop [^long i (identity 2.5) a 0] (if (pos? i) (recur (dec i) (+ a i)) a))" 3]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."
