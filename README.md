@@ -145,7 +145,8 @@ How each runtime is launched, what was verified and how it differs from `clojure
 `doc/CLI.md`. Using cohost as a library inside a host (a sub-runtime you hand strings
 to): [`doc/EMBEDDING.md`](doc/EMBEDDING.md).
 What differs from one runtime to the next, and startup and speed for each:
-[Choosing a runtime](doc/guide/07-choosing-a-runtime.md).
+[Choosing a runtime](doc/guide/07-choosing-a-runtime.md). The per-host performance switches:
+[How it works](doc/guide/08-how-it-works.md#performance-keys).
 
 ## The guide
 

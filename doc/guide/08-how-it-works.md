@@ -41,7 +41,8 @@ named capabilities a clojure-like implements to plug in — read/eval in a
 namespace, var and namespace surgery, four constructors, regex search
 primitives, the host's `Math`, the type predicates behind the class tokens.
 Adapters ship for **jolt**, **basilisp**, **ClojureScript (self-hosted, Node
-and browser)**, **ClojureWasm**, **Phel**, **let-go** and the **JVM** (as the reference host).
+and browser)**, **ClojureWasm**, **Phel**, **let-go**, **jank** (`hosts/jank_host.jank`) and
+the **JVM** (as the reference host).
 
 It is the method of [clinj](https://github.com/johnmn3/clinj) ("WINE, not an
 emulator": shim the JDK surface the code calls, run the real source
@@ -63,6 +64,24 @@ on jank, where compiling is the expensive part:
   what a boot evaluates and compiles it into modules; a later run loads the modules instead
   of booting (about 0.6 s), and boots as usual when the snapshot is stale. The `cohost`
   command and the benchmark use it when it is fresh.
+
+## Performance keys
+
+Seven capabilities of the host contract are performance switches, default off, turned on per
+host where that host's bench says they pay (`doc/PERF.md`, "Cross-host"):
+
+- `:multimethod-cache?`: the shim's multimethod with a one-entry dispatch cache (JVM, jolt,
+  ClojureWasm, Phel, ClojureScript on Node and in Chromium, jank).
+- `:sort-host-compare?`: the host's compare when the comparator is the stock `compare`
+  (let-go, Phel; jank always).
+- Five that jank alone sets: `:native-hints` (which primitive hints the host compiles as native
+  types), `:native-local-casts` (the host's conversion for a hinted `let`/`loop` local),
+  `:defn-fn-name?` (a def's name carried onto its `fn*`, so a self-call is a direct call),
+  `:static-aliases` (a shim static emitted as the host's own op: jank's `-`), `:core-aliases`
+  (a stock core fn emitted as the host's own: jank's `not`).
+
+`cohost.adapter/contract` carries each one's doc; a new host leaves them off until its own
+bench says otherwise ([Adding a host](09-adding-a-host.md)).
 
 ## Where the code is
 
