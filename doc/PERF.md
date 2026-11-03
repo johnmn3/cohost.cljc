@@ -256,6 +256,11 @@ for the native-build work; `tak-hinted` reached the 15-minute limit). Median ms 
 | tak-hinted | 196.5 | 22689.9 (x115.49) | error |
 | **geomean xJVM** (programs that ran) | 1 | **x20.48** (28) | **x85.17** (15) |
 
+**ReleaseFast ClojureWasm** (lane D, Box 3, 2026-11-03 4:20-4:35 AM ET; ClojureWasm 1.15.4 built from its tag with
+`zig build -Doptimize=ReleaseFast`, against the shipped ReleaseSafe binary): 8 programs on ClojureWasm's own core
+take x0.862 of the time (geomean); the built app's `fib` x0.79 and `first-output` x0.90; the binary is 6.6 MB
+against 9.6 MB. Records and the exact install commands: `doc/perf/cljw-releasefast/` (d/aot-cljw).
+
 ### Box 4: let-go and Phel
 
 Box 4: 4 CPUs (Intel Xeon, 2.10 GHz), Linux, let-go 1.13.0, PHP 8.3.6; the JVM column is this box's own
