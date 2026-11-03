@@ -1829,7 +1829,12 @@ nil))
                             (apply disj *native-reals* syms) pairs)
                     (apply disj *native-reals* syms))
             bvec' (if-let [f (and (= h 'loop*) (:loop-int-init ctx))]
-                    (carry-meta (vec (mapcat (fn [[b v] [b0 v0]] [b (if (int-init? [b0 v0]) (f v) v)])
+                    ;; A5-8: a literal-started local that is not int-safe starts from a boxed
+                    ;; value: jank types a loop local from a bare literal init itself (a C++
+                    ;; integer the recur converts into), so the literal goes through identity
+                    (carry-meta (vec (mapcat (fn [[b v] [b0 v0]] [b (cond (int-init? [b0 v0]) (f v)
+                                                                          (lit-init? [b0 v0]) (list 'clojure.core/identity v)
+                                                                          :else v)])
                                              (partition 2 bvec') pairs))
                                 bvec')
                     bvec')
