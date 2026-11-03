@@ -916,7 +916,6 @@ namespace cohost_obj {
 ;; the shim's class-of, resolved lazily: the shim requires this adapter
 ;; (through cohost.hosts.auto), so this namespace cannot require it back
 (def ^:private shim-class-of (delay (var-get (resolve 'cohost.shim/class-of))))
-(def ^:private shim-rt-count (delay (var-get (resolve 'cohost.shim/RT-count))))
 (def ^:private shim-string-format (delay (var-get (resolve 'cohost.shim/String-format))))
 (def ^:private shim-supers (delay (var-get (resolve 'cohost.shim/class-supers))))
 (def ^:private shim-bases (delay (var-get (resolve 'cohost.shim/class-bases))))
@@ -2009,7 +2008,9 @@ namespace cohost_obj {
              'clojure.core/set native-set
              'clojure.core/frequencies native-frequencies
              'clojure.core/group-by native-group-by
-             'clojure.core/count native-count
+             ;; A4 (a): an integer range and a chunked seq counted in O(1) / a chunk at a time,
+             ;; everything else native-count
+             'clojure.core/count (jank-rt/count-with native-count)
              'clojure.core/nth native-nth
              'clojure.core/get native-get
              'clojure.core/assoc native-assoc
@@ -2017,8 +2018,7 @@ namespace cohost_obj {
              ;; at a time (cohost.hosts.jank-runtime)
              'clojure.core/range jank-rt/range
              'clojure.core/map jank-rt/map
-             'clojure.core/filter jank-rt/filter
-             'clojure.core/count (jank-rt/count-with (fn [x] (@shim-rt-count x)))}
+             'clojure.core/filter jank-rt/filter}
    ;; str is NOT a native here: policy owns str on every host -- an
    ;; exception's str must reach the shim's toString (JVM rendering), and
    ;; jank's own str writes jank's. See policy.cljc.
