@@ -183,7 +183,9 @@
    ["an if whose branches agree" "(let [a 7 b (if (pos? a) (dec a) (inc a))] b)" 6]
    ["a guarded arity given longs and doubles" "(let [f (fn [a b] (+ a b))] [(f 1 2) (f 1.5 2) (f 1 2.5)])" [3 3.5 3.5]]
    ["a guarded loop over a double parameter" "(let [f (fn [x] (loop [i 0 a 0.0] (if (< i x) (recur (inc i) (+ a 0.5)) a)))] [(f 4) (f 4.5)])" [2.0 2.5]]
-   ["a speculated self-call given a double" "(let [f (fn fib [n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))] [(f 20) (f 20.5)])" [6765 12238.0]]])
+   ["a speculated self-call given a double" "(let [f (fn fib [n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))] [(f 20) (f 20.5)])" [6765 12238.0]]
+   ["a param guessed long beside a long, given longs and doubles" "(let [f (fn [i j] (/ 1.0 (+ (* (+ i j) 0.5) i)))] [(f 1 1) (f 1.5 0.5)])" [0.5 0.4]]
+   ["a param guessed double beside a double, given a long" "(let [f (fn [x] (* x 2.5))] [(f 2) (f 0.5)])" [5.0 1.25]]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."
