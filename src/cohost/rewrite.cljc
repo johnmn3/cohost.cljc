@@ -2060,7 +2060,8 @@
             ;; A5-8: a literal-started loop local is a native long only when every recur
             ;; of this loop passes an int-safe value in its position (loop-int-safe)
             safe (when (some lit-init? pairs) (loop-int-safe bvec body (filter lit-init? pairs)))
-            int-init? (fn [[b v :as p]] (and (lit-init? p) (contains? safe (*plain* b))))
+            ;; no :as in a vector binding: Phel's destructuring rejects it (PHEL008)
+            int-init? (fn [p] (let [b (first p)] (and (lit-init? p) (contains? safe (*plain* b)))))
             ;; inits see the names bound before them: drop every name this form binds,
             ;; then add the literal-started loop locals for the body
             bvec' (binding [*native-ints* (apply disj *native-ints* syms)
@@ -2097,8 +2098,9 @@
                                     (not (contains? *locals* (*plain* (first v))))
                                     (contains? #{nil "clojure.core" "cohost.core"} (namespace (first v)))
                                     (contains? long-inits (symbol (name (first v))))))
-            [natives casts] (reduce (fn [[acc cs] [b v :as p]]
-                                      (let [k (when (symbol? b) (*plain* b))]
+            [natives casts] (reduce (fn [[acc cs] p]
+                                      (let [[b v] p
+                                            k (when (symbol? b) (*plain* b))]
                                         (cond (nil? k) [acc cs]
                                               (int-init? p) [(conj acc k) cs]
                                               (or (empty? long-inits) (some? (:tag (meta b)))) [(disj acc k) cs]
