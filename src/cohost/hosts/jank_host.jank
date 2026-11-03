@@ -1801,6 +1801,30 @@ namespace cohost_obj {
    ;; Math/round, abs, pow keep the shim: round is floor(a+1/2) (std::llround
    ;; rounds -2.5 to -3), abs of Long/MIN_VALUE and pow's argument kinds are
    ;; the shim's already.
+   ;; U6-7: (nth v i) and (count v) on jank's own vector are jank's nth and count
+   ;; (inline in its analyzer); anything else -- a cohost type, a string, an
+   ;; index out of range or not an integer -- is the shim's RT-nth / RT-count,
+   ;; whose answers (the descriptor's op, the JVM's IndexOutOfBoundsException)
+   ;; stay. jank::runtime::is_vector is in jank's runtime headers, which every
+   ;; module sees (the adapter's own cpp/raw namespaces are per-module).
+   :vector-aliases {"RT-nth" (fn [args]
+                               (when (= 2 (count args))
+                                 (let [c (gensym "nc") k (gensym "nk")]
+                                   (list 'let* [c (first args) k (second args)]
+                                         (list 'if (list 'if (list 'cpp/jank.runtime.is_vector c)
+                                                         (list 'if (list 'clojure.core/integer? k)
+                                                               (list 'clojure.core/< -1 k (list 'clojure.core/count c))
+                                                               false)
+                                                         false)
+                                               (list 'clojure.core/nth c k)
+                                               (list 'cohost.shim/RT-nth c k))))))
+                    "RT-count" (fn [args]
+                                 (when (= 1 (count args))
+                                   (let [c (gensym "cc")]
+                                     (list 'let* [c (first args)]
+                                           (list 'if (list 'cpp/jank.runtime.is_vector c)
+                                                 (list 'clojure.core/count c)
+                                                 (list 'cohost.shim/RT-count c))))))}
    :math-aliases {"Math-sqrt" (fn [args]
                                 (when (= 1 (count args))
                                   (let [d (gensym "msqrt")]
