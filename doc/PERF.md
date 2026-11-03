@@ -55,8 +55,10 @@ Box 1, `main` @ ff30ce1, 2026-11-03 12:41 AM ET (`doc/perf/release-perf/lane-c/s
   ahead-of-time objects, which is slower.
 - Every other runtime reads, rewrites and evaluates `clojure.core` and the libraries the program requires at
   every start. That is the whole difference between 4.5 s on jolt and 94 s on ClojureWasm: how fast each one
-  evaluates Clojure's own source. basilisp has a cached boot (`bb boot:lpy` uses it); the `cohost` command does not
-  use it yet.
+  evaluates Clojure's own source. basilisp has a cached boot, and since this release the `cohost` command uses it: the first
+  command builds it (225 s on Box 4), then `cohost :lpy -M -m demo.main` took 21.0 s and 18.4 s there (release
+  candidate b2ec699, 2026-11-03 1:48 AM ET, while another check ran on the box), against the 88.6 s above, which
+  booted from source.
 - The compiled builds (`cohost -T:build build`) start faster on some runtimes: [Compiled builds](#compiled-builds).
 
 The programs' tables below also carry `first-output`: the wall time to print one line from a one-line program,
