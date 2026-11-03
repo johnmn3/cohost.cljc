@@ -1539,3 +1539,23 @@ this branch: in flight on `max/a4` (1d67c92). Measured so far on apt (u2, step 0
   built eagerly and recursively: `(count (map inc (range 1e6)))` over a chunked range exits 139
   at 1e6 (5e5 works), in jank's own `map` and under cohost alike. 15b-17 fixes it in the patched
   column; the extension's chunk-cons never forces its rest.
+
+**Chunk granularity (A4-2, u3, 2026-11-03).** apt's `chunked_cons::next` hands back its raw tail
+when the chunk is at its last element, and `next_in_place_non_chunked` takes `tail.first()` /
+`tail.next()` and returns the cons itself, so a tail that realizes empty becomes an extra `nil`
+element; a tail that is nil or non-empty is safe. A4 (a)'s `chunk-cons` therefore moved a chunk's
+last element into a cons in front of an unrealized rest (chunk-first one short). Now:
+
+- `map` (the adapter's native) seqs its source's chunk-rest when it builds a chunk; map keeps
+  emptiness, so its tail is nil or a map over a non-empty source and the chunk stays whole
+  (`cohost_rt::chunk_cons_whole`): chunk-first counts 32 and `(first (map f ...))` calls `f` 32
+  times, as on the JVM. The cost: the map's *source* is realized one chunk ahead of the JVM (a
+  range or a vector seq runs no user code; a chunked `map` source runs its own `f` a chunk early).
+- `filter` keeps the whole chunk only when its source is exhausted. Otherwise its rest can
+  realize empty while the source continues (`(filter #(< % 10) (range 64))`), and knowing it
+  would mean calling `pred` ahead of the JVM for every chunk, so the A4 (a) rule stays: a chunked
+  filter's chunk is one element short of the JVM's when its source continues
+  (`(count (chunk-first (seq (filter odd? (range 64)))))` is 15, the JVM's 16). Values, counts,
+  laziness and `pred`'s call count are the JVM's.
+- `dev/research/a4/chunk_first.sh` on both columns: 32 / 15 / 32 / 32 / 32 / true (JVM 32 / 16 /
+  32 / 32 / 32 / true).

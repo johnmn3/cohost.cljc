@@ -37,6 +37,11 @@
    ["cat dedupe-xf halt-when?" "(into [] (comp cat (dedupe)) [[1 1] [2 2 3]])" [1 2 3]]
    ["juxt comp partial complement constantly fnil" "[((juxt inc dec) 5) ((comp str inc) 1) ((partial + 1) 2) ((complement odd?) 3) ((constantly 7) 1 2) ((fnil + 10) nil 1)]" [[6 4] "2" 3 false 7 11]]
    ["every-pred some-fn memoize trampoline" "[((every-pred odd? pos?) 3) ((some-fn odd? neg?) 2) (let [m (memoize inc)] [(m 1) (m 1)]) (trampoline (fn f [n] (if (pos? n) #(f (dec n)) :done)) 5)]" [true false [2 2] :done]]
+   ;; A4 (a): a range and the map/filter over it are chunked seqs on jank (jank's obj::range and
+   ;; chunked_cons); what the stock core and the reader see of them must be Clojure's
+   ["chunked range = hash print count" "(let [r (range 70) m (map inc r) f (filter odd? m)] [(= r (range 70)) (= m (range 1 71)) (= (hash m) (hash (range 1 71))) (pr-str (take 3 f)) (count r) (count m) (count f) (count (range 5 0 -2)) (vec (range 0 10 4))])" [true true true "(1 3 5)" 70 70 35 3 [0 4 8]]]
+   ["chunked seq seq next last meta" "(let [m (map inc (range 32))] [(seq (filter neg? (range 70))) (count (next m)) (last (map inc (range 65))) (first (next (filter odd? (range 100)))) (meta (with-meta (range 3) {:m 1})) (coll? (range 3)) (seq? (map inc (range 3)))])" [nil 31 65 3 {:m 1} true true]]
+   ["chunked laziness" "[(vec (take 5 (map inc (range 1000000000000)))) (first (filter #(> % 100000) (map inc (range 1000000000000)))) (reduce + 0 (map inc (range 100))) (into [] (map inc) (range 5))]" [[1 2 3 4 5] 100001 5050 [1 2 3 4 5]]]
    ["sort sort-by compare" "[(sort [3 1 2]) (sort > [3 1 2]) (sort-by - [3 1 2]) (sort-by :k [{:k 2} {:k 1}]) (compare [1 2] [1 3])]" ['(1 2 3) '(3 2 1) '(3 2 1) '({:k 1} {:k 2}) -1]]
    ["max-key min-key apply max" "[(max-key count \"a\" \"bbb\" \"cc\") (min-key count \"a\" \"bbb\") (apply max [1 5 3])]" ["bbb" "a" 5]]
    ["str keyword symbol name namespace" "[(str :a 1 \"b\" nil) (keyword \"ns\" \"n\") (symbol \"ns/n\") (name :ns/n) (namespace 'ns/n) (keyword 'x) (name \"s\")]" [":a1b" :ns/n 'ns/n "n" "ns" :x "s"]]
@@ -60,6 +65,10 @@
    ["macroexpand" "(macroexpand-1 '(when x y z))" '(if x (do y z))]
    ["gensym unique" "(let [a (gensym \"g\") b (gensym \"g\")] (and (symbol? a) (not= a b)))" true]
    ["binding dynamic" "(do (def ^:dynamic *d* 1) (defn rd [] *d*) [(rd) (binding [*d* 2] (rd)) (rd)])" [1 2 1]]
+   ;; U6-8: (/ x y) inline on jank keeps the wrapper's zero-divisor answers
+   ["division: IEEE infinities and NaN on a zero divisor, exact otherwise" "(let [z 0 dz 0.0] [(/ 1.0 z) (/ -1 dz) (Double/isNaN (/ 0.0 z)) (/ 6 3) (/ 5 2.0) (/ 7.5 2.5)])" [##Inf ##-Inf true 2 2.5 3.0]]
+   ;; U6-8: Math statics where a host's own op could answer differently
+   ["Math: round half up, abs of Long/MIN_VALUE, sqrt of negatives and -0.0, pow" "(let [x -4 z -0.0] [(Math/round 2.5) (Math/round -2.5) (Math/abs Long/MIN_VALUE) (Double/isNaN (Math/sqrt -1)) (Double/isNaN (Math/sqrt x)) (str (Math/sqrt -0.0)) (str (Math/sqrt z)) (Math/pow 2 0.5) (Math/sqrt 4) (Math/sqrt 2.25)])" [3 -2 -9223372036854775808 true true "-0.0" "-0.0" 1.4142135623730951 2.0 1.5]]
    ["with-redefs" "(do (defn orig [] :orig) [(with-redefs [orig (fn [] :redef)] (orig)) (orig)])" [:redef :orig]]
    ["redefining a fn during its own recursion" "(do (defn rr [n] (if (pos? n) (do (alter-var-root #'rr (fn [_] (fn [x] :redefined))) (rr (dec n))) :original)) (rr 1))" :redefined]
    ;; ^:redef keeps the var call on a :defn-fn-name? host (Clojure's direct
@@ -106,6 +115,7 @@
    ["radix parsing and printing" "[(Integer/parseInt \"ff\" 16) (Long/parseLong \"-zz\" 36) (Long/toString 255 16) (Integer/toHexString -1) (Integer/toBinaryString 5)]" [255 -1295 "ff" "ffffffff" "101"]]
    ["Character/isWhitespace is Java's" "[(Character/isWhitespace (char 11)) (Character/isWhitespace (char 8195)) (Character/isWhitespace (char 160))]" [true true false]]
    ["unchecked int arithmetic wraps at 32 bits" "[(unchecked-add-int 2147483647 1) (unchecked-multiply-int 2147483647 2) (unchecked-int 3000000000) (unchecked-byte 300)]" [-2147483648 -2 -1294967296 44]]
+   ["assoc past a vector's end throws IndexOutOfBoundsException" "[(try (assoc [4 5 6] 9 :x) (catch IndexOutOfBoundsException e :ioob)) (try (assoc [4 5 6] -1 :x) (catch IndexOutOfBoundsException e :ioob)) (assoc [4 5 6] 3 :d) (assoc [4 5 6] 0 :a 2 :c)]" [:ioob :ioob [4 5 6 :d] [:a 5 :c]]]
    ["string and array index exceptions" "[(try (subs \"abc\" 1 5) (catch StringIndexOutOfBoundsException e :sioobe)) (try (aget (to-array [1]) 5) (catch ArrayIndexOutOfBoundsException e :aioobe))]" [:sioobe :aioobe]]
    ["an unmatched group is nil" "[(re-find #\"a(b)?\" \"a\") (re-matches #\"(a)|(b)\" \"b\") (re-seq #\"a(b)?\" \"aab\") (re-find #\"^(\\S+)(?:\\s+(.*))?\" \"-v\")]" [["a" nil] ["b" nil "b"] '(["a" nil] ["ab" "b"]) ["-v" "-v" nil]]]
    ["Matcher group spans" "(let [m (re-matcher #\"(\\d)(\\d)|(x)\" \"a12\")] (.find m) [(.start m 1) (.end m 2) (.start m 3)])" [1 3 -1]]
@@ -118,6 +128,13 @@
    ["iterators" "[(vec (iterator-seq (.iterator [1 2 3]))) (let [it (.iterator {:a 1})] [(.hasNext it) (vec (.next it)) (.hasNext it)])]" [[1 2 3] [true [:a 1] false]]]
    ["a java.util.Comparator that is no fn" "[(sort (java.util.Collections/reverseOrder) [1 3 2]) (sort-by :a (java.util.Collections/reverseOrder) [{:a 1} {:a 3}])]" [[3 2 1] [{:a 3} {:a 1}]]]
    ["instance? of nil; Iterable, Collection, IPersistentStack" "[(instance? Object nil) (instance? Comparable nil) (instance? java.util.Collection {:a 1}) (instance? Iterable \"s\") (instance? clojure.lang.IPersistentStack (range 3)) (instance? Iterable [1])]" [false false false false false true]]
+   ;; A4 (c)(d): a sort result walks as Clojure's (rest, next, meta, =, hash); nth / count / str of
+   ;; strings and vectors through the jank adapter's one-call natives, their edges Clojure's
+   ["a sort result walks: rest next meta = hash" "[(rest (sort [3 1 2])) (next (sort-by - [3 1 2])) (sort []) (seq (sort [])) (meta (sort (with-meta [2 1] {:m 1}))) (= (sort [3 1 2]) '(1 2 3)) (= (hash (sort [3 1 2])) (hash '(1 2 3))) (sort > [1 3 2]) (reduce + (sort (range 100))) (nth (sort (range 100 0 -1)) 50)]" ['(2 3) '(2 1) '() nil {:m 1} true true '(3 2 1) 4950 51]]
+   ["nth count str of strings and vectors" "[(nth \"abc\" 1) (nth \"abc\" 5 :nf) (nth [1 2] 1) (nth [1 2] 2 :nf) (try (nth \"abc\" 5) (catch IndexOutOfBoundsException _ :ioobe)) (try (nth [1] -1) (catch IndexOutOfBoundsException _ :ioobe)) (count \"abc\") (count [1 2 3]) (count nil) (str) (str nil) (str :k \\c 1 nil \"s\" 'y true) (apply str [\"a\" nil 'b 2 [1]])]" [\b :nf 2 :nf :ioobe :ioobe 3 3 0 "" "" ":kc1sytrue" "ab2[1]"]]
+   ;; A4-2: a chunked map keeps its whole chunk (Clojure's 32), and realizing its first element
+   ;; calls f once per element of that one chunk
+   ["chunked map: chunk-first counts 32, f called 32 times for first" "[(count (chunk-first (seq (map inc (range 64))))) (let [a (atom 0)] (first (map (fn [x] (swap! a inc) x) (map inc (range 100)))) @a) (let [a (atom 0)] (first (map (fn [x] (swap! a inc) x) (range 100))) @a)]" [32 32 32]]
    ["chunk-cons keeps its chunk" "(let [b (chunk-buffer 2)] (chunk-append b 1) (chunk-append b 2) (let [s (chunk-cons (chunk b) (list 3))] [(count (chunk-first s)) (vec s) (chunked-seq? s) (vec (map inc s))]))" [2 [1 2 3] true [2 3 4]]]
    ["String methods" "[(.trim \"  a  \") (.isBlank \" \") (.equalsIgnoreCase \"ABC\" \"abc\") (.repeat \"ab\" 2) (.codePointAt \"abc\" 1) (.strip \" x \")]" ["a" true true "abab" 98 "x"]]
    ["format is java.util.Formatter's" "(format \"%5.2f|%-4d|%x|%,d|%s|%b|%e|%3$X\" 3.14159 42 255 1234567 nil true 1234.5)" " 3.14|42  |ff|1,234,567|null|true|1.234500e+03|FF"]
@@ -180,6 +197,21 @@
    ["a ^long let local rejects a non-number" "(try (let [^long x (identity \"a\")] (inc x)) (catch ClassCastException e :cce))" :cce]
    ["a ^double let local" "(let [^double x (identity 2)] (+ x 0.5))" 2.5]
    ["a ^long loop local is a long to arithmetic" "(loop [^long i (identity 2.5) a 0] (if (pos? i) (recur (dec i) (+ a i)) a))" 3]
+   ;; U6-7: what the codemod infers (:static-types) must leave every value Clojure's
+   ["an inferred long local rebound to a string" "(let [x 1 x (str x \"!\")] x)" "1!"]
+   ["a hinted local rebound unhinted" "(let [^long x 1 x (str x \"!\")] x)" "1!"]
+   ["a loop local whose recur passes a string" "(loop [i (count []) acc []] (if (< (count acc) 3) (recur (str i \"a\") (conj acc i)) acc))" [0 "0a" "0aa"]]
+   ["an inferred double local" "(let [a 1.5 b (* a 2)] b)" 3.0]
+   ["inferred long arithmetic and count" "(let [a 2 b (* a 21) c (inc b)] [b c (count [1 2 3])])" [42 43 3]]
+   ["a local named like a core fn is no core fn" "(let [+ (fn [a b] (str a b)) q (+ 1 2)] q)" "12"]
+   ["an inferred long loop" "(loop [i 0 s 0] (if (< i 5) (recur (inc i) (+ s i)) s))" 10]
+   ["a local from count" "(let [n (count \"abc\") m (* n 2)] m)" 6]
+   ["an if whose branches agree" "(let [a 7 b (if (pos? a) (dec a) (inc a))] b)" 6]
+   ["a guarded arity given longs and doubles" "(let [f (fn [a b] (+ a b))] [(f 1 2) (f 1.5 2) (f 1 2.5)])" [3 3.5 3.5]]
+   ["a guarded loop over a double parameter" "(let [f (fn [x] (loop [i 0 a 0.0] (if (< i x) (recur (inc i) (+ a 0.5)) a)))] [(f 4) (f 4.5)])" [2.0 2.5]]
+   ["a self-calling fn given a double" "(let [f (fn fib [n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))] [(f 20) (f 20.5)])" [6765 12238.0]]
+   ["a param guessed long beside a long, given longs and doubles" "(let [f (fn [i j] (/ 1.0 (+ (* (+ i j) 0.5) i)))] [(f 1 1) (f 1.5 0.5)])" [0.5 0.4]]
+   ["a param guessed double beside a double, given a long" "(let [f (fn [x] (* x 2.5))] [(f 2) (f 0.5)])" [5.0 1.25]]
    ;; D-11: cohost picks each #? branch by the target's ranking of the keys
    ;; (:clj, then :default, on every target today), not by source order
    ["#? the :clj branch over :cljs and :default" "#?(:cljs 1 :clj 2 :default 3)" 2]

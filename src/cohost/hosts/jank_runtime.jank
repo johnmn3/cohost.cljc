@@ -1,0 +1,477 @@
+;; cohost's jank runtime extension (A4, the RULING of 2026-11-02 6:2x PM ET): C++ that
+;; unpatched jank loads through its own cpp/ interop when cohost boots. jank's tree is untouched;
+;; jank's authors are free to take any of it. The C++ lives in cpp/raw blocks in this module
+;; (the pattern jank_host.jank's cohost_obj / cohost_sort use) rather than in a .hpp: a header
+;; would need -I on every jank command and every AOT compile, a cpp/raw block needs nothing.
+;; Cost (A4 step 0, measured on apt 0.1-noble): under AOT (bb boot:jank, the snapshot) the
+;; block is compiled into this module's object once; on the JIT path (boot:jank-jit) it is
+;; compiled at every boot (about 0.03 s per KB of C++); jank's PCH never holds it.
+;;
+;; The namespace has no `jank` segment: jank's codegen puts a module's C++ in a namespace made
+;; of its segments, and a cohost::hosts::jank::runtime there shadows ::jank::runtime for every
+;; name the generated code uses (the snapshot build fails: "no member named 'obj' in namespace
+;; 'cohost::hosts::jank::runtime'").
+;;
+;; Everything here is reached by cohost.hosts.jank-host only, behind the adapter's keys
+;; (:chunks, :natives); stock code never names it.
+(ns cohost.hosts.jank-runtime
+  (:refer-clojure :exclude [range chunk-cons chunk? map filter count]))
+
+(cpp/raw "
+#include <jank/runtime/object.hpp>
+#include <jank/runtime/core/make_box.hpp>
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/core/call.hpp>
+#include <jank/runtime/obj/chunked_cons.hpp>
+#include <jank/runtime/obj/array_chunk.hpp>
+#include <jank/runtime/obj/cons.hpp>
+#include <jank/runtime/obj/lazy_sequence.hpp>
+#include <jank/runtime/obj/range.hpp>
+#include <jank/runtime/obj/number.hpp>
+#include <jank/runtime/obj/persistent_vector.hpp>
+#include <jank/runtime/core/truthy.hpp>
+
+namespace cohost_rt {
+  using namespace jank::runtime;
+
+  /* The extension's version: bumped with every change of its C++ (the AOT stamp already
+   * follows this file). */
+  inline object_ref version() { return make_box(static_cast<jank::i64>(3)); }
+
+  /* A4 (a): chunked seqs built from jank's own obj::chunked_cons and obj::array_chunk, so
+   * jank's runtime first/next/seq/count/=/hash/print walk them natively. On apt 0.1-noble
+   * jank's chunk_cons realizes its rest at construction (seq.cpp: make_box<chunked_cons>(chunk,
+   * seq(rest))), so a chunked lazy pipeline is built eagerly and recursively and overflows the
+   * stack near 1e6 elements; and chunked_cons::next hands back its raw tail, so an unrealized
+   * tail that turns out empty breaks next's contract (an extra nil element). These build
+   * chunked_cons only with a tail that is nil or never empty, and never force anything. */
+
+  /* array_chunk::buffer is a native_vector on apt 0.1-noble and a jtl::ref to one on the series
+   * build (patch 11-sorted-walk shares it across chunk_next steps): buf() gives the vector on both,
+   * so the extension compiles on either binary. */
+  template <class B>
+  inline auto &buf(B &b) {
+    if constexpr(requires { b->size(); }) { return *b; }
+    else { return b; }
+  }
+
+  inline bool is_chunk(object_ref const x) { return x.get_type() == object_type::array_chunk; }
+  inline bool is_chunked_cons(object_ref const x) { return x.get_type() == object_type::chunked_cons; }
+
+  /* count of a jank obj::range over integers in O(1) (jank walks it); -1 for any other range. */
+  inline jank::i64 range_count(object_ref const x) {
+    if(x.get_type() != object_type::range) { return -1; }
+    auto const r(expect_object<obj::range>(x));
+    if(!r->start.is_some() || !is_integer(r->start) || !is_integer(r->end) || !is_integer(r->step)) { return -1; }
+    auto const a(to_int(r->start));
+    auto const e(to_int(r->end));
+    auto const st(to_int(r->step));
+    if(st == 0) { return -1; }
+    jank::i64 const n{ st > 0 ? (e - a + st - 1) / st : (e - a + st + 1) / st };
+    return n < 0 ? 0 : n;
+  }
+
+  /* The stock chunk-cons ((chunk-cons (chunk b) rest) in map, filter, concat...). A rest that is
+   * not an unrealized lazy seq (nil, a list, a vector, an already realized lazy seq) is seq'd
+   * here, which forces nothing new: the chunk stays whole, as Clojure's ChunkedCons keeps it.
+   * An unrealized lazy rest (the stock pipeline's own (map f (chunk-rest s))) may turn out
+   * empty, and apt's chunked_cons::next would hand it back raw: then the chunk's last element
+   * moves into a cons in front of the unrealized rest, so the chunked_cons's tail is a cons
+   * (never empty; cons::next seqs its own tail) and nothing is forced. The one difference a
+   * program can see: chunk-first of such a seq is one element short. An empty chunk gives rest
+   * itself, as Clojure's chunk-cons does. */
+  inline object_ref chunk_cons(object_ref const chunk, object_ref const rest) {
+    if(chunk.get_type() != object_type::array_chunk) {
+      return jank::runtime::chunk_cons(chunk, rest);
+    }
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    auto const n(buf(c->buffer).size() - c->offset);
+    if(n == 0) { return rest; }
+    bool const unrealized_lazy{ rest.get_type() == object_type::lazy_sequence
+                                && expect_object<obj::lazy_sequence>(rest)->fn.is_some() };
+    if(!unrealized_lazy) {
+      return make_box<obj::chunked_cons>(chunk, rest.is_nil() ? rest : rest.seq());
+    }
+    auto const tail(make_box<obj::cons>(buf(c->buffer)[c->offset + n - 1], rest));
+    if(n == 1) { return tail; }
+    jank::native_vector<object_ref> v(buf(c->buffer).begin() + static_cast<long>(c->offset),
+                                      buf(c->buffer).begin() + static_cast<long>(c->offset + n - 1));
+    return make_box<obj::chunked_cons>(make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0)),
+                                       tail);
+  }
+
+  /* A4-2 (u3): a chunked_cons over a whole chunk whose rest is nil or known non-empty (map's
+   * rest over a source that still has elements: map keeps emptiness), so apt's
+   * chunked_cons::next, which hands the raw tail back, never meets an empty lazy tail and the
+   * chunk is not cut (chunk-first counts 32, as Clojure's). An empty chunk gives rest. */
+  inline object_ref chunk_cons_whole(object_ref const chunk, object_ref const rest) {
+    if(chunk.get_type() != object_type::array_chunk) {
+      return jank::runtime::chunk_cons(chunk, rest);
+    }
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    if(buf(c->buffer).size() == c->offset) { return rest; }
+    return make_box<obj::chunked_cons>(chunk, rest);
+  }
+
+  /* The stock chunked branch of map / filter in one C++ loop over a chunk: f (pred) called once
+   * per element in order, the results in a new chunk (u5's 23-chunk-branch, adapter-side). */
+  inline object_ref chunk_map(object_ref const f, object_ref const chunk) {
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    jank::native_vector<object_ref> v;
+    v.reserve(buf(c->buffer).size() - c->offset);
+    for(auto i(c->offset); i < buf(c->buffer).size(); ++i) { v.push_back(f.call(buf(c->buffer)[i])); }
+    return make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0));
+  }
+
+  inline object_ref chunk_filter(object_ref const pred, object_ref const chunk) {
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    jank::native_vector<object_ref> v;
+    for(auto i(c->offset); i < buf(c->buffer).size(); ++i) {
+      auto const e(buf(c->buffer)[i]);
+      if(truthy(pred.call(e))) { v.push_back(e); }
+    }
+    return make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0));
+  }
+
+  /* count of a seq that starts as a jank chunked_cons: a chunk at a time (jank's own walk steps
+   * a chunked_cons by chunk_next, which on apt copies the whole chunk per element), the cons /
+   * lazy_sequence links between chunks one by one. */
+  /* [n rest]: rest nil when the whole seq was counted, else the part still to count. */
+  inline object_ref count_chunked_head(object_ref const x) {
+    jank::i64 n{};
+    object_ref cur{ x };
+    while(!cur.is_nil()) {
+      auto const t(cur.get_type());
+      if(t == object_type::chunked_cons) {
+        auto const cc(expect_object<obj::chunked_cons>(cur));
+        if(cc->head.get_type() != object_type::array_chunk) { break; }
+        auto const c(expect_object<obj::array_chunk>(cc->head));
+        n += static_cast<jank::i64>(buf(c->buffer).size() - c->offset);
+        cur = cc->tail.is_nil() ? cc->tail : cc->tail.seq();
+      }
+      else if(t == object_type::cons) { ++n; cur = cur.next(); }
+      else if(t == object_type::lazy_sequence) { cur = cur.seq(); }
+      else { break; }
+    }
+    return make_box<obj::persistent_vector>(std::in_place, make_box(n), cur);
+  }
+
+  /* IChunk.reduce over a jank array_chunk: by index, a reduced result returned unopened. */
+  inline object_ref chunk_reduce(object_ref const chunk, object_ref const f, object_ref const init) {
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    object_ref acc{ init };
+    for(auto i(c->offset); i < buf(c->buffer).size(); ++i) {
+      acc = f.call(acc, buf(c->buffer)[i]);
+      if(acc.get_type() == object_type::reduced) { return acc; }
+    }
+    return acc;
+  }
+}
+")
+
+(cpp/raw "
+#include <jank/runtime/obj/native_vector_sequence.hpp>
+#include <jank/runtime/obj/persistent_vector_sequence.hpp>
+#include <jank/runtime/obj/persistent_string.hpp>
+#include <jank/runtime/obj/character.hpp>
+#include <jank/runtime/core/to_string.hpp>
+#include <jank/runtime/core/meta.hpp>
+#include <gc/gc.h>
+
+/* A4 (c)(d) (u3): the leaves. A second block, beside cohost_rt, so the two lanes' C++ never
+ * share lines. */
+namespace cohost_leaf {
+  using namespace jank::runtime;
+
+  /* A4 (c): jank's sort result is a native_vector_sequence. On apt 0.1-noble its next copies the
+   * whole buffer and hands back a sequence that starts over at index 0 ((rest (sort [3 1 2]))
+   * prints (1 2 3)), so every walk of a sort result is wrong past first and quadratic in time
+   * ((reduce + (sort xs)) over 1e5: 60 s). The result is copied once into a persistent_vector
+   * and handed back as that vector's seq: O(1) next, metadatable, inside jank's visit set, the
+   * sort's meta carried. The series build (patch 11-sorted-walk: a shared buffer_ref, O(1) next)
+   * takes jank's result untouched; the choice is made at compile time on the header's shape. */
+  template <class NVS>
+  object_ref sorted_seq_t(object_ref const r, object_ref const m) {
+    if(r.get_type() != object_type::native_vector_sequence) { return r; }
+    auto const s(expect_object<NVS>(r));
+    constexpr bool shared{ requires { typename NVS::buffer_ref; } };
+    auto const &data([&]() -> auto const & {
+      if constexpr(shared) { return *s->data; } else { return s->data; }
+    }());
+    if(s->index >= data.size()) { return r; }
+    /* the series: next is O(1) already, so its result stands, unless the collection had meta:
+     * the JVM's sort keeps it ((with-meta (seq a) (meta coll))) and cohost reads no meta on the
+     * series' native_vector_sequence (its sort result reads nil under cohost), so then the copy */
+    if constexpr(shared) {
+      if(m.is_nil()) { return r; }
+    }
+    jank::runtime::detail::native_transient_vector t;
+    for(auto i(s->index); i < data.size(); ++i) { t.push_back(data[i]); }
+    auto const v(make_box<obj::persistent_vector>(t.persistent()));
+    auto const out(make_box<obj::persistent_vector_sequence>(v, static_cast<jank::usize>(0)));
+    if(m.is_nil()) { return out; }
+    return out->with_meta(m);
+  }
+
+  /* r: jank's sort result; m: the sorted collection's meta (nil for none) */
+  inline object_ref sorted_seq(object_ref const r, object_ref const m) {
+    return sorted_seq_t<obj::native_vector_sequence>(r, m);
+  }
+
+  /* A4 (d): nth and count of a string or vector in one C++ call. Under cohost each went through
+   * the M-5 natives' guards (is_cohost, vector?/string?, count, then jank's nth: five var derefs
+   * and calls, ~250 ns per string nth on apt). An ASCII byte comes back as one shared character
+   * box per byte value (a table in uncollectable GC memory, so the collector sees its boxes);
+   * anything else -- an index out of range or not an integer, a byte >= 128, another type --
+   * goes to `stock`, the M-5 native, unchanged (its bounds error, cohost instances). */
+  inline object_ref *char_table() {
+    static object_ref *t{ [] {
+      auto const p(static_cast<object_ref *>(GC_MALLOC_UNCOLLECTABLE(128 * sizeof(object_ref))));
+      for(int b{}; b < 128; ++b) { new(p + b) object_ref{ make_box<obj::character>(static_cast<char>(b)) }; }
+      return p;
+    }() };
+    return t;
+  }
+
+  inline object_ref nth_or(object_ref const c, object_ref const i, object_ref const stock) {
+    if(is_integer(i)) {
+      auto const n(to_int(i));
+      auto const t(c.get_type());
+      if(t == object_type::persistent_string) {
+        auto const &d(expect_object<obj::persistent_string>(c)->data);
+        if(0 <= n && n < static_cast<jank::i64>(d.size())) {
+          auto const b(static_cast<unsigned char>(d[static_cast<size_t>(n)]));
+          if(b < 128) { return char_table()[b]; }
+        }
+      }
+      else if(t == object_type::persistent_vector) {
+        auto const &d(expect_object<obj::persistent_vector>(c)->data);
+        if(0 <= n && n < static_cast<jank::i64>(d.size())) { return d[static_cast<size_t>(n)]; }
+      }
+    }
+    return stock.call(c, i);
+  }
+
+  inline object_ref nth_or(object_ref const c, object_ref const i, object_ref const nf, object_ref const stock) {
+    if(is_integer(i)) {
+      auto const n(to_int(i));
+      auto const t(c.get_type());
+      if(t == object_type::persistent_string) {
+        auto const &d(expect_object<obj::persistent_string>(c)->data);
+        if(n < 0 || n >= static_cast<jank::i64>(d.size())) { return nf; }
+        auto const b(static_cast<unsigned char>(d[static_cast<size_t>(n)]));
+        if(b < 128) { return char_table()[b]; }
+      }
+      else if(t == object_type::persistent_vector) {
+        auto const &d(expect_object<obj::persistent_vector>(c)->data);
+        if(n < 0 || n >= static_cast<jank::i64>(d.size())) { return nf; }
+        return d[static_cast<size_t>(n)];
+      }
+    }
+    return stock.call(c, i, nf);
+  }
+
+  inline object_ref count_or(object_ref const c, object_ref const stock) {
+    auto const t(c.get_type());
+    if(t == object_type::persistent_vector) {
+      return make_box(static_cast<jank::i64>(expect_object<obj::persistent_vector>(c)->data.size()));
+    }
+    if(t == object_type::persistent_string) {
+      return make_box(static_cast<jank::i64>(expect_object<obj::persistent_string>(c)->data.size()));
+    }
+    if(t == object_type::nil) { return make_box(static_cast<jank::i64>(0)); }
+    return stock.call(c);
+  }
+
+  /* A4 (d): str. The jank adapter's str (jank_host.jank's 'str override) is variadic through
+   * apply and a lazy map that asks adapter/exception? of every argument. Here: nil writes
+   * nothing, a string / number / keyword / symbol / character / boolean writes what jank's own
+   * str writes (to_string), anything else is handed to `render` (the adapter's one-argument str,
+   * which keeps the exception rendering) and its string appended. */
+  inline bool plain(object_ref const x) {
+    switch(x.get_type()) {
+      case object_type::boolean:
+      case object_type::integer:
+      case object_type::small_integer:
+      case object_type::real:
+      case object_type::small_real:
+      case object_type::keyword:
+      case object_type::symbol:
+      case object_type::character:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  inline void put(jtl::string_builder &b, object_ref const x, object_ref const render) {
+    auto const t(x.get_type());
+    if(t == object_type::nil) { return; }
+    if(t == object_type::persistent_string) { b(expect_object<obj::persistent_string>(x)->data); return; }
+    if(plain(x)) { jank::runtime::to_string(x, b); return; }
+    auto const r(render.call(x));
+    if(r.get_type() == object_type::persistent_string) { b(expect_object<obj::persistent_string>(r)->data); }
+    else { jank::runtime::to_string(r, b); }
+  }
+
+  inline object_ref str1(object_ref const render, object_ref const a) {
+    auto const t(a.get_type());
+    if(t == object_type::persistent_string) { return a; }
+    if(t == object_type::nil) { return make_box<obj::persistent_string>(jtl::immutable_string{}); }
+    if(!plain(a)) { return render.call(a); }
+    jtl::string_builder b;
+    jank::runtime::to_string(a, b);
+    return make_box<obj::persistent_string>(b.release());
+  }
+
+  inline object_ref str2(object_ref const render, object_ref const a, object_ref const c) {
+    jtl::string_builder b;
+    put(b, a, render); put(b, c, render);
+    return make_box<obj::persistent_string>(b.release());
+  }
+
+  inline object_ref str3(object_ref const render, object_ref const a, object_ref const c, object_ref const d) {
+    jtl::string_builder b;
+    put(b, a, render); put(b, c, render); put(b, d, render);
+    return make_box<obj::persistent_string>(b.release());
+  }
+
+  inline object_ref str4(object_ref const render, object_ref const a, object_ref const c, object_ref const d,
+                         object_ref const e) {
+    jtl::string_builder b;
+    put(b, a, render); put(b, c, render); put(b, d, render); put(b, e, render);
+    return make_box<obj::persistent_string>(b.release());
+  }
+
+  /* any number of arguments, as a seq (the variadic arity's rest) after three fixed ones */
+  inline object_ref strn(object_ref const render, object_ref const a, object_ref const c, object_ref const d,
+                         object_ref const more) {
+    jtl::string_builder b;
+    put(b, a, render); put(b, c, render); put(b, d, render);
+    for(auto s(jank::runtime::seq(more)); !s.is_nil(); s = jank::runtime::next(s)) {
+      put(b, jank::runtime::first(s), render);
+    }
+    return make_box<obj::persistent_string>(b.release());
+  }
+}
+")
+
+(defn version
+  "The C++ extension's version (cohost_rt::version): its presence says the extension loaded."
+  []
+  (cpp/cohost_rt.version))
+
+(defn chunk-cons
+  "The stock pipeline's chunk-cons on jank: lazy in its rest (cohost_rt::chunk_cons)."
+  [chunk rest]
+  (cpp/cohost_rt.chunk_cons chunk rest))
+
+(defn chunk?
+  "Whether x is one of jank's chunks (an array_chunk)."
+  [x]
+  (cpp/cohost_rt.is_chunk x))
+
+(defn chunk-reduce
+  "IChunk.reduce over a jank chunk: a reduced result returned unopened."
+  [chunk f init]
+  (cpp/cohost_rt.chunk_reduce chunk f init))
+
+(defn- fixnum? [x] (and (integer? x) (< -4611686018427387904 x 4611686018427387904)))
+
+(defn range
+  "clojure.core/range (the adapter's native, A4 (a)): integer arguments give jank's own obj::range,
+   which is chunked (32 per chunk, chunked-seq? true) where jank's integer_range is not, so the
+   stock map/filter/reduce take their chunked branches; anything else is jank's own range. Its
+   count is O(1) through count-with below; its nth walks it."
+  ([] (clojure.core/range))
+  ([end] (if (fixnum? end) (cpp/jank.runtime.obj.range.create end) (clojure.core/range end)))
+  ([start end] (if (and (fixnum? start) (fixnum? end))
+                 (cpp/jank.runtime.obj.range.create start end)
+                 (clojure.core/range start end)))
+  ([start end step] (if (and (fixnum? start) (fixnum? end) (fixnum? step))
+                      (cpp/jank.runtime.obj.range.create start end step)
+                      (clojure.core/range start end step))))
+
+(defn map
+  "clojure.core/map (the adapter's native, A4 (a)): (map f coll) takes a jank chunked seq a chunk
+   at a time through one C++ loop (cohost_rt::chunk_map) and keeps its result chunked and lazy;
+   every other arity is jank's own map."
+  ([f] (clojure.core/map f))
+  ([f coll]
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (if (chunked-seq? s)
+         ;; A4-2: the source's rest is seq'd here (a range or vector seq: free; a chunked map
+         ;; source: its next chunk, one chunk ahead of the JVM, at that inner level only), so
+         ;; the rest is nil or a non-empty map and the chunk stays whole
+         (let [c (cpp/cohost_rt.chunk_map f (chunk-first s))
+               r (seq (chunk-rest s))]
+           (cpp/cohost_rt.chunk_cons_whole c (when r (map f r))))
+         (cons (f (first s)) (map f (rest s)))))))
+  ([f c1 c2] (clojure.core/map f c1 c2))
+  ([f c1 c2 c3] (clojure.core/map f c1 c2 c3))
+  ([f c1 c2 c3 & colls] (apply clojure.core/map f c1 c2 c3 colls)))
+
+(defn filter
+  "clojure.core/filter (the adapter's native, A4 (a)): (filter pred coll) as map above
+   (cohost_rt::chunk_filter); (filter pred) is jank's own."
+  ([pred] (clojure.core/filter pred))
+  ([pred coll]
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (if (chunked-seq? s)
+         ;; A4-2: the chunk stays whole when the source has nothing left (the rest is nil);
+         ;; otherwise filter's rest may realize empty, so chunk-cons's rule applies (the chunk's
+         ;; last element moves into a cons in front of the rest: chunk-first one short)
+         (let [c (cpp/cohost_rt.chunk_filter pred (chunk-first s))
+               r (seq (chunk-rest s))]
+           (if r
+             (chunk-cons c (filter pred r))
+             (cpp/cohost_rt.chunk_cons_whole c nil)))
+         (let [f (first s) r (rest s)]
+           (if (pred f) (cons f (filter pred r)) (filter pred r))))))))
+
+(defn count-with
+  "A count fn for cohost.core: a seq that starts as a jank chunked_cons is counted a chunk at a
+   time (cohost_rt::count_chunked_head); the rest, and anything else, by `stock-count`."
+  [stock-count]
+  (fn [coll]
+    (let [rn (cpp/cohost_rt.range_count coll)]
+      (if (<= 0 rn) rn
+    (if (cpp/cohost_rt.is_chunked_cons coll)
+      (let [[n rest] (cpp/cohost_rt.count_chunked_head coll)]
+        (if (nil? rest) n (+ n (stock-count rest))))
+      (stock-count coll))))))
+
+
+(defn sorted-seq
+  "A4 (c): jank's sort result r as a seq whose walk is linear and right on apt
+   (cohost_leaf::sorted_seq), carrying m (the sorted collection's meta) as the JVM's sort does;
+   on the series build r itself, with m."
+  [r m]
+  (cpp/cohost_leaf.sorted_seq r m))
+
+(defn nth-with
+  "A4 (d): an nth fn for cohost.core: a string or vector at an in-range integer index in one C++
+   call (cohost_leaf::nth_or); everything else by `stock`."
+  [stock]
+  (fn ([c i] (cpp/cohost_leaf.nth_or c i stock))
+      ([c i nf] (cpp/cohost_leaf.nth_or c i nf stock))))
+
+(defn count-fast-with
+  "A4 (d): a count fn: a vector, string or nil in one C++ call (cohost_leaf::count_or); else `stock`."
+  [stock]
+  (fn [c] (cpp/cohost_leaf.count_or c stock)))
+
+(defn str-with
+  "A4 (d): str for cohost.core on jank: fixed arities, one string builder, plain values written
+   as jank's own str writes them, anything else through `render` (the adapter's one-argument
+   str, which keeps the exception rendering)."
+  [render]
+  (fn ([] "")
+      ([a] (cpp/cohost_leaf.str1 render a))
+      ([a b] (cpp/cohost_leaf.str2 render a b))
+      ([a b c] (cpp/cohost_leaf.str3 render a b c))
+      ([a b c d] (cpp/cohost_leaf.str4 render a b c d))
+      ([a b c d & more] (cpp/cohost_leaf.strn render a b c (cons d more)))))
+

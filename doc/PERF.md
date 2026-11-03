@@ -1371,3 +1371,273 @@ alone.
   compare through the adapter's own `:interned-var` / `:var-get`.
 - On Chromium the host's compare through JS `Array.prototype.sort` was slower than the shim's wrapper.
 
+
+## jank's collector environment (jank-MAX A1)
+
+Apt jank 0.1-noble (UNPATCHED) starts bdwgc from its own defaults; patch 19 compiles a default initial heap into
+`jank_init` when `GC_INITIAL_HEAP_SIZE` is unset. A1 sets the collector environment from cohost's side for every jank
+process cohost launches: `dev/perf/jank_gc_env.clj` (`GC_INITIAL_HEAP_SIZE=512M`; a `GC_*` variable the user sets
+wins key by key; `COHOST_JANK_GC=none` sets nothing), passed by `bb.edn`'s `jank!` (boot:jank on the snapshot or the
+AOT modules, boot:jank-snapshot, boot:jank-jit, bench:jank) and the tasks that shell jank directly (boot:jank-profile,
+boot:jank-aot), and by `bench:programs`' cohost-on-jank target (`jank-jit`/`jank-aot` keep jank as shipped). The
+snapshot bakes no heap: bdwgc reads the variable at `GC_init`. Commit `d537775`. Measured 2026-11-02, 7:30-10:20 PM
+ET, apt jank, `max/main` @ `8434556`, box 4 CPUs / 15 GB shared with lanes u1 and u5 (no lock).
+
+**The matrix** (3 interleaved rounds per cell, run as three parallel streams with the cell order rotated, load 4-11;
+median [min-max]; ms unless named; heap:divisor, 3 = bdwgc's default divisor; `boot` = `bb boot:jank` on the
+snapshot, `bootaot` = `JANK_BIN=/usr/local/bin/jank bb boot:jank`). Every one of the 42 boots: 542/171/78/0,
+147/149, 61/61; `run.sh 17` (counts only) identical in every cell.
+
+| row | none | 128M:2 | 128M:3 | 256M:2 | 256M:3 | 512M:2 | 512M:3 |
+|---|---|---|---|---|---|---|---|
+| run18 [i i] ms | 1628.4 [1000-1775] | 452.0 [377-723] | 470.0 [340-1055] | 340.0 [309-398] | 949.8 [341-1141] | 516.2 [466-548] | 768.7 [386-941] |
+| run18 bt ms | 372.2 [205-389] | 214.9 [131-807] | 122.4 [114-216] | 123.2 [108-199] | 303.9 [192-395] | 153.6 [122-264] | 194.4 [84-318] |
+| prog binary-trees-14 | 217.2 [205-363] | 467.2 [430-508] | 279.0 [233-341] | 237.3 [142-338] | 433.0 [391-521] | 172.2 [143-303] | 246.6 [152-315] |
+| prog lazy-pipeline | 3772.3 [3423-5192] | 6308.9 [4132-6508] | 2656.0 [1805-3913] | 2774.2 [2281-4949] | 5905.6 [5448-9522] | 3565.1 [3298-6454] | 3168.5 [2239-5740] |
+| prog keyword-map | 1012.7 [847-1137] | 1804.1 [1551-2205] | 918.7 [567-1006] | 649.9 [517-766] | 1372.4 [924-1448] | 763.0 [689-1361] | 638.9 [509-674] |
+| prog json | 8156.5 [6725-13866] | 14194.1 [12822-14478] | 10135.8 [8997-13604] | 7937.6 [6131-12611] | 13300.5 [12752-13373] | 8598.6 [6262-13036] | 12586.9 [6313-13162] |
+| boot wall s | 38.0 [26-51] | 77.4 [66-85] | 46.5 [37-79] | 39.2 [35-94] | 55.5 [24-75] | 36.8 [35-66] | 35.2 [24-90] |
+| boot maxrss KB | 801708.0 [795736-805040] | 888104.0 [887880-888344] | 887976.0 [887960-888128] | 1029900.0 [1029848-1030072] | 1030152.0 [1029960-1030208] | 1314140.0 [1314120-1314200] | 1314144.0 [1314032-1314208] |
+| bootaot wall s | 204.6 [173-335] | 443.1 [247-464] | 331.7 [215-449] | 347.7 [198-506] | 232.9 [174-411] | 213.6 [203-236] | 184.5 [175-462] |
+| bootaot maxrss KB | 1778432.0 [1778280-1795964] | 1817704.0 [1817696-1817920] | 1782320.0 [1782288-1782576] | 1888680.0 [1888628-1892588] | 1888776.0 [1888644-1888872] | 2172876.0 [2172660-2172884] | 2176196.0 [2172716-2176400] |
+
+512M beats bdwgc's defaults on 6 of 8 timed rows at either divisor (256M:2: 5, 128M:3: 4); at divisor 3 it wins
+keyword-map and both boot walls outright. Boot maxrss: 1.64x apt's on the snapshot path, 1.22x on the AOT path
+(within the 2x bar). The three streams made the program rows noisy, so they were measured again:
+
+**Re-measure, one stream** (4 rounds, order rotated, `bb bench:programs jank`, MEDIAN-MS, median of the 4 rounds):
+
+| program | none | 256M:2 | 512M |
+|---|---:|---:|---:|
+| binary-trees-14 | 160.4 | 136.1 | **114.6** |
+| json | 5251.6 | 4541.4 | **3922.5** |
+| keyword-map | 609.8 | 469.0 | **465.0** |
+| lazy-pipeline | **2052.2** | 2506.2 | 2876.3 |
+
+**Before / after** (`COHOST_JANK_GC=none` / the default, 3 interleaved rounds):
+
+| measure | before | after |
+|---|---|---|
+| `bb bench:jank`, snapshot leg: stock geomean over 29 cases | 1 | **0.506** (15 cases below every before run, 0 above; format 413.66 -> 276.57 ms, sort 103.92 -> 24.16, lazy-pipeline 231.52 -> 62.34) |
+| `bb bench:jank`, AOT leg | 1 | **0.856** (11 below, 7 above; format 408.81 -> 316.16) |
+| `bench:programs jank` binary-trees-14 | 159.85 / 166.89 / 383.68 | 177.05 / 185.11 / 390.79 |
+| `bench:programs jank` lazy-pipeline | 2376.57 / 2859.33 / 3114.86 | 3957.01 / 4028.63 / 4121.70 |
+| `bb boot:jank` (snapshot) maxrss KB | 795580 / 802448 / 805212 | 1313788 / 1314248 / 1314428 |
+
+lazy-pipeline is slower with the larger heap in both program measurements; binary-trees-14 was faster in the
+single-stream re-measure and level in the before/after. The default stays 512M: it wins bench:jank on both legs,
+`run.sh 18`, and three of the four program rows.
+
+**PATCHED** (`JANK_BIN` = a source build carrying 19-gc-defaults, `/usr/local/lib/jank-dev`: 11 13 14 12-21 18 19;
+3 rounds): not a no-op. Patch 19 applies its own heap only when the variable is unset, so cohost's 512M replaces it:
+boot (AOT) maxrss 1776172 -> 2166628 KB (1.22x), binary-trees-14 80.86 -> 56.19 ms; boots 542/171/78/0, 147/149,
+61/61 both ways. `COHOST_JANK_GC=none` gives a patched binary its own default.
+
+Lane D's D-4 (cohost's mainline, not yet in `max/main`) chose the same 512M on another box for the CLI launch
+(`dev/perf/jank_snapshot_cli.clj`); when `max/main` takes the mainline, that literal should read `(jank-gc-env)`.
+
+## cohost-max: unpatched and patched
+
+The jank-MAX fleet's scoreboard in two columns: UNPATCHED is apt jank 0.1-noble with cohost's launcher (A1's
+`GC_INITIAL_HEAP_SIZE=512M` in effect), PATCHED is the 21-patch series build
+(`JANK_BIN=/home/user/int-a/jank-inst/bin/jank`; the launcher's 512M applies there too). x1 writes the programs
+table under this heading (X1-5); the `bb bench:jank` table is below (X1-5b).
+
+### `bb bench:programs`: the program suite against JVM Clojure (X1-5, x1)
+
+Measured 2026-11-02 9:59 PM to 2026-11-03 1:06 AM ET on int-a's box (4 CPUs, 15 GB, shared with five other lanes, no
+lock). This is **one round**. For each program and target, the UNPATCHED process (apt jank 0.1-noble) ran, then the
+PATCHED one (`JANK_BIN=/home/user/int-a/jank-inst/bin/jank`, f3d82d65 + the 21-patch series of `max/main`). One x1
+jank process ran at a time. Each cell is that process's median of 10 timed calls, after the driver's warm-up (C-1's
+method), with the min-max of those 10 calls in brackets. xJVM is against the single JVM run, `bb bench:programs jvm`,
+taken at the start of the round at load 5-6. Script: `round.sh`/`roundp.sh` in x1's lane dir; raw logs:
+`/home/user/logs/x1-r1{a,b,c,d}.log`.
+
+Each row comes from the tree that was current when it ran. max/main moved four times during the round, and the
+coordinator's NOTICEs named which rows were re-run:
+
+- binary-trees, binary-trees-hinted, binary-trees-14 and binary-trees-14-hinted: max/x1 `a5cca22` (= max/main
+  `22b0bc0`), 9:59-11:41 PM ET, load 7-17 (median 12.6). That is before A1's 512M launcher heap, so these
+  rows are the first to re-run.
+- keyword-map, fannkuch(-hinted), nsieve(-hinted), k-nucleotide, dispatch, json and first-output: `dd72e52`
+  (`ce94816`: the sort gate, A1), 11:42 PM-12:19 AM ET, load 3-8. The 11:3x load gate (1-minute load < 8, free > 4 GB)
+  was in force from here on.
+- fib, fib-hinted, tak, tak-hinted, nbody(-hinted), spectral-norm(-hinted), sum-overflow(-hinted): `0e5d60b` (max/main
+  `034534a`: A5-3 and A4), 12:20-12:46 AM ET, load 3-6.
+- sort, lazy-pipeline, pipeline and mandelbrot(-hinted): `dfa7ce4` (max/main `ecc9a31`: A4 and U6-7), 12:46-1:06 AM
+  ET, load 4-6.
+
+jank's own AOT (`bb bench:programs jank-aot`):
+
+| program | size | jvm | UNPATCHED ms (min-max) | xJVM | PATCHED ms (min-max) | xJVM |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 36 | 202.2 | 80.0 (75.4-117.9) | x0.40 | 100.0 (51.4-104.5) | x0.49 |
+| fib-hinted | 36 | 125.3 | 132.3 (131.2-133.9) | x1.06 | 51.7 (51.4-52.3) | x0.41 |
+| tak | 30 20 10 | 295.2 | 488.2 (477.3-562.9) | x1.65 | 120.8 (119.5-140.9) | x0.41 |
+| tak-hinted | 30 20 10 | 251.4 | 819.5 (805.6-850.0) | x3.26 | 118.2 (118.0-119.0) | x0.47 |
+| nbody | 50000 | 268.0 | ABSENT error: use of undeclared identifier 's59' | - | 786.2 (770.8-862.2) | x2.93 |
+| nbody-hinted | 50000 | 190.0 | ABSENT error: use of undeclared identifier 's61' | - | 802.7 (788.7-840.7) | x4.23 |
+| spectral-norm | 600 | 225.3 | 1924.1 (1849.0-2090.9) | x8.54 | 229.8 (224.1-289.5) | x1.02 |
+| spectral-norm-hinted | 600 | 163.8 | 3992.1 (3288.2-4447.5) | x24.38 | 277.3 (213.2-361.9) | x1.69 |
+| mandelbrot | 1500 | 250.9 | ABSENT error: use of undeclared identifier 's35' | - | 721.2 (617.8-791.8) | x2.87 |
+| mandelbrot-hinted | 1500 | 270.3 | ABSENT error: use of undeclared identifier 's37' | - | 266.4 (239.8-329.6) | x0.99 |
+| binary-trees | 18 | 307.2 | 6045.4 (5800.7-6261.5) | x19.68 | 904.5 (790.3-1162.6) | x2.94 |
+| binary-trees-hinted | 18 | 267.3 | 5739.8 (4836.4-6847.4) | x21.47 | 1173.0 (1133.7-1213.8) | x4.39 |
+| binary-trees-14 | 14 | 6.7 | 598.8 (367.9-1026.4) | x88.97 | 52.2 (48.3-115.0) | x7.76 |
+| binary-trees-14-hinted | 14 | 6.3 | 427.8 (403.2-461.4) | x68.39 | 51.0 (32.8-78.1) | x8.15 |
+| sum-overflow | 1000000 | 15.1 | 127.3 (72.1-236.3) DIFFER | - | 6.3 (6.2-10.6) | x0.42 |
+| sum-overflow-hinted | 1000000 | 0.4 | 8.5 (8.4-8.6) DIFFER | - | 2.0 (1.9-2.1) | x4.84 |
+| sort | 100000 | 61.3 | 37251.9 (26929.7-39501.5) | x607.59 | 29.7 (20.4-41.1) | x0.48 |
+| lazy-pipeline | 1000000 | 33.6 | 1078.8 (690.6-2307.9) | x32.08 | 21.1 (20.6-125.8) | x0.63 |
+| keyword-map | 1000000 | 77.7 | 365.9 (346.9-439.8) | x4.71 | 162.1 (160.3-175.0) | x2.08 |
+| fannkuch | 8 | 612.4 | ABSENT error: use of undeclared identifier 's28' | - | 494.6 (450.5-561.5) | x0.81 |
+| fannkuch-hinted | 8 | 720.2 | ABSENT error: use of undeclared identifier 's30' | - | 504.6 (463.0-537.5) | x0.70 |
+| nsieve | 20 | 244.0 | ABSENT error: use of undeclared identifier 's56'; did you mean ' | - | 106.4 (100.7-126.6) | x0.44 |
+| nsieve-hinted | 20 | 259.7 | ABSENT error: use of undeclared identifier 's58'; did you mean ' | - | 98.1 (93.0-123.4) | x0.38 |
+| k-nucleotide | 2000000 | 172.0 | 549.9 (508.1-578.9) | x3.20 | 270.2 (255.4-439.5) | x1.57 |
+| pipeline | 500000 | 195.9 | 1294.5 (1054.5-1670.2) DIFFER | - | 897.7 (638.2-1002.5) | x4.58 |
+| dispatch | 5000000 | 193.7 | ABSENT error: The symbol `defprotocol` could not be resolved. | - | ABSENT error: The symbol `defprotocol` could not be resolved. | - |
+| json | 30000 | 311.4 | 1685.6 (1658.7-1735.8) | x5.41 | 557.9 (540.1-619.1) | x1.79 |
+| first-output | - | 1417.1 | 805.3 (617.5-1023.4) | x0.57 | 672.9 (478.1-759.5) | x0.47 |
+
+cohost on jank (`bb bench:programs jank`):
+
+| program | size | jvm | UNPATCHED ms (min-max) | xJVM | PATCHED ms (min-max) | xJVM |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 36 | 202.2 | 470.2 (454.5-602.0) | x2.33 | 65.7 (65.2-66.0) | x0.32 |
+| fib-hinted | 36 | 125.3 | 700.4 (688.4-708.8) | x5.59 | 65.5 (65.2-66.8) | x0.52 |
+| tak | 30 20 10 | 295.2 | 488.0 (482.3-501.7) | x1.65 | 112.5 (112.4-112.6) | x0.38 |
+| tak-hinted | 30 20 10 | 251.4 | 1551.4 (1542.8-1587.0) | x6.17 | 112.1 (111.8-116.5) | x0.45 |
+| nbody | 50000 | 268.0 | 5089.0 (5046.0-5338.2) | x18.99 | 3838.1 (3682.3-3899.6) | x14.32 |
+| nbody-hinted | 50000 | 190.0 | 5153.0 (4980.8-5248.6) | x27.12 | 3784.6 (3701.1-3853.7) | x19.92 |
+| spectral-norm | 600 | 225.3 | 1144.5 (976.5-1548.6) | x5.08 | 583.7 (465.4-769.2) | x2.59 |
+| spectral-norm-hinted | 600 | 163.8 | 1549.9 (1363.4-1867.2) | x9.46 | 543.0 (542.0-571.8) | x3.32 |
+| mandelbrot | 1500 | 250.9 | 721.3 (671.9-828.4) | x2.87 | 544.6 (505.3-651.6) | x2.17 |
+| mandelbrot-hinted | 1500 | 270.3 | 1139.6 (833.8-1327.4) | x4.22 | 940.3 (852.3-1230.3) | x3.48 |
+| binary-trees | 18 | 307.2 | 6558.0 (5993.1-6891.4) | x21.35 | 1494.9 (1475.0-1719.9) | x4.87 |
+| binary-trees-hinted | 18 | 267.3 | 8182.4 (7238.5-9002.6) | x30.61 | 2008.4 (1816.8-2301.1) | x7.51 |
+| binary-trees-14 | 14 | 6.7 | 331.7 (211.8-447.4) | x49.29 | 75.6 (61.4-241.2) | x11.24 |
+| binary-trees-14-hinted | 14 | 6.3 | 320.3 (227.5-458.2) | x51.21 | 54.4 (45.9-189.3) | x8.69 |
+| sum-overflow | 1000000 | 15.1 | 21.6 (21.1-83.1) | x1.43 | 5.0 (4.9-5.2) | x0.33 |
+| sum-overflow-hinted | 1000000 | 0.4 | 9.3 (9.1-9.7) | x22.94 | 7.8 (7.6-8.7) | x19.36 |
+| sort | 100000 | 61.3 | 68.9 (33.0-153.2) | x1.12 | 57.7 (24.0-103.3) | x0.94 |
+| lazy-pipeline | 1000000 | 33.6 | 184.0 (126.2-397.2) | x5.47 | 72.0 (68.0-344.2) | x2.14 |
+| keyword-map | 1000000 | 77.7 | 520.0 (460.5-527.1) | x6.69 | 366.3 (305.9-369.9) | x4.71 |
+| fannkuch | 8 | 612.4 | 1577.1 (1394.4-1683.8) | x2.58 | 1294.4 (1269.1-1416.2) | x2.11 |
+| fannkuch-hinted | 8 | 720.2 | 1662.1 (1419.4-1777.8) | x2.31 | 1284.8 (1205.5-1356.6) | x1.78 |
+| nsieve | 20 | 244.0 | 456.3 (443.5-521.7) | x1.87 | 281.6 (279.8-284.7) | x1.15 |
+| nsieve-hinted | 20 | 259.7 | 466.4 (444.2-579.8) | x1.80 | 288.0 (285.6-291.5) | x1.11 |
+| k-nucleotide | 2000000 | 172.0 | 1531.8 (1451.6-1646.4) | x8.91 | 1302.9 (1141.8-1661.3) | x7.57 |
+| pipeline | 500000 | 195.9 | 1322.4 (1147.7-1528.7) | x6.75 | 1436.4 (1129.4-1602.5) | x7.33 |
+| dispatch | 5000000 | 193.7 | 1015.3 (991.5-1082.4) | x5.24 | 318.8 (317.9-332.6) | x1.65 |
+| json | 30000 | 311.4 | 3580.2 (3050.0-4805.0) | x11.50 | 2634.4 (2438.0-3089.2) | x8.46 |
+| first-output | - | 1417.1 | 14105.2 (12226.8-15906.3) | x9.95 | 21411.8 (20987.3-25263.7) | x15.11 |
+
+Geomeans of xJVM over the rows that print the JVM's result (SAME). A DIFFER or ABSENT row is not counted:
+
+| target | UNPATCHED | PATCHED | over the rows SAME in both columns |
+|---|---:|---:|---:|
+| jank-aot | 8.706 over 16 | 1.309 over 27 | 8.706 / 1.272 over 16 |
+| **cohost on jank** | **6.524 over 28** (unhinted 5.316 over 18, hinted 9.431 over 10) | 2.870 over 28 (unhinted 2.675 over 18, hinted 3.256 over 10) | 6.524 / 2.870 over 28 |
+
+- **The public number is cohost on unpatched jank: 6.524 xJVM over all 28 programs.** Every row runs and prints the
+  JVM's result on both binaries. In X1-3 the same column was 14.818 over 16 (9-patch era, 9c40fa2). Three changes
+  account for most of the drop: the sort gate (32.7 s on 77befea, 68.9 ms here), A4's chunked ranges (lazy-pipeline
+  2880.6 ms in X1-3, 184.0 here), and A5 (sum-overflow, pipeline and dispatch are SAME on apt).
+- jank's own core on apt still cannot compile nbody, mandelbrot, fannkuch and nsieve (`use of undeclared identifier
+  'sNN'`, the inner-loop rebinding) or dispatch (`defprotocol`). It wraps sum-overflow and pipeline at 32 bits
+  (DIFFER). Its sort is the quadratic walk, 37.3 s.
+- Under cohost, two rows are slower on PATCHED than on UNPATCHED:
+  - pipeline: 1436.4 against 1322.4 ms. The ranges overlap, so one round cannot separate it from noise.
+  - first-output: 21411.8 against 14105.2 ms, 1.5x, outside both ranges. first-output is process wall time to `ok`,
+    which includes loading cohost's AOT modules, and the patched binary has no snapshot (u0's note below).
+- Single-round caveat: the min-max is within one process. Rounds 2-3 run only for rows within 20% of a bar or with a
+  min-max spanning 2x (10:3x NOTICE). On the UNPATCHED cohost column, rows spanning 2x are binary-trees-14(-hinted),
+  sort, lazy-pipeline and sum-overflow; with the binary-trees rows' pre-A1 tree, they are the re-run list.
+
+**X1-4 (the format regression), closed with u0's X1-5b.** On apt, at every first-parent merge from c499930 to
+6918ca7, `dev/research/p13_format.clj` (`run-cohost-jank.sh`, -O3, 3 interleaved rounds per commit) gave 144-166 ms
+with no step. `bb bench:jank`'s format row, A B x3, was 144.68 ms at c499930 against 134.68 at 6918ca7. The snapshot
+boot was 211.25 against AOT 163.91, with the ranges overlapping. So apt has no format regression to name. The 80.9 ms
+baseline is below every number this box gives at its 120-250 ms noise (x1, 2026-11-02 7:27 PM ET; probes
+`dev/research/p13_format.clj` and `run-cohost-jank-snapshot.sh`). The patched leg is u0's format row below: medians
+310.01 apt against 420.56 patched with overlapping ranges, so a regression is not established either.
+
+### `bb bench:jank`: the stock core against jank's own core (X1-5b, u0)
+
+Measured 2026-11-02/03, 10:50 PM-12:20 AM ET, on max/x3 @ `ce94816` (= max/main with `651592c` + A1), int-a's box
+(4 CPUs, 15 GB, six lanes, no lock). Legs interleaved per round: apt on the snapshot, apt on the AOT modules
+(`JANK_BIN=/usr/local/bin/jank`), patched on the AOT modules (a `JANK_BIN` binary has no snapshot). Rounds 1-2 ran
+at load 8-14; from round 2's second leg on, each leg started only under the load gate (1-minute load < 8, free
+memory > 4 GB). Rounds 4-5 are two extra AOT pairs for the regex row. x = stock / jank's own (the printed ratio);
+the geomean is over the 30 printed x values of a run, median [range] over the runs.
+
+| | apt, snapshot (3 runs) | apt, AOT (5 runs) | patched, AOT (5 runs) |
+|---|---:|---:|---:|
+| stock core / jank's own core, geomean x | **1.47** [1.38-1.50] | **1.48** [1.38-1.79] | **2.29** [1.87-2.56] |
+
+The patched column's ratio is higher because the series speeds jank's own core more than the stock core
+(lazy-pipeline, AOT medians: jank's own 82.39 -> 2.10 ms, 39x; the stock core 157.01 -> 24.83 ms, 6.3x).
+
+Per case, stock-side ms median [range], and the median x:
+
+| case | apt-snapshot stock ms | x | apt-aot stock ms | x | patched-aot stock ms | x | patched median above apt AOT max |
+|---|---|---|---|---|---|---|---|
+| fn-call | 1.27 [1.27-1.33] | 2.06 | 1.30 [1.28-1.38] | 2.09 | 0.21 [0.21-0.22] | 1.00 |  |
+| loop-arith | 0.00 [0.00-0.00] | 1.06 | 0.00 [0.00-0.00] | 1.05 | 0.05 [0.05-0.05] | 0.99 | yes |
+| hinted-loop | 0.00 [0.00-0.00] | 0.00 | 0.00 [0.00-0.00] | 0.00 | 0.05 [0.05-0.05] | 0.99 | yes |
+| reduce-range | 3.79 [3.76-11.71] | 0.34 | 3.95 [3.55-7.66] | 0.49 | 0.97 [0.97-0.99] | 0.78 |  |
+| lazy-pipeline | 93.44 [86.22-166.07] | 1.64 | 157.01 [72.17-246.86] | 1.90 | 24.83 [24.81-29.20] | 11.90 |  |
+| transduce | 13.81 [10.06-24.95] | 2.01 | 16.01 [9.65-19.54] | 2.27 | 4.71 [4.69-6.66] | 2.83 |  |
+| into-vector | 4.83 [4.71-12.52] | 0.99 | 5.94 [4.36-8.66] | 1.01 | 1.69 [1.68-1.72] | 1.13 |  |
+| conj-vector | 19.90 [14.32-29.95] | 0.71 | 18.75 [9.91-22.01] | 0.83 | 10.55 [10.24-14.90] | 1.03 |  |
+| transient-vector | 34.81 [22.34-55.47] | 6.52 | 34.95 [23.77-44.97] | 5.61 | 35.18 [34.55-63.49] | 35.30 |  |
+| assoc-map | 34.90 [22.81-57.27] | 1.01 | 22.82 [22.29-50.86] | 0.96 | 22.27 [21.90-39.20] | 1.04 |  |
+| map-lookup | 12.09 [8.07-20.27] | 0.96 | 8.42 [8.26-16.42] | 0.62 | 5.49 [5.38-9.44] | 1.47 |  |
+| keyword-lookup | 8.85 [8.76-12.87] | 0.52 | 4.81 [4.74-8.88] | 0.48 | 1.69 [1.65-1.70] | 1.02 |  |
+| destructure | 21.33 [15.28-37.11] | 1.53 | 25.08 [13.24-25.21] | 1.44 | 6.96 [6.84-10.85] | 4.10 |  |
+| frequencies | 60.65 [56.32-90.67] | 1.31 | 93.62 [37.22-97.74] | 1.70 | 16.45 [16.25-20.55] | 2.98 |  |
+| group-by | 27.63 [22.36-46.44] | 1.08 | 34.59 [18.74-40.17] | 1.02 | 12.14 [12.03-16.42] | 1.03 |  |
+| sort | 48.56 [46.08-60.37] | 1.75 | 37.79 [24.36-52.68] | 1.76 | 10.68 [10.56-14.79] | 1.97 |  |
+| sort-by | 65.31 [44.11-105.46] | 5.27 | 45.19 [41.36-94.08] | 5.16 | 8.48 [7.98-9.22] | 1.01 |  |
+| set-build | 14.00 [9.88-22.78] | 1.07 | 13.69 [9.53-18.14] | 1.04 | 4.91 [4.89-9.07] | 1.09 |  |
+| distinct | 346.44 [324.73-461.66] | 0.93 | 437.98 [192.78-526.05] | 1.07 | 75.65 [74.22-107.36] | 1.12 |  |
+| partition | 121.67 [92.43-202.26] | 1.65 | 160.40 [58.01-243.18] | 1.70 | 34.26 [33.37-56.50] | 1.47 |  |
+| lazy-iterate | 8.67 [5.06-12.88] | 1.65 | 4.83 [4.56-8.99] | 1.29 | 1.55 [1.54-1.60] | 1.70 |  |
+| atom-swap | 9.34 [5.36-13.22] | 1.10 | 5.45 [5.22-9.46] | 1.14 | 4.32 [4.22-4.65] | 1.00 |  |
+| protocol | 19.64 [16.81-28.57] | 0.97 | 12.05 [11.72-24.32] | 0.90 | 3.90 [3.84-4.20] | 0.98 |  |
+| multimethod | 5.29 [3.88-8.03] | 0.18 | 3.93 [3.90-7.96] | 0.15 | 2.19 [2.17-2.45] | 1.62 |  |
+| equality | 0.72 [0.71-0.73] | 0.99 | 0.71 [0.68-0.72] | 1.00 | 0.70 [0.68-0.73] | 0.99 |  |
+| str-build | 60.57 [27.90-74.13] | 3.88 | 39.20 [29.23-65.34] | 4.70 | 16.54 [16.31-31.81] | 6.02 |  |
+| string-join | 56.47 [29.25-71.07] | 0.02 | 27.55 [25.85-113.36] | 0.00 | 27.22 [21.68-41.44] | 0.00 |  |
+| regex | 228.62 [193.13-437.10] | 69.87 | 262.87 [244.39-376.49] | 96.18 | 322.33 [212.62-489.66] | 108.14 |  |
+| format | 366.52 [323.03-732.09] | 107.45 | 310.01 [260.27-596.84] | 102.24 | 420.56 [281.06-559.33] | 229.85 |  |
+| pr-str | 1.00 [1.00-1.00] | 1.00 | 0.97 [0.96-0.98] | 1.00 | 1.02 [1.01-1.05] | 1.04 | yes |
+
+The rows marked: loop-arith and hinted-loop take 0.00 ms on apt because its i32 loop arithmetic wraps and the loop
+folds; the series computes the i64 sum (12-21) in 0.05 ms. pr-str is a 1-ms case (0.97 -> 1.02). No other case's
+patched median is above apt's AOT maximum; regex, flagged after 3 runs (402.92 above 376.49), is not after 5.
+
+**format** (X1-4's open question): stock ms per round, apt AOT / patched AOT: 596.84 / 424.77 (load 13), 461.46 /
+420.56 (8), 277.75 / 329.87 (6), 260.27 / 281.06 (4-5), 310.01 / 559.33 (4-7). The series was faster in two pairs
+and slower in three; the medians are 310.01 and 420.56 with overlapping ranges. A format regression on the
+series is not established at this spread; the low-load pairs (rounds 3-4) put it at 1.08-1.19x if it exists. On
+apt the snapshot leg is not slower than the AOT leg (366.52 vs 310.01, ranges overlapping).
+
+`bb boot:jank` in this tree: apt (snapshot and AOT) 525/171/17 natives/78/0, battery 170/172 (subs count nth first
+last butlast; Character outside ASCII), libraries 62/62; patched 523/171/19 natives/78/0 (sort and sort-by become
+natives where the sort walks linearly, `651592c`), the same 170/172 and 62/62.
+
+**On max/main `034534a`** (A4's extension: chunked ranges, the linear sorted walk, string nth; max/x3 @
+`66329bd`), one round under the load gate (load 4.5-6.8, free 5-7 GB), 2026-11-03 1:00-1:09 AM ET. Stock ms /
+x, jank's own ms in brackets; the table above is on `ce94816`, before it:
+
+| row | apt, snapshot | apt, AOT | patched, AOT |
+|---|---|---|---|
+| sort | **10.78** / x0.31 (own 33.99); was 48.56 | **19.38** / x0.59 (own 32.37); was 37.79 | **6.49** / x1.18 (own 5.46); was 10.68 |
+| lazy-pipeline | **20.02** / x0.23 (own 86.43); was 93.44 | **15.25** / x0.06 (own 244.93); was 157.01 | **7.17** / x3.40 (own 2.10); was 24.83 |
+| geomean x over the 30 cases (this one round) | 1.22 | 1.22 | 2.05 |
+
+On `034534a` the stock core beats jank's own core on both rows on apt (x < 1), and on the series it is within 3.4x
+(lazy-pipeline) and 1.18x (sort). `bb boot:jank` there: 518/171/24 natives/78/0, battery 176/178, libraries 62/62
+on all three (the snapshot, apt AOT, patched AOT).
