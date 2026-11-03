@@ -1,0 +1,2 @@
+  PROGRAM fib ABSENT booted as stock: 555   from host: 145   skipped: 91   errors: 0
+  PROGRAM fib-hinted ABSENT booted as stock: 555   from host: 145   skipped: 91   errors: 0
