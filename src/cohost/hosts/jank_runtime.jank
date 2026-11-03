@@ -154,6 +154,7 @@ namespace cohost_rt {
 #include <jank/runtime/obj/character.hpp>
 #include <jank/runtime/core/to_string.hpp>
 #include <gc/gc.h>
+#include <cstdlib>
 
 /* A4 (c)(d) (u3): the leaves. A second block, beside cohost_rt, so the two lanes' C++ never
  * share lines. */
@@ -306,6 +307,27 @@ namespace cohost_leaf {
     return make_box<obj::persistent_string>(b.release());
   }
 
+  inline object_ref str4(object_ref const render, object_ref const a, object_ref const c, object_ref const d,
+                         object_ref const e) {
+    jtl::string_builder b;
+    put(b, a, render); put(b, c, render); put(b, d, render); put(b, e, render);
+    return make_box<obj::persistent_string>(b.release());
+  }
+
+  /* A4 (e): the small vector. Building [i i] under cohost on apt costs ~3.5x what it costs in
+   * plain jank (2e6: ~2 s against ~0.6 s), and the difference is the collector, not the vector:
+   * Boehm collects once per (heap / free-space divisor) bytes allocated and every collection
+   * marks cohost's whole live heap (the booted core: ~700 MB RSS). The same loop with
+   * GC_INITIAL_HEAP_SIZE=1G runs at plain jank's speed (+0.9 GB RSS); a free-space divisor of
+   * 1 (Boehm's default 3) collects a third as often for +~0.1 GB. Set once at the adapter's
+   * install, unless the environment already names one (GC_FREE_SPACE_DIVISOR wins). */
+  inline object_ref gc_tune(object_ref const divisor) {
+    if(is_integer(divisor) && to_int(divisor) > 0 && !std::getenv(\"GC_FREE_SPACE_DIVISOR\")) {
+      GC_set_free_space_divisor(static_cast<GC_word>(to_int(divisor)));
+    }
+    return make_box(static_cast<jank::i64>(GC_get_free_space_divisor()));
+  }
+
   /* any number of arguments, as a seq (the variadic arity's rest) after three fixed ones */
   inline object_ref strn(object_ref const render, object_ref const a, object_ref const c, object_ref const d,
                          object_ref const more) {
@@ -422,4 +444,11 @@ namespace cohost_leaf {
       ([a] (cpp/cohost_leaf.str1 render a))
       ([a b] (cpp/cohost_leaf.str2 render a b))
       ([a b c] (cpp/cohost_leaf.str3 render a b c))
-      ([a b c & more] (cpp/cohost_leaf.strn render a b c more))))
+      ([a b c d] (cpp/cohost_leaf.str4 render a b c d))
+      ([a b c d & more] (cpp/cohost_leaf.strn render a b c (cons d more)))))
+
+(defn gc-tune!
+  "A4 (e): Boehm's free-space divisor for cohost on jank (cohost_leaf::gc_tune); a positive
+   integer, or nil to leave the collector as it is. Returns the divisor in effect."
+  [divisor]
+  (cpp/cohost_leaf.gc_tune divisor))

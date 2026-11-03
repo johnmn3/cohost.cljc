@@ -2019,6 +2019,10 @@ namespace cohost_obj {
              ;; call (jank-rt/count-fast-with, jank-rt/nth-with); the rest as before
              'clojure.core/count (jank-rt/count-fast-with (jank-rt/count-with native-count))
              'clojure.core/nth (jank-rt/nth-with native-nth)
+             ;; A4 (d): stock = is (Util/equiv x y), and Util-equiv on jank is jank's own =
+             ;; (shim.cljc), so jank's = is the same function minus the stock layers
+             ;; (~160 ns per char comparison on apt)
+             'clojure.core/= :host
              'clojure.core/get native-get
              'clojure.core/assoc native-assoc
              ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
@@ -2034,5 +2038,12 @@ namespace cohost_obj {
    :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
 })
 
+
+;; A4 (e): the jank adapter's collector setting (jank-rt/gc-tune!): Boehm's free-space divisor,
+;; 1 against its default 3 (allocation-heavy loops 1.5-2x on apt for ~+0.1 GB RSS: each collection
+;; marks the whole booted core). nil leaves the collector alone; GC_FREE_SPACE_DIVISOR in the
+;; environment wins.
+(def gc-free-space-divisor 1)
+(jank-rt/gc-tune! gc-free-space-divisor)
 
 (adapter/install! adapter)
