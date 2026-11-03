@@ -1004,7 +1004,7 @@
    codemod types itself)."
   [x]
   (and (seq? x) (symbol? (first x))
-       (not (contains? '#{let* loop* letfn* fn* fn if do quote var try throw recur def set! new . case*} (first x)))
+       (not (contains? #{'let* 'loop* 'letfn* 'fn* 'fn 'if 'do 'quote 'var 'try 'throw 'recur 'def 'set! 'new (symbol ".") 'case*} (first x)))
        (not (native-int-form? x)) (not (real-form? x))
        (not (#{\. \/} (first (name (first x)))))
        (not (and (namespace (first x)) (re-find #"^[A-Z]" (namespace (first x)))))))
@@ -2236,7 +2236,8 @@
   "True when form holds a let*, loop*, letfn* or try outside a quote."
   [form]
   (cond (seq? form) (and (not= 'quote (first form))
-                         (or (contains? '#{let* loop* letfn* try let loop letfn} (first form))
+                         ;; a set of quoted symbols, not a quoted set: let-go's reader makes '#{...} a list
+                         (or (contains? #{'let* 'loop* 'letfn* 'try 'let 'loop 'letfn} (first form))
                              (boolean (some block-inside? form))))
         (coll? form) (boolean (some block-inside? form))
         :else false))
