@@ -2157,9 +2157,7 @@ namespace cohost_assoc {
    :native-long-inits (when int-wraps? '#{count})
    ;; A7-1: a vector literal of 1..4 elements is one GC block (jank-rt/vec1..vec4) where jank's
    ;; own literal builds a transient (apt); the series build's own literals are one block already
-   ;; OFF until A7-1's two FAILs are fixed (a redefined record's protocol dispatch; spec's
-   ;; "or alt nilable"): the emission is (when false ...)
-   :vector-literal (when (and false (not (jank-rt/own-small-vectors?)))
+   :vector-literal (when (not (jank-rt/own-small-vectors?))
                      '{1 cohost.hosts.jank-runtime/vec1 2 cohost.hosts.jank-runtime/vec2
                        3 cohost.hosts.jank-runtime/vec3 4 cohost.hosts.jank-runtime/vec4})
    :core-ns 'clojure.core
