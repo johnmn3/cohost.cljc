@@ -30,13 +30,20 @@
 #include <jank/runtime/obj/number.hpp>
 #include <jank/runtime/obj/persistent_vector.hpp>
 #include <jank/runtime/core/truthy.hpp>
+#include <jank/runtime/obj/persistent_string.hpp>
+#include <jank/runtime/core/to_string.hpp>
+#include <charconv>
+#include <cstdlib>
+#include <cmath>
+#include <string>
+#include <string_view>
 
 namespace cohost_rt {
   using namespace jank::runtime;
 
   /* The extension's version: bumped with every change of its C++ (the AOT stamp already
    * follows this file). */
-  inline object_ref version() { return make_box(static_cast<jank::i64>(3)); }
+  inline object_ref version() { return make_box(static_cast<jank::i64>(4)); }
 
   /* A4 (a): chunked seqs built from jank's own obj::chunked_cons and obj::array_chunk, so
    * jank's runtime first/next/seq/count/=/hash/print walk them natively. On apt 0.1-noble
@@ -154,6 +161,64 @@ namespace cohost_rt {
       else { break; }
     }
     return make_box<obj::persistent_vector>(std::in_place, make_box(n), cur);
+  }
+
+  /* A5-5: Double.toString as the JVM writes it: the shortest digits that read back as the same
+   * double (std::to_chars, as JDK 19+), plain decimal for 1e-3 <= |d| < 1e7 with at least one
+   * fraction digit (1.0, 0.001, 1234567.5), else d.dddE<exp> (3.0E10, 1.0E-4); NaN, Infinity,
+   * -Infinity, 0.0 and -0.0 as the JVM's. jank's own writes 3e+10 and 1e-04. */
+  inline void jvm_double_into(double const d, jtl::string_builder &b) {
+    if(std::isnan(d)) { b(\"NaN\"); return; }
+    if(std::isinf(d)) { b(d < 0 ? \"-Infinity\" : \"Infinity\"); return; }
+    if(d == 0.0) { b(std::signbit(d) ? \"-0.0\" : \"0.0\"); return; }
+    char buf[64];
+    auto const r(std::to_chars(buf, buf + sizeof(buf), d, std::chars_format::scientific));
+    std::string_view const sci(buf, static_cast<size_t>(r.ptr - buf));
+    auto const epos(sci.find('e'));
+    std::string_view mant(sci.substr(0, epos));
+    int exp{ std::atoi(std::string(sci.substr(epos + 1)).c_str()) };
+    if(!mant.empty() && mant[0] == '-') { b(\"-\"); mant.remove_prefix(1); }
+    std::string digits;
+    for(char const c : mant) { if(c != '.') { digits.push_back(c); } }
+    /* the JDK writes at least two digits: when the shortest is one digit, the closest two-digit
+     * decimal that reads back as d (Double.MIN_VALUE is 4.9E-324, not 5.0E-324) */
+    if(digits.size() == 1) {
+      char b2[64];
+      auto const r2(std::to_chars(b2, b2 + sizeof(b2), std::fabs(d), std::chars_format::scientific, 1));
+      std::string const two(b2, static_cast<size_t>(r2.ptr - b2));
+      if(std::strtod(two.c_str(), nullptr) == std::fabs(d)) {
+        digits = std::string(1, two[0]) + two[2];
+        exp = std::atoi(two.substr(two.find('e') + 1).c_str());
+      }
+    }
+    while(digits.size() > 1 && digits.back() == '0') { digits.pop_back(); }
+    double const a{ std::fabs(d) };
+    std::string out;
+    if(a >= 1e-3 && a < 1e7) {
+      if(exp >= 0) {
+        auto const ip(static_cast<size_t>(exp) + 1);
+        while(digits.size() < ip) { digits.push_back('0'); }
+        out = digits.substr(0, ip) + \".\" + (digits.size() > ip ? digits.substr(ip) : std::string(\"0\"));
+      }
+      else { out = \"0.\" + std::string(static_cast<size_t>(-exp - 1), '0') + digits; }
+    }
+    else {
+      out = digits.substr(0, 1) + \".\" + (digits.size() > 1 ? digits.substr(1) : std::string(\"0\")) + \"E\"
+        + std::to_string(exp);
+    }
+    b(jtl::immutable_string{ out.data(), out.size() });
+  }
+
+  /* a double: jank boxes one as a small_real (make_box of any floating point), a real otherwise */
+  inline bool is_double(object_ref const x) {
+    auto const t(x.get_type());
+    return t == object_type::small_real || t == object_type::real;
+  }
+
+  inline object_ref double_str(object_ref const x) {
+    jtl::string_builder b;
+    jvm_double_into(to_real(x), b);
+    return make_box<obj::persistent_string>(b.release());
   }
 
   /* IChunk.reduce over a jank array_chunk: by index, a reduced result returned unopened. */
@@ -308,6 +373,7 @@ namespace cohost_leaf {
     auto const t(x.get_type());
     if(t == object_type::nil) { return; }
     if(t == object_type::persistent_string) { b(expect_object<obj::persistent_string>(x)->data); return; }
+    if(cohost_rt::is_double(x)) { cohost_rt::jvm_double_into(to_real(x), b); return; } /* A5-5 (u2) */
     if(plain(x)) { jank::runtime::to_string(x, b); return; }
     auto const r(render.call(x));
     if(r.get_type() == object_type::persistent_string) { b(expect_object<obj::persistent_string>(r)->data); }
@@ -318,6 +384,7 @@ namespace cohost_leaf {
     auto const t(a.get_type());
     if(t == object_type::persistent_string) { return a; }
     if(t == object_type::nil) { return make_box<obj::persistent_string>(jtl::immutable_string{}); }
+    if(cohost_rt::is_double(a)) { return cohost_rt::double_str(a); } /* A5-5 (u2) */
     if(!plain(a)) { return render.call(a); }
     jtl::string_builder b;
     jank::runtime::to_string(a, b);
@@ -475,3 +542,7 @@ namespace cohost_leaf {
       ([a b c d] (cpp/cohost_leaf.str4 render a b c d))
       ([a b c d & more] (cpp/cohost_leaf.strn render a b c (cons d more)))))
 
+(defn double-str
+  "A5-5: Double.toString as the JVM writes it (cohost_rt::double_str): 3.0E10, 1.0E-4, 0.001."
+  [x]
+  (cpp/cohost_rt.double_str x))

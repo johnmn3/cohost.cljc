@@ -184,6 +184,9 @@
    ;; wraps or traps); quot of a double; (int x) past i32 throws
    ["/ quot rem mod of integers, exact and in i64" "(let [x (identity -2147483648) y (identity -1)] [(== (* (/ 6 4) 2) 3) (== (/ 1 2) 0.5) (/ x y) (quot x y) (rem x y) (mod -7 2) (quot -7 2) (rem 7 -2) (/ 6 3)])" [true true 2147483648 2147483648 0 1 -3 1 2]]
    ["quot of a double is a double; int past 2^31 throws" "[(quot 7.5 2) (let [x (identity 2147483648)] (try (int x) (catch ArithmeticException e :overflow)))]" [3.0 :overflow]]
+   ;; A5-5: str of a double is Double.toString (jank's own str writes 3e+10). pr / print are
+   ;; the host's printer on jank (policy.cljc host-names) and still write 1e-04: not in this row
+   ["str of a double is Double.toString" "[(str 3.0E10) (str 1.0E-4) (str 1.0E7) (str 0.001) (str 1234567.5) (str \"x\" 1.0E21 \" \" -0.0) (.toString 2.5E-4)]" ["3.0E10" "1.0E-4" "1.0E7" "0.001" "1234567.5" "x1.0E21 -0.0" "2.5E-4"]]
    ["hash-combine hashes its argument as Object.hashCode does" "[(hash-combine 0 \"a\") (hash-combine 0 nil) (hash-combine 1 2) (hash-combine -5 \"hello\")]" [-1640531430 -1640531527 -1640531462 1541369522]]
    ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]
    ;; primitive fn* parameters coerce as JVM Clojure 1.12.0 does (measured
