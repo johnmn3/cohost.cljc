@@ -1493,8 +1493,8 @@ more than 5% worse, maxrss under 2x):
 
 **2G does not run.** At `GC_INITIAL_HEAP_SIZE=2G` every program fails on both binaries, in all 3 rounds: "JIT session
 error: In graph .../cohost/hosts/jank_host.o, section .eh_frame: relocation target ... (DW.ref.__gxx_personality_v0)
-is out of range of Delta32 fixup". The 2 GB initial heap puts the JIT's object mapping more than 2 GB from the
-runtime's code, beyond the reach of a 32-bit relocation. The 2G maxrss column (about 280 MB) is that failing process.
+is out of range of Delta32 fixup". The likely cause (inferred from the error, not measured) is that the 2 GB initial heap puts the JIT's object
+mapping more than 2 GB from the runtime's code, beyond the reach of a 32-bit relocation. The 2G maxrss column (about 280 MB) is that failing process.
 So the launcher's default must stay below that, and a user's `GC_INITIAL_HEAP_SIZE` of 2G breaks cohost on jank.
 
 ## cohost-max: unpatched and patched
