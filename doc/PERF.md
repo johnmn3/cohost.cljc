@@ -2,587 +2,433 @@
 
 How fast Clojure runs on cohost, on each runtime, against stock Clojure on the JVM.
 
-*Measured 2026-11-02/03 on cohost `main` @ ff30ce1 (the program columns on 6eec4e2, whose code is ff30ce1's for
-every runtime except jank's `sort`; see [jank](#jank)). Four 4-CPU Linux boxes and, from
-2026-11-03, a macOS box (Apple M5, [below](#macos-apple-m5-built-apps-on-c0431c6)); every ratio is against stock
-Clojure on the JVM measured on the same box, so ratios compare across boxes and milliseconds do not. Raw records:
-`doc/perf/release-perf/`. cohost is pre-alpha; these numbers will move.*
+Two things are measured, per box, per way of running a program:
 
-## At a glance
+1. **Startup**: the wall time of a hello-world `-main` (`dev/cli-demo`, `demo.main`), median of 3 runs after one
+   untimed run.
+2. **Speed**: the time per call of 28 benchmark programs, as the geometric mean of each program's ratio to stock
+   Clojure on the JVM on the same box (x3 = three times as long as the JVM).
 
-Clojure deploys ahead of time, and so does cohost: `cohost -T:build build` makes an app in each runtime's own compiled
-form ([Built apps](#built-apps), [doc/AOT-PLAN.md](AOT-PLAN.md)). Those are the numbers that count for a deployed
-program; running from source (`cohost :<runtime> ...`) is what development costs.
+The ways of running:
 
-| runtime | the built app (`cohost -T:build build`) | built: `run you` | built: programs (geomean xJVM) | from source: startup | from source: programs | the runtime's own Clojure |
-|---|---|---:|---:|---:|---:|---:|
-| stock Clojure on the JVM (the reference) | | | | 1.5 s | 1 | |
-| cohost `:jvm` (the real Clojure CLI) | an uberjar | not yet measured | x1.00 (28) | 1.4 s | 1 | |
-| cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | x4.39 (28, Box 4); x3.40 (28, macOS; x3.36 on c415244) | 2.6 s (1.3 s with the launcher, macOS) | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
-| cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | x6.3 (28); x6.56 on c0431c6; x7.13 (28, macOS) | 4.5 s | x9.6 (28) | x2.9 (28) |
-| cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | x3511 (25, at smaller sizes) | 88.6 s | not yet measured | not yet measured |
-| cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | x72.1 (27, Box 3); x111.9 (28, macOS) | 94.0 s | x79.3 (27) | x20.5 (28) |
-| cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | x10.7 (28, Box 3); x10.33 (28, macOS) | 8.9 s | x9.1 (28) | x3.9 (25) |
-| ClojureScript in Chromium | | | | | not measured | x3.0 (25) |
-| cohost `:phel` (Phel 0.54.0, PHP 8.5) | the app compiled to PHP by `phel build` (OPcache + tracing JIT) | 1.3-2.0 s (Box 1) | x131.6 (28, Box 1); does not build on macOS ([why](#macos-apple-m5-built-apps-on-c0431c6)) | 47.0 s | not yet measured | x23.7 (15 of 28) |
-| cohost `:lg` (let-go 1.13.0, Go) | boots from source (bytecode and Go: in progress) | | x167.7 (23 of 28, macOS, partial) | 15.4 s | x118.9 (25) | x19.3 (28) |
+| mode | command | what it is |
+|---|---|---|
+| **from source** | `cohost :<runtime> ...` | boots `clojure.core` from Clojure's own source on every start; what the batteries test |
+| **cached boot** | `cohost :jank ...`, `cohost :lpy ...` | the booted core saved once (jank: a snapshot and a native launcher; basilisp: a cached boot) and loaded instead; the default after `dev/install/<runtime>.sh` |
+| **built app** | `cohost -T:build build`, then `target/<app>/run` | the app in the runtime's own compiled form ([doc/CLI.md](CLI.md#building), [doc/AOT-PLAN.md](AOT-PLAN.md)); what a deployment runs |
+| **own Clojure** | `jank run`, `jolt`, `cljw`, ... | the runtime's own core library, not cohost: the reference for what running Clojure's `clojure.core` costs on it |
 
-How to read it:
+Every ratio is against the JVM measured on the same box, so ratios compare across boxes and milliseconds do not.
+Cells: `—` not measured; `fails` the program does not run or build there (why: [Known problems](#known-problems));
+`differs` it runs but gives another answer; `> x1000` cut off and unrecorded (a bug, listed below), left out of the
+geomean, whose count of programs follows it. cohost is pre-alpha; these numbers move with each release.
 
-- **"Programs"** is the geometric mean, over the suite's programs that ran and gave the JVM's answer, of each
-  program's time per call (warmed up) divided by stock Clojure's on the JVM. x10 means ten times as long.
-- **"Built"** runs each program as an app built by `cohost -T:build build` (`bb bench:programs <runtime>-built`).
-  `run you` is the README's built app, run from another directory (jank: Linux, 2026-11-02; jolt, basilisp,
-  ClojureWasm: macOS arm64, 2026-11-03, from aot/native-builds).
-- **"From source"** is `cohost :<runtime>`, which boots `clojure.core` from Clojure's source (jank and basilisp load a
-  cached boot instead). Startup is the median of 3 wall times of `cohost :<runtime> -M -m demo.main` in
-  `dev/cli-demo` ([Startup](#startup)).
-- **"The runtime's own Clojure"** runs the same programs on the runtime's own core library instead of on
-  Clojure's. The gap to it is what running Clojure's own `clojure.core` costs on that runtime.
+## The boxes
 
-## Built apps
+| box | hardware | runtimes | cohost | records |
+|---|---|---|---|---|
+| macOS | Apple M5, 10 cores, 32 GB, macOS 26.5; a desktop in use (load 3.2-4.8 at each column's start, the JVM column under the same load) | jank 0.1 (Homebrew tap), jolt 0.8.23, ClojureWasm 1.15.4, ClojureScript 1.12.42 on Node 22, let-go 1.13.0, OpenJDK 26 | c0431c6; the launcher on c415244 | `doc/perf/macos/` |
+| Box 4 | Linux, Intel Xeon 2.10 GHz, 4 CPUs; the coordinator's box, other work running | jank 0.1 (apt), jolt 0.8.23, let-go 1.13.0, Phel 0.54 on PHP 8.3, basilisp 0.5.1 | 4497c85 (run A), c0431c6 (run B) | `doc/perf/box4/` |
+| Box 3 | Linux, 4 CPUs; nothing else running | ClojureWasm 1.15.4, jolt, ClojureScript | 4497c85 | `doc/perf/release-perf-d/`, `doc/perf/built-d/` |
+| Box 2 | Linux, 4 CPUs | jank 0.1 (apt) | 6eec4e2 | `doc/perf/release-perf/` |
+| Box 1 | Linux, Intel Xeon 2.80 GHz, 4 CPUs, 15 GB; nothing else running | jolt, ClojureScript 1.12.42 (Node and headless Chromium), Phel 0.54, let-go, basilisp, ClojureWasm | ff30ce1 (startup), c/aot-phel (Phel's built app) | `doc/perf/release-perf/lane-c/` |
 
-What `cohost -T:build build` makes on each runtime is in [doc/CLI.md](CLI.md#building); how each runtime's own AOT
-form is reached, and its status, is [doc/AOT-PLAN.md](AOT-PLAN.md). Being measured now on Box 4 (the coordinator's
-box), against its own JVM column: `jolt-built` and `jvm-built` (done), `jank-built`, then `lpy-built` at smaller sizes; `cljw-built` on Box 3. Phel,
-let-go and ClojureScript follow as their AOT forms land.
+The benchmark programs and the method: [Method](#method). To measure your own machine: [Add a box](#add-a-box).
 
-### Box 4: built apps
+## macOS (Apple M5)
 
-Box 4 (4 CPUs, Intel Xeon 2.10 GHz, Linux), the release candidate coord/release4 @ 4497c85 (aot/native-builds merged),
-2026-11-03 from 4:06 AM ET; each program built with `cohost -T:build build` and run as `target/<name>/run`; the JVM
-column is Box 4's own (1:18 AM ET). Median ms (xJVM). Records: `doc/perf/box4/`.
+### Startup
 
-| program | jvm | jvm-built | jolt-built |
+| runtime | from source | cached boot | built app (`run you`) |
 |---|---:|---:|---:|
-| binary-trees | 246.8 | 246.5 (x1.00) | 1275.9 (x5.17) |
-| binary-trees-14 | 10.4 | 15.5 (x1.50) | 63.6 (x6.15) |
-| binary-trees-14-hinted | 14.2 | 10.6 (x0.75) | 152.7 (x10.72) |
-| binary-trees-hinted | 239.7 | 249.5 (x1.04) | 2918.8 (x12.17) |
-| dispatch | 152.8 | 175.5 (x1.15) | 954.1 (x6.24) |
-| fannkuch | 142.1 | 147.0 (x1.03) | 291.0 (x2.05) |
-| fannkuch-hinted | 163.1 | 161.2 (x0.99) | 279.9 (x1.72) |
-| fib | 121.8 | 117.1 (x0.96) | 288.5 (x2.37) |
-| fib-hinted | 76.3 | 85.9 (x1.13) | 8802.3 (x115.34) |
-| first-output | 804.7 | 710.9 (x0.88) | 1074.8 (x1.34) |
-| json | 219.9 | 209.1 (x0.95) | 3817.3 (x17.36) |
-| k-nucleotide | 128.6 | 133.7 (x1.04) | 660.1 (x5.13) |
-| keyword-map | 95.1 | 113.0 (x1.19) | 354.2 (x3.72) |
-| lazy-pipeline | 34.1 | 26.5 (x0.78) | 122.1 (x3.58) |
-| mandelbrot | 187.9 | 170.1 (x0.91) | 1434.2 (x7.63) |
-| mandelbrot-hinted | 174.6 | 171.7 (x0.98) | 1308.7 (x7.49) |
-| nbody | 212.9 | 187.8 (x0.88) | 748.4 (x3.52) |
-| nbody-hinted | 212.5 | 202.8 (x0.95) | 720.2 (x3.39) |
-| nsieve | 212.5 | 179.5 (x0.84) | 1706.5 (x8.03) |
-| nsieve-hinted | 180.2 | 180.9 (x1.00) | 1696.2 (x9.41) |
-| pipeline | 141.0 | 152.4 (x1.08) | 997.3 (x7.07) |
-| sort | 37.3 | 45.9 (x1.23) | 73.4 (x1.97) |
-| spectral-norm | 222.3 | 229.7 (x1.03) | 1402.1 (x6.31) |
-| spectral-norm-hinted | 133.8 | 129.8 (x0.97) | 4150.8 (x31.01) |
-| sum-overflow | 12.9 | 16.1 (x1.25) | 23.7 (x1.84) |
-| sum-overflow-hinted | 0.5 | 0.5 (x0.95) | 2.9 (x5.57) |
-| tak | 260.0 | 250.2 (x0.96) | 439.9 (x1.69) |
-| tak-hinted | 162.0 | 155.5 (x0.96) | 36047.5 (x222.48) |
-| **geomean xJVM** (programs that ran) | 1 | **x1.00** (28) | **x6.27** (28) |
+| jank | — | 1.34 s (`-m demo.main`; the first run 2.35 s), `-e` 0.58 s | — |
+| jolt | — | — | 0.37 s |
+| basilisp | — | — | 1.9 s |
+| ClojureWasm | — | — | 0.9 s |
+| JVM, ClojureScript, let-go, Phel | — | — | — |
 
-jolt's built app is one native binary per program. Its hinted programs are much slower than its plain ones
-(`tak-hinted` x222, `fib-hinted` x115): the same holds for cohost on jolt from source (Box 1), so it is how cohost
-treats type hints on jolt, not the build ([Type hints](#type-hints)).
+jank's cached boot is the launcher of c415244: the snapshot and the launcher build in 156.9 s (`bb boot:jank-snapshot`;
+batteries 214/216 and 62/62; the binary 91.5 MB). The built apps' `run you` are the README's app, run from another
+directory (2026-11-03, aot/native-builds).
 
-### basilisp's built app, at smaller sizes (Box 4)
+### Speed (geomean xJVM, programs counted)
 
-At the suite's sizes one call takes basilisp minutes (`fib 36` passed the 15-minute limit on Box 1), so basilisp is
-measured at lane C's smaller sizes, picked so one call on basilisp's own core takes about 5 to 20 s, with Box 4's JVM
-measured at the same sizes (2026-11-03 5:01-5:54 AM ET, 4497c85). Sizes: fib and fib-hinted 24; tak 21 14 7;
-binary-trees 12; sum-overflow 100000; sort 100000; lazy-pipeline 100000; keyword-map 100000; fannkuch 7; nsieve 16;
-k-nucleotide 20000; pipeline 5000; dispatch 50000; mandelbrot 50; nbody 1000; spectral-norm 100; json 1000 (each
-hinted form as its plain one). The built app is cohost on basilisp loading its cached boot; the boot is what the
-build saves, not time per call. Median ms (xJVM). Records: `doc/perf/box4/` (`jvm-small.edn`, `lpy-built-small.edn`).
+| runtime | own Clojure | cohost, from source | cohost, built app |
+|---|---:|---:|---:|
+| jank | x6.66 (13, JIT); x6.47 (13, AOT -O3) | — | x3.40 (28); x2.37 over the 13 the own core runs |
+| jolt | — | — | x7.13 (28) |
+| ClojureScript | — | — | x10.33 (28) |
+| ClojureWasm | — | — | x91.56 (26; 2 cut) |
+| let-go | — | — | x89.11 (18; 5 cut; 23 of 28 run) |
+| Phel | — | — | fails (the build) |
+| basilisp, JVM | — | — | — |
 
-| program | jvm | lpy-built |
-|---|---:|---:|
-| binary-trees | 3.3 | 7320.6 (x2217.55) |
-| binary-trees-hinted | 5.3 | 15429.5 (x2903.08) |
-| dispatch | 7.6 | 9182.3 (x1208.72) |
-| fannkuch | 20.9 | 13270.7 (x635.15) |
-| fannkuch-hinted | 25.3 | 13561.8 (x535.51) |
-| fib | 0.4 | 5569.6 (x14235.51) |
-| fib-hinted | 0.6 | 19813.4 (x34606.18) |
-| json | 10.7 | 17049.9 (x1589.13) |
-| k-nucleotide | 4.3 | 6405.6 (x1477.68) |
-| keyword-map | 13.4 | 42845.3 (x3203.82) |
-| lazy-pipeline | 2.7 | 16434.4 (x6108.06) |
-| mandelbrot | 0.4 | 6102.4 (x14175.41) |
-| mandelbrot-hinted | 0.3 | 5855.8 (x23207.65) |
-| nbody | 5.8 | 8070.5 (x1389.60) |
-| nbody-hinted | 9.6 | 7920.2 (x827.09) |
-| nsieve | 8.8 | 12509.9 (x1424.12) |
-| nsieve-hinted | 7.8 | 12778.6 (x1629.76) |
-| pipeline | 6.6 | 2144.4 (x325.45) |
-| sort | 57.6 | 23203.0 (x403.03) |
-| spectral-norm | 6.2 | 42080.4 (x6805.51) |
-| spectral-norm-hinted | 3.7 | 79750.5 (x21269.53) |
-| sum-overflow | 3.5 | 4862.3 (x1384.67) |
-| sum-overflow-hinted | 0.1 | 3337.8 (x25264.00) |
-| tak | 1.6 | 13547.4 (x8736.56) |
-| tak-hinted | 0.6 | 85579.8 (x141957.47) |
-| **geomean xJVM** (programs that ran) | 1 | **x3511.27** (25) |
+The built apps were measured on c0431c6 (2026-11-03, 11:36 AM to 12:58 PM ET); jank's again on c415244 (the launcher
+release): x3.36, every row within 5%. jank's own core was measured the night before (0c8834f, the same method and
+binary, against that run's JVM column). cohost's built app on jank is at or under the JVM on the call-heavy programs:
+`tak-hinted` x0.56, `fib` x0.91, `first-output` x0.97.
 
-### Box 4 on the release c0431c6: jank's and jolt's built apps
+### Per program: built apps (median ms, xJVM)
 
-The first measurement of jank's built app (hinted programs did not build before 8fcb495). Box 4 (4 CPUs, Intel Xeon
-2.10 GHz, Linux, jank 0.1 from apt), the JVM column measured on 2704c21 the same morning (10:19 AM ET), jank-built on
-8fcb495 (11:18 to 11:38 AM ET) and jolt-built (11:38 to 11:48 AM ET), the box busy with other compiles. Each program is one native executable from
-`cohost -T:build build`. Median ms (xJVM). Records: `doc/perf/box4/jank-built-c0431c6.edn`.
+| program | jvm | jank-built | jolt-built | cljs-built | cljw-built | lg-built |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 75 | 68 (x0.91) | 131 (x1.75) | 322 (x4.31) | 5,098 (x68.24) | 2,425 (x32.46) |
+| fib-hinted | 34 | 35 (x1.03) | 4,206 (x122.75) | 1,398 (x40.80) | > x1000 | 23,993 (x700.15) |
+| tak | 167 | 237 (x1.42) | 247 (x1.48) | 1,181 (x7.07) | 16,034 (x96.03) | 8,450 (x50.61) |
+| tak-hinted | 96 | 53 (x0.56) | 17,271 (x179.51) | 5,739 (x59.65) | > x1000 | > x1000 |
+| nbody | 106 | 321 (x3.03) | 321 (x3.03) | 657 (x6.20) | 4,666 (x44.06) | 5,714 (x53.95) |
+| nbody-hinted | 104 | 313 (x3.02) | 308 (x2.97) | 657 (x6.32) | 4,482 (x43.15) | 5,786 (x55.72) |
+| spectral-norm | 47 | 472 (x10.04) | 535 (x11.38) | 1,072 (x22.80) | 7,475 (x158.93) | 31,896 (x678.13) |
+| spectral-norm-hinted | 36 | 359 (x10.02) | 1,805 (x50.34) | 1,419 (x39.59) | 20,887 (x582.61) | > x1000 |
+| mandelbrot | 75 | 315 (x4.22) | 634 (x8.49) | 2,000 (x26.78) | 23,033 (x308.42) | > x1000 |
+| mandelbrot-hinted | 67 | 314 (x4.66) | 654 (x9.68) | 1,977 (x29.29) | 24,831 (x367.96) | > x1000 |
+| binary-trees | 86 | 318 (x3.69) | 615 (x7.14) | 617 (x7.17) | 7,654 (x88.92) | 10,758 (x124.98) |
+| binary-trees-hinted | 82 | 313 (x3.80) | 1,381 (x16.74) | 861 (x10.44) | 14,470 (x175.40) | 14,825 (x179.70) |
+| binary-trees-14 | 4.9 | 17 (x3.40) | 29 (x5.92) | 28 (x5.73) | 345 (x70.92) | 514 (x105.67) |
+| binary-trees-14-hinted | 4.6 | 17 (x3.65) | 65 (x14.03) | 39 (x8.40) | 716 (x154.84) | 695 (x150.20) |
+| sum-overflow | 2.3 | 12 (x5.29) | 8.9 (x3.96) | 2.9 (x1.29) | 9.1 (x4.05) | 18 (x7.89) |
+| sum-overflow-hinted | 0.3 | 5.0 (x18.38) | 2.0 (x7.26) | 28 (x102.75) | 33 (x122.57) | > x1000 |
+| sort | 12 | 17 (x1.39) | 30 (x2.52) | 36 (x2.95) | 2,793 (x232.08) | 522 (x43.35) |
+| lazy-pipeline | 11 | 50 (x4.50) | 42 (x3.81) | 96 (x8.59) | 5,176 (x465.51) | 2,181 (x196.12) |
+| keyword-map | 43 | 164 (x3.82) | 156 (x3.63) | 269 (x6.27) | 2,160 (x50.36) | 9,036 (x210.73) |
+| fannkuch | 85 | 259 (x3.04) | 103 (x1.20) | 285 (x3.33) | 3,149 (x36.85) | 2,602 (x30.45) |
+| fannkuch-hinted | 67 | 264 (x3.97) | 104 (x1.57) | 282 (x4.24) | 3,162 (x47.49) | 2,611 (x39.22) |
+| nsieve | 45 | 210 (x4.65) | 655 (x14.50) | 619 (x13.70) | 5,716 (x126.51) | 4,282 (x94.77) |
+| nsieve-hinted | 46 | 212 (x4.56) | 657 (x14.14) | 614 (x13.21) | 5,596 (x120.49) | 4,360 (x93.89) |
+| k-nucleotide | 52 | 202 (x3.88) | 344 (x6.61) | 505 (x9.70) | 3,411 (x65.52) | — |
+| pipeline | 60 | 304 (x5.03) | 339 (x5.61) | 249 (x4.12) | 2,911 (x48.17) | — |
+| dispatch | 70 | 331 (x4.70) | 431 (x6.12) | 1,084 (x15.39) | 13,115 (x186.23) | — |
+| json | 74 | 461 (x6.28) | 1,535 (x20.88) | 789 (x10.73) | 17,993 (x244.78) | — |
+| first-output | 195 | 190 (x0.97) | 339 (x1.74) | 1,838 (x9.41) | 850 (x4.35) | — |
+| **geomean xJVM** (recorded programs) | 1 | **x3.40** (28) | **x7.13** (28) | **x10.33** (28) | **x91.56** (26; 2 cut) | **x89.11** (18; 5 cut) |
+
+## Box 4 (Linux, Xeon 2.10 GHz)
+
+### Startup
+
+| runtime | from source | cached boot | built app (`run you`) |
+|---|---:|---:|---:|
+| jank | — | 2.1 s (`-m demo.main`; the first run 37 s), `-e` 2.0 s | — |
+| basilisp | — | 18.4-21.0 s (the first command 225 s) | — |
+| the others | — | — | — |
+
+jank: the launcher with the per-project snapshot (main after 0b6a476; the first `-m` of a project compiles its
+namespaces ahead). On the launcher release before it (c415244) `-m` took 3.6 s and `-e` 1.9 s, and through `jank
+run-main` (no launcher) 2.07 s and 2.06 s. basilisp: release candidate b2ec699, 1:48 AM ET. The box was busy with other
+work for every measurement here.
+
+### Speed (geomean xJVM, programs counted)
+
+Run A, cohost 4497c85, the JVM column of 1:18 AM ET; run B, cohost c0431c6, the JVM column of 10:19 AM ET.
+
+| runtime | own Clojure | cohost, from source | cohost, built app |
+|---|---:|---:|---:|
+| JVM | 1 | — | x1.01 (28) (A) |
+| jank | — | — | x4.40 (28) (B) |
+| jolt | — | — | x6.28 (28) (A); x6.57 (28) (B) |
+| let-go | x19.32 (28) (A) | x100.96 (24; 1 cut) (A) | — |
+| Phel | x23.70 (15) (A) | — | — |
+| basilisp | — | — | unrecorded: > x1000 on 24 of the 25 programs at the smaller sizes (A) |
+| ClojureScript, ClojureWasm | — | — | — |
+
+basilisp's built app is cohost's cached boot, not compiled code; at the suite's sizes one call takes minutes, and at
+lane C's smaller sizes (`doc/perf/box4/jvm-small.edn`, `lpy-built-small.edn`) every ratio but `pipeline` (x325) is
+over x1000. Phel's own core runs 15 of the 28 (12 fail on its own dialect, `json` differs).
+
+### Per program, run B (c0431c6): built apps (median ms, xJVM)
 
 | program | jvm | jank-built | jolt-built |
 |---|---:|---:|---:|
-| binary-trees | 241.9 | 1374.3 (x5.68) | 1410.7 (x5.83) |
-| binary-trees-14 | 12.4 | 74.7 (x6.01) | 59.2 (x4.76) |
-| binary-trees-14-hinted | 10.6 | 71.1 (x6.73) | 134.3 (x12.71) |
-| binary-trees-hinted | 263.2 | 1384.2 (x5.26) | 2964.1 (x11.26) |
-| dispatch | 140.8 | 1109.1 (x7.88) | 943.9 (x6.71) |
-| fannkuch | 134.7 | 952.9 (x7.08) | 253.5 (x1.88) |
-| fannkuch-hinted | 153.8 | 996.8 (x6.48) | 249.1 (x1.62) |
-| fib | 117.8 | 153.4 (x1.30) | 294.1 (x2.50) |
-| fib-hinted | 76.6 | 63.8 (x0.83) | 8909.0 (x116.33) |
-| first-output | 666.7 | 789.8 (x1.18) | 1164.6 (x1.75) |
-| json | 203.7 | 1922.9 (x9.44) | 4105.0 (x20.15) |
-| k-nucleotide | 134.3 | 755.1 (x5.62) | 680.1 (x5.06) |
-| keyword-map | 95.2 | 652.5 (x6.85) | 327.4 (x3.44) |
-| lazy-pipeline | 26.9 | 211.5 (x7.87) | 109.9 (x4.09) |
-| mandelbrot | 171.5 | 751.9 (x4.38) | 1463.0 (x8.53) |
-| mandelbrot-hinted | 169.6 | 785.2 (x4.63) | 1337.0 (x7.89) |
-| nbody | 205.8 | 1181.6 (x5.74) | 940.6 (x4.57) |
-| nbody-hinted | 201.6 | 1184.9 (x5.88) | 685.0 (x3.40) |
-| nsieve | 182.8 | 703.9 (x3.85) | 1616.2 (x8.84) |
-| nsieve-hinted | 175.9 | 695.9 (x3.96) | 1681.1 (x9.56) |
-| pipeline | 149.8 | 1638.4 (x10.94) | 995.0 (x6.64) |
-| sort | 32.6 | 62.6 (x1.92) | 64.9 (x1.99) |
-| spectral-norm | 223.2 | 815.7 (x3.65) | 1380.4 (x6.19) |
-| spectral-norm-hinted | 120.3 | 1164.7 (x9.68) | 4303.7 (x35.78) |
-| sum-overflow | 11.0 | 35.4 (x3.22) | 23.2 (x2.10) |
-| sum-overflow-hinted | 0.5 | 8.0 (x15.56) | 2.9 (x5.59) |
-| tak | 265.0 | 492.0 (x1.86) | 436.7 (x1.65) |
-| tak-hinted | 147.4 | 127.6 (x0.87) | 37246.1 (x252.71) |
-| **geomean xJVM** (programs that ran) | 1 | **x4.39** (28) | **x6.56** (28) |
+| fib | 118 | 153 (x1.30) | 294 (x2.50) |
+| fib-hinted | 77 | 64 (x0.83) | 8,909 (x116.31) |
+| tak | 265 | 492 (x1.86) | 437 (x1.65) |
+| tak-hinted | 147 | 128 (x0.87) | 37,246 (x252.69) |
+| nbody | 206 | 1,182 (x5.74) | 941 (x4.57) |
+| nbody-hinted | 202 | 1,185 (x5.88) | 685 (x3.40) |
+| spectral-norm | 223 | 816 (x3.65) | 1,380 (x6.18) |
+| spectral-norm-hinted | 120 | 1,165 (x9.68) | 4,304 (x35.77) |
+| mandelbrot | 172 | 752 (x4.38) | 1,463 (x8.53) |
+| mandelbrot-hinted | 170 | 785 (x4.63) | 1,337 (x7.88) |
+| binary-trees | 242 | 1,374 (x5.68) | 1,411 (x5.83) |
+| binary-trees-hinted | 263 | 1,384 (x5.26) | 2,964 (x11.26) |
+| binary-trees-14 | 12 | 75 (x6.02) | 59 (x4.77) |
+| binary-trees-14-hinted | 11 | 71 (x6.71) | 134 (x12.67) |
+| sum-overflow | 11 | 35 (x3.22) | 23 (x2.11) |
+| sum-overflow-hinted | 0.5 | 8.0 (x16.00) | 2.9 (x5.80) |
+| sort | 33 | 63 (x1.92) | 65 (x1.99) |
+| lazy-pipeline | 27 | 212 (x7.86) | 110 (x4.09) |
+| keyword-map | 95 | 653 (x6.85) | 327 (x3.44) |
+| fannkuch | 135 | 953 (x7.07) | 254 (x1.88) |
+| fannkuch-hinted | 154 | 997 (x6.48) | 249 (x1.62) |
+| nsieve | 183 | 704 (x3.85) | 1,616 (x8.84) |
+| nsieve-hinted | 176 | 696 (x3.96) | 1,681 (x9.56) |
+| k-nucleotide | 134 | 755 (x5.62) | 680 (x5.06) |
+| pipeline | 150 | 1,638 (x10.94) | 995 (x6.64) |
+| dispatch | 141 | 1,109 (x7.88) | 944 (x6.70) |
+| json | 204 | 1,923 (x9.44) | 4,105 (x20.15) |
+| first-output | 667 | 790 (x1.18) | 1,165 (x1.75) |
+| **geomean xJVM** (recorded programs) | 1 | **x4.40** (28) | **x6.57** (28) |
 
-### macOS (Apple M5): built apps on c0431c6
+### Per program, run A (4497c85) (median ms, xJVM)
 
-The macOS box: Apple M5, 10 cores (4 performance + 6 efficiency), 32 GB, macOS 26.5; jank 0.1 from jank's Homebrew
-tap, jolt 0.8.23, ClojureWasm 1.15.4 (ReleaseSafe), ClojureScript 1.12.42 on Node 22.22.3, let-go 1.13.0, OpenJDK
-26.0.1. A desktop in use: the load average was 3.2 to 4.8 when each column started, with the JVM column under the same
-load. coord/docs6 @ c0431c6, 2026-11-03 11:36 AM to 12:58 PM ET, full sizes, one column at a time; each program built
-with `cohost -T:build build` and run as `target/<name>/run`. Median ms (xJVM). Records: `doc/perf/macos/`.
-
-| program | size | jvm | jank-built | jolt-built | cljs-built | cljw-built | lg-built |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| fib | 36 | 74.708 | 67.928 (x0.91) | 130.741 (x1.75) | 322.055 (x4.31) | 5098.077 (x68.24) | 2425.223 (x32.46) |
-| fib-hinted | 36 | 34.268 | 35.327 (x1.03) | 4206.422 (x122.75) | 1398.200 (x40.80) | 43772.013 (x1277.36) | 23992.906 (x700.16) |
-| tak | 30 20 10 | 166.967 | 236.666 (x1.42) | 246.790 (x1.48) | 1180.974 (x7.07) | 16034.161 (x96.03) | 8449.643 (x50.61) |
-| tak-hinted | 30 20 10 | 96.212 | 53.417 (x0.56) | 17270.906 (x179.51) | 5739.285 (x59.65) | 174731.810 (x1816.11) | 96783.625 (x1005.94) |
-| nbody | 50000 | 105.905 | 320.600 (x3.03) | 320.623 (x3.03) | 656.933 (x6.20) | 4665.750 (x44.06) | 5713.667 (x53.95) |
-| nbody-hinted | 50000 | 103.851 | 313.317 (x3.02) | 308.316 (x2.97) | 656.551 (x6.32) | 4481.611 (x43.15) | 5786.063 (x55.72) |
-| spectral-norm | 600 | 47.036 | 472.361 (x10.04) | 535.232 (x11.38) | 1072.402 (x22.80) | 7475.272 (x158.93) | 31896.437 (x678.12) |
-| spectral-norm-hinted | 600 | 35.850 | 359.299 (x10.02) | 1804.778 (x50.34) | 1419.341 (x39.59) | 20886.649 (x582.61) | 41212.102 (x1149.56) |
-| mandelbrot | 1500 | 74.681 | 314.787 (x4.22) | 633.740 (x8.49) | 1999.767 (x26.78) | 23032.948 (x308.42) | 105893.570 (x1417.95) |
-| mandelbrot-hinted | 1500 | 67.482 | 314.371 (x4.66) | 653.555 (x9.68) | 1976.852 (x29.29) | 24830.915 (x367.96) | 103869.878 (x1539.22) |
-| binary-trees | 18 | 86.079 | 317.546 (x3.69) | 614.648 (x7.14) | 616.920 (x7.17) | 7654.334 (x88.92) | 10757.743 (x124.97) |
-| binary-trees-hinted | 18 | 82.499 | 313.285 (x3.80) | 1381.326 (x16.74) | 861.245 (x10.44) | 14470.009 (x175.40) | 14825.082 (x179.70) |
-| binary-trees-14 | 14 | 4.865 | 16.517 (x3.40) | 28.825 (x5.93) | 27.898 (x5.73) | 345.036 (x70.93) | 514.088 (x105.68) |
-| binary-trees-14-hinted | 14 | 4.625 | 16.870 (x3.65) | 64.901 (x14.03) | 38.862 (x8.40) | 716.141 (x154.85) | 694.659 (x150.20) |
-| sum-overflow | 1000000 | 2.259 | 11.948 (x5.29) | 8.941 (x3.96) | 2.907 (x1.29) | 9.143 (x4.05) | 17.831 (x7.89) |
-| sum-overflow-hinted | 1000000 | 0.272 | 4.998 (x18.37) | 1.975 (x7.26) | 27.949 (x102.72) | 33.339 (x122.53) | 1245.054 (x4576.01) |
-| sort | 100000 | 12.036 | 16.746 (x1.39) | 30.283 (x2.52) | 35.565 (x2.95) | 2793.302 (x232.08) | 521.800 (x43.35) |
-| lazy-pipeline | 1000000 | 11.119 | 50.016 (x4.50) | 42.408 (x3.81) | 95.558 (x8.59) | 5176.009 (x465.52) | 2180.609 (x196.12) |
-| keyword-map | 1000000 | 42.878 | 163.930 (x3.82) | 155.691 (x3.63) | 268.741 (x6.27) | 2159.509 (x50.36) | 9035.674 (x210.73) |
-| fannkuch | 8 | 85.449 | 259.477 (x3.04) | 102.851 (x1.20) | 284.862 (x3.33) | 3149.211 (x36.85) | 2601.613 (x30.45) |
-| fannkuch-hinted | 8 | 66.586 | 264.048 (x3.97) | 104.372 (x1.57) | 282.058 (x4.24) | 3162.471 (x47.49) | 2611.476 (x39.22) |
-| nsieve | 20 | 45.185 | 210.294 (x4.65) | 655.085 (x14.50) | 618.926 (x13.70) | 5716.244 (x126.51) | 4282.136 (x94.77) |
-| nsieve-hinted | 20 | 46.443 | 211.787 (x4.56) | 656.889 (x14.14) | 613.560 (x13.21) | 5595.779 (x120.49) | 4360.395 (x93.89) |
-| k-nucleotide | 2000000 | 52.055 | 201.978 (x3.88) | 343.834 (x6.61) | 505.158 (x9.70) | 3410.723 (x65.52) | not run |
-| pipeline | 500000 | 60.428 | 303.887 (x5.03) | 338.817 (x5.61) | 249.230 (x4.12) | 2910.599 (x48.17) | not run |
-| dispatch | 5000000 | 70.423 | 331.125 (x4.70) | 431.117 (x6.12) | 1083.630 (x15.39) | 13114.865 (x186.23) | not run |
-| json | 30000 | 73.510 | 461.360 (x6.28) | 1534.653 (x20.88) | 788.606 (x10.73) | 17993.490 (x244.78) | not run |
-| first-output | - | 195.405 | 190.284 (x0.97) | 339.495 (x1.74) | 1838.310 (x9.41) | 849.960 (x4.35) | not run |
-| **geomean xJVM** (programs that ran) | | 1 | **x3.40** (28) | **x7.13** (28) | **x10.33** (28) | **x111.9** (28) | **x167.7** (23) |
-
-- **jank's built app runs at the JVM's speed on the call-heavy programs:** `tak-hinted` x0.56, `fib` x0.91,
-  `fib-hinted` x1.03, and first-output 190 ms against the JVM's 195. The geomean is x3.40 over all 28, every one with
-  the JVM's answer (the 32-bit wrap of jank's own core does not show here). Against jank's own core on the programs
-  both run: [jank](#jank).
-- **On the launcher release (c415244, `main`)** the same column gives x3.36 over 28, each row within 5% of c0431c6's.
-  The built app does not change on that branch.
-- **let-go's column is partial** (23 of 28): the run was stopped for the launcher test before k-nucleotide, pipeline,
-  dispatch, json and first-output.
-- **Phel's built app does not build on macOS.** The build runs `ulimit -s 65536 && exec phel ...`
-  (`src/cohost/build.clj`, the recording and `phel build` steps; `dev/perf/phel_snapshot.sh`). macOS's hard stack
-  limit is 65520 KB, so `ulimit` fails ("Operation not permitted") and Phel never runs. `docs:check phel` fails on the
-  same two build steps; the other seven runtimes pass `docs:check` on c0431c6. The rest of cohost already tolerates
-  it (`ulimit -s 1048576 2>/dev/null; exec ...`); a fix: `ulimit -s 65536 2>/dev/null || ulimit -s hard; exec ...`.
-- Not measured on this box yet: jvm-built, basilisp's built app at the smaller sizes, the from-source columns, and
-  the startup table.
-
-### Box 1: built apps
-
-Box 1 (lane C, 4 CPUs, Linux), Phel's built app (`phel build` of the recorded boot, run under OPcache with the tracing
-JIT), c/aot-phel, 2026-11-03 before 6:24 AM ET; the JVM column is Box 1's own. Every program gives the JVM's answer;
-`lazy-pipeline` needs the 1 GB stack the built run asks for. Median ms (xJVM). Records:
-`doc/perf/release-perf/lane-c/phel-built.edn`.
-
-| program | jvm | phel-built |
-|---|---:|---:|
-| binary-trees | 249.0 | 35480.9 (x142.49) |
-| binary-trees-14 | 12.2 | 1190.7 (x97.29) |
-| binary-trees-14-hinted | 9.9 | 1761.4 (x177.79) |
-| binary-trees-hinted | 253.1 | 37066.8 (x146.47) |
-| dispatch | 175.2 | 89711.8 (x512.16) |
-| fannkuch | 229.0 | 23483.0 (x102.54) |
-| fannkuch-hinted | 198.2 | 19500.0 (x98.40) |
-| fib | 164.8 | 7251.9 (x43.99) |
-| fib-hinted | 90.6 | 46850.2 (x516.84) |
-| first-output | 815.0 | 1694.1 (x2.08) |
-| json | 285.1 | 80520.4 (x282.42) |
-| k-nucleotide | 156.4 | 11713.7 (x74.90) |
-| keyword-map | 130.6 | 7934.6 (x60.77) |
-| lazy-pipeline | 32.8 | 38482.9 (x1173.78) |
-| mandelbrot | 245.7 | 96933.5 (x394.50) |
-| mandelbrot-hinted | 236.9 | 95526.8 (x403.30) |
-| nbody | 225.6 | 35374.0 (x156.78) |
-| nbody-hinted | 256.3 | 34703.7 (x135.38) |
-| nsieve | 273.8 | 25145.4 (x91.84) |
-| nsieve-hinted | 282.8 | 17520.3 (x61.96) |
-| pipeline | 216.7 | 28527.3 (x131.65) |
-| sort | 42.9 | 1577.9 (x36.82) |
-| spectral-norm | 241.9 | 53851.3 (x222.62) |
-| spectral-norm-hinted | 143.8 | 62462.7 (x434.47) |
-| sum-overflow | 9.9 | 1748.8 (x177.18) |
-| sum-overflow-hinted | 0.9 | 35.7 (x41.41) |
-| tak | 457.0 | 13625.4 (x29.81) |
-| tak-hinted | 229.1 | 188884.6 (x824.43) |
-| **geomean xJVM** (programs that ran) | 1 | **x131.55** (28) |
-
-### Box 3: built apps
-
-Box 3 (lane D, 4 CPUs, Linux), coord/release4's artifacts at 4497c85, 2026-11-03 4:37-5:30 AM ET; the JVM column is
-Box 3's own. ClojureWasm's built app is the recorded boot as ClojureWasm modules on the shipped ReleaseSafe `cljw`:
-it skips the boot from source, and its programs run about as fast as cohost on ClojureWasm from source (Box 3, x85
-over the 15 measured). Median ms (xJVM). Records: `doc/perf/built-d/` (d/aot-cljw).
-
-| program | jvm | jvm-built | jolt-built | cljs-built | cljw-built |
-|---|---:|---:|---:|---:|---:|
-| binary-trees | 257.5 | 305.6 (x1.19) | 1584.8 (x6.15) | 1658.6 (x6.44) | 14426.2 (x56.02) |
-| binary-trees-14 | 11.4 | 19.1 (x1.68) | 70.9 (x6.24) | 86.8 (x7.65) | 649.4 (x57.18) |
-| binary-trees-14-hinted | 9.4 | 12.4 (x1.32) | 160.5 (x17.12) | 102.5 (x10.93) | 1357.1 (x144.79) |
-| binary-trees-hinted | 245.7 | 301.0 (x1.23) | 3330.3 (x13.55) | 2130.7 (x8.67) | 28215.4 (x114.84) |
-| dispatch | 138.0 | 177.7 (x1.29) | 1057.8 (x7.67) | 3290.9 (x23.85) | 17447.3 (x126.42) |
-| fannkuch | 148.0 | 162.1 (x1.10) | 291.2 (x1.97) | 921.3 (x6.22) | 6664.3 (x45.03) |
-| fannkuch-hinted | 165.6 | 158.7 (x0.96) | 327.5 (x1.98) | 906.2 (x5.47) | 6508.7 (x39.31) |
-| fib | 163.6 | 150.0 (x0.92) | 314.9 (x1.93) | 757.3 (x4.63) | 8006.8 (x48.94) |
-| fib-hinted | 99.8 | 98.9 (x0.99) | 9970.9 (x99.86) | 3393.9 (x33.99) | 81055.7 (x811.78) |
-| first-output | 647.3 | 700.1 (x1.08) | 893.4 (x1.38) | 6664.1 (x10.29) | 2205.5 (x3.41) |
-| json | 234.0 | 244.5 (x1.04) | 4278.8 (x18.29) | 2029.3 (x8.67) | 32820.5 (x140.26) |
-| k-nucleotide | 131.1 | 131.3 (x1.00) | 733.6 (x5.60) | 1378.2 (x10.51) | 7342.3 (x56.01) |
-| keyword-map | 85.7 | 89.7 (x1.05) | 403.7 (x4.71) | 768.0 (x8.96) | 5125.5 (x59.81) |
-| lazy-pipeline | 32.1 | 37.4 (x1.17) | 121.6 (x3.79) | 235.3 (x7.34) | 8228.5 (x256.57) |
-| mandelbrot | 206.4 | 217.6 (x1.05) | 1530.8 (x7.42) | 5198.3 (x25.19) | 46419.1 (x224.93) |
-| mandelbrot-hinted | 219.0 | 216.7 (x0.99) | 1402.6 (x6.40) | 5058.0 (x23.10) | 45755.2 (x208.94) |
-| nbody | 188.4 | 229.7 (x1.22) | 928.0 (x4.92) | 1658.3 (x8.80) | 8257.3 (x43.82) |
-| nbody-hinted | 190.0 | 216.0 (x1.14) | 793.6 (x4.18) | 1695.1 (x8.92) | 8330.8 (x43.85) |
-| nsieve | 142.5 | 132.3 (x0.93) | 1641.1 (x11.52) | 1703.6 (x11.95) | 9075.2 (x63.69) |
-| nsieve-hinted | 163.0 | 145.2 (x0.89) | 1706.8 (x10.47) | 1712.0 (x10.50) | 9535.7 (x58.49) |
-| pipeline | 143.0 | 151.1 (x1.06) | 968.9 (x6.78) | 857.3 (x6.00) | 5867.3 (x41.04) |
-| sort | 36.9 | 50.8 (x1.38) | 78.6 (x2.13) | 98.0 (x2.66) | 5817.6 (x157.58) |
-| spectral-norm | 189.1 | 249.4 (x1.32) | 1407.2 (x7.44) | 2971.7 (x15.71) | 12874.5 (x68.08) |
-| spectral-norm-hinted | 146.6 | 159.4 (x1.09) | 4773.3 (x32.55) | 3710.2 (x25.30) | 37298.0 (x254.38) |
-| sum-overflow | 8.9 | 13.1 (x1.47) | 28.2 (x3.18) | 7.1 (x0.81) | 24.4 (x2.75) |
-| sum-overflow-hinted | 0.6 | 1.1 (x1.71) | 5.5 (x8.93) | 77.0 (x124.66) | 54.0 (x87.41) |
-| tak | 317.9 | 367.4 (x1.16) | 506.2 (x1.59) | 2277.4 (x7.16) | 26214.4 (x82.47) |
-| tak-hinted | 196.5 | 248.5 (x1.26) | 42078.3 (x214.18) | 11925.3 (x60.70) | error |
-| **geomean xJVM** (programs that ran) | 1 | **x1.15** (28) | **x7.03** (28) | **x10.65** (28) | **x72.09** (27) |
-
-## Startup
-
-| command | median | the 3 runs, ms |
-|---|---:|---|
-| `clojure -M -m demo.main` (stock) | 1519 ms | 1428 1583 1519 |
-| `cohost :jvm -M -m demo.main` | 1407 ms | 1386 1407 1414 |
-| `cohost :jank -M -m demo.main` | 2550 ms | 2482 2814 2550 |
-| `cohost :jolt -M -m demo.main` | 4534 ms | 4427 4534 5186 |
-| `cohost :cljs -M -m demo.main` | 8853 ms | 8325 9937 8853 |
-| `cohost :lg -M -m demo.main` | 15446 ms | 14042 15653 15446 |
-| `cohost :phel -M -m demo.main` | 46994 ms | 47358 46159 46994 |
-| `cohost :lpy -M -m demo.main` | 88557 ms | 88557 88793 86305 |
-| `cohost :cljw -M -m demo.main` | 94010 ms | 94010 94479 92136 |
-
-Box 1, `main` @ ff30ce1, 2026-11-03 12:41 AM ET (`doc/perf/release-perf/lane-c/startup.txt`).
-
-- `:jvm` is the real Clojure CLI; cohost adds nothing.
-- `:jank` loads a snapshot of the booted core, built once by `bb boot:jank-snapshot` in the cohost checkout
-  (about 12 minutes) and rebuilt when cohost or jank changes. Without a fresh snapshot, jank boots from cohost's
-  ahead-of-time objects, which is slower.
-- **The jank launcher** (c415244, `main`): `cohost :jank` execs a native binary, cohost.cli compiled with the booted
-  core, built with the snapshot. On the macOS box the snapshot and launcher build in 156.9 s (battery 214/216,
-  libraries 62/62; peak about 2.9 GB); then `cohost :jank -m demo.main you` takes 2.35 s and 1.34 s, and
-  `cohost :jank -e '(+ 1 2)'` 0.58 s. The launcher is 91.5 MB there (`doc/perf/macos/c415244/`).
-- Every other runtime reads, rewrites and evaluates `clojure.core` and the libraries the program requires at
-  every start. That is the whole difference between 4.5 s on jolt and 94 s on ClojureWasm: how fast each one
-  evaluates Clojure's own source. basilisp has a cached boot, and since this release the `cohost` command uses it: the first
-  command builds it (225 s on Box 4), then `cohost :lpy -M -m demo.main` took 21.0 s and 18.4 s there (release
-  candidate b2ec699, 2026-11-03 1:48 AM ET, while another check ran on the box), against the 88.6 s above, which
-  booted from source.
-- The compiled builds (`cohost -T:build build`) start faster on some runtimes: [Built apps](#built-apps).
-
-The programs' tables below also carry `first-output`: the wall time to print one line from a one-line program,
-through the benchmark's own launch of each runtime (no project, no library), median of 3 processes.
-
-## Programs
-
-The suite is `bench/programs/`: fib, tak, nbody, spectral-norm, mandelbrot, binary-trees (depths 18 and 14), fannkuch,
-nsieve, k-nucleotide, a lazy pipeline, map-heavy `pipeline`, `keyword-map`, protocol `dispatch`, a JSON-like
-round trip, `sort`, and `sum-overflow` (sums past 2^31). Each is sized so that one call takes 100-1000 ms on the
-JVM. Ten of them come twice: plain, and with primitive type hints (`^long`, `^double`, coercions) as in
-performance-minded JVM code.
-
-Method, per program and runtime: one fresh process; the first call is timed as cold; warm-up continues until the
-median of the last 5 calls moves under 2% (at most 20 calls or 10 s); then 10 timed calls, or as many as fit in
-15 s with at least 3, of which the table shows the median; a program's process is stopped after 15 minutes. Every
-call's result is checked against the first call's, and the first call's against the JVM's. A call of several seconds
-gains nothing from ten timed calls: the 15 s budget came in on 2026-11-03 at 1:37 AM ET. Boxes 1 to 3 were measured
-with 10 timed calls (and `first-output` over 10 processes) every time; the medians compare all the same.
-
-### Box 1: the JVM, ClojureScript and jolt
-
-`bb bench:programs table jvm cljs cljs-cohost browser jolt jolt-cohost`. Median ms (xJVM). `cljs` and `jolt` are
-the runtimes' own cores; `-cohost` is Clojure's core booted by cohost on them; `browser` is ClojureScript's own core
-in headless Chromium.
-
-| program | jvm | cljs | cljs-cohost | browser | jolt | jolt-cohost |
+| program | jvm | lg | phel | lg-cohost | jvm-built | jolt-built |
 |---|---:|---:|---:|---:|---:|---:|
-| fib | 164.8 | 312.0 (x1.89) | 387.7 (x2.35) | 201.9 (x1.22) | 266.1 (x1.61) | 1008.5 (x6.12) |
-| fib-hinted | 90.6 | 291.5 (x3.22) | 2890.2 (x31.88) | 189.1 (x2.09) | 196.6 (x2.17) | 13080.0 (x144.30) |
-| tak | 457.0 | error | 1651.8 (x3.61) | error | 550.1 (x1.20) | 2897.7 (x6.34) |
-| tak-hinted | 229.1 | error | 12980.9 (x56.66) | error | 525.3 (x2.29) | 54551.6 (x238.10) |
-| nbody | 225.6 | 1117.4 (x4.95) | 2019.1 (x8.95) | 875.7 (x3.88) | 826.0 (x3.66) | 1699.3 (x7.53) |
-| nbody-hinted | 256.3 | 986.2 (x3.85) | 2283.6 (x8.91) | 814.7 (x3.18) | 734.5 (x2.87) | 1455.5 (x5.68) |
-| spectral-norm | 241.9 | 1992.3 (x8.24) | 3365.4 (x13.91) | 1219.5 (x5.04) | 1232.8 (x5.10) | 2175.5 (x8.99) |
-| spectral-norm-hinted | 143.8 | 1924.1 (x13.38) | 4239.7 (x29.49) | 1217.8 (x8.47) | 977.3 (x6.80) | 6177.0 (x42.97) |
-| mandelbrot | 245.7 | 3045.4 (x12.39) | 5412.8 (x22.03) | 2360.0 (x9.60) | 1956.7 (x7.96) | 2512.5 (x10.23) |
-| mandelbrot-hinted | 236.9 | 3197.7 (x13.50) | 5182.9 (x21.88) | 2662.1 (x11.24) | 293.4 (x1.24) | 2787.6 (x11.77) |
-| binary-trees | 249.0 | 821.1 (x3.30) | 1411.9 (x5.67) | 521.8 (x2.10) | 1327.6 (x5.33) | 2480.5 (x9.96) |
-| binary-trees-hinted | 253.1 | 861.2 (x3.40) | 1958.2 (x7.74) | 468.2 (x1.85) | 1386.5 (x5.48) | 4727.6 (x18.68) |
-| binary-trees-14 | 12.2 | 29.2 (x2.38) | 66.8 (x5.46) | 16.8 (x1.37) | 53.3 (x4.36) | 101.7 (x8.31) |
-| binary-trees-14-hinted | 9.9 | 30.2 (x3.05) | 91.2 (x9.21) | 23.2 (x2.34) | 59.8 (x6.04) | 203.4 (x20.53) |
-| fannkuch | 229.0 | 776.1 (x3.39) | 1026.2 (x4.48) | 573.5 (x2.50) | 399.2 (x1.74) | 538.6 (x2.35) |
-| fannkuch-hinted | 198.2 | 812.6 (x4.10) | 1048.8 (x5.29) | 592.4 (x2.99) | 425.4 (x2.15) | 484.5 (x2.44) |
-| nsieve | 273.8 | 871.6 (x3.18) | 2365.7 (x8.64) | 541.4 (x1.98) | 1747.0 (x6.38) | 2199.7 (x8.03) |
-| nsieve-hinted | 282.8 | 805.5 (x2.85) | 2354.9 (x8.33) | 527.9 (x1.87) | 1684.3 (x5.96) | 2191.2 (x7.75) |
-| k-nucleotide | 156.4 | 948.3 (x6.06) | 1522.5 (x9.74) | 597.8 (x3.82) | 437.8 (x2.80) | 1063.6 (x6.80) |
-| lazy-pipeline | 32.8 | 131.6 (x4.02) | 302.8 (x9.24) | 94.2 (x2.87) | 62.3 (x1.90) | 214.1 (x6.53) |
-| pipeline | 216.7 | 667.8 (x3.08) | 1045.2 (x4.82) | 622.7 (x2.87) | 1157.5 (x5.34) | 1270.6 (x5.86) |
-| keyword-map | 130.6 | 471.5 (x3.61) | 905.8 (x6.94) | 333.0 (x2.55) | 193.0 (x1.48) | 568.6 (x4.35) |
-| dispatch | 175.2 | 854.0 (x4.88) | 3801.8 (x21.70) | 713.9 (x4.08) | 2336.4 (x13.34) | 2342.2 (x13.37) |
-| json | 285.1 | wrong answer | 2421.2 (x8.49) | wrong answer | 693.9 (x2.43) | 7541.5 (x26.45) |
-| sort | 42.9 | 119.2 (x2.78) | 103.9 (x2.43) | 85.7 (x2.00) | 69.1 (x1.61) | 78.0 (x1.82) |
-| sum-overflow | 9.9 | 9.1 (x0.92) | 8.0 (x0.81) | 6.1 (x0.62) | 25.9 (x2.63) | 28.6 (x2.89) |
-| sum-overflow-hinted | 0.9 | 50.0 (x58.05) | 72.0 (x83.57) | 38.2 (x44.31) | 1.6 (x1.87) | 8.5 (x9.85) |
-| first-output (ms per process) | 815.0 | 139.0 (x0.17) | 7761.1 (x9.52) | 834.6 (x1.02) | 202.1 (x0.25) | 3847.5 (x4.72) |
-| **geomean xJVM** (programs that ran) | 1 | **x3.93** (25) | **x9.13** (28) | **x3.01** (25) | **x2.91** (28) | **x9.57** (28) |
+| fib | 122 | 4,792 (x39.34) | 3,169 (x26.02) | 5,237 (x43.00) | 117 (x0.96) | 289 (x2.37) |
+| fib-hinted | 76 | 4,787 (x62.74) | fails | 57,107 (x748.45) | 86 (x1.13) | 8,802 (x115.36) |
+| tak | 260 | 15,315 (x58.90) | 5,407 (x20.79) | 19,483 (x74.93) | 250 (x0.96) | 440 (x1.69) |
+| tak-hinted | 162 | 16,066 (x99.17) | fails | fails | 156 (x0.96) | 36,048 (x222.52) |
+| nbody | 213 | 2,267 (x10.65) | fails | 15,261 (x71.68) | 188 (x0.88) | 748 (x3.52) |
+| nbody-hinted | 213 | 2,228 (x10.49) | fails | 15,203 (x71.54) | 203 (x0.95) | 720 (x3.39) |
+| spectral-norm | 222 | 7,794 (x35.06) | fails | 80,771 (x363.34) | 230 (x1.03) | 1,402 (x6.31) |
+| spectral-norm-hinted | 134 | 8,986 (x67.16) | fails | 100,725 (x752.80) | 130 (x0.97) | 4,151 (x31.02) |
+| mandelbrot | 188 | 20,079 (x106.86) | 103,937 (x553.15) | fails | 170 (x0.91) | 1,434 (x7.63) |
+| mandelbrot-hinted | 175 | 20,330 (x116.44) | fails | fails | 172 (x0.98) | 1,309 (x7.50) |
+| binary-trees | 247 | 9,834 (x39.85) | 16,357 (x66.28) | 26,348 (x106.76) | 247 (x1.00) | 1,276 (x5.17) |
+| binary-trees-hinted | 240 | 9,781 (x40.81) | fails | 36,094 (x150.58) | 250 (x1.04) | 2,919 (x12.18) |
+| binary-trees-14 | 10 | 464 (x44.64) | 662 (x63.61) | 1,341 (x128.89) | 16 (x1.49) | 64 (x6.12) |
+| binary-trees-14-hinted | 14 | 472 (x33.24) | fails | 1,835 (x129.23) | 11 (x0.75) | 153 (x10.75) |
+| sum-overflow | 13 | 42 (x3.24) | 775 (x60.04) | 52 (x3.99) | 16 (x1.25) | 24 (x1.84) |
+| sum-overflow-hinted | 0.5 | 82 (x164.80) | fails | > x1000 | 0.5 (x1.00) | 2.9 (x5.80) |
+| sort | 37 | 252 (x6.76) | 121 (x3.23) | 1,350 (x36.18) | 46 (x1.23) | 73 (x1.97) |
+| lazy-pipeline | 34 | 850 (x24.92) | fails | 5,442 (x159.57) | 27 (x0.78) | 122 (x3.58) |
+| keyword-map | 95 | 1,172 (x12.32) | 4,305 (x45.27) | 22,304 (x234.54) | 113 (x1.19) | 354 (x3.72) |
+| fannkuch | 142 | 1,617 (x11.38) | 3,792 (x26.69) | 7,294 (x51.33) | 147 (x1.03) | 291 (x2.05) |
+| fannkuch-hinted | 163 | 1,605 (x9.84) | 3,641 (x22.32) | 7,053 (x43.24) | 161 (x0.99) | 280 (x1.72) |
+| nsieve | 213 | 774 (x3.64) | 3,844 (x18.09) | 12,435 (x58.52) | 180 (x0.84) | 1,707 (x8.03) |
+| nsieve-hinted | 180 | 802 (x4.45) | 3,915 (x21.72) | 12,616 (x70.01) | 181 (x1.00) | 1,696 (x9.41) |
+| k-nucleotide | 129 | 2,029 (x15.78) | 4,974 (x38.68) | 41,268 (x320.90) | 134 (x1.04) | 660 (x5.13) |
+| pipeline | 141 | 6,684 (x47.41) | 5,146 (x36.50) | 10,935 (x77.55) | 152 (x1.08) | 997 (x7.07) |
+| dispatch | 153 | 3,182 (x20.82) | fails | 54,027 (x353.58) | 176 (x1.15) | 954 (x6.24) |
+| json | 220 | 4,136 (x18.81) | differs | 58,805 (x267.42) | 209 (x0.95) | 3,817 (x17.36) |
+| first-output | 805 | 12 (x0.02) | 92 (x0.11) | 9,656 (x12.00) | 711 (x0.88) | 1,075 (x1.34) |
+| **geomean xJVM** (recorded programs) | 1 | **x19.32** (28) | **x23.70** (15) | **x100.96** (24; 1 cut) | **x1.01** (28) | **x6.28** (28) |
 
-Box 1: Intel Xeon @ 2.80 GHz, 4 CPUs, 15 GB; Linux; OpenJDK with Clojure 1.12.0; runs one at a time, nothing else
-on the box (load about 1). Records: `doc/perf/release-perf/lane-c/`.
+## Box 3 (Linux)
 
-### Box 2: the JVM and jank
+### Speed (geomean xJVM, programs counted)
 
-`bb bench:programs table jvm jvm-cohost jank-jit jank-aot jank`. `jvm-cohost` is Clojure's core booted by cohost on
-the JVM (not what `cohost :jvm` runs; it shows cohost's own overhead on the reference host). `jank-jit` and
-`jank-aot` are jank's own core (`jank run`; `jank compile-module -O3`); `jank` is cohost on jank, from its snapshot.
+| runtime | own Clojure | cohost, from source | cohost, built app |
+|---|---:|---:|---:|
+| JVM | 1 | — | x1.15 (28) |
+| jolt | — | — | x7.03 (28) |
+| ClojureScript | — | — | x10.66 (28) |
+| ClojureWasm | x20.50 (28) | x79.34 (27) | x72.14 (27) |
+| the others | — | — | — |
+
+ClojureWasm's built app is the recorded boot as ClojureWasm modules on the shipped ReleaseSafe `cljw`; it skips the boot
+from source and runs the programs about as fast as cohost from source. A `cljw` built with `-Doptimize=ReleaseFast`
+takes x0.862 of ReleaseSafe's time on its own core (8 programs; `doc/perf/cljw-releasefast/`). Startup: not measured.
+
+### Per program (median ms, xJVM)
+
+| program | jvm | cljw | cljw-cohost | jvm-built | jolt-built | cljs-built | cljw-built |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fib | 164 | 6,168 (x37.70) | 8,247 (x50.41) | 150 (x0.92) | 315 (x1.92) | 757 (x4.63) | 8,007 (x48.94) |
+| fib-hinted | 100 | 5,362 (x53.73) | 82,116 (x822.80) | 99 (x0.99) | 9,971 (x99.91) | 3,394 (x34.01) | 81,056 (x812.18) |
+| tak | 318 | 25,820 (x81.22) | 25,635 (x80.64) | 367 (x1.16) | 506 (x1.59) | 2,277 (x7.16) | 26,214 (x82.46) |
+| tak-hinted | 197 | 22,690 (x115.47) | fails | 249 (x1.26) | 42,078 (x214.14) | 11,925 (x60.69) | fails |
+| nbody | 188 | 2,758 (x14.64) | 9,090 (x48.25) | 230 (x1.22) | 928 (x4.93) | 1,658 (x8.80) | 8,257 (x43.83) |
+| nbody-hinted | 190 | 2,655 (x13.97) | 8,483 (x44.64) | 216 (x1.14) | 794 (x4.18) | 1,695 (x8.92) | 8,331 (x43.85) |
+| spectral-norm | 189 | 9,854 (x52.11) | 12,814 (x67.76) | 249 (x1.32) | 1,407 (x7.44) | 2,972 (x15.71) | 12,875 (x68.08) |
+| spectral-norm-hinted | 147 | 11,222 (x76.55) | 37,976 (x259.05) | 159 (x1.09) | 4,773 (x32.56) | 3,710 (x25.31) | 37,298 (x254.42) |
+| mandelbrot | 206 | 37,737 (x182.83) | 45,245 (x219.21) | 218 (x1.05) | 1,531 (x7.42) | 5,198 (x25.19) | 46,419 (x224.90) |
+| mandelbrot-hinted | 219 | 37,954 (x173.31) | 45,521 (x207.86) | 217 (x0.99) | 1,403 (x6.40) | 5,058 (x23.10) | 45,755 (x208.93) |
+| binary-trees | 258 | 11,297 (x43.87) | 14,358 (x55.76) | 306 (x1.19) | 1,585 (x6.15) | 1,659 (x6.44) | 14,426 (x56.02) |
+| binary-trees-hinted | 246 | 10,026 (x40.81) | 28,770 (x117.09) | 301 (x1.23) | 3,330 (x13.55) | 2,131 (x8.67) | 28,215 (x114.84) |
+| binary-trees-14 | 11 | 454 (x39.83) | 724 (x63.49) | 19 (x1.68) | 71 (x6.22) | 87 (x7.61) | 649 (x56.96) |
+| binary-trees-14-hinted | 9.4 | 464 (x49.34) | 1,359 (x144.52) | 12 (x1.32) | 161 (x17.07) | 103 (x10.90) | 1,357 (x144.37) |
+| sum-overflow | 8.9 | 25 (x2.84) | 24 (x2.74) | 13 (x1.47) | 28 (x3.17) | 7.1 (x0.80) | 24 (x2.74) |
+| sum-overflow-hinted | 0.6 | 59 (x98.00) | 58 (x96.67) | 1.1 (x1.83) | 5.5 (x9.17) | 77 (x128.33) | 54 (x90.00) |
+| sort | 37 | 92 (x2.50) | 5,856 (x158.70) | 51 (x1.38) | 79 (x2.13) | 98 (x2.66) | 5,818 (x157.66) |
+| lazy-pipeline | 32 | 120 (x3.74) | 7,736 (x240.98) | 37 (x1.17) | 122 (x3.79) | 235 (x7.33) | 8,229 (x256.34) |
+| keyword-map | 86 | 832 (x9.71) | 3,277 (x38.24) | 90 (x1.05) | 404 (x4.71) | 768 (x8.96) | 5,126 (x59.81) |
+| fannkuch | 148 | 2,811 (x19.00) | 6,169 (x41.68) | 162 (x1.10) | 291 (x1.97) | 921 (x6.23) | 6,664 (x45.03) |
+| fannkuch-hinted | 166 | 3,049 (x18.41) | 6,312 (x38.12) | 159 (x0.96) | 328 (x1.98) | 906 (x5.47) | 6,509 (x39.30) |
+| nsieve | 143 | 1,743 (x12.23) | 9,426 (x66.15) | 132 (x0.93) | 1,641 (x11.52) | 1,704 (x11.96) | 9,075 (x63.69) |
+| nsieve-hinted | 163 | 1,636 (x10.04) | 9,440 (x57.91) | 145 (x0.89) | 1,707 (x10.47) | 1,712 (x10.50) | 9,536 (x58.50) |
+| k-nucleotide | 131 | 1,887 (x14.39) | 4,684 (x35.73) | 131 (x1.00) | 734 (x5.60) | 1,378 (x10.51) | 7,342 (x56.01) |
+| pipeline | 143 | 2,372 (x16.59) | 5,315 (x37.17) | 151 (x1.06) | 969 (x6.78) | 857 (x6.00) | 5,867 (x41.03) |
+| dispatch | 138 | 2,835 (x20.54) | 13,419 (x97.24) | 178 (x1.29) | 1,058 (x7.67) | 3,291 (x23.85) | 17,447 (x126.43) |
+| json | 234 | 4,149 (x17.73) | 31,890 (x136.28) | 245 (x1.04) | 4,279 (x18.29) | 2,029 (x8.67) | 32,821 (x140.26) |
+| first-output | 647 | 21 (x0.03) | 87,356 (x134.96) | 700 (x1.08) | 893 (x1.38) | 6,664 (x10.30) | 2,206 (x3.41) |
+| **geomean xJVM** (recorded programs) | 1 | **x20.50** (28) | **x79.34** (27) | **x1.15** (28) | **x7.03** (28) | **x10.66** (28) | **x72.14** (27) |
+
+## Box 2 (Linux)
+
+### Speed (geomean xJVM, programs counted)
+
+| runtime | own Clojure | cohost, cached boot | cohost, built app |
+|---|---:|---:|---:|
+| JVM | 1 | x1.68 (28): Clojure's core booted by cohost on the JVM (cohost's own overhead, not what `cohost :jvm` runs) | — |
+| jank | x6.44 (14, JIT); x6.26 (14, AOT -O3) | x8.74 (23): from its snapshot | — |
+
+Measured 2026-11-02 on 6eec4e2, before the sort fix (ff30ce1) and the release of jank's built app. Startup: not
+measured.
+
+### Per program (median ms, xJVM)
 
 | program | jvm | jvm-cohost | jank-jit | jank-aot | jank |
 |---|---:|---:|---:|---:|---:|
-| fib | 174.0 | 629.3 (x3.62) | 185.4 (x1.07) | 148.6 (x0.85) | 187.3 (x1.08) |
-| fib-hinted | 86.7 | 321.6 (x3.71) | 340.9 (x3.93) | 329.5 (x3.80) | 312.0 (x3.60) |
-| tak | 361.0 | 372.0 (x1.03) | 786.1 (x2.18) | 718.7 (x1.99) | 770.8 (x2.14) |
-| tak-hinted | 217.2 | 1595.6 (x7.35) | 1586.1 (x7.30) | 1360.1 (x6.26) | 1644.5 (x7.57) |
-| nbody | 191.9 | 287.4 (x1.50) | error | error | 2869.0 (x14.95) |
-| nbody-hinted | 197.7 | 229.5 (x1.16) | error | error | 2803.3 (x14.18) |
-| spectral-norm | 202.2 | 269.4 (x1.33) | error | error | 3763.9 (x18.61) |
-| spectral-norm-hinted | 89.2 | 272.9 (x3.06) | error | error | 4386.8 (x49.19) |
-| mandelbrot | 264.4 | 262.4 (x0.99) | error | error | 1331.7 (x5.04) |
-| mandelbrot-hinted | 248.4 | 264.4 (x1.06) | error | error | 1229.2 (x4.95) |
-| binary-trees | 226.7 | 215.5 (x0.95) | 3370.7 (x14.87) | 3312.8 (x14.61) | 3199.8 (x14.11) |
-| binary-trees-hinted | 225.9 | 242.7 (x1.07) | 3149.8 (x13.94) | 3152.9 (x13.96) | 2692.3 (x11.92) |
-| binary-trees-14 | 15.4 | 15.4 (x1.00) | 154.9 (x10.07) | 133.7 (x8.69) | 91.9 (x5.98) |
-| binary-trees-14-hinted | 20.8 | 17.6 (x0.85) | 141.8 (x6.82) | 142.7 (x6.87) | 94.5 (x4.55) |
-| fannkuch | 209.2 | 217.3 (x1.04) | error | error | 2664.7 (x12.74) |
-| fannkuch-hinted | 189.8 | 223.5 (x1.18) | error | error | 2578.3 (x13.58) |
-| nsieve | 151.1 | 345.9 (x2.29) | error | error | 1066.6 (x7.06) |
-| nsieve-hinted | 203.5 | 397.0 (x1.95) | error | error | 1406.0 (x6.91) |
-| k-nucleotide | 262.2 | 283.7 (x1.08) | 755.5 (x2.88) | 731.4 (x2.79) | 2794.8 (x10.66) |
-| lazy-pipeline | 41.7 | 58.0 (x1.39) | 1069.4 (x25.65) | 996.8 (x23.91) | 3140.9 (x75.34) |
-| pipeline | 212.6 | 310.4 (x1.46) | wrong answer | wrong answer | wrong answer |
-| keyword-map | 156.6 | 149.2 (x0.95) | 498.8 (x3.19) | 508.5 (x3.25) | 1105.7 (x7.06) |
-| dispatch | 343.0 | 810.7 (x2.36) | error | error | wrong answer |
-| json | 508.8 | 608.4 (x1.20) | 2188.8 (x4.30) | 1867.2 (x3.67) | 5706.0 (x11.21) |
-| sort | 45.8 | 47.5 (x1.04) | 16136.9 (x351.99) | 27603.6 (x602.11) | 35.8 ms after the sort fix (release ff30ce1, box 1) |
-| sum-overflow | 17.0 | 15.2 (x0.89) | wrong answer | wrong answer | wrong answer |
-| sum-overflow-hinted | 1.0 | 14.7 (x14.22) | wrong answer | wrong answer | wrong answer |
-| first-output (ms per process) | 1104.0 | 7991.5 (x7.24) | 695.7 (x0.63) | 667.5 (x0.60) | 6792.7 (x6.15) |
-| **geomean xJVM** (programs that ran) | 1 | **x1.68** (28) | **x6.45** (14) | **x6.26** (14) | **x8.89** (22) |
+| fib | 174 | 629 (x3.62) | 185 (x1.07) | 149 (x0.85) | 187 (x1.08) |
+| fib-hinted | 87 | 322 (x3.71) | 341 (x3.93) | 330 (x3.80) | 312 (x3.60) |
+| tak | 361 | 372 (x1.03) | 786 (x2.18) | 719 (x1.99) | 771 (x2.14) |
+| tak-hinted | 217 | 1,596 (x7.35) | 1,586 (x7.30) | 1,360 (x6.26) | 1,645 (x7.57) |
+| nbody | 192 | 287 (x1.50) | fails | fails | 2,869 (x14.95) |
+| nbody-hinted | 198 | 230 (x1.16) | fails | fails | 2,803 (x14.18) |
+| spectral-norm | 202 | 269 (x1.33) | fails | fails | 3,764 (x18.61) |
+| spectral-norm-hinted | 89 | 273 (x3.06) | fails | fails | 4,387 (x49.18) |
+| mandelbrot | 264 | 262 (x0.99) | fails | fails | 1,332 (x5.04) |
+| mandelbrot-hinted | 248 | 264 (x1.06) | fails | fails | 1,229 (x4.95) |
+| binary-trees | 227 | 216 (x0.95) | 3,371 (x14.87) | 3,313 (x14.61) | 3,200 (x14.11) |
+| binary-trees-hinted | 226 | 243 (x1.07) | 3,150 (x13.94) | 3,153 (x13.96) | 2,692 (x11.92) |
+| binary-trees-14 | 15 | 15 (x1.00) | 155 (x10.06) | 134 (x8.68) | 92 (x5.97) |
+| binary-trees-14-hinted | 21 | 18 (x0.85) | 142 (x6.82) | 143 (x6.86) | 95 (x4.54) |
+| sum-overflow | 17 | 15 (x0.89) | differs | differs | differs |
+| sum-overflow-hinted | 1.0 | 15 (x14.70) | differs | differs | differs |
+| sort | 46 | 48 (x1.04) | 16,137 (x352.33) | 27,604 (x602.70) | see note |
+| lazy-pipeline | 42 | 58 (x1.39) | 1,069 (x25.65) | 997 (x23.90) | 3,141 (x75.32) |
+| keyword-map | 157 | 149 (x0.95) | 499 (x3.19) | 509 (x3.25) | 1,106 (x7.06) |
+| fannkuch | 209 | 217 (x1.04) | fails | fails | 2,665 (x12.74) |
+| fannkuch-hinted | 190 | 224 (x1.18) | fails | fails | 2,578 (x13.58) |
+| nsieve | 151 | 346 (x2.29) | fails | fails | 1,067 (x7.06) |
+| nsieve-hinted | 204 | 397 (x1.95) | fails | fails | 1,406 (x6.91) |
+| k-nucleotide | 262 | 284 (x1.08) | 756 (x2.88) | 731 (x2.79) | 2,795 (x10.66) |
+| pipeline | 213 | 310 (x1.46) | differs | differs | differs |
+| dispatch | 343 | 811 (x2.36) | fails | fails | differs |
+| json | 509 | 608 (x1.20) | 2,189 (x4.30) | 1,867 (x3.67) | 5,706 (x11.21) |
+| first-output | 1,104 | 7,992 (x7.24) | 696 (x0.63) | 668 (x0.60) | 6,793 (x6.15) |
+| **geomean xJVM** (recorded programs) | 1 | **x1.68** (28) | **x6.44** (14) | **x6.26** (14) | **x8.74** (23) |
 
-Box 2: 4 CPUs, Linux, jank 0.1-noble from jank's apt repository (what `dev/install/jank.sh` installs; no patches),
-`main`'s code at 6eec4e2, 2026-11-02 evening. Records: `doc/perf/release-perf/` (muse/release-perf).
+## Box 1 (Linux, Xeon 2.80 GHz)
 
-### Box 3: ClojureWasm
+### Startup (from source, `cohost :<runtime> -M -m demo.main`)
 
-Box 3: 4 CPUs, Linux, ClojureWasm 1.15.4, nothing else running; the JVM column is this box's own. `cljw` is
-ClojureWasm's own core, all 28 programs (2026-11-03 12:39 to 1:19 AM ET, 10 timed calls each). `cljw-cohost` is
-Clojure's core booted by cohost on ClojureWasm, all 28 programs (ffcc0cb's method, 2:35 to 3:35 and 6:12 to 6:43 AM
-ET; `tak-hinted` reached the 15-minute limit). Median ms (xJVM in parens). Records:
-`doc/perf/release-perf-d/` (lane D, d/release-perf @ a2fe7a6).
-
-| program | jvm | cljw | cljw-cohost |
+| runtime | from source | cached boot | built app (`run you`) |
 |---|---:|---:|---:|
-| binary-trees | 257.5 | 11297.2 (x43.87) | 14358.3 (x55.76) |
-| binary-trees-14 | 11.4 | 454.1 (x39.99) | 723.8 (x63.74) |
-| binary-trees-14-hinted | 9.4 | 463.8 (x49.48) | 1358.5 (x144.94) |
-| binary-trees-hinted | 245.7 | 10026.0 (x40.81) | 28770.1 (x117.10) |
-| dispatch | 138.0 | 2835.2 (x20.54) | 13419.3 (x97.24) |
-| fannkuch | 148.0 | 2811.3 (x18.99) | 6168.8 (x41.68) |
-| fannkuch-hinted | 165.6 | 3049.3 (x18.41) | 6311.9 (x38.12) |
-| fib | 163.6 | 6167.9 (x37.70) | 8247.3 (x50.41) |
-| fib-hinted | 99.8 | 5362.0 (x53.70) | 82115.5 (x822.40) |
-| first-output | 647.3 | 21.1 (x0.03) | 87356.4 (x134.95) |
-| json | 234.0 | 4149.4 (x17.73) | 31890.1 (x136.28) |
-| k-nucleotide | 131.1 | 1887.1 (x14.40) | 4684.1 (x35.73) |
-| keyword-map | 85.7 | 832.3 (x9.71) | 3277.2 (x38.24) |
-| lazy-pipeline | 32.1 | 119.9 (x3.74) | 7735.5 (x241.20) |
-| mandelbrot | 206.4 | 37737.1 (x182.86) | 45244.9 (x219.24) |
-| mandelbrot-hinted | 219.0 | 37954.1 (x173.32) | 45521.4 (x207.87) |
-| nbody | 188.4 | 2757.8 (x14.64) | 9090.3 (x48.24) |
-| nbody-hinted | 190.0 | 2654.6 (x13.97) | 8482.5 (x44.64) |
-| nsieve | 142.5 | 1742.7 (x12.23) | 9426.3 (x66.15) |
-| nsieve-hinted | 163.0 | 1636.1 (x10.04) | 9439.7 (x57.90) |
-| pipeline | 143.0 | 2372.0 (x16.59) | 5315.0 (x37.18) |
-| sort | 36.9 | 92.4 (x2.50) | 5855.9 (x158.62) |
-| spectral-norm | 189.1 | 9853.7 (x52.10) | 12813.6 (x67.76) |
-| spectral-norm-hinted | 146.6 | 11221.8 (x76.54) | 37976.1 (x259.01) |
-| sum-overflow | 8.9 | 25.3 (x2.85) | 24.4 (x2.76) |
-| sum-overflow-hinted | 0.6 | 58.8 (x95.08) | 58.0 (x93.94) |
-| tak | 317.9 | 25820.4 (x81.23) | 25634.5 (x80.64) |
-| tak-hinted | 196.5 | 22689.9 (x115.49) | error |
-| **geomean xJVM** (programs that ran) | 1 | **x20.48** (28) | **x79.29** (27) |
+| stock `clojure -M -m demo.main` | 1.52 s | — | — |
+| JVM (`cohost :jvm`, the real Clojure CLI) | 1.41 s | — | — |
+| jank | 2.55 s (the snapshot, before the launcher) | — | — |
+| jolt | 4.53 s | — | — |
+| ClojureScript | 8.85 s | — | — |
+| let-go | 15.4 s | — | — |
+| Phel | 47.0 s | — | 1.3-2.0 s |
+| basilisp | 88.6 s (from source; the cached boot came later) | — | — |
+| ClojureWasm | 94.0 s | — | — |
 
-**ReleaseFast ClojureWasm** (lane D, Box 3, 2026-11-03 4:20-4:35 AM ET; ClojureWasm 1.15.4 built from its tag with
-`zig build -Doptimize=ReleaseFast`, against the shipped ReleaseSafe binary): 8 programs on ClojureWasm's own core
-take x0.862 of the time (geomean); the built app's `fib` x0.79 and `first-output` x0.90; the binary is 6.6 MB
-against 9.6 MB. Records and the exact install commands: `doc/perf/cljw-releasefast/` (d/aot-cljw).
+`main` @ ff30ce1, 2026-11-03 12:41 AM ET (`doc/perf/release-perf/lane-c/startup.txt`). Every runtime without a cached
+boot reads, rewrites and evaluates `clojure.core` and the program's libraries at each start; the spread from 4.5 s on
+jolt to 94 s on ClojureWasm is how fast each one evaluates Clojure's own source.
 
-### Box 4: let-go and Phel
+### Speed (geomean xJVM, programs counted)
 
-Box 4: 4 CPUs (Intel Xeon, 2.10 GHz), Linux, let-go 1.13.0, PHP 8.3.6; the JVM column is this box's own
-(2026-11-03 1:18 AM ET). `lg` is let-go's own core, all 28 programs (release4 @ 53164fc, 6:09 to 6:23 AM ET, the 15 s
-budget). `phel` is Phel's own core, all 28 programs (2:29 to 2:43 AM ET, the 15 s
-budget, ffcc0cb): 15 run with the JVM's answer, `json` gives another answer, and 12 fail on Phel's own dialect
-(type hints, Java's `Math`, the unresolved symbol `w` in `dispatch`, a crash in `lazy-pipeline`). `lg-cohost` is Clojure's core booted by cohost on let-go, all 28 programs (6:23 to 7:54 AM ET);
-Phel through cohost is being measured.
-Records: `doc/perf/box4/`.
+| runtime | own Clojure | cohost, from source | cohost, built app |
+|---|---:|---:|---:|
+| jolt | x2.91 (28) | x9.56 (28) | — |
+| ClojureScript | x3.93 (25, Node); x3.00 (25, Chromium) | x9.12 (28, Node) | — |
+| Phel | — | — | x121.12 (27; 1 cut) |
+| the others | — | — | — |
 
-| program | jvm | lg | phel | lg-cohost |
-|---|---:|---:|---:|---:|
-| binary-trees | 246.8 | 9834.4 (x39.84) | 16357.1 (x66.27) | 26348.4 (x106.75) |
-| binary-trees-14 | 10.4 | 464.3 (x44.85) | 661.5 (x63.90) | 1340.5 (x129.50) |
-| binary-trees-14-hinted | 14.2 | 472.0 (x33.12) | error | 1835.1 (x128.78) |
-| binary-trees-hinted | 239.7 | 9781.0 (x40.80) | error | 36094.1 (x150.55) |
-| dispatch | 152.8 | 3181.9 (x20.83) | error | 54026.8 (x353.61) |
-| fannkuch | 142.1 | 1617.2 (x11.38) | 3792.0 (x26.69) | 7293.8 (x51.34) |
-| fannkuch-hinted | 163.1 | 1604.8 (x9.84) | 3640.5 (x22.32) | 7052.7 (x43.24) |
-| fib | 121.8 | 4792.2 (x39.35) | 3169.3 (x26.03) | 5236.8 (x43.00) |
-| fib-hinted | 76.3 | 4787.2 (x62.73) | error | 57106.6 (x748.27) |
-| first-output | 804.7 | 12.3 (x0.02) | 91.9 (x0.11) | 9655.9 (x12.00) |
-| json | 219.9 | 4136.3 (x18.81) | 4746.0, differs | 58804.6 (x267.45) |
-| k-nucleotide | 128.6 | 2028.9 (x15.78) | 4974.2 (x38.68) | 41268.2 (x320.92) |
-| keyword-map | 95.1 | 1172.1 (x12.32) | 4304.8 (x45.27) | 22304.3 (x234.53) |
-| lazy-pipeline | 34.1 | 849.7 (x24.90) | error | 5441.5 (x159.44) |
-| mandelbrot | 187.9 | 20078.6 (x106.87) | 103936.6 (x553.21) | error |
-| mandelbrot-hinted | 174.6 | 20330.2 (x116.41) | error | error |
-| nbody | 212.9 | 2266.5 (x10.65) | error | 15260.6 (x71.69) |
-| nbody-hinted | 212.5 | 2228.2 (x10.49) | error | 15203.2 (x71.54) |
-| nsieve | 212.5 | 774.1 (x3.64) | 3843.8 (x18.08) | 12435.4 (x58.51) |
-| nsieve-hinted | 180.2 | 801.8 (x4.45) | 3914.8 (x21.72) | 12615.6 (x70.00) |
-| pipeline | 141.0 | 6684.4 (x47.39) | 5146.2 (x36.49) | 10935.1 (x77.53) |
-| sort | 37.3 | 252.3 (x6.77) | 120.5 (x3.23) | 1349.7 (x36.20) |
-| spectral-norm | 222.3 | 7793.8 (x35.06) | error | 80770.5 (x363.30) |
-| spectral-norm-hinted | 133.8 | 8986.0 (x67.14) | error | 100724.7 (x752.57) |
-| sum-overflow | 12.9 | 41.8 (x3.24) | 774.5 (x60.04) | 51.5 (x3.99) |
-| sum-overflow-hinted | 0.5 | 82.4 (x156.74) | error | 3168.2 (x6024.18) |
-| tak | 260.0 | 15315.1 (x58.90) | 5406.7 (x20.79) | 19483.0 (x74.93) |
-| tak-hinted | 162.0 | 16065.7 (x99.15) | error | error |
-| **geomean xJVM** (programs that ran) | 1 | **x19.29** (28) | **x23.71** (15) | **x118.90** (25) |
+Phel's built app is `phel build` of the recorded boot, run under OPcache with the tracing JIT (c/aot-phel). Every
+program gives the JVM's answer; `lazy-pipeline` is over x1000.
 
-basilisp is measured on Box 1; its rows go in as each column finishes.
+### Per program (median ms, xJVM)
 
-### Type hints
+| program | jvm | cljs | cljs-cohost | browser | jolt | jolt-cohost | phel-built |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fib | 165 | 312 (x1.89) | 388 (x2.35) | 202 (x1.23) | 266 (x1.61) | 1,009 (x6.12) | 7,252 (x44.00) |
+| fib-hinted | 91 | 292 (x3.22) | 2,890 (x31.90) | 189 (x2.09) | 197 (x2.17) | 13,080 (x144.37) | 46,850 (x517.11) |
+| tak | 457 | fails | 1,652 (x3.61) | fails | 550 (x1.20) | 2,898 (x6.34) | 13,625 (x29.81) |
+| tak-hinted | 229 | fails | 12,981 (x56.66) | fails | 525 (x2.29) | 54,552 (x238.11) | 188,885 (x824.46) |
+| nbody | 226 | 1,117 (x4.95) | 2,019 (x8.95) | 876 (x3.88) | 826 (x3.66) | 1,699 (x7.53) | 35,374 (x156.80) |
+| nbody-hinted | 256 | 986 (x3.85) | 2,284 (x8.91) | 815 (x3.18) | 735 (x2.87) | 1,456 (x5.68) | 34,704 (x135.40) |
+| spectral-norm | 242 | 1,992 (x8.24) | 3,365 (x13.91) | 1,220 (x5.04) | 1,233 (x5.10) | 2,176 (x8.99) | 53,851 (x222.62) |
+| spectral-norm-hinted | 144 | 1,924 (x13.38) | 4,240 (x29.48) | 1,218 (x8.47) | 977 (x6.80) | 6,177 (x42.96) | 62,463 (x434.37) |
+| mandelbrot | 246 | 3,045 (x12.39) | 5,413 (x22.03) | 2,360 (x9.61) | 1,957 (x7.96) | 2,513 (x10.23) | 96,934 (x394.52) |
+| mandelbrot-hinted | 237 | 3,198 (x13.50) | 5,183 (x21.88) | 2,662 (x11.24) | 293 (x1.24) | 2,788 (x11.77) | 95,527 (x403.24) |
+| binary-trees | 249 | 821 (x3.30) | 1,412 (x5.67) | 522 (x2.10) | 1,328 (x5.33) | 2,481 (x9.96) | 35,481 (x142.49) |
+| binary-trees-hinted | 253 | 861 (x3.40) | 1,958 (x7.74) | 468 (x1.85) | 1,387 (x5.48) | 4,728 (x18.68) | 37,067 (x146.45) |
+| binary-trees-14 | 12 | 29 (x2.39) | 67 (x5.48) | 17 (x1.38) | 53 (x4.37) | 102 (x8.34) | 1,191 (x97.60) |
+| binary-trees-14-hinted | 9.9 | 30 (x3.05) | 91 (x9.21) | 23 (x2.34) | 60 (x6.04) | 203 (x20.55) | 1,761 (x177.92) |
+| sum-overflow | 9.9 | 9.1 (x0.92) | 8.0 (x0.81) | 6.1 (x0.62) | 26 (x2.62) | 29 (x2.89) | 1,749 (x176.65) |
+| sum-overflow-hinted | 0.9 | 50 (x55.56) | 72 (x80.00) | 38 (x42.44) | 1.6 (x1.78) | 8.5 (x9.44) | 36 (x39.67) |
+| sort | 43 | 119 (x2.78) | 104 (x2.42) | 86 (x2.00) | 69 (x1.61) | 78 (x1.82) | 1,578 (x36.78) |
+| lazy-pipeline | 33 | 132 (x4.01) | 303 (x9.23) | 94 (x2.87) | 62 (x1.90) | 214 (x6.53) | > x1000 |
+| keyword-map | 131 | 472 (x3.61) | 906 (x6.94) | 333 (x2.55) | 193 (x1.48) | 569 (x4.35) | 7,935 (x60.75) |
+| fannkuch | 229 | 776 (x3.39) | 1,026 (x4.48) | 574 (x2.50) | 399 (x1.74) | 539 (x2.35) | 23,483 (x102.55) |
+| fannkuch-hinted | 198 | 813 (x4.10) | 1,049 (x5.29) | 592 (x2.99) | 425 (x2.15) | 485 (x2.44) | 19,500 (x98.39) |
+| nsieve | 274 | 872 (x3.18) | 2,366 (x8.64) | 541 (x1.98) | 1,747 (x6.38) | 2,200 (x8.03) | 25,145 (x91.84) |
+| nsieve-hinted | 283 | 806 (x2.85) | 2,355 (x8.33) | 528 (x1.87) | 1,684 (x5.96) | 2,191 (x7.75) | 17,520 (x61.95) |
+| k-nucleotide | 156 | 948 (x6.06) | 1,523 (x9.73) | 598 (x3.82) | 438 (x2.80) | 1,064 (x6.80) | 11,714 (x74.90) |
+| pipeline | 217 | 668 (x3.08) | 1,045 (x4.82) | 623 (x2.87) | 1,158 (x5.34) | 1,271 (x5.86) | 28,527 (x131.64) |
+| dispatch | 175 | 854 (x4.87) | 3,802 (x21.70) | 714 (x4.07) | 2,336 (x13.34) | 2,342 (x13.37) | 89,712 (x512.05) |
+| json | 285 | differs | 2,421 (x8.49) | differs | 694 (x2.43) | 7,542 (x26.45) | 80,520 (x282.43) |
+| first-output | 815 | 139 (x0.17) | 7,761 (x9.52) | 835 (x1.02) | 202 (x0.25) | 3,848 (x4.72) | 1,694 (x2.08) |
+| **geomean xJVM** (recorded programs) | 1 | **x3.93** (25) | **x9.12** (28) | **x3.00** (25) | **x2.91** (28) | **x9.56** (28) | **x121.12** (27; 1 cut) |
 
-On the JVM, primitive hints make fib, tak and spectral-norm about twice as fast (hinted/unhinted median 0.44-0.60),
-sum-overflow 12-16 times as fast, and leave the rest within 0.8-1.4. On cohost they often do the opposite:
-`fib-hinted` is x31.9 the JVM on `cljs-cohost` against x2.35 unhinted, `tak-hinted` x238 on `jolt-cohost` against
-x6.34. cohost gives a hinted parameter the JVM's semantics (a `^long` parameter is coerced to a long on every call,
-on every runtime), and that coercion is paid on every call. On jank, hints compile to native types where jank has
-them (`:native-hints`, [How it works](guide/08-how-it-works.md#performance-keys)), and the hinted rows run at
-0.84-2.13 times the unhinted ones. For speed on cohost today, leave hints off except on the JVM.
+## Known problems
 
-### Programs that do not run, or give another answer
+Each cut or failed cell above is one of these; they are bugs until fixed.
 
-- **ClojureScript, `tak`** (its own core, Node and Chromium): `TypeError: Cannot read properties of undefined
-  (reading 'call')`. The program runs through cohost on ClojureScript.
-- **ClojureScript, `json`** (its own core): returns 0, where the JVM returns 870000. It runs through cohost.
-- **jank's own core, `nbody`, `spectral-norm`** (both forms): `The symbol 'Math/sqrt' (or 'Math/round') could not
-  be resolved`; **`dispatch`**: `The symbol 'defprotocol' could not be resolved`; **`mandelbrot`, `fannkuch`,
-  `nsieve`** (both forms): jank 0.1's C++ code generation fails (`use of undeclared identifier 's28'`) on a `loop`
-  inside a `loop` that rebinds a name of the outer one. All of them run through cohost on jank, which rewrites the
-  interop and the loops.
-- **jank, `sum-overflow` and `pipeline`** (own core and cohost): jank 0.1 adds and multiplies two integers that fit
-  in 32 bits in 32 bits, so a sum past 2^31 wraps (1783293664 where the JVM gives 499999500000). **cohost on jank,
-  `dispatch`**: the same wrap (1691001973 against 12500045833333).
+- **Over x1000 (cut):** basilisp's built app at the smaller sizes, 24 of 25 programs (Box 4); let-go's built app on
+  `tak-hinted`, `mandelbrot`, `mandelbrot-hinted`, `spectral-norm-hinted`, `sum-overflow-hinted` and ClojureWasm's on
+  `fib-hinted`, `tak-hinted` (macOS); Phel's built app on `lazy-pipeline` (Box 1); cohost on let-go from source on
+  `sum-overflow-hinted` (Box 4).
+- **Type hints.** On the JVM, primitive hints make fib, tak and spectral-norm about twice as fast. On cohost they often
+  do the opposite (jolt's `tak-hinted` x252 against x1.65 unhinted, Box 4 run B): a hinted parameter keeps the JVM's
+  semantics (coerced on every call), and that coercion is paid on every call. jank compiles hints to native types
+  (`:native-hints`), and its hinted rows run at 0.84-2.13 times the unhinted ones. For speed on cohost today, leave
+  hints off except on the JVM and jank.
+- **Phel's built app does not build on macOS** (fixed on this branch): the build ran `ulimit -s 65536 && exec phel
+  ...`, and macOS's hard stack limit is 65520 KB, so `ulimit` failed and Phel never ran (`docs:check phel` failed its
+  two build steps there). Now `ulimit -s 65536 2>/dev/null || ulimit -s hard; exec ...` (`src/cohost/build.clj`,
+  `dev/perf/phel_snapshot.sh`), as `bin/cohost` already did.
+- **let-go's built app on macOS is partial** (23 of 28): the run was stopped for the launcher test before
+  k-nucleotide, pipeline, dispatch, json and first-output.
+- **jank's own core:** `nbody`, `spectral-norm` (`Math/sqrt`, `Math/round` unresolved), `dispatch` (`defprotocol`),
+  `mandelbrot`, `fannkuch`, `nsieve` (jank 0.1's C++ code generation fails on a `loop` inside a `loop` that rebinds an
+  outer name); all run through cohost, which rewrites the interop and the loops. `sum-overflow` and `pipeline` wrap
+  at 32 bits on jank 0.1 (own core and cohost from source; the built app gives the JVM's answer on every program), as
+  does cohost on jank's `dispatch`. jank 0.1's own `sort` walks its result quadratically (x352-x602 on Box 2); cohost
+  uses Clojure's own sort there since ff30ce1. cohost carries a patch series against jank (`upstream/jank/`) for the
+  wrap, the sort walk and more; it is used only when `JANK_BIN` names a build of it. These tables are the jank that
+  ships.
+- **ClojureScript's own core:** `tak` fails (`TypeError: Cannot read properties of undefined`), `json` returns 0;
+  both run through cohost.
+- **Phel's own core** runs 15 of 28: type hints, Java's `Math`, `dispatch`'s `w`, a crash in `lazy-pipeline`;
+  `json` gives another answer. `1N` reads as a long on Phel.
 
-## jank
+## Method
 
-- **cohost on jank against jank's own core** (`bb bench:jank`, 30 small cases of `clojure.core` use, Box 2): geomean
-  x0.92, so Clojure's own core booted by cohost is slightly faster overall than jank's own. The worst five for
-  cohost: reduce over a range x44.7 (68.6 ms against 1.5), `clojure.string/join` x39.3, a multimethod call x27.9,
-  keyword lookup x4.0, map lookup x1.9.
-- **sort.** jank 0.1's own `sort` result walks quadratically (each `next` copies the buffer), which is the x352-x602
-  in jank's own columns. cohost on jank uses Clojure's own sort there (a boot probe picks; `main` since ff30ce1):
-  SORT-ROW.
-- **cohost's built app against jank's own core** (macOS box). Over the 13 programs jank's own core runs and all
-  three columns answer as the JVM does: jank-jit x6.66, jank-aot x6.47, and cohost's built app (c0431c6) **x2.37**,
-  about 2.7 times as fast as jank's own `clojure.core`. The gap: `sort` (x1.39 against x217), `lazy-pipeline` (x4.5
-  against x32.4), the four binary-trees (x3.4-3.8 against x7.9-9.7), `tak-hinted` (x0.56 against x3.84). jank's own
-  core leads on `fib` (x0.72 against x0.91) and `keyword-map` (x3.43 against x3.82). jank's own columns were measured
-  the night before (0c8834f, the same bench method and jank binary, against that run's JVM column):
-  `doc/perf/macos/jank-own-0c8834f/`. cohost's built app runs all 27 programs (28 rows with first-output); jank's
-  own core runs 13 of them with the JVM's answer.
-- **Patched jank.** cohost carries a patch series against jank (`upstream/jank/`) that fixes the 32-bit wrap,
-  the sort walk and more; it is used only when `JANK_BIN` names a build of it. These tables are the jank that ships.
+The suite is `bench/programs/`: fib 36, tak 30 20 10, nbody 50000, spectral-norm 600, mandelbrot 1500, binary-trees
+18 and 14, sum-overflow 1000000 (sums past 2^31), sort 100000, lazy-pipeline 1000000, keyword-map 1000000, fannkuch 8,
+nsieve 20, k-nucleotide 2000000, pipeline 500000 (map-heavy), dispatch 5000000 (protocols), json 30000 (a round
+trip); each sized so one call takes 100-1000 ms on the JVM. Ten come twice: plain, and with primitive type hints
+(`^long`, `^double`, coercions) as in performance-minded JVM code. `first-output` is the wall time to print one line
+from a one-line program through the benchmark's own launch of each runtime (no project, no library), median of 3
+processes.
 
-## What makes a runtime fast or slow on cohost
+Per program and runtime (`dev/bench_programs.clj`): one fresh process; the first call is timed as cold; warm-up
+continues until the median of the last 5 calls moves under 2% (at most 20 calls or 10 s); then 10 timed calls, or as
+many as fit in 15 s with at least 3, of which the table shows the median; a program's process is stopped after 15
+minutes. Every call's result is checked against the first call's, and the first call's against the JVM's. The 15 s
+budget came in on 2026-11-03 at 1:37 AM ET; Boxes 1 to 3 were measured with 10 timed calls every time, and the
+medians compare all the same.
 
-- cohost runs Clojure 1.12's own `clojure.core` source, compiled or interpreted by the runtime, with Clojure's JVM
-  interop rewritten to a shim (`clojure.lang.*`, `java.*`) over the runtime's own data structures. A program's speed
-  is the runtime's speed on that code, plus the shim on interop-heavy paths (multimethods, protocols, string
-  building).
-- **Natives**: a runtime can hand a stock function to its own implementation, one name at a time (`:natives`,
-  [Adding a host](guide/09-adding-a-host.md)); each is gated by the batteries and the bench.
-- **Performance keys**: seven switches per runtime, [How it works](guide/08-how-it-works.md#performance-keys).
-- **Startup** is the boot of `clojure.core` from source, except where a snapshot or a cached boot loads instead.
+What makes a runtime fast or slow on cohost: cohost runs Clojure 1.12's own `clojure.core` source, compiled or
+interpreted by the runtime, with Clojure's JVM interop rewritten to a shim over the runtime's own data structures; a
+program's speed is the runtime's speed on that code plus the shim on interop-heavy paths (multimethods, protocols,
+string building). A runtime can hand a stock function to its own implementation one name at a time (`:natives`,
+[Adding a host](guide/09-adding-a-host.md)), and seven performance switches exist per runtime
+([How it works](guide/08-how-it-works.md#performance-keys)). `bb bench:jank` (30 small cases of `clojure.core` use,
+Box 2) puts Clojure's core booted by cohost at x0.92 of jank's own core overall; the worst five for cohost: reduce
+over a range x44.7, `clojure.string/join` x39.3, a multimethod call x27.9, keyword lookup x4.0, map lookup x1.9.
 
-## Measure your machine (add a box)
+## Add a box
 
-Every table above is one box: its own JVM column and the runtimes measured on it, one at a time, nothing else
-running. To add a box, run the steps below and add a section like [Box 1](#box-1-the-jvm-clojurescript-and-jolt).
-Box 1 is the complete example: its records are in `doc/perf/release-perf/lane-c/` (one `.edn` per column plus
-`startup.txt`), and its table is the output of step 4 pasted in.
+Every table above is one box: its own JVM column and the runtimes measured on it, one at a time. To add one, run
+the steps below and add a section like [macOS](#macos-apple-m5): a startup table, a speed table, the per-program
+tables, and the box's description (CPUs, OS, each runtime's version, the cohost commit, the date and time, the load
+when each column started). The macOS records (`doc/perf/macos/`) are the complete example.
 
 1. **Checkout and runtimes.** A cohost checkout of the commit you measure, and each runtime on `PATH`:
 
@@ -590,7 +436,7 @@ Box 1 is the complete example: its records are in `doc/perf/release-perf/lane-c/
    # not checked: clones and installs
    git clone https://github.com/johnmn3/cohost.cljc ~/cohost && cd ~/cohost
    bash dev/install/jank.sh        # likewise jolt.sh, cljs.sh, lg.sh, phel.sh, basilisp.sh, cljw.sh
-   bb boot:jank-snapshot           # jank only: builds its core snapshot once (2 to 11 minutes)
+   bb boot:jank-snapshot           # jank only: builds its snapshot and launcher once (157 s on the M5, 11 min on a busy Linux box)
    ```
 
 2. **The JVM column first.** Every ratio is against this box's own JVM:
@@ -601,16 +447,16 @@ Box 1 is the complete example: its records are in `doc/perf/release-perf/lane-c/
    ```
 
 3. **One column per runtime, one at a time.** `<runtime>` is the runtime's own core; `<runtime>-cohost` is
-   Clojure's core booted by cohost on it (on jank, `jank` is cohost; `bb bench:jank` compares it with jank's own
-   core). The compiled builds are `<runtime>-built`. Each column writes `target/bench-programs/results/<column>.edn`.
+   Clojure's core booted by cohost on it (on jank, `jank` is cohost from its snapshot; `bb bench:jank` compares it
+   with jank's own core); `<runtime>-built` is the built app. Each column writes
+   `target/bench-programs/results/<column>.edn`. A program over x1000 is a bug, not a number: stop that column and
+   record it as cut.
 
    ```bash
    # not checked: minutes (jolt, cljs) to an hour or more (cljw, lpy) per column
-   bb bench:programs jolt
-   bb bench:programs jolt-cohost
-   bb bench:programs jank
-   bb bench:programs cljs              # then cljs-cohost, browser, lg, lg-cohost, phel, phel-cohost,
-                                       # lpy, lpy-cohost, cljw, cljw-cohost, jank-built, jolt-built, ...
+   bb bench:programs jank-built
+   bb bench:programs jolt-built        # then cljs-built, cljw-built, lg-built, phel-built, jvm-built,
+                                       # jolt, jolt-cohost, jank, cljs, cljs-cohost, browser, lg, lg-cohost, ...
    ```
 
    Never run two at once: two ClojureScript compiles at once can corrupt `~/.cljs/.aot_cache`, and any other load
@@ -620,7 +466,7 @@ Box 1 is the complete example: its records are in `doc/perf/release-perf/lane-c/
 
    ```bash
    # not checked: reads the records step 3 wrote
-   bb bench:programs table jvm jolt jolt-cohost jank cljs cljs-cohost
+   bb bench:programs table jvm jank-built jolt-built cljs-built cljw-built
    ```
 
 5. **Startup.** Three wall times per runtime of a hello-world `-main` in `dev/cli-demo`, after one untimed run
@@ -638,9 +484,7 @@ Box 1 is the complete example: its records are in `doc/perf/release-perf/lane-c/
    cd ../..
    ```
 
-6. **The box's section and records.** Head the section with the box: CPUs, OS, each runtime's version, the
-   cohost commit (`git rev-parse --short HEAD`), the date and time, and the load average when each column started.
-   Copy `target/bench-programs/results/*.edn` and the startup lines into `doc/perf/<box-name>/`, commit both on a
-   branch and push it.
+6. **Records.** Copy `target/bench-programs/results/*.edn` and the startup lines into `doc/perf/<box-name>/`, commit
+   them with the doc on a branch and push it.
 
 The history of how these numbers came to be is in [`doc/perf/HISTORY.md`](perf/HISTORY.md).

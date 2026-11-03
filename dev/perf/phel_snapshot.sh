@@ -12,7 +12,7 @@ cd "$(dirname "$0")/../.."
 step=${1:-all}
 if [ "$step" = record ] || [ "$step" = all ]; then
   mkdir -p target/phel-snapshot
-  bash -c "ulimit -s 65536 && exec phel run dev/phel_snapshot_record.phel --out target/phel-snapshot/events.edn"
+  bash -c "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec phel run dev/phel_snapshot_record.phel --out target/phel-snapshot/events.edn"
 fi
 if [ "$step" = emit ] || [ "$step" = all ]; then
   rm -rf phel-snap
@@ -31,5 +31,5 @@ return PhelConfig::forProject(ProjectLayout::Flat)
     ->withTestDirs([])
     ->withBuildDestDir('out');
 PHP
-  (cd phel-snap-run && bash -c "ulimit -s 65536 && exec phel run ../dev/phel_snapshot_run.phel")
+  (cd phel-snap-run && bash -c "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec phel run ../dev/phel_snapshot_run.phel")
 fi

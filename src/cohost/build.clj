@@ -311,11 +311,11 @@ require_once __DIR__ . '/out/cohost/app_main.php';
         modules (str (io/file work "modules"))
         [php phar] (phel-runtime)
         roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":phel" "-Spath")) #":")
-        big-stack (fn [& cmd] (apply sh! (str work) "bash" "-c" (str "ulimit -s 65536 && exec \"$@\"") "phel-build" cmd))]
+        big-stack (fn [& cmd] (apply sh! (str work) "bash" "-c" (str "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec \"$@\"") "phel-build" cmd))]
     (sh! "." "rm" "-rf" (str out) (str work))
     (.mkdirs work)
     ;; record from the checkout: its phel-config.php lists src
-    (apply sh! home "bash" "-c" "ulimit -s 65536 && exec phel run dev/phel_snapshot_record.phel \"$@\"" "phel-record"
+    (apply sh! home "bash" "-c" "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec phel run dev/phel_snapshot_record.phel \"$@\"" "phel-record"
            "--out" events (concat (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
     (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "phel" "--events" events "--out" modules "--main" (str main))
     (let [closure (sh! home "bb" "dev/perf/phel_closure.clj" "cohost.app-main" modules (str home "/src"))]
