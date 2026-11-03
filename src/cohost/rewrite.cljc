@@ -661,6 +661,18 @@
                       (list 'cpp/jank.runtime.to_real (list (static-sym 'clojure.lang.Numbers 'divide) a b))
                       (list (symbol core "/") a b))))))))
 
+(defn- int-op-operand?
+  "A5-3: an operand :int-op-aliases may name twice -- an integer literal, or a
+   local or var symbol the codemod has not typed (no native long, no real, no
+   hint), so its value is an object. A call or any other form is not: the
+   expansion would need a let* to name it, and a let* in an argument of a
+   jank self-call fails jank's C++ codegen on apt (see the battery row)."
+  [x]
+  (or (integer? x)
+      (and (symbol? x) (nil? (namespace x))
+           (not (native-int-form? x)) (not (real-form? x))
+           (nil? (get *local-tags* x)) (nil? (:tag (meta x))))))
+
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
         nm (static-name c m)
@@ -669,7 +681,12 @@
     (cond (and (seq *native-ints*) (get (:native-int-aliases ctx) nm) (seq args) (every? native-int-form? args))
           (apply list (get (:native-int-aliases ctx) nm) args')
           real' real'
-          (known? ctx nm) (or ;; U6-8: the adapter's own expansion of a Math static at
+          (known? ctx nm) (or ;; A5-3: + - * of two unknown operands where the shim's are
+                              ;; A5's checked call: the host's promoting op inline (nil: keep it)
+                              (when-let [f (and (= 2 (count args)) (every? int-op-operand? args)
+                                                (some symbol? args) (get (host/int-op-aliases) nm))]
+                                (f args' (or (get (:host-aliases ctx) nm) (static-sym c m))))
+                              ;; U6-8: the adapter's own expansion of a Math static at
                               ;; the call head (nil: keep the shim call)
                               (when-let [mf (get (host/math-aliases) nm)] (mf args'))
                               (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args'))
