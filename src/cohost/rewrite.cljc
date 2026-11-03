@@ -2941,7 +2941,13 @@
 (def ^:private reader-position-keys #{:line :column :end-line :end-column :file :source :jank/source})
 (defn- vector-literal-fn [form]
   (when-let [m (host/vector-literal)]
-    (when (every? reader-position-keys (keys (meta form)))
+    (when (and (every? reader-position-keys (keys (meta form)))
+               ;; never a vector in a binding or parameter position: some paths hand a whole
+               ;; clause to rw ((bt-y [_ k] body) in a record's specs), where [_ k] must stay a
+               ;; vector. A parameter vector holds only symbols, & and destructuring patterns
+               ;; (vectors, maps); a literal that is data holds a call or an atom
+               (not-any? #(or (vector? %) (map? %)) form)
+               (some #(or (seq? %) (number? %) (string? %) (keyword? %) (char? %) (boolean? %) (nil? %)) form))
       (get m (count form)))))
 
 (defn rw [ctx form]
