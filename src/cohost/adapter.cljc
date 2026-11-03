@@ -117,6 +117,7 @@
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
    :vector-aliases  [[] "{shim static name (\"RT-nth\", \"RT-count\") -> (fn [args]) returning the form the call becomes, or nil}: like :math-aliases, for the RT collection statics: the host's own op where the argument is the host's vector (a test the host's user modules can see), the shim's wrapper otherwise, so a cohost type still reaches its descriptor. Default {}"]
+   :int-op-aliases  [[] "{shim static name (\"Numbers-add\", \"Numbers-minus\", \"Numbers-multiply\") -> (fn [args checked]) returning the form a call of two untyped operands (locals or integer literals, which it may name twice) becomes; checked is the shim static's symbol}: where the host's own integer ops wrap and the shim's are a checked call (A5, jank on apt), the host's own promoting op inline, with the shim's checked call only when two integers overflow (A5-3). Default {}"]
    :math-aliases    [[] "{shim static name (a string, \"Math-sqrt\") -> (fn [args]) returning the form a call (Math/sqrt x) becomes on this host, or nil to keep the shim call}: the host's own math op at the call head, where its value is the JVM's for every argument (a probe per op; ops whose semantics differ keep the shim wrapper). Default {}"]
    :static-aliases  [[] "{shim static name (a string) -> the host core's symbol}: statics the host-aliases? scan cannot match because the shim's value is a wrapper with its own body, where that wrapper's semantics are the host op's on this host (jank: Numbers-minus is jank's -). Merged over the scan's aliases. Default {}"]
    :core-aliases    [[] "#{stock core name}: calls of these booted stock core fns are emitted as the host core's fn of that name, whose semantics are the stock fn's on this host, so the host's compiler sees (and may inline) its own op; the stock fn stays booted for every other use (apply, a value, with-redefs of the booted var). Default #{}"]
@@ -365,6 +366,7 @@ namespace cohost_err {
     :static-aliases {}
     :math-aliases {}
     :vector-aliases {}
+    :int-op-aliases {}
     :core-aliases #{}
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
@@ -647,6 +649,7 @@ namespace cohost_err {
 (defn static-aliases [] (or (cap :static-aliases) {}))
 (defn math-aliases [] (or (cap :math-aliases) {}))
 (defn vector-aliases [] (or (cap :vector-aliases) {}))
+(defn int-op-aliases [] (or (cap :int-op-aliases) {}))
 (defn core-aliases [] (or (cap :core-aliases) #{}))
 (defn env-locals "The local symbols of a macro's &env." [env]
   (try-all (fn [] (filter symbol? ((cap :env-locals) env)))))

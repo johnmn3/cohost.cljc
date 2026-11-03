@@ -22,6 +22,7 @@
    ["doseq + atom" "(let [a (atom [])] (doseq [x (range 3) y [:a :b]] (swap! a conj [x y])) @a)" [[0 :a] [0 :b] [1 :a] [1 :b] [2 :a] [2 :b]]]
    ["dotimes while" "(let [a (atom 0)] (dotimes [_ 4] (swap! a inc)) (while (< @a 10) (swap! a inc)) @a)" 10]
    ["lazy-seq infinite" "(take 5 (iterate (partial * 2) 1))" '(1 2 4 8 16)]
+   ["a self-call with a let argument" "(do (defn sc-let [n] (if (< n 1) 0 (+ 1 (sc-let (let [m (dec n)] (if (pos? m) m 0)))))) (defn sc-loop [n acc] (if (< n 1) acc (sc-loop (dec n) (loop [k 0] (if (< k 2) (recur (inc k)) (+ acc k)))))) [(sc-let 3) (sc-loop 3 0)])" [3 6]]
    ["lazy-seq user" "(do (defn nats ([] (nats 0)) ([n] (lazy-seq (cons n (nats (inc n)))))) (take 4 (drop 2 (nats))))" '(2 3 4 5)]
    ["lazy-cat concat mapcat" "[(take 4 (lazy-cat [1 2] (range))) (mapcat reverse [[1 2] [3 4]])]" [[1 2 0 1] [2 1 4 3]]]
    ["partition group-by frequencies" "[(partition 2 1 [1 2 3 4]) (partition-all 3 (range 7)) (group-by odd? (range 5)) (frequencies \"abca\")]" ['((1 2) (2 3) (3 4)) '((0 1 2) (3 4 5) (6)) {true [1 3] false [0 2 4]} {\a 2 \b 1 \c 1}]]
@@ -177,6 +178,7 @@
    ["multimethod: derive after a call is seen" "(do (defmulti bt-mh identity) (defmethod bt-mh ::bt-p [_] :p) (defmethod bt-mh :default [_] :d) (let [a (bt-mh ::bt-q)] (derive ::bt-q ::bt-p) [a (bt-mh ::bt-q)]))" [:d :p]]
    ;; integer arithmetic past 2^31 (A5: unpatched jank wraps + - * at 32 bits; every host must pass)
    ["+ - * past 2^31 on small integers" "[(+ 2147483647 1) (- -2147483648 1) (* 65536 65536) (* 46341 46341) (- 0 -2147483648) (inc 2147483647) (dec -2147483648)]" [2147483648 -2147483649 4294967296 2147488281 2147483648 2147483648 -2147483649]]
+   ["+ - * past 2^31 on untyped locals" "(let [a (identity 2147483647) b (identity 65536) c (identity -2147483648) h (identity 1.5)] [(+ a 1) (* b b) (- c 1) (- 0 c) (+ h 1) (* a 2) (- a h) (+ a b)])" [2147483648 4294967296 -2147483649 2147483648 2.5 4294967294 2147483645.5 2147549183]]
    ["a sum past 2^31 through reduce, apply and a loop" "[(reduce + (range 100000)) (apply + (range 100000)) (loop [i 0 s 0] (if (< i 100000) (recur (inc i) (+ s i)) s)) (loop [i 0 s 0] (if (< i 70000) (recur (inc i) (+ s (* i 3))) s))]" [4999950000 4999950000 4999950000 7349895000]]
    ["hash-combine hashes its argument as Object.hashCode does" "[(hash-combine 0 \"a\") (hash-combine 0 nil) (hash-combine 1 2) (hash-combine -5 \"hello\")]" [-1640531430 -1640531527 -1640531462 1541369522]]
    ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]
