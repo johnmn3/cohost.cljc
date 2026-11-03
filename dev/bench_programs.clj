@@ -3,6 +3,9 @@
 ;;   bb bench:programs <target> [program[:size],...]   measure, print, record
 ;;   bb bench:programs all [program[:size],...]        every target, in order
 ;;   bb bench:programs table [target ...]              doc/PERF.md table from the records
+;;   bb bench:programs sentinels [table]               the sentinel rows: measure jank-aot and jank
+;;                                                      (jvm only where it has no record), print their table;
+;;                                                      `table` prints only. Honors JANK_BIN.
 ;;
 ;; Method (C-1, 2026-11-02). One process per program and target. Inside it:
 ;; - the first call of -run is COLD-MS (the first call in a fresh process);
@@ -26,6 +29,21 @@
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
 
+;; JANK_BIN=<path> runs the jank targets on that binary (default: jank on
+;; PATH). Its AOT objects live under their own roots (suffix: sha256 of the
+;; binary's real path, 12 hex), so the apt jank and a source build never load
+;; each other's objects.
+(def jank-bin
+  (let [b (System/getenv "JANK_BIN")]
+    (if (str/blank? b) "jank" b)))
+
+(def jank-tag
+  (if (= "jank" jank-bin)
+    ""
+    (str "-" (subs (-> (shell {:out :string :in (str (fs/real-path jank-bin))} "sha256sum")
+                       :out str/trim)
+                   0 12))))
+
 ;; Sizes: one JVM call takes 100-1000 ms after warm-up (measured 2026-11-02).
 (def programs
   [{:id :fib :file "bench/programs/fib.clj" :arg "36"}
@@ -40,6 +58,15 @@
    {:id :mandelbrot-hinted :file "bench/programs/mandelbrot_hinted.clj" :arg "1500" :hinted? true}
    {:id :binary-trees :file "bench/programs/binary_trees.clj" :arg "18"}
    {:id :binary-trees-hinted :file "bench/programs/binary_trees_hinted.clj" :arg "18" :hinted? true}
+   ;; X1: depth 14 as a second size (GC visible); the i32-wrap sentinel; sort then a walk to the middle.
+   {:id :binary-trees-14 :file "bench/programs/binary_trees.clj" :arg "14" :sentinel? true}
+   {:id :binary-trees-14-hinted :file "bench/programs/binary_trees_hinted.clj" :arg "14" :hinted? true :sentinel? true}
+   {:id :sum-overflow :file "bench/programs/sum_overflow.clj" :arg "1000000" :sentinel? true}
+   {:id :sum-overflow-hinted :file "bench/programs/sum_overflow_hinted.clj" :arg "1000000" :hinted? true :sentinel? true}
+   {:id :sort :file "bench/programs/sort.clj" :arg "100000" :sentinel? true}
+   ;; X1-2: a lazy pipeline over a long range; get/assoc on a 16-key map of long keywords.
+   {:id :lazy-pipeline :file "bench/programs/lazy_pipeline.clj" :arg "1000000" :sentinel? true}
+   {:id :keyword-map :file "bench/programs/keyword_map.clj" :arg "1000000" :sentinel? true}
    {:id :fannkuch :file "bench/programs/fannkuch.clj" :arg "8"}
    {:id :fannkuch-hinted :file "bench/programs/fannkuch_hinted.clj" :arg "8" :hinted? true}
    {:id :nsieve :file "bench/programs/nsieve.clj" :arg "20"}
@@ -53,9 +80,9 @@
 (def targets
   [{:id "jvm" :exe "clojure"}
    {:id "jvm-cohost" :exe "clojure"}
-   {:id "jank-jit" :exe "jank"}
-   {:id "jank-aot" :exe "jank"}
-   {:id "jank" :exe "jank"}
+   {:id "jank-jit" :exe jank-bin}
+   {:id "jank-aot" :exe jank-bin}
+   {:id "jank" :exe jank-bin}
    {:id "jolt" :exe "jolt"}
    {:id "jolt-cohost" :exe "jolt"}
    {:id "lpy" :exe "basilisp"}
@@ -161,10 +188,10 @@
 (defn run-jank-jit [id src arg]
   (let [f (tmp (str (name id) ".jank"))]
     (spit f (str (harness src (clock "jank-jit") true) "(apply -main *command-line-args*)\n"))
-    (run! ["jank" "-O3" "run" f "--" arg])))
+    (run! [jank-bin "-O3" "run" f "--" arg])))
 
 (defn aot-dir [id src]
-  (let [root (str "target/bench-programs/aot-" (name id))
+  (let [root (str "target/bench-programs/aot-" (name id) jank-tag)
         file (str root "/src/bench/prog.jank")
         stamp (str root "/stamp")
         body (str "(ns bench.prog)\n" (harness src (clock "jank-aot") true))]
@@ -172,7 +199,7 @@
       (fs/delete-tree root)
       (fs/create-dirs (str root "/src/bench"))
       (spit file body)
-      (let [c (run! ["jank" "--module-path" (str root "/src") "compile-module" "bench.prog"
+      (let [c (run! [jank-bin "--module-path" (str root "/src") "compile-module" "bench.prog"
                      "-O3" "--target-dir" root])]
         (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/prog.o")))
           (throw (ex-info "aot-compile" {:err (str (:err c) "\n" (:out c))}))))
@@ -181,7 +208,7 @@
 
 (defn run-jank-aot [id src arg]
   (let [d (aot-dir id src)]
-    (run! ["jank" "--module-path" (str (:cache d) ":" (:src d)) "run-main" "bench.prog" "--" arg])))
+    (run! [jank-bin "--module-path" (str (:cache d) ":" (:src d)) "run-main" "bench.prog" "--" arg])))
 
 (defn jank-cohost-dir []
   ;; cohost's own namespaces AOT (G-12), rebuilt when stale.
@@ -209,12 +236,12 @@
           (reset! jank-env env)
           {:env env
            :cmd (if snapshot?
-                  ["jank" "-O3" "--module-path" module-path "run" (str repo "/dev/perf/jank_snapshot_run.jank")
+                  [jank-bin "-O3" "--module-path" module-path "run" (str repo "/dev/perf/jank_snapshot_run.jank")
                    "--" "--eval" code]
-                  ["jank" "-O3" "--module-path" module-path "run-main" "cohost.run" "--" "--eval" code])}))
+                  [jank-bin "-O3" "--module-path" module-path "run-main" "cohost.run" "--" "--eval" code])}))
     (do (reset! jank-boot :aot)
         (reset! jank-env nil)
-        {:cmd ["jank" "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" code]})))
+        {:cmd [jank-bin "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" code]})))
 
 (defn run-jank-cohost [_ src arg]
   ;; cohost's jank boot has no load-file; --eval reads every form of its argument.
@@ -380,19 +407,19 @@
 ;; ---- first-output
 
 (defn wall-aot-cmd []
-  (let [root "target/bench-programs/aot-wall"
+  (let [root (str "target/bench-programs/aot-wall" jank-tag)
         body "(ns bench.wall)\n(defn -main [& _]\n  (println \"ok\"))\n"
         stamp (str root "/stamp")]
     (when-not (and (fs/exists? stamp) (= (slurp stamp) body) (seq (fs/glob root "**/bench/wall.o")))
       (fs/delete-tree root)
       (fs/create-dirs (str root "/src/bench"))
       (spit (str root "/src/bench/wall.jank") body)
-      (let [c (run! ["jank" "--module-path" (str root "/src") "compile-module" "bench.wall"
+      (let [c (run! [jank-bin "--module-path" (str root "/src") "compile-module" "bench.wall"
                      "-O3" "--target-dir" root])]
         (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/wall.o")))
           (throw (ex-info "aot-wall" {:err (str (:err c) "\n" (:out c))}))))
       (spit stamp body))
-    ["jank" "--module-path" (str (first (fs/glob root "_cache/*")) ":" root "/src") "run-main" "bench.wall"]))
+    [jank-bin "--module-path" (str (first (fs/glob root "_cache/*")) ":" root "/src") "run-main" "bench.wall"]))
 
 (def ok-eval "(println \"ok\")")
 
@@ -400,7 +427,7 @@
   (case id
     "jvm" ["clojure" "-M" file]
     "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" ok-eval]
-    "jank-jit" ["jank" "-O3" "run" file]
+    "jank-jit" [jank-bin "-O3" "run" file]
     "jank-aot" (wall-aot-cmd)
     "jank" (:cmd (jank-cohost-cmd ok-eval))
     "cljrs" ["cljrs" "run" file]
@@ -504,7 +531,11 @@
 
 ;; ---- records
 
-(defn results-file [target-id] (str "target/bench-programs/results/" target-id ".edn"))
+;; A jank target's records carry the binary's tag (JANK_BIN), so a source build's
+;; rows never overwrite the apt binary's.
+(defn results-file [target-id]
+  (str "target/bench-programs/results/" target-id
+       (if (str/starts-with? target-id "jank") jank-tag "") ".edn"))
 
 (defn load-results [target-id]
   (let [f (results-file target-id)]
@@ -556,8 +587,9 @@
 
 (defn geomean [xs] (when (seq xs) (Math/exp (/ (reduce + (map #(Math/log %) xs)) (count xs)))))
 
-(defn table [ids]
-  (let [ids (if (seq ids) ids (filter #(fs/exists? (results-file %)) (map :id targets)))
+(defn table [ids & [ps]]
+  (let [ps (or ps programs)
+        ids (if (seq ids) ids (filter #(fs/exists? (results-file %)) (map :id targets)))
         others (remove #{"jvm"} ids)
         recs (into {} (map (fn [i] [i (load-results i)]) ids))
         jvm (load-results "jvm")
@@ -568,7 +600,7 @@
     (println)
     (row (concat ["program" "size" "jvm"] others))
     (println (str "|---|---:|" (str/join "" (repeat (inc (count others)) "---:|"))))
-    (doseq [p programs :let [pid (:id p)]]
+    (doseq [p ps :let [pid (:id p)]]
       (row (concat [(name pid) (or (get-in jvm [pid :arg]) "-") (some-> (get-in jvm [pid :median]) fmt)]
                    (for [i others :let [r (get-in recs [i pid])]]
                      (cond (nil? r) "not run"
@@ -580,20 +612,20 @@
     (println)
     (row (concat ["program"] ids))
     (println (str "|---|" (str/join "" (repeat (count ids) "---:|"))))
-    (doseq [p programs :let [pid (:id p)]]
+    (doseq [p ps :let [pid (:id p)]]
       (row (cons (name pid)
                  (for [i ids :let [r (get-in recs [i pid])]]
                    (if (:median r) (str (fmt (:min r)) "-" (fmt (:max r)) " / " (fmt (:cold r))) "")))))
     (println)
     (doseq [i ids :when (not= i "jvm")
-            :let [all (keep #(ratio i (:id %)) programs)
-                  un (keep #(when-not (:hinted? %) (ratio i (:id %))) programs)
-                  hi (keep #(when (:hinted? %) (ratio i (:id %))) programs)]]
+            :let [all (keep #(ratio i (:id %)) ps)
+                  un (keep #(when-not (:hinted? %) (ratio i (:id %))) ps)
+                  hi (keep #(when (:hinted? %) (ratio i (:id %))) ps)]]
       (println (str "- " i ": geomean xJVM " (some-> (geomean all) (#(format "%.3f" %))) " over " (count all)
                     " programs (unhinted " (some-> (geomean un) (#(format "%.3f" %))) " over " (count un)
                     ", hinted " (some-> (geomean hi) (#(format "%.3f" %))) " over " (count hi) ")")))
     (doseq [i ids
-            :let [pairs (for [p programs :when (:hinted? p)
+            :let [pairs (for [p ps :when (:hinted? p)
                               :let [base (keyword (str/replace (name (:id p)) "-hinted" ""))
                                     h (get-in recs [i (:id p) :median]) u (get-in recs [i base :median])]
                               :when (and h u)]
@@ -603,20 +635,45 @@
     (println)
     (println "ABSENT and DIFFER, as printed:")
     (println)
-    (doseq [i ids p programs :let [r (get-in recs [i (:id p)])]
+    (doseq [i ids p ps :let [r (get-in recs [i (:id p)])]
             :when (or (:fail r) (:differ r))]
       (println (str "- " i " " (name (:id p)) ": "
                     (if (:fail r)
                       (str "`" (str/replace (:fail r) "`" "'") "`")
                       (str "DIFFER: " (:result r) ", JVM " (:differ r))))))))
 
+;; ---- the sentinel table (X1-2): the rows each upstream patch should move.
+
+(def sentinels (filter :sentinel? programs))
+
+(defn sentinel-table []
+  (println (str "Sentinels on JANK_BIN=" jank-bin
+                (when-not (str/blank? jank-tag) (str " (jank records tag " jank-tag ")"))))
+  (println)
+  (table ["jvm" "jank-aot" "jank"] sentinels))
+
+(defn run-sentinels!
+  "jvm where a sentinel has no JVM record; jank-aot and jank always (on JANK_BIN); then the table."
+  []
+  (let [filt (str/join "," (map (comp name :id) sentinels))
+        jvm (load-results "jvm")
+        missing (remove #(get-in jvm [(:id %) :median]) sentinels)
+        target (fn [id] (first (filter #(= (:id %) id) targets)))]
+    (when (seq missing)
+      (report-target (target "jvm") (str/join "," (map (comp name :id) missing))))
+    (doseq [id ["jank-aot" "jank"]]
+      (report-target (target id) filt))
+    (println)
+    (sentinel-table)))
+
 (defn -main [& args]
   (let [[arg filt] args]
     (cond
       (or (nil? arg) (= arg "help"))
-      (do (println "usage: bb bench:programs <target>|all [program[:size],...] | table [target ...]")
+      (do (println "usage: bb bench:programs <target>|all [program[:size],...] | table [target ...] | sentinels [table]")
           (println (str "targets: " (str/join " " (map :id targets)))))
       (= arg "table") (table (rest args))
+      (= arg "sentinels") (if (= filt "table") (sentinel-table) (run-sentinels!))
       (= arg "all") (doseq [t targets] (report-target t filt))
       :else
       (if-let [t (first (filter #(= (:id %) arg) targets))]

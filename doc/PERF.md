@@ -674,6 +674,228 @@ i32 wrap above), timed anyway.
 | first-output | 672.119 | 678.953 | 13872.158 | 20101.329 |
 
 
+### Sentinels: binary-trees at depth 14, sum-overflow, sort (jank-MAX X1-1)
+
+Three rows that make the upstream lanes' changes visible on the suite (jank-MAX §2 X1). They are fixed by what they
+catch, not by the 100-1000 ms size rule above: a warm JVM call of each takes 0.6-37 ms.
+
+- `binary-trees-14` (and `-hinted`): `binary_trees.clj` at depth 14, a second size beside 18, so the collector's
+  share is visible at a small heap (U5's vectors and collector defaults).
+- `sum-overflow` (and `-hinted`, a `^long` loop): `(reduce + (range 1000000))`, 499999500000 on the JVM, past
+  2^31, so a host that wraps at 32 bits prints `DIFFER` (U1's i64 arms; jank-12, jank-21).
+- `sort`: 100000 numbers from an LCG kept under 2^23 (no host wraps), sorted, then `nth` of the middle element of
+  the sorted seq (U2's sorted walk, jank-11). No hinted twin: there is no primitive arm to hint.
+
+Measured 2026-11-02, 11:01 AM to 11:17 AM ET, one 4-CPU box shared with two other lanes (every timing run serialized
+through one lock), apt jank 0.1-noble, cohost `max/x1` (c/bench-programs 6ba26ac with max/main 1475973). `bb
+bench:programs jvm|jank-aot|jank binary-trees-14,binary-trees-14-hinted,sum-overflow,sum-overflow-hinted,sort`, then
+`bb bench:programs table jvm jank-aot jank` (rows for these five; the 21 rows above are C-1's run).
+
+Median ms of 10 timed calls (xJVM: median / JVM median).
+
+| program | size | jvm | jank-aot | jank |
+|---|---:|---:|---:|---:|
+| binary-trees-14 | 14 | 9.268 | 152.684 (x16.47) | 153.955 (x16.61) |
+| binary-trees-14-hinted | 14 | 14.790 | 153.942 (x10.41) | 211.597 (x14.31) |
+| sum-overflow | 1000000 | 8.891 | 99.390 DIFFER | 80.905 DIFFER |
+| sum-overflow-hinted | 1000000 | 0.579 | 11.398 DIFFER | 10.501 DIFFER |
+| sort | 100000 | 36.551 | 15782.846 (x431.80) | 105.723 (x2.89) |
+
+min-max of the 10 timed calls / the cold call (the first call in a fresh process), ms.
+
+| program | jvm | jank-aot | jank |
+|---|---:|---:|---:|
+| binary-trees-14 | 8.410-128.627 / 39.751 | 126.567-189.042 / 177.659 | 137.662-178.511 / 3384.105 |
+| binary-trees-14-hinted | 8.863-126.885 / 50.075 | 121.648-170.560 / 187.343 | 192.200-241.764 / 3085.089 |
+| sum-overflow | 8.220-223.141 / 38.494 | 93.486-135.052 / 124.876 | 72.047-97.288 / 366.215 |
+| sum-overflow-hinted | 0.569-0.591 / 11.295 | 10.168-11.924 / 16.451 | 10.013-11.204 / 287.616 |
+| sort | 31.767-126.055 / 126.310 | 10068.304-18151.171 / 10558.572 | 86.180-116.144 / 1613.717 |
+
+- `sum-overflow`, both forms, jank-aot and cohost on jank: `DIFFER: 1783293664, JVM 499999500000`
+  (499999500000 mod 2^32). This row turns `SAME` on U1's build (not yet built: U0-1).
+- `sort` on jank's own core takes 15.8 s per call, x432 the JVM; its warm-up stopped at 1 call (the 10 s limit).
+  Cohost on jank runs the same program in 106 ms (x2.89): cohost's `sort` and `nth` are the shim's, not jank's.
+  The gap is jank's own `sort`/`nth` over the sorted seq (lane R's jank-11 names the sorted walk).
+- binary-trees: jank-aot is x16.47 at depth 14 here and x14.41 at depth 18 in C-1's table above; cohost on jank
+  x16.61 and x25.85. On the JVM one call of the 10 at depth 14 took 128.6 ms (median 9.3 ms), a collector pause
+  inside the timed calls; the min-max columns show it.
+
+### The sentinel table (jank-MAX X1-2): seven rows, one command
+
+Two more sentinels, same shape as the three above:
+
+- `lazy-pipeline`: `(count (filter odd? (map inc (range 1000000))))`, 500000; every element crosses three lazy
+  seqs (U3's in-place walks and lazy lock, U4's internal reduce and chunks; jank-15, 16, 17).
+- `keyword-map`: 1000000 `get` + `assoc` pairs on a 16-key map whose keys are 30-character keywords
+  (`:keyword-map-sentinel-key-alpha` ...), with a checksum kept under 2^20 so no integer width changes it
+  (U2's keyword hash; jank-14). 218003 on the JVM.
+
+The command (the coordinator runs it after every merged patch):
+
+```
+bb bench:programs sentinels              # measure jank-aot and jank on the seven rows, jvm only where it has no record, print the table
+bb bench:programs sentinels table        # print only, from the records
+JANK_BIN=<path> bb bench:programs sentinels   # the same on another jank binary
+```
+
+Under `JANK_BIN` the jank targets' records go to `target/bench-programs/results/<target>-<tag>.edn`, the tag being the
+first 12 hex digits of the sha256 of the binary's real path (the same tag as its AOT roots), so a source build's rows
+never overwrite the apt binary's and either table can be printed again later. The JVM records are shared.
+
+Measured 2026-11-02, 12:44 PM to 1:06 PM ET, cohost `max/x1` @ c3c76cb (max/main 0271898 merged). The box has 4 CPUs
+and was shared with two other lanes, unserialized: the apt run and the u2-binary run overlapped from 12:56 PM to
+1:04 PM ET, with other lanes' builds and benches running too. So compare the two tables row by row for large factors
+only. The JVM medians for lazy-pipeline and keyword-map were measured in this run; the other five JVM records were
+already in this checkout from the X1-1 done-bar re-run, and the command does not re-measure them.
+
+`bb bench:programs sentinels` on apt jank 0.1-noble (log `/home/user/logs/x1-sentinels-apt.log` on the lane box):
+
+| program | size | jvm | jank-aot | jank |
+|---|---:|---:|---:|---:|
+| binary-trees-14 | 14 | 13.474 | 119.482 (x8.87) | 259.437 (x19.25) |
+| binary-trees-14-hinted | 14 | 11.973 | 111.824 (x9.34) | 257.988 (x21.55) |
+| sum-overflow | 1000000 | 14.178 | 69.040 DIFFER | 119.049 DIFFER |
+| sum-overflow-hinted | 1000000 | 0.608 | 11.801 DIFFER | 16.075 DIFFER |
+| sort | 100000 | 38.737 | 17215.731 (x444.43) | 122.020 (x3.15) |
+| lazy-pipeline | 1000000 | 35.656 | 1042.084 (x29.23) | 4297.217 (x120.52) |
+| keyword-map | 1000000 | 90.400 | 614.343 (x6.80) | 1144.508 (x12.66) |
+
+`JANK_BIN=/usr/local/lib/jank-u2/bin/jank bb bench:programs sentinels`: u2's build, src f3d82d65 with patches
+11, 13, 14 (sorted walk, `=` inline, keyword hash; records tag `-bfe39dde20e3`):
+
+| program | size | jvm | jank-aot | jank |
+|---|---:|---:|---:|---:|
+| binary-trees-14 | 14 | 13.474 | 159.199 (x11.82) | 292.704 (x21.72) |
+| binary-trees-14-hinted | 14 | 11.973 | 162.473 (x13.57) | 310.971 (x25.97) |
+| sum-overflow | 1000000 | 14.178 | 91.746 DIFFER | 171.123 DIFFER |
+| sum-overflow-hinted | 1000000 | 0.608 | 8.854 DIFFER | 3.313 DIFFER |
+| sort | 100000 | 38.737 | 50.393 (x1.30) | 157.493 (x4.07) |
+| lazy-pipeline | 1000000 | 35.656 | 1619.950 (x45.43) | 2484.581 (x69.68) |
+| keyword-map | 1000000 | 90.400 | 439.950 (x4.87) | 664.527 (x7.35) |
+
+- `sort` shows U2-1 (jank-11) on the suite. On jank's own core it fell from 17215.731 ms (min-max
+  12437.249-21181.731) to 50.393 ms (45.232-54.502), x444 to x1.30 the JVM. Cohost on jank was already off jank's
+  `sort` (122.020 and 157.493 ms, inside the noise of this window).
+- `keyword-map`, jank-aot: 614.343 ms (537.892-648.671) on apt, 439.950 ms (368.565-508.468) on u2's build. The
+  ranges do not overlap, but the window was shared, so U2-3's own measure should confirm the change.
+- `sum-overflow` prints `DIFFER: 1783293664, JVM 499999500000` on both binaries; neither carries U1's patch.
+- `lazy-pipeline` is x29 (jank-aot) and x121 (cohost on jank) on apt. u2's build carries no walk patch, and its
+  jank-aot min-max (1281.872-4429.067) shows the noise of this shared window.
+
+### cohost-max: the merged series (2026-11-02, X1-3)
+
+The plan's scoreboard (jank-MAX §0) on the merged upstream series. Two jank binaries: `apt` is jank 0.1-noble;
+`merged` is jank-lang/jank f3d82d65 with cohost's `upstream/jank/patches/series`, built with
+`JANK_SRC=/usr/local/src/jank-main JANK_DEV_PREFIX=/usr/local/lib/jank-main bash dev/install/jank-src.sh`, then
+`--patches` as patches merged. Every jank run had its own `XDG_CACHE_HOME`: the source builds all print the same
+`print-binary-version` and would otherwise share one PCH. The binary-tagged AOT roots and the cache were cleared after
+every rebuild. The box has 4 CPUs and was shared with the other lanes, unserialized, at load average 7-9. The JVM rows of
+this run are slower than C-1's (fib 328.767 against 139.164 ms), and every xJVM below uses this run's JVM.
+
+**Full suite, nine-patch series** (max/main faa50c4: 11, 13, 14, 12-21, 18, 19, 15a-16, 15b-17, 22). `bb bench:programs
+jvm`, then `bb bench:programs jank-aot` and `bb bench:programs jank` on apt and with
+`JANK_BIN=/usr/local/lib/jank-main/bin/jank`. Median ms of 10 timed calls (xJVM):
+
+| program | size | jvm | jank-aot apt | jank-aot merged | jank apt | jank merged |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 36 | 328.767 | 148.339 (x0.45) | 140.364 (x0.43) | 553.721 (x1.68) | 544.508 (x1.66) |
+| fib-hinted | 36 | 147.111 | 168.561 (x1.15) | 243.378 (x1.65) | 3048.341 (x20.72) | 2539.452 (x17.26) |
+| tak | 30 20 10 | 415.510 | 750.618 (x1.81) | 866.382 (x2.09) | 1698.438 (x4.09) | 1565.381 (x3.77) |
+| tak-hinted | 30 20 10 | 296.893 | 1492.643 (x5.03) | 1428.758 (x4.81) | 20615.452 (x69.44) | 17891.301 (x60.26) |
+| nbody | 50000 | 245.980 | ABSENT | ABSENT | ABSENT | ABSENT |
+| nbody-hinted | 50000 | 226.022 | ABSENT | ABSENT | ABSENT | ABSENT |
+| spectral-norm | 600 | 304.986 | ABSENT | ABSENT | 5724.004 (x18.77) | 5287.932 (x17.34) |
+| spectral-norm-hinted | 600 | 167.914 | ABSENT | ABSENT | 6703.139 (x39.92) | 7290.028 (x43.42) |
+| mandelbrot | 1500 | 216.625 | ABSENT | ABSENT | ABSENT | ABSENT |
+| mandelbrot-hinted | 1500 | 242.505 | ABSENT | ABSENT | ABSENT | ABSENT |
+| binary-trees | 18 | 441.679 | 3827.530 (x8.67) | 1979.189 (x4.48) | 4353.341 (x9.86) | 1618.805 (x3.67) |
+| binary-trees-hinted | 18 | 362.610 | 3611.230 (x9.96) | 1922.790 (x5.30) | 6120.744 (x16.88) | 2593.301 (x7.15) |
+| binary-trees-14 | 14 | 18.072 | 156.323 (x8.65) | 71.412 (x3.95) | 239.796 (x13.27) | 87.586 (x4.85) |
+| binary-trees-14-hinted | 14 | 14.605 | 159.882 (x10.95) | 97.638 (x6.69) | 378.712 (x25.93) | 129.429 (x8.86) |
+| sum-overflow | 1000000 | 25.006 | 78.731 DIFFER | 18.754 (x0.75) | 168.079 DIFFER | 45.425 (x1.82) |
+| sum-overflow-hinted | 1000000 | 0.599 | 11.365 DIFFER | 4.367 (x7.29) | 10.872 DIFFER | 6.216 (x10.38) |
+| sort | 100000 | 43.809 | 27652.770 (x631.21) | 24.100 (x0.55) | 192.171 (x4.39) | 86.981 (x1.99) |
+| lazy-pipeline | 1000000 | 36.320 | 1398.660 (x38.51) | 205.817 (x5.67) | 2880.591 (x79.31) | 688.740 (x18.96) |
+| keyword-map | 1000000 | 127.189 | 557.583 (x4.38) | 281.313 (x2.21) | 1275.398 (x10.03) | 640.434 (x5.04) |
+| fannkuch | 8 | 213.102 | ABSENT | ABSENT | ABSENT | ABSENT |
+| fannkuch-hinted | 8 | 212.243 | ABSENT | ABSENT | ABSENT | ABSENT |
+| nsieve | 20 | 340.399 | ABSENT | ABSENT | ABSENT | ABSENT |
+| nsieve-hinted | 20 | 197.237 | ABSENT | ABSENT | ABSENT | ABSENT |
+| k-nucleotide | 2000000 | 174.209 | 844.388 (x4.85) | 888.224 (x5.10) | 2055.509 (x11.80) | 1778.718 (x10.21) |
+| pipeline | 500000 | 174.239 | 1290.984 DIFFER | 983.129 (x5.64) | 2171.439 DIFFER | 1747.661 (x10.03) |
+| dispatch | 5000000 | 213.103 | ABSENT | ABSENT | 12678.188 DIFFER | 7569.793 (x35.52) |
+| json | 30000 | 389.482 | 2331.012 (x5.98) | 1148.436 (x2.95) | 10164.134 (x26.10) | 7702.754 (x19.78) |
+| first-output | - | 1482.445 | 674.079 (x0.45) | 819.871 (x0.55) | 17545.517 (x11.84) | 16793.854 (x11.33) |
+
+Geomean xJVM (`bb bench:programs table jvm jank-aot jank`, on each binary's records):
+
+- jank's own AOT: apt 5.842 over 14 programs, merged 2.545 over 17. Over the 14 that both run SAME: apt 5.842,
+  merged 2.433.
+- cohost on jank: apt 14.818 over 16, merged 9.125 over 20. Over the same 16: apt 14.818, merged 9.143.
+- The merged binary turns sum-overflow, sum-overflow-hinted and pipeline (both targets) and dispatch (cohost) from
+  `DIFFER` (the i32 wrap) to `SAME` (12-21).
+- `ABSENT` on both binaries, the same causes as C-1's table. jank's own core: nbody (`Math/sqrt`), spectral-norm
+  (`Math/round`), dispatch (`defprotocol`). Both targets: mandelbrot, fannkuch and nsieve (`use of undeclared
+  identifier 'sNN'`, the inner-loop rebinding). Cohost: nbody too.
+- `bb bench:jank` (stock core / jank's own, 30 cases, geomean of the printed x column): apt x1.77, merged x2.12.
+  Booted the same on both: stock 542, from host 171, skipped 78, errors 0.
+
+**A B interleave, eleven-patch series** (max/main 3c08fb4: the nine above plus 20-native-returns and 23-chunk-branch;
+`/usr/local/lib/jank-main` rebuilt with `--patches`, its AOT roots, records and cache cleared). Three rounds. Each round
+runs apt jank-aot, apt jank, merged jank-aot, merged jank on binary-trees, binary-trees-14, sort, lazy-pipeline,
+keyword-map, pipeline, json, fib, fib-hinted, tak and tak-hinted. Each cell is the median of the three rounds' medians
+(10 timed calls each), with the min-max of those three in brackets. The JVM column is the full suite's JVM above.
+Measured 2026-11-02, 2:48 PM to 4:31 PM ET.
+
+jank-aot:
+
+| program | jvm | apt median (min-max) | merged median (min-max) | merged / apt | merged xJVM |
+|---|---:|---:|---:|---:|---:|
+| binary-trees | 441.7 | 4187.7 (3666.1-4368.6) | 1137.1 (1067.8-1140.7) | 0.27 | x2.57 |
+| binary-trees-14 | 18.1 | 197.1 (175.8-243.3) | 44.5 (37.0-50.9) | 0.23 | x2.46 |
+| sort | 43.8 | 24106.7 (20321.0-24840.2) | 24.0 (23.8-37.1) | 0.00 | x0.55 |
+| lazy-pipeline | 36.3 | 1103.4 (993.9-1452.7) | 86.0 (82.7-104.8) | 0.08 | x2.37 |
+| keyword-map | 127.2 | 511.4 (472.6-521.4) | 256.0 (239.2-279.5) | 0.50 | x2.01 |
+| pipeline | 174.2 | 1213.9 (1101.7-1247.5) DIFFER | 1128.2 (950.6-1264.1) | 0.93 | x6.48 |
+| json | 389.5 | 1961.7 (1943.2-2352.3) | 1077.2 (1045.9-1136.7) | 0.55 | x2.77 |
+| fib | 328.8 | 101.1 (97.4-106.1) | 107.9 (102.3-181.1) | 1.07 | x0.33 |
+| fib-hinted | 147.1 | 174.0 (165.4-264.5) | 80.6 (77.7-81.1) | 0.46 | x0.55 |
+| tak | 415.5 | 674.1 (646.9-726.6) | 316.2 (310.6-335.8) | 0.47 | x0.76 |
+| tak-hinted | 296.9 | 1347.4 (1285.3-1429.6) | 182.6 (182.4-186.1) | 0.14 | x0.62 |
+
+geomean merged/apt over 11: 0.212
+
+jank:
+
+| program | jvm | apt median (min-max) | merged median (min-max) | merged / apt | merged xJVM |
+|---|---:|---:|---:|---:|---:|
+| binary-trees | 441.7 | 3454.1 (3351.5-3729.3) | 1532.5 (1511.5-1590.5) | 0.44 | x3.47 |
+| binary-trees-14 | 18.1 | 221.5 (192.2-222.9) | 106.7 (83.5-107.5) | 0.48 | x5.90 |
+| sort | 43.8 | 118.2 (108.3-138.1) | 96.0 (85.0-109.6) | 0.81 | x2.19 |
+| lazy-pipeline | 36.3 | 2405.1 (2184.6-2515.6) | 797.9 (589.0-902.8) | 0.33 | x21.97 |
+| keyword-map | 127.2 | 824.3 (792.8-961.3) | 749.7 (725.0-1252.0) | 0.91 | x5.89 |
+| pipeline | 174.2 | 1846.9 (1797.1-2105.8) DIFFER | 2429.5 (2237.1-2668.5) | 1.32 | x13.94 |
+| json | 389.5 | 7498.1 (7434.6-8019.9) | 9415.1 (7117.3-10328.0) | 1.26 | x24.17 |
+| fib | 328.8 | 454.9 (452.0-500.2) | 682.6 (472.2-707.2) | 1.50 | x2.08 |
+| fib-hinted | 147.1 | 2867.1 (2866.0-3282.5) | 2488.3 (2483.0-2601.2) | 0.87 | x16.91 |
+| tak | 415.5 | 1598.3 (1476.4-2185.2) | 1476.9 (1472.1-1551.9) | 0.92 | x3.55 |
+| tak-hinted | 296.9 | 17636.6 (17076.7-22737.2) | 15890.1 (14175.0-16291.6) | 0.90 | x53.52 |
+
+geomean merged/apt over 11: 0.806
+
+- jank's own AOT moves on every row except fib (1.07, inside fib's spread). The biggest moves: sort x0.001 (11, the
+  sorted walk), lazy-pipeline 0.08 (15a/15b, 23), tak-hinted 0.14 and fib-hinted 0.46 (20, native returns),
+  binary-trees 0.23-0.27 (18, 19). Merged jank-aot is below the JVM on fib, fib-hinted, tak, tak-hinted and sort.
+- Cohost on jank moves less (geomean 0.806), and three rows are slower on the merged binary:
+  - fib: 682.6 against 454.9 ms. The spreads overlap (472.2-707.2 against 452.0-500.2).
+  - json: 9415.1 against 7498.1 ms. The spreads overlap (7117.3-10328.0 against 7434.6-8019.9).
+  - pipeline: 2429.5 against 1846.9 ms. apt's pipeline is the wrong answer (DIFFER, the i32 wrap), so that pair does
+    not compare like for like.
+
+  The fib and json rows are not confirmed regressions in this window. They are named here for the next merge's run.
+- The full-suite tables above are the nine-patch binary. This interleave is the eleven-patch one. The next run (X1-4 or
+  the coordinator's next merge) re-runs the full suite on the series of that day.
+
 ## Cohost AOT optimization level
 
 `bb boot:jank` calls `jank-aot-dir` (`bb.edn` lines 14-15), which loads `dev/perf/jank_aot_ensure.clj`. The recompile is one command, `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot`, at `dev/perf/jank_aot_ensure.clj:68-69`. That `-O3` covers `cohost.run` and the namespaces it depends on, including `cohost.shim` and `cohost.hosts.jank-host`. The script requires `cohost/shim.o` and `cohost/hosts/jank_host.o` in that same cache. There is no environment variable for the level. jank's own flag is `-O` / `--optimization`, values 0 through 3. The boot does not read it from the environment. The level is the literal `-O3` on that line, so the default is already `-O3`. `bb bench:programs jank` loads those objects. A second target would repeat the same compile. Default and `-O3` are that run: fib median `126.469398` ms, and the geometric mean of cohost `-O3` / default is `1`.
@@ -1020,4 +1242,85 @@ These three `bb bench:programs` processes were still running when G-13 closed. R
 `cljw-cohost` had printed through binary-trees median 4.066756 SAME. The rest had not printed.
 
 `phel-cohost` had printed through dispatch median 234.659488 SAME. spectral-norm and spectral-norm-hinted ABSENT `Seq::range` end must be int|float, BigInt given. fannkuch and fannkuch-hinted ABSENT the same `Seq::range` BigInt error. nsieve and nsieve-hinted ABSENT `Unsupported operand types: int << BigInt`. pipeline ABSENT the same `Seq::range` BigInt error.
+
+
+## Cross-host: capability keys per host (jank-MAX X3-1)
+
+Each capability-gated gain is a key in a host's adapter map (`src/cohost/hosts/*`), default off; X3 turns it
+on per host where that host's own bench says it pays. First key: `:multimethod-cache?` (X2-1/X2-2), the shim's
+`MultiFn` with a one-entry dispatch cache.
+
+**Which hosts run the shim's MultiFn: all of them.** `rewrite.cljc`'s `rw-new` sends
+`(new clojure.lang.MultiFn ...)` to the shim's `new-MultiFn` on every host (only `java.util` collections pass
+through to the host); probed on jolt and the JVM: `(:cohost.shim/multifn (meta f))` is true. So the key
+reaches the multimethod case on the JVM too (an earlier `(class f)` probe that printed `clojure.lang.MultiFn`
+was the shim's class mapping, not the JVM's class).
+
+Method: base `max/main` @ `aeac81b`; key nil is a clean tree, key true is the same tree with the key in each
+host's map; `bb bench:<host> --quick` (the JVM: the full `bb bench:jvm`, since `--quick` has no warmup there:
+4.93-86.32 ms on one case), the two sides alternated A B A B ..., median and [spread] of the stock side;
+lpy's two sides ran at the same time in each round (about 60 minutes a round at this load); `bb boot:<host>` on both sides. Box: 4 CPUs,
+15 GB, shared with lanes u1 and u5, no lock, load 6-15; 2026-11-02, 2:30-5 PM ET. A host is flipped when the
+multimethod case improves and no case's true median lies above its nil maximum.
+
+| host | rounds | multimethod nil -> true, ms | geomean x nil -> true | battery / libraries (both sides) | key |
+|---|---:|---|---|---|---|
+| JVM (Clojure 1.12.0, Java 21) | 5 full | 8.49 [4.61-8.76] -> 7.24 [7.13-7.35] | 1.28 -> 1.25 | 149/149, 61/61 (148/149 under `LC_ALL=C.UTF-8`, both sides: below) | **on** |
+| jolt 0.8.23 | 9 | 20.19 [15.19-30.48] -> 18.29 [15.02-26.39] | 1.36 -> 1.25 | 149/149, 61/61 | **on** |
+| ClojureWasm 1.15.4 | 8 | 155.22 [96.68-191.55] -> 108.44 [80.94-141.07] | 4.85 -> 4.77 | 147/149, 61/61 | **on** |
+| Phel 0.54.0 | 9 | 813.96 [517.76-968.47] -> 391.87 [267.88-522.38] (true below nil 9 of 9) | 4.37 -> 4.36 | 149/149, 61/61 | **on** |
+| let-go 1.13.0 | 9 | 287.95 [211.03-509.99] -> 280.29 [202.36-412.69] (true below nil 6 of 9) | 6.28 -> 5.96 | 147/149, 61/61 | off: inside the noise |
+| ClojureScript, Node, before X2-3 | 3 | 26.26 [24.61-76.55] -> 55.58 [49.48-69.24] | 1.27 -> 1.41 | nil 147/149, 61/61; **true 144/149, 59/61** | incorrect |
+| ClojureScript, Chromium, before X2-3 | 3 | 51.39 [49.60-54.89] -> 40.09 [38.29-47.30] | 1.27 -> 1.31 | nil 147/149, 61/61; **true 144/149, 59/61** | incorrect |
+| ClojureScript, Node, on X2-3 (`2f07bfc`) | 9 | 68.57 [28.07-87.89] -> 52.96 [21.49-129.66] (true below nil 7 of 9) | 1.37 -> 1.25 | 147/149, 61/61 | **on** (X3-2, `47d43ca`) |
+| ClojureScript, Chromium, on X2-3 (`2f07bfc`) | 9 | 51.59 [20.84-83.10] -> 38.00 [14.09-55.30] (true below nil 7 of 9) | 1.37 -> 1.30 | 147/149, 61/61 | **on** (X3-2, `47d43ca`) |
+| basilisp 0.5.1 | 3 paired | 21590.20 -> 21098.93, 16245.01 -> 19659.29, 7001.37 -> 6607.08 (round 3, X3-2, load 4.6): paired ratios 0.98, 1.21, 0.94 | 1.88 -> 1.85, 2.04 -> 1.80, 1.98 -> 1.92 | 148/149 (numeric tower), 61/61 | off: no gain |
+| clojurust 0.2.32 | - | not measurable on a 15 GB box | - | `bb boot:cljrs` OOM-killed at 4.7 GB RSS (exit 137) or exit 139; `bb bench:cljrs` fails at key nil 3/3 ("wrong type: expected intercepted, got find-ns sentinel") | off |
+| jank | - | (on since X2-1, with its own `cpp/raw` hit fn, X2-2) | - | - | on |
+
+Notes:
+
+- cljs/Chromium with the key before X2-3: battery rows "a class multimethod reaches user types", "multimethod: a
+  miss is not cached", "multimethod: defmethod after a call is seen", libraries clojure.test "a failing is reports
+  FAIL", "thrown? are testing" failed (a `::miss` sentinel that ClojureScript does not intern). X2-3 fixed it; the
+  rows above "on X2-3" are measured on its merge, nil = a clean `2f07bfc` tree.
+- X2-2's hit fn: on a non-jank host with the key true the shim's `new-MultiFn` calls a no-op `h-mm-hit` per
+  dispatch; on the JVM the true side's multimethod was 3.23-3.40 ms at `5fd3e3e` (before X2-2) and 7.13-7.35 ms
+  at `aeac81b`. Choosing the arity fns at construction would give it back (shared layer, X2-3).
+- The JVM battery row "reduce over an eduction; a :tag that is data" fails with `LC_ALL=C.UTF-8` exported
+  (`clojure.core.Eduction cannot be cast to clojure.lang.IReduce`, 7 of 7 boots) and passes with LANG/LC_ALL
+  unset (4 of 4), the same tree; not the key's.
+- The reduce and sort arms of X4-1 (`doc/research/jank-workarounds.md`): swept in X3-2, below.
+- Next keys as they merge: the fn name on defn (M-9).
+
+### `:sort-host-compare?` (X3-2): X4-1's sort arm on every host
+
+X4-1 made jank's sort take the host's compare when the comparator is the stock core's `compare` (whose body is
+the host's compare), instead of the shim's comparator wrapper around a stock fn call per comparison. X3-2 made it
+the adapter key `:sort-host-compare?` (default nil; `shim.cljc` `stock-compare`, `Arrays-sort`, `-compare`;
+`81259d2`) and measured it per host with X3-1's method (base `max/main` @ `4698b55`; key nil = that tree, key
+true = the same with the key; `bb bench:<host> --quick`, the JVM's full `bb bench:jvm`; load 13-18, box shared
+with u1 and u5, no lock). The first pass turned on both X4 arms together (this key and a counted `nth` loop for
+the shim's reduce over a host vector); the reduce key paid nowhere (transduce, into-vector, group-by worse on lg,
+cljw, phel, jolt) and is not committed. Hosts where the pair showed a sort gain were re-measured with the sort key
+alone.
+
+| host | rounds | sort nil -> true, ms | sort-by nil -> true | geomean x | battery / libraries (both sides) | key |
+|---|---:|---|---|---|---|---|
+| JVM | 3 full, both keys | 21.78 [21.08-23.89] -> 23.69 [21.91-24.69] | 12.47 -> 11.02 | 1.28 -> 1.24 | 149/149, 61/61 (LANG/LC_ALL unset) | off: no gain |
+| jolt | 3, both keys | 61.36 [51.05-81.73] -> 60.37 [56.99-75.50] | 36.22 -> 44.10 | 1.43 -> 1.27 | 149/149, 61/61 | off: no gain |
+| ClojureScript, Node | 3, both keys | 52.95 [52.93-55.54] -> 54.00 [41.84-65.90] | 70.33 -> 80.63 | 1.18 -> 1.26 | 147/149, 61/61 | off: no gain |
+| ClojureScript, Chromium | 3, both keys | 23.20 [19.15-32.79] -> 46.19 [43.69-66.70] | 22.89 -> 79.30 | 1.31 -> 1.34 | 147/149, 61/61 | off: slower |
+| ClojureWasm | 3 both keys, then 6 sort key alone | both: 4755.30 -> 3979.81; alone: 4257.44 [2310.55-5461.05] -> 4041.50 [1946.94-5434.06] (true below nil 4 of 6) | alone: 2236.85 -> 2219.78 | alone: 4.67 -> 5.11 | 147/149, 61/61 | off: inside the noise alone |
+| let-go | 9 sort key alone, then 6 with the order reversed | 1988.31 [1022.21-2573.78] -> 1238.85 [642.76-2082.75] (8 of 9); reversed 1854.82 [962.74-2412.19] -> 912.30 [568.96-1283.22] (6 of 6) | 1661.50 -> 1688.61; 1630.72 -> 1587.01 | 5.90 -> 5.88; 5.99 -> 5.95 | 147/149, 61/61 | **on** (`04733e3`) |
+| Phel | 6 sort key alone | 1200.53 [1010.93-1753.69] -> 807.75 [746.68-928.35] (6 of 6) | 1570.43 -> 1542.78 | 4.31 -> 4.17 | 149/149, 61/61 | **on** (`b1899fc`) |
+| basilisp | - | not run (a quick bench is ~25-60 min a side here) | - | - | - | off |
+| clojurust | - | not measurable (X3-1) | - | - | - | off |
+| jank | - | always on (X4-1's `#?(:jank ...)` arm) | - | - | - | on |
+
+- let-go's first 9 rounds (nil always first) flagged the multimethod case 415.92 -> 516.42 ms; the key has no path
+  there, and with the order reversed it went 450.25 -> 393.35: order bias, not the key.
+- Phel's first run with the key failed: Phel has no `ns-resolve`; off jank `stock-compare` now finds the stock
+  compare through the adapter's own `:interned-var` / `:var-get`.
+- On Chromium the host's compare through JS `Array.prototype.sort` was slower than the shim's wrapper.
 

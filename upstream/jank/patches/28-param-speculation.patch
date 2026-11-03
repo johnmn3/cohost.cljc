@@ -1,0 +1,648 @@
+jank-28: untyped params speculated as i64: a native entry beside the generic body, picked per call
+(cohost doc/upstream/jank-28-param-speculation.md; lane U6, order U6-3)
+
+Base: jank-lang/jank f3d82d65499920f81216e9235bd5d3a34a968e3f with the series before it in
+upstream/jank/patches/series (11, 13, 14, 12-21, 18, 19, 15a-16, 15b-17, 22, 20, 23, 24, 26). Apply
+from the clone's root: git apply <this file>.
+
+Builds on 20-native-returns (native entry per typed arity, boxing entry, named recursion and typed
+call sites into it) for fns with no hints at all.
+
+Files:
+- compiler+runtime/src/cpp/jank/analyze/processor.cpp, include .../analyze/processor.hpp,
+  .../analyze/expr/function.hpp:
+  - speculation_candidate: a syntactic filter: an arity with an untyped param that appears
+    directly in a numeric operation ((< n 2), (dec n), (+ acc i), ...) or in a binding vector
+    ((loop [i n] ...)); most fns are analyzed once as before.
+  - analyze_fn, with_speculation: such an arity that got no native entry is analyzed a second time
+    with its untyped params as i64 (analyze_fn_arity's speculate_params). If that gives a native
+    entry (20's rules: a native-number tail, no fn-level recur), the arity is speculative and the
+    first analysis is kept as its generic twin (function_arity::generic, fn_ctx->generic_twin).
+    Closures keep their generic arities.
+  - analyze_call: named recursion into a speculative arity, and a typed call site to one, call the
+    native entry only when every argument is a native number of the parameter's kind; any other
+    argument (an object, which may be a real, a ratio or a string) goes through the boxing entry.
+    So nothing throws that did not throw before.
+  - the native-entry registry (typed call sites, 20) records the speculative flag.
+- compiler+runtime/src/cpp/jank/ir/processor.cpp, builder.cpp, include .../ir/builder.hpp,
+  .../ir/instruction.hpp: the generic twin is an IR function <name>_<n>_generic, emitted as a
+  module entry point (root fn) or with its function instruction (nested fns, as in AOT modules).
+- compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp: a speculative arity's boxing entry
+  <name>_<n> calls <name>_<n>_native when every speculated argument is an integer (a tagged small
+  integer or an integer object) and <name>_<n>_generic otherwise; the generic twin is emitted
+  under its own name. Overflow stays checked in the native entry (12-21's arms).
+
+Not done here (named for the next order): an f64 variant. A fn whose untyped params arrive as reals
+(H0's down-double-plain, called with 2000000.0) takes the generic body, as before: 8784249 ->
+8757379 ns.
+
+Measured (cohost dev/research; control = f3d82d65 + the full series through 26 (max/main aeac81b),
+patched = the same + this patch, same recipe; A/B/A/B/A/B on a shared 4-CPU box at load 5-12,
+medians of 3, ns; this box's timings are bimodal (the same function runs at ~3.6 or ~7.6 ms per
+process), so the per-round values are given where it matters):
+- run.sh 28-param-speculation: fib-var 30 5046072 -> 3678518 (fib-hinted 3687368 on the patched
+  build: 1.00x); down-plain 2e6 59608765 -> 526148 (113x); the speculation line prints Clojure's
+  values on both builds (6765 2.0 42 3 2.5 5050 55.0 throws throws 6765).
+- run-jank.sh p1_fib_floor both: fib-var on the patched build JIT 7656627 / 3645706 / 4545907
+  (median 4545907; fib-hinted-leaf 3662782: 1.24x), AOT 3213036 / 3239800 / 4067326 (median
+  3239800; fib-hinted-leaf 3109642: 1.04x); control fib-var JIT 5363962, AOT 4826274.
+- dev/perf/jank_h0_bench.jank: down-long-plain 39017961 -> 517409 (down-long-hinted 512744: 1.01x);
+  the other rows unchanged within noise.
+- run.sh 20-native-returns, 26-native-inference, 24-direct-calls, 12-i32-add, 21-int32-loop-local:
+  every Expected line on the patched build.
+- bb boot:jank on the patched build: 542/171/78/0, battery 147/149, libraries 61/61 (the control's).
+
+diff --git a/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp b/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
+index ed74c265..c4f63033 100644
+--- a/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
++++ b/compiler+runtime/include/cpp/jank/analyze/expr/function.hpp
+@@ -35,6 +35,13 @@ namespace jank::analyze::expr
+     jtl::ptr<void> native_return_type{};
+     /* The parameter types of this arity, for the native entry. */
+     native_vector<jtl::ptr<void>> param_types;
++    /* jank-28: the native entry was speculated: the untyped parameters were analyzed as i64.
++     * The boxing entry calls the native entry only when every such argument is an integer,
++     * and otherwise the arity's generic twin (the body as it always was). */
++    bool speculative{};
++    /* jank-28: this arity is the generic twin of a speculative arity: emitted as
++     * <name>_<n>_generic, called only by that arity's boxing entry. */
++    bool generic_twin{};
+     /* TODO: is_pure */
+   };
+ 
+@@ -54,6 +61,8 @@ namespace jank::analyze::expr
+     do_ref body;
+     local_frame_ptr frame;
+     function_context_ref fn_ctx;
++    /* jank-28: set on a speculative arity (fn_ctx->speculative): its generic twin. */
++    jtl::ptr<function_arity> generic{};
+   };
+ 
+   struct arity_key
+diff --git a/compiler+runtime/include/cpp/jank/analyze/processor.hpp b/compiler+runtime/include/cpp/jank/analyze/processor.hpp
+index aef420d6..b3e43b46 100644
+--- a/compiler+runtime/include/cpp/jank/analyze/processor.hpp
++++ b/compiler+runtime/include/cpp/jank/analyze/processor.hpp
+@@ -101,7 +101,8 @@ namespace jank::analyze
+                      jtl::immutable_string const &name,
+                      local_frame_ptr,
+                      jtl::ptr<void> native_return_hint = {},
+-                     bool allow_native = false);
++                     bool allow_native = false,
++                     bool speculate_params = false);
+     expression_result analyze_let(runtime::obj::persistent_list_ref const,
+                                   local_frame_ptr,
+                                   expression_position,
+diff --git a/compiler+runtime/include/cpp/jank/ir/builder.hpp b/compiler+runtime/include/cpp/jank/ir/builder.hpp
+index 83d6cce5..b2c08149 100644
+--- a/compiler+runtime/include/cpp/jank/ir/builder.hpp
++++ b/compiler+runtime/include/cpp/jank/ir/builder.hpp
+@@ -71,7 +71,8 @@ namespace jank::ir
+     identifier function(analyze::expression_position const pos,
+                         native_unordered_map<u8, jtl::immutable_string> &&arities,
+                         runtime::callable_arity_flags const arity_flags,
+-                        bool const is_variadic);
++                        bool const is_variadic,
++                        native_vector<jtl::immutable_string> &&generics = {});
+     identifier
+     closure(analyze::expression_position const pos,
+             jtl::immutable_string const &context,
+diff --git a/compiler+runtime/include/cpp/jank/ir/instruction.hpp b/compiler+runtime/include/cpp/jank/ir/instruction.hpp
+index d5388ce0..d7bfb89d 100644
+--- a/compiler+runtime/include/cpp/jank/ir/instruction.hpp
++++ b/compiler+runtime/include/cpp/jank/ir/instruction.hpp
+@@ -253,6 +253,8 @@ namespace jank::ir
+       native_unordered_map<u8, jtl::immutable_string> arities;
+       runtime::callable_arity_flags arity_flags{};
+       bool is_variadic{};
++      /* jank-28: generic twins of speculative arities, emitted beside the arities. */
++      native_vector<jtl::immutable_string> generics;
+     };
+ 
+     using function_ref = jtl::ref<function>;
+diff --git a/compiler+runtime/src/cpp/jank/analyze/processor.cpp b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
+index 89080246..f22450fd 100644
+--- a/compiler+runtime/src/cpp/jank/analyze/processor.cpp
++++ b/compiler+runtime/src/cpp/jank/analyze/processor.cpp
+@@ -143,6 +143,8 @@ namespace jank::analyze
+   {
+     jtl::ptr<void> return_type{};
+     native_vector<jtl::ptr<void>> param_types;
++    /* jank-28: a speculative entry: only called with native arguments of its types. */
++    bool speculative{};
+   };
+ 
+   struct native_entry_registry
+@@ -1295,8 +1297,9 @@ namespace jank::analyze
+                && arity.fn_ctx->param_types.size() == arity.fn_ctx->param_count)
+             {
+               natives.resize(std::max<usize>(natives.size(), arity.fn_ctx->param_count + 1));
+-              natives[arity.fn_ctx->param_count]
+-                = { arity.fn_ctx->native_return_type, arity.fn_ctx->param_types };
++              natives[arity.fn_ctx->param_count] = { arity.fn_ctx->native_return_type,
++                                                     arity.fn_ctx->param_types,
++                                                     arity.fn_ctx->speculative };
+             }
+           }
+         }
+@@ -1611,12 +1614,105 @@ namespace jank::analyze
+     return jtl::make_ref<expr::var_deref>(position, current_frame, true, qualified_sym, var);
+   }
+ 
++  /* jank-28: whether an arity is worth a speculative analysis: it has an untyped parameter that
++   * appears directly in a numeric operation ((+ n 1), (< n 2), (dec n), ...) or in a binding
++   * vector ((loop [i n] ...)). A cheap syntactic filter, so most fns are analyzed once. */
++  static bool speculation_candidate(runtime::obj::persistent_list_ref const arity_list)
++  {
++    auto const params_obj(arity_list->data.first());
++    if(params_obj.is_none()
++       || params_obj.unwrap().get_type() != runtime::object_type::persistent_vector)
++    {
++      return false;
++    }
++    static auto const tag_kw(__rt_ctx->intern_keyword("", "tag").expect_ok());
++    native_set<jtl::immutable_string> untyped;
++    for(auto const &p :
++        runtime::expect_object<runtime::obj::persistent_vector>(params_obj.unwrap())->data)
++    {
++      if(p.get_type() != runtime::object_type::symbol)
++      {
++        return false;
++      }
++      auto const sym(runtime::expect_object<runtime::obj::symbol>(p));
++      if(sym->name == "&")
++      {
++        return false;
++      }
++      if(!sym->get_meta().get(tag_kw).is_some())
++      {
++        untyped.emplace(sym->name);
++      }
++    }
++    if(untyped.empty())
++    {
++      return false;
++    }
++
++    static native_set<jtl::immutable_string> const numeric_ops{
++      "+",     "-",  "*",    "/",   "<",   ">",   "<=",  ">=",  "=",    "==",  "inc",
++      "dec",   "zero?", "pos?", "neg?", "quot", "rem", "mod", "max", "min", "even?", "odd?"
++    };
++    auto const is_param{ [&](runtime::object_ref const o) {
++      return o.get_type() == runtime::object_type::symbol
++        && runtime::expect_object<runtime::obj::symbol>(o)->ns.empty()
++        && untyped.contains(runtime::expect_object<runtime::obj::symbol>(o)->name);
++    } };
++    std::function<bool(runtime::object_ref)> scan;
++    scan = [&](runtime::object_ref const o) -> bool {
++      if(o.get_type() == runtime::object_type::persistent_list)
++      {
++        auto const l(runtime::expect_object<runtime::obj::persistent_list>(o));
++        auto const head(l->data.first());
++        if(head.is_some() && head.unwrap().get_type() == runtime::object_type::symbol
++           && numeric_ops.contains(
++             runtime::expect_object<runtime::obj::symbol>(head.unwrap())->name))
++        {
++          for(auto const &arg : l->data.rest())
++          {
++            if(is_param(arg))
++            {
++              return true;
++            }
++          }
++        }
++        for(auto const &item : l->data)
++        {
++          if(scan(item))
++          {
++            return true;
++          }
++        }
++      }
++      else if(o.get_type() == runtime::object_type::persistent_vector)
++      {
++        for(auto const &item : runtime::expect_object<runtime::obj::persistent_vector>(o)->data)
++        {
++          if(is_param(item) || scan(item))
++          {
++            return true;
++          }
++        }
++      }
++      return false;
++    };
++    for(auto const &form : arity_list->data.rest())
++    {
++      if(scan(form))
++      {
++        return true;
++      }
++    }
++    return false;
++  }
++
+   jtl::result<expr::function_arity, error_ref>
+   processor::analyze_fn_arity(runtime::obj::persistent_list_ref const list,
+                               jtl::immutable_string const &name,
+                               local_frame_ptr const current_frame,
+                               jtl::ptr<void> const native_return_hint,
+-                              bool const allow_native)
++                              bool const allow_native,
++                              bool const speculate_params)
+   {
+     auto const first_form(list->data.first());
+     if(first_form.is_none())
+@@ -1738,6 +1834,12 @@ namespace jank::analyze
+         }
+       }
+ 
++      /* jank-28: speculatively, an untyped parameter is analyzed as i64. */
++      if(speculate_params && !type_meta.is_some())
++      {
++        param_type = cpp_util::long_long_type();
++      }
++
+       auto const unique_res(unique_param_symbols.emplace(*sym));
+       if(!unique_res.second)
+       {
+@@ -1775,6 +1877,7 @@ namespace jank::analyze
+     fn_ctx->name = name;
+     fn_ctx->is_variadic = is_variadic;
+     fn_ctx->param_count = param_symbols.size();
++    fn_ctx->speculative = speculate_params;
+     for(auto const &param : param_symbols)
+     {
+       fn_ctx->param_types.emplace_back(param.type);
+@@ -2030,18 +2133,43 @@ namespace jank::analyze
+       }
+     }
+ 
++    /* jank-28: an arity that got no native entry but has an untyped parameter used as a number
++     * is analyzed again with its untyped parameters as i64; if that gives a native entry, the
++     * arity is the speculative one, and the original analysis becomes its generic twin. */
++    auto const with_speculation{ [&](runtime::obj::persistent_list_ref const arity_list,
++                                     expr::function_arity base) -> expr::function_arity {
++      if(!allow_native || base.fn_ctx->native_return_type || base.fn_ctx->is_variadic
++         || !speculation_candidate(arity_list))
++      {
++        return base;
++      }
++      auto spec(analyze_fn_arity(arity_list,
++                                 name,
++                                 current_frame,
++                                 native_return_hint,
++                                 allow_native,
++                                 true));
++      if(spec.is_err() || !spec.expect_ok().fn_ctx->native_return_type)
++      {
++        return base;
++      }
++      auto ret(spec.expect_ok_move());
++      ret.fn_ctx->speculative = true;
++      base.fn_ctx->generic_twin = true;
++      ret.generic = jtl::make_ref<expr::function_arity>(jtl::move(base)).data;
++      return ret;
++    } };
++
+     if(first_elem.get_type() == runtime::object_type::persistent_vector)
+     {
+-      auto const result(analyze_fn_arity(make_box<runtime::obj::persistent_list>(list->data.rest()),
+-                                         name,
+-                                         current_frame,
+-                                         native_return_hint,
+-                                         allow_native));
++      auto const arity_list(make_box<runtime::obj::persistent_list>(list->data.rest()));
++      auto const result(
++        analyze_fn_arity(arity_list, name, current_frame, native_return_hint, allow_native));
+       if(result.is_err())
+       {
+         return result.expect_err()->add_fallback_usage(object_source(list->data.first().unwrap()));
+       }
+-      arities.emplace_back(result.expect_ok());
++      arities.emplace_back(with_speculation(arity_list, result.expect_ok()));
+     }
+     else
+     {
+@@ -2060,7 +2188,7 @@ namespace jank::analyze
+             return result.expect_err()->add_fallback_usage(
+               object_source(list->data.first().unwrap()));
+           }
+-          arities.emplace_back(result.expect_ok_move());
++          arities.emplace_back(with_speculation(arity_list, result.expect_ok_move()));
+         }
+         else
+         {
+@@ -2130,6 +2258,12 @@ namespace jank::analyze
+       /* TODO: remove these, since we have a ptr to the fn now. */
+       base->fn_ctx->name = name;
+       base->fn_ctx->unique_name = unique_name;
++      if(base->generic)
++      {
++        base->generic->fn_ctx->fn = ret;
++        base->generic->fn_ctx->name = name;
++        base->generic->fn_ctx->unique_name = unique_name;
++      }
+       if(base + 1 == arities.end())
+       {
+         break;
+@@ -2153,6 +2287,28 @@ namespace jank::analyze
+     static_ref_cast<expr::function>(ret)->arities = std::move(arities);
+     static_ref_cast<expr::function>(ret)->is_variadic = found_variadic != 0;
+ 
++    /* jank-28: a closure keeps its generic arities (no speculative entries for closures). */
++    {
++      auto &fn_arities(static_ref_cast<expr::function>(ret)->arities);
++      bool has_speculative{};
++      for(auto const &arity : fn_arities)
++      {
++        has_speculative |= static_cast<bool>(arity.generic);
++      }
++      if(has_speculative && !static_ref_cast<expr::function>(ret)->captures().empty())
++      {
++        for(auto &arity : fn_arities)
++        {
++          if(arity.generic)
++          {
++            expr::function_arity generic{ *arity.generic };
++            generic.fn_ctx->generic_twin = false;
++            arity = jtl::move(generic);
++          }
++        }
++      }
++    }
++
+     return ret;
+   }
+ 
+@@ -3854,7 +4010,7 @@ namespace jank::analyze
+       {
+         return arg_expr.expect_err()->add_usage(read::parse::reparse_nth(o, i + 1));
+       }
+-      if(native_callee.is_some())
++      if(native_callee.is_some() || (native_target && native_target->speculative))
+       {
+         /* Converted below, once every argument's type is known. */
+         arg_exprs.emplace_back(arg_expr.expect_ok());
+@@ -3871,9 +4027,51 @@ namespace jank::analyze
+       arg_exprs.emplace_back(arg_expr.expect_ok());
+     }
+ 
++    /* jank-28: a speculative entry is called only with native arguments of its parameter
++     * types; anything else (an object, which may be a ratio or a string) goes through the
++     * boxing entry, which picks the native entry or the generic body at run time. */
++    auto const natively_typed{ [&](native_vector<jtl::ptr<void>> const &param_types) {
++      for(usize i{}; i < arg_exprs.size(); ++i)
++      {
++        auto const param_type{ param_types[i] };
++        if(cpp_util::is_untyped_object(param_type))
++        {
++          continue;
++        }
++        auto const arg_type{ cpp_util::expression_type(arg_exprs[i]) };
++        if(!cpp_util::is_native_number(arg_type)
++           || cppinterop::is_integral(arg_type) != cppinterop::is_integral(param_type))
++        {
++          return false;
++        }
++      }
++      return true;
++    } };
++    if(native_target && native_target->speculative)
++    {
++      auto const typed{ natively_typed(native_target->param_types) };
++      for(usize i{}; i < arg_exprs.size(); ++i)
++      {
++        auto const converted(apply_implicit_conversion(
++          arg_exprs[i],
++          typed ? native_target->param_types[i] : cpp_util::untyped_object_ref_type(),
++          macro_expansions));
++        if(converted.is_err())
++        {
++          return converted;
++        }
++        arg_exprs[i] = converted.expect_ok();
++      }
++      if(!typed)
++      {
++        native_target = nullptr;
++      }
++    }
++
+     if(native_callee.is_some())
+     {
+-      bool typed{ true };
++      bool typed{ !native_callee.unwrap().speculative
++                  || natively_typed(native_callee.unwrap().param_types) };
+       for(usize i{}; i < arg_exprs.size() && typed; ++i)
+       {
+         auto const param_type{ native_callee.unwrap().param_types[i] };
+diff --git a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+index 1c2b2b6f..2e659dde 100644
+--- a/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
++++ b/compiler+runtime/src/cpp/jank/codegen/cpp_processor.cpp
+@@ -838,6 +838,8 @@ namespace jank::codegen
+       util::format_to(b.deps_buffer, "{}", nested.declaration_str());
+       if(!inst->is_variadic && nested.function->arity->fn_ctx->native_return_type)
+       {
++        /* (jank-28: native_arity points at the native entry, speculative or not; a typed call
++         * site with native arguments of its types calls it directly.) */
+         util::format_to(b.body_buffer,
+                         "{}->native_arity[{}] = reinterpret_cast<void *>(&{}_native);\n"
+                         "{}->native_sig[{}] = {}_native_sig();\n",
+@@ -850,6 +852,14 @@ namespace jank::codegen
+       }
+     }
+ 
++    /* jank-28: the generic twins of speculative arities. */
++    for(auto const &generic : inst->generics)
++    {
++      builder nested{ b.module, generic };
++      gen(*nested.function, nested);
++      util::format_to(b.deps_buffer, "{}", nested.declaration_str());
++    }
++
+     return inst->name;
+   }
+ 
+@@ -2102,9 +2112,11 @@ namespace jank::codegen
+     {
+       util::format_to(
+         b.body_buffer,
+-        "\nextern \"C\" jank::runtime::object_ref {}_{}(jank::runtime::object_ref const {}",
++        "\nextern \"C\" jank::runtime::object_ref {}_{}{}(jank::runtime::object_ref const {}",
+         munged_linkage_name,
+         fn.arity->params.size(),
++        /* jank-28: a speculative arity's generic twin. */
++        fn.arity->fn_ctx->generic_twin ? "_generic" : "",
+         param_shadows_fn ? "" : munged_fn_name);
+     }
+ 
+@@ -2201,6 +2213,27 @@ namespace jank::codegen
+ 
+     if(native_return_type)
+     {
++      /* jank-28: a speculative arity's boxing entry calls its native entry only when every
++       * speculated argument is an integer, and otherwise its generic twin. */
++      auto const speculative{ fn.arity->fn_ctx->speculative && fn.arity->generic };
++      auto const is_speculated{ [&](usize const i) {
++        return speculative && is_untyped_object(fn.arity->generic->params[i].type)
++          && !is_untyped_object(fn.arity->params[i].type);
++      } };
++      if(speculative)
++      {
++        util::format_to(b.body_buffer,
++                        "\nextern \"C\" jank::runtime::object_ref {}_{}_generic(jank::runtime::"
++                        "object_ref const",
++                        munged_linkage_name,
++                        fn.arity->params.size());
++        for(usize i{}; i < fn.arity->params.size(); ++i)
++        {
++          util::format_to(b.body_buffer, ", jank::runtime::object_ref");
++        }
++        util::format_to(b.body_buffer, ");\n");
++      }
++
+       /* The boxing entry. */
+       util::format_to(b.body_buffer,
+                       "\nextern \"C\" jank::runtime::object_ref {}_{}(jank::runtime::object_ref "
+@@ -2211,8 +2244,25 @@ namespace jank::codegen
+       {
+         util::format_to(b.body_buffer, ", jank::runtime::object_ref const jank_arg_{}", i);
+       }
++      util::format_to(b.body_buffer, ") {\n");
++      if(speculative)
++      {
++        util::format_to(b.body_buffer, "if(true");
++        for(usize i{}; i < fn.arity->params.size(); ++i)
++        {
++          if(is_speculated(i))
++          {
++            util::format_to(b.body_buffer,
++                            " && (jank::runtime::detail::is_tagged_small_int(jank_arg_{}.raw()) "
++                            "|| jank_arg_{}.get_type() == jank::runtime::object_type::integer)",
++                            i,
++                            i);
++          }
++        }
++        util::format_to(b.body_buffer, ") [[likely]] {\n");
++      }
+       util::format_to(b.body_buffer,
+-                      ") {\nreturn jank::runtime::convert<{}>::into_object({}_{}_native(jank_fn_self",
++                      "return jank::runtime::convert<{}>::into_object({}_{}_native(jank_fn_self",
+                       get_qualified_type_name(native_return_type),
+                       munged_linkage_name,
+                       fn.arity->params.size());
+@@ -2231,7 +2281,20 @@ namespace jank::codegen
+                           i);
+         }
+       }
+-      util::format_to(b.body_buffer, "));\n}\n");
++      util::format_to(b.body_buffer, "));\n");
++      if(speculative)
++      {
++        util::format_to(b.body_buffer,
++                        "}\nreturn {}_{}_generic(jank_fn_self",
++                        munged_linkage_name,
++                        fn.arity->params.size());
++        for(usize i{}; i < fn.arity->params.size(); ++i)
++        {
++          util::format_to(b.body_buffer, ", jank_arg_{}", i);
++        }
++        util::format_to(b.body_buffer, ");\n");
++      }
++      util::format_to(b.body_buffer, "}\n");
+ 
+       /* The signature id typed call sites check (see cpp_util::native_signature_id); a
+        * function, since the JIT resolves function symbols by name. */
+diff --git a/compiler+runtime/src/cpp/jank/ir/builder.cpp b/compiler+runtime/src/cpp/jank/ir/builder.cpp
+index 1a379c94..ab3e79a1 100644
+--- a/compiler+runtime/src/cpp/jank/ir/builder.cpp
++++ b/compiler+runtime/src/cpp/jank/ir/builder.cpp
+@@ -196,11 +196,15 @@ namespace jank::ir
+   identifier builder::function(analyze::expression_position const pos,
+                                native_unordered_map<u8, jtl::immutable_string> &&arities,
+                                runtime::callable_arity_flags const arity_flags,
+-                               bool const is_variadic)
++                               bool const is_variadic,
++                               native_vector<jtl::immutable_string> &&generics)
+   {
+     auto name{ next_ident() };
+-    current_function()->blocks[block_index].instructions.emplace_back(
+-      jtl::make_ref<inst::function>(name, location, jtl::move(arities), arity_flags, is_variadic));
++    auto const inst{
++      jtl::make_ref<inst::function>(name, location, jtl::move(arities), arity_flags, is_variadic)
++    };
++    inst->generics = jtl::move(generics);
++    current_function()->blocks[block_index].instructions.emplace_back(inst);
+     if(pos == analyze::expression_position::tail)
+     {
+       return ret(name, current_function()->blocks[block_index].instructions.back()->type);
+diff --git a/compiler+runtime/src/cpp/jank/ir/processor.cpp b/compiler+runtime/src/cpp/jank/ir/processor.cpp
+index e5b4881e..3a788877 100644
+--- a/compiler+runtime/src/cpp/jank/ir/processor.cpp
++++ b/compiler+runtime/src/cpp/jank/ir/processor.cpp
+@@ -236,7 +236,10 @@ namespace jank::ir
+                                   analyze::expr::function_ref const fn_expr,
+                                   analyze::expr::function_arity const &arity)
+   {
+-    auto name{ runtime::munge(util::format("{}_{}", fn_expr->unique_name, arity.params.size())) };
++    auto name{ runtime::munge(util::format("{}_{}{}",
++                                           fn_expr->unique_name,
++                                           arity.params.size(),
++                                           arity.fn_ctx->generic_twin ? "_generic" : "")) };
+ 
+     {
+       /* We can't access `fn` later in this function, since `mod.functions` may have been
+@@ -381,10 +384,16 @@ namespace jank::ir
+   jtl::option<identifier> gen(analyze::expr::function_ref const expr, builder &b)
+   {
+     native_unordered_map<u8, jtl::immutable_string> arities;
++    native_vector<jtl::immutable_string> generics;
+     auto const flags{ arity_flags(expr->arities) };
+     for(auto const &arity : expr->arities)
+     {
+       arities[arity.params.size()] = gen_arity(*b.mod, expr, arity);
++      /* jank-28: a speculative arity's generic twin, called by its boxing entry. */
++      if(arity.generic)
++      {
++        generics.emplace_back(gen_arity(*b.mod, expr, *arity.generic));
++      }
+     }
+ 
+     auto const captures{ expr->captures() };
+@@ -411,7 +420,11 @@ namespace jank::ir
+                        expr->is_variadic);
+     }
+ 
+-    return b.function(expr->position, jtl::move(arities), flags, expr->is_variadic);
++    return b.function(expr->position,
++                      jtl::move(arities),
++                      flags,
++                      expr->is_variadic,
++                      jtl::move(generics));
+   }
+ 
+   jtl::option<identifier> gen(analyze::expr::recur_ref const expr, builder &b)
+@@ -1016,6 +1029,11 @@ namespace jank::ir
+     {
+       entry_points.emplace_back(
+         runtime::munge(util::format("{}_{}", fn_expr->unique_name, arity.params.size())));
++      if(arity.generic)
++      {
++        entry_points.emplace_back(
++          runtime::munge(util::format("{}_{}_generic", fn_expr->unique_name, arity.params.size())));
++      }
+     }
+     ir::module mod{ module_name,
+                     target,
+@@ -1026,6 +1044,10 @@ namespace jank::ir
+     for(auto const &arity : fn_expr->arities)
+     {
+       gen_arity(mod, fn_expr, arity);
++      if(arity.generic)
++      {
++        gen_arity(mod, fn_expr, *arity.generic);
++      }
+     }
+ 
+     jtl::immutable_string_view const print_settings{ getenv("JANK_PRINT_IR") ?: "" };

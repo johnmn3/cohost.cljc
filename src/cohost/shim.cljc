@@ -50,6 +50,13 @@
 (def ^:private h-reduced? (host/capability :reduced?))
 (def ^:private h-pending? (host/capability :pending?))
 (def ^:private h-multifn? (host/capability :multifn?))
+(def ^:private h-mm-cache? (host/capability :multimethod-cache?))
+;; adapter :sort-host-compare? (X3-2): sort and a sorted coll's compare take the host's compare for
+;; the stock one off jank too (jank's arms below do it unconditionally, X4-1)
+(def ^:private h-sort-host-compare? (host/capability :sort-host-compare?))
+;; a host's own hit check of the cache cell, when :multimethod-cache? is a fn (jank's
+;; is one C++ call); nil from it, or no fn, means mf-fast-method decides
+(def ^:private h-mm-hit (when (fn? h-mm-cache?) h-mm-cache?))
 (def ^:private h-delay? (host/capability :delay?))
 (def ^:private h-decimal? (host/capability :decimal?))
 (def ^:private h-uuid? (host/capability :uuid?))
@@ -862,9 +869,18 @@
 
 ;; the host's reduce over coll: Phel's over a map walks its values, so a map's
 ;; entries, its seq, are walked there
+#?(:jank (def ^:private jank-reduce-init
+           ;; X4-1: the jank adapter's reduce over a range or a vector without
+           ;; jank's seq walk (removed when upstream jank-15 lands); resolved by
+           ;; name, as the adapter resolves shim vars, after both are loaded
+           (delay (or (some-> (resolve 'cohost.hosts.jank-host/reduce-init) var-get) reduce))))
+#?(:jank (def ^:private jank-reduce-noinit
+           (delay (or (some-> (resolve 'cohost.hosts.jank-host/reduce-noinit) var-get) reduce))))
 (defn- host-reduce
-  ([f coll] (reduce f #?(:phel (if (map? coll) (seq coll) coll) :default coll)))
-  ([f init coll] (reduce f init #?(:phel (if (map? coll) (seq coll) coll) :default coll))))
+  ([f coll] #?(:jank (@jank-reduce-noinit f coll)
+               :default (reduce f #?(:phel (if (map? coll) (seq coll) coll) :default coll))))
+  ([f init coll] #?(:jank (@jank-reduce-init f init coll)
+                    :default (reduce f init #?(:phel (if (map? coll) (seq coll) coll) :default coll)))))
 (def protocols-coll-reduce (fn ([coll f] (host-reduce (host-reducer f) coll)) ([coll f init] (host-reduce (host-reducer f) init coll))))
 (declare -kvreduce)
 (def protocols-kv-reduce (fn [coll f init] (-kvreduce coll f init)))
@@ -1254,18 +1270,63 @@
         (swap! state assoc :cache {:methods (:methods st) :prefers (:prefers st) :h h :table (if m {dv m} {})})
         m))))
 
+(defn- mf-fast-method
+  "mf-method behind a one-entry cache (adapter :multimethod-cache?): mc holds
+   [state-value hierarchy-ref hierarchy-value {dv method}], good while the
+   multimethod's state (methods, prefers, default) and its hierarchy's value
+   are the very ones it was filled under; a dv it lacks is found with
+   mf-find-method and added. No atom swap on a hit or a miss. (A host's
+   h-mm-hit makes the same hit check first, in one call.)"
+  [state mc dv]
+  (let [e @mc st @state href (:hierarchy st) h (deref href)]
+    (if (and e (identical? (nth e 0) st) (identical? (nth e 2) h))
+      ;; find, not a ::miss sentinel compared with identical?: ClojureScript does not
+      ;; intern keywords, so (identical? m ::miss) was false and the sentinel came back
+      ;; as the method (X2-3: cljs and Chromium failed every first call of a new dv)
+      (if-let [hit (find (nth e 3) dv)]
+        (val hit)
+        (let [m (mf-find-method st dv)]
+          ;; a miss is not cached, as the JVM's findAndCacheBestMethod
+          (when m (reset! mc [st href h (assoc (nth e 3) dv m)]))
+          m))
+      (let [m (mf-find-method st dv)]
+        (reset! mc [st href h (if m {dv m} {})])
+        m))))
+
 (def new-MultiFn
   (fn [name dispatch-fn default hierarchy]
     (let [state (atom {:name name :dispatch-fn dispatch-fn :default default :hierarchy hierarchy :methods {} :prefers {}})
-          no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))]
+          no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))
+          mc (when h-mm-cache? (atom nil))]
       ((fn [f] (if fn-meta? (with-meta f {::multifn state}) (do (swap! mf-states assoc f state) f)))
-        (fn
-          ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
-          ([a] (let [dv (dispatch-fn a) m (mf-method state dv)] (if m (m a) (no-method dv))))
-          ([a b] (let [dv (dispatch-fn a b) m (mf-method state dv)] (if m (m a b) (no-method dv))))
-          ([a b c] (let [dv (dispatch-fn a b c) m (mf-method state dv)] (if m (m a b c) (no-method dv))))
-          ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
-                            (if m (apply m a b c more) (no-method dv)))))))))
+        ;; the arity fns are chosen here, once: a host with a hit fn (jank's cpp/raw call)
+        ;; tries it first; a host with the cache on and no hit fn goes straight to
+        ;; mf-fast-method; with the cache off, mf-method; no host pays a no-op per call
+        (cond
+          h-mm-hit
+          (fn
+            ([] (let [dv (dispatch-fn) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m) (no-method dv))))
+            ([a] (let [dv (dispatch-fn a) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a) (no-method dv))))
+            ([a b] (let [dv (dispatch-fn a b) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a b) (no-method dv))))
+            ([a b c] (let [dv (dispatch-fn a b c) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a b c) (no-method dv))))
+            ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))]
+                              (if m (apply m a b c more) (no-method dv)))))
+          h-mm-cache?
+          (fn
+            ([] (let [dv (dispatch-fn) m (mf-fast-method state mc dv)] (if m (m) (no-method dv))))
+            ([a] (let [dv (dispatch-fn a) m (mf-fast-method state mc dv)] (if m (m a) (no-method dv))))
+            ([a b] (let [dv (dispatch-fn a b) m (mf-fast-method state mc dv)] (if m (m a b) (no-method dv))))
+            ([a b c] (let [dv (dispatch-fn a b c) m (mf-fast-method state mc dv)] (if m (m a b c) (no-method dv))))
+            ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-fast-method state mc dv)]
+                              (if m (apply m a b c more) (no-method dv)))))
+          :else
+          (fn
+            ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
+            ([a] (let [dv (dispatch-fn a) m (mf-method state dv)] (if m (m a) (no-method dv))))
+            ([a b] (let [dv (dispatch-fn a b) m (mf-method state dv)] (if m (m a b) (no-method dv))))
+            ([a b c] (let [dv (dispatch-fn a b c) m (mf-method state dv)] (if m (m a b c) (no-method dv))))
+            ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
+                              (if m (apply m a b c more) (no-method dv))))))))))
 (def new-Object (fn [] (atom ::object)))
 (def new-ExceptionInfo host/ex-info*)
 ;; (Exception.) (Exception. msg) (Exception. cause) (Exception. msg cause)
@@ -1579,7 +1640,30 @@
         (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.util.Comparator cmp)))
         r))))
 (defn- as-comparator [cmp] (fn [a b] (compare-with cmp a b)))
-(def Arrays-sort (fn ([a] (host/sort-array! a compare)) ([a cmp] (host/sort-array! a (as-comparator cmp)))))
+;; jank (X4-1): the stock core's compare, once the boot has defined it. Its
+;; body is (Util/compare x y) and Util-compare is the host's compare, so a
+;; comparator that is that fn gives the host's compare's answers: sort and
+;; (. comp (compare a b)) call the host's directly instead of a stock fn per
+;; comparison. A redefined compare is another fn and takes the general path.
+(def ^:private stock-compare-fn (volatile! nil))
+(defn- stock-compare []
+  (or @stock-compare-fn
+      #?(:jank (when-let [n (find-ns 'cohost.core)]
+                 (when-let [v (ns-resolve n 'compare)]
+                   (vreset! stock-compare-fn @v)))
+         ;; Phel has no ns-resolve: the adapter's own lookup
+         :default (when-let [h (host/interned-var 'cohost.core 'compare)]
+                    (vreset! stock-compare-fn (host/var-root h))))))
+(def Arrays-sort (fn ([a] (host/sort-array! a compare))
+                   ;; jank (X4-1): the host's compare for the stock one; any other
+                   ;; fn unwrapped (the adapter reads its answer as compare-with
+                   ;; does); a Comparator that is no fn through compare-with
+                   ([a cmp] (host/sort-array! a #?(:jank (cond (identical? cmp (stock-compare)) compare
+                                                               (fn? cmp) cmp
+                                                               :else (as-comparator cmp))
+                                                   :default (if (and h-sort-host-compare? (identical? cmp (stock-compare)))
+                                                              compare
+                                                              (as-comparator cmp)))))))
 (def Collections-shuffle (unsupported "Collections/shuffle"))
 ;; Collections.reverseOrder(): the host's own where it has java.util, else a
 ;; comparator fn that reverses compare (or the comparator given)
@@ -1825,7 +1909,10 @@
 (def -size -count)
 (def -clear (fn [x] (reset! (:state x) []) nil))
 (def -toArray (fn [x] (to-array* (if (host/mlist? x) @(:state x) x))))
-(def -compare compare-with)
+(def -compare #?(:jank (fn [cmp a b] (if (identical? cmp (stock-compare)) (compare a b) (compare-with cmp a b)))
+                :default (if h-sort-host-compare?
+                           (fn [cmp a b] (if (identical? cmp (stock-compare)) (compare a b) (compare-with cmp a b)))
+                           compare-with)))
 (def -comparator (fn [coll] (host/sorted-comparator coll)))
 ;; Sorted.entryKey: a tree map's entry key, a tree set's element itself
 (def -entryKey (fn [coll e] (if (map? coll) (key e) e)))

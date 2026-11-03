@@ -5,3 +5,5 @@
          (loop [i 0 s 0] (if (< i 70000) (recur (inc i) (+ s i)) s)))
 (println "(let [i 2147483647] (+ i 1)) =>" (let [i 2147483647] (+ i 1)))
 (println "(loop [i 2147483647] (+ i 1)) =>" (loop [i 2147483647] (+ i 1)))
+;; U1-1: a literal-initialized let local multiplied past i32. Expected after the patch: 4294967294.
+(println "(let [i 2147483647] (* i 2)) =>" (let [i 2147483647] (* i 2)))

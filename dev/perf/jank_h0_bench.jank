@@ -154,6 +154,16 @@ namespace h0bench {
       (recur (+ i 1.0) (+ acc i))
       acc)))
 
+;; U6-5: a hinted leaf that recurses (no loop), and return hints.
+(defn fib-hinted [^long n] (if (< n 2) n (+ (fib-hinted (- n 1)) (fib-hinted (- n 2)))))
+(defn fib-ret-arglist ^long [^long n] (if (< n 2) n (+ (fib-ret-arglist (- n 1)) (fib-ret-arglist (- n 2)))))
+(defn ^long fib-ret-name [^long n] (if (< n 2) n (+ (fib-ret-name (- n 1)) (fib-ret-name (- n 2)))))
+(defn fib-plain [n] (if (< n 2) n (+ (fib-plain (- n 1)) (fib-plain (- n 2)))))
+(defn ret-only ^long [n] (+ n 1))
+(defn ret-only-plain [n] (+ n 1))
+(defn call-ret-only [] (loop [i 0 a 0] (if (< i 2000000) (recur (inc i) (ret-only a)) a)))
+(defn call-ret-only-plain [] (loop [i 0 a 0] (if (< i 2000000) (recur (inc i) (ret-only-plain a)) a)))
+
 (defn nanos [f]
   (let [s (cpp/jank.runtime.current_time)
         r (f)
@@ -239,3 +249,11 @@ namespace h0bench {
   (report "sum-double-plain" b)
   (report-ratio "sum-double" a b))
 (println "jank-h0-bench-done")
+(let [a (five (fn [] (fib-hinted 27))) b (five (fn [] (fib-plain 27)))]
+  (report "fib27-param-hinted" a) (report "fib27-plain" b) (report-ratio "fib27-param" a b))
+(let [a (five (fn [] (fib-ret-arglist 27))) b (five (fn [] (fib-plain 27)))]
+  (report "fib27-ret-arglist" a) (report-ratio "fib27-ret-arglist" a b))
+(let [a (five (fn [] (fib-ret-name 27))) b (five (fn [] (fib-plain 27)))]
+  (report "fib27-ret-name" a) (report-ratio "fib27-ret-name" a b))
+(let [a (five call-ret-only) b (five call-ret-only-plain)]
+  (report "call-ret-only-hinted" a) (report "call-ret-only-plain" b) (report-ratio "call-ret-only" a b))
