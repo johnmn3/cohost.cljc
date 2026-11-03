@@ -130,6 +130,7 @@
    :vector-literal  [[] "nil (the default), or {element-count fn-symbol}: a vector literal in code of that many elements, with no metadata but its reader position, is emitted as a call of the fn on its rewritten elements (jank on apt: one-block small vectors, A7-1). The fn must return the same vector the literal would"]
    :native-long-inits [[] "nil (the default), or a set of core fn names (unqualified symbols) whose call always returns a long (jank on apt: #{count}): under :native-int-aliases, a let* local started from such a call gets the host's native conversion (:native-local-casts 'long) at its init and is a native long in its body; a let* local started from arithmetic over native longs is one as it is; never a loop* local, whose recur may pass anything (U6-10)"]
    :native-self-calls? [[] "true when a fn* whose parameters carry native tags passes them natively on a self-call and honors its :rettag (jank with the series' patch 20: a native entry); false or nil when the host boxes every typed argument at the call and unboxes it at entry (apt jank 0.1: convert<long>::into_object / from_object per argument). With nil, a hinted fn that calls itself recurses through an untagged inner fn* when every self-call argument is certainly of its parameter's type (U6-11 (C)); with true, a fn hinted only on its return speculates a typed inner fn* for long arguments (U6-11 (D)). Default nil"]
+   :cpp-twins?      [[] "true when the host compiles C++ in a (cpp/raw \"...\") form (jank): a self-recursive arity whose parameters are all ^long and whose body is in the numeric subset (long literals, the params, + - * inc dec, comparisons, not, zero? pos? neg?, if, self-calls) gets a C++ twin in a cpp/raw block before its def, called under the long guard; its + - * are checked (__builtin_*_overflow), and an overflow or a non-long argument runs the arity as written (U6-12). Default nil"]
    :native-local-casts [[] "nil (the default), or {hint-symbol conversion-fn-symbol}: for a ^long / ^double let* or loop* local, the host's conversion whose result the host types natively (jank: cpp/jank.runtime.to_int); the codemod emits (conversion <the JVM's coercion of the init>) as the binding's init. nil binds the coerced value only."]
    :chunks          [[] "the host's chunked seqs, or nil: {:chunked-seq? :chunk-first :chunk-rest :chunk-next :chunk-buffer :chunk-append :chunk :chunk-cons}, plus :chunk? and :chunk-reduce when the host's reduce cannot walk one of its chunks (the JVM's ArrayChunk); :chunk-reduce keeps IChunk.reduce's contract: a reduced result returned unopened. The stock chunked branches (map, filter, concat, doseq, for, reduce1) then run over the host's own chunks; with nil, no host seq is chunked to stock code. Default: the host core's fns of those names, when it has them all"]
    :host-data?      [['x] "a cheap test, asked at every (.m x args) before the type is looked up: true only when x is certainly the host's own data, never a user type (jolt: its transients, atoms, fns, strings, numbers ...); default: never true"]
@@ -369,6 +370,7 @@ namespace cohost_err {
     :native-long-inits nil
     :vector-literal nil
     :native-self-calls? nil
+    :cpp-twins? nil
     :static-types nil
     :host-aliases? true
     :static-aliases {}
@@ -648,6 +650,11 @@ namespace cohost_err {
    default, and an uninstalled adapter) keeps the shim call."
   []
   (when-let [m (current)] (:prim-kind-test m)))
+(defn cpp-twins?
+  "U6-12: does the host compile C++ twins from cpp/raw?"
+  []
+  (boolean (when-let [m (current)] (:cpp-twins? m))))
+
 (defn native-self-calls?
   "U6-11: does the host pass native-tagged arguments natively on a self-call?"
   []
