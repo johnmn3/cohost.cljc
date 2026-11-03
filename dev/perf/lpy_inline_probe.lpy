@@ -1,0 +1,22 @@
+;; Basilisp's compiler inlining (--inline-functions, --generate-auto-inlines) on the cached boot:
+;; the boot from the modules, then a few bench programs through cohost's eval, three timed calls each.
+;; Run from the checkout, the flags by env (BASILISP_INLINE_FUNCTIONS / BASILISP_GENERATE_AUTO_INLINES):
+;;   basilisp run -p <snapshot src> -p src dev/perf/lpy_inline_probe.lpy
+(import time)
+(require 'cohost.run)
+(require 'cohost.boot)
+(let [t0 (time/perf_counter_ns)]
+  (require 'cohost.core)
+  (cohost.boot/snapshot-report)
+  (println "BOOT-MS" (/ (- (time/perf_counter_ns) t0) 1000000.0)))
+(cohost.boot/make-user-ns!)
+(doseq [[id file size] [["fib" "fib.clj" "24"] ["tak" "tak.clj" "18 12 6"] ["binary-trees" "binary_trees.clj" "12"]
+                        ["sort" "sort.clj" "100000"] ["keyword-map" "keyword_map.clj" "100000"]
+                        ["nsieve" "nsieve.clj" "16"]]]
+  (cohost.boot/eval-str (slurp (str "bench/programs/" file)))
+  (let [call (str "(-run " (pr-str size) ")")
+        ms (vec (for [_ (range 3)]
+                  (let [t0 (time/perf_counter_ns)]
+                    (cohost.boot/eval-str call)
+                    (/ (- (time/perf_counter_ns) t0) 1000000.0))))]
+    (println "PROGRAM" id size "MS" (nth (sort ms) 1) "RUNS" ms)))
