@@ -1042,15 +1042,22 @@ namespace cohost_obj {
       ([m k nf] (if (cpp/cohost_obj.is_cohost m)
                   (let [e (@shim-RT-find m k)] (if e (val e) nf))
                   (@host-get m k nf)))))
+(defn- assoc-1 [m k v]
+  (if (cpp/cohost_obj.is_cohost m)
+    (@shim-RT-assoc m k v)
+    (do (when (and (@host-vector? m) (number? k) (not (<= 0 k (@host-count m))))
+          (throw (adapter/ex* 'java.lang.IndexOutOfBoundsException
+                              (str "Index " k " out of bounds for length " (@host-count m)))))
+        (@host-assoc m k v))))
+;; jank's own assoc on its vector raises a native C++ exception for an
+;; index past the end; Clojure throws IndexOutOfBoundsException. Index
+;; (count v) is the append and stays jank's assoc; a negative index or
+;; one past (count v) throws Clojure's exception, the same guard nth has.
 (def ^:private native-assoc
-  (fn ([m k v] (if (cpp/cohost_obj.is_cohost m)
-                 (@shim-RT-assoc m k v)
-                 (@host-assoc m k v)))
-      ([m k v & kvs] (if (cpp/cohost_obj.is_cohost m)
-                       (reduce (fn [mm [kk vv]] (@shim-RT-assoc mm kk vv))
-                               (@shim-RT-assoc m k v)
-                               (partition 2 kvs))
-                       (apply @host-assoc m k v kvs)))))
+  (fn ([m k v] (assoc-1 m k v))
+      ([m k v & kvs] (reduce (fn [mm [kk vv]] (assoc-1 mm kk vv))
+                             (assoc-1 m k v)
+                             (partition 2 kvs)))))
 
 (defn type-key
   "The protocol dispatch key of a value."
