@@ -1,0 +1,4 @@
+;; deps-new's template cohost/app: bin/cohost puts this library on every -T
+;; call's classpath, so `cohost -Tnew create :template cohost/app :name acme/myapp`
+;; finds it (doc/CLI.md, "New projects").
+{:paths ["resources" "src"]}

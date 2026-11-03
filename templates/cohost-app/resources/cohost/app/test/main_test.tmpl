@@ -1,0 +1,16 @@
+(ns {{top/ns}}.{{main/ns}}-test
+  (:require [clojure.test :refer [deftest is testing run-tests]]
+            [{{top/ns}}.{{main/ns}} :as app]))
+
+(deftest greet-test
+  (testing "the greeting"
+    (is (= "Hello, cohost!" (app/greet "cohost")))
+    (is (= "Hello, you!" (app/greet "  you ")))))
+
+(defn run
+  "cohost -X:test: this namespace's tests; a failure or error ends the run
+   with exit code 1."
+  [_]
+  (let [{:keys [fail error]} (run-tests '{{top/ns}}.{{main/ns}}-test)]
+    (when (pos? (+ fail error))
+      (throw (ex-info "tests failed" {:fail fail :error error})))))
