@@ -755,13 +755,26 @@
             :else nil)]
     (when (and (symbol? n) (nil? (namespace n)) (contains? primitive-hints n)) n)))
 
+(defn- branch?
+  "A form to walk into: a collection, or any seq. jank's coll? is false for a
+   lazy seq (the JVM's is true), and the rewritten bodies are lazy seqs (map),
+   so a walk that tested coll? alone stopped at them."
+  [x]
+  (or (coll? x) (seq? x)))
+
+(defn- mentions-sym?
+  "True when sym occurs anywhere in form (lazy seqs included; see branch?)."
+  [sym form]
+  (or (= sym form)
+      (and (branch? form) (boolean (some #(mentions-sym? sym %) (seq form))))))
+
 (defn- arity-loops?
   "True when this arity's body has loop, loop*, or recur outside a nested fn.
    A quoted form and a nested fn/fn* keep their own recur targets."
   [body]
   (letfn [(hit? [x]
             (cond
-              (not (coll? x)) false
+              (not (branch? x)) false
               (seq? x)
               (let [h (first x)
                     n (when (symbol? h) (symbol (name (*plain* h))))]
@@ -848,7 +861,7 @@
   [body]
   (letfn [(hit? [x]
             (cond
-              (not (coll? x)) false
+              (not (branch? x)) false
               (seq? x)
               (let [h (first x)
                     n (when (symbol? h) (symbol (name (*plain* h))))]
@@ -898,7 +911,7 @@
              ;; value wins (0.12-0.13x), and so does a fn that calls itself,
              ;; whose self-calls stay inside the typed inner fn* (fib 32 in
              ;; this shape 24-25 ms vs 27-28 on apt; 9 vs 25 on the series)
-             self-calls? (and single? nm (mentions? (bare-sym nm) body'))
+             self-calls? (and single? nm (mentions-sym? (bare-sym nm) body'))
              native? (and spells
                           (or (arity-loops? body') self-calls?)
                           (every? #(and (symbol? %) (not= '& (*plain* %))) params)
