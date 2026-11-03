@@ -1435,6 +1435,20 @@
     (swap! state (fn [st] (-> st (assoc :loading outer) (update ::snap-outer pop)))))
   nil)
 
+(defn snap-read
+  "A snapshot module's data for a host whose reader cannot read cohost's
+   printed forms (let-go: the emitter's :text? dialect): text, read by
+   cohost's reader (the adapter's read-string, as the boot reads)."
+  [text]
+  (host/read-string* text))
+
+(defn snap-form!
+  "A snapshot module's recorded form for such a host: its text, read by
+   cohost's reader and evaluated through the adapter, as the boot evaluated
+   the rewritten form. -> its value."
+  [text]
+  (host/eval-form (snap-read text)))
+
 (defn compile-lib!
   "cohost's compile (D-10), as clojure.core/compile: lib and every library it
    loads that is not the core snapshot's (the stock core and its twelve

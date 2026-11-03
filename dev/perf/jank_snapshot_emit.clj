@@ -43,7 +43,10 @@
 ;; (snap-begin!, or the library's ns directive) runs the adapter's
 ;; ensure-bare-ns!, which clears the refers as the boot does.
 (def lang (get {"lpy" {:core "basilisp.core" :ext ".lpy" :bare? false}
-                "lg" {:core "core" :ext ".lg" :bare? false}}
+                ;; let-go: each form as text, read by cohost's reader and
+                ;; evaluated through the adapter (its eval lowers cohost's
+                ;; special forms, letfn* and the rest, for let-go's compiler)
+                "lg" {:core "core" :ext ".lg" :bare? false :text? true}}
                (:host cli-opts)
                {:core "clojure.core" :ext ".jank" :bare? true}))
 (def C (:core lang))
@@ -112,7 +115,21 @@
   (binding [*print-length* nil *print-level* nil *print-meta* true *print-namespace-maps* false]
     (pr-str (escape-regexes (if (= "lpy" (:host cli-opts)) (lpy-fix form) form)))))
 
-(defn quoted [x] (str "(quote " (pr-src x) ")"))
+(defn quoted
+  "x as data in a module: quoted, or for a :text? host the text cohost's own
+   reader reads at load (cohost.boot/snap-read)."
+  [x]
+  (if (:text? lang)
+    (str "(cohost.boot/snap-read " (pr-str (pr-src x)) ")")
+    (str "(quote " (pr-src x) ")")))
+
+(defn code
+  "A form the module evaluates: itself, or for a :text? host its text, read
+   and evaluated through the adapter at load (cohost.boot/snap-form!)."
+  [form]
+  (if (:text? lang)
+    (str "(cohost.boot/snap-form! " (pr-str (pr-src form)) ")")
+    (pr-src form)))
 
 (def failed (set (keep #(when (= :lib-fail (:op %)) (:lib %)) events)))
 
@@ -146,11 +163,11 @@
 
 (defn event-src [e]
   (case (:op e)
-    :form (pr-src (decode (:form e)))
+    :form (code (decode (:form e)))
     :host (str "(cohost.boot/snap-take! " (quoted (:sym e)) ")")
     :extra (str "(cohost.boot/snap-extra! " (quoted (:sym e)) ")")
     :scan (str "(cohost.boot/snap-scan! " (quoted (:ns e)) ")")
-    :inline (str "(cohost.boot/snap-inline! " (quoted (:sym e)) " " (pr-src (decode (:form e))) ")")
+    :inline (str "(cohost.boot/snap-inline! " (quoted (:sym e)) " " (code (decode (:form e))) ")")
     :directive (str "(cohost.boot/snap-directive! " (quoted (decode (:d e))) ")")
     :end (str "(cohost.boot/snap-end! " (quoted (:data e)) ")")
     :lib-end (str "(cohost.boot/snap-lib-end! " (quoted (:lib e)) " " (quoted (:entry e)) " "
