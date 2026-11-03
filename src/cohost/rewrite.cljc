@@ -1745,20 +1745,7 @@ nil))
 ;; -negate: longs too, dotimes' step) of int-safe forms, or an if whose branches both are.
 ;; A local whose recur passes anything else (a double: (recur (+ x 0.5)); a call result)
 ;; stays boxed, as Clojure's would be. Iterated to a fixpoint: dropping one local can make
-;; another's recur argument unsafe.
-(defn- loop-recurs [body]
-  (let [acc (volatile! [])]
-    (letfn [(walk [x]
-              (cond (seq? x)
-                    (let [h (first x) n (when (symbol? h) (name (*plain* h)))]
-                      (cond (contains? #{"quote" "loop*" "loop" "fn*" "fn" "letfn*" "letfn" "defn" "reify" "deftype"} n) nil
-                            (= n "recur") (do (vswap! acc conj (vec (rest x))) (doseq [y (rest x)] (walk y)))
-                            :else (doseq [y x] (walk y))))
-                    (or (vector? x) (map? x) (set? x)) (doseq [y (if (map? x) (mapcat identity x) x)] (walk y))
-                    :else nil))]
-      (doseq [b body] (walk b)))
-    @acc))
-
+;; another's recur argument unsafe. The recurs are U6-7's loop-recurs (above).
 (defn- int-safe? [natives x]
   (cond (integer? x) true
         (symbol? x) (or (contains? natives (*plain* x)) (contains? *native-ints* (*plain* x)))
