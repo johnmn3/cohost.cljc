@@ -108,6 +108,23 @@ runs both batteries. This is the correctness gate for each runtime's modules.
 9. **Docs.** Update doc/CLI.md "Building": what each artifact holds and what it needs at
    run time.
 
+## Shared changes, checked on every runtime that snapshots
+
+The branch changes code every snapshot path uses: `snap-encode` (regexes), `snap-lib-end!`
+(`last`/`butlast`), the emitter (dialects, regex decoding), and the jolt branch of
+`:set-current-ns!`. After them, each runtime's snapshot was rebuilt from a new recording
+and booted, with both batteries (macOS arm64, 2026-11-03):
+
+| runtime | core battery | libraries | the same as |
+|---|---:|---:|---|
+| jank (`bb boot:jank-snapshot`) | 165/167 | 62/62 | before the branch |
+| jolt | 167/167 | 62/62 | its source boot |
+| ClojureWasm | 165/167 | 62/62 | its source boot |
+| basilisp (`bb boot:lpy-snapshot`) | 165/167 | 62/62 | its source boot, on this branch and on its base ab3cd28 (`numeric tower` and `hash = identical` fail on all three) |
+
+Guide 07 lists basilisp at 166/167. On ab3cd28 its source boot gives 165/167, so that row
+is out of date.
+
 ## Gates for each runtime
 
 - The built app runs the README's `run you` from another directory, with the runtime's
