@@ -32,19 +32,19 @@ from the template at `c6b8eaa`.
 | 12 | classpath split/join on `:` (breaks on Windows) | fixed (untested on Windows) |
 | 13 | no Windows entry point for `bin/cohost` | fixed (untested on Windows) |
 | 14 | Homebrew 5 refuses jank's tap until trusted | handled: script stops with the command |
-| 15 | default target is `:jvm`; nothing reaches cohost-on-a-host by default | open (docs) |
-| 16 | jank's core snapshot is never built automatically, and goes stale on any update | open |
-| 17 | first `:jank` run: 58 s, one cryptic line | open |
-| 18 | `:lpy` is ~20 s per command (34 s first, silent); the CLI never uses the lpy snapshot | open |
-| 19 | `:cljw` ~17 s, `:phel` ~22 s per command; no user-facing numbers | open (docs) |
-| 20 | Phel leaves compiled files in `$TMPDIR/phel/tmp` and never cleans them | open |
-| 21 | Homebrew PHP's ini shows each PHP warning twice | open |
-| 22 | rustup `--no-modify-path`: `cljrs` isn't on PATH afterwards | documented by the script |
-| 23 | `rlwrap` suggested, no install hint | open (docs) |
+| 15 | default target is `:jvm`; nothing reaches cohost-on-a-host by default | fixed: new projects and the CLI default to `:jank`; `:jvm` is the reference (README, guide 02/06/07, CLI.md) |
+| 16 | jank's core snapshot is never built automatically, and goes stale on any update | fixed: built on first use and by `jank.sh` after the install (one line, a lock, a log) |
+| 17 | first `:jank` run: 58 s, one cryptic line | fixed: the first run says what it builds and how long it takes (Linux: 665 s on a loaded box, then 2.2 s) |
+| 18 | `:lpy` is ~20 s per command (34 s first, silent); the CLI never uses the lpy snapshot | fixed: the CLI boots from the cached boot, built on first use |
+| 19 | `:cljw` ~17 s, `:phel` ~22 s per command; no user-facing numbers | fixed (docs): guide 07 and doc/PERF.md give startup for every runtime |
+| 20 | Phel leaves compiled files in `$TMPDIR/phel/tmp` and never cleans them | fixed: each run gets its own TMPDIR, removed after |
+| 21 | Homebrew PHP's ini shows each PHP warning twice | fixed: the phel wrapper passes `-d log_errors=0` (reinstall phel to get it) |
+| 22 | rustup `--no-modify-path`: `cljrs` isn't on PATH afterwards | fixed (docs): the README says to add `$HOME/.cargo/bin` to PATH |
+| 23 | `rlwrap` suggested, no install hint | fixed (docs): install hints in the README and guide 04 |
 | 24 | deps-new on JDK 26 prints 3 `Final field ... mutated reflectively` warnings | upstream |
-| 25 | `bb boot:jank-snapshot` prints `load error: set! ...` lines while passing | open |
-| 26 | `jank-src.sh` is Debian/root-only | open |
-| 27 | the template pins `c6b8eaa`; fixes reach new projects only at the next release | release step |
+| 25 | `bb boot:jank-snapshot` prints `load error: set! ...` lines while passing | fixed: the lines read "not loaded on this host (expected; its cases do not need it)" |
+| 26 | `jank-src.sh` is Debian/root-only | partly: the bash 3.2 empty-array abort is fixed; the build is still Debian-only |
+| 27 | the template pins `c6b8eaa`; fixes reach new projects only at the next release | fixed: the README names 7b3d58e, the release commit |
 | 28 | Windows: the Clojure CLI is a PowerShell module, and `bin/cohost` runs `clojure` | open, untested |
 | 29 | `brew install php` prints php-fpm service caveats during `phel.sh` | cosmetic |
 
