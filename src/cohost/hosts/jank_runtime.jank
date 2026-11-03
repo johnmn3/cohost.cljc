@@ -348,6 +348,38 @@ namespace cohost_leaf {
     return stock.call(c);
   }
 
+  /* A6-1: assoc on a vector at an in-range index (0..count, count being the append) in one C++
+   * call per pair (jank's own persistent_vector::assoc); nil when the fast path does not apply,
+   * so the caller falls back to `stock`, the M-5 native (its bounds error, cohost instances,
+   * maps). nbody does 25 three-pair vector assocs per step: 3.5 us each through the native's
+   * reduce over (partition 2 kvs) on the series build, 0.5 us in plain jank. */
+  inline object_ref assoc_vec(object_ref const m, object_ref const k, object_ref const v) {
+    if(m.get_type() != object_type::persistent_vector || !is_integer(k)) { return jank_nil; }
+    auto const pv(expect_object<obj::persistent_vector>(m));
+    auto const n(to_int(k));
+    if(n < 0 || n > static_cast<jank::i64>(pv->data.size())) { return jank_nil; }
+    return pv->assoc(k, v);
+  }
+
+  inline object_ref assoc1(object_ref const m, object_ref const k, object_ref const v, object_ref const stock) {
+    auto const r(assoc_vec(m, k, v));
+    return r.is_nil() ? stock.call(m, k, v) : r;
+  }
+
+  inline object_ref assoc2(object_ref const m, object_ref const k, object_ref const v, object_ref const k2,
+                           object_ref const v2, object_ref const stock) {
+    auto const r(assoc_vec(m, k, v));
+    if(r.is_nil()) { return stock.call(m, k, v, k2, v2); }
+    return assoc1(r, k2, v2, stock);
+  }
+
+  inline object_ref assoc3(object_ref const m, object_ref const k, object_ref const v, object_ref const k2,
+                           object_ref const v2, object_ref const k3, object_ref const v3, object_ref const stock) {
+    auto const r(assoc_vec(m, k, v));
+    if(r.is_nil()) { return stock.call(m, k, v, k2, v2, k3, v3); }
+    return assoc2(r, k2, v2, k3, v3, stock);
+  }
+
   /* A4 (d): str. The jank adapter's str (jank_host.jank's 'str override) is variadic through
    * apply and a lazy map that asks adapter/exception? of every argument. Here: nil writes
    * nothing, a string / number / keyword / symbol / character / boolean writes what jank's own
@@ -546,3 +578,12 @@ namespace cohost_leaf {
   "A5-5: Double.toString as the JVM writes it (cohost_rt::double_str): 3.0E10, 1.0E-4, 0.001."
   [x]
   (cpp/cohost_rt.double_str x))
+
+(defn assoc-with
+  "A6-1: an assoc fn for cohost.core: a vector at an in-range integer index, up to three pairs, in
+   C++ (cohost_leaf::assoc1/2/3); anything else, and more pairs, by `stock`."
+  [stock]
+  (fn ([m k v] (cpp/cohost_leaf.assoc1 m k v stock))
+      ([m k v k2 v2] (cpp/cohost_leaf.assoc2 m k v k2 v2 stock))
+      ([m k v k2 v2 k3 v3] (cpp/cohost_leaf.assoc3 m k v k2 v2 k3 v3 stock))
+      ([m k v k2 v2 k3 v3 & kvs] (apply stock m k v k2 v2 k3 v3 kvs))))
