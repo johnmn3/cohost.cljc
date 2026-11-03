@@ -29,14 +29,24 @@
 #include <jank/runtime/obj/range.hpp>
 #include <jank/runtime/obj/number.hpp>
 #include <jank/runtime/obj/persistent_vector.hpp>
+#include <gc/gc.h>
+#include <new>
+#include <type_traits>
 #include <jank/runtime/core/truthy.hpp>
+#include <jank/runtime/obj/persistent_string.hpp>
+#include <jank/runtime/core/to_string.hpp>
+#include <charconv>
+#include <cstdlib>
+#include <cmath>
+#include <string>
+#include <string_view>
 
 namespace cohost_rt {
   using namespace jank::runtime;
 
   /* The extension's version: bumped with every change of its C++ (the AOT stamp already
    * follows this file). */
-  inline object_ref version() { return make_box(static_cast<jank::i64>(3)); }
+  inline object_ref version() { return make_box(static_cast<jank::i64>(5)); }
 
   /* A4 (a): chunked seqs built from jank's own obj::chunked_cons and obj::array_chunk, so
    * jank's runtime first/next/seq/count/=/hash/print walk them natively. On apt 0.1-noble
@@ -154,6 +164,104 @@ namespace cohost_rt {
       else { break; }
     }
     return make_box<obj::persistent_vector>(std::in_place, make_box(n), cur);
+  }
+
+  /* A5-5: Double.toString as the JVM writes it: the shortest digits that read back as the same
+   * double (std::to_chars, as JDK 19+), plain decimal for 1e-3 <= |d| < 1e7 with at least one
+   * fraction digit (1.0, 0.001, 1234567.5), else d.dddE<exp> (3.0E10, 1.0E-4); NaN, Infinity,
+   * -Infinity, 0.0 and -0.0 as the JVM's. jank's own writes 3e+10 and 1e-04. */
+  inline void jvm_double_into(double const d, jtl::string_builder &b) {
+    if(std::isnan(d)) { b(\"NaN\"); return; }
+    if(std::isinf(d)) { b(d < 0 ? \"-Infinity\" : \"Infinity\"); return; }
+    if(d == 0.0) { b(std::signbit(d) ? \"-0.0\" : \"0.0\"); return; }
+    char buf[64];
+    auto const r(std::to_chars(buf, buf + sizeof(buf), d, std::chars_format::scientific));
+    std::string_view const sci(buf, static_cast<size_t>(r.ptr - buf));
+    auto const epos(sci.find('e'));
+    std::string_view mant(sci.substr(0, epos));
+    int exp{ std::atoi(std::string(sci.substr(epos + 1)).c_str()) };
+    if(!mant.empty() && mant[0] == '-') { b(\"-\"); mant.remove_prefix(1); }
+    std::string digits;
+    for(char const c : mant) { if(c != '.') { digits.push_back(c); } }
+    /* the JDK writes at least two digits: when the shortest is one digit, the closest two-digit
+     * decimal that reads back as d (Double.MIN_VALUE is 4.9E-324, not 5.0E-324) */
+    if(digits.size() == 1) {
+      char b2[64];
+      auto const r2(std::to_chars(b2, b2 + sizeof(b2), std::fabs(d), std::chars_format::scientific, 1));
+      std::string const two(b2, static_cast<size_t>(r2.ptr - b2));
+      if(std::strtod(two.c_str(), nullptr) == std::fabs(d)) {
+        digits = std::string(1, two[0]) + two[2];
+        exp = std::atoi(two.substr(two.find('e') + 1).c_str());
+      }
+    }
+    while(digits.size() > 1 && digits.back() == '0') { digits.pop_back(); }
+    double const a{ std::fabs(d) };
+    std::string out;
+    if(a >= 1e-3 && a < 1e7) {
+      if(exp >= 0) {
+        auto const ip(static_cast<size_t>(exp) + 1);
+        while(digits.size() < ip) { digits.push_back('0'); }
+        out = digits.substr(0, ip) + \".\" + (digits.size() > ip ? digits.substr(ip) : std::string(\"0\"));
+      }
+      else { out = \"0.\" + std::string(static_cast<size_t>(-exp - 1), '0') + digits; }
+    }
+    else {
+      out = digits.substr(0, 1) + \".\" + (digits.size() > 1 ? digits.substr(1) : std::string(\"0\")) + \"E\"
+        + std::to_string(exp);
+    }
+    b(jtl::immutable_string{ out.data(), out.size() });
+  }
+
+  /* a double: jank boxes one as a small_real (make_box of any floating point), a real otherwise */
+  inline bool is_double(object_ref const x) {
+    auto const t(x.get_type());
+    return t == object_type::small_real || t == object_type::real;
+  }
+
+  inline object_ref double_str(object_ref const x) {
+    jtl::string_builder b;
+    jvm_double_into(to_real(x), b);
+    return make_box<obj::persistent_string>(b.release());
+  }
+
+  /* A7-1: a vector of 1..4 elements as ONE GC allocation (patch 18's make_small, adapter-side):
+   * [persistent_vector | exact-size immer leaf], the leaf the vector's tail, its root immer's
+   * shared empty root. An ordinary immer vector after that: nth, conj, assoc, pop, seq, =, hash,
+   * transients, meta and print are jank's own code. jank's _jank_vec on apt builds a transient
+   * (an owner token, a full 32-slot leaf, then the box: three allocations). The block is a plain
+   * GC_malloc (scanned conservatively, so the leaf's elements are traced; bdwgc runs with
+   * interior pointers, so the tail alone keeps it alive); immer never mutates or frees the leaf
+   * (no refcounting, no transient owner). Not used where jank's own vectors already are one
+   * block (the series build's patch 18: persistent_vector::small_max exists there). */
+  template <class V>
+  constexpr bool own_small_vectors_t() { return requires { V::small_max; }; }
+  inline object_ref own_small_vectors() {
+    return own_small_vectors_t<obj::persistent_vector>() ? jank_true : jank_false;
+  }
+
+  inline object_ref small_vec(object_ref const *elems, jank::usize const n) {
+    using native_vector = jank::runtime::detail::native_persistent_vector;
+    using native_rbtree = std::remove_cvref_t<decltype(std::declval<native_vector const &>().impl())>;
+    using native_node = native_rbtree::node_t;
+    constexpr jank::usize align{ alignof(native_node) };
+    constexpr jank::usize box_size{ (sizeof(obj::persistent_vector) + align - 1) / align * align };
+    auto const count{ static_cast<immer::detail::rbts::count_t>(n) };
+    auto const leaf_size{ native_node::sizeof_leaf_n(count) };
+    auto const mem{ static_cast<char *>(GC_malloc(box_size + leaf_size)) };
+    if(!mem) { throw std::bad_alloc{}; }
+    auto const leaf{ native_node::make_leaf_n_into(mem + box_size, leaf_size, count) };
+    auto const dst(leaf->leaf());
+    for(jank::usize i{}; i < n; ++i) { ::new(static_cast<void *>(dst + i)) object_ref{ elems[i] }; }
+    auto const ret{ ::new(static_cast<void *>(mem)) obj::persistent_vector{
+      std::in_place, native_rbtree(n, native_node::bits_leaf, native_rbtree::empty_root(), leaf) } };
+    return jank::runtime::detail::untagged(ret);
+  }
+  inline object_ref vec1(object_ref a) { object_ref e[1]{ a }; return small_vec(e, 1); }
+  inline object_ref vec2(object_ref a, object_ref b) { object_ref e[2]{ a, b }; return small_vec(e, 2); }
+  inline object_ref vec3(object_ref a, object_ref b, object_ref c) { object_ref e[3]{ a, b, c }; return small_vec(e, 3); }
+  inline object_ref vec4(object_ref a, object_ref b, object_ref c, object_ref d) {
+    object_ref e[4]{ a, b, c, d };
+    return small_vec(e, 4);
   }
 
   /* IChunk.reduce over a jank array_chunk: by index, a reduced result returned unopened. */
@@ -367,6 +475,7 @@ namespace cohost_leaf {
     auto const t(x.get_type());
     if(t == object_type::nil) { return; }
     if(t == object_type::persistent_string) { b(expect_object<obj::persistent_string>(x)->data); return; }
+    if(cohost_rt::is_double(x)) { cohost_rt::jvm_double_into(to_real(x), b); return; } /* A5-5 (u2) */
     if(plain(x)) { jank::runtime::to_string(x, b); return; }
     auto const r(render.call(x));
     if(r.get_type() == object_type::persistent_string) { b(expect_object<obj::persistent_string>(r)->data); }
@@ -377,6 +486,7 @@ namespace cohost_leaf {
     auto const t(a.get_type());
     if(t == object_type::persistent_string) { return a; }
     if(t == object_type::nil) { return make_box<obj::persistent_string>(jtl::immutable_string{}); }
+    if(cohost_rt::is_double(a)) { return cohost_rt::double_str(a); } /* A5-5 (u2) */
     if(!plain(a)) { return render.call(a); }
     jtl::string_builder b;
     jank::runtime::to_string(a, b);
@@ -544,6 +654,21 @@ namespace cohost_leaf {
       ([m k v k2 v2 k3 v3] (cpp/cohost_leaf.assoc3 m k v k2 v2 k3 v3 stock))
       ([m k v k2 v2 k3 v3 & kvs] (apply stock m k v k2 v2 k3 v3 kvs))))
 
+(defn double-str
+  "A5-5: Double.toString as the JVM writes it (cohost_rt::double_str): 3.0E10, 1.0E-4, 0.001."
+  [x]
+  (cpp/cohost_rt.double_str x))
+
+(defn own-small-vectors?
+  "A7-1: true where jank's own vector literals are already one block (the series build)."
+  []
+  (cpp/cohost_rt.own_small_vectors))
+
+;; A7-1: the vector literals of 1..4 elements the codemod emits as calls (adapter :vector-literal)
+(defn vec1 "A7-1: [a] as one GC block (cohost_rt::vec1)." [a] (cpp/cohost_rt.vec1 a))
+(defn vec2 "A7-1: [a b] as one GC block." [a b] (cpp/cohost_rt.vec2 a b))
+(defn vec3 "A7-1: [a b c] as one GC block." [a b c] (cpp/cohost_rt.vec3 a b c))
+(defn vec4 "A7-1: [a b c d] as one GC block." [a b c d] (cpp/cohost_rt.vec4 a b c d))
 (defn get-with
   "A6-3: a get fn for cohost.core: jank's array / hash map in one C++ call (cohost_leaf::get_or);
    everything else by `stock`."
