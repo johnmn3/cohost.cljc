@@ -919,6 +919,13 @@ namespace cohost_obj {
     (@stock-reduce @stock-conj [] coll)
     coll))
 
+;; true where jank's own sort result is a native_vector_sequence whose next
+;; copies its buffer (apt 0.1-noble): (rest (sort [3 1 2])) prints (1 2 3)
+;; there. Probed once at boot; the series' 11-sorted-walk makes it false.
+;; pr-str, not =: on apt the broken sequence's = walks right while its print,
+;; count and nth read from index 0 (jank-11: equal/hash/to_string ignore the index).
+(def ^:private sort-walk-broken? (not= "(2 3)" (pr-str (rest (sort [3 1 2])))))
+
 (def ^:private native-sort
   (fn ([coll] (@host-sort (host-data coll)))
       ([comp coll] (@host-sort comp (host-data coll)))))
@@ -1864,7 +1871,7 @@ namespace cohost_obj {
    ;; group that did not match, where the JVM's is nil ((re-find #"a(b)?" "a")
    ;; -> ["a" ""]), which tools.cli reads as a flag's argument. The stock fns
    ;; over the shim's Matcher (:re-find-at, std::smatch's matched) answer nil.
-   :natives {;; atoms on jank are jank's own clojure.lang.Atom (probed
+   :natives (cond-> {;; atoms on jank are jank's own clojure.lang.Atom (probed
              ;; 2026-11-02), so swap!/reset! cannot meet a cohost instance.
              'clojure.core/swap! :host
              'clojure.core/reset! :host
@@ -1878,8 +1885,13 @@ namespace cohost_obj {
              'clojure.core/disj! native-disj!
              'clojure.core/into native-into
              'clojure.core/transduce native-transduce
-             'clojure.core/sort native-sort
-             'clojure.core/sort-by native-sort-by
+             ;; sort / sort-by are natives only where jank's sort result walks
+             ;; linearly (sort-walk-broken? below): on apt 0.1-noble
+             ;; native_vector_sequence::next copies its buffer per step, so
+             ;; every walk of a sorted seq is quadratic and (rest (sort [3 1 2]))
+             ;; prints (1 2 3); the stock sort over the shim's Arrays-sort is
+             ;; right there. A jank whose sort result walks linearly keeps the
+             ;; native (sort 1.3x the JVM instead of ~5x).
              'clojure.core/set native-set
              'clojure.core/frequencies native-frequencies
              'clojure.core/group-by native-group-by
@@ -1887,6 +1899,7 @@ namespace cohost_obj {
              'clojure.core/nth native-nth
              'clojure.core/get native-get
              'clojure.core/assoc native-assoc}
+              (not sort-walk-broken?) (assoc 'clojure.core/sort native-sort 'clojure.core/sort-by native-sort-by))
    ;; str is NOT a native here: policy owns str on every host -- an
    ;; exception's str must reach the shim's toString (JVM rendering), and
    ;; jank's own str writes jank's. See policy.cljc.
