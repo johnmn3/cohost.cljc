@@ -2289,8 +2289,15 @@
 (def -append (fn [sb x] (h-sb-append! sb (if (nil? x) "null" x))))
 (def -close host/close!)
 (def -flush (fn [_] nil))
-(def -numerator (host-fn 'numerator identity))
-(def -denominator (host-fn 'denominator (constantly 1)))
+(def -numerator (let [h (host-fn 'numerator identity)]
+                  ;; (jank, A5-2: Ratio's numerator and denominator are BigIntegers, which
+                  ;; print with no N on the JVM; jank's are its BigInt, which prints 3N: a
+                  ;; part that fits a long comes back as the long)
+                  #?(:jank (fn [r] (let [n (h r)] (if (< -9223372036854775808 n 9223372036854775807) (long n) n)))
+                     :default h)))
+(def -denominator (let [h (host-fn 'denominator (constantly 1))]
+                    #?(:jank (fn [r] (let [n (h r)] (if (< -9223372036854775808 n 9223372036854775807) (long n) n)))
+                       :default h)))
 (def -bigIntegerValue identity)
 (def -toBigInteger identity)
 (def -doubleValue RT-doubleCast)

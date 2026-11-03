@@ -382,12 +382,21 @@ namespace cohost_reduce {
 #include <jank/runtime/core/math.hpp>
 #include <jank/runtime/core/make_box.hpp>
 #include <jank/runtime/obj/ratio.hpp>
+#include <jank/runtime/obj/big_integer.hpp>
 #include <limits>
 namespace cohost_num {
   using namespace jank::runtime;
   inline bool int_operand(object_ref const x) {
     auto const t(x.get_type());
     return t == object_type::small_integer || t == object_type::integer;
+  }
+  // A5-2: an integral result of ratio arithmetic is a BigInt, as Clojure's Ratio
+  // ops give ((* 1/2 4) is 2N); jank's gives a long.
+  inline object_ref ratio_int(object_ref a, object_ref b, object_ref r) {
+    if (int_operand(r) && (a.get_type() == object_type::ratio || b.get_type() == object_type::ratio)) {
+      return make_box<obj::big_integer>(to_int(r));
+    }
+    return r;
   }
   inline object_ref add(object_ref a, object_ref b) {
     if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
@@ -398,7 +407,7 @@ namespace cohost_num {
       if (__builtin_add_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
       return make_box(r);
     }
-    return jank::runtime::add(a, b);
+    return ratio_int(a, b, jank::runtime::add(a, b));
   }
   inline object_ref sub(object_ref a, object_ref b) {
     if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
@@ -409,7 +418,7 @@ namespace cohost_num {
       if (__builtin_sub_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
       return make_box(r);
     }
-    return jank::runtime::sub(a, b);
+    return ratio_int(a, b, jank::runtime::sub(a, b));
   }
   inline object_ref mul(object_ref a, object_ref b) {
     if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
@@ -420,7 +429,7 @@ namespace cohost_num {
       if (__builtin_mul_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
       return make_box(r);
     }
-    return jank::runtime::mul(a, b);
+    return ratio_int(a, b, jank::runtime::mul(a, b));
   }
   // A5-2: Clojure's / on two integers (Numbers.divide): the exact quotient when
   // the divisor divides, else a ratio. jank's own / divides integers as C++ does
@@ -503,7 +512,7 @@ namespace cohost_var {
 (def ^:private int-div-wrong? (not (ratio? (/ (identity 6) 4))))
 (def num-divide
   (when int-div-wrong?
-    (fn [x y] (let [r (cpp/cohost_num.div x y)] (if (nil? r) (clojure.core// x y) r)))))
+    (fn [x y] (let [r (cpp/cohost_num.div x y)] (if (nil? r) (cpp/cohost_num.ratio_int x y (clojure.core// x y)) r)))))
 
 ;; A5-2: quot and rem. Two integers in i64 (cohost_num::quot / rem; jank's own
 ;; traps on i32 min by -1 on apt); jank's quot of a double is an integer
