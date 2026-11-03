@@ -104,7 +104,7 @@ runs both batteries. This is the correctness gate for each runtime's modules.
      wrong: the replay does call `intern` and `ns-publics`, and jolt says a wrong vouch
      fails silently, with `resolve` answering nil.
 8. **The bench.** The `<runtime>-built` columns measure these artifacts. Re-run them for
-   jolt and lpy (this branch) and add the results to doc/PERF.md's "Compiled builds".
+   jolt and lpy (this branch) and add the results to doc/PERF.md's "Built apps".
 9. **Docs.** Update doc/CLI.md "Building": what each artifact holds and what it needs at
    run time. **Done** for jolt, basilisp and ClojureWasm (2026-11-03); each later runtime updates its row.
 
