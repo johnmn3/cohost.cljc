@@ -770,7 +770,9 @@ namespace cohost_obj {
 ;; true where jank's own sort result is a native_vector_sequence whose next
 ;; copies its buffer (apt 0.1-noble): (rest (sort [3 1 2])) prints (1 2 3)
 ;; there. Probed once at boot; the series' 11-sorted-walk makes it false.
-(def ^:private sort-walk-broken? (not= '(2 3) (rest (sort [3 1 2]))))
+;; pr-str, not =: on apt the broken sequence's = walks right while its print,
+;; count and nth read from index 0 (jank-11: equal/hash/to_string ignore the index).
+(def ^:private sort-walk-broken? (not= "(2 3)" (pr-str (rest (sort [3 1 2])))))
 
 (def ^:private native-sort
   (fn ([coll] (@host-sort (host-data coll)))
