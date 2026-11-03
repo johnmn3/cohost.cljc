@@ -1074,7 +1074,7 @@ Step 3's syntax-quote metadata pass is not its own profiler region. Exclusive ti
 ## Runtime profile
 
 Measured 2026-11-01 ET by lane M (jank-FAST Step 2, order M-3), on the same full
-`bb bench:jank` run doc/PERF.md records as the jank baseline (muse/jank-step2 @ 573ee4d5).
+`bb bench:jank` run doc/perf/HISTORY.md records as the jank baseline (muse/jank-step2 @ 573ee4d5).
 The five worst cases of that table, by the stock core's ratio against jank's own core:
 regex (x320.10), format (x49.57), into-vector (x30.32), sort-by (x27.45),
 transduce (x21.68).
@@ -1115,7 +1115,7 @@ Reading:
   fns: the shim's dispatch and the adapter's capability calls, which is what
   Step 3's items (type tests by tag, the instance guard as one C++ call, hot
   capability lookups read once) and Step 4's natives address. This profiler
-  cannot split that block further; the case ratios in doc/PERF.md are the
+  cannot split that block further; the case ratios in doc/perf/HISTORY.md are the
   before/after measure for those steps.
 - The rest, 12-34%, is JIT compilation of fns the boot alone never calls:
   13-31 `jit eval_string` compilations per case, triggered on first use inside
@@ -1330,7 +1330,7 @@ libraries: 61/61 cases pass across 12 clojure.* libraries
 
 The two jank failures are `subs count nth first last butlast` (`Unterminated vector.`) and `Character outside ASCII` (`Unexpected end of file.`). `bb boot:jank` on the tip, after the defn, spec, and call-list shortcuts were removed, printed the same three lines: `542` / `171` / `78` / `0`, battery `143/145`, libraries `61/61`.
 
-Step 8's program suite (fib, tak, nbody, and the rest) is `bb bench:programs`. The table is "Programs against JVM Clojure" in `doc/PERF.md` (JVM, jank-jit, jank-aot, cohost on jank, and clojurust).
+Step 8's program suite (fib, tak, nbody, and the rest) is `bb bench:programs`. The table is "Programs against JVM Clojure" in `doc/perf/HISTORY.md` (JVM, jank-jit, jank-aot, cohost on jank, and clojurust).
 
 ## Step 5 H1: the coercion's fast path, and the :arglists strip (2026-11-02)
 
@@ -1364,7 +1364,7 @@ on the base too), libraries 61/61; `bb boot:jank` 143/145, 61/61.
 C-2 (jank-FAST Step 8). nbody, mandelbrot, fannkuch and nsieve fail on cohost on jank, and they fail the same way on
 jank's own core (`jank -O3 run`, and `compile-module -O3`): this is not a cohost bug but jank 0.1's, and cohost can
 work around it in its codemod. Measured 2026-11-02 on jank 0.1-noble, cohost at `c499930`; programs from
-`c/bench-programs` (`bb bench:programs jank`, doc/PERF.md "Programs against JVM Clojure").
+`c/bench-programs` (`bb bench:programs jank`, doc/perf/HISTORY.md "Programs against JVM Clojure").
 
 **The cause (all four).** jank 0.1's C++ codegen fails on a `loop*` that binds a name an enclosing `loop*` binds:
 `error: use of undeclared identifier 'sNN'`. The init does not matter (`(loop [a a] ...)`, `(loop [a (inc a)] ...)`,

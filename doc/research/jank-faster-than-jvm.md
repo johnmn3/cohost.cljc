@@ -39,7 +39,7 @@ and timings overlap otherwise).
 
 | fact | value | where |
 |---|---|---|
-| jank's own core, AOT `-O3`, against the JVM over the 10 programs that ran | geomean 0.705 (fib 0.80, tak 0.24, binary-trees 1.75, k-nucleotide 0.44, pipeline 1.34, json 0.23, first-output 1.00) | doc/PERF.md "Programs against JVM Clojure" (first pass; runs too short for the JVM JIT, lane C re-measures) |
+| jank's own core, AOT `-O3`, against the JVM over the 10 programs that ran | geomean 0.705 (fib 0.80, tak 0.24, binary-trees 1.75, k-nucleotide 0.44, pipeline 1.34, json 0.23, first-output 1.00) | doc/perf/HISTORY.md "Programs against JVM Clojure" (first pass; runs too short for the JVM JIT, lane C re-measures) |
 | jank's own core, JIT, against the JVM | geomean 2.43 (the JIT's first-use compilation is inside the five timed calls) | same |
 | cohost's stock core on jank against the JVM | geomean 10.34 (fib 23.9, tak 7.4, spectral-norm 47.6, binary-trees 4.1, k-nucleotide 2.2, pipeline 2.3, dispatch 11.2, json 1.8, first-output 26.0) | same |
 | six programs ABSENT on raw jank | nbody, spectral-norm (`Math/sqrt`, `Math/round`), mandelbrot, fannkuch, nsieve (`use of undeclared identifier 'sNN'`), dispatch (`defprotocol`) | same |
@@ -47,9 +47,9 @@ and timings overlap otherwise).
 | a hinted leaf fn called from a loop | hinted/plain 1.24 (`inc`) to 1.52 (`+` on `jtl.i64`): the result is boxed on the way out | same |
 | return hints and `let`/`loop` local hints | unused by the compiler (`ret_only` has no convert; `locals_hinted` and `locals_plain` emit the same C++) | same, "What `+`, `<`, and `inc` compile to" |
 | one cross-module fn call on jank | ~100 ns per entry (274 ms over fib 30's 2.7M entries) | atom.broker reports/muse.md, M-6 (2026-11-02 08:04 ET) |
-| stock core against jank's own core, 30 bench cases | geomean x4.09; regex x320, format x49.6, into-vector x30.3, sort-by x27.5, transduce x21.7, transient-vector x18.7, sort x15.2, str-build x15.5, set-build x11.1, group-by x10.5 | doc/PERF.md "jank baseline" |
+| stock core against jank's own core, 30 bench cases | geomean x4.09; regex x320, format x49.6, into-vector x30.3, sort-by x27.5, transduce x21.7, transient-vector x18.7, sort x15.2, str-build x15.5, set-build x11.1, group-by x10.5 | doc/perf/HISTORY.md "jank baseline" |
 | where the stock core's time goes in those cases | 63-83% inside the compiled stock and shim fns; 12-34% first-use JIT compilation (13-31 `jit eval_string` per case); the evaluator under 1% | doc/perf/jank.md "Runtime profile" |
-| a protocol call on a record | jank's own core 163.10 ms, the stock core 166.05 ms; JVM Clojure 0.81 ms (about 200x) | doc/PERF.md "jank baseline" and the all-host table (line "protocol call on a record") |
+| a protocol call on a record | jank's own core 163.10 ms, the stock core 166.05 ms; JVM Clojure 0.81 ms (about 200x) | doc/perf/HISTORY.md "jank baseline" and the all-host table (line "protocol call on a record") |
 | boot on jank | AOT default: boot-ms 11,848, libs-ms 7,758; JIT 44,163 / 36,215 | atom.broker BOARD.md scoreboard |
 | boot profile | codemod 41%, library phase 44%, eval 4.7%, reading 4.3%; jank's profiler: `jit eval_string` 71% exclusive | doc/perf/jank.md "Boot profile" |
 | AOT stage 2 (a snapshot of the booted core) | `compile-module` of the rewritten forms produces no module: vars interned at boot (`cohost.shim/is$clojure_lang_IMapEntry`, `PersistentList-creator`) do not resolve; 550 `cohost.core` forms, not 2,000 | doc/perf/jank.md "AOT stage 2 probe" |
@@ -179,7 +179,7 @@ The loop itself is cheaper on jank than on the JVM (19.8 vs 27.9 ms for 5e6 boxe
   P1; for loop-carried numeric code, up to the 8-10x of H0. On the yardstick this is the
   numeric half (fib, tak, nbody, spectral-norm, mandelbrot, nsieve, fannkuch, and the hinted
   variants, which H1 passes through for loops): the JVM's own hinted variants gain 0.48-0.84 on
-  mandelbrot, fib, tak, nbody (doc/PERF.md "Hinted median / unhinted median on the JVM"), which
+  mandelbrot, fib, tak, nbody (doc/perf/HISTORY.md "Hinted median / unhinted median on the JVM"), which
   is what jank's hinted rows lose today (fib-hinted/fib 1.74 on jank-aot).
 - **Probe.** P1 (done): `fib-cpp-native` is the ceiling, `fib-hinted-leaf` the current loss.
   Next: `dev/research/p7_native_entry.jank`, a hand-written C++ native entry for tak and
@@ -356,7 +356,7 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
   tree node) and build the larger one from it, as Clojure's `PersistentVector` keeps a tail.
   The split between (a) and (b) is what probe P3b measures.
 - **Cost attacked.** binary-trees: 25x the JVM at depth 14 (bt-14 218850983 vs 8727705 ns);
-  the yardstick's depth-8 run hid it (jank-aot 1.75x the JVM, doc/PERF.md). Every program
+  the yardstick's depth-8 run hid it (jank-aot 1.75x the JVM, doc/perf/HISTORY.md). Every program
   that allocates a collection per step: pipeline (a map per `assoc`), json (`conj` per
   character), nbody (a vector per body per step). 408 collections in one P3 run.
 - **Expected effect.** The environment knobs are not a reliable gain: one matrix gave bt-14
@@ -481,7 +481,7 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
     for the call-site arity and cache the last dispatch value -> method per call site
     (`isa?` re-check only on a hierarchy change).
 - **Cost attacked.** The stock core's worst bench cases run on exactly these leaves: sort
-  x15.2, sort-by x27.5, str-build x15.5 against jank's own core (doc/PERF.md "jank
+  x15.2, sort-by x27.5, str-build x15.5 against jank's own core (doc/perf/HISTORY.md "jank
   baseline"), and jank's own sort of 1e5 is 1160x the JVM. In the yardstick: json
   (`apply str`, `nth` on a string), k-nucleotide (`nth` on a string), dispatch
   (multimethod), pipeline (`assoc`/`update-in` are variadic).
@@ -574,7 +574,7 @@ jank, `defn` names the fn (core.jank line 778), so raw jank already has the dire
   snapshot to make it free.
 - **Cost attacked.** `-O0` machine code for every stock-core fn and every user fn: the whole
   cohost column of Step 8 (geomean 10.34; fib 23.9x, tak 7.4x, spectral-norm 47.6x, dispatch
-  11.2x, doc/PERF.md) and the stock-vs-own bench (geomean x4.09) were measured at `-O0` on the
+  11.2x, doc/perf/HISTORY.md) and the stock-vs-own bench (geomean x4.09) were measured at `-O0` on the
   stock side while jank's own core is compiled into the binary at `-O3`/`-O2`
   (`CMakeLists.txt:144`, `:951`). The suite's `jank-jit` column is `-O0` too.
 - **Expected effect.** Measured on fib: 6.4x (P6). On the rest: unknown until `bb bench:programs
@@ -609,7 +609,7 @@ jank, `defn` names the fn (core.jank line 778), so raw jank already has the dire
 - **Cost attacked.** fib-stock 38481897 against fib-fn-def 20871741 and fib-host-ops 29816492
   at `-O3` (P6); lane M's ~100 ns per entry (M-6); the collection-op guards on every
   `RT-count`/`RT-nth`/`RT-conj` (`shim.cljc:606-615`), i.e. the transient-vector, into,
-  group-by, frequencies, set-build cases (x11-x19 stock vs own, doc/PERF.md "jank baseline")
+  group-by, frequencies, set-build cases (x11-x19 stock vs own, doc/perf/HISTORY.md "jank baseline")
   and json/k-nucleotide/pipeline in the yardstick.
 - **Expected effect.** fib: up to 1.84x (P6, the `def`+`fn` shape); the collection cases:
   P12 found the guard itself unmeasurable on `nth` under `-O3`, so the remaining gap in the
@@ -642,7 +642,7 @@ jank, `defn` names the fn (core.jank line 778), so raw jank already has the dire
   the same one-entry cache is the upstream twin.
 - **Cost attacked.** dispatch under cohost on jank 24320671 ns for 20000 iterations, 1.2 us
   per protocol call + multimethod call + arithmetic, against the JVM's 2168401 (11.2x); the
-  protocol bench case 163.10 ms against the JVM's 0.81 ms (about 200x) (doc/PERF.md); the
+  protocol bench case 163.10 ms against the JVM's 0.81 ms (about 200x) (doc/perf/HISTORY.md); the
   variadic entry alone is 108 ns per call and a multimethod call 61 ns on raw jank (P2).
 - **Expected effect.** The protocol call falls from a variadic call + `apply` + 4-6 lookups
   to a fixed-arity call + one `cpp/raw` read + one `identical?`: the order of P2's

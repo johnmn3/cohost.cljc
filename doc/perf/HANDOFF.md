@@ -5,7 +5,7 @@ Written 2026-10-30, 2:05 PM ET, on branch `claude/eager-euler-ci8ev7`; brought u
 left. A new session should read it first, then the files it names.
 
 **State:** every planned item is implemented, tested on all four hosts and the jolt corpus,
-and on `main` at `3e59a25`. That commit is measured on every host in `doc/PERF.md`; its
+and on `main` at `3e59a25`. That commit is measured on every host in `doc/perf/HISTORY.md`; its
 results are in `doc/perf/after/`.
 
 ## The request
@@ -31,7 +31,7 @@ results are in `doc/perf/after/`.
   - Batteries green (2:13 PM ET): jolt and JVM 133/133 and 61/61, with 6 core natives
     plus join. ClojureScript is 131/133, the two host limits.
   - (Those counts are from 2:13 PM ET; today's are under "The planned items" below.)
-- **Then:** measured before against after on every host (`doc/PERF.md`), with an
+- **Then:** measured before against after on every host (`doc/perf/HISTORY.md`), with an
   adversarial review whose fixes are below.
 
 ## Resume
@@ -62,7 +62,7 @@ bb bench:report target
 
 `bb bench:report --compare doc/perf/before target` prints the before/after table.
 
-- **"Before":** commit `4ce56eb`, in `doc/perf/before/`. `doc/PERF.md` says how it was run.
+- **"Before":** commit `4ce56eb`, in `doc/perf/before/`. `doc/perf/HISTORY.md` says how it was run.
 - **"After":** commit `3e59a25`, in `doc/perf/after/`. jolt with `JOLT_TRACE=0` is in
   `doc/perf/after-jolt-trace0/`.
 - **Batteries on `3e59a25`:**
@@ -219,7 +219,7 @@ jolt corpus in one round.
   - `transduce`, ×3.0 to ×4.0 on jolt and ClojureScript;
   - jolt's lazy `count`/`filter`/`map`, ×3.9;
   - basilisp's `re-seq`, `format` and `sort-by`, which are not natives there.
-  `doc/PERF.md` has them all.
+  `doc/perf/HISTORY.md` has them all.
 - **The perf finders that hit the usage limit** (adapters, shim-core, shim-rest) were not
   re-run: they are discovery, not planned work.
 - **The correctness review's later rounds** (its boot/policy finder and its "find more"
