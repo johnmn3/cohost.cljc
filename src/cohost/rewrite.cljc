@@ -216,6 +216,13 @@
           :else (doseq [y args] (walk y))))
       :else nil)))
 
+(defn unit-kinds?
+  "U6-9 (b): does this host's reader keep a real literal apart from an integer
+   one (2.0 is not 2)? Where it does not (ClojureScript: both are a JS number),
+   no literal proves a long or a double, so unit-param-kinds types nothing."
+  []
+  (not (integer? 2.0)))
+
 (defn unit-param-kinds
   "U6-9 (b): {defn name {arity-count [kind-or-nil ...]}} for the top-level
    defns of forms (one compilation unit) whose every call site in the unit
@@ -224,7 +231,8 @@
    not understand), not ^:dynamic or ^:redef, defined once. A parameter with
    a hint of its own is left to the hint. macro?: (fn [head-symbol]) -> true
    for a macro. The least fixpoint over the call graph: a kind is recorded
-   only from kinds already established."
+   only from kinds already established. {} on a host without distinct
+   integer and real literals (unit-kinds?)."
   [forms macro?]
   (let [defn-name (fn [f] (when (and (seq? f) (contains? #{"defn" "defn-"} (uk-head (first f))) (symbol? (second f)))
                             (second f)))
@@ -236,7 +244,7 @@
                            (let [more (drop-while #(or (string? %) (map? %)) (drop 2 f))]
                              [nm (vec (keep #(when (and (vector? %) (every? symbol? %) (not (some #{'&} %))) %)
                                             (if (vector? (first more)) [(first more)] (map first (filter seq? more)))))])))]
-    (if (empty? unit)
+    (if (or (empty? unit) (not (unit-kinds?)))
       {}
       (loop [R {} i 0]
         (let [st (volatile! {:sites {} :escaped #{}})]
