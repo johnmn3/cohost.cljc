@@ -1026,12 +1026,15 @@ namespace cohost_obj {
     (@stock-reduce @stock-conj [] coll)
     coll))
 
+;; A4 (c): jank's sort result walked through jank-rt/sorted-seq (on apt its next restarts at
+;; the first element and copies the buffer: (rest (sort [3 1 2])) was (1 2 3), any walk of a
+;; sort result quadratic); the series build's result passes untouched.
 (def ^:private native-sort
-  (fn ([coll] (@host-sort (host-data coll)))
-      ([comp coll] (@host-sort comp (host-data coll)))))
+  (fn ([coll] (jank-rt/sorted-seq (@host-sort (host-data coll))))
+      ([comp coll] (jank-rt/sorted-seq (@host-sort comp (host-data coll))))))
 (def ^:private native-sort-by
-  (fn ([keyfn coll] (@host-sort-by keyfn (host-data coll)))
-      ([keyfn comp coll] (@host-sort-by keyfn comp (host-data coll)))))
+  (fn ([keyfn coll] (jank-rt/sorted-seq (@host-sort-by keyfn (host-data coll))))
+      ([keyfn comp coll] (jank-rt/sorted-seq (@host-sort-by keyfn comp (host-data coll))))))
 (def ^:private native-set
   (fn [coll] (@host-set (host-data coll))))
 (def ^:private native-frequencies
@@ -1405,10 +1408,12 @@ namespace cohost_obj {
    ;; shim's, which branch on a ref into the LockingTransaction machinery
    ;; cohost.core/str is jank's str, whose rendering of an ex-info is
    ;; its #error dump: a standin exception prints as its class instead
-   'str (fn [& args] (apply str (map (fn [x] (if (adapter/exception? x)
-                                               ((adapter/capability :exception-string) x)
-                                               x))
-                                     args)))
+   ;; A4 (d): fixed arities and one C++ string builder (jank-rt/str-with); a value that is
+   ;; not nil / a string / a number / a keyword / a symbol / a character / a boolean goes
+   ;; through the one-argument render below, as before
+   'str (jank-rt/str-with (fn [x] (if (adapter/exception? x)
+                                    ((adapter/capability :exception-string) x)
+                                    (str x))))
    ;; jank's own newline is a TODO stub that throws ("TODO: port
    ;; newline"); clojure.stacktrace's print-throwable calls it
    'newline (fn [] (print "\n"))
@@ -2010,8 +2015,10 @@ namespace cohost_obj {
              'clojure.core/group-by native-group-by
              ;; A4 (a): an integer range and a chunked seq counted in O(1) / a chunk at a time,
              ;; everything else native-count
-             'clojure.core/count (jank-rt/count-with native-count)
-             'clojure.core/nth native-nth
+             ;; A4 (d): a vector, string or nil counted, a string or vector nth'd, in one C++
+             ;; call (jank-rt/count-fast-with, jank-rt/nth-with); the rest as before
+             'clojure.core/count (jank-rt/count-fast-with (jank-rt/count-with native-count))
+             'clojure.core/nth (jank-rt/nth-with native-nth)
              'clojure.core/get native-get
              'clojure.core/assoc native-assoc
              ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
