@@ -1,0 +1,53 @@
+;; A7-1 measure-first: is a one-block small vector (patch 18's make_small, built adapter-side in
+;; cpp/raw) still a win when it is reached through one jank fn call per literal?
+;;   LC_ALL=C.UTF-8 jank -O3 run dev/research/a7/vec_probe.jank      (apt 0.1-noble)
+(ns vec-probe)
+(cpp/raw "
+#include <jank/runtime/object.hpp>
+#include <jank/runtime/core/make_box.hpp>
+#include <jank/runtime/obj/persistent_vector.hpp>
+#include <gc/gc.h>
+#include <new>
+namespace a7 {
+  using namespace jank::runtime;
+  using native_vector = jank::runtime::detail::native_persistent_vector;
+  using native_rbtree = std::remove_cvref_t<decltype(std::declval<native_vector const &>().impl())>;
+  using native_node = native_rbtree::node_t;
+  inline object_ref small(object_ref const *elems, jank::usize const n) {
+    constexpr jank::usize align{ alignof(native_node) };
+    constexpr jank::usize box_size{ (sizeof(obj::persistent_vector) + align - 1) / align * align };
+    auto const count{ static_cast<immer::detail::rbts::count_t>(n) };
+    auto const leaf_size{ native_node::sizeof_leaf_n(count) };
+    auto const mem{ static_cast<char *>(GC_malloc(box_size + leaf_size)) };
+    if(!mem) { throw std::bad_alloc{}; }
+    auto const leaf{ native_node::make_leaf_n_into(mem + box_size, leaf_size, count) };
+    auto const dst(leaf->leaf());
+    for(jank::usize i{}; i < n; ++i) { ::new(static_cast<void *>(dst + i)) object_ref{ elems[i] }; }
+    auto const ret{ ::new(static_cast<void *>(mem)) obj::persistent_vector{
+      std::in_place, native_rbtree(n, native_node::bits_leaf, native_rbtree::empty_root(), leaf) } };
+    return jank::runtime::detail::untagged(ret);
+  }
+  inline object_ref vec2(object_ref a, object_ref b) { object_ref e[2]{ a, b }; return small(e, 2); }
+  inline object_ref vec3(object_ref a, object_ref b, object_ref c) { object_ref e[3]{ a, b, c }; return small(e, 3); }
+}
+")
+(defn vec2 [a b] (cpp/a7.vec2 a b))
+(defn vec3 [a b c] (cpp/a7.vec3 a b c))
+(defn now [] (cpp/jank.runtime.current_time))
+(defn lit-loop [n] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (count [i i]))) s)))
+(defn fn-loop [n] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (count (vec2 i i)))) s)))
+(defn cpp-loop [n] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (count (cpp/a7.vec2 i i)))) s)))
+(defn make [d] (if (zero? d) [nil nil] (let [d (dec d)] [(make d) (make d)])))
+(defn check [t] (let [l (nth t 0) r (nth t 1)] (if (nil? l) 1 (+ 1 (check l) (check r)))))
+(defn make2 [d] (if (zero? d) (vec2 nil nil) (let [d (dec d)] (vec2 (make2 d) (make2 d)))))
+(defn time-ms [f] (let [t0 (now) r (f) t1 (now)] [(/ (- t1 t0) 1000000.0) r]))
+(defn med [f] (let [rs (vec (sort (map first (repeatedly 7 #(time-ms f)))))] (nth rs 3)))
+(println "checks" (= [1 2] (vec2 1 2)) (= (hash [1 2]) (hash (vec2 1 2))) (pr-str (vec2 1 [2])) (count (conj (vec2 1 2) 3))
+         (pr-str (assoc (vec2 1 2) 0 :a)) (pr-str (meta (with-meta (vec2 1 2) {:m 1}))) (pr-str (seq (vec2 1 2))) (pr-str (pop (vec2 1 2)))
+         (= (check (make 10)) (check (make2 10))) (pr-str (into (vec2 1 2) (range 40))))
+(dotimes [_ 3] (lit-loop 2000000) (fn-loop 2000000) (cpp-loop 2000000) (check (make 14)) (check (make2 14)))
+(println "[i i] literal 2e6 ms" (med #(lit-loop 2000000)))
+(println "(vec2 i i) fn 2e6 ms" (med #(fn-loop 2000000)))
+(println "cpp vec2 inline 2e6 ms" (med #(cpp-loop 2000000)))
+(println "binary-tree depth 14 literal ms" (med #(check (make 14))))
+(println "binary-tree depth 14 vec2 ms" (med #(check (make2 14))))
