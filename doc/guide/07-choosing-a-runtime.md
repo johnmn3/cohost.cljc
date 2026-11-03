@@ -1,7 +1,8 @@
 # Choosing a runtime
 
-*2026-11-02. Core battery: merged commit a1aeb5f. Library battery: f02a978 (Phel: 8967d0e, after
-its `ns-interns` fix). Speed: doc/PERF.md, "Programs against JVM Clojure" (cf1046e; jank's first
+*2026-11-02. Core and library batteries: the coordinator's check of cohost coord/b13 @ f9ee475,
+whose code this release (max/integrate @ 6eec4e2) carries with the battery's rows reordered.
+Speed: doc/PERF.md, "Programs against JVM Clojure" (cf1046e; jank's first
 output from its snapshot: 5d02b93).*
 
 `:cohost/target` in `deps.edn` names the runtime; `cohost :<target> ...` overrides it for one
@@ -9,18 +10,25 @@ command. The same source runs on each; what differs is the host underneath.
 
 | target | runtime | core battery | library battery | install |
 |---|---|---:|---:|---|
-| `:jvm` | JVM Clojure (the real CLI) | 146/146 | 62/62 | the Clojure CLI |
-| `:jolt` | jolt 0.8.23 (Chez Scheme) | 146/146 | 62/62 | `dev/install/jolt.sh` |
-| `:jank` | jank 0.1 (C++/LLVM) | 144/146 | 62/62 | `dev/install/jank.sh` |
-| `:cljs` | ClojureScript 1.12.42, self-hosted, on Node | 144/146 | 62/62 | Node |
-| `:lpy` | basilisp 0.5.1 (Python) | 145/146 | 62/62 | `dev/install/basilisp.sh` |
-| `:cljw` | ClojureWasm 1.15.4 | 144/146 | 62/62 | `dev/install/cljw.sh` |
-| `:phel` | Phel 0.54.0 (PHP 8.5) | 145/146 | 62/62 | `dev/install/phel.sh` |
-| `:lg` | let-go 1.13.0 (Go) | 144/146 | 62/62 | `dev/install/lg.sh` |
+| `:jvm` | JVM Clojure (the real CLI) | 167/167 | 62/62 | the Clojure CLI |
+| `:jolt` | jolt 0.8.23 (Chez Scheme) | 167/167 | 62/62 | `dev/install/jolt.sh` |
+| `:jank` | jank 0.1 (C++/LLVM) | 165/167 | 62/62 | `dev/install/jank.sh` |
+| `:cljs` | ClojureScript 1.12.42, self-hosted, on Node | 165/167 | 62/62 | Node |
+| `:lpy` | basilisp 0.5.1 (Python) | 166/167 | 62/62 | `dev/install/basilisp.sh` |
+| `:cljw` | ClojureWasm 1.15.4 | 165/167 | 62/62 | `dev/install/cljw.sh` |
+| `:phel` | Phel 0.54.0 (PHP 8.5) | 166/167 | 62/62 | `dev/install/phel.sh` |
+| `:lg` | let-go 1.13.0 (Go) | 165/167 | 62/62 | `dev/install/lg.sh` |
 | `:cljrs` | clojurust 0.2.32 (Rust) | not wired into `cohost` | | `dev/install/cljrs.sh` |
 
 The core battery checks behaviors of `clojure.core` against JVM Clojure 1.12's answers; the
-library battery runs twelve `clojure.*` libraries the same way.
+library battery runs twelve `clojure.*` libraries the same way: clojure.walk, set, string, zip,
+data, edn, template, test, math, stacktrace, repl and clojure.spec.alpha. On the
+jolt-conformance corpus (4,942 rows) the stock core on jolt passes 4,306 (495 fail, 141 error);
+jolt's own core passes 4,468 (2026-10-30, the same jolt).
+
+`:jank` runs the jank package from jank's apt repository (`dev/install/jank.sh`) as it ships.
+cohost also carries a patch series against jank under `upstream/jank/` for its own measurements
+(`doc/PERF.md`, "Two jank binaries"); nothing selects it unless `JANK_BIN` names a build of it.
 
 ## What differs, in plain words
 
@@ -34,6 +42,10 @@ library battery runs twelve `clojure.*` libraries the same way.
 - **Regex groups.** ClojureWasm's and let-go's regex matchers give no group positions
   (`Matcher.start(g)`).
 - **Equality of deftype instances** in let-go's sets is by identity.
+- **`alter-var-root`** of a var the thread binds applies the fn to the binding, not the root, on
+  ClojureWasm.
+- **Redefining a fn during its own recursion**: on jank a closure-free fn keeps the original
+  (jank's own `defn` answers the same; doc/REPORT.md).
 - **Macros' `&env`** is ClojureScript's analyzer environment on ClojureScript.
 - **Errors** say `Divide by zero` where the JVM's primitive division says `/ by zero`; jolt's
   error for calling nil is a ClassCastException.
