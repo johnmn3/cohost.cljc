@@ -76,6 +76,26 @@
 
 (defn- module-path [cache] (str cache ":" src-dir ":src"))
 
+;; The launcher: cohost.cli compiled with the snapshot into one jank program
+;; (--runtime dynamic keeps eval, so -e and a project's namespaces work; the
+;; static runtime has none). Its entry requires cohost.snapshot, so the ten
+;; library modules are linked and registered in the binary: a compiled jank
+;; program has no module path at run time, and a library a project requires
+;; (cohost.string ...) is otherwise "could not be found". bin/cohost execs it
+;; with the config; its objects, in aot/_cache, also serve the run-main path.
+(def ^:private launcher-dir (str root "/launcher"))
+(def ^:private launcher-bin (str aot-dir "/cohost-jank"))
+(def ^:private launcher-entry
+  (str "(clojure.core/ns cohost.app-main\n"
+       "  (:require [cohost.snapshot] [cohost.cli]))\n"
+       "(clojure.core/defn -main [& args]\n"
+       "  (clojure.core/apply cohost.cli/-main args))\n"))
+
+(defn launcher-path
+  "The launcher binary's absolute path when it is built, else nil."
+  []
+  (when (fs/executable? launcher-bin) (str (fs/absolutize launcher-bin))))
+
 (defn rebuild! [k]
   (let [t0 (System/nanoTime)
         stage1 (load-file "dev/perf/jank_aot_ensure.clj")]
@@ -86,9 +106,17 @@
            "--" "--out" (str root "/events.edn"))
     ;; 2. emit one module per namespace
     (shell "bb" "dev/perf/jank_snapshot_emit.clj" "--events" (str root "/events.edn") "--out" src-dir)
-    ;; 3. compile them all through the entry module, -O3
-    (shell snap-bin "--module-path" (str src-dir ":src") "compile-module" "cohost.snapshot"
-           "-O3" "--target-dir" aot-dir)
+    ;; 3. compile them all, with cohost.cli, into the launcher (one -O3 compile; its
+    ;;    objects land in aot/_cache); when that fails, the modules alone as before
+    (fs/create-dirs (str launcher-dir "/cohost"))
+    (spit (str launcher-dir "/cohost/app_main.jank") launcher-entry)
+    (let [r (shell {:continue true} snap-bin "-O3" "--module-path" (str launcher-dir ":src:" aot-dir ":" src-dir)
+                   "compile" "cohost.app-main" "--runtime" "dynamic" "--name" "cohost-jank" "--target-dir" aot-dir)]
+      (when-not (and (zero? (:exit r)) (launcher-path))
+        (println "SNAPSHOT-LAUNCHER not built (exit" (:exit r) "); compiling the modules alone")
+        (fs/delete-if-exists launcher-bin)
+        (shell snap-bin "--module-path" (str src-dir ":src") "compile-module" "cohost.snapshot"
+               "-O3" "--target-dir" aot-dir)))
     (let [cache (cache-dir)]
       (when-not (objects-present? cache)
         (throw (ex-info "snapshot compile finished without its objects" {:caches (caches)})))

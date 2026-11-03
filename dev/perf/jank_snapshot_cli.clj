@@ -36,13 +36,15 @@
                    "bb" "-e"
                    (str "(load-file \"dev/perf/jank_snapshot_key.clj\")"
                         "(if-let [m ((resolve 'fresh-path))]"
-                        "  (println \"CLI-PATH snapshot\" m)"
+                        "  (do (println \"CLI-PATH snapshot\" m)"
+                        "      (when-let [l ((resolve 'launcher-path))] (println \"CLI-LAUNCHER\" l)))"
                         "  (println \"CLI-PATH aot\" (str (load-file \"dev/perf/jank_aot_ensure.clj\") \":src\")))"))
         lines (str/split-lines (:out r))
-        line (last (filter #(str/starts-with? % "CLI-PATH ") lines))]
+        line (last (filter #(str/starts-with? % "CLI-PATH ") lines))
+        launcher (some-> (last (filter #(str/starts-with? % "CLI-LAUNCHER ") lines)) (subs 13))]
     (when-not line
       (throw (ex-info (str "jank: no module path from dev/perf/jank_snapshot_key.clj: " (:err r)) {})))
-    (str/split line #" " 3)))
+    (conj (str/split line #" " 3) launcher)))
 
 (defn- jank-build-snapshot!
   "Builds the core snapshot once, on first use (or after a cohost update made it
@@ -64,7 +66,7 @@
         (do (println "cohost: jank's core snapshot is being built by another cohost command; this one runs on the slower path") false)
         :else
         (try
-          (println "cohost: building jank's core snapshot (once per cohost update: 2 to 11 minutes measured, longer on a busy machine; log: target/jank-snapshot.log) ...")
+          (println "cohost: building jank's core snapshot and launcher (once per cohost update: 11 minutes measured on a busy Linux box; log: target/jank-snapshot.log) ...")
           (let [t0 (System/nanoTime)
                 r (p/shell {:dir repo :out (str log) :err (str log ".err") :continue true}
                            "bb" "-e" "(load-file \"dev/perf/jank_snapshot_key.clj\") ((resolve 'ensure!))")]
@@ -76,12 +78,14 @@
           (finally (fs/delete-if-exists lock)))))))
 
 (defn jank-cli-launch [repo]
-  (let [[_ kind path] (let [c (jank-check repo)]
-                        (if (and (= "aot" (second c)) (jank-build-snapshot! repo))
-                          (jank-check repo)
-                          c))]
-    {:module-path (abs-path repo path) :snapshot? (= "snapshot" kind)
-     :env (jank-gc-env)}))
+  (let [[_ kind path launcher] (let [c (jank-check repo)]
+                                 (if (and (= "aot" (second c)) (jank-build-snapshot! repo))
+                                   (jank-check repo)
+                                   c))]
+    (cond-> {:module-path (abs-path repo path) :snapshot? (= "snapshot" kind)
+             :env (jank-gc-env)}
+      ;; the snapshot's launcher binary (jank_snapshot_key.clj): bin/cohost execs it
+      launcher (assoc :launcher launcher))))
 
 ;; D-8: a project's snapshot. The core's snapshot covers the stock core and
 ;; the twelve libraries; the project's own namespaces (its main ns and what it

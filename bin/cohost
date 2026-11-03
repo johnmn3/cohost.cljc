@@ -251,7 +251,9 @@
   (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
   (let [l ((resolve 'jank-cli-launch) repo)
         main-ns (when (#{:main :exec} (get-in run [:main :type])) (get-in run [:main :ns]))
-        proj (when (:snapshot? l)
+        ;; the launcher binary has no module path: the per-project snapshot is the
+        ;; run-main path's
+        proj (when (and (:snapshot? l) (not (:launcher l)))
                ((resolve 'jank-project-launch) repo cwd roots main-ns (:module-path l) (:env l)))]
     (merge l proj)))
 
@@ -319,9 +321,13 @@
                                           (when-let [d (:lpy-src jank)] ["-p" d])
                                           ["-p" src "-c" (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])))
       "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg])
-      ;; the booted core from a fresh snapshot (else cohost's -O3 AOT objects
-      ;; and a boot of core.clj), cohost.cli and the program JIT-compiled at -O3
-      "jank" (-> (p/process ["jank" "-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg]
+      ;; the snapshot's launcher: cohost.cli compiled with the booted core into one
+      ;; jank program (dev/perf/jank_snapshot_key.clj), the program JIT-compiled at
+      ;; -O3; without it, the booted core from a fresh snapshot (else cohost's -O3
+      ;; AOT objects and a boot of core.clj) and cohost.cli through jank run-main
+      "jank" (-> (p/process (if-let [l (:launcher jank)]
+                              [l cfg]
+                              ["jank" "-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg])
                             {:dir cwd :inherit true :extra-env (:env jank)})
                  deref :exit))))
 

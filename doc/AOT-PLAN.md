@@ -143,7 +143,8 @@ Guide 07 listed basilisp at 166/167; on ab3cd28 its source boot gives 165/167, a
 
 | runtime | `run you` from another directory | snapshot_run.cljc (modules = source boot) | `bb docs:check` | `<runtime>-built` gives the JVM's answers |
 |---|---|---|---|---|
-| jolt | yes (macOS) | yes: 167/167, 62/62 (macOS) | pass, 0 failing (Linux, 4497c85, 2026-11-03 3:32 AM ET) | being measured (Linux) |
-| basilisp | yes (macOS) | yes: 165/167, 62/62 (macOS) | pass, 22/22 (Linux, 4497c85, 3:42 AM ET) | being measured (Linux) |
-| ClojureWasm (modules) | yes (macOS) | yes: 165/167, 62/62 (macOS) | pass, 0 failing (Linux, 4497c85, 4:06 AM ET) | being measured (Linux) |
+| jank | yes (Linux, `docs:check` on main f5bb132 with the README pin at 8fcb495, 2026-11-03 12:12 PM ET; macOS) | yes: the snapshot boots 214/216, 62/62, as from source (Linux, c0431c6) | pass, 0 failing (Linux, f5bb132, 12:12 PM ET) | yes: 28/28, x4.39 (Box 4, c0431c6); 28/28, x2.37 (macOS arm64 M5) |
+| jolt | yes (macOS; Linux, f5bb132) | yes: 167/167, 62/62 (macOS) | pass, 0 failing (Linux, f5bb132 with the pin at 8fcb495, 12:15 PM ET) | yes: 28/28, x6.56 (Box 4, c0431c6) |
+| basilisp | yes (macOS) | yes: 165/167, 62/62 (macOS) | pass, 22/22 (Linux, 4497c85, 3:42 AM ET) | at the smaller sizes: 25/25, x3511 (Box 4) |
+| ClojureWasm (modules) | yes (macOS) | yes: 165/167, 62/62 (macOS) | pass, 0 failing (Linux, 4497c85, 4:06 AM ET) | yes: x72.09 (Box 3, lane D) |
 | Phel | yes: 1.7-2.0 s, 1.3-1.4 s with OPcache warm (Box 1, c/aot-phel @ 43ad1ee) | modules: 195/205, 62/62 as from source; the compiled build: 195/205, 60/62 (2 clojure.test cases bind a library var at run time) | pass, 22/22 (Linux, release4 @ 53164fc, 2026-11-03 6:08 AM ET) | yes: 28/28, x131.6 (lane C, Box 1) |

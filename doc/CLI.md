@@ -131,7 +131,11 @@ runs `dev/phel_cli.phel` from the repo (its `phel-config.php` names the source
 directories) and `:cljs` the build in `cljs-cli.edn` (`:main cohost.cli`, rebuilt
 when `src/` or the edn changes) from the repo (the nodejs bootstrap finds its
 files from the process's directory): `cohost.cli` moves to the project directory
-the config names. `:jank` runs `jank -O3 --module-path <cohost's -O3 AOT objects>:src
+the config names. `:jank` runs the snapshot's launcher, `target/jank-snapshot/aot/cohost-jank
+<config>`: `cohost.cli` compiled with the booted core and the ten libraries into one jank program
+(`--runtime dynamic`, so `-e` and a project's namespaces still evaluate), built with the snapshot
+(`dev/perf/jank_snapshot_key.clj`, once per cohost update; the first `cohost` command builds it).
+Without a fresh snapshot it runs `jank -O3 --module-path <cohost's -O3 AOT objects>:src
 run-main cohost.cli -- <config>`; the objects are `dev/perf/jank_aot_ensure.clj`'s, rebuilt
 when `src/cohost` or the jank binary changed (the first run after a change compiles them).
 

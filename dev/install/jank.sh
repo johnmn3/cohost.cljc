@@ -49,7 +49,7 @@ repo="$(cd "$(dirname "$0")/../.." && pwd)"
 if [ "${COHOST_JANK_SNAPSHOT:-}" != off ] && have bb && [ -f "$repo/dev/perf/jank_snapshot_key.clj" ]; then
   mkdir -p "$repo/target"
   if mkdir "$repo/target/jank-snapshot.lock" 2>/dev/null; then
-    say "building cohost's core snapshot for jank (once: 2 to 11 minutes measured; log: target/jank-snapshot.log)"
+    say "building cohost's core snapshot and launcher for jank (once: 11 minutes measured on a busy Linux box; log: target/jank-snapshot.log)"
     if (cd "$repo" && bb -e '(load-file "dev/perf/jank_snapshot_key.clj") ((resolve (quote ensure!)))') \
          >"$repo/target/jank-snapshot.log" 2>&1; then
       say "cohost's core snapshot for jank is built"
