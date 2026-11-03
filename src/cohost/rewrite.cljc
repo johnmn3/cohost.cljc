@@ -987,7 +987,9 @@
                           (= 'long (infer-num env (last body'))))))
           (let [sp (get spells 'long)
                 ips (mapv #(with-meta % {:tag (list 'quote sp)}) names)
-                inner (list 'fn* nm (cons ips body'))
+                ;; the tail is long under the assumption: the inner fn*'s
+                ;; native return (:rettag, as a hinted return's)
+                inner (with-meta (list 'fn* nm (cons ips body')) {:rettag (list 'quote sp)})
                 guard (apply list 'and (map #(list (shim-fn "long-kind?") %) names))]
             [(list 'if guard (apply list inner names) (if (next body') (apply list 'do body') (first body')))]))))))
 
