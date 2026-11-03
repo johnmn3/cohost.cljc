@@ -2581,10 +2581,20 @@ nil))
                               (apply list (or (core-alias ctx h) (rw ctx h)) (or args' (rw-all ctx args))))))))]
       (carry-meta out form))))
 
+;; A7-1: the adapter's fn for a vector literal of this size (:vector-literal), when the literal
+;; carries no metadata but its reader position
+(def ^:private reader-position-keys #{:line :column :end-line :end-column :file :source})
+(defn- vector-literal-fn [form]
+  (when-let [m (host/vector-literal)]
+    (when (every? reader-position-keys (keys (meta form)))
+      (get m (count form)))))
+
 (defn rw [ctx form]
   (cond
     (seq? form) (rw-list ctx form)
-    (vector? form) (carry-meta (vec (rw-all ctx form)) form)
+    (vector? form) (if-let [f (vector-literal-fn form)]
+                     (cons f (rw-all ctx form))
+                     (carry-meta (vec (rw-all ctx form)) form))
     (map? form) (rw-map ctx form)
     (set? form) (carry-meta (into #{} (rw-all ctx form)) form)
     (symbol? form) (rw-symbol ctx form)

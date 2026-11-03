@@ -29,6 +29,9 @@
 #include <jank/runtime/obj/range.hpp>
 #include <jank/runtime/obj/number.hpp>
 #include <jank/runtime/obj/persistent_vector.hpp>
+#include <gc/gc.h>
+#include <new>
+#include <type_traits>
 #include <jank/runtime/core/truthy.hpp>
 #include <jank/runtime/obj/persistent_string.hpp>
 #include <jank/runtime/core/to_string.hpp>
@@ -43,7 +46,7 @@ namespace cohost_rt {
 
   /* The extension's version: bumped with every change of its C++ (the AOT stamp already
    * follows this file). */
-  inline object_ref version() { return make_box(static_cast<jank::i64>(4)); }
+  inline object_ref version() { return make_box(static_cast<jank::i64>(5)); }
 
   /* A4 (a): chunked seqs built from jank's own obj::chunked_cons and obj::array_chunk, so
    * jank's runtime first/next/seq/count/=/hash/print walk them natively. On apt 0.1-noble
@@ -219,6 +222,46 @@ namespace cohost_rt {
     jtl::string_builder b;
     jvm_double_into(to_real(x), b);
     return make_box<obj::persistent_string>(b.release());
+  }
+
+  /* A7-1: a vector of 1..4 elements as ONE GC allocation (patch 18's make_small, adapter-side):
+   * [persistent_vector | exact-size immer leaf], the leaf the vector's tail, its root immer's
+   * shared empty root. An ordinary immer vector after that: nth, conj, assoc, pop, seq, =, hash,
+   * transients, meta and print are jank's own code. jank's _jank_vec on apt builds a transient
+   * (an owner token, a full 32-slot leaf, then the box: three allocations). The block is a plain
+   * GC_malloc (scanned conservatively, so the leaf's elements are traced; bdwgc runs with
+   * interior pointers, so the tail alone keeps it alive); immer never mutates or frees the leaf
+   * (no refcounting, no transient owner). Not used where jank's own vectors already are one
+   * block (the series build's patch 18: persistent_vector::small_max exists there). */
+  template <class V>
+  constexpr bool own_small_vectors_t() { return requires { V::small_max; }; }
+  inline object_ref own_small_vectors() {
+    return own_small_vectors_t<obj::persistent_vector>() ? jank_true : jank_false;
+  }
+
+  inline object_ref small_vec(object_ref const *elems, jank::usize const n) {
+    using native_vector = jank::runtime::detail::native_persistent_vector;
+    using native_rbtree = std::remove_cvref_t<decltype(std::declval<native_vector const &>().impl())>;
+    using native_node = native_rbtree::node_t;
+    constexpr jank::usize align{ alignof(native_node) };
+    constexpr jank::usize box_size{ (sizeof(obj::persistent_vector) + align - 1) / align * align };
+    auto const count{ static_cast<immer::detail::rbts::count_t>(n) };
+    auto const leaf_size{ native_node::sizeof_leaf_n(count) };
+    auto const mem{ static_cast<char *>(GC_malloc(box_size + leaf_size)) };
+    if(!mem) { throw std::bad_alloc{}; }
+    auto const leaf{ native_node::make_leaf_n_into(mem + box_size, leaf_size, count) };
+    auto const dst(leaf->leaf());
+    for(jank::usize i{}; i < n; ++i) { ::new(static_cast<void *>(dst + i)) object_ref{ elems[i] }; }
+    auto const ret{ ::new(static_cast<void *>(mem)) obj::persistent_vector{
+      std::in_place, native_rbtree(n, native_node::bits_leaf, native_rbtree::empty_root(), leaf) } };
+    return jank::runtime::detail::untagged(ret);
+  }
+  inline object_ref vec1(object_ref a) { object_ref e[1]{ a }; return small_vec(e, 1); }
+  inline object_ref vec2(object_ref a, object_ref b) { object_ref e[2]{ a, b }; return small_vec(e, 2); }
+  inline object_ref vec3(object_ref a, object_ref b, object_ref c) { object_ref e[3]{ a, b, c }; return small_vec(e, 3); }
+  inline object_ref vec4(object_ref a, object_ref b, object_ref c, object_ref d) {
+    object_ref e[4]{ a, b, c, d };
+    return small_vec(e, 4);
   }
 
   /* IChunk.reduce over a jank array_chunk: by index, a reduced result returned unopened. */
@@ -588,3 +631,14 @@ namespace cohost_leaf {
   "A5-5: Double.toString as the JVM writes it (cohost_rt::double_str): 3.0E10, 1.0E-4, 0.001."
   [x]
   (cpp/cohost_rt.double_str x))
+
+(defn own-small-vectors?
+  "A7-1: true where jank's own vector literals are already one block (the series build)."
+  []
+  (cpp/cohost_rt.own_small_vectors))
+
+;; A7-1: the vector literals of 1..4 elements the codemod emits as calls (adapter :vector-literal)
+(defn vec1 "A7-1: [a] as one GC block (cohost_rt::vec1)." [a] (cpp/cohost_rt.vec1 a))
+(defn vec2 "A7-1: [a b] as one GC block." [a b] (cpp/cohost_rt.vec2 a b))
+(defn vec3 "A7-1: [a b c] as one GC block." [a b c] (cpp/cohost_rt.vec3 a b c))
+(defn vec4 "A7-1: [a b c d] as one GC block." [a b c d] (cpp/cohost_rt.vec4 a b c d))

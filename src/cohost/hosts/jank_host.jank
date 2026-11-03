@@ -1936,6 +1936,11 @@ namespace cohost_assoc {
    ;; U6-10: a let* local started from (count x) is a native long (to_int of
    ;; jank's count, always an integer), beside A5's literal-started loop locals
    :native-long-inits (when int-wraps? '#{count})
+   ;; A7-1: a vector literal of 1..4 elements is one GC block (jank-rt/vec1..vec4) where jank's
+   ;; own literal builds a transient (apt); the series build's own literals are one block already
+   :vector-literal (when-not (jank-rt/own-small-vectors?)
+                     '{1 cohost.hosts.jank-runtime/vec1 2 cohost.hosts.jank-runtime/vec2
+                       3 cohost.hosts.jank-runtime/vec3 4 cohost.hosts.jank-runtime/vec4})
    :core-ns 'clojure.core
    :catch-all 'cpp/jank.runtime.object_ref
    :read-forms read-forms
