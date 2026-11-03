@@ -2477,6 +2477,8 @@ namespace cohost_assoc {
    ;; big_integer -- a bigint converts, and the cast range-checks it);
    ;; is_real is exactly a host double.
    :defn-fn-name? true
+   ;; A7-5: a user [x & ys] defn gets the str-with shape (fixed arities for 0-4 extra args)
+   :fixed-rest-arities? true
    :prim-kind-test (fn [hint sym]
                      (case hint
                        long (list 'cpp/jank.runtime.is_integer sym)

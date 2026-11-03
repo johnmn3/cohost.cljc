@@ -1721,3 +1721,37 @@ as if it were native. It excludes the local from the int-op path, and does not g
 So every hinted twin pays the boxed shim op that neither the untyped nor the native path pays. One change at the
 wrapper would address mandelbrot, spectral-norm and X1-10's fib and tak together: a native arm for typed params (u5),
 or admission of boxed hinted locals to the int-op path (u1).
+
+## A7: multimethod dispatch and user variadics (A7-5, u3, 2026-11-03)
+
+**Dispatch half: NAMED, nothing ships.** Probe: u4's `dev/research/a6/dispatch_parts.clj`,
+PATCHED column, the change against its own base in the same gated round (ns per step):
+
+| shape                                                         | e01 multi3 | e02 one dispatch value |
+|---------------------------------------------------------------|-----------:|-----------------------:|
+| JVM                                                           |       18.1 |                      - |
+| base (`mm_hit`: three derefs + a hash-map get)                |      42-43 |                     25 |
+| one-call C++ dispatch (`cohost_obj::mm_invoke1/2`, `:multimethod-invoke`) |      45-46 |                  28-29 |
+| `mm_hit` reads a non-dynamic hierarchy var's root directly    |       48.3 |                   29.8 |
+
+Both shapes are slower, so both are parked off the branch (`u3-a75-oneCall`, `u3-a75-varroot`).
+The bar was 2x the JVM, about 36 ns per step. The ceiling is jank's own fn-call cost, not the
+hit path:
+
+- the dispatch fn costs 15.8 ns on PATCHED and 7.0 on the JVM;
+- the method call costs 6.9 and 4.6;
+- the remaining hit is about 15 ns.
+
+Collapsing the hit into one C++ entry saves no call: it adds an entry frame.
+
+**Variadic half: before.** `dev/research/a7/variadic.clj`, 1e6 calls per case; the median in ms
+over 3 gated rounds (the JVM ran once):
+
+| case                         |  JVM |    apt | PATCHED |
+|------------------------------|-----:|-------:|--------:|
+| call-2 `(f2 i 1)`            |  4.8 |  23-68 |     3.9 |
+| call-variadic `[x & ys]`, ys unused |  5.2 | 149-191 |     6.6 |
+| call-variadic-first          | 13.7 | 137-174 |      83 |
+| call-variadic-count (2 rest) |  4.4 | 200-209 |     106 |
+
+apt's call-variadic is 25x the series.

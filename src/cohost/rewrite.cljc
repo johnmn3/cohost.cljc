@@ -2267,11 +2267,67 @@
               [(with-meta (apply list (first init) (bare-sym nm) (rest init)) (meta init))])
       more)))
 
+;; A7-5 (u3): a user [p1..pn & ys] defn, on a :fixed-rest-arities? host, gets
+;; the str-with shape: fixed arities for 0-4 extra arguments plus a variadic
+;; tail, so a call with few extra arguments takes a fixed arity (apt jank's
+;; variadic call path measured ~25x the series). ys is nil, (list a1..ak) or
+;; (list* a1 a2 a3 a4 more) -- a seq as Clojure's rest arg is; a body that
+;; never names ys binds nothing.
+(def ^:private fixed-rest-node-cap 120)
+
+(defn- fixed-rest-arities
+  [ctx more]
+  (let [init (last more)
+        head (when (seq? init) (first init))
+        fn-init? (and (host/fixed-rest-arities?) (:booted? ctx) @(:booted? ctx)
+                      (symbol? head) (contains? #{"fn" "fn*"} (name (*plain* head))))
+        named? (and fn-init? (symbol? (second init)))
+        sigs (when fn-init? (if named? (nnext init) (next init)))
+        arities (when (seq sigs) (if (vector? (first sigs)) [sigs] sigs))
+        arities (when (every? #(and (seq? %) (vector? (first %))) arities) arities)
+        variadic? (fn [[ps]] (and (vector? ps) (some #(= '& %) ps)))
+        vs (filter variadic? arities)
+        [[vps & vbody]] vs
+        vbody (apply list vbody)
+        n (when vps (count (take-while #(not= '& %) vps)))
+        ys (when vps (last vps))
+        ;; every node of the body (seqs too: coll? alone misses some of jank's)
+        nodes (tree-seq #(or (coll? %) (seq? %)) seq vbody)
+        names? (fn [s] (boolean (some #(and (symbol? %) (= s (*plain* %))) nodes)))]
+    (if (and fn-init?
+             (seq arities)
+             (= 1 (count vs))
+             (= (+ n 2) (count vps))
+             (symbol? ys) (not= '& ys) (nil? (:tag (meta ys)))
+             (every? (fn [[ps]] (or (variadic? [ps]) (< (count ps) n))) arities)
+             (not (names? 'recur))
+             ;; a {:pre :post} map stays the arity's own, not a let* body form
+             (not (and (map? (first vbody)) (next vbody)))
+             (<= (count nodes) fixed-rest-node-cap))
+      (let [fixed (vec (take n vps))
+            as (vec (repeatedly 4 #(gensym "rest__")))
+            more-sym (gensym "more__")
+            uses? (names? (*plain* ys))
+            arm (fn [ps ys-form]
+                  (if uses?
+                    (list ps (apply list 'let* [ys ys-form] vbody))
+                    (apply list ps vbody)))
+            new (concat (map (fn [k] (arm (into fixed (take k as))
+                                          (when (pos? k) (apply list 'clojure.core/list (take k as)))))
+                             (range 5))
+                        [(arm (into fixed (concat as ['& more-sym]))
+                              (apply list 'clojure.core/list* (conj as more-sym)))])
+            others (remove variadic? arities)
+            init' (with-meta (apply list head (concat (when named? [(second init)]) others new)) (meta init))]
+        (concat (butlast more) [init']))
+      more)))
+
 (defn- rw-def [ctx [_ nm & more]]
   (let [;; ^:redef and ^:dynamic keep every call through the var, as under
         ;; Clojure's direct linking (U6-6)
         var-call? (let [m (meta nm)] (or (:redef m) (:dynamic m)))
         more (if var-call? more (self-named-init nm more))
+        more (fixed-rest-arities ctx more)
         nm (carry-meta nm nm)
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
