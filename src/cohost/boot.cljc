@@ -179,9 +179,12 @@
 (defn- snap-encode
   "form with every metadata map made data: {:cohost.snap/meta m
    :cohost.snap/val x}, since a host's printer may drop metadata (jank's
-   ignores *print-meta*). The emitter turns it back into reader metadata."
+   ignores *print-meta*). The emitter turns it back into reader metadata.
+   A regex is {:cohost.snap/regex source}: a host's printer may write it as
+   bare text (Phel's prints its source unquoted)."
   [x]
-  (let [enc (fn [y] (cond (map? y) (into {} (map (fn [[k v]] [(snap-encode k) (snap-encode v)]) y))
+  (let [enc (fn [y] (cond (host/regex? y) {:cohost.snap/regex (host/re-source y)}
+                          (map? y) (into {} (map (fn [[k v]] [(snap-encode k) (snap-encode v)]) y))
                           (vector? y) (mapv snap-encode y)
                           (set? y) (set (map snap-encode y))
                           (seq? y) (apply list (map snap-encode y))
@@ -1456,8 +1459,9 @@
   [lib entry data parent]
   (snap-restore! data)
   (swap! state assoc-in [:libs lib] entry)
-  (let [outer (peek (::snap-outer @state))]
-    (swap! state (fn [st] (-> st (assoc :loading outer) (update ::snap-outer pop)))))
+  ;; last/butlast, not peek/pop: Phel's pop is another fn (3 arguments)
+  (let [outer (last (::snap-outer @state))]
+    (swap! state (fn [st] (-> st (assoc :loading outer) (update ::snap-outer #(vec (butlast %)))))))
   nil)
 
 (defn register-snapshot-libs!

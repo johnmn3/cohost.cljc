@@ -900,7 +900,11 @@
                                       ;; a reify carries metadata
                                       (contains? '#{clojure.lang.IObj clojure.lang.IMeta} token) (and (php/is_object x) (php/method_exists x "cohostMeta"))
                                       :else false))))
-   :require-host! (fn [lib] (throw (ex-info (str "cohost: phel has no require at run time: " lib) {:lib lib})))
+   ;; no require at run time; a namespace already loaded (a snapshot's module,
+   ;; required ahead by the entry) is there
+   :require-host! (fn [lib]
+                    (when-not (some #(= (str lib) (str %)) (loaded-namespaces))
+                      (throw (ex-info (str "cohost: phel has no require at run time: " lib) {:lib lib}))))
    :var-ns (fn [v] (symbol (.getNamespace v)))
    :var-sym (fn [v] (symbol (.getName v)))
    :var? (fn [x] (php/instanceof x PhelVar))

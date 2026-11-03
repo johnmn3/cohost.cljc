@@ -345,7 +345,13 @@ namespace cohost_err {
                                                          (when rename [:rename rename]))))))
     ;; resolved, not named: a host may have no alias fn (basilisp adds aliases on the namespace)
     :alias! #?(:cljs (unsupported :alias!) :phel (unsupported :alias!) :default (fn [into-ns a target] (binding [*ns* (the-ns into-ns)] ((resolve 'alias) a target))))
-    :set-current-ns! #?(:cljs (unsupported :set-current-ns!) :phel (unsupported :set-current-ns!) :jank (fn [ns-sym] (in-ns ns-sym)) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
+    :set-current-ns! #?(:jolt (fn [ns-sym]
+                                ;; `jolt build` loads namespaces with *ns* unbound
+                                ;; (a snapshot's replayed ns directive): its root then
+                                (if (thread-bound? #'*ns*)
+                                  (set! *ns* (the-ns ns-sym))
+                                  (alter-var-root #'*ns* (constantly (the-ns ns-sym)))))
+                         :cljs (unsupported :set-current-ns!) :phel (unsupported :set-current-ns!) :jank (fn [ns-sym] (in-ns ns-sym)) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
     :require-host! #?(:cljs (unsupported :require-host!) :phel (unsupported :require-host!) :default (fn [lib] (require lib)))
     :core-extras {}
     :host-type nil
