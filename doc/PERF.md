@@ -1443,19 +1443,23 @@ The jank-MAX fleet's scoreboard in two columns: UNPATCHED is apt jank 0.1-noble 
 (`JANK_BIN=/home/user/int-a/jank-inst/bin/jank`; the launcher's 512M applies there too). x1 writes the programs
 table under this heading (X1-5); the `bb bench:jank` table is below (X1-5b).
 
-### Summary for the release (tip `6a1dbaf`)
+### Summary for the release (tip `e357cec`)
 
-Every number here is copied from a table below in this section, and each one names its table. The release tip is
-max/main `6a1dbaf`. The rows were measured on the trees listed in the footnotes, which are all ancestors of that tip.
-int-b's X1-8 re-run on `2de1c74` has not landed. When it does, its rows replace the ones marked X1-5 and X1-6.
+Every number here is copied from a table below in this section, and each one names its table. The summary describes
+max/main `e357cec`. The rows were measured on the trees listed in the footnotes, all of them ancestors of that tip; work
+merged after a row's tree (named under the table) is not in that row. Rows come from int-b's X1-8 (3 rounds on the
+release cut `b33cfd0` and on `2de1c74`, int-b's box) where it has them, else from x1's X1-6 (3 rounds) or X1-5 (one
+round) on int-a's box. The two boxes' JVM runs differ, so each row's JVM column is its own run's.
 
-**Headline.** The geomean of xJVM over the programs that print the JVM's result (`bb bench:programs`, X1-5 with
-X1-6's ten rows):
+**Headline.** The geomean of xJVM over the programs that print the JVM's result (`bb bench:programs`; each row names
+its run):
 
 | | UNPATCHED (apt jank 0.1-noble) | PATCHED (21-patch series) |
 |---|---:|---:|
-| cohost on jank, against the JVM | **6.187** over 28 | **2.637** over 28 |
-| jank's own AOT, against the JVM | 7.508 over 16 (12 programs do not compile or DIFFER) | 1.247 over 27 |
+| cohost on jank, against the JVM: all 28 programs (X1-5 + X1-6, int-a's box) | **6.187** over 28 | **2.637** over 28 |
+| cohost on jank: the 15 programs of the release cut `b33cfd0` (X1-8, int-b's box, 3 rounds) | 6.196 over 15 | 2.732 over 15 |
+| jank's own AOT: all programs (X1-5 + X1-6) | 7.508 over 16 (12 programs do not compile or DIFFER) | 1.247 over 27 |
+| jank's own AOT: `b33cfd0` (X1-8) | 10.250 over 9 | 1.539 over 15 |
 
 **Startup.** First output on the snapshot (`bb bench:programs jank first-output`, process wall time to `ok`, X1-7,
 3 rounds): UNPATCHED **4386 ms** (3134-4677), PATCHED **4740 ms** (4064-5369). On the AOT modules the figures are
@@ -1465,25 +1469,33 @@ X1-6's ten rows):
 
 | program | UNPATCHED | PATCHED | JVM | from |
 |---|---:|---:|---:|---|
-| fib 36 | 470.2 | 65.7 | 202.2 | [a] |
-| tak 30 20 10 | 488.0 | 112.5 | 295.2 | [a] |
-| nbody 50000 | 5089.0 | 3838.1 | 268.0 | [a] |
-| spectral-norm 600 | 1144.5 | 583.7 | 225.3 | [a] |
-| mandelbrot 1500 | 721.3 | 544.6 | 250.9 | [b] |
+| fib 36 | 384.1 | 65.4 | 96.6 | [e] |
+| tak 30 20 10 | 489.9 | 114.1 | 214.8 | [e] |
+| nbody 50000 | 2572.2 | 2198.7 | 169.8 | [f] |
+| spectral-norm 600 | 679.3 | 733.6 | 172.3 | [f] [g] |
+| mandelbrot 1500 | 605.3 | 469.2 | 142.5 | [f] |
 | binary-trees 18 | 3503.1 | 751.3 | 177.2 | [c] |
 | sort 100000 | 41.6 | 31.1 | 31.2 | [c] |
 | lazy-pipeline 1000000 | 258.6 | 74.5 | 20.3 | [c] |
-| json 30000 | 3580.2 | 2634.4 | 311.4 | [d] |
+| json 30000 | 1482.4 | 942.3 | 165.2 | [f] |
 | k-nucleotide 2000000 | 1531.8 | 1302.9 | 172.0 | [d] |
 
-- [a] X1-5, one round, max/x1 `0e5d60b` (max/main `034534a`), 12:20-12:46 AM ET, load 3-6, against the 9:59 PM ET JVM run.
-- [b] X1-5, one round, max/x1 `dfa7ce4` (max/main `ecc9a31`), 12:46-1:06 AM ET, load 4-6, against the 9:59 PM ET JVM run.
-- [c] X1-6, three rounds, max/x1 `3713865`, 1:32-3:08 AM ET, load 3.5-7.7. The cell is the median of the three
+- [c] X1-6, three rounds, max/x1 `3713865`, int-a's box, 1:32-3:08 AM ET, load 3.5-7.7. The cell is the median of the three
   rounds' medians, against the 1:32 AM ET JVM run.
-- [d] X1-5, one round, max/x1 `dd72e52` (`ce94816`), 11:42 PM-12:19 AM ET, load 3-8, against the 9:59 PM ET JVM run.
+- [d] X1-5, one round, max/x1 `dd72e52` (`ce94816`), int-a's box, 11:42 PM-12:19 AM ET, load 3-8, against the 9:59
+  PM ET JVM run. X1-8 did not run k-nucleotide.
+- [e] X1-8, three rounds, max/main `2de1c74` (`b33cfd0` + A5-4), int-b's box, 2:05-4:00 AM ET, load 1.9-3.8, against
+  that part's JVM run.
+- [f] X1-8, three rounds, max/main `b33cfd0` (the release cut), int-b's box, same session.
+- [g] **A regression on the series build:** spectral-norm PATCHED is 733.6 ms on `b33cfd0` against 427.6 ms in int-b's X1-5 round on
+  `ecc9a31` (same box, +72%), and spectral-norm-hinted is +55% / +49%. The UNPATCHED rows are flat (+3%), and X1-12 is
+  bisecting it. jank's own AOT spectral-norm PATCHED is 217.4 ms (x1.26).
+- x1's X1-6 rows stand for binary-trees, sort and lazy-pipeline (and pipeline and first-output, not in this table). On
+  `b33cfd0`, X1-8 measured sort at 42.6 / 32.7 ms and lazy-pipeline at 160.7 / 64.9 ms.
 
-Not yet in these rows: u3's A6-1 (nbody at jank-aot's speed, about 908 ms apt), u1's A5-6 (fib's per-call cost) and
-u2's A5-5 (doubles printed as the JVM prints them). They landed or are landing after the rows above were measured.
+Not in these rows: u3's A6-1 (nbody at jank-aot's speed, about 908 ms apt; in `e357cec`, not in `b33cfd0`), u3's
+A6-3 (keyword-map and k-nucleotide), u1's A5-6 (fib's per-call cost) and u2's A5-5 (doubles printed as the JVM prints
+them). They merged, or are merging, after the rows' trees.
 
 **How to reproduce.**
 - **Install:** apt jank with `bash dev/install/jank.sh`; then, from cohost's root, the series build with
