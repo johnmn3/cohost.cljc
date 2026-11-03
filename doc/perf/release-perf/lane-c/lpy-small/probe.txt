@@ -1,0 +1,109 @@
+== lpy-probe 3:14 AM load: 0.70 0.94 0.98
+  fib 20 -> 991.439866
+  fib 22 -> 2999.55606
+  fib 24 -> 7193.345317
+CHOSEN fib 24 7193.345317
+  fib-hinted 20 -> 1267.741922
+  fib-hinted 22 -> 2541.233922
+  fib-hinted 24 -> 7098.458665
+CHOSEN fib-hinted 24 7098.458665
+  tak 12 8 4 -> 66.226121
+  tak 15 10 5 -> 640.810655
+  tak 18 12 6 -> 3093.089696
+  tak 21 14 7 -> 18507.862985
+CHOSEN tak 21 14 7 18507.862985
+  tak-hinted 12 8 4 -> 69.518095
+  tak-hinted 15 10 5 -> 456.703682
+  tak-hinted 18 12 6 -> 2309.965705
+  tak-hinted 21 14 7 -> 15895.068218
+CHOSEN tak-hinted 21 14 7 15895.068218
+  nbody 1000 -> error: Traceback (most recent call last):
+  File "/root/.local/share/uv/tools/basilisp/lib/python3.13/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexp
+CHOSEN nbody 1000 error: Traceback (most recent call last):
+  File "/root/.local/share/uv/tools/basilisp/lib/python3.13/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexp
+  nbody-hinted 1000 -> error: Traceback (most recent call last):
+  File "/root/.local/share/uv/tools/basilisp/lib/python3.13/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexp
+CHOSEN nbody-hinted 1000 error: Traceback (most recent call last):
+  File "/root/.local/share/uv/tools/basilisp/lib/python3.13/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexp
+  spectral-norm 50 -> error: Traceback (most recent call last):
+  File "/root/.local/share/uv/tools/basilisp/lib/python3.13/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexp
+CHOSEN spectral-norm 50 error: Traceback (most recent call last):
+  File "/root/.local/share/uv/tools/basilisp/lib/python3.13/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexp
+  spectral-norm-hinted 50 -> error: Traceback (most recent call last):
+  File "/root/.local/share/uv/tools/basilisp/lib/python3.13/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexp
+CHOSEN spectral-norm-hinted 50 error: Traceback (most recent call last):
+  File "/root/.local/share/uv/tools/basilisp/lib/python3.13/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexp
+  mandelbrot 100 -> 40820.074832
+CHOSEN mandelbrot 100 40820.074832
+  mandelbrot-hinted 100 -> 41490.594957
+CHOSEN mandelbrot-hinted 100 41490.594957
+  binary-trees 8 -> 598.414731
+  binary-trees 10 -> 2129.99894
+  binary-trees 12 -> 11068.988801
+CHOSEN binary-trees 12 11068.988801
+  binary-trees-hinted 8 -> 450.921923
+  binary-trees-hinted 10 -> 2023.402517
+  binary-trees-hinted 12 -> 10129.493829
+CHOSEN binary-trees-hinted 12 10129.493829
+  sum-overflow 10000 -> 552.02137
+  sum-overflow 100000 -> 5085.881694
+CHOSEN sum-overflow 100000 5085.881694
+  sum-overflow-hinted 10000 -> 444.91764
+  sum-overflow-hinted 100000 -> 4539.09524
+  sum-overflow-hinted 1000000 -> 47157.843346
+CHOSEN sum-overflow-hinted 100000 4539.09524
+  sort 1000 -> 70.287927
+  sort 10000 -> 1023.058058
+  sort 100000 -> 10000.422185
+CHOSEN sort 100000 10000.422185
+  lazy-pipeline 10000 -> 1797.712547
+  lazy-pipeline 100000 -> 15750.564839
+CHOSEN lazy-pipeline 100000 15750.564839
+  keyword-map 10000 -> 972.544953
+  keyword-map 100000 -> 11296.176458
+CHOSEN keyword-map 100000 11296.176458
+  fannkuch 5 -> 261.354989
+  fannkuch 6 -> 1591.399487
+  fannkuch 7 -> 16815.832521
+CHOSEN fannkuch 7 16815.832521
+  fannkuch-hinted 5 -> 412.569885
+  fannkuch-hinted 6 -> 2240.888096
+  fannkuch-hinted 7 -> 16085.481632
+CHOSEN fannkuch-hinted 7 16085.481632
+  nsieve 12 -> 1122.618837
+  nsieve 14 -> 4300.728532
+  nsieve 16 -> 14126.240825
+CHOSEN nsieve 16 14126.240825
+  nsieve-hinted 12 -> 931.380215
+  nsieve-hinted 14 -> 4044.71158
+  nsieve-hinted 16 -> 15873.58856
+CHOSEN nsieve-hinted 16 15873.58856
+  k-nucleotide 20000 -> 4785.655111
+  k-nucleotide 100000 -> 21112.036709
+CHOSEN k-nucleotide 20000 4785.655111
+  pipeline 5000 -> 1900.513617
+  pipeline 50000 -> 22071.724109
+CHOSEN pipeline 5000 1900.513617
+  dispatch 50000 -> 4812.634572
+  dispatch 500000 -> 50593.690012
+CHOSEN dispatch 50000 4812.634572
+  json 300 -> error: Traceback (most recent call last):
+  File "/root/.local/bin/basilisp", line 10, in <module>
+    sys.exit(invoke_cli())
+             ~~~~~~~~~~^^
+  File "/root/.local/share/uv/tools/basilisp/lib/python
+CHOSEN json 300 error: Traceback (most recent call last):
+  File "/root/.local/bin/basilisp", line 10, in <module>
+    sys.exit(invoke_cli())
+             ~~~~~~~~~~^^
+  File "/root/.local/share/uv/tools/basilisp/lib/python
+FILT fib:24,fib-hinted:24,tak:21 14 7,tak-hinted:21 14 7,nbody:1000,nbody-hinted:1000,spectral-norm:50,spectral-norm-hinted:50,mandelbrot:100,mandelbrot-hinted:100,binary-trees:12,binary-trees-hinted:12,sum-overflow:100000,sum-overflow-hinted:100000,sort:100000,lazy-pipeline:100000,keyword-map:100000,fannkuch:7,fannkuch-hinted:7,nsieve:16,nsieve-hinted:16,k-nucleotide:20000,pipeline:5000,dispatch:50000,json:300
+== lpy-probe done 3:22 AM
