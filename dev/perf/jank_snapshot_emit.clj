@@ -208,6 +208,8 @@
 ;; cohost.core only; the libraries load when load-lib! asks for them.
 (let [top (keep (fn [m] (when (and (not= 'clojure.core m) (nil? (:parent (lib-begins m)))) (module-ns m))) modules)]
   (when (:project cli-opts)
+    ;; a project's own modules sit under its namespaces' directories; cohost/ may not exist yet
+    (fs/create-dirs (fs/parent (module-file 'cohost.project)))
     (spit (module-file 'cohost.project)
           (str "(" C "/ns cohost.project\n  (:require [cohost.boot]))\n"
                "(cohost.boot/register-snapshot-libs! " (quoted libs-map) ")\n"))
