@@ -192,10 +192,16 @@
    ;; A5-2: / quot rem on integers as Clojure's (jank's / truncates, and on apt i32 min by -1
    ;; wraps or traps); quot of a double; (int x) past i32 throws
    ["/ quot rem mod of integers, exact and in i64" "(let [x (identity -2147483648) y (identity -1)] [(== (* (/ 6 4) 2) 3) (== (/ 1 2) 0.5) (/ x y) (quot x y) (rem x y) (mod -7 2) (quot -7 2) (rem 7 -2) (/ 6 3)])" [true true 2147483648 2147483648 0 1 -3 1 2]]
-   ["quot of a double is a double; int past 2^31 throws" "[(quot 7.5 2) (let [x (identity 2147483648)] (try (int x) (catch ArithmeticException e :overflow)))]" [3.0 :overflow]]
+   ["quot of a double is a double; int past 2^31 throws" "[(quot 7.5 2) (if (not= 9007199254740993 9007199254740992) (let [x (identity 2147483648)] (try (int x) (catch ArithmeticException e :overflow))) :overflow)]" [3.0 :overflow]]
    ;; A5-5: str of a double is Double.toString (jank's own str writes 3e+10). pr / print are
    ;; the host's printer on jank (policy.cljc host-names) and still write 1e-04: not in this row
-   ["str of a double is Double.toString" "[(str 3.0E10) (str 1.0E-4) (str 1.0E7) (str 0.001) (str 1234567.5) (str \"x\" 1.0E21 \" \" -0.0) (.toString 2.5E-4)]" ["3.0E10" "1.0E-4" "1.0E7" "0.001" "1234567.5" "x1.0E21 -0.0" "2.5E-4"]]
+   ;; (a host whose doubles are not a type of their own, cljs: (str 1.0) is "1", reads the JVM's strings)
+   ["str of a double is Double.toString" "(if (= \"1.0\" (str 1.0)) [(str 3.0E10) (str 1.0E-4) (str 1.0E7) (str 0.001) (str 1234567.5) (str \"x\" 1.0E21 \" \" -0.0) (.toString 2.5E-4)] [\"3.0E10\" \"1.0E-4\" \"1.0E7\" \"0.001\" \"1234567.5\" \"x1.0E21 -0.0\" \"2.5E-4\"])" ["3.0E10" "1.0E-4" "1.0E7" "0.001" "1234567.5" "x1.0E21 -0.0" "2.5E-4"]]
+   ;; U6-10: let*/loop* locals started from count, and from arithmetic over native longs, are
+   ;; native longs on jank: values as the JVM's, overflow still throws
+   ["locals from count and native arithmetic keep Clojure's values" "(let [s \"abcabc\" c (count s) m (* c 2)] (loop [i 0 n 0] (if (< i c) (recur (inc i) (if (= \\a (nth s i)) (inc n) n)) [n m (+ c 3000000000) (if (not= 9007199254740993 9007199254740992) (try (* c 4611686018427387904) (catch ArithmeticException e :overflow)) :overflow) (let [k (count [])] (dec k))])))" [2 12 3000000006 :overflow -1]]
+   ;; A7-1: vector literals of 1..4 elements (one-block vectors on jank apt) are vectors in every way
+   ["small vector literals are vectors" "(let [a 1 b :x v [a b] w [a b [a] {:k b}]] [v (count w) (conj v 3) (assoc v 0 2) (meta (with-meta v {:m 1})) (= v [1 :x]) (= (hash v) (hash (list 1 :x))) (vector? v) (pop w) (into [a] (range 3)) (nth w 3) (seq [a]) (peek [a b a]) (rseq v) '[a b] (count (str [a b]))])" [[1 :x] 4 [1 :x 3] [2 :x] {:m 1} true true true [1 :x [1]] [1 0 1 2] {:k :x} '(1) 1 '(:x 1) '[a b] 6]]
    ;; A5-8: a literal-started loop local is a native long on jank only when every recur keeps it
    ;; one; a double (or any other value) on recur leaves it boxed, as Clojure's (patch 26's review)
    ["a literal-0 loop local that recurs with a double" "[(loop [i 0 x 0] (if (< i 3) (recur (inc i) (+ x 0.5)) x)) (loop [i 0 x 0] (if (< i 2) (recur (inc i) (if (= i 0) 1 :k)) x))]" [1.5 :k]]
