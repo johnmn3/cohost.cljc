@@ -953,15 +953,15 @@
         rng '(core/type (core/range 1))
         seqs [lst rng '(core/type (core/iterate core/inc 1)) '(core/type (core/repeat 1))]
         sets [st sst]
-        nums ['(core/type 1) '(core/type 1.5) '(core/type 1N) '(core/type 1/2) '(core/type 1M)]
+        nums ['(core/type 1) '(core/type 1.5) '(core/type (core/bigint 1)) '(core/type (core// 1 2)) '(core/type (core/bigdec 1))]
         colls (vec (concat [vecs maps] sets seqs))]
     {'java.lang.Object 'core/java.lang.Object
      'java.lang.String '(core/type "") 'java.lang.CharSequence '(core/type "")
      'java.lang.Character '(core/type \a) 'java.lang.Boolean '(core/type true)
      'java.lang.Long '(core/type 1) 'java.lang.Integer '(core/type 1) 'java.lang.Short '(core/type 1)
      'java.lang.Byte '(core/type 1) 'java.lang.Double '(core/type 1.5) 'java.lang.Float '(core/type 1.5)
-     'clojure.lang.BigInt '(core/type 1N) 'java.math.BigInteger '(core/type 1N)
-     'clojure.lang.Ratio '(core/type 1/2) 'java.math.BigDecimal '(core/type 1M)
+     'clojure.lang.BigInt '(core/type (core/bigint 1)) 'java.math.BigInteger '(core/type (core/bigint 1))
+     'clojure.lang.Ratio '(core/type (core// 1 2)) 'java.math.BigDecimal '(core/type (core/bigdec 1))
      'java.lang.Number nums
      'clojure.lang.Keyword '(core/type :k) 'clojure.lang.Symbol '(core/type (quote s))
      'clojure.lang.Fn '(core/type (fn* [] nil)) 'clojure.lang.AFn '(core/type (fn* [] nil))
