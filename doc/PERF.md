@@ -23,7 +23,7 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 | cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | x72.1 (27, Box 3) | 94.0 s | x85.2 (15 of 28 so far) | x20.5 (28) |
 | cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | | 8.9 s | x9.1 (28) | x3.9 (25) |
 | ClojureScript in Chromium | | | | | not measured | x3.0 (25) |
-| cohost `:phel` (Phel 0.54.0, PHP 8.5) | the app compiled to PHP by `phel build` (OPcache + tracing JIT) | 1.3-2.0 s (Box 1) | being measured | 47.0 s | not yet measured | x23.7 (15 of 28) |
+| cohost `:phel` (Phel 0.54.0, PHP 8.5) | the app compiled to PHP by `phel build` (OPcache + tracing JIT) | 1.3-2.0 s (Box 1) | x142.9 (21 of 28 so far, Box 1) | 47.0 s | not yet measured | x23.7 (15 of 28) |
 | cohost `:lg` (let-go 1.13.0, Go) | boots from source (bytecode and Go: in progress) | | | 15.4 s | not yet measured | x46.6 (11 of 28 so far) |
 
 How to read it:
@@ -134,37 +134,37 @@ Box 3's own. ClojureWasm's built app is the recorded boot as ClojureWasm modules
 it skips the boot from source, and its programs run about as fast as cohost on ClojureWasm from source (Box 3, x85
 over the 15 measured). Median ms (xJVM). Records: `doc/perf/built-d/` (d/aot-cljw).
 
-| program | jvm | jvm-built | cljw-built |
-|---|---:|---:|---:|
-| binary-trees | 257.5 | 305.6 (x1.19) | 14426.2 (x56.02) |
-| binary-trees-14 | 11.4 | 19.1 (x1.68) | 649.4 (x57.18) |
-| binary-trees-14-hinted | 9.4 | 12.4 (x1.32) | 1357.1 (x144.79) |
-| binary-trees-hinted | 245.7 | 301.0 (x1.23) | 28215.4 (x114.84) |
-| dispatch | 138.0 | 177.7 (x1.29) | 17447.3 (x126.42) |
-| fannkuch | 148.0 | 162.1 (x1.10) | 6664.3 (x45.03) |
-| fannkuch-hinted | 165.6 | 158.7 (x0.96) | 6508.7 (x39.31) |
-| fib | 163.6 | 150.0 (x0.92) | 8006.8 (x48.94) |
-| fib-hinted | 99.8 | 98.9 (x0.99) | 81055.7 (x811.78) |
-| first-output | 647.3 | 700.1 (x1.08) | 2205.5 (x3.41) |
-| json | 234.0 | 244.5 (x1.04) | 32820.5 (x140.26) |
-| k-nucleotide | 131.1 | 131.3 (x1.00) | 7342.3 (x56.01) |
-| keyword-map | 85.7 | 89.7 (x1.05) | 5125.5 (x59.81) |
-| lazy-pipeline | 32.1 | 37.4 (x1.17) | 8228.5 (x256.57) |
-| mandelbrot | 206.4 | 217.6 (x1.05) | 46419.1 (x224.93) |
-| mandelbrot-hinted | 219.0 | 216.7 (x0.99) | 45755.2 (x208.94) |
-| nbody | 188.4 | 229.7 (x1.22) | 8257.3 (x43.82) |
-| nbody-hinted | 190.0 | 216.0 (x1.14) | 8330.8 (x43.85) |
-| nsieve | 142.5 | 132.3 (x0.93) | 9075.2 (x63.69) |
-| nsieve-hinted | 163.0 | 145.2 (x0.89) | 9535.7 (x58.49) |
-| pipeline | 143.0 | 151.1 (x1.06) | 5867.3 (x41.04) |
-| sort | 36.9 | 50.8 (x1.38) | 5817.6 (x157.58) |
-| spectral-norm | 189.1 | 249.4 (x1.32) | 12874.5 (x68.08) |
-| spectral-norm-hinted | 146.6 | 159.4 (x1.09) | 37298.0 (x254.38) |
-| sum-overflow | 8.9 | 13.1 (x1.47) | 24.4 (x2.75) |
-| sum-overflow-hinted | 0.6 | 1.1 (x1.71) | 54.0 (x87.41) |
-| tak | 317.9 | 367.4 (x1.16) | 26214.4 (x82.47) |
-| tak-hinted | 196.5 | 248.5 (x1.26) | error |
-| **geomean xJVM** (programs that ran) | 1 | **x1.15** (28) | **x72.09** (27) |
+| program | jvm | jvm-built | jolt-built | cljw-built |
+|---|---:|---:|---:|---:|
+| binary-trees | 257.5 | 305.6 (x1.19) | 1584.8 (x6.15) | 14426.2 (x56.02) |
+| binary-trees-14 | 11.4 | 19.1 (x1.68) | 70.9 (x6.24) | 649.4 (x57.18) |
+| binary-trees-14-hinted | 9.4 | 12.4 (x1.32) | 160.5 (x17.12) | 1357.1 (x144.79) |
+| binary-trees-hinted | 245.7 | 301.0 (x1.23) | 3330.3 (x13.55) | 28215.4 (x114.84) |
+| dispatch | 138.0 | 177.7 (x1.29) | 1057.8 (x7.67) | 17447.3 (x126.42) |
+| fannkuch | 148.0 | 162.1 (x1.10) | 291.2 (x1.97) | 6664.3 (x45.03) |
+| fannkuch-hinted | 165.6 | 158.7 (x0.96) | 327.5 (x1.98) | 6508.7 (x39.31) |
+| fib | 163.6 | 150.0 (x0.92) | 314.9 (x1.93) | 8006.8 (x48.94) |
+| fib-hinted | 99.8 | 98.9 (x0.99) | 9970.9 (x99.86) | 81055.7 (x811.78) |
+| first-output | 647.3 | 700.1 (x1.08) | 893.4 (x1.38) | 2205.5 (x3.41) |
+| json | 234.0 | 244.5 (x1.04) | 4278.8 (x18.29) | 32820.5 (x140.26) |
+| k-nucleotide | 131.1 | 131.3 (x1.00) | 733.6 (x5.60) | 7342.3 (x56.01) |
+| keyword-map | 85.7 | 89.7 (x1.05) | 403.7 (x4.71) | 5125.5 (x59.81) |
+| lazy-pipeline | 32.1 | 37.4 (x1.17) | 121.6 (x3.79) | 8228.5 (x256.57) |
+| mandelbrot | 206.4 | 217.6 (x1.05) | 1530.8 (x7.42) | 46419.1 (x224.93) |
+| mandelbrot-hinted | 219.0 | 216.7 (x0.99) | 1402.6 (x6.40) | 45755.2 (x208.94) |
+| nbody | 188.4 | 229.7 (x1.22) | 928.0 (x4.92) | 8257.3 (x43.82) |
+| nbody-hinted | 190.0 | 216.0 (x1.14) | 793.6 (x4.18) | 8330.8 (x43.85) |
+| nsieve | 142.5 | 132.3 (x0.93) | 1641.1 (x11.52) | 9075.2 (x63.69) |
+| nsieve-hinted | 163.0 | 145.2 (x0.89) | 1706.8 (x10.47) | 9535.7 (x58.49) |
+| pipeline | 143.0 | 151.1 (x1.06) | 968.9 (x6.78) | 5867.3 (x41.04) |
+| sort | 36.9 | 50.8 (x1.38) | 78.6 (x2.13) | 5817.6 (x157.58) |
+| spectral-norm | 189.1 | 249.4 (x1.32) | 1407.2 (x7.44) | 12874.5 (x68.08) |
+| spectral-norm-hinted | 146.6 | 159.4 (x1.09) | 4773.3 (x32.55) | 37298.0 (x254.38) |
+| sum-overflow | 8.9 | 13.1 (x1.47) | 28.2 (x3.18) | 24.4 (x2.75) |
+| sum-overflow-hinted | 0.6 | 1.1 (x1.71) | 5.5 (x8.93) | 54.0 (x87.41) |
+| tak | 317.9 | 367.4 (x1.16) | 506.2 (x1.59) | 26214.4 (x82.47) |
+| tak-hinted | 196.5 | 248.5 (x1.26) | 42078.3 (x214.18) | error |
+| **geomean xJVM** (programs that ran) | 1 | **x1.15** (28) | **x7.03** (28) | **x72.09** (27) |
 
 ## Startup
 
