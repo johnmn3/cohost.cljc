@@ -24,6 +24,7 @@
          '[babashka.process :as p]
          '[clojure.string :as str])
 (load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_inputs.clj"))
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/sha256.clj"))
 
 (defn- abs-path [repo path]
   (str/join ":" (map (fn [x] (str (fs/absolutize (fs/path repo x)))) (str/split path #":"))))
@@ -67,14 +68,13 @@
 
 (defn- project-key [repo roots main]
   (let [files (sort (mapcat source-files roots))
-        sums (if (seq files)
-               (:out (p/shell {:out :string :in (str/join "\n" files)} "xargs" "-d" "\n" "sha256sum"))
-               "")]
+        sums (cohost.dev.sha256/sha256sum-listing files)]
     (sha256-of (str (slurp (str repo "/target/jank-snapshot/stamp"))
                     sums
-                    (:out (p/shell {:out :string} "sha256sum" (str repo "/dev/perf/jank_snapshot_cli.clj")
-                                   (str repo "/dev/perf/jank_snapshot_project_record.jank")
-                                   (str repo "/dev/perf/jank_snapshot_emit.clj")))
+                    (cohost.dev.sha256/sha256sum-listing
+                     [(str repo "/dev/perf/jank_snapshot_cli.clj")
+                      (str repo "/dev/perf/jank_snapshot_project_record.jank")
+                      (str repo "/dev/perf/jank_snapshot_emit.clj")])
                     "main " main "\n"))))
 
 (defn jank-project-launch [repo project roots main core-path env]

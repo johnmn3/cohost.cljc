@@ -10,6 +10,7 @@
 (require '[babashka.fs :as fs]
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/sha256.clj"))
 
 (def ^:private lpy-root "target/lpy-snapshot")
 (def ^:private lpy-src (str lpy-root "/src"))
@@ -18,9 +19,9 @@
   (let [files (->> (concat (fs/glob "resources/cohost/clojure-1.12.0" "**") (fs/glob "src/cohost" "**")
                            (fs/glob "dev/perf" "{jank_snapshot_emit.clj,lpy_snapshot_*}"))
                    (filter fs/regular-file?) (map str) sort)
-        sums (:out (shell {:out :string :in (str/join "\n" files)} "xargs" "-d" "\n" "sha256sum"))
+        sums (cohost.dev.sha256/sha256sum-listing files)
         version (str/trim (:out (shell {:out :string} "basilisp" "version")))]
-    (-> (shell {:out :string :in (str sums "basilisp " version "\n")} "sha256sum") :out str/trim (str/split #"\s+") first)))
+    (cohost.dev.sha256/sha256-hex (str sums "basilisp " version "\n"))))
 
 (defn- lpy-stale-reason [k]
   (let [stamp (str lpy-root "/stamp")]
