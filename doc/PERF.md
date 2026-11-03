@@ -17,7 +17,7 @@ on the JVM measured on the same box, so ratios compare across boxes and millisec
 | cohost `:jolt` (jolt 0.8.23, Chez Scheme) | 4.5 s | x9.6 (28) | x2.9 (28) |
 | cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | 8.9 s | x9.1 (28) | x3.9 (25) |
 | ClojureScript in Chromium | | not measured | x3.0 (25) |
-| cohost `:lg` (let-go 1.13.0, Go) | 15.4 s | not yet measured | not yet measured |
+| cohost `:lg` (let-go 1.13.0, Go) | 15.4 s | not yet measured | x46.6 (11 of 28 so far) |
 | cohost `:phel` (Phel 0.54.0, PHP 8.5) | 47.0 s | not yet measured | not yet measured |
 | cohost `:lpy` (basilisp 0.5.1, Python) | 88.6 s | not yet measured | not yet measured |
 | cohost `:cljw` (ClojureWasm 1.15.4) | 94.0 s | not yet measured | x20.5 (28) |
@@ -198,7 +198,46 @@ ClojureWasm's own core, all 28 programs (2026-11-03 12:39 to 1:19 AM ET). Median
 | tak-hinted | 196.5 | 22689.9 (x115.49) |
 | **geomean xJVM** (programs that ran) | 1 | **x20.48** (28) |
 
-let-go and Phel are measured on Box 4 and basilisp on Box 1; their tables go in as each column finishes.
+### Box 4: let-go and Phel
+
+Box 4: 4 CPUs (Intel Xeon, 2.10 GHz), Linux, let-go 1.13.0, PHP 8.3.6; the JVM column is this box's own
+(2026-11-03 1:18 AM ET). `lg` is let-go's own core, 11 of the 28 programs so far (1:20 to 1:42 AM ET, 10 timed calls
+each); the rest, cohost on let-go (`lg-cohost`), and Phel on its own core and through cohost are measured next, with
+the 15 s budget. Records: `doc/perf/box4/`.
+
+| program | jvm | lg |
+|---|---:|---:|
+| binary-trees | 246.8 | 10137.5 (x41.07) |
+| binary-trees-14 | 10.4 | not yet measured |
+| binary-trees-14-hinted | 14.2 | not yet measured |
+| binary-trees-hinted | 239.7 | not yet measured |
+| dispatch | 152.8 | not yet measured |
+| fannkuch | 142.1 | not yet measured |
+| fannkuch-hinted | 163.1 | not yet measured |
+| fib | 121.8 | 4638.3 (x38.09) |
+| fib-hinted | 76.3 | 4952.0 (x64.89) |
+| first-output | 804.7 | not yet measured |
+| json | 219.9 | not yet measured |
+| k-nucleotide | 128.6 | not yet measured |
+| keyword-map | 95.1 | not yet measured |
+| lazy-pipeline | 34.1 | not yet measured |
+| mandelbrot | 187.9 | 20880.5 (x111.14) |
+| mandelbrot-hinted | 174.6 | 21376.8 (x122.40) |
+| nbody | 212.9 | 2280.9 (x10.72) |
+| nbody-hinted | 212.5 | 2278.5 (x10.72) |
+| nsieve | 212.5 | not yet measured |
+| nsieve-hinted | 180.2 | not yet measured |
+| pipeline | 141.0 | not yet measured |
+| sort | 37.3 | not yet measured |
+| spectral-norm | 222.3 | 8078.9 (x36.34) |
+| spectral-norm-hinted | 133.8 | 9240.4 (x69.04) |
+| sum-overflow | 12.9 | not yet measured |
+| sum-overflow-hinted | 0.5 | not yet measured |
+| tak | 260.0 | 15141.9 (x58.23) |
+| tak-hinted | 162.0 | 15874.0 (x97.97) |
+| **geomean xJVM** (programs that ran) | 1 | **x46.64** (11) |
+
+basilisp is measured on Box 1; its rows go in as each column finishes.
 
 ### Type hints
 
