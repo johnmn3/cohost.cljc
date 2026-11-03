@@ -1,0 +1,17 @@
+;; Phel's boot from its snapshot modules, then both batteries, as
+;; dev/perf/snapshot_run.cljc does on the other hosts (Phel needs an ns form,
+;; and has no require at run time: the modules load by this ns form).
+;;   cd <dir whose phel-config.php lists src and the modules> && phel run <this file>
+(ns cohost-phel-snapshot-run
+  (:require [cohost.snapshot]
+            [cohost.boot]
+            [cohost.adapter]
+            [cohost.battery]
+            [cohost.lib-battery]))
+
+(let [report (cohost.boot/snapshot-report)]
+  (when-not report (throw (ex-info "no boot report (the modules did not load?)" {})))
+  (cohost.boot/print-report report))
+(cohost.boot/make-user-ns!)
+(cohost.battery/run-battery! cohost.boot/eval-str)
+(cohost.lib-battery/run-lib-battery! cohost.boot/eval-str)

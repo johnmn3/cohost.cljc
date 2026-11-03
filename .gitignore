@@ -4,3 +4,7 @@ __pycache__/
 .cpcache/
 node_modules/
 .phel/
+
+# dev/perf/phel_snapshot.sh: the emitted Phel modules and the run directory
+/phel-snap/
+/phel-snap-run/

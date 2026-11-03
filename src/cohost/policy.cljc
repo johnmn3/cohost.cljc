@@ -218,8 +218,10 @@
    ;; str reaches the shim's toString, which writes the JVM's
    :cljw {:stock (set '[str])}
    ;; Phel's str of an exception is PHP's (the class, the message, the trace);
-   ;; core.clj's str reaches the shim's toString
-   :phel {:stock (set '[str])}
+   ;; core.clj's str reaches the shim's toString. Phel has no locking: core.clj's
+   ;; (monitor-enter/-exit, the shim's no-ops; Phel runs one thread) boots, so
+   ;; clojure.spec.gen.alpha's dynaload defines
+   :phel {:stock (set '[str locking])}
    ;; let-go's atom takes its validator when it is made (:validator), and has
    ;; no set-validator! to give one after: core.clj's atom sets it after
    :lg {:host (set '[atom])}

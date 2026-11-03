@@ -1,0 +1,108 @@
+7a8,9
+> (let*
+> [n
+9,11c11,12
+< (clojure.core/<
+< n
+< 2)
+---
+> (cpp/jank.runtime.is_integer
+> n)
+13,17d13
+< (cohost.shim/Numbers-add
+< (fib
+< (clojure.core/dec
+< n))
+< (fib
+19c15,17
+< (cpp/jank.runtime.is_integer
+---
+> (number?
+> n)
+> (long
+22,23c20
+< (clojure.core/<
+< -2147483649
+---
+> (nil?
+24a22,46
+> (throw
+> (cohost.shim/new-NullPointerException
+> "Cannot
+> invoke
+> \"java.lang.Number.longValue()\"
+> because
+> the
+> argument
+> is
+> null"))
+> (throw
+> (cohost.shim/new-ClassCastException
+> "class
+> java.lang.Object
+> cannot
+> be
+> cast
+> to
+> class
+> java.lang.Number")))))]
+> (let*
+> [cohost_user$ret___1
+> ((fn*
+> fib
+> ([n]
+28,30d49
+< 2147483648)
+< (cpp/jank.runtime.promoting_sub
+< n
+32d50
+< (cohost.shim/Numbers-minus
+34c52,53
+< 2))
+---
+> (cohost.shim/Numbers-add
+> (fib
+37,38c56,58
+< 2))
+< (cpp/jank.runtime.promoting_sub
+---
+> 1))
+> (fib
+> (cohost.shim/Numbers-minus
+40c60,93
+< 2))))))))
+---
+> 2))))))
+> n)]
+> (if
+> (cpp/jank.runtime.is_integer
+> cohost_user$ret___1)
+> cohost_user$ret___1
+> (if
+> (number?
+> cohost_user$ret___1)
+> (long
+> cohost_user$ret___1)
+> (if
+> (nil?
+> cohost_user$ret___1)
+> (throw
+> (cohost.shim/new-NullPointerException
+> "Cannot
+> invoke
+> \"java.lang.Number.longValue()\"
+> because
+> the
+> argument
+> is
+> null"))
+> (throw
+> (cohost.shim/new-ClassCastException
+> "class
+> java.lang.Object
+> cannot
+> be
+> cast
+> to
+> class
+> java.lang.Number"))))))))))

@@ -197,6 +197,21 @@
   [module]
   (take-while #(not= module %) lib-ends))
 
+;; Phel: a library form whose def failed in the boot from source (its report's
+;; :error entries) still left the name in Phel's compile-time environment, so
+;; the forms after it compiled there; the module, compiled as one file, gets
+;; the same name by a declare (one name per declare: Phel's declares its first).
+(def def-heads #{"def" "defn" "defn-" "defonce" "defmacro" "defmulti"})
+
+(defn failed-def-names [module]
+  (let [le (first (filter #(and (= :lib-end (:op %)) (= module (:lib %))) events))]
+    (distinct
+     (keep (fn [en]
+             (when (:error en)
+               (when-let [[_ head nm] (re-find #"^\((\S+)\s+(?:\^\S+\s+)?([^\s()\[\]{}]+)" (str (:form en)))]
+                 (when (def-heads head) nm))))
+           (get-in le [:entry :entries])))))
+
 (defn module-src [module]
   (let [nm (module-ns module)
         evs (events-of module)
@@ -221,6 +236,8 @@
                     (apply str (map #(str " [" (module-ns %) "]") (libs-before module)))
                     "))\n")
                :else "\n  (:require [cohost.boot] [cohost.core]))\n")
+         (when (and (:plain-ns? lang) (not core?))
+           (apply str (map #(str "(declare " % ")\n") (failed-def-names module))))
          (if core?
            (str "(cohost.boot/snap-begin! " (quoted (:opts begin)) " " (quoted libs-map) ")\n")
            (str "(cohost.boot/snap-lib-begin! " (quoted (:lib lb)) " " (quoted (:target lb)) " "
