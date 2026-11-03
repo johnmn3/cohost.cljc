@@ -890,7 +890,7 @@
   [fn-hint params]
   (or (primitive-hint (:tag (meta params))) fn-hint))
 
-(declare infer-num loop-recurs core-op)
+(declare infer-num loop-recurs core-op infer-here?)
 
 (defn- self-call-args
   "Every occurrence of nm in body: a vector of each call's argument list, or
@@ -953,7 +953,7 @@
   [nm single? params body']
   (let [spells (host/native-hints)
         names (mapv #(*plain* (bare-sym %)) params)]
-    (when (and (host/static-types) spells (get spells 'long) single? nm (seq params)
+    (when (and (infer-here?) spells (get spells 'long) single? nm (seq params)
                (every? #(and (symbol? %) (not= '& (*plain* %)) (nil? (primitive-hint (:tag (meta %))))) params))
       (let [nm (*plain* (bare-sym nm))
             env (reduce #(assoc %1 %2 'long) (apply dissoc *num-env* nm names) names)
@@ -1077,7 +1077,7 @@
                                        ;; U6-7: a second rewrite with the numeric params typed,
                                        ;; for a guarded arity (not when a hint or a cast is missing)
                                        casts (host/native-local-casts)
-                                       ptypes (when (and (host/static-types) (host/native-hints) casts
+                                       ptypes (when (and (infer-here?) (host/native-hints) casts
                                                          (not (some #(= '& (*plain* %)) ps0))
                                                          (not (some #(primitive-hint (:tag (meta %))) ps0)))
                                                 (not-empty (into {} (filter (fn [[_ t]] (get casts t)))
@@ -1120,6 +1120,17 @@
 ;; U6-7: static numeric types (adapter :static-types). Sound only: a local is
 ;; typed when its value's type is certain from the source, so emitting the
 ;; host's native conversion changes nothing Clojure would compute.
+
+(defn- infer-here?
+  "U6-7: static types are inferred in user code only: not in the stock core
+   cohost boots (cohost.core) nor in a clojure.* library it loads, whose
+   behavior the batteries pin and whose fns would all grow a guarded twin."
+  []
+  (and (host/static-types)
+       (let [cur (str *current-ns*)]
+         ;; cohost.user, where cohost evaluates a program, is user code
+         (or (= cur "cohost.user")
+             (not (or (starts-with? cur "cohost.") (starts-with? cur "clojure.")))))))
 
 (defn- core-op
   "The name of a clojure.core fn this call head names (unqualified or
@@ -1269,7 +1280,7 @@
   (let [;; U6-7: the certain numeric types of the bindings (adapter
         ;; :static-types); an inferred one is marked like a hint so
         ;; with-hinted-locals gives it the host's native conversion
-        [types body-env] (if (and (host/static-types) (#{'let* 'loop*} h) (vector? bvec))
+        [types body-env] (if (and (infer-here?) (#{'let* 'loop*} h) (vector? bvec))
                            (infer-bindings h bvec body *num-env*)
                            [nil *num-env*])
         bvec (if (some some? types)
@@ -1401,7 +1412,7 @@
     (if (and (host/native-hints) (symbol? nm)
              (or (hinted-fn-init? init)
                  ;; U6-7: an unhinted fn that calls its own var, for speculation
-                 (and (host/static-types) (seq? init) (symbol? (first init))
+                 (and (infer-here?) (seq? init) (symbol? (first init))
                       (contains? #{"fn" "fn*"} (name (*plain* (first init))))
                       (not (symbol? (second init)))
                       (mentions-sym? (*plain* (bare-sym nm)) (rest init)))))
