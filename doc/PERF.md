@@ -248,19 +248,70 @@ runtime, run as `target/<name>/run`).
 - **Performance keys**: seven switches per runtime, [How it works](guide/08-how-it-works.md#performance-keys).
 - **Startup** is the boot of `clojure.core` from source, except where a snapshot or a cached boot loads instead.
 
-## Reproduce
+## Measure your machine (add a box)
 
-In a cohost checkout, with the runtime on `PATH` (`dev/install/<runtime>.sh`):
+Every table above is one box: its own JVM column and the runtimes measured on it, one at a time, nothing else
+running. To add a box, run the steps below and add a section like [Box 1](#box-1-the-jvm-clojurescript-and-jolt).
+Box 1 is the complete example: its records are in `doc/perf/release-perf/lane-c/` (one `.edn` per column plus
+`startup.txt`), and its table is the output of step 4 pasted in.
 
-```bash
-# not checked: minutes to hours per runtime
-bb bench:programs jvm                       # the reference column first: every ratio is against it
-bb bench:programs jolt-cohost               # one column: cohost on jolt (also jank, cljs-cohost, lg-cohost, ...)
-bb bench:programs jolt                      # the runtime's own core
-bb bench:programs jolt-built                # the compiled build: cohost -T:build build, run as target/<name>/run
-bb bench:programs table jvm jolt jolt-cohost   # the table above, from target/bench-programs/results/
-bb bench:jank                               # jank: cohost against jank's own core, 30 cases
-```
+1. **Checkout and runtimes.** A cohost checkout of the commit you measure, and each runtime on `PATH`:
 
-Run one runtime at a time on a quiet box: two ClojureScript compiles at once can corrupt `~/.cljs/.aot_cache`.
+   ```bash
+   # not checked: clones and installs
+   git clone https://github.com/johnmn3/cohost.cljc ~/cohost && cd ~/cohost
+   bash dev/install/jank.sh        # likewise jolt.sh, cljs.sh, lg.sh, phel.sh, basilisp.sh, cljw.sh
+   bb boot:jank-snapshot           # jank only: builds its core snapshot once (2 to 11 minutes)
+   ```
+
+2. **The JVM column first.** Every ratio is against this box's own JVM:
+
+   ```bash
+   # not checked: about 2 minutes
+   bb bench:programs jvm
+   ```
+
+3. **One column per runtime, one at a time.** `<runtime>` is the runtime's own core; `<runtime>-cohost` is
+   Clojure's core booted by cohost on it (on jank, `jank` is cohost; `bb bench:jank` compares it with jank's own
+   core). The compiled builds are `<runtime>-built`. Each column writes `target/bench-programs/results/<column>.edn`.
+
+   ```bash
+   # not checked: minutes (jolt, cljs) to an hour or more (cljw, lpy) per column
+   bb bench:programs jolt
+   bb bench:programs jolt-cohost
+   bb bench:programs jank
+   bb bench:programs cljs              # then cljs-cohost, browser, lg, lg-cohost, phel, phel-cohost,
+                                       # lpy, lpy-cohost, cljw, cljw-cohost, jank-built, jolt-built, ...
+   ```
+
+   Never run two at once: two ClojureScript compiles at once can corrupt `~/.cljs/.aot_cache`, and any other load
+   skews the times.
+
+4. **The table.** Paste its output into your box's section:
+
+   ```bash
+   # not checked: reads the records step 3 wrote
+   bb bench:programs table jvm jolt jolt-cohost jank cljs cljs-cohost
+   ```
+
+5. **Startup.** Three wall times per runtime of a hello-world `-main` in `dev/cli-demo`, after one untimed run
+   (the first run of jank and basilisp builds their caches); the table shows the median:
+
+   ```bash
+   # not checked: minutes; prints one line per run
+   cd dev/cli-demo
+   for rt in jvm jank jolt cljs lg phel lpy cljw; do
+     ../../bin/cohost :$rt -M -m demo.main warm > /dev/null 2>&1
+     for i in 1 2 3; do
+       bb -e "(let [t (System/nanoTime)] (babashka.process/shell {:out :string :err :string} \"../../bin/cohost\" \":$rt\" \"-M\" \"-m\" \"demo.main\" \"me\") (println \"STARTUP $rt\" (quot (- (System/nanoTime) t) 1000000) \"ms\"))"
+     done
+   done
+   cd ../..
+   ```
+
+6. **The box's section and records.** Head the section with the box: CPUs, OS, each runtime's version, the
+   cohost commit (`git rev-parse --short HEAD`), the date and time, and the load average when each column started.
+   Copy `target/bench-programs/results/*.edn` and the startup lines into `doc/perf/<box-name>/`, commit both on a
+   branch and push it.
+
 The history of how these numbers came to be is in [`doc/perf/HISTORY.md`](perf/HISTORY.md).
