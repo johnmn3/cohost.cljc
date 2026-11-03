@@ -30,7 +30,7 @@ runs both batteries. This is the correctness gate for each runtime's modules.
 | jank | `compile-module -O3`, statically linked | already done (`cohost.build-jank`) |
 | jolt | `jolt build`: one binary. Release mode direct-links and inlines over a direct-linked `clojure.core`, with whole-program inference (unboxed numerics). `--closed-world` also tree-shakes | **done:** record, emit `--host jolt`, `jolt build` in release mode. Batteries 167/167 and 62/62 from the modules; app `run` 0.37 s |
 | basilisp | compiled namespaces cached as `.lpyc` bytecode; `--inline-functions` / `--generate-auto-inlines` | **done:** ships the cached boot (`.lpy` + `.lpyc`); `run` 1.9 s, down from 19–25 s booting from source. Inline flags: to try |
-| Phel | `phel build -O 2` (inlining; the default is level 0) to PHP; PHP OPcache with the tracing JIT (`opcache.enable_cli=1 opcache.jit=tracing`) | spike: see below |
+| Phel | `phel build -O 2` (inlining; the default is level 0) to PHP; PHP OPcache with the tracing JIT (`opcache.enable_cli=1 opcache.jit=tracing`) | **spike, partway:** records (29 s), emits, and the core boots from the modules in 6 s against about 23 s from source (core battery 162/167; 166 from source). Libraries load in order up to `clojure.spec.gen.alpha`, which stops: see item 3 |
 | let-go | `.lgb` bytecode (`lg -c`); standalone binaries (bytecode appended to `lg`); AOT that lowers IR to native Go (`ir.passes.pipeline/lower-ns-to-go`, tagged `lg` build; fib(35) 2.42 s → 0.11 s in their benchmark) | **spike blocked:** recording works (7 s, 1,323 events), but the emitted modules don't load. The recorded forms still hold special forms (`letfn*`) that cohost's lg adapter lowers only at eval time. See item 4 |
 | ClojureWasm | `cljw build`, a native binary; the runtime itself as a ReleaseFast Zig build (`-Doptimize=ReleaseFast`; it ships ReleaseSafe) | **done as modules:** the artifact ships the recorded boot as cljw modules and runs `cohost.app-main` from them. Batteries 165/167 (as from source) and 62/62; boot 0.83 s against about 17 s; app `run` 0.9 s. `cljw build` of those modules: still `UnsupportedValueTag` |
 | ClojureScript | Closure `:advanced` | plan only: see below |
@@ -41,6 +41,20 @@ runs both batteries. This is the correctness gate for each runtime's modules.
 2. **basilisp** — done. Next: measure `--inline-functions` and `--generate-auto-inlines`
    on the cached boot.
 3. **Phel**
+   - Done in the spike:
+     - `snap-encode` tags regexes as `{:cohost.snap/regex src}` on every host, because
+       Phel prints a regex as bare text.
+     - The emitter reads Phel's `\$` string escape.
+     - Phel modules get a plain `(ns …)` first in the file, the core's requires inside
+       it, and each library module requires every library that finished loading before
+       it (Phel has no `require` at run time).
+     - `require-host!` on Phel accepts a namespace that's already loaded.
+     - `snap-lib-end!` uses `last`/`butlast`, not `peek`/`pop`: Phel's `pop` is another fn.
+   - **Next:** `clojure.spec.gen.alpha`'s `(defn- dynaload …)` never reaches the recording
+     on Phel, so the module's later forms can't resolve `dynaload`. Phel resolves symbols
+     at compile time and compiles a whole file at once, so a missing def stops the module.
+     Find how the source boot treats that form on Phel, and record what it does.
+   - **Next:** the core battery's 4 regressions against the source boot (162 against 166).
    - Emit `--host phel` modules. cohost's own `.cljc` already reads on Phel; check that the
      emitter's printed forms read back the same.
    - Compile them with `phel build -O 2` and ship the PHP.

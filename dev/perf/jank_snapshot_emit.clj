@@ -45,20 +45,34 @@
 (def lang (get {"lpy" {:core "basilisp.core" :ext ".lpy" :bare? false}
                 "jolt" {:core "clojure.core" :ext ".clj" :bare? true}
                 "lg" {:core "clojure.core" :ext ".clj" :bare? true}
-                "cljw" {:core "clojure.core" :ext ".clj" :bare? true}}
+                "cljw" {:core "clojure.core" :ext ".clj" :bare? true}
+                ;; Phel finds a namespace's file by its literal (ns ...) form
+                "phel" {:core "phel.core" :ext ".phel" :bare? false :plain-ns? true}}
                (:host cli-opts)
                {:core "clojure.core" :ext ".jank" :bare? true}))
 (def C (:core lang))
+(def NS (if (:plain-ns? lang) "ns" (str C "/ns")))
 
 (def events
   (binding [*read-eval* false]
-    (read-string (slurp (or (:events cli-opts) "target/jank-snapshot/events.edn")))))
+    (let [text (slurp (or (:events cli-opts) "target/jank-snapshot/events.edn"))]
+      (read-string
+       (if (= "phel" (:host cli-opts))
+         ;; Phel prints $ in a string as \$ (PHP's escape): not a Clojure escape.
+         ;; Only an unescaped one: an even run of backslashes before it is \\s.
+         (str/replace text #"(?<!\\)((?:\\\\)*)\\\$" "$1\\$")
+         text)))))
 
 (defn decode
   "Undo cohost.boot's snap-encode: {:cohost.snap/meta m :cohost.snap/val x}
    is x with metadata m."
   [x]
   (cond
+    (and (map? x) (contains? x :cohost.snap/regex))
+    (if (= "phel" (:host cli-opts))
+      ;; Phel writes no regex object into code: cohost's Phel reader makes one this way
+      (list 'cohost.hosts.phel/re-literal (:cohost.snap/regex x))
+      (re-pattern (:cohost.snap/regex x)))
     (and (map? x) (contains? x :cohost.snap/val) (contains? x :cohost.snap/meta))
     (let [v (decode (:cohost.snap/val x))
           m (decode (:cohost.snap/meta x))]
@@ -173,6 +187,16 @@
                 (conj acc e))))
           [] evs))
 
+(def lib-ends
+  "The libraries in the order their loads finished: one a library loads
+   finishes before it does."
+  (keep (fn [e] (when (and (= :lib-end (:op e)) (lib-begins (:lib e))) (:lib e))) events))
+
+(defn libs-before
+  "Phel: the libraries whose loads finished before module's did."
+  [module]
+  (take-while #(not= module %) lib-ends))
+
 (defn module-src [module]
   (let [nm (module-ns module)
         evs (events-of module)
@@ -182,10 +206,21 @@
     ;; cohost.run (the adapter, the boot) is required before the bare ns:
     ;; jank analyzes a required file's ns form in the requiring namespace
     ;; cohost.cli too, so the snapshot's compile makes its object (D-8)
-    (str (when core? (str "(" C "/require (quote cohost.run))\n(" C "/require (quote cohost.cli))\n"))
-         "(" C "/ns " nm
+    ;; Phel: its ns form comes first in the file, so they are the ns's requires
+    (str (when (and core? (not (:plain-ns? lang)))
+           (str "(" C "/require (quote cohost.run))\n(" C "/require (quote cohost.cli))\n"))
+         "(" NS " " nm
          (if (:bare? lang) "\n  (:refer-clojure :only [])" "")
-         (if core? ")\n" "\n  (:require [cohost.boot] [cohost.core]))\n")
+         (cond (and core? (:plain-ns? lang)) "\n  (:require [cohost.run] [cohost.cli]))\n"
+               core? ")\n"
+               ;; Phel: the libraries this one loaded (its replayed requires) load
+               ;; first, by its ns form, since nothing is required at run time
+               ;; (every library loaded before it, and every one it loaded)
+               (:plain-ns? lang)
+               (str "\n  (:require [cohost.boot] [cohost.core]"
+                    (apply str (map #(str " [" (module-ns %) "]") (libs-before module)))
+                    "))\n")
+               :else "\n  (:require [cohost.boot] [cohost.core]))\n")
          (if core?
            (str "(cohost.boot/snap-begin! " (quoted (:opts begin)) " " (quoted libs-map) ")\n")
            (str "(cohost.boot/snap-lib-begin! " (quoted (:lib lb)) " " (quoted (:target lb)) " "
@@ -209,20 +244,22 @@
 ;; and every library module (a library a library requires is loaded, and
 ;; compiled, by its directive's replay). A boot from the snapshot requires
 ;; cohost.core only; the libraries load when load-lib! asks for them.
-(let [top (keep (fn [m] (when (and (not= 'clojure.core m) (nil? (:parent (lib-begins m)))) (module-ns m))) modules)]
+;; Phel has no require at run time: there the entry requires every library
+;; module, in load order, so a library's replayed require finds it loaded.
+(let [top (keep (fn [m] (when (and (not= 'clojure.core m) (or (:plain-ns? lang) (nil? (:parent (lib-begins m))))) (module-ns m))) modules)]
   (when (:project cli-opts)
     ;; a project's own modules sit under its namespaces' directories; cohost/ may not exist yet
     (fs/create-dirs (fs/parent (module-file 'cohost.project)))
     (spit (module-file 'cohost.project)
-          (str "(" C "/ns cohost.project\n  (:require [cohost.boot]))\n"
+          (str "(" NS " cohost.project\n  (:require [cohost.boot]))\n"
                "(cohost.boot/register-snapshot-libs! " (quoted libs-map) ")\n"))
     (spit (module-file 'cohost.project-build)
-          (str "(" C "/ns cohost.project-build\n  (:require [cohost.core] [cohost.project]"
+          (str "(" NS " cohost.project-build\n  (:require [cohost.core] [cohost.project]"
                (apply str (map #(str " [" % "]") top)) "))\n"))
     (println "MODULE cohost.project" (module-file 'cohost.project) (count libs-map)))
   (when-not (:project cli-opts)
   (spit (module-file 'cohost.snapshot)
-        (str "(" C "/ns cohost.snapshot\n  (:require [cohost.core]"
+        (str "(" NS " cohost.snapshot\n  (:require [cohost.core]"
              (apply str (map #(str " [" % "]") top)) "))\n"))
   (println "MODULE cohost.snapshot" (module-file 'cohost.snapshot) (count top))))
 
@@ -232,7 +269,7 @@
     (when-not (lib-begins lib)
       (throw (ex-info (str "the app's namespace " app " was not recorded (or failed to load)") {:failed failed})))
     (spit (module-file 'cohost.app-main)
-          (str "(" C "/ns cohost.app-main\n  (:require [cohost.core] [" m "]))\n"
+          (str "(" NS " cohost.app-main\n  (:require [cohost.core] [" m "]))\n"
                "(" C "/defn -main [& args]\n"
                "  (cohost.boot/boot-from-snapshot! {})\n"
                "  (cohost.boot/make-user-ns!)\n"
