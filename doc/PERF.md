@@ -1443,10 +1443,10 @@ The jank-MAX fleet's scoreboard in two columns: UNPATCHED is apt jank 0.1-noble 
 (`JANK_BIN=/home/user/int-a/jank-inst/bin/jank`; the launcher's 512M applies there too). x1 writes the programs
 table under this heading (X1-5); the `bb bench:jank` table is below (X1-5b).
 
-### Summary for the release (tip `6a1dbaf`)
+### Summary for the release (tip `808619a`)
 
 Every number here is copied from a table below in this section, and each one names its table. The release tip is
-max/main `6a1dbaf`. The rows were measured on the trees listed in the footnotes, which are all ancestors of that tip.
+max/main `808619a`, whose source tree is `6a1dbaf`'s (808619a adds only this documentation). The rows were measured on the trees listed in the footnotes, which are all ancestors of that tip.
 int-b's X1-8 re-run on `2de1c74` has not landed. When it does, its rows replace the ones marked X1-5 and X1-6.
 
 **Headline.** The geomean of xJVM over the programs that print the JVM's result (`bb bench:programs`, X1-5 with
