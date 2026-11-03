@@ -1882,3 +1882,38 @@ Reading:
   - sort +34% UNPATCHED, inside its spread (30.9-94.7 ms).
 - fib on apt is 384-394 ms (x3.9-4.0). That is still A5's checked integer path. The pre-A5 collation measured 91-98 ms
   on apt.
+
+#### Regression bisect (X1-12): PATCHED spectral-norm, 427.6 -> 733.6 ms
+
+X1-8 above showed spectral-norm under cohost on the PATCHED build (`JANK_BIN=/usr/local/lib/jank-main/bin/jank`, the
+21-patch series) 72% slower than X1-5, with the UNPATCHED rows flat. The bisect: `bb bench:programs jank
+spectral-norm,spectral-norm-hinted`, PATCHED only, 3 interleaved rounds over 5 trees on int-b's box at load 1.0
+(4 CPUs, 15 GB), 2026-11-03 4:21-5:00 AM ET. A cell is the median of 3 round medians (each of 10 timed calls), with
+the 3 round medians and the min-max of all calls in brackets. RESULT is 784791 (SAME) everywhere. Raw data:
+`/home/user/logs/intb-x112.log`.
+
+| tree | what it adds | spectral-norm ms | spectral-norm-hinted ms |
+|---|---|---:|---:|
+| ecc9a31 | X1-5's tree | 396.1 (406.6 / 396.1 / 394.4; 381.8-413.3) | 558.6 (558.6 / 541.9 / 559.4; 535.6-623.9) |
+| 192e62c | ecc9a31 + u1's int-op path | 417.8 (393.4 / 417.8 / 442.1; 389.0-465.5) | 550.8 (545.4 / 550.8 / 561.1; 530.8-600.8) |
+| 034534a | A4 (93d2ab8's parent) | 420.9 (420.9 / 424.1 / 409.0; 400.1-483.3) | 543.0 (548.0 / 539.9 / 543.0; 525.2-582.8) |
+| **93d2ab8** | 034534a + **u2's A5-2** | **735.5** (733.3 / 793.1 / 735.5; 701.5-900.4) | **858.6** (872.9 / 858.6 / 843.9; 821.5-930.7) |
+| 6bd1472 | the release cut | 735.1 (742.8 / 735.1 / 727.3; 675.6-798.8) | 899.1 (832.6 / 917.3 / 899.1; 818.7-1017.0) |
+
+The step is **034534a -> 93d2ab8, u2's A5-2**: +75% on spectral-norm, +58% on the hinted twin. u1's 192e62c is flat
+against ecc9a31.
+
+The form, from `dev/research/x1/dump_rewrite.sh bench/programs/spectral_norm.clj` on the PATCHED binary
+(`/home/user/logs/intb-x112-dump-{034534a,93d2ab8}.txt`): in `eval-a`, the non-zero branch of `(/ 1.0 (+ ...))`, and
+the same in `-run`'s `(/ vBv vv)`:
+
+```
+034534a:  (if (clojure.core/zero? dvb) (cohost.shim/Numbers-divide dva dvb) (clojure.core// dva dvb))
+93d2ab8:  (if (clojure.core/zero? dvb) (cohost.shim/Numbers-divide dva dvb) (cohost.hosts.jank-host/num-divide dva dvb))
+```
+
+So every `eval-a` call now goes through the adapter's `num-divide` var call where it used to be jank's own `/`. That
+happens on the series build too, where jank's `/` is already correct, and with a real dividend (the literal `1.0`),
+which A5-3's rule (`*native-reals*`: a real operand takes the host op directly) would keep direct. A fix belongs at
+the producer, u2's A5-2 divide clause: keep `clojure.core//` when either operand is a known real, and stand down on a
+build whose `/` is correct, as A5's own boot probe does for `+ - *`.
