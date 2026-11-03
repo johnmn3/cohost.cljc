@@ -1815,3 +1815,70 @@ x1.57, x1.29 (29, 28, 29 cases); PATCHED x2.13, x2.10, x2.11 (29 cases). On apt 
 every round: atom-swap, hinted-loop, loop-arith, protocol, reduce-range and transduce. The host (jank's own) value
 wraps at 32 bits, and the stock (cohost) value is Clojure's. So on apt those x values compare a correct result with a
 wrong one, and the UNPATCHED geomean flatters jank's own core.
+
+### The release tip on int-b's box (X1-8)
+
+Measured 2026-11-03, 2:05 AM to 4:00 AM ET, on int-b's box (4 CPUs, 15 GB RAM), shared with lane u4 only. One-minute
+load was 1.9-3.8, with no lock. The method is **3 interleaved rounds**: per program and round, the UNPATCHED process
+(apt jank 0.1-noble) then the PATCHED one (`JANK_BIN=/usr/local/lib/jank-main/bin/jank`, f3d82d65 plus max/main's
+21-patch series), jank-aot then cohost-on-jank, each binary with its own `XDG_CACHE_HOME`. A cell is the median of the
+3 round medians (each round's median is of 10 timed calls), with xJVM against that part's single JVM run, and the
+min-max over all 3 rounds' calls. The last column is cohost's change from the X1-5 table above (UNPATCHED / PATCHED,
+with X1-5's ms in brackets). The geomeans leave out ABSENT and DIFFER rows. Raw data: `/home/user/logs/intb-x18.log`
+and `intb-x18b.log` on int-b's box, parsed by `intb-x18-parse.awk`.
+
+**max/main b33cfd0** (the release cut: u1's integer path and u2's division fix; the coordinator's order), 15 programs:
+
+| program | jvm | jank-aot UNPATCHED | jank-aot PATCHED | cohost UNPATCHED | cohost PATCHED | cohost vs X1-5 (UNPATCHED / PATCHED) |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 100.4 | 76.3 (x0.76; 72.6-89.7) | 52.3 (x0.52; 50.2-59.3) | 393.7 (x3.92; 375.1-443.0) | 66.3 (x0.66; 62.9-82.4) | -14% / +1% (457.4 / 65.4) |
+| fib-hinted | 64.7 | 134.8 (x2.08; 130.6-174.7) | 50.9 (x0.79; 49.5-60.0) | 689.1 (x10.65; 641.5-737.6) | 66.0 (x1.02; 63.6-80.5) | -0% / +1% (689.8 / 65.3) |
+| tak | 205.3 | 447.7 (x2.18; 430.1-509.9) | 119.9 (x0.58; 114.3-142.0) | 491.1 (x2.39; 470.4-569.8) | 113.8 (x0.55; 110.3-123.4) | +2% / -0% (483.1 / 114.3) |
+| tak-hinted | 122.4 | 789.9 (x6.45; 763.1-863.0) | 119.8 (x0.98; 115.1-131.0) | 1498.7 (x12.25; 1428.0-1619.3) | 113.9 (x0.93; 112.7-114.7) | +1% / +1% (1490.0 / 112.3) |
+| mandelbrot | 142.5 | ABSENT | 583.4 (x4.09; 553.6-758.3) | 605.3 (x4.25; 602.2-690.8) | 469.2 (x3.29; 454.4-574.8) | +1% / +0% (599.0 / 467.1) |
+| mandelbrot-hinted | 143.8 | ABSENT | 228.3 (x1.59; 216.5-266.3) | 761.6 (x5.30; 731.9-804.8) | 786.7 (x5.47; 747.5-892.6) | -3% / +3% (781.2 / 762.9) |
+| spectral-norm | 172.3 | 1885.6 (x10.94; 1759.5-1988.1) | 217.4 (x1.26; 208.9-288.6) | 679.3 (x3.94; 655.1-767.3) | 733.6 (x4.26; 690.4-865.3) | +3% / +72% (656.4 / 427.6) |
+| spectral-norm-hinted | 94.8 | 2037.4 (x21.48; 1842.8-2161.3) | 208.3 (x2.20; 195.1-236.8) | 1302.0 (x13.73; 1255.6-1397.6) | 899.2 (x9.48; 839.3-1025.2) | +3% / +55% (1263.1 / 579.1) |
+| nbody | 169.8 | ABSENT | 869.5 (x5.12; 798.1-936.4) | 2572.2 (x15.15; 2342.2-2791.7) | 2198.7 (x12.95; 2108.7-2472.8) | -50% / -42% (5114.7 / 3808.7) |
+| sum-overflow | 9.6 | 66.1 (x6.89; 60.5-97.8) DIFFER | 6.3 (x0.66; 6.0-6.7) | 27.6 (x2.88; 26.7-63.8) | 5.1 (x0.53; 4.8-5.3) | +29% / +1% (21.4 / 5.0) |
+| sum-overflow-hinted | 0.5 | 8.4 (x15.57; 7.8-16.8) DIFFER | 2.0 (x3.64; 1.9-2.0) | 9.0 (x16.63; 8.8-9.1) | 8.1 (x15.08; 7.5-12.8) | +0% / -1% (8.9 / 8.2) |
+| sort | 28.5 | 19121.4 (x670.22; 13308.9-28937.5) | 20.5 (x0.72; 18.6-38.1) | 42.6 (x1.49; 30.9-94.7) | 32.7 (x1.14; 24.4-70.6) | +34% / +3% (31.9 / 31.7) |
+| lazy-pipeline | 24.6 | 867.5 (x35.28; 578.6-1236.9) | 23.0 (x0.94; 20.4-102.2) | 160.7 (x6.54; 117.3-232.4) | 64.9 (x2.64; 63.4-265.2) | -4% / -7% (167.1 / 70.2) |
+| pipeline | 126.4 | 874.1 (x6.92; 833.9-1060.1) DIFFER | 669.3 (x5.30; 608.9-737.9) | 1016.9 (x8.05; 911.6-1081.7) | 994.3 (x7.87; 898.9-1130.0) | +8% / +4% (941.2 / 951.8) |
+| json | 165.2 | 1666.5 (x10.09; 1317.3-2228.6) | 574.5 (x3.48; 555.3-694.5) | 1482.4 (x8.97; 1380.7-1639.5) | 942.3 (x5.70; 872.0-1041.1) | +9% / +1% (1356.2 / 931.2) |
+- cohost on jank PATCHED: geomean xJVM 2.732 over 15 programs
+- cohost on jank UNPATCHED: geomean xJVM 6.196 over 15 programs
+- jank-aot PATCHED: geomean xJVM 1.539 over 15 programs
+- jank-aot UNPATCHED: geomean xJVM 10.250 over 9 programs
+
+**max/main 2de1c74** (b33cfd0 plus u1's A5-4: bound-checked + - * inc dec on native longs), re-run on the 8 rows A5-4
+touches, per the 02:29 AM NOTICE:
+
+| program | jvm | jank-aot UNPATCHED | jank-aot PATCHED | cohost UNPATCHED | cohost PATCHED | cohost vs X1-5 (UNPATCHED / PATCHED) |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 96.6 | 76.2 (x0.79; 73.0-99.7) | 49.6 (x0.51; 49.0-53.1) | 384.1 (x3.98; 363.5-440.6) | 65.4 (x0.68; 63.1-72.3) | -16% / +0% (457.4 / 65.4) |
+| fib-hinted | 60.9 | 131.2 (x2.15; 126.0-155.9) | 52.0 (x0.85; 49.5-55.3) | 663.5 (x10.89; 643.6-699.4) | 66.3 (x1.09; 62.9-73.4) | -4% / +2% (689.8 / 65.3) |
+| tak | 214.8 | 487.1 (x2.27; 442.5-519.5) | 118.7 (x0.55; 114.6-154.5) | 489.9 (x2.28; 462.4-544.0) | 114.1 (x0.53; 109.3-127.9) | +1% / -0% (483.1 / 114.3) |
+| tak-hinted | 120.8 | 787.9 (x6.52; 747.6-830.0) | 119.0 (x0.99; 112.0-133.8) | 1397.5 (x11.57; 1357.5-1568.0) | 114.1 (x0.94; 107.6-161.8) | -6% / +2% (1490.0 / 112.3) |
+| mandelbrot-hinted | 140.0 | ABSENT | 225.2 (x1.61; 214.4-278.1) | 794.3 (x5.67; 752.4-856.5) | 772.9 (x5.52; 725.4-900.1) | +2% / +1% (781.2 / 762.9) |
+| spectral-norm-hinted | 93.5 | 1997.6 (x21.36; 1850.6-2824.6) | 198.9 (x2.13; 191.8-249.5) | 1263.2 (x13.51; 1229.5-1399.8) | 862.6 (x9.22; 816.7-988.3) | +0% / +49% (1263.1 / 579.1) |
+| sum-overflow | 6.7 | 75.5 (x11.22; 60.6-91.5) DIFFER | 6.3 (x0.94; 6.0-8.1) | 27.8 (x4.14; 26.1-68.8) | 5.1 (x0.76; 4.7-7.7) | +30% / +1% (21.4 / 5.0) |
+| sum-overflow-hinted | 0.4 | 8.3 (x20.88; 8.1-11.6) DIFFER | 1.9 (x4.90; 1.8-2.7) | 8.7 (x21.74; 8.3-14.6) | 8.0 (x20.09; 7.5-11.2) | -3% / -2% (8.9 / 8.2) |
+- cohost on jank PATCHED: geomean xJVM 2.028 over 8 programs
+- cohost on jank UNPATCHED: geomean xJVM 7.279 over 8 programs
+- jank-aot PATCHED: geomean xJVM 1.179 over 8 programs
+- jank-aot UNPATCHED: geomean xJVM 3.515 over 5 programs
+
+Reading:
+
+- Every cohost RESULT is SAME in both columns. On apt, jank's own AOT prints DIFFER on sum-overflow,
+  sum-overflow-hinted and pipeline (the i32 wrap), and is ABSENT on mandelbrot(-hinted) and nbody.
+- A5-4 costs nothing measurable here: its 8 rows on 2de1c74 are within ±6% of b33cfd0's in both columns.
+- Rows moved more than 20% from X1-5 (cohost):
+  - nbody -50% UNPATCHED / -42% PATCHED.
+  - spectral-norm **+72% PATCHED** (427.6 -> 733.6 ms) and spectral-norm-hinted **+55% / +49% PATCHED**: a regression on
+    the series build between ecc9a31 (X1-5) and b33cfd0. The UNPATCHED rows are flat (+3%).
+  - sum-overflow +29% / +30% UNPATCHED (21.4 -> 27.6-27.8 ms).
+  - sort +34% UNPATCHED, inside its spread (30.9-94.7 ms).
+- fib on apt is 384-394 ms (x3.9-4.0). That is still A5's checked integer path. The pre-A5 collation measured 91-98 ms
+  on apt.

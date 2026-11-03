@@ -1886,6 +1886,14 @@ namespace cohost_assoc {
 
 (def adapter
   {:name :jank
+   ;; a thrown jank value no cohost type made: jank's checked integer ops throw
+   ;; a string -- the series build's + - * "integer overflow" (runtime/core/
+   ;; math.cpp throw_integer_overflow), inc and dec on a native long "Overflow on
+   ;; increment." (math.hpp, both builds) -- which is the JVM's
+   ;; ArithmeticException; any other is the default's RuntimeException
+   :exception-class (fn [e] (if (contains? #{"integer overflow" "Overflow on increment." "Overflow on decrement."} e)
+                              'java.lang.ArithmeticException
+                              'RuntimeException))
    ;; A4 (a): jank's own chunk fns, but a chunk-cons that keeps its rest lazy (jank's realizes it:
    ;; a chunked pipeline overflows the stack near 1e6 on apt), plus IChunk.reduce over jank's
    ;; array_chunk; and the integer range as a chunked seq of jank's own chunked_cons
@@ -2048,9 +2056,8 @@ namespace cohost_assoc {
    ;; battery's edge cases against the stock path and the JVM
    ;; (dev/research/u4/edges.sh: integers, Long/MAX/MIN, reals, NaN, -0.0, a
    ;; bigint, the shim's integer "ratio", a non-number): every row equal
-   ;; A6-1 (merged by int-a): = is jank's own here too, so its calls are emitted as
-   ;; clojure.core/=, which jank's compiler inlines
-   :core-aliases '#{not = not= < > <= >= ==}
+   ;; A6-1 (u3): = joins them: it is jank's own here ('clojure.core/= :host in :natives)
+   :core-aliases '#{not not= = < > <= >= ==}
    ;; U6-9: a booted stock fn passed as a value ((map inc xs), (filter odd? xs))
    ;; is jank's own fn: the stock inc/pos?/</... bodies already are jank's op
    ;; (their :inline reaches it), so the value differs only by the var call.
