@@ -203,6 +203,21 @@
    ["(cohost) :unit: reals, a range element; ^:redef and recur to another kind type nothing" "[(cohost.rewrite/unit-param-kinds '[(defn bu-c [d] (* d 2.0)) (defn bu-e [i] i) (defn bu-d [] (bu-c 0.5) (mapv (fn [i] (bu-e i)) (range 3)))] (constantly false)) (cohost.rewrite/unit-param-kinds '[(defn ^:redef bu-r [x] x) (defn bu-s [] (bu-r 1))] (constantly false)) (cohost.rewrite/unit-param-kinds '[(defn bu-t [x] x) (defn bu-w [] (loop [i 0] (bu-t i) (recur (str i))))] (constantly false))]" ['{bu-c {1 [:double]} bu-e {1 [:long]}} {} {}]]
    ["(cohost) :unit: mixed kinds, a value use, a macro, an untyped caller type nothing" "[(cohost.rewrite/unit-param-kinds '[(defn bu-a [x] x) (defn bu-b [] (bu-a 1) (bu-a 2.0))] (constantly false)) (cohost.rewrite/unit-param-kinds '[(defn bu-a [x] x) (defn bu-b [] (bu-a 1) (map bu-a [1]))] (constantly false)) (cohost.rewrite/unit-param-kinds '[(defn bu-a [x] x) (defn bu-b [] (bu-a 1) (-> 1 (bu-a)))] (fn [h] (= '-> h))) (cohost.rewrite/unit-param-kinds '[(defn bu-a [x] x) (defn bu-b [y] (bu-a 1) (bu-a y))] (constantly false))]" [{} {} {} {}]]
    ["(cohost) a :unit-typed program computes as Clojure" "(do (cohost.rewrite/static-types! :unit) (try (cohost.boot/eval-str \"(defn bu-p [i j] (+ i (* 2 j))) (defn bu-q [x] (* x 0.5)) (defn bu-u [i] (inc i)) [(bu-p 1 2) (bu-p 2147483647 2147483647) (bu-q 3.0) (bu-u 1) (map bu-u [1.5])]\" {:session? false}) (finally (cohost.rewrite/static-types! nil))))" [5 6442450941 1.5 2 '(2.5)]]
+   ;; U6-7: what the codemod infers (:static-types) must leave every value Clojure's
+   ["an inferred long local rebound to a string" "(let [x 1 x (str x \"!\")] x)" "1!"]
+   ["a hinted local rebound unhinted" "(let [^long x 1 x (str x \"!\")] x)" "1!"]
+   ["a loop local whose recur passes a string" "(loop [i (count []) acc []] (if (< (count acc) 3) (recur (str i \"a\") (conj acc i)) acc))" [0 "0a" "0aa"]]
+   ["an inferred double local" "(let [a 1.5 b (* a 2)] b)" 3.0]
+   ["inferred long arithmetic and count" "(let [a 2 b (* a 21) c (inc b)] [b c (count [1 2 3])])" [42 43 3]]
+   ["a local named like a core fn is no core fn" "(let [+ (fn [a b] (str a b)) q (+ 1 2)] q)" "12"]
+   ["an inferred long loop" "(loop [i 0 s 0] (if (< i 5) (recur (inc i) (+ s i)) s))" 10]
+   ["a local from count" "(let [n (count \"abc\") m (* n 2)] m)" 6]
+   ["an if whose branches agree" "(let [a 7 b (if (pos? a) (dec a) (inc a))] b)" 6]
+   ["a guarded arity given longs and doubles" "(let [f (fn [a b] (+ a b))] [(f 1 2) (f 1.5 2) (f 1 2.5)])" [3 3.5 3.5]]
+   ["a guarded loop over a double parameter" "(let [f (fn [x] (loop [i 0 a 0.0] (if (< i x) (recur (inc i) (+ a 0.5)) a)))] [(f 4) (f 4.5)])" [2.0 2.5]]
+   ["a self-calling fn given a double" "(let [f (fn fib [n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))] [(f 20) (f 20.5)])" [6765 12238.0]]
+   ["a param guessed long beside a long, given longs and doubles" "(let [f (fn [i j] (/ 1.0 (+ (* (+ i j) 0.5) i)))] [(f 1 1) (f 1.5 0.5)])" [0.5 0.4]]
+   ["a param guessed double beside a double, given a long" "(let [f (fn [x] (* x 2.5))] [(f 2) (f 0.5)])" [5.0 1.25]]
    ;; D-11: cohost picks each #? branch by the target's ranking of the keys
    ;; (:clj, then :default, on every target today), not by source order
    ["#? the :clj branch over :cljs and :default" "#?(:cljs 1 :clj 2 :default 3)" 2]

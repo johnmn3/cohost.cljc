@@ -1307,7 +1307,7 @@
          ;; U6-9 (b): :static-types :unit -- this source text is one compilation
          ;; unit; its defns' parameter kinds from their call sites (a read
          ;; failure types nothing)
-         unit (when (and (= :unit @rw/static-types) (= :unit (host/static-types)))
+         unit (when (or (= :unit (host/static-types)) (and (= :unit @rw/static-types) (host/static-types)))
                 (host/try-all
                  (fn []
                    (let [forms (atom [])]

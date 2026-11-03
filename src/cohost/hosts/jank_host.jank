@@ -1927,9 +1927,6 @@ namespace cohost_obj {
    ;; is jank's op on a host long (is_integer: integer and small_integer; a
    ;; native long boxes into it) and the stock fn on anything else (a bigint,
    ;; a real, a non-number); an integer literal is jank's op directly
-   ;; U6-9 (b): the codemod may type a parameter by call-site evidence when
-   ;; the run opts in (adapter.cljc's :static-types, with its unsoundness)
-   :static-types :unit
    :core-expansions {'odd? (fn [stock-head args] (parity-expansion 'clojure.core/odd? stock-head args))
                      'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))}
    :syntax-quote-source? true
@@ -2123,6 +2120,9 @@ namespace cohost_obj {
    ;; a ^long / ^double let*/loop* local: jank types a local by its init, and
    ;; these return i64 / f64 (runtime/core/math.hpp, always inline)
    :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
+   ;; U6-7: infer what is certain (adapter :static-types); U6-9 (b): :unit
+   ;; when the run opts in (cohost.rewrite/static-types! :unit)
+   :static-types :sound
 })
 
 
