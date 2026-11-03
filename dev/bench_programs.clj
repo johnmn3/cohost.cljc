@@ -302,7 +302,14 @@
 
 (defn run-jank-cohost [_ src arg]
   ;; cohost's jank boot has no load-file; --eval reads every form of its argument.
-  (let [{:keys [cmd env]} (jank-cohost-cmd (cohost-source src (clock "jank") arg))]
+  (let [{:keys [cmd env]} (jank-cohost-cmd (cohost-source src (clock "jank") arg))
+        ;; U6-9: COHOST_STATIC_TYPES=unit opts the program into the codemod's
+        ;; :static-types :unit (call-site parameter typing within the program),
+        ;; a first --eval ahead of the program's; unset, the default
+        cmd (if (= "unit" (System/getenv "COHOST_STATIC_TYPES"))
+              (let [[a b] (split-with #(not= "--eval" %) cmd)]
+                (vec (concat a ["--eval" "(cohost.rewrite/static-types! :unit)"] (rest b))))
+              cmd)]
     (run! cmd (when env {:extra-env env}))))
 
 (defn run-cljrs [id src arg]
