@@ -196,6 +196,10 @@
    ;; A5-5: str of a double is Double.toString (jank's own str writes 3e+10). pr / print are
    ;; the host's printer on jank (policy.cljc host-names) and still write 1e-04: not in this row
    ["str of a double is Double.toString" "[(str 3.0E10) (str 1.0E-4) (str 1.0E7) (str 0.001) (str 1234567.5) (str \"x\" 1.0E21 \" \" -0.0) (.toString 2.5E-4)]" ["3.0E10" "1.0E-4" "1.0E7" "0.001" "1234567.5" "x1.0E21 -0.0" "2.5E-4"]]
+   ;; A5-8: a literal-started loop local is a native long on jank only when every recur keeps it
+   ;; one; a double (or any other value) on recur leaves it boxed, as Clojure's (patch 26's review)
+   ["a literal-0 loop local that recurs with a double" "[(loop [i 0 x 0] (if (< i 3) (recur (inc i) (+ x 0.5)) x)) (loop [i 0 x 0] (if (< i 2) (recur (inc i) (if (= i 0) 1 :k)) x))]" [1.5 :k]]
+   ["an int-safe recur keeps its literal loop local" "[(loop [i 0 s 0] (if (< i 5) (recur (inc i) (if (odd? i) (+ s i) s)) s)) (loop [i 0 acc 0] (if (< i 4) (recur (inc i) (+ acc (* i 3))) acc))]" [4 18]]
    ["hash-combine hashes its argument as Object.hashCode does" "[(hash-combine 0 \"a\") (hash-combine 0 nil) (hash-combine 1 2) (hash-combine -5 \"hello\")]" [-1640531430 -1640531527 -1640531462 1541369522]]
    ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]
    ;; primitive fn* parameters coerce as JVM Clojure 1.12.0 does (measured
