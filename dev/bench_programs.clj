@@ -265,8 +265,11 @@
                    "--" "--eval" code]
                   [jank-bin "-O3" "--module-path" module-path "run-main" "cohost.run" "--" "--eval" code])}))
     (do (reset! jank-boot :aot)
-        (reset! jank-env nil)
-        {:cmd [jank-bin "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" code]})))
+        ;; jank-MAX A1: cohost's collector environment (dev/perf/jank_gc_env.clj)
+        (load-file "dev/perf/jank_gc_env.clj")
+        (reset! jank-env ((resolve 'jank-gc-env)))
+        {:env @jank-env
+         :cmd [jank-bin "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" code]})))
 
 (defn run-jank-cohost [_ src arg]
   ;; cohost's jank boot has no load-file; --eval reads every form of its argument.
