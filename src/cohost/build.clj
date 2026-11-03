@@ -348,6 +348,51 @@ require_once __DIR__ . '/out/cohost/app_main.php';
                          "exec " php " -d opcache.enable_cli=1 -d opcache.file_cache=\"$here/.opcache\" -d opcache.file_cache_only=1"
                          " -d opcache.jit=tracing -d opcache.jit_buffer_size=64M \"$here/run.php\" \"$@\"\n"))))
 
+(def ^:private lg-entry
+  ";; the built app's entry (made by cohost.build): lg -c runs this file while it compiles,
+;; so the app's -main runs only behind the run marker that `run` passes first
+(ns cohost-lg-app
+  (:require [cohost.app-main]))
+(when (= \"--cohost-run\" (first *command-line-args*))
+  (apply cohost.app-main/-main (rest *command-line-args*)))
+")
+
+(defn- lg-bytecode
+  "let-go's own AOT: the booted core, the libraries and the app's namespaces,
+   recorded on let-go (dev/perf/snapshot_record.cljc), emitted as let-go
+   modules (--host lg --main: cohost.app-main boots from them and calls the
+   app's -main), and compiled with them, cohost and an entry by `lg -c` into
+   one bytecode file. target/<name>/: app.lgb, the lg binary (statically
+   linked) and run. No source is read at run time.
+   - The modules are lane D's :text? dialect: each recorded form is evaluated
+     through the adapter at load, so the bytecode holds them as text (the
+     code dialect, whose forms would be compiled too, stops on `distinct`:
+     doc/AOT-PLAN.md).
+   - The adapter's type table builds 1/2, 1N and 1M at run time: let-go's
+     bytecode cannot serialize those constants."
+  [{:keys [main name]}]
+  (let [home (cohost-home)
+        out (io/file "target" name)
+        work (.getCanonicalFile (io/file "target" "cohost-lg-build"))
+        events (str (io/file work "events.edn"))
+        src (str (io/file work "src"))
+        lg (str/trim (sh! "." "sh" "-c" "command -v lg"))
+        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":lg" "-Spath")) #":")]
+    (sh! "." "rm" "-rf" (str out) (str work))
+    (.mkdirs work)
+    (apply sh! home "lg" "-source-paths" "src" "dev/perf/snapshot_record.cljc"
+           "--out" events (concat (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
+    (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "lg" "--events" events "--out" src "--main" (str main))
+    (spit (io/file work "entry.lg") lg-entry)
+    (.mkdirs out)
+    (sh! (str work) "lg" "-source-paths" (str src ":" home "/src") "-c" (str (.getCanonicalFile (io/file out "app.lgb"))) "entry.lg")
+    (io/copy (io/file lg) (io/file out "lg"))
+    (.setExecutable (io/file out "lg") true false)
+    (sh! "." "rm" "-rf" (str work))
+    (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main, let-go bytecode (made by cohost.build)\n"
+                         "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
+                         "exec \"$here/lg\" \"$here/app.lgb\" --cohost-run \"$@\"\n"))))
+
 (defn- jank-exe [{:keys [main name]}]
   (let [home (cohost-home)
         ;; the source roots, resolved as `cohost :jank` resolves them (jars extracted)
@@ -371,7 +416,7 @@ require_once __DIR__ . '/out/cohost/app_main.php';
       :jolt (jolt-native opts)
       :lpy (lpy-native opts)
       :cljw (cljw-snapshot opts)
-      :lg (script-bundle t opts)
+      :lg (lg-bytecode opts)
       :phel (phel-native opts)
       :jank (jank-exe opts)
       (do (println (str "build: not yet on " t))
