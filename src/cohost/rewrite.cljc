@@ -19,6 +19,12 @@
   ;; names defined here that let-go's core also has (it warns of each)
   #?(:lg (:refer-clojure :exclude [starts-with? ends-with?])))
 
+;; A5-6: whether the form being rewritten is an argument of a self-call of
+;; the def being rewritten (*def-name*): there a let* does not compile on apt
+;; (self-call-block-arg?); elsewhere the int-op expansion may name a call
+;; operand with one.
+(def ^:dynamic *in-self-arg* false)
+
 (def ^:dynamic *native-reals*
   "A5-3: let*/loop* locals statically real under *native-ints*' regime (a
    :native-int-aliases host): started from a real literal or from real
@@ -728,6 +734,17 @@
             (guard (map small? args') fast (slow checked args'))))
         (apply list op args')))))
 
+(defn- int-op-call?
+  "A5-6: a call form the int-op expansion may name with a let*: a list whose
+   head is a plain symbol (not a special form, interop, or a numeric form the
+   codemod types itself)."
+  [x]
+  (and (seq? x) (symbol? (first x))
+       (not (contains? '#{let* loop* letfn* fn* fn if do quote var try throw recur def set! new . case*} (first x)))
+       (not (native-int-form? x)) (not (real-form? x))
+       (not (#{\. \/} (first (name (first x)))))
+       (not (and (namespace (first x)) (re-find #"^[A-Z]" (namespace (first x)))))))
+
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
         nm (static-name c m)
@@ -741,9 +758,16 @@
           real' real'
           (known? ctx nm) (or ;; A5-3: + - * of two unknown operands where the shim's are
                               ;; A5's checked call: the host's promoting op inline (nil: keep it)
-                              (when-let [f (and (= 2 (count args)) (every? int-op-operand? args)
-                                                (some symbol? args) (get (host/int-op-aliases) nm))]
-                                (f args' (or (get (:host-aliases ctx) nm) (static-sym c m))))
+                              (when-let [f (and (= 2 (count args)) (get (host/int-op-aliases) nm))]
+                                (cond (and (every? int-op-operand? args) (some symbol? args))
+                                      (f args' (or (get (:host-aliases ctx) nm) (static-sym c m)) (not *in-self-arg*))
+                                      ;; A5-6: a call operand (fib's (+ (fib ..) (fib ..))) is named
+                                      ;; once by a let*, outside a self-call's argument
+                                      (and (not *in-self-arg*)
+                                           (every? #(or (int-op-operand? %) (int-op-call? %)) args))
+                                      (let [gs (mapv (fn [a a'] (if (int-op-operand? a) a' (gensym "io"))) args args')
+                                            bs (vec (mapcat (fn [g a'] (when (not= g a') [g a'])) gs args'))]
+                                        (list 'let* bs (f gs (or (get (:host-aliases ctx) nm) (static-sym c m)) true)))))
                               ;; U6-8: the adapter's own expansion of a Math static at
                               ;; the call head (nil: keep the shim call)
                               (when-let [mf (get (host/math-aliases) nm)] (mf args'))
@@ -2276,7 +2300,11 @@ nil))
                       ;; arguments without inlining (the expansion inlines them)
                       (if (and *inline?* (rewritten-macro? ctx h))
                         (binding [*inline?* false] (apply list (rw ctx h) (doall (rw-all ctx args))))
-                        (apply list (or (core-alias ctx h) (rw ctx h)) (rw-all ctx args)))))]
+                        ;; (a self-named fn* binds its name as a local: no locals test;
+                        ;; a shadowing local only loses the let* here, never correctness)
+                        (if (and *def-name* (symbol? h) (nil? (namespace h)) (= (name h) (name *def-name*)))
+                          (binding [*in-self-arg* true] (apply list (rw ctx h) (doall (rw-all ctx args))))
+                          (apply list (or (core-alias ctx h) (rw ctx h)) (rw-all ctx args))))))]
       (carry-meta out form))))
 
 (defn rw [ctx form]
