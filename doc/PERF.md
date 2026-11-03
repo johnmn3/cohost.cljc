@@ -1428,6 +1428,24 @@ lazy-pipeline is slower with the larger heap in both program measurements; binar
 single-stream re-measure and level in the before/after. The default stays 512M: it wins bench:jank on both legs,
 `run.sh 18`, and three of the four program rows.
 
+**The heap guard (A1-3).** An initial heap of 2G or more breaks every cohost program on both binaries: the JIT
+cannot link `cohost/hosts/jank_host.o` ("relocation ... out of range of Delta32 fixup"; the A1-2 section, all 3
+rounds). `jank-gc-env` therefore clamps a user's `GC_INITIAL_HEAP_SIZE` at or above 2G (in any spelling bdwgc reads:
+`2G`, `2048M`, `4g`, bytes) to `1G`, the largest value the A1-2 matrix measured, and prints one line on stderr naming
+the clamp and the reason. `COHOST_JANK_GC=none` passes the value through. `GC_MAXIMUM_HEAP_SIZE` is left alone,
+because 4G ran (bdwgc does not reserve the maximum up front).
+
+Probes on apt (`bb bench:programs jank binary-trees-14`, gated, 2026-11-03 7:17-7:28 AM ET):
+
+| setting | without the guard | with it |
+|---|---|---|
+| 2G | ABSENT (the Delta32 error); 2048M the same | the clamp line, then 113.2 ms |
+| 2G with `COHOST_JANK_GC=none` | - | ABSENT (passed through) |
+| 1G | 81.8 ms | 92.5 ms (no clamp) |
+| `GC_MAXIMUM_HEAP_SIZE=4G` | 184.4 ms | (not clamped) |
+
+1536M also ran (145.6 ms), so the limit lies between 1.5G and 2G.
+
 **PATCHED** (`JANK_BIN` = a source build carrying 19-gc-defaults, `/usr/local/lib/jank-dev`: 11 13 14 12-21 18 19;
 3 rounds): not a no-op. Patch 19 applies its own heap only when the variable is unset, so cohost's 512M replaces it:
 boot (AOT) maxrss 1776172 -> 2166628 KB (1.22x), binary-trees-14 80.86 -> 56.19 ms; boots 542/171/78/0, 147/149,
