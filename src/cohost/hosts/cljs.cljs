@@ -472,9 +472,15 @@
         ;; one entry of (macro-defs ns-sym), not the whole map
         m (let [e (get (defs (macros-ns ns-sym)) nm)] (when-not (alias? e) e))]
     (when (or d m)
-      (let [h (handle (if m (macros-ns ns-sym) ns-sym) nm (boolean m))]
+      (let [h (handle (if m (macros-ns ns-sym) ns-sym) nm (boolean m))
+            ;; a def whose name meta has :test (deftest's) compiles to a
+            ;; cljs$lang$test property on the value: neither the analyzer's
+            ;; :meta nor meta-store has it, and clojure.test's run-tests
+            ;; finds tests through ns-interns
+            t (when-not m (let [v (js-path (:ns h) nm)] (when (some? v) (.-cljs$lang$test v))))]
         (Var. (fn [] (js-path (:ns h) nm)) (symbol (str ns-sym) (str nm))
-              (assoc (var-meta h) :ns ns-sym :name nm))))))
+              (cond-> (assoc (var-meta h) :ns ns-sym :name nm)
+                (some? t) (assoc :test t)))))))
 
 (defn- rt-ns-resolve
   ([ns sym] (rt-ns-resolve ns nil sym))
