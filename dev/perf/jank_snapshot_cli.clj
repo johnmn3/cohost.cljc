@@ -114,7 +114,9 @@
                     (:out (p/shell {:out :string} "sha256sum" (str repo "/dev/perf/jank_snapshot_cli.clj")
                                    (str repo "/dev/perf/jank_snapshot_project_record.jank")
                                    (str repo "/dev/perf/jank_snapshot_emit.clj")))
-                    "main " main "\n"))))
+                    ;; not the main namespace (D-10): whatever was compiled
+                    ;; loads compiled under any main, the rest from source
+                    ""))))
 
 (defn jank-project-build!
   "D-10: compile what a run recorded (dir/events.edn) into the project's
@@ -187,3 +189,45 @@
                  (binding [*out* *err*]
                    (println (str "cohost: jank: compiling the project's namespaces in the background for the next run ("
                                  dir "/build.log)"))))))})))))
+(defn- project-namespaces
+  "The namespaces under the project's own source roots (those inside the
+   project directory: its :paths, not its dependencies'), from their files."
+  [project roots]
+  (let [proj (str (fs/canonicalize project))
+        own (filter #(str/starts-with? (str (fs/canonicalize %)) proj) roots)]
+    (->> own
+         (mapcat (fn [r] (map (fn [f] [r f]) (source-files r "**.{clj,cljc}"))))
+         (remove (fn [[_ f]] (or (str/includes? f "/target/") (str/includes? f "/.cpcache/"))))
+         (map (fn [[r f]] (-> (str (fs/relativize r f)) (str/replace #"\.cljc?$" "") (str/replace "/" ".") (str/replace "_" "-"))))
+         distinct sort vec)))
+
+(defn jank-prepare!
+  "D-10: cohost :jank -P, the install step: after the dependencies are
+   resolved (as clojure -P), the core snapshot is built when stale and the
+   project's own namespaces are recorded (loaded, never run) and compiled, so
+   the first run loads them compiled. Prints what it did on stderr; -> exit code."
+  [repo project roots]
+  (binding [*out* *err*]
+    (let [ens (p/shell {:dir repo :continue true} "bb" "-e" "(load-file \"dev/perf/jank_snapshot_ensure.clj\")")
+          l (when (zero? (:exit ens)) (jank-cli-launch repo))]
+      (if-not (:snapshot? l)
+        (do (println "cohost: jank: the core snapshot did not build; -P stops here") 1)
+        (let [libs (project-namespaces project roots)
+              dir (str (fs/absolutize (fs/path project "target/cohost-jank")))
+              stamp (str dir "/stamp")
+              k (project-key repo roots nil)]
+          (cond
+            (empty? libs) (do (println "cohost: jank: the core snapshot is fresh; no project namespaces to compile") 0)
+            (and (fs/exists? stamp) (= k (str/trim (slurp stamp))))
+            (do (println (str "cohost: jank: the core snapshot and the project's " (count libs) " namespaces are compiled")) 0)
+            :else
+            (let [events (str dir "/events.edn")
+                  _ (fs/create-dirs dir)
+                  r (apply p/shell {:dir repo :out :string :err :string :continue true :extra-env (:env l)}
+                           "jank" "--module-path" (:module-path l) "run" (str repo "/dev/perf/jank_snapshot_project_record.jank")
+                           "--" "--stock" (str repo "/resources/cohost/clojure-1.12.0") "--out" events
+                           (concat (mapcat (fn [x] ["--lib" x]) libs) (mapcat (fn [x] ["--root" x]) roots)))]
+              (doseq [line (str/split-lines (:out r)) :when (str/starts-with? line "RECORD-LIB-ERROR")] (println line))
+              (if (and (zero? (:exit r)) (jank-project-build! repo dir (:module-path l) k (:env l)))
+                (do (println (str "cohost: jank: compiled the project's " (count libs) " namespaces (" dir ")")) 0)
+                (do (println (str "cohost: jank: compiling the project's namespaces failed: " (:err r))) 1)))))))))

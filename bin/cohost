@@ -294,8 +294,13 @@
       (let [{:keys [roots argmap]} (resolve-deps cwd o)]
         (cond
           (:spath? o) (println (str/join ":" roots))
-          (:prepare? o) (binding [*out* *err*]
-                          (println (str "cohost: prepared " (count roots) " source roots under " cache-dir)))
+          (:prepare? o) (do (binding [*out* *err*]
+                              (println (str "cohost: prepared " (count roots) " source roots under " cache-dir)))
+                            ;; jank (D-10): -P is the install step: the core
+                            ;; snapshot and the project's namespaces, compiled
+                            (when (= host "jank")
+                              (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
+                              (System/exit ((resolve 'jank-prepare!) repo cwd roots))))
           :else
           (let [run (if (= mode :X)
                       {:inits [] :main (exec-config (:main o) argmap)}
