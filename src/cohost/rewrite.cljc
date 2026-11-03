@@ -890,7 +890,7 @@
   [fn-hint params]
   (or (primitive-hint (:tag (meta params))) fn-hint))
 
-(declare infer-num loop-recurs)
+(declare infer-num loop-recurs core-op)
 
 (defn- self-call-args
   "Every occurrence of nm in body: a vector of each call's argument list, or
@@ -912,6 +912,35 @@
               :else (mapcat walk (seq x))))]
     (let [r (doall (walk body))]
       (when-not (some #{::escapes} r) (vec r)))))
+
+(def ^:private numeric-ops
+  #{"+" "-" "*" "/" "inc" "dec" "<" ">" "<=" ">=" "==" "zero?" "pos?" "neg?" "quot" "rem" "mod" "max" "min"})
+
+(defn- numeric-params
+  "U6-7: {param type} of the unhinted plain parameters the raw body uses as a
+   direct operand of a numeric core fn (outside nested fns and quoted forms):
+   double when the body holds a double literal, else long. A guess only: the
+   arity runs it under a guard on the arguments' kinds (guarded-arity)."
+  [params body]
+  (let [ps (set (keep #(when (and (symbol? %) (not= '& (*plain* %)) (nil? (primitive-hint (:tag (meta %)))))
+                         (*plain* (bare-sym %)))
+                      params))
+        used (volatile! #{})
+        dbl? (volatile! false)]
+    (letfn [(walk [x]
+              (cond
+                (double? x) (vreset! dbl? true)
+                (not (branch? x)) nil
+                (seq? x)
+                (let [h (first x) n (when (symbol? h) (name (*plain* h)))]
+                  (when-not (contains? #{"quote" "fn" "fn*" "letfn*"} n)
+                    (when (contains? numeric-ops (core-op h))
+                      (doseq [a (rest x)]
+                        (when (and (symbol? a) (contains? ps (*plain* a))) (vswap! used conj (*plain* a)))))
+                    (run! walk x)))
+                :else (run! walk (seq x))))]
+      (run! walk body)
+      (into {} (map (fn [p] [p (if @dbl? 'double 'long)])) @used))))
 
 (defn- speculation
   "U6-7, :static-types on a :native-hints host: an unhinted single-arity fn
@@ -956,13 +985,25 @@
    host never converts an argument it has not coerced. A single-arity fn named
    `nm` names the inner fn* the same, so its self-calls are the host's native
    named recursion; the return hint becomes the inner fn*'s :rettag."
-  ([params body'] (emit-arity nil false nil params body'))
-  ([nm single? ret-hint params body']
+  ([params body'] (emit-arity nil false nil params body' nil))
+  ([nm single? ret-hint params body'] (emit-arity nm single? ret-hint params body' nil))
+  ([nm single? ret-hint params body' typed]
    (let [hints (mapv (fn [p] (when (symbol? p) (primitive-hint (:tag (meta p))))) params)]
      (if-not (or (some some? hints) ret-hint)
        (if-let [spec (speculation nm single? params body')]
          (apply list (rw-params params) spec)
-         (apply list (rw-params params) body'))
+         (if-let [[ptypes tbody] typed]
+           ;; U6-7: the params guessed numeric, under a guard on their kinds:
+           ;; the typed body binds them through the host's native conversion
+           ;; (its locals infer from them), anything else runs the body as is
+           (let [casts (host/native-local-casts)
+                 guard (apply list 'and (map (fn [[p t]] (list (shim-fn (if (= 'double t) "double-kind?" "long-kind?")) p)) ptypes))
+                 binds (vec (mapcat (fn [[p t]] [p (list (get casts t) p)]) ptypes))]
+             (apply list (rw-params params)
+                    [(list 'if guard
+                           (apply list 'let* binds tbody)
+                           (if (next body') (apply list 'do body') (first body')))]))
+           (apply list (rw-params params) body')))
        (let [body' (or (seq body') '(nil))
              binds (into [] (mapcat (fn [p h]
                                       (when h (let [s (bare-sym p)] [s (coerce-form h s)])))
@@ -1033,13 +1074,27 @@
                                        body' (binding [*local-tags* tags *local-classes* classes *marker-depth* depths
                                                        *num-env* fenv]
                                                (doall (rw-all ctx body)))
+                                       ;; U6-7: a second rewrite with the numeric params typed,
+                                       ;; for a guarded arity (not when a hint or a cast is missing)
+                                       casts (host/native-local-casts)
+                                       ptypes (when (and (host/static-types) (host/native-hints) casts
+                                                         (not (some #(= '& (*plain* %)) ps0))
+                                                         (not (some #(primitive-hint (:tag (meta %))) ps0)))
+                                                (not-empty (into {} (filter (fn [[_ t]] (get casts t)))
+                                                                 (numeric-params params body))))
+                                       tbody (when ptypes
+                                               (binding [*local-tags* tags *local-classes* classes *marker-depth* depths
+                                                         *num-env* (merge fenv ptypes)]
+                                                 (doall (rw-all ctx body))))
                                        body' (with-markers bs body')
                                        body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')
                                        rest-arg (second (drop-while #(not= '& %) params))
                                        body' (if (and (:vector-rest-args? ctx) (symbol? rest-arg))
                                                [(apply list 'let* [rest-arg (list (shim-fn "RT-seq") rest-arg)] body')]
                                                body')]
-                                   (emit-arity nm one-arity? (return-hint fn-ret params) params body')))
+                                   (emit-arity nm one-arity? (return-hint fn-ret params) params body'
+                                               (when (and ptypes (empty? bs) (not (:loop-variadic-recur? ctx)))
+                                                 [ptypes tbody]))))
                                arities)))]
     (if (and nm (not (:named-fn*? ctx)))
       (list 'letfn* [nm (apply list (carry-meta 'fn* (first form)) (if single? (first arities') arities'))] nm)
@@ -1119,6 +1174,33 @@
               :else (vec (mapcat walk (seq x)))))]
     (vec (mapcat walk body))))
 
+(defn- recur-sites
+  "[env args] for each recur whose target is this loop (as loop-recurs), env
+   being env extended by the let* bindings between the loop and the recur
+   (each inferred in order; a binding shadows)."
+  [env body]
+  (letfn [(walk [env x]
+            (cond
+              (not (branch? x)) []
+              (seq? x)
+              (let [h (first x) n (when (symbol? h) (name (*plain* h)))]
+                (cond
+                  (contains? #{"quote" "loop" "loop*" "fn" "fn*" "letfn*"} n) []
+                  (= "recur" n) [[env (vec (rest x))]]
+                  (and (= "let*" n) (vector? (second x)))
+                  (let [[env' acc] (reduce (fn [[e acc] [b v]]
+                                             (let [acc (into acc (walk e v))]
+                                               (if (symbol? b)
+                                                 (let [sym (*plain* (bare-sym b))
+                                                       t (binding [*locals* (conj *locals* sym)] (infer-num e v))]
+                                                   [(if t (assoc e sym t) (dissoc e sym)) acc])
+                                                 [e acc])))
+                                           [env []] (partition 2 (second x)))]
+                    (into acc (mapcat #(walk env' %) (drop 2 x))))
+                  :else (vec (mapcat #(walk env %) x))))
+              :else (vec (mapcat #(walk env %) (seq x)))))]
+    (vec (mapcat #(walk env %) body))))
+
 (defn- infer-bindings
   "[types env']: for a let*/loop*'s [sym init ...], each unhinted symbol
    binding's certain type (nil when not), and the env its body sees. loop*:
@@ -1143,11 +1225,12 @@
                    [acc env])))
         [ts env'] (step nil)]
     (if (= h 'loop*)
-      (let [rs (loop-recurs body)]
+      (do
         (loop [ts ts env' env']
           (let [names (keep (fn [[b _]] (when (symbol? b) (*plain* (bare-sym b)))) pairs)
+                rs (binding [*locals* (into *locals* names)] (recur-sites env' body))
                 ts' (binding [*locals* (into *locals* names)]
-                      (vec (map-indexed (fn [i t] (when (and t (every? #(= t (infer-num env' (nth % i nil))) rs)) t)) ts)))]
+                      (vec (map-indexed (fn [i t] (when (and t (every? (fn [[e args]] (= t (infer-num e (nth args i nil)))) rs)) t)) ts)))]
             (if (= ts' ts) [ts env'] (let [[ts2 e2] (step ts')] (recur ts2 e2))))))
       [ts env'])))
 
