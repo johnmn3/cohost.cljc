@@ -17,7 +17,7 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 |---|---|---:|---:|---:|---:|---:|
 | stock Clojure on the JVM (the reference) | | | | 1.5 s | 1 | |
 | cohost `:jvm` (the real Clojure CLI) | an uberjar | not yet measured | x1.00 (28) | 1.4 s | 1 | |
-| cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | not in this release: programs with type hints fail to build | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
+| cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | x4.39 (28, Box 4); x3.40 (28, macOS) | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
 | cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | x6.3 (28) | 4.5 s | x9.6 (28) | x2.9 (28) |
 | cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | x3511 (25, at smaller sizes) | 88.6 s | not yet measured | not yet measured |
 | cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | x72.1 (27, Box 3) | 94.0 s | x79.3 (27) | x20.5 (28) |
@@ -126,6 +126,49 @@ build saves, not time per call. Median ms (xJVM). Records: `doc/perf/box4/` (`jv
 | tak | 1.6 | 13547.4 (x8736.56) |
 | tak-hinted | 0.6 | 85579.8 (x141957.47) |
 | **geomean xJVM** (programs that ran) | 1 | **x3511.27** (25) |
+
+### Box 4 on the release c0431c6: jank's built app
+
+The first measurement of jank's built app (hinted programs did not build before 8fcb495). Box 4 (4 CPUs, Intel Xeon
+2.10 GHz, Linux, jank 0.1 from apt), the JVM column measured on 2704c21 the same morning (10:19 AM ET), jank-built on
+8fcb495 (11:18 to 11:38 AM ET, the box busy with other compiles). Each program is one native executable from
+`cohost -T:build build`. Median ms (xJVM). Records: `doc/perf/box4/jank-built-c0431c6.edn`.
+
+| program | jvm | jank-built |
+|---|---:|---:|
+| binary-trees | 241.9 | 1374.3 (x5.68) |
+| binary-trees-14 | 12.4 | 74.7 (x6.01) |
+| binary-trees-14-hinted | 10.6 | 71.1 (x6.73) |
+| binary-trees-hinted | 263.2 | 1384.2 (x5.26) |
+| dispatch | 140.8 | 1109.1 (x7.88) |
+| fannkuch | 134.7 | 952.9 (x7.08) |
+| fannkuch-hinted | 153.8 | 996.8 (x6.48) |
+| fib | 117.8 | 153.4 (x1.30) |
+| fib-hinted | 76.6 | 63.8 (x0.83) |
+| first-output | 666.7 | 789.8 (x1.18) |
+| json | 203.7 | 1922.9 (x9.44) |
+| k-nucleotide | 134.3 | 755.1 (x5.62) |
+| keyword-map | 95.2 | 652.5 (x6.85) |
+| lazy-pipeline | 26.9 | 211.5 (x7.87) |
+| mandelbrot | 171.5 | 751.9 (x4.38) |
+| mandelbrot-hinted | 169.6 | 785.2 (x4.63) |
+| nbody | 205.8 | 1181.6 (x5.74) |
+| nbody-hinted | 201.6 | 1184.9 (x5.88) |
+| nsieve | 182.8 | 703.9 (x3.85) |
+| nsieve-hinted | 175.9 | 695.9 (x3.96) |
+| pipeline | 149.8 | 1638.4 (x10.94) |
+| sort | 32.6 | 62.6 (x1.92) |
+| spectral-norm | 223.2 | 815.7 (x3.65) |
+| spectral-norm-hinted | 120.3 | 1164.7 (x9.68) |
+| sum-overflow | 11.0 | 35.4 (x3.22) |
+| sum-overflow-hinted | 0.5 | 8.0 (x15.56) |
+| tak | 265.0 | 492.0 (x1.86) |
+| tak-hinted | 147.4 | 127.6 (x0.87) |
+| **geomean xJVM** (programs that ran) | 1 | **x4.39** (28) |
+
+The macOS box (Apple silicon, the user's agent) measured the same column on c0431c6: x3.40 over 28 (unhinted x3.29,
+hinted x3.61), first-output 190 ms against the JVM's 195 -- the built app at the JVM's start time, and about twice as
+fast as cohost on jank through the JIT on that box (x6.0 the night before). Its records land when its branch is pushed.
 
 ### Box 1: built apps
 
