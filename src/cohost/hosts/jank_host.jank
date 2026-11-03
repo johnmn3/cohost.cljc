@@ -2399,6 +2399,12 @@ namespace cohost_assoc {
    ;; a ^long / ^double let*/loop* local: jank types a local by its init, and
    ;; these return i64 / f64 (runtime/core/math.hpp, always inline)
    :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
+   ;; U6-11: the series (patch 20) passes native-tagged arguments natively on a
+   ;; self-call; apt 0.1 boxes each at the call and unboxes it at entry
+   ;; (codegen of tak-both-dec on apt: convert<long>::into_object / from_object).
+   ;; Keyed on the series, as int-wraps? is: a :rettag probe cannot tell them
+   ;; apart (both return 2.5 from (^{:rettag 'long} fn* ([x] x)) 2.5).
+   :native-self-calls? (not int-wraps?)
    ;; U6-7: infer what is certain (adapter :static-types); U6-9 (b): :unit
    ;; when the run opts in (cohost.rewrite/static-types! :unit)
    :static-types :sound
