@@ -1389,7 +1389,8 @@
    named recursion; the return hint becomes the inner fn*'s :rettag."
   ([params body'] (emit-arity nil false nil params body' nil))
   ([nm single? ret-hint params body'] (emit-arity nm single? ret-hint params body' nil))
-  ([nm single? ret-hint params body' typed]
+  ([nm single? ret-hint params body' typed] (emit-arity nm single? ret-hint params body' typed nil))
+  ([nm single? ret-hint params body' typed hinted]
    (let [hints (mapv (fn [p] (when (symbol? p) (primitive-hint (:tag (meta p))))) params)]
      (if-not (or (some some? hints) ret-hint)
        (if-let [[ptypes tbody] typed]
@@ -1419,7 +1420,19 @@
              ;; whose self-calls stay inside the typed inner fn* (fib 32 in
              ;; this shape 24-25 ms vs 27-28 on apt; 9 vs 25 on the series)
              self-calls? (and single? nm (mentions-sym? (bare-sym nm) body'))
-             native? (and spells
+             ;; U6-11 (E): the hinted params as native locals (rw-fn*'s second
+             ;; rewrite), unless the arity calls itself (the inner fn* paths)
+             ;; nor with a recur to the arity, whose argument the native local
+             ;; would take uncoerced
+             [htypes hbody] (when (and hinted (not self-calls?) (not (fn-level-recur? body'))) hinted)
+             binds (if htypes
+                     (into binds (mapcat (fn [p] (let [s (bare-sym p)]
+                                                   (when-let [t (get htypes (*plain* s))]
+                                                     [s (list (get (host/native-local-casts) t) s)])))
+                                         params))
+                     binds)
+             body' (if htypes (or (seq hbody) '(nil)) body')
+             native? (and (not htypes) spells
                           (or (arity-loops? body') self-calls?)
                           (every? #(and (symbol? %) (not= '& (*plain* %))) params)
                           (some (fn [h] (when h (get spells h))) hints))
@@ -1549,6 +1562,22 @@
                                                          *native-ints* (into *native-ints* (keep (fn [[p t]] (when (= 'long t) p))) ptypes)
                                                          *native-reals* (into *native-reals* (keep (fn [[p t]] (when (= 'double t) p))) ptypes)]
                                                  (doall (rw-all ctx body))))
+                                       ;; U6-11 (E): on a :native-int-aliases host, a ^long / ^double
+                                       ;; param takes the path an untyped one gets: coerced, then the
+                                       ;; host's native conversion at entry, and the body rewritten with
+                                       ;; it in A5's native sets -- no inner fn*, no boxed param (x1's
+                                       ;; X1-11: the wrapper cost every hinted twin on apt)
+                                       htypes (when (and (seq (:native-int-aliases ctx)) casts (get casts 'long) (get casts 'double)
+                                                         (not (some #(= '& (*plain* %)) ps0)))
+                                                (not-empty (into {} (keep (fn [p] (let [h (primitive-hint (:tag (meta p)))]
+                                                                                    (when (#{'long 'double} h) [(*plain* (bare-sym p)) h]))))
+                                                                 ps0)))
+                                       hbody (when htypes
+                                               (binding [*local-tags* tags *local-classes* classes *marker-depth* depths
+                                                         *num-env* fenv
+                                                         *native-ints* (into *native-ints* (keep (fn [[p t]] (when (= 'long t) p))) htypes)
+                                                         *native-reals* (into *native-reals* (keep (fn [[p t]] (when (= 'double t) p))) htypes)]
+                                                 (doall (rw-all ctx body))))
                                        body' (with-markers bs body')
                                        body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')
                                        rest-arg (second (drop-while #(not= '& %) params))
@@ -1557,7 +1586,10 @@
                                                body')]
                                    (emit-arity nm one-arity? (return-hint fn-ret params) params body'
                                                (when (and ptypes (empty? bs) (not (:loop-variadic-recur? ctx)))
-                                                 [ptypes tbody]))))
+                                                 [ptypes tbody])
+                                               (when (and htypes (empty? bs) (not (:loop-variadic-recur? ctx))
+                                                          (not (and (:vector-rest-args? ctx) (symbol? rest-arg))))
+                                                 [htypes hbody]))))
                                arities)))]
     (if (and nm (not (:named-fn*? ctx)))
       (list 'letfn* [nm (apply list (carry-meta 'fn* (first form)) (if single? (first arities') arities'))] nm)
