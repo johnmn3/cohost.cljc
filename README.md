@@ -166,10 +166,10 @@ What differs from one runtime to the next, and startup and speed for each:
 
 jank, as its apt package and Homebrew formula ship today, has known gaps cohost cannot hide:
 integers wrap at 32 bits (a fix is in progress upstream), `coll?` is false on lazy seqs, and
-two character rows of the battery fail under the C locale (`LANG` unset). In this release, building a jank app
+two character rows of the battery fail under the C locale (`LANG` unset). Building a jank app
 (`cohost -T:build build`) fails when its code has primitive type hints (`^long`, `^double`): jank's compile rejects
-the integer check cohost writes for them (`analyze/invalid-cpp-dsl`); running it with `cohost :jank` works, and the
-fix is for the next release. The details, and each runtime's other gaps: [Limitations and FAQ](doc/guide/10-limitations-and-faq.md) and
+the kind check cohost writes for them (`analyze/invalid-cpp-dsl`; present since 2026-11-02); running it with
+`cohost :jank` works, and the fix is for the next release. The details, and each runtime's other gaps: [Limitations and FAQ](doc/guide/10-limitations-and-faq.md) and
 `doc/REPORT.md`.
 
 ## The guide
