@@ -1243,6 +1243,14 @@ namespace cohost_assoc {
                     (reduce (fn [cc y] (@shim-RT-conj cc y)) (@shim-RT-conj c x) xs)
                     (apply @host-conj c x xs)))))
 
+;; A6-2 cohost_json: map? / vector? (chunks' cond chain): a cohost instance (a record is a
+;; map on the JVM, a deftype may implement IPersistentVector) takes the booted stock fn; any
+;; other value jank's own, whose answer is the stock fn's on jank's collections
+(def ^:private stock-map? (delay (var-get (resolve 'cohost.core/map?))))
+(def ^:private stock-vector? (delay (var-get (resolve 'cohost.core/vector?))))
+(defn map?* [x] (if (cpp/cohost_obj.is_cohost x) (@stock-map? x) (map? x)))
+(defn vector?* [x] (if (cpp/cohost_obj.is_cohost x) (@stock-vector? x) (vector? x)))
+
 (defn type-key
   "The protocol dispatch key of a value."
   [x]
@@ -2043,6 +2051,16 @@ namespace cohost_assoc {
                   ;; wrapper (a keyword pair compares by =); against a literal nil, true or false
                   ;; it is jank's own nil? / true? / false? (jank 0.1's identical? on a literal
                   ;; does not compile: a C++ == of two object_refs)
+                  ;; A6-2 cohost_json: (int c) of a char (every json read: (int (nth s i))) is
+                  ;; jank's int, the char's code point (the adapter's :char-code); anything else
+                  ;; keeps the shim's RT-intCast (A5-2's range check)
+                  "RT-intCast" (fn [args]
+                                 (when (= 1 (count args))
+                                   (let [c (gensym "ic")]
+                                     (list 'let* [c (first args)]
+                                           (list 'if (list 'clojure.core/char? c)
+                                                 (list 'clojure.core/int c)
+                                                 (list 'cohost.shim/RT-intCast c))))))
                   "Util-identical" (fn [args]
                                      (when (= 2 (count args))
                                        (let [[a b] args]
@@ -2091,14 +2109,18 @@ namespace cohost_assoc {
                          = clojure.core/= not= clojure.core/not= not clojure.core/not
                          odd? cohost.hosts.jank-host/odd?* even? cohost.hosts.jank-host/even?*
                          ;; A6-2 cohost_json
-                         nil? clojure.core/nil? true? clojure.core/true? false? clojure.core/false? string? clojure.core/string?}
+                         nil? clojure.core/nil? true? clojure.core/true? false? clojure.core/false? string? clojure.core/string?
+                         map? cohost.hosts.jank-host/map?* vector? cohost.hosts.jank-host/vector?*}
    ;; U6-9: jank's own odd?/even? of a non-integer raise a native C++ exception
    ;; (no catch reaches it; Clojure's is IllegalArgumentException), so a call
    ;; is jank's op on a host long (is_integer: integer and small_integer; a
    ;; native long boxes into it) and the stock fn on anything else (a bigint,
    ;; a real, a non-number); an integer literal is jank's op directly
    :core-expansions {'odd? (fn [stock-head args] (parity-expansion 'clojure.core/odd? stock-head args))
-                     'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))}
+                     'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))
+                     ;; A6-2 cohost_json: map? / vector? through the guarded map?* / vector?*
+                     'map? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/map?* (first args))))
+                     'vector? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/vector?* (first args))))}
    :syntax-quote-source? true
    :loop-rebind-shadow? true
    :lazy-seq (fn [f] (lazy-seq (f)))
