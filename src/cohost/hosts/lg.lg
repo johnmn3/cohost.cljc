@@ -991,6 +991,12 @@
 
 (def adapter
   {:name :lg
+   ;; X3-2: sort with the host's compare for the stock one (adapter.cljc); bb bench:lg --quick,
+   ;; key nil vs true on max/main 4698b55, 9 interleaved rounds then 6 with the order reversed:
+   ;; sort stock 1988.31 [1022.21-2573.78] -> 1238.85 [642.76-2082.75] ms (true below nil 8 of 9),
+   ;; reversed 1854.82 [962.74-2412.19] -> 912.30 [568.96-1283.22] (6 of 6); no case's true median
+   ;; above its nil max in the reversed set; battery 147/149 and libraries 61/61 both ways
+   :sort-host-compare? true
    :core-ns 'core
    :catch-all 'Throwable
    :read-forms read-forms
