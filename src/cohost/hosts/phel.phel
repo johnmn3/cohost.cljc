@@ -79,8 +79,8 @@
 (defn- demote [args r]
   (if (and (php/instanceof r BigInt)
            (not (some #(php/instanceof % BigInt) args))
-           (php/-> r (fitsInPhpInt)))
-    (php/-> r (toInt))
+           (.fitsInPhpInt r))
+    (.toInt r)
     r))
 (defn add-p [& xs] (demote xs (apply +' xs)))
 (defn mul-p [& xs] (demote xs (apply *' xs)))
