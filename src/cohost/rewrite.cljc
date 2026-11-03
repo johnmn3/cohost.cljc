@@ -388,6 +388,11 @@
    (U6-7, :static-types): a primitive-hinted fn* parameter (coerced on entry),
    a hinted let/loop local, and a local inferred from its init."
   {})
+(def ^:dynamic *cpp-twins*
+  "U6-12: while a def is rewritten, an atom of the cpp/raw C++ source its fn's
+   twins need (emitted beside the def); nil elsewhere."
+  nil)
+
 (def ^:dynamic *num-fns*
   "{fn-name long|double}: the return type assumed for a fn's own name while
    its self-calls are checked (U6-11)."
@@ -1426,6 +1431,76 @@
                           (concat calls (loop-recurs body')))
                   (or (nil? ret) (= ret (infer-num env (last body'))))))))))
 
+(defn- twin-cpp
+  "U6-12: the C++ of a self-recursive hinted arity in the numeric subset, or
+   nil. pnames are the ^long parameters (plain symbols), nm the fn's name, f
+   the C++ function name. The subset: long literals, the params, + - * inc dec
+   (each checked: __builtin_*_overflow throws ovf, the entry returns nil and the
+   arity runs its boxed body), < > <= >= = ==, not, zero? pos? neg?, if with
+   both branches, and calls of nm with its arity. Anything else: nil."
+  [nm pnames f body]
+  (let [cs (into {} (map-indexed (fn [i p] [p (str "p" i)]) pnames))
+        nm (*plain* (bare-sym nm))
+        fold (fn [op unit xs] (cond (empty? xs) unit
+                                    (= 1 (count xs)) (first xs)
+                                    :else (reduce (fn [a b] (str op "(" a ", " b ")")) xs)))]
+    (letfn [(L [x]
+              (cond
+                (and (int? x) (<= -9223372036854775807 x 9223372036854775807)) (str "INT64_C(" x ")")
+                (symbol? x) (get cs (*plain* x))
+                (and (seq? x) (seq x))
+                (let [h (first x) args (rest x)
+                      self? (and (symbol? h) (nil? (namespace h)) (= nm (*plain* h)))
+                      op (when-not self? (core-op h))]
+                  (cond
+                    self? (when (= (count args) (count pnames))
+                            (let [as (map L args)] (when (every? some? as) (str f "(" (apply str (interpose ", " as)) ")"))))
+                    (= "if" (name (*plain* h)))
+                    (when (= 3 (count args))
+                      (let [[c a b] (map-indexed (fn [i y] (if (zero? i) (B y) (L y))) args)]
+                        (when (and c a b) (str "(" c " ? " a " : " b ")"))))
+                    :else
+                    (let [as (map L args)]
+                      (when (every? some? as)
+                        (case op
+                          "+" (fold "tw_add" "INT64_C(0)" as)
+                          "*" (fold "tw_mul" "INT64_C(1)" as)
+                          "-" (cond (empty? as) nil
+                                    (= 1 (count as)) (str "tw_sub(INT64_C(0), " (first as) ")")
+                                    :else (fold "tw_sub" nil as))
+                          "inc" (when (= 1 (count as)) (str "tw_add(" (first as) ", INT64_C(1))"))
+                          "dec" (when (= 1 (count as)) (str "tw_sub(" (first as) ", INT64_C(1))"))
+                          nil)))))
+                :else nil))
+            (B [x]
+              (cond
+                (true? x) "true"
+                (false? x) "false"
+                (and (seq? x) (seq x) (symbol? (first x)))
+                (let [h (first x) args (rest x) op (core-op h)]
+                  (cond
+                    (= "not" op) (when (= 1 (count args)) (when-let [c (B (first args))] (str "!(" c ")")))
+                    (contains? #{"zero?" "pos?" "neg?"} op)
+                    (when (= 1 (count args))
+                      (when-let [a (L (first args))] (str "(" a ({"zero?" " == 0" "pos?" " > 0" "neg?" " < 0"} op) ")")))
+                    (contains? #{"<" ">" "<=" ">=" "=" "=="} op)
+                    (when (= 2 (count args))
+                      (let [[a b] (map L args)]
+                        (when (and a b) (str "(" a ({"<" " < " ">" " > " "<=" " <= " ">=" " >= " "=" " == " "==" " == "} op) b ")"))))
+                    :else nil))
+                :else nil))]
+      (when (and (= 1 (count body)) (seq pnames))
+        (when-let [e (L (first body))]
+          (let [ps (apply str (interpose ", " (map #(str "std::int64_t " (cs %)) pnames)))
+                as (apply str (interpose ", " (map cs pnames)))]
+            (str "namespace " f "_ns { struct ovf {};\n"
+                 "inline std::int64_t tw_add(std::int64_t a, std::int64_t b) { std::int64_t r; if(__builtin_add_overflow(a, b, &r)) { throw ovf{}; } return r; }\n"
+                 "inline std::int64_t tw_sub(std::int64_t a, std::int64_t b) { std::int64_t r; if(__builtin_sub_overflow(a, b, &r)) { throw ovf{}; } return r; }\n"
+                 "inline std::int64_t tw_mul(std::int64_t a, std::int64_t b) { std::int64_t r; if(__builtin_mul_overflow(a, b, &r)) { throw ovf{}; } return r; }\n"
+                 "inline std::int64_t " f "(" ps ") { return " e "; }\n"
+                 "inline jank::runtime::object_ref " f "_entry(" ps ") { try { return jank::runtime::make_box(" f "(" as ")); } catch(ovf const &) { return jank::runtime::jank_nil; } }\n"
+                 "}")))))))
+
 (defn- emit-arity
   "One fn* arity. A primitive hint is coerced on every host, so the value
    matches the JVM: a parameter's on entry, a return's on exit (the JVM's
@@ -1637,12 +1712,36 @@
                                        body' (if (and (:vector-rest-args? ctx) (symbol? rest-arg))
                                                [(apply list 'let* [rest-arg (list (shim-fn "RT-seq") rest-arg)] body')]
                                                body')]
-                                   (emit-arity nm one-arity? (return-hint fn-ret params) params body'
-                                               (when (and ptypes (empty? bs) (not (:loop-variadic-recur? ctx)))
-                                                 [ptypes tbody])
-                                               (when (and htypes (empty? bs) (not (:loop-variadic-recur? ctx))
-                                                          (not (and (:vector-rest-args? ctx) (symbol? rest-arg))))
-                                                 [htypes hbody]))))
+                                   (let [arity (emit-arity nm one-arity? (return-hint fn-ret params) params body'
+                                                           (when (and ptypes (empty? bs) (not (:loop-variadic-recur? ctx)))
+                                                             [ptypes tbody])
+                                                           (when (and htypes (empty? bs) (not (:loop-variadic-recur? ctx))
+                                                                      (not (and (:vector-rest-args? ctx) (symbol? rest-arg))))
+                                                             [htypes hbody]))
+                                         ;; U6-12: a self-recursive ^long arity in the numeric
+                                         ;; subset gets a C++ twin, called under the long guard;
+                                         ;; nil (an overflow) or a non-long argument runs the arity
+                                         pn (mapv #(*plain* (bare-sym %)) params)
+                                         f (when (and *cpp-twins* (host/cpp-twins?) one-arity? nm
+                                                      (contains? #{nil 'long} (return-hint fn-ret params))
+                                                      (seq params)
+                                                      (every? #(and (symbol? %) (not= '& (*plain* %))
+                                                                    (= 'long (primitive-hint (:tag (meta %)))))
+                                                              params)
+                                                      (mentions-sym? (*plain* (bare-sym nm)) body))
+                                             (str "cohost_twin" (gensym "")))
+                                         code (when f (twin-cpp nm pn f body))]
+                                     (if-not code
+                                       arity
+                                       (let [_ (swap! *cpp-twins* conj code)
+                                             [ps & fs] arity
+                                             r (gensym "twin__")
+                                             call (apply list (symbol "cpp" (str f "_ns." f "_entry"))
+                                                         (map (fn [p] (list 'cpp/jank.runtime.to_int (bare-sym p))) params))]
+                                         (list ps (list 'let* [r (list 'if (apply list 'and (map #(kind-test 'long (bare-sym %)) params)) call nil)]
+                                                        (list 'if (list 'nil? r)
+                                                              (if (next fs) (apply list 'do fs) (first fs))
+                                                              r))))))))
                                arities)))]
     (if (and nm (not (:named-fn*? ctx)))
       (list 'letfn* [nm (apply list (carry-meta 'fn* (first form)) (if single? (first arities') arities'))] nm)
@@ -2099,8 +2198,10 @@
         ua (when (and *unit-params* (not var-call?) (seq more)
                       (let [i (last more)] (and (seq? i) (symbol? (*plain* (first i))) (contains? #{"fn" "fn*"} (name (*plain* (first i)))))))
              (get *unit-params* (bare-sym nm)))
+        twins (atom [])
         more' (binding [*def-name* (when (symbol? nm) (*plain* (bare-sym nm)))
-                        *unit-arities* ua]
+                        *unit-arities* ua
+                        *cpp-twins* twins]
                 (doall (rw-all ctx more)))
         ;; a host whose defn names its fn (jank's own does): carry the
         ;; def's name onto an unnamed fn* value, so self-recursion is a
@@ -2124,8 +2225,12 @@
                        (not (self-call-block-arg? nm (rest (last more')))))
                 (concat (butlast more')
                         [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
-                more')]
-    (apply list 'def nm more')))
+                more')
+        d (apply list 'def nm more')]
+    ;; U6-12: the C++ twins the def's fn calls, in a cpp/raw block before it
+    (if (seq @twins)
+      (apply list 'do (concat (map #(list 'cpp/raw %) @twins) [d]))
+      d)))
 
 (defn- rw-map
   "A map literal is data: its keys and values are rewritten, nothing is
