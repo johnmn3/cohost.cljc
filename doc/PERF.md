@@ -633,6 +633,16 @@ ABSENT and DIFFER, as printed:
   JVM, hinted/unhinted is at most 1.026 (nsieve, min-max 155-453 vs 165-345 ms), 1.005 (mandelbrot) and 0.991
   (nbody): inside the box's noise; fib 0.62, tak 0.43, spectral-norm 0.50.
 
+### cohost on jank from the snapshot (C-3 addendum)
+
+With lane D's D-5 entry in the tree (`dev/perf/jank_snapshot_cli.clj`), `bb bench:programs jank` boots from the
+snapshot when it is fresh (else from the AOT objects, as that entry decides) and records `:boot` per row. Measured
+2026-11-02 1:34 PM ET on `c/bench-programs` merged with `d/jank-cli` (`bb boot:jank-snapshot`: built in 559016 ms,
+`SNAPSHOT-BOOT-MS 633.302331`), `bb bench:programs jank "fib,tak,first-output"`, `:boot :snapshot` on every row:
+first-output median 4293.496 ms (min-max 4051.667-4444.732; the AOT -O3 boot above: 20101.329), fib 484.177 ms,
+tak 1402.188 ms (the program's own time: the same as from the AOT boot, 459.506 and 1488.983). The table above is
+the AOT boot; the coordinator's rerun on a tree with D-5 merged gives the snapshot's.
+
 ### jank without -O against -O3
 
 The same driver, the same box, jank-jit and cohost on jank before the addendum
@@ -917,6 +927,19 @@ geomean merged/apt over 11: 0.806
 | first-output | 127.289412 | 155.165961 | 0.330518 | 2036.561343 | 1997.019663 | 5.288114 | ok |
 
 Geometric mean of the twenty-one jolt / JVM median ratios: `0.683374`. Geometric mean of the twenty-one jolt-cohost / JVM median ratios: `2.404439`.
+
+## Cached boots (D-6 step 1, 2026-11-02 ET)
+
+What each host can cache, measured on one box (lane D's; times are not comparable with other sections'). The boot is `bb boot:<host>`'s whole process (boot, battery, libraries), one run each. The probe (`bash dev/perf/cached_boot_probe.sh <dir>`) is one namespace of 1,000 small fns (`(defn fN [x y] (let [...] (if ... (str ...) (map inc [...]))))`, written per dialect), three runs each, wall seconds: `eval` reads and evaluates it form by form (`load-file`, as cohost's boot evaluates its rewritten forms), `module` requires it with the host's cache empty, `cached` with it warm. A cached boot here means jank's snapshot carried over: the boot's rewritten forms recorded once (D-1's record mode, portable), emitted as the host's modules, loaded through the host's own cache, so a fresh boot skips cohost's reading and rewriting of core.clj and the host's compile of what it rewrote.
+
+| host | boot here | eval / module / cached (s) | what a cached boot can be |
+|---|---|---|---|
+| Basilisp 0.5.1 | 2 m 38.654 s; 529/130/36/96/0, 144/145, 61/61 | 12.731 / 13.128 / 13.008; 12.538 / 12.165 / 12.826; 0.774 / 0.744 / 0.728 | a generated `.lpy` module per booted namespace: `require` compiles it once to `__pycache__/*.lpyc`, then loads the bytecode, 17x faster than evaluating the same forms. Both of its costs (the rewrite in Python, the Python compile of each form) go. **Ranked first.** |
+| ClojureWasm v1.15.4 | 1 m 31.604 s; 555/145/91/0, 143/145, 61/61 | 0.056 / 0.089 / 0.057; 0.058 / 0.059 / 0.057; no cache | evaluating is cheap (1,000 fns in 0.06 s) and `require` caches nothing; `cljw build` makes a binary that still evaluates the script at start (a load-time `(reduce + (range 2e7))` took 1.409 s as a script and 1.449 s built). So its boot is cohost's own reading and rewriting on cljw, and a generated module saves that part, not the eval. |
+| Phel v0.54.0 | 1 m 13.065 s; 591/73/127/0, 145/145, 61/61 | 3.906 / 0.146 / 0.154 (`phel run`); `phel build --no-cache` 10.340 / 6.482 / 6.852 | `phel run` already caches the PHP it compiles (3.9 s first, 0.15 s after); cohost's boot evaluates forms at run time, which that cache does not cover. A generated module run by `phel run` would get it. |
+| let-go 1.13.0 | 19.407 s; 569/105/117/0, 143/145, 61/61 | 0.101 / 0.099 / 0.105; `lg -c` 0.110 / 0.111 / 0.122; `.lgb` 0.019 / 0.020 / 0.019 | `lg -c` compiles to `.lgb` bytecode, 5x faster to load than the source; but the source itself is cheap, so its boot too is mostly cohost's rewrite. |
+| ClojureScript (Node 24.22.1) | 53.161 s (the cljs build included); 518/87/46/140/0, 143/145, 61/61 | not probed (its boot is seconds once built) | the compiled JS of a generated module (cljs.main caches the build). |
+| jolt v0.8.23 | 11.391 s; 466/199/63/63/0, 145/145, 61/61 | not probed (the fastest boot) | -- |
 
 ## Basilisp, ClojureWasm, Phel, let-go
 

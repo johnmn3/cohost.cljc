@@ -10,13 +10,34 @@
 ;; prebuilt instance tests) and restore the boot's state as data. Each module
 ;; starts in a bare namespace (:refer-clojure :only []), as the boot's own
 ;; namespaces do; the replayed directives refer cohost.core into a library's.
+;; --project (D-8): the events of a project's namespaces recorded on top of a
+;; snapshot boot (dev/perf/jank_snapshot_project_record.jank): only their
+;; library modules, cohost.project (registers them: load-lib! requires them)
+;; and cohost.project-build (requires them all: compile-module's entry).
 ;; Prints the modules in load order, one line each: MODULE <ns> <file> <forms>.
 (require '[clojure.string :as str]
          '[babashka.fs :as fs])
 
+;; For an app's executable (D-7, src/cohost/build_jank.clj):
+;;   bb dev/perf/jank_snapshot_emit.clj --events <events.edn> --out <src dir> --main <app ns>
+;; writes the modules under <src dir> and, for --main, cohost/app_main.jank:
+;; the executable's entry, whose -main boots from the snapshot and calls the
+;; app's -main.
+(def cli-opts
+  (loop [args (seq *command-line-args*) o {}]
+    (if-let [[a b & more] args]
+      (case a
+        "--events" (recur more (assoc o :events b))
+        "--out" (recur more (assoc o :out b))
+        "--main" (recur more (assoc o :main b))
+        "--project" (recur (next args) (assoc o :project true))
+        (recur (next args) o))
+      o)))
+(def src-root (or (:out cli-opts) "target/jank-snapshot/src"))
+
 (def events
   (binding [*read-eval* false]
-    (read-string (slurp "target/jank-snapshot/events.edn"))))
+    (read-string (slurp (or (:events cli-opts) "target/jank-snapshot/events.edn")))))
 
 (defn decode
   "Undo cohost.boot's snap-encode: {:cohost.snap/meta m :cohost.snap/val x}
@@ -49,8 +70,9 @@
   (if (= 'clojure.core module) 'cohost.core (:target (lib-begins module))))
 
 (def modules
-  "Load order: the core, then each library as its load began."
-  (cons 'clojure.core (keep (fn [e] (when (and (= :lib-begin (:op e)) (lib-begins (:lib e))) (:lib e))) events)))
+  "Load order: the core, then each library as its load began (a project's:
+   its libraries only)."
+  ((if (:project cli-opts) identity (partial cons 'clojure.core)) (keep (fn [e] (when (and (= :lib-begin (:op e)) (lib-begins (:lib e))) (:lib e))) events)))
 
 (def libs-map (into {} (map (fn [[lib e]] [lib (:target e)]) lib-begins)))
 
@@ -80,7 +102,8 @@
     :lib-end (str "(cohost.boot/snap-lib-end! " (quoted (:lib e)) " " (quoted (:entry e)) " "
                   (quoted (:data e)) " " (quoted (:parent (lib-begins (:lib e)))) ")")
     :declare (str "(def " (:sym e) ")")
-    :native (throw (ex-info "a native in the snapshot: not emitted on jank" e))
+    :native (str "(cohost.boot/snap-native! " (quoted (:ns e)) " " (quoted (:sym e)) " "
+                 (pr-src (:lib e)) " " (quoted (:meta e)) ")")
     (:is :dot :begin :lib-begin :lib-fail) nil))
 
 (defn collapse-scans
@@ -102,7 +125,8 @@
         lb (lib-begins module)]
     ;; cohost.run (the adapter, the boot) is required before the bare ns:
     ;; jank analyzes a required file's ns form in the requiring namespace
-    (str (when core? "(clojure.core/require (quote cohost.run))\n")
+    ;; cohost.cli too, so the snapshot's compile makes its object (D-8)
+    (str (when core? "(clojure.core/require (quote cohost.run))\n(clojure.core/require (quote cohost.cli))\n")
          "(clojure.core/ns " nm "\n"
          "  (:refer-clojure :only [])"
          (if core? ")\n" "\n  (:require [cohost.boot] [cohost.core]))\n")
@@ -114,9 +138,9 @@
          (str/join "\n" (keep event-src (collapse-scans evs))) "\n")))
 
 (defn module-file [nm]
-  (str "target/jank-snapshot/src/" (-> (str nm) (str/replace "-" "_") (str/replace "." "/")) ".jank"))
+  (str src-root "/" (-> (str nm) (str/replace "-" "_") (str/replace "." "/")) ".jank"))
 
-(fs/delete-tree "target/jank-snapshot/src")
+(fs/delete-tree src-root)
 (doseq [m modules]
   (let [nm (module-ns m)
         file (module-file nm)]
@@ -130,7 +154,29 @@
 ;; compiled, by its directive's replay). A boot from the snapshot requires
 ;; cohost.core only; the libraries load when load-lib! asks for them.
 (let [top (keep (fn [m] (when (and (not= 'clojure.core m) (nil? (:parent (lib-begins m)))) (module-ns m))) modules)]
+  (when (:project cli-opts)
+    (spit (module-file 'cohost.project)
+          (str "(clojure.core/ns cohost.project\n  (:require [cohost.boot]))\n"
+               "(cohost.boot/register-snapshot-libs! " (quoted libs-map) ")\n"))
+    (spit (module-file 'cohost.project-build)
+          (str "(clojure.core/ns cohost.project-build\n  (:require [cohost.core] [cohost.project]"
+               (apply str (map #(str " [" % "]") top)) "))\n"))
+    (println "MODULE cohost.project" (module-file 'cohost.project) (count libs-map)))
+  (when-not (:project cli-opts)
   (spit (module-file 'cohost.snapshot)
         (str "(clojure.core/ns cohost.snapshot\n  (:require [cohost.core]"
              (apply str (map #(str " [" % "]") top)) "))\n"))
-  (println "MODULE cohost.snapshot" (module-file 'cohost.snapshot) (count top)))
+  (println "MODULE cohost.snapshot" (module-file 'cohost.snapshot) (count top))))
+
+(when-let [app (:main cli-opts)]
+  (let [lib (symbol app)
+        m (module-ns lib)]
+    (when-not (lib-begins lib)
+      (throw (ex-info (str "the app's namespace " app " was not recorded (or failed to load)") {:failed failed})))
+    (spit (module-file 'cohost.app-main)
+          (str "(clojure.core/ns cohost.app-main\n  (:require [cohost.core] [" m "]))\n"
+               "(clojure.core/defn -main [& args]\n"
+               "  (cohost.boot/boot-from-snapshot! {})\n"
+               "  (cohost.boot/make-user-ns!)\n"
+               "  (clojure.core/apply " m "/-main args))\n"))
+    (println "MODULE cohost.app-main" (module-file 'cohost.app-main) "main" (str m "/-main"))))

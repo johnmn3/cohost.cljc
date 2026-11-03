@@ -94,6 +94,7 @@
    :inline-meta     [[] ":keep when the host ignores a var's :inline fn or is the JVM; :strip when it honors it (basilisp) -- the stock inline fns build forms holding quoted JVM interop"]
    :rewrite-inline? [[] "true when the host's compiler ignores a var's :inline fn: the codemod applies core.clj's own inline expansions at rewrite time, as the JVM compiler does (with :inline-meta :keep); default false"]
    :syntax-quote-source? [[] "true when the host's reader expands syntax-quote into (clojure.core/with-meta x (clojure.core/hash-map :jank/source ...)) wrappers, one per quoted form: the codemod drops those wrappers from the forms cohost evaluates -- the meta is the host's source bookkeeping, not the program's, and building it costs a hash-map per quoted symbol on every expansion; default false"]
+   :loop-rebind-shadow? [[] "true when the host's compiler fails on a loop* binding a name an enclosing loop* binds (jank 0.1: C++ codegen, use of undeclared identifier 'sNN'): the codemod binds such a name under a fresh one and rebinds it with let* at the top of the body (recur is positional, so the loop is the same); default false"]
    :empty-queue     [[] "the host's empty persistent queue (clojure.lang.PersistentQueue/EMPTY), or nil"]
    :host-class      [['token] "the host's own class or interface a JVM class token names, or nil: instance? also asks it"]
    :host-instance?  [['token 'x] "is x, an object that is not the host's own data, an instance of the JVM class token on this host? (default: instance? of :host-class)"]
@@ -115,9 +116,11 @@
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
    :static-aliases  [[] "{shim static name (a string) -> the host core's symbol}: statics the host-aliases? scan cannot match because the shim's value is a wrapper with its own body, where that wrapper's semantics are the host op's on this host (jank: Numbers-minus is jank's -). Merged over the scan's aliases. Default {}"]
-   :direct-linking? [[] "true where the codemod compiles as Clojure's direct linking (-Dclojure.compiler.direct-linking=true) does: a def whose init is an anonymous fn names the fn with the var's name, so its own recursive calls bypass the var (a redefinition no longer reaches them); ^:redef and ^:dynamic vars keep the var call. Default nil (every call through the var)"]
    :core-aliases    [[] "#{stock core name}: calls of these booted stock core fns are emitted as the host core's fn of that name, whose semantics are the stock fn's on this host, so the host's compiler sees (and may inline) its own op; the stock fn stays booted for every other use (apply, a value, with-redefs of the booted var). Default #{}"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
+   :native-hints    [[] "nil (the default), or {hint-symbol host-type-symbol}: primitive fn* parameter hints this host compiles as native types (long, double, int, boolean). nil leaves every other host's rewritten forms without native tags."]
+   :prim-kind-test  [[] "nil (the default), or a fn of [hint sym] returning the form that tests whether sym is already of the hinted kind, which the codemod emits in place of the shim's kind test (cohost.shim/long-kind? / double-kind?). jank's returns a cpp tag test, inlined by its compiler. nil keeps the shim call."]
+   :defn-fn-name?   [[] "true when a def whose value is an unnamed fn* carries the def's name onto the fn* -- (def f (fn* f ...)) -- so self-recursion is a direct call, not a var deref (jank's own defn does this). Default false: the JVM's defn leaves the fn unnamed and recursion goes through the var."]
    :native-hints    [[] "nil (the default), or {hint-symbol host-type-symbol}: the primitive hints (long, double, int, boolean) this host compiles as native types. Positions: a fn* parameter (an arity that loops or calls itself: the coerced value goes to an inner fn* whose parameter carries the type; a leaf called from elsewhere stays untyped, H0 measured it losing on jank), a return (the inner fn*'s :rettag, the type the host spells for the arity's return hint), and a let*/loop* local through :native-local-casts. Every position is coerced as the JVM coerces on every host; nil leaves every other host's rewritten forms without native tags."]
    :native-local-casts [[] "nil (the default), or {hint-symbol conversion-fn-symbol}: for a ^long / ^double let* or loop* local, the host's conversion whose result the host types natively (jank: cpp/jank.runtime.to_int); the codemod emits (conversion <the JVM's coercion of the init>) as the binding's init. nil binds the coerced value only."]
    :chunks          [[] "the host's chunked seqs, or nil: {:chunked-seq? :chunk-first :chunk-rest :chunk-next :chunk-buffer :chunk-append :chunk :chunk-cons}, plus :chunk? and :chunk-reduce when the host's reduce cannot walk one of its chunks (the JVM's ArrayChunk); :chunk-reduce keeps IChunk.reduce's contract: a reduced result returned unopened. The stock chunked branches (map, filter, concat, doseq, for, reduce1) then run over the host's own chunks; with nil, no host seq is chunked to stock code. Default: the host core's fns of those names, when it has them all"]
@@ -140,6 +143,7 @@
    ;; host facts
    :nano-time       [[] "System/nanoTime: a monotonic clock, in nanoseconds"]
    :current-time-millis [[] "System/currentTimeMillis"]
+   :exit            [['code] "System/exit: end the process with the exit code, standard output flushed; the default knows every host"]
    :math-ceil       [['x] "Math/ceil of a double"]
    :math-floor      [['x] "Math/floor of a double"]
    :math-sqrt       [['x] "Math/sqrt of a double"]
@@ -350,11 +354,12 @@ namespace cohost_err {
     :host-data? (fn [_] false)
     :natives {}
     :native-hints nil
+    :prim-kind-test nil
+    :defn-fn-name? false
     :native-local-casts nil
     :host-aliases? true
     :static-aliases {}
     :core-aliases #{}
-    :direct-linking? nil
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
               (let [fs (into {} (map (fn [n] [(keyword (name n)) (try-all (fn [] (some-> ((cap :resolve-core) n) ((cap :var-get)))))])
@@ -403,6 +408,7 @@ namespace cohost_err {
     :inline-meta :keep
     :rewrite-inline? false
     :syntax-quote-source? false
+    :loop-rebind-shadow? false
     :empty-queue (fn [] nil)
     :atom (fn ([x] (atom x)) ([x m] (atom x :meta m)))
     :ex-info (fn ([msg m] (apply ex-info [msg m]))
@@ -410,6 +416,14 @@ namespace cohost_err {
     :exception-class (fn [_] 'RuntimeException)
     :nano-time (unsupported :nano-time)
     :current-time-millis (unsupported :current-time-millis)
+    :exit (fn [code]
+            #?(:cljs (.exit js/process code)
+               :lpy (python/exit code)
+               :phel (php/exit code)
+               :lg (os/exit code)
+               ;; jank 0.1's flush throws "TODO: port flesh"; std::exit flushes stdout
+               :jank (cpp/std.exit code)
+               :default (do (flush) (System/exit code))))
     :math-ceil (unsupported :math-ceil)
     :math-floor (unsupported :math-floor)
     :math-sqrt (unsupported :math-sqrt)
@@ -594,6 +608,7 @@ namespace cohost_err {
 (defn strip-inline? [] (= :strip (cap :inline-meta)))
 (defn rewrite-inline? [] (boolean (cap :rewrite-inline?)))
 (defn syntax-quote-source? [] (boolean (cap :syntax-quote-source?)))
+(defn loop-rebind-shadow? [] (boolean (cap :loop-rebind-shadow?)))
 (defn chunks [] ((cap :chunks)))
 (defn natives [] (or (get @installed :natives) {}))
 (defn native-hints
@@ -602,6 +617,13 @@ namespace cohost_err {
    adapter) emits no native tag."
   []
   (when-let [m (current)] (:native-hints m)))
+(defn defn-fn-name? [] (boolean (cap :defn-fn-name?)))
+(defn prim-kind-test
+  "nil, or a fn of [hint sym] -> the form testing whether sym is already of
+   the hinted kind, emitted in place of the shim's kind test. nil (the
+   default, and an uninstalled adapter) keeps the shim call."
+  []
+  (when-let [m (current)] (:prim-kind-test m)))
 (defn native-local-casts
   "nil, or {hint-symbol conversion-fn-symbol}: the host conversion a ^long /
    ^double let*/loop* local's coerced init goes through so the host types the
@@ -611,7 +633,6 @@ namespace cohost_err {
 (defn host-aliases? [] (boolean (cap :host-aliases?)))
 (defn static-aliases [] (or (cap :static-aliases) {}))
 (defn core-aliases [] (or (cap :core-aliases) #{}))
-(defn direct-linking? [] (boolean (cap :direct-linking?)))
 (defn env-locals "The local symbols of a macro's &env." [env]
   (try-all (fn [] (filter symbol? ((cap :env-locals) env)))))
 (defn empty-queue [] ((cap :empty-queue)))
@@ -703,6 +724,7 @@ namespace cohost_err {
 
 (defn nano-time [] ((cap :nano-time)))
 (defn current-time-millis [] ((cap :current-time-millis)))
+(defn exit [code] ((cap :exit) code))
 (defn math-ceil [x] ((cap :math-ceil) x))
 (defn math-floor [x] ((cap :math-floor) x))
 (defn math-sqrt [x] ((cap :math-sqrt) x))

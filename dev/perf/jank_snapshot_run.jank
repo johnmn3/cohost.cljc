@@ -6,6 +6,11 @@
 ;; libraries' snapshot modules through load-lib!).
 ;;
 ;;   bb boot:jank-snapshot [--no-libs | --bench [--quick] ...]
+;;   jank -O3 --module-path <snapshot path> run dev/perf/jank_snapshot_run.jank -- --eval <src> ...
+;; --eval: as cohost.run's (each src evaluated in the stock user namespace and
+;; printed as `src` then `   => value`): the entry lane C's program runner
+;; uses (D-5 addendum). SNAPSHOT-BOOT-MS goes to stderr, so stdout is
+;; cohost.run's.
 ;;
 ;; The module path is the snapshot's (see dev/perf/jank_snapshot_ensure.clj),
 ;; which never hands this script a stale snapshot.
@@ -16,7 +21,9 @@
 (require 'cohost.lib-battery)
 (require 'cohost.bench)
 
-(let [args (or *command-line-args* ())
+(let [all-args (or *command-line-args* ())
+      [args evals] (split-with #(not= "--eval" %) all-args)
+      evals (rest evals)
       flags (set (filter #(and (string? %) (= "--" (subs % 0 (min 2 (count %))))) args))
       t0 (cohost.adapter/nano-time)
       _ (require 'cohost.core)
@@ -24,10 +31,16 @@
       boot-ms (/ (double (- (cohost.adapter/nano-time) t0)) 1000000.0)]
   (when-not report
     (throw (ex-info "cohost.core loaded, but it is not a snapshot (no snapshot report)" {})))
-  (println (str "SNAPSHOT-BOOT-MS " boot-ms))
+  (binding [*out* *err*] (println (str "SNAPSHOT-BOOT-MS " boot-ms)))
   (cohost.boot/print-report report)
   (cohost.boot/make-user-ns!)
-  (if (contains? flags "--bench")
+  (cond
+    (seq evals)
+    (doseq [src evals]
+      (println (str src "\n   => "
+                    (cohost.adapter/try-all (fn [] (pr-str (cohost.boot/eval-str src)))
+                                            (fn [e] (str "ERR " (cohost.adapter/error-message e)))))))
+    (contains? flags "--bench")
     (cohost.bench/run-bench!
      (merge {:boot-ms boot-ms :libs-ms (cohost.bench/load-libs!)}
             (when-let [f (first (filter #(= "--scale=" (subs % 0 (min 8 (count %)))) flags))]

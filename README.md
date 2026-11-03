@@ -1,7 +1,140 @@
-# cohost.cljc
+# cohost
 
-**Boot the stock `clojure/core.clj` — and Clojure's own standard libraries —
-inside a clojure-like.**
+**A Clojure you develop in: `clojure.core`, `clojure.string`, `clojure.test` and the
+rest are Clojure 1.12's own source, unchanged, on the runtime your project picks.**
+
+You write ordinary Clojure, use `deps.edn`, Maven and git dependencies, a REPL, `-M`,
+`-X`, `-T` and tools.build exactly as with `clj`. The command is `cohost` instead of
+`clojure`; where your code runs is one key in `deps.edn`.
+
+## Install
+
+You need [Babashka](https://babashka.org) and the
+[Clojure CLI](https://clojure.org/guides/install_clojure). Then:
+
+```bash
+# not checked: installs
+git clone https://github.com/johnmn3/cohost.cljc ~/cohost
+export PATH="$HOME/cohost/bin:$PATH"
+clojure -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
+```
+
+## A new project
+
+Projects come from [deps-new](https://github.com/seancorfield/deps-new); cohost ships
+the template `cohost/app`:
+
+```bash
+cohost -Tnew create :template cohost/app :name acme/myapp
+cd myapp
+```
+
+That gives `deps.edn`, `src/acme/myapp.cljc`, `test/acme/myapp_test.cljc` and
+`build.clj`.
+
+## Run it
+
+```bash
+cohost -M -m acme.myapp           # => Hello, world!
+cohost -M:main you                # => Hello, you!
+cohost -X:run :who '"cohost"'     # => Hello, cohost!
+cohost -e '(+ 1 2)'               # => 3
+```
+
+`-M -m ns args` calls `ns/-main`, `-M:alias` adds the alias's `:main-opts`, `-X` calls a
+function with a map (an alias's `:exec-fn` and `:exec-args`, then `key value` pairs from
+the command line), and `-e`/`-i`/a script path run as `clojure.main` runs them.
+
+## The REPL
+
+`cohost` with no main option is the REPL, as `clj` is:
+
+```bash
+printf '(require (quote [clojure.string :as str]))\n(str/upper-case "hi")\n' | cohost
+# => Clojure 1.12.0
+# => user=> nil
+# => user=> "HI"
+# => user=>
+```
+
+On a terminal it reads a line at a time; wrap it in `rlwrap` for editing and history.
+
+## Dependencies
+
+`deps.edn` is resolved by tools.deps itself (through the Clojure CLI), so Maven
+coordinates, git deps, `:local/root`, aliases and `-Sdeps` work as they do for `clj`:
+
+```bash
+cohost -Sdeps '{:deps {org.clojure/tools.cli {:mvn/version "1.2.245"}}}' -e "(require '[clojure.tools.cli :as cli])" -e '(:options (cli/parse-opts ["-v"] [["-v" "--verbose"]]))'
+# => {:verbose true}
+```
+
+A library's Clojure sources load through cohost, so they run on stock `clojure.core` on
+any runtime. `cohost -Spath` prints the source roots.
+
+## Tests
+
+`clojure.test`, through the template's `:test` alias:
+
+```bash
+cohost -X:test
+# => Testing acme.myapp-test
+# => Ran 1 tests containing 2 assertions.
+# => 0 failures, 0 errors.
+```
+
+## Building
+
+Builds are [tools.build](https://clojure.org/guides/tools_build): `cohost -T:build <task>`
+runs the project's `build.clj`, as `clojure -T:build` does. cohost adds `cohost.build`,
+whose `build` makes the artifact for the project's runtime: a directory `target/<name>/`
+whose `run` starts your `-main`, from any directory:
+
+```bash
+# targets: jvm jolt cljs cljw lg lpy phel
+cohost -T:build build                               # => build: target/myapp/run
+(cd /tmp && "$OLDPWD"/target/myapp/run you)         # => Hello, you!
+```
+
+What is inside for each runtime (an uberjar, a native binary, a bundle) is in
+`doc/CLI.md` ("Building").
+
+## Choosing a runtime
+
+The runtime is a key in `deps.edn`:
+
+```clojure
+{:cohost/target :jank
+ :paths ["src"]}
+```
+
+A project without the key runs on the JVM (the real `clojure`). `cohost :<target> ...`
+overrides the key for one command:
+
+```bash
+cohost :jvm -M -m acme.myapp      # => Hello, world!
+```
+
+`cohost -Tnew create :template cohost/app :name acme/myapp :target jank` writes the key
+for you.
+
+| target | runtime | `cohost` command | install |
+|---|---|---|---|
+| `:jvm` | JVM Clojure (the real Clojure CLI) | yes | the Clojure CLI |
+| `:jolt` | jolt (Chez Scheme) | yes | `dev/install/jolt.sh` |
+| `:jank` | jank (C++/LLVM) | yes | `dev/install/jank.sh` |
+| `:cljs` | ClojureScript, self-hosted on Node | yes | node |
+| `:lpy` | basilisp (Python) | yes | `dev/install/basilisp.sh` |
+| `:cljw` | ClojureWasm | yes | `dev/install/cljw.sh` |
+| `:phel` | Phel (PHP) | yes | `dev/install/phel.sh` |
+| `:lg` | let-go (Go) | yes | `dev/install/lg.sh` |
+| `:cljrs` | clojurust (Rust) | not yet | `dev/install/cljrs.sh` |
+
+How each runtime is launched, what was verified and how it differs from `clojure`:
+`doc/CLI.md`. Using cohost as a library inside a host (a sub-runtime you hand strings
+to): [`doc/EMBEDDING.md`](doc/EMBEDDING.md).
+
+## How it works
 
 Every non-JVM Clojure (jolt, basilisp, ClojureScript, ...) re-implements
 `clojure.core` by hand against a conformance corpus: broad, never total, and
@@ -84,9 +217,10 @@ perf passes, is in `doc/PERF.md`.
 or the adapter answers it, the conformance-corpus scoreboard, and what is
 deliberately left out.
 
-## Run it
+## Developing cohost
 
 ```bash
+# not checked: cohost's own tasks, run in the cohost checkout
 bb boot:jolt      # jolt on PATH
 bb boot:lpy       # basilisp on PATH  (uv tool install basilisp)
 bb boot:cljs      # ClojureScript, self-hosted on Node (needs the clojure CLI + node)
@@ -110,43 +244,6 @@ libraries required through the loader, each case checked against the value
 JVM Clojure 1.12.0 gives. `cohost.run/-main` takes `--verbose`, `--no-libs`
 and `--eval src ...` (evaluate instead of the batteries) on every host, e.g.
 `node target/cljs-node/main.js --eval "(binding [*print-length* 2] (pr-str (range)))"`.
-
-## The `cohost` command
-
-`bin/cohost` puts the Clojure CLI's face on any host: `cohost :cljs -e "(+ 1 2)"`
-boots stock Clojure on ClojureScript and evaluates. A `deps.edn` in the directory
-is resolved with tools.deps (through the Clojure CLI itself), and its namespaces,
-jars included, load on the host through the ordinary loader: `-e`, `-i`, `-m`,
-scripts, `-X`, `-Spath`, `-Sdeps` and the aliases' `:main-opts` / `:exec-fn` /
-`:exec-args` behave as `clojure.main` and `clojure.run.exec` do. Wired: `:cljs
-:jolt :lpy :cljw :phel :lg`; `:jvm` runs the real CLI. Design, the verified
-matrix and the differences: `doc/CLI.md`.
-
-## Use it
-
-```clojure
-(require 'cohost.hosts.auto)                ; installs this host's adapter
-(require '[cohost.boot :as boot])
-
-(boot/boot!)                                ; -> the report map
-(boot/make-user-ns!)                        ; cohost.user sees only stock
-(boot/eval-str "(->> (range 10) (map inc) (filter even?) (reduce +))")   ; 30
-(boot/eval-str "(require '[clojure.set :as set])")                      ; the stock clojure.set
-(boot/eval-str "(set/union #{1} #{2})")                                 ; #{1 2}
-(boot/eval-str "(ns my.app (:require [clojure.string :as str])) (str/upper-case \"hi\")")
-```
-
-`cohost.core/map`, `cohost.core/let` and the rest are the stock definitions;
-`(meta #'cohost.core/map)` carries core.clj's docstring and arglists.
-`eval-str` reads each form of its source after the one before it ran, in the
-namespace that one left current, as a REPL session does (a `::kw` after an
-`ns` form is that namespace's), and keeps the namespace for the next call:
-after the `ns` form above, `(boot/eval-str "*ns*")` is `my.app`. A
-`require` (or an `ns` form's `:require`) of a library whose source is on the
-source roots boots it stock — `clojure.X` into `cohost.X`, any other library
-under its own name — and falls back to the host's own `require` otherwise.
-`boot/add-source-root!` adds a directory to search; `boot/lib-report` says
-what each library's load did.
 
 ## Layout
 
