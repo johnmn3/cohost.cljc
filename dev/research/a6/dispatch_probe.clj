@@ -1,0 +1,21 @@
+;; A6-4: the dispatch program's candidates, 1e6 steps each, under cohost (and the JVM: clojure -M dev/research/run-jvm.clj <this>)
+(defprotocol PArea (parea [s]))
+(defrecord PSq [w] PArea (parea [_] (* w w)))
+(defmulti pkind (fn [x] (mod x 3)))
+(defmethod pkind 0 [x] x)
+(defmethod pkind 1 [x] (* 2 x))
+(defmethod pkind :default [x] 0)
+(defn plain [x] (* x x))
+(def N 1000000)
+(def sq (->PSq 3))
+(defn d00-loop [] (loop [i 0 a 0] (if (< i N) (recur (inc i) (+ a (bit-and i 15))) a)))
+(defn d01-protocol [] (loop [i 0 a 0] (if (< i N) (recur (inc i) (+ a (parea sq))) a)))
+(defn d02-multi [] (loop [i 0 a 0] (if (< i N) (recur (inc i) (+ a (pkind i))) a)))
+(defn d03-mod3 [] (loop [i 0 a 0] (if (< i N) (recur (inc i) (+ a (mod i 3))) a)))
+(defn d04-field-kw [] (loop [i 0 a 0] (if (< i N) (recur (inc i) (+ a (:w sq))) a)))
+(defn d05-plain-call [] (loop [i 0 a 0] (if (< i N) (recur (inc i) (+ a (plain 3))) a)))
+(defn d06-both [] (loop [i 0 a 0] (if (< i N) (recur (inc i) (+ a (parea sq) (pkind i))) a)))
+(defn run []
+  (doseq [[l f] [["d00-loop" d00-loop] ["d01-protocol" d01-protocol] ["d02-multi" d02-multi] ["d03-mod3" d03-mod3]
+                 ["d04-field-kw" d04-field-kw] ["d05-plain-call" d05-plain-call] ["d06-both" d06-both]]]
+    (bench l f)))

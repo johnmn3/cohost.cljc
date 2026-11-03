@@ -309,8 +309,61 @@ namespace cohost_sort {
 // sequence walk (runtime::reduce allocates a seq step per element: draft
 // jank-15). The same elements in the same order, the same reduced handling;
 // any other coll goes to runtime::reduce itself. Removed when jank-15 lands.
+#include <jank/runtime/obj/chunked_cons.hpp>
+#include <jank/runtime/obj/array_chunk.hpp>
+#include <jank/runtime/obj/lazy_sequence.hpp>
+#include <jank/runtime/obj/native_vector_sequence.hpp>
 namespace cohost_reduce {
   using namespace jank::runtime;
+  // A7-2 (u3): a chunk's buffer on both builds (the series' array_chunk::buffer is a shared
+  // jtl::ref, patch 11; apt's a plain vector).
+  template <class B>
+  inline auto const &cbuf(B const &b) {
+    if constexpr(requires { b->size(); }) { return *b; } else { return b; }
+  }
+  // A7-2: the walk for every coll the fast paths below do not take (15a/15b's walk, adapter-
+  // side): a jank chunked_cons is walked a chunk at a time by index (apt's chunk_next copies
+  // the chunk per element), a lazy_sequence is realized in place of itself, anything else steps
+  // by first / next. The same elements in the same order as jank's reduce, the same reduced.
+  // A7-2: true on the series build (patch 11's shared native_vector_sequence buffer is the
+  // marker of the patched runtime), where jank's own reduce already walks in place
+  template <class T>
+  constexpr bool series_t() { return requires { typename T::buffer_ref; }; }
+  inline bool series_build() { return series_t<obj::native_vector_sequence>(); }
+  // A7-2: the types jank's transient takes (stock into's IEditableCollection test)
+  inline bool is_editable(object_ref const o) {
+    auto const t(o.get_type());
+    return t == object_type::persistent_vector || t == object_type::persistent_array_map
+      || t == object_type::persistent_hash_map || t == object_type::persistent_hash_set;
+  }
+  inline object_ref walk_reduce(object_ref f, object_ref init, object_ref coll) {
+    object_ref res{ init };
+    object_ref s{ coll.is_nil() ? coll : jank::runtime::seq(coll) };
+    while(s.is_some()) {
+      auto const t(s.get_type());
+      if(t == object_type::chunked_cons) {
+        auto const *cc = static_cast<obj::chunked_cons const *>(s.ptr());
+        if(cc->head.get_type() == object_type::array_chunk) {
+          auto const *c = static_cast<obj::array_chunk const *>(cc->head.ptr());
+          auto const &b(cbuf(c->buffer));
+          for(auto i(c->offset); i < b.size(); ++i) {
+            res = f.call(res, b[i]);
+            if(res.get_type() == object_type::reduced) { return expect_object<obj::reduced>(res)->val; }
+          }
+          s = cc->tail.is_nil() ? cc->tail : jank::runtime::seq(cc->tail);
+          continue;
+        }
+      }
+      else if(t == object_type::lazy_sequence) {
+        s = jank::runtime::seq(s);
+        continue;
+      }
+      res = f.call(res, jank::runtime::first(s));
+      if(res.get_type() == object_type::reduced) { return expect_object<obj::reduced>(res)->val; }
+      s = jank::runtime::next(s);
+    }
+    return res;
+  }
   // A4 (a): the adapter's integer range is jank's obj::range (chunked); its integer start, step
   // and count, or false for any other range.
   inline bool int_range(object_ref coll, jank::i64 &a, jank::i64 &st, jank::i64 &n) {
@@ -359,6 +412,12 @@ namespace cohost_reduce {
         }
         return res;
       }
+      case object_type::chunked_cons:
+      case object_type::lazy_sequence:
+      case object_type::cons:
+      case object_type::persistent_vector_sequence:
+      case object_type::range:
+        return walk_reduce(f, init, coll);
       default:
         return jank::runtime::reduce(f, init, coll);
     }
@@ -563,6 +622,25 @@ namespace cohost_var {
             :else (let [n (gensym "par")]
                     (list 'let* [n a]
                           (list 'if (list 'cpp/jank.runtime.is_integer n) (list op n) (list stock-head n))))))))
+
+;; A6-3 (u3): (mod a b) on two integers inside (-2^31, 2^31) with b nonzero is jank's own mod,
+;; whose body is Clojure's (rem, zero?, pos?, = and +, jank's ops inline on integers); in that
+;; range jank's + cannot wrap on apt (|m| < |b| < 2^31, opposite signs). Anything else, a
+;; zero divisor included, is the stock mod. A literal integer divisor in range is not re-tested.
+(defn- mod-expansion [stock-head args]
+  (when (= 2 (count args))
+    (let [[x y] args
+          a (gensym "moda") b (gensym "modb")
+          in32 (fn [s] (list 'if (list 'clojure.core/< -2147483648 s) (list 'clojure.core/< s 2147483648) false))
+          lit-b? (and (integer? y) (cpp/jank.runtime.is_integer y) (< -2147483648 y 2147483648) (not= 0 y))
+          test-b (if lit-b? true
+                   (list 'if (list 'cpp/jank.runtime.is_integer b)
+                         (list 'if (in32 b) (list 'if (list 'clojure.core/= b 0) false true) false)
+                         false))]
+      (list 'let* [a x b y]
+            (list 'if (list 'if (list 'cpp/jank.runtime.is_integer a) (list 'if (in32 a) test-b false) false)
+                  (list 'clojure.core/mod a b)
+                  (list stock-head a b))))))
 
 ;; A5-2: jank's / on two integers truncates ((/ 6 4) is 1 on apt and on the
 ;; series build alike) and wraps at 32 bits on apt; Clojure's is the exact
@@ -1086,15 +1164,36 @@ namespace cohost_obj {
 (def ^:private host-into (delay @(get (ns-publics 'clojure.core) 'into)))
 (def ^:private host-transduce (delay @(get (ns-publics 'clojure.core) 'transduce)))
 
+;; A7-2: helpers for into / frequencies / group-by over reduce-init (host-get and host-conj
+;; proper are defined further down)
+(def ^:private host-get* (delay @(get (ns-publics 'clojure.core) 'get)))
+(def ^:private host-conj* (delay @(get (ns-publics 'clojure.core) 'conj)))
+(defn- editable? [to] (cpp/cohost_reduce.is_editable to))
+;; A7-2: on the series build jank's own into / frequencies / group-by are faster than the
+;; adapter's walk (measured: frequencies 6.7 vs 9.3 ms per 1e5, group-by 13.0 vs 15.9), so
+;; there they stay jank's own
+(def ^:private series? (cpp/cohost_reduce.series_build))
+(defn- keep-meta [to r] (if-let [m (meta to)] (with-meta r m) r))
 (def ^:private native-into
+  ;; A7-2: a host to and from reduce through reduce-init (cohost_reduce: by index over a range
+  ;; or vector, a chunk at a time over a chunked seq) into a transient where to is editable,
+  ;; as stock into does; meta kept
   (fn ([to from]
        (if (or (cpp/cohost_obj.is_cohost to) (cpp/cohost_obj.is_cohost from))
          (@stock-reduce @stock-conj to from)
-         (@host-into to from)))
+         (if series? (@host-into to from)
+         (if (editable? to)
+           (keep-meta to (@host-persistent! (reduce-init (fn [t x] (@host-conj! t x)) (@host-transient to) from)))
+           (reduce-init (fn [c x] (@host-conj* c x)) to from)))))
       ([to xform from]
        (if (or (cpp/cohost_obj.is_cohost to) (cpp/cohost_obj.is_cohost from))
          (@stock-reduce @stock-conj to (@stock-eduction xform from))
-         (@host-into to xform from)))))
+         (if series? (@host-into to xform from)
+         (if (editable? to)
+           (let [rf (xform (fn ([t] t) ([t x] (@host-conj! t x))))]
+             (keep-meta to (@host-persistent! (rf (reduce-init rf (@host-transient to) from)))))
+           (let [rf (xform (fn ([c] c) ([c x] (@host-conj* c x))))]
+             (rf (reduce-init rf to from)))))))))
 
 (def ^:private native-transduce
   (fn transduce*
@@ -1102,7 +1201,8 @@ namespace cohost_obj {
     ([xform f init coll]
      (if (cpp/cohost_obj.is_cohost coll)
        (@stock-reduce (xform f) init coll)
-       (@host-transduce xform f init coll)))))
+       ;; A7-2: stock transduce's body over reduce-init
+       (let [rf (xform f)] (rf (reduce-init rf init coll)))))))
 
 ;; sort, sort-by, set, frequencies, group-by (M-5): the same guard one
 ;; level up -- a cohost-instance SOURCE is first materialized into a host
@@ -1132,10 +1232,15 @@ namespace cohost_obj {
       ([keyfn comp coll] (let [d (host-data coll)] (sorted-of d (@host-sort-by keyfn comp d))))))
 (def ^:private native-set
   (fn [coll] (@host-set (host-data coll))))
+;; A7-2: stock frequencies / group-by bodies over reduce-init into a transient map
 (def ^:private native-frequencies
-  (fn [coll] (@host-frequencies (host-data coll))))
+  (fn [coll] (if series? (@host-frequencies (host-data coll)) (@host-persistent!
+              (reduce-init (fn [counts x] (@host-assoc! counts x (inc (@host-get* counts x 0))))
+                           (@host-transient {}) (host-data coll))))))
 (def ^:private native-group-by
-  (fn [f coll] (@host-group-by f (host-data coll))))
+  (fn [f coll] (if series? (@host-group-by f (host-data coll)) (@host-persistent!
+                (reduce-init (fn [ret x] (let [k (f x)] (@host-assoc! ret k (@host-conj* (@host-get* ret k []) x))))
+                             (@host-transient {}) (host-data coll))))))
 
 ;; assoc, get, nth, count (M-5): one is_cohost test decides. A cohost
 ;; instance goes to the shim's RT fn for the op (that is where instance
@@ -1146,6 +1251,7 @@ namespace cohost_obj {
 ;; IndexOutOfBoundsException. get's instance branch goes through
 ;; RT-find -- RT-get itself is core's get, which is this native.
 (def ^:private shim-RT-count (delay (var-get (resolve 'cohost.shim/RT-count))))
+(def ^:private shim-RT-conj (delay (var-get (resolve 'cohost.shim/RT-conj))))
 (def ^:private shim-RT-nth (delay (var-get (resolve 'cohost.shim/RT-nth))))
 (def ^:private shim-RT-find (delay (var-get (resolve 'cohost.shim/RT-find))))
 (def ^:private shim-RT-assoc (delay (var-get (resolve 'cohost.shim/RT-assoc))))
@@ -1228,21 +1334,6 @@ namespace cohost_assoc {
 
 ;; ---------------------------------------------------------------------------
 ;; A6-2 cohost_json: the json program's per-operation costs on jank (dev/research/a6/json_*).
-;; conj: the stock conj is a var call to RT-conj (the shim's cohost-type check) and then
-;; jank's conj, three dynamic calls per element (p08 conj+into: +170 ms per 1e6 over plain
-;; jank on the series build). A jank collection takes jank's conj directly; a cohost
-;; instance the shim's RT-conj, as the stock path does (its descriptor's :conj, or the
-;; ClassCastException).
-(def ^:private shim-RT-conj (delay (var-get (resolve 'cohost.shim/RT-conj))))
-(def ^:private host-conj (delay @(get (ns-publics 'clojure.core) 'conj)))
-(def ^:private native-conj
-  (fn ([] [])
-      ([c] c)
-      ([c x] (if (cpp/cohost_obj.is_cohost c) (@shim-RT-conj c x) (@host-conj c x)))
-      ([c x & xs] (if (cpp/cohost_obj.is_cohost c)
-                    (reduce (fn [cc y] (@shim-RT-conj cc y)) (@shim-RT-conj c x) xs)
-                    (apply @host-conj c x xs)))))
-
 ;; A6-2 cohost_json: map? / vector? (chunks' cond chain): a cohost instance (a record is a
 ;; map on the JVM, a deftype may implement IPersistentVector) takes the booted stock fn; any
 ;; other value jank's own, whose answer is the stock fn's on jank's collections
@@ -1250,6 +1341,48 @@ namespace cohost_assoc {
 (def ^:private stock-vector? (delay (var-get (resolve 'cohost.core/vector?))))
 (defn map?* [x] (if (cpp/cohost_obj.is_cohost x) (@stock-map? x) (map? x)))
 (defn vector?* [x] (if (cpp/cohost_obj.is_cohost x) (@stock-vector? x) (vector? x)))
+
+;; ---------------------------------------------------------------------------
+;; A6-4: get-in / assoc-in / update-in (the pipeline program; dev/research/a6/pipeline_probe:
+;; update-in with (fnil + 0) 1416 ms per 1e6 under cohost vs 828 plain jank on apt, assoc-in
+;; 903 vs 642, get-in 250 vs 131). The stock fns destructure [k & ks] and apply f at every
+;; level through var calls. These walk the keys once, over cohost.core's own get and assoc
+;; (the installed natives: a cohost record or map at any level is handled there), with fixed
+;; arities for f's extra arguments. A key collection that is a cohost instance walks through
+;; the booted seq / first / next.
+(def ^:private a64-get (delay (var-get (resolve 'cohost.core/get))))
+(def ^:private a64-assoc (delay (var-get (resolve 'cohost.core/assoc))))
+(def ^:private a64-seq (delay (var-get (resolve 'cohost.core/seq))))
+(def ^:private a64-first (delay (var-get (resolve 'cohost.core/first))))
+(def ^:private a64-next (delay (var-get (resolve 'cohost.core/next))))
+(def ^:private a64-none (volatile! :a64-none))
+(defn- a64-keys [ks] (if (cpp/cohost_obj.is_cohost ks) (@a64-seq ks) (seq ks)))
+(defn- a64-fst [s] (if (cpp/cohost_obj.is_cohost s) (@a64-first s) (first s)))
+(defn- a64-nxt [s] (if (cpp/cohost_obj.is_cohost s) (@a64-next s) (next s)))
+(defn- a64-up [m s g]
+  (let [k (a64-fst s) r (a64-nxt s)]
+    (if r
+      (@a64-assoc m k (a64-up (@a64-get m k) r g))
+      (@a64-assoc m k (g (@a64-get m k))))))
+(defn- a64-ai [m s v]
+  (let [k (a64-fst s) r (a64-nxt s)]
+    (if r
+      (@a64-assoc m k (a64-ai (@a64-get m k) r v))
+      (@a64-assoc m k v))))
+(def ^:private native-get-in
+  (fn ([m ks] (loop [m m s (a64-keys ks)] (if s (recur (@a64-get m (a64-fst s)) (a64-nxt s)) m)))
+      ([m ks nf] (loop [m m s (a64-keys ks)]
+                   (if s
+                     (let [v (@a64-get m (a64-fst s) a64-none)]
+                       (if (identical? v a64-none) nf (recur v (a64-nxt s))))
+                     m)))))
+(def ^:private native-assoc-in (fn [m ks v] (a64-ai m (a64-keys ks) v)))
+(def ^:private native-update-in
+  (fn ([m ks f] (a64-up m (a64-keys ks) f))
+      ([m ks f a] (a64-up m (a64-keys ks) (fn [o] (f o a))))
+      ([m ks f a b] (a64-up m (a64-keys ks) (fn [o] (f o a b))))
+      ([m ks f a b c] (a64-up m (a64-keys ks) (fn [o] (f o a b c))))
+      ([m ks f a b c & more] (a64-up m (a64-keys ks) (fn [o] (apply f o a b c more))))))
 
 (defn type-key
   "The protocol dispatch key of a value."
@@ -1909,6 +2042,76 @@ namespace cohost_assoc {
              :object-methods {'append (fn [x & args] (swap! (inst-field x 0) conj (apply str args)) x)
                               'toString (fn [x] (apply str @(inst-field x 0)))})))
 
+;; A5-3/A5-6: + - * of two operands the codemod cannot type, where jank's own
+;; ops wrap at 32 bits (apt). jank's add/sub/mul computes in i64 when its right
+;; operand is a native long (a small integer's i32 payload meets an i64), so the
+;; expansion hands jank the right operand as a long: an integer literal as
+;; (cpp/long k), an integer object through to_int. Clojure's overflow is caught
+;; with the cheapest test that is exact: a literal's bound is decided here (one
+;; comparison inline); two objects compare the result against the left operand
+;; (add/sub) or bound both operands to 32 bits (mul). Any overflow calls the
+;; shim's checked op, which throws. Reals, ratios and big integers take jank's
+;; op as they are. Probe on apt (fib 27): jank's unchecked add 1.19 ms, this
+;; shape 1.42-2.2, jank's promoting ops 4.3-6.5. Inside a self-call's argument
+;; no let* compiles (rewrite.cljc's self-call-block-arg?): two objects there
+;; keep the 32-bit range test.
+(defn- int-op-aliases []
+  (let [mx 9223372036854775807 mn1 -9223372036854775807
+        lt 'clojure.core/< long* (fn [k] (list 'cpp/long k))
+        to-int (fn [v] (list 'cpp/jank.runtime.to_int v))
+        is-int (fn [v] (list 'cpp/jank.runtime.is_integer v))]
+    (into {}
+          (map (fn [[nm op]]
+                 [nm (fn [[x y] checked & [may-let?]]
+                       (let [slow (list checked x y)]
+                         (cond
+                           ;; (op x k): one bound test on x, decided by k
+                           (and (integer? y) (not (integer? x)) (#{"Numbers-add" "Numbers-minus"} nm))
+                           (let [k (if (= nm "Numbers-add") y (- y))
+                                 fast (list op x (long* y))]
+                             (cond (zero? k) fast
+                                   ;; x + k overflows iff x > MAX - k (k > 0), x < MIN - k (k < 0)
+                                   (pos? k) (list 'if (list lt (- mx k) x) slow fast)
+                                   (> k mn1) (list 'if (list lt x (- mn1 1 k)) slow fast)
+                                   :else slow))
+                           (and (integer? y) (not (integer? x)) (= nm "Numbers-multiply"))
+                           (let [k (if (neg? y) (- y) y)]
+                             (if (zero? k) (list op x (long* y))
+                               (let [b (quot mx k)]
+                                 (list 'if (list lt (- b) x) (list 'if (list lt x b) (list op x (long* y)) slow) slow))))
+                           ;; two objects, named: the right one as a long when it is an integer
+                           may-let?
+                           (let [q (gensym "iq") r (gensym "ir")
+                                 ovf (case nm
+                                       "Numbers-add" (list 'if (list lt 0 q) (list lt r x) (list 'if (list lt q 0) (list lt x r) false))
+                                       "Numbers-minus" (list 'if (list lt 0 q) (list lt x r) (list 'if (list lt q 0) (list lt r x) false))
+                                       nil)]
+                             (list 'if (is-int y)
+                                   (if ovf
+                                     (list 'let* [q (to-int y) r (list op x q)] (list 'if ovf slow r))
+                                     ;; mul: both inside 32 bits, else the checked op
+                                     (list 'let* [q (to-int y)]
+                                           (list 'if (list lt -2147483649 q)
+                                                 (list 'if (list lt q 2147483648)
+                                                       (list 'if (list lt -2147483649 x)
+                                                             (list 'if (list lt x 2147483648) (list op x q) slow)
+                                                             slow)
+                                                       slow)
+                                                 slow)))
+                                   (list op x y)))
+                           ;; two objects inside a self-call argument: both inside 32 bits
+                           :else
+                           (let [yl (if (integer? y) (long* y) (to-int y))
+                                 small (fn [v then]
+                                         (if (integer? v)
+                                           (if (< -2147483649 v 2147483648) then slow)
+                                           (list 'if (list lt -2147483649 v) (list 'if (list lt v 2147483648) then slow) slow)))
+                                 int-test (fn [v then else] (if (integer? v) then (list 'if (is-int v) then else)))]
+                             (int-test x (int-test y (small x (small y (list op x yl))) (list op x y)) (list op x y))))))]))
+          [["Numbers-add" 'cpp/jank.runtime.add]
+           ["Numbers-minus" 'cpp/jank.runtime.sub]
+           ["Numbers-multiply" 'cpp/jank.runtime.mul]])))
+
 (def adapter
   {:name :jank
    ;; a thrown jank value no cohost type made: jank's checked integer ops throw
@@ -2034,27 +2237,7 @@ namespace cohost_assoc {
    ;; there can the i64 op overflow, and only that case calls the shim's checked
    ;; op (Clojure's ArithmeticException). Before, every such op was a dynamic
    ;; call of the checked op. No let*: the operands are named twice as they are.
-   :int-op-aliases (if int-wraps?
-                     (into {}
-                           (map (fn [[nm op]]
-                                  [nm (fn [[x y] checked]
-                                        (let [fast (list op x y)
-                                              slow (list checked x y)
-                                              ;; a literal's test is decided here, a local's inline
-                                              int-test (fn [v then else]
-                                                         (if (integer? v) then
-                                                             (list 'if (list 'cpp/jank.runtime.is_integer v) then else)))
-                                              small (fn [v then else]
-                                                      (if (integer? v)
-                                                        (if (< -2147483649 v 2147483648) then else)
-                                                        (list 'if (list 'clojure.core/< -2147483649 v)
-                                                              (list 'if (list 'clojure.core/< v 2147483648) then else)
-                                                              else)))]
-                                          (int-test x (int-test y (small x (small y fast slow) slow) fast) fast)))]))
-                           [["Numbers-add" 'cpp/jank.runtime.promoting_add]
-                            ["Numbers-minus" 'cpp/jank.runtime.promoting_sub]
-                            ["Numbers-multiply" 'cpp/jank.runtime.promoting_mul]])
-                     {})
+   :int-op-aliases (if int-wraps? (int-op-aliases) {})
    ;; U6-8: Math/sqrt at the call head is jank's runtime sqrt on the double,
    ;; inline. A negative argument is the JVM's NaN as a literal: std::sqrt gives
    ;; a negative-signed NaN, and boxing one crashes jank (probe: (let* [r
@@ -2133,7 +2316,8 @@ namespace cohost_assoc {
    ;; is jank's op on a host long (is_integer: integer and small_integer; a
    ;; native long boxes into it) and the stock fn on anything else (a bigint,
    ;; a real, a non-number); an integer literal is jank's op directly
-   :core-expansions {'odd? (fn [stock-head args] (parity-expansion 'clojure.core/odd? stock-head args))
+   :core-expansions {'mod mod-expansion
+                     'odd? (fn [stock-head args] (parity-expansion 'clojure.core/odd? stock-head args))
                      'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))
                      ;; A6-2 cohost_json: map? / vector? through the guarded map?* / vector?*
                      'map? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/map?* (first args))))
@@ -2314,12 +2498,19 @@ namespace cohost_assoc {
              ;; (shim.cljc), so jank's = is the same function minus the stock layers
              ;; (~160 ns per char comparison on apt)
              'clojure.core/= :host
-             'clojure.core/get native-get
+             ;; A6-3: get on jank's array / hash maps and conj onto jank's vector in one C++ call
+             ;; (jank-rt/get-with, jank-rt/conj-with); everything else as before (conj: the
+             ;; shim's RT-conj, which stock conj calls)
+             'clojure.core/get (jank-rt/get-with native-get)
+             ;; A6-4: get-in / assoc-in / update-in in one walk (native-get-in above)
+             'clojure.core/get-in native-get-in
+             'clojure.core/assoc-in native-assoc-in
+             'clojure.core/update-in native-update-in
+             'clojure.core/conj (jank-rt/conj-with (fn [c x] (@shim-RT-conj c x)))
              ;; A6-1: a vector assoc (up to three pairs) in one C++ call per pair
              ;; (jank-rt/assoc-with); maps, cohost instances, bounds errors as before
              'clojure.core/assoc (jank-rt/assoc-with native-assoc)
-             ;; A6-2 cohost_json: conj without the stock layers (native-conj above)
-             'clojure.core/conj native-conj
+             ;; A6-2's native-conj is superseded by A6-3's jank-rt/conj-with above (one C++ call)
              ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
              ;; at a time (cohost.hosts.jank-runtime)
              'clojure.core/range jank-rt/range
@@ -2335,6 +2526,12 @@ namespace cohost_assoc {
    ;; a ^long / ^double let*/loop* local: jank types a local by its init, and
    ;; these return i64 / f64 (runtime/core/math.hpp, always inline)
    :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
+   ;; U6-11: the series (patch 20) passes native-tagged arguments natively on a
+   ;; self-call; apt 0.1 boxes each at the call and unboxes it at entry
+   ;; (codegen of tak-both-dec on apt: convert<long>::into_object / from_object).
+   ;; Keyed on the series, as int-wraps? is: a :rettag probe cannot tell them
+   ;; apart (both return 2.5 from (^{:rettag 'long} fn* ([x] x)) 2.5).
+   :native-self-calls? (not int-wraps?)
    ;; U6-7: infer what is certain (adapter :static-types); U6-9 (b): :unit
    ;; when the run opts in (cohost.rewrite/static-types! :unit)
    :static-types :sound
