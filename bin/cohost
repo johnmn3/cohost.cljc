@@ -20,6 +20,10 @@
          '[clojure.string :as str]
          '[clojure.java.io :as io])
 
+;; dir/p, or p itself when it is absolute (babashka.fs before 0.5 refuses an
+;; absolute second argument: "... is not a relative path")
+(defn under [dir p] (if (fs/absolute? p) (fs/path p) (fs/path dir p)))
+
 (def script-file (fs/canonicalize *file*))
 (def repo (str (fs/parent (fs/parent script-file))))
 (def stock-root (str repo "/resources/cohost/clojure-1.12.0"))
@@ -127,12 +131,12 @@
       (die 1 (str "cohost: tools.deps resolution failed (" (str/join " " cmd) ")")))
     (let [lines (str/split-lines (:out out))
           cp-file (some #(second (re-matches #"cp_file\s*=\s*(.*)" %)) lines)
-          basis (when cp-file (fs/file (fs/path cwd (str/replace cp-file #"\.cp$" ".basis"))))
+          basis (when cp-file (fs/file (under cwd (str/replace cp-file #"\.cp$" ".basis"))))
           argmap (when (and basis (fs/exists? basis))
                    (:argmap (edn/read-string {:default tagged-literal} (slurp basis))))]
       {:argmap argmap
        :roots (vec (keep (fn [entry]
-                           (let [abs (str (fs/absolutize (fs/path cwd entry)))]
+                           (let [abs (str (fs/absolutize (under cwd entry)))]
                              (cond
                                (fs/directory? abs) abs
                                (str/ends-with? abs ".jar")
@@ -148,7 +152,7 @@
 ;; --------------------------------------------------------------------------
 ;; clojure.main's arguments, and clojure.run.exec's
 
-(defn abs-path [cwd f] (str (fs/absolutize (fs/path cwd f))))
+(defn abs-path [cwd f] (str (fs/absolutize (under cwd f))))
 
 (defn main-config
   "clojure.main's arguments: init options (-i/--init, -e/--eval, in the
@@ -221,7 +225,7 @@
         dir (some #(second (re-matches #"COHOST-AOT-DIR (.*)" %)) (str/split-lines (:out r)))]
     (when-not (and (zero? (:exit r)) dir)
       (die 1 "cohost: jank AOT modules failed (bb -e (load-file \"dev/perf/jank_aot_ensure.clj\") in the repo)"))
-    (str (fs/absolutize (fs/path repo dir)))))
+    (str (fs/absolutize (under repo dir)))))
 
 (defn jank-launch
   "jank: the module path (a fresh snapshot of the booted core, else cohost's
