@@ -304,7 +304,12 @@
       ;; Phel compiles to PHP files under $TMPDIR/phel and never removes them: give
       ;; each run its own TMPDIR and remove it after
       "phel" (let [tmp (str (fs/create-temp-dir {:prefix "cohost-phel-"}))]
-               (try (-> (p/process ["phel" "run" "dev/phel_cli.phel" cfg]
+               ;; PHP's stack: freeing a long lazy seq recurses deeper than its 8 MB default allows
+               ;; (a segfault); ask for 1 GB as the built app's run does (only what is used is
+               ;; touched), and keep the default where the limit is lower (macOS caps it)
+               (try (-> (p/process (if (fs/which "bash")
+                                     ["bash" "-c" "ulimit -s 1048576 2>/dev/null; exec phel run dev/phel_cli.phel \"$1\"" "cohost-phel" cfg]
+                                     ["phel" "run" "dev/phel_cli.phel" cfg])
                                    {:dir repo :inherit true :extra-env {"COHOST_HOME" repo "TMPDIR" tmp}})
                         deref :exit)
                     (finally (fs/delete-tree tmp))))

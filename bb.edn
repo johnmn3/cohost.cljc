@@ -118,7 +118,8 @@
   boot:cljw {:doc "ClojureWasm (Zig): the `cljw` binary on PATH (v1.15.4)"
              :task (shell "cljw" "-cp" "src" "-m" "cohost.run")}
   boot:phel {:doc "Phel (PHP 8.5): the `phel` wrapper over phel.phar on PATH (v0.54.0)"
-             :task (shell "phel" "run" "dev/phel_main.phel")}
+             ;; 1 GB of stack, as bin/cohost's Phel launch: PHP's 8 MB default segfaults freeing a long lazy seq
+             :task (shell "bash" "-c" "ulimit -s 1048576 2>/dev/null; exec phel run dev/phel_main.phel")}
   boot:lg   {:doc "let-go (Go): the `lg` binary on PATH (v1.13.0); it has no -m, so dev/lg_main.lg calls cohost.run"
              :task (shell "lg" "-source-paths" "src" "dev/lg_main.lg")}
   ;; CLJRS_IR_THRESHOLD=1: clojurust lowers a fn to its IR on the first call,
