@@ -19,6 +19,12 @@
   ;; names defined here that let-go's core also has (it warns of each)
   #?(:lg (:refer-clojure :exclude [starts-with? ends-with?])))
 
+;; A5-6: whether the form being rewritten is an argument of a self-call of
+;; the def being rewritten (*def-name*): there a let* does not compile on apt
+;; (self-call-block-arg?); elsewhere the int-op expansion may name a call
+;; operand with one.
+(def ^:dynamic *in-self-arg* false)
+
 (def ^:dynamic *native-reals*
   "A5-3: let*/loop* locals statically real under *native-ints*' regime (a
    :native-int-aliases host): started from a real literal or from real
@@ -912,6 +918,23 @@
            ;; U6-7's inferred long/double locals may be native
            (nil? (get *num-env* (*plain* x))))))
 
+(defn- int-op-long-operand?
+  "A5-6 (x1's X1-10 cause A): a ^long-hinted or inferred-long local the codemod
+   has not put in *native-ints*. On jank it is a native long inside a typed
+   arity's inner fn* and the wrapper's boxed object elsewhere, so only the
+   expansion that compiles for both takes it: a literal right operand (jank's
+   op with a (cpp/long k) operand, one comparison)."
+  [x]
+  (and (symbol? x) (nil? (namespace x))
+       (not (native-int-form? x)) (not (real-form? x))
+       (let [p (*plain* x)
+             tags (remove nil? [(primitive-hint (:tag (meta x))) (primitive-hint (get *local-tags* x))])
+             kind (get *num-env* p)]
+         ;; (*num-env* holds 'long for a hinted param, :long for an inferred kind)
+         (and (or (seq tags) (contains? #{:long 'long} kind))
+              (every? #{'long} tags)
+              (contains? #{nil :long 'long} kind)))))
+
 ;; A5-4: jank's + - * inc dec on two native longs wrap at 64 bits; Clojure's
 ;; throw ArithmeticException "integer overflow". With both operands inside 32
 ;; bits (or inc/dec away from the i64 ends) no i64 op can overflow: jank's own
@@ -942,7 +965,14 @@
               plus (symbol core "+") minus (symbol core "-") le (symbol core "<=")
               mn1 -9223372036854775807 mx 9223372036854775807
               fast (apply list op args')]
-          (case nm
+          (case (if (and (integer? b) (contains? #{"Numbers-add" "Numbers-minus"} nm)) :literal nm)
+            ;; A5-6: a literal right operand's bound is decided here: one
+            ;; comparison inline, as cheap as jank's own dec
+            :literal (let [k (if (= nm "Numbers-add") b (- b))]
+                       (cond (zero? k) fast
+                             (pos? k) (list 'if (list le a (- mx k)) fast (slow checked args'))
+                             (> k mn1) (list 'if (list le (- mn1 1 k) a) fast (slow checked args'))
+                             :else (slow checked args')))
             ;; a + b stays in i64 iff b < 0 ? a > MIN - b - 1 : a <= MAX - b
             "Numbers-add" (list 'if (list 'if (list lt b 0)
                                           (list lt (list minus (list minus mn1 b) 2) a)
@@ -955,6 +985,17 @@
                                   fast (slow checked args'))
             (guard (map small? args') fast (slow checked args'))))
         (apply list op args')))))
+
+(defn- int-op-call?
+  "A5-6: a call form the int-op expansion may name with a let*: a list whose
+   head is a plain symbol (not a special form, interop, or a numeric form the
+   codemod types itself)."
+  [x]
+  (and (seq? x) (symbol? (first x))
+       (not (contains? '#{let* loop* letfn* fn* fn if do quote var try throw recur def set! new . case*} (first x)))
+       (not (native-int-form? x)) (not (real-form? x))
+       (not (#{\. \/} (first (name (first x)))))
+       (not (and (namespace (first x)) (re-find #"^[A-Z]" (namespace (first x)))))))
 
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
@@ -969,9 +1010,19 @@
           real' real'
           (known? ctx nm) (or ;; A5-3: + - * of two unknown operands where the shim's are
                               ;; A5's checked call: the host's promoting op inline (nil: keep it)
-                              (when-let [f (and (= 2 (count args)) (every? int-op-operand? args)
-                                                (some symbol? args) (get (host/int-op-aliases) nm))]
-                                (f args' (or (get (:host-aliases ctx) nm) (static-sym c m))))
+                              (when-let [f (and (= 2 (count args)) (get (host/int-op-aliases) nm))]
+                                (cond (and (every? int-op-operand? args) (some symbol? args))
+                                      (f args' (or (get (:host-aliases ctx) nm) (static-sym c m)) (not *in-self-arg*))
+                                      ;; A5-6: (- n 1) with n a ^long local: the literal form only
+                                      (and (int-op-long-operand? (first args)) (integer? (second args)))
+                                      (f args' (or (get (:host-aliases ctx) nm) (static-sym c m)) false)
+                                      ;; A5-6: a call operand (fib's (+ (fib ..) (fib ..))) is named
+                                      ;; once by a let*, outside a self-call's argument
+                                      (and (not *in-self-arg*)
+                                           (every? #(or (int-op-operand? %) (int-op-call? %)) args))
+                                      (let [gs (mapv (fn [a a'] (if (int-op-operand? a) a' (gensym "io"))) args args')
+                                            bs (vec (mapcat (fn [g a'] (when (not= g a') [g a'])) gs args'))]
+                                        (list 'let* bs (f gs (or (get (:host-aliases ctx) nm) (static-sym c m)) true)))))
                               ;; U6-8: the adapter's own expansion of a Math static at
                               ;; the call head (nil: keep the shim call)
                               (when-let [mf (get (host/math-aliases) nm)] (mf args'))
@@ -2669,10 +2720,14 @@
                       ;; arguments without inlining (the expansion inlines them)
                       (if (and *inline?* (rewritten-macro? ctx h))
                         (binding [*inline?* false] (apply list (rw ctx h) (doall (rw-all ctx args))))
-                        (let [ef (core-expansion ctx h)
-                              args' (when ef (rw-all ctx args))]
-                          (or (when ef (ef (binding [*locals* (conj *locals* (*plain* h))] (rw ctx h)) args'))
-                              (apply list (or (core-alias ctx h) (rw ctx h)) (or args' (rw-all ctx args))))))))]
+                        ;; (a self-named fn* binds its name as a local: no locals test;
+                        ;; a shadowing local only loses the let* here, never correctness)
+                        (if (and *def-name* (symbol? h) (nil? (namespace h)) (= (name h) (name *def-name*)))
+                          (binding [*in-self-arg* true] (apply list (rw ctx h) (doall (rw-all ctx args))))
+                          (let [ef (core-expansion ctx h)
+                                args' (when ef (rw-all ctx args))]
+                            (or (when ef (ef (binding [*locals* (conj *locals* (*plain* h))] (rw ctx h)) args'))
+                                (apply list (or (core-alias ctx h) (rw ctx h)) (or args' (rw-all ctx args)))))))))]
       (carry-meta out form))))
 
 (defn rw [ctx form]
