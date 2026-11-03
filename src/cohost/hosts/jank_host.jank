@@ -1822,7 +1822,7 @@ namespace cohost_obj {
                     ;; which take no :inline): the same test at the call head,
                     ;; the booted fn (head) otherwise
                     'nth (fn [head args]
-                           (when (= 2 (count args))
+                           (when (and (= 2 (count args)) (not (coll? (first args))))
                              (let [c (gensym "nc") k (gensym "nk")]
                                (list 'let* [c (first args) k (second args)]
                                      (list 'if (list 'if (list 'cpp/jank.runtime.is_vector c)
@@ -1833,7 +1833,7 @@ namespace cohost_obj {
                                            (list 'clojure.core/nth c k)
                                            (list head c k))))))
                     'count (fn [head args]
-                             (when (= 1 (count args))
+                             (when (and (= 1 (count args)) (not (coll? (first args))))
                                (let [c (gensym "cc")]
                                  (list 'let* [c (first args)]
                                        (list 'if (list 'cpp/jank.runtime.is_vector c)
@@ -1842,8 +1842,12 @@ namespace cohost_obj {
                     ;; (assoc v k x ...) on jank's vector, every key an integer in
                     ;; 0..count (assoc at count appends; past it the JVM throws
                     ;; IndexOutOfBoundsException, which the booted assoc keeps)
+                    ;; (a literal collection argument keeps the booted assoc: its
+                    ;; local is typed as jank's vector, not an object, and
+                    ;; is_vector of it does not compile -- battery "vector ops")
                     'assoc (fn [head args]
-                             (when (and (>= (count args) 3) (odd? (count args)))
+                             (when (and (>= (count args) 3) (odd? (count args))
+                                        (not (coll? (first args))))
                                (let [m (gensym "am")
                                      syms (vec (repeatedly (dec (count args)) #(gensym "ak")))
                                      binds (vec (concat [m (first args)] (interleave syms (rest args))))
