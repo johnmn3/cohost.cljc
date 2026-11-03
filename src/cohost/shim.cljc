@@ -747,7 +747,11 @@
 ;; ---------------------------------------------------------------------------
 ;; Numbers
 
-(def Numbers-add +)
+;; (jank: where unpatched jank's + - * wrap at 32 bits, the adapter's checked
+;; i64 entries, A5; nil elsewhere, and on every other host these are the host's own)
+#?(:jank (def ^:private jank-int-arith
+           (fn [nm] (some-> (resolve (symbol "cohost.hosts.jank-host" nm)) var-get))))
+(def Numbers-add #?(:jank (or (jank-int-arith "num-add") +) :default +))
 (def Numbers-addP (host-fn '+' +))
 ;; on jank the wrapper IS the host's - with an extra hop: it checks
 ;; nothing (the host's - throws on nil and on a non-number, as the JVM's
@@ -755,11 +759,12 @@
 ;; fires. The quotient/remainder/divide wrappers stay: jank's own die
 ;; with SIGFPE on a zero divisor where the JVM throws ArithmeticException.
 ;; max/min stay: jank's min answers the number for (min 1 ##NaN) where
-;; the JVM's static answers NaN.
-(def Numbers-minus #?(:jank -
+;; the JVM's static answers NaN. (A5: where unpatched jank's - wraps at 32
+;; bits, the adapter's checked num-minus instead, and host-aliases does not fire.)
+(def Numbers-minus #?(:jank (or (jank-int-arith "num-minus") -)
                       :default (fn ([x] (- x)) ([x y] (- x y)))))
 (def Numbers-minusP (host-fn '-' -))
-(def Numbers-multiply *)
+(def Numbers-multiply #?(:jank (or (jank-int-arith "num-multiply") *) :default *))
 (def Numbers-multiplyP (host-fn '*' *))
 ;; a double divided by zero is an infinity or NaN, as IEEE 754 and the JVM
 ;; say (jolt's / as a value and basilisp's Python division throw instead)

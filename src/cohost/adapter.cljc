@@ -81,6 +81,7 @@
    :macro-def-style [[] ":meta when `(def ^:macro x (fn [&form &env ...]))` + mark-macro! makes a macro; :defmacro when only a defmacro form does"]
    :macro-wrap-style [[] ":root when a macro's fn can be replaced after definition (alter-var-root); :source when its body must be wrapped at definition"]
    :code-form       [['form] "nil (the default), or a fn making a macro's expansion code the host's compiler takes back: applied to every expansion the codemod rewrites (ClojureWasm re-analyses no array seq, which is what a fn's & rest args are there)"]
+   :loop-int-init   [['n] "nil (the default), or a fn of an integer literal -> the form a loop* binding started from that literal starts from instead. jank on unpatched apt: (cpp/long n), since jank types a literal-initialized loop local as a C++ int and recur converts back into it, wrapping at 32 bits (draft jank-21; A5). The series build (12-21) needs none: nil there"]
    :multimethod-cache? [[] "nil (the default): a stock multimethod looks its method up through its state atom's per-dispatch-value cache on every call; true: through a one-entry cache of (state, hierarchy) -> {dispatch value method} checked first, with no atom swap (cohost.shim mf-fast-method); or a fn [cell state-atom dv] -> the cached method or nil, the host's own one-call hit check of that cell ([state-value hierarchy-ref hierarchy-value {dv method}]), nil falling to mf-fast-method (jank's, a cpp/raw call; other hosts off until measured)"]
    :sort-host-compare? [[] "nil (the default): sort and a sorted coll's compare call the stock compare through the shim's comparator wrapper; true: when the comparator is the stock core's compare (whose body is the host's compare), the host's compare itself (X3-2; jank does this unconditionally, X4-1)"]
    :snapshot-emit   [['event] "nil (the default). When boot! runs with {:record? true}, each recorded event is passed to this fn if it is one. Off, and nil, do not call it"]
@@ -398,6 +399,7 @@ namespace cohost_err {
     :code-form nil
     :snapshot-emit nil
     :multimethod-cache? nil
+    :loop-int-init nil
     :sort-host-compare? nil
     :shim-ref nil
     :variadic-recur-style :jvm
@@ -631,6 +633,7 @@ namespace cohost_err {
   []
   (when-let [m (current)] (:native-local-casts m)))
 (defn host-aliases? [] (boolean (cap :host-aliases?)))
+(defn loop-int-init "The adapter's :loop-int-init fn, or nil." [] (get @installed :loop-int-init))
 (defn static-aliases [] (or (cap :static-aliases) {}))
 (defn core-aliases [] (or (cap :core-aliases) #{}))
 (defn env-locals "The local symbols of a macro's &env." [env]

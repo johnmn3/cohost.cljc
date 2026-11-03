@@ -372,6 +372,12 @@
                 :core-ns (name core-ns)
                 :shim-ref (host/shim-ref)
                 :loop-variadic-recur? (host/loop-variadic-recur?)
+                :loop-int-init (host/loop-int-init)
+                ;; A5: with :loop-int-init, + - * of native longs are the host's own
+                :native-int-aliases (when (host/loop-int-init)
+                                      (let [core (host/core-ns-sym)]
+                                        (into {} (map (fn [[nm op]] [nm (with-meta (symbol (str core) op) {:cohost/host true})]))
+                                              [["Numbers-add" "+"] ["Numbers-minus" "-"] ["Numbers-multiply" "*"]])))
                 :named-fn*? (host/named-fn*?)
                 :plain-symbol host/plain-symbol
                 :special-forms (host/special-forms)
@@ -804,7 +810,11 @@
                           hv (some-> (host/resolve-core nm) host/var-root)]
                       (when (and (fn? sv) (fn? hv) (not (identical? sv hv)))
                         [sv hv])))
-                  '[+ *]))))
+                  ;; (A5: not where the shim's Numbers-add / multiply are the adapter's
+                  ;; checked fns, i.e. the host's own + * are wrong past 2^31)
+                  (filter (fn [nm] (if (= '+ nm) (= shim/Numbers-add (some-> (host/resolve-core '+) host/var-root))
+                                     (= shim/Numbers-multiply (some-> (host/resolve-core '*) host/var-root))))
+                          '[+ *])))))
 
 (defn- snap-state
   "The boot's state a snapshot restores as data at the end of a module: the
