@@ -1129,14 +1129,29 @@
                                        (some #(and (symbol? %) (primitive-hint (:tag (meta %)))) params))))
                             arities))))))
 
+(defn- anonymous-fn-init?
+  "An anonymous (fn ...) or (fn* ...): no name of its own."
+  [x]
+  (and (seq? x) (symbol? (first x))
+       (contains? #{"fn" "fn*"} (name (*plain* (first x))))
+       (not (symbol? (second x)))))
+
 (defn- self-named-init
-  "On a host that compiles native hints, a def whose init is a hinted anonymous
-   fn gets the var's name as the fn's own name, as jank's defn does: the hinted
-   arity's self-calls then reach its native entry (emit-arity's inner fn*)
-   instead of re-entering the coercing outer arity through the var."
+  "A def whose init is an anonymous fn gets the var's name as the fn's own
+   name, as jank's defn does, so its self-calls are the host's named
+   recursion (its native entry) rather than calls through the var:
+   - on a :direct-linking? host, every such def except a ^:redef or ^:dynamic
+     var's (Clojure's direct linking: a redefinition no longer reaches the
+     fn's own recursive calls; ^:redef and ^:dynamic opt out);
+   - on a host that compiles native hints, a hinted anonymous fn (U6-5): the
+     hinted arity's self-calls reach its native entry (emit-arity's inner
+     fn*) instead of re-entering the coercing outer arity through the var."
   [nm more]
-  (let [init (last more)]
-    (if (and (host/native-hints) (symbol? nm) (hinted-fn-init? init))
+  (let [init (last more)
+        opt-out? (let [m (meta nm)] (or (:redef m) (:dynamic m)))]
+    (if (and (symbol? nm)
+             (or (and (host/direct-linking?) (not opt-out?) (anonymous-fn-init? init))
+                 (and (host/native-hints) (hinted-fn-init? init))))
       (concat (butlast more)
               [(with-meta (apply list (first init) (bare-sym nm) (rest init)) (meta init))])
       more)))
