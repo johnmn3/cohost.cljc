@@ -37,6 +37,13 @@
                       {:cmd cmd :exit (:exit r)})))
     (:out r)))
 
+(defn- jank-bin
+  "The jank binary every step runs: JANK_BIN when set (as the AOT objects of
+   step 1 are built with it, dev/perf/jank_aot_ensure.clj), else jank on PATH.
+   One binary for every step: objects from one jank do not load in another."
+  []
+  (let [b (System/getenv "JANK_BIN")] (if (str/blank? b) "jank" b)))
+
 (defn- abs [& parts] (.getCanonicalPath (apply io/file parts)))
 
 (defn- host-cache-file?
@@ -78,7 +85,7 @@
                            (files-under (abs repo "src/cohost"))
                            (map #(abs repo %) snapshot-scripts))
         root-files (mapcat files-under roots)
-        version (str/trim (sh! repo {} "jank" "print-binary-version"))]
+        version (str/trim (sh! repo {} (jank-bin) "print-binary-version"))]
     (sha256 (str/join "\n" (concat (map #(str % " " (file-sha %)) (concat repo-files root-files))
                                    [(str "jank " version) (str "main " main) (str "name " name)])))))
 
@@ -109,7 +116,7 @@
         (let [aot-out (sh! repo {} "bb" "-e" "(println (str \"AOT \" (load-file \"dev/perf/jank_aot_ensure.clj\")))")
               aot (abs repo (second (re-find #"(?m)^AOT (.*)$" aot-out)))]
           ;; 2. record the boot, the libraries and the app
-          (let [out (apply sh! repo gc "jank" "--module-path" (str aot ":" (abs repo "src")) "run"
+          (let [out (apply sh! repo gc (jank-bin) "--module-path" (str aot ":" (abs repo "src")) "run"
                            (abs repo "dev/perf/jank_snapshot_record.jank") "--" "--out" events "--lib" (str main)
                            (mapcat (fn [r] ["--root" r]) roots))]
             (log (last (filter #(str/starts-with? % "SNAPSHOT-EVENTS") (str/split-lines out))))
@@ -118,7 +125,7 @@
         (log (last (str/split-lines (sh! repo {} "bb" (abs repo "dev/perf/jank_snapshot_emit.clj")
                                           "--events" events "--out" src "--main" (str main)))))
         ;; 4. one executable
-        (sh! repo gc "jank" "-O3" "--module-path" (str src ":" (abs repo "src")) "compile" "cohost.app-main"
+        (sh! repo gc (jank-bin) "-O3" "--module-path" (str src ":" (abs repo "src")) "compile" "cohost.app-main"
               "--runtime" "static" "--name" name "--target-dir" target)
         (when-not (.exists (io/file exe))
           (throw (ex-info (str "cohost.build-jank: jank compile wrote no " exe) {})))
