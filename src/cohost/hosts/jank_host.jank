@@ -1754,10 +1754,6 @@ namespace cohost_obj {
                    :chunk-next chunk-next :chunk-buffer chunk-buffer :chunk-append chunk-append
                    :chunk chunk :chunk-cons jank-rt/chunk-cons
                    :chunk? jank-rt/chunk? :chunk-reduce jank-rt/chunk-reduce})
-   :natives {'clojure.core/range jank-rt/range
-             'clojure.core/map jank-rt/map
-             'clojure.core/filter jank-rt/filter
-             'clojure.core/count (jank-rt/count-with (fn [x] (@shim-rt-count x)))}
    ;; the shim's stock multimethod behind a one-entry cache (X2-1, doc/research/jank-dispatch.md)
    :multimethod-cache? mm-hit
    ;; A5: a loop local started from an integer literal is a native long, not the
@@ -2016,7 +2012,13 @@ namespace cohost_obj {
              'clojure.core/count native-count
              'clojure.core/nth native-nth
              'clojure.core/get native-get
-             'clojure.core/assoc native-assoc}
+             'clojure.core/assoc native-assoc
+             ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
+             ;; at a time (cohost.hosts.jank-runtime)
+             'clojure.core/range jank-rt/range
+             'clojure.core/map jank-rt/map
+             'clojure.core/filter jank-rt/filter
+             'clojure.core/count (jank-rt/count-with (fn [x] (@shim-rt-count x)))}
    ;; str is NOT a native here: policy owns str on every host -- an
    ;; exception's str must reach the shim's toString (JVM rendering), and
    ;; jank's own str writes jank's. See policy.cljc.
