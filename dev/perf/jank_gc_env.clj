@@ -14,7 +14,7 @@
 ;; The user's environment wins key by key: a GC_* variable already set is not touched.
 ;; COHOST_JANK_GC=none sets nothing (bdwgc's or the binary's own defaults).
 ;; The values stay in this one file: lane D's dev/perf/jank_snapshot_cli.clj (cohost's
-;; mainline, D-4) carries its own {"GC_INITIAL_HEAP_SIZE" "512M"}.
+;; mainline, D-4) reads it too (jank-cli-launch :env); src/cohost/build_jank.clj (built executables) carries its own 512M.
 ;; The matrix (A1, apt 0.1-noble, 3 interleaved rounds per cell, 2026-11-02): a 512 MiB initial
 ;; heap beat bdwgc's defaults on 6 of 8 timed rows; the free-space divisor is left at bdwgc's
 ;; 3 (divisor 2 won nothing it did not also win at 3). Boot maxrss 1.64x apt's on the

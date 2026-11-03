@@ -372,6 +372,55 @@ namespace cohost_reduce {
     return res;
   }
 }
+// A5: + - * on unpatched jank wrap at 32 bits on two small integers (jank's
+// small_integer payload is i32 and its add/sub/mul arms compute in it: draft
+// jank-12). These are the shim's Numbers-add/minus/multiply on jank when the
+// boot probe sees the wrap: two small integers in i64 (no overflow possible),
+// two integers checked in i64 (nil back on overflow: the caller throws
+// ArithmeticException integer overflow, as Clojure's Numbers does), anything
+// else (reals, ratios, big numbers) jank's own arm.
+#include <jank/runtime/core/math.hpp>
+#include <jank/runtime/core/make_box.hpp>
+namespace cohost_num {
+  using namespace jank::runtime;
+  inline bool int_operand(object_ref const x) {
+    auto const t(x.get_type());
+    return t == object_type::small_integer || t == object_type::integer;
+  }
+  inline object_ref add(object_ref a, object_ref b) {
+    if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
+      return make_box(static_cast<jank::i64>(detail::as_integer(a.raw())) + static_cast<jank::i64>(detail::as_integer(b.raw())));
+    }
+    if (int_operand(a) && int_operand(b)) {
+      jank::i64 r{};
+      if (__builtin_add_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
+      return make_box(r);
+    }
+    return jank::runtime::add(a, b);
+  }
+  inline object_ref sub(object_ref a, object_ref b) {
+    if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
+      return make_box(static_cast<jank::i64>(detail::as_integer(a.raw())) - static_cast<jank::i64>(detail::as_integer(b.raw())));
+    }
+    if (int_operand(a) && int_operand(b)) {
+      jank::i64 r{};
+      if (__builtin_sub_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
+      return make_box(r);
+    }
+    return jank::runtime::sub(a, b);
+  }
+  inline object_ref mul(object_ref a, object_ref b) {
+    if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
+      return make_box(static_cast<jank::i64>(detail::as_integer(a.raw())) * static_cast<jank::i64>(detail::as_integer(b.raw())));
+    }
+    if (int_operand(a) && int_operand(b)) {
+      jank::i64 r{};
+      if (__builtin_mul_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
+      return make_box(r);
+    }
+    return jank::runtime::mul(a, b);
+  }
+}
 namespace cohost_var {
   using namespace jank::runtime;
   inline object_ref set_dynamic(object_ref v) {
@@ -389,6 +438,29 @@ namespace cohost_var {
   }
 }
 ")
+
+;; A5: integer + - * correct past 2^31 on unpatched jank. The probe runs jank's
+;; own + at boot: where it wraps (apt 0.1-noble) the shim's Numbers-add /
+;; minus / multiply are these (the C++ above, one call); where it does not (the
+;; series build, 12-21), they stay nil and the shim keeps jank's own fns, which
+;; the codemod then aliases inline.
+(def ^:private int-wraps? (not= 2147483648 (+ (identity 2147483647) 1)))
+;; true where jank's own sort result is a native_vector_sequence whose next copies
+;; its buffer (apt 0.1-noble): (rest (sort [3 1 2])) prints (1 2 3) there.
+;; pr-str, not =: on apt the broken sequence's = walks right while its print,
+;; count and nth read from index 0 (jank-11: equal/hash/to_string ignore the index).
+(def ^:private sort-walk-broken? (not= "(2 3)" (pr-str (rest (sort [3 1 2])))))
+(defn- int-overflow [] (throw (adapter/ex* 'java.lang.ArithmeticException "integer overflow")))
+(def num-add
+  (when int-wraps?
+    (fn ([x y] (let [r (cpp/cohost_num.add x y)] (if (nil? r) (int-overflow) r))))))
+(def num-minus
+  (when int-wraps?
+    (fn ([x] (let [r (cpp/cohost_num.sub 0 x)] (if (nil? r) (int-overflow) r)))
+        ([x y] (let [r (cpp/cohost_num.sub x y)] (if (nil? r) (int-overflow) r))))))
+(def num-multiply
+  (when int-wraps?
+    (fn ([x y] (let [r (cpp/cohost_num.mul x y)] (if (nil? r) (int-overflow) r))))))
 
 ;; X4-1: the shim's reduce with and without an init (the stock reduce's IReduceInit and
 ;; coll-reduce paths, so transduce and into too) over a range or a vector,
@@ -832,6 +904,153 @@ namespace cohost_obj {
 (def ^:private shim-alter (delay (var-get (resolve 'cohost.shim/-alter))))
 (def ^:private shim-commute (delay (var-get (resolve 'cohost.shim/-commute))))
 (def ^:private shim-touch (delay (var-get (resolve 'cohost.shim/-touch))))
+
+;; Step 4 natives for the transient family (M-5). jank's own transient fns
+;; do not throw ClassCastException when handed a persistent collection --
+;; stock core.clj's hinted arguments do (battery: "a hinted argument is
+;; checked (transients, CharSequence)") -- so the natives are jank's fns
+;; behind the one check stock makes: the receiver must be a transient.
+;; jank's core vars are resolved lazily, like the shim's above.
+(def ^:private host-vector? (delay @(get (ns-publics 'clojure.core) 'vector?)))
+(def ^:private host-map? (delay @(get (ns-publics 'clojure.core) 'map?)))
+(def ^:private host-set? (delay @(get (ns-publics 'clojure.core) 'set?)))
+(def ^:private host-transient (delay @(get (ns-publics 'clojure.core) 'transient)))
+(def ^:private host-persistent! (delay @(get (ns-publics 'clojure.core) 'persistent!)))
+(def ^:private host-conj! (delay @(get (ns-publics 'clojure.core) 'conj!)))
+(def ^:private host-assoc! (delay @(get (ns-publics 'clojure.core) 'assoc!)))
+(def ^:private host-dissoc! (delay @(get (ns-publics 'clojure.core) 'dissoc!)))
+(def ^:private host-disj! (delay @(get (ns-publics 'clojure.core) 'disj!)))
+
+(defn- must-be-transient [t]
+  (when-not (adapter/transient? t)
+    (throw (adapter/ex* 'java.lang.ClassCastException
+                        "a persistent collection cannot be cast to a transient"))))
+
+(def ^:private native-transient
+  (fn [x]
+    (if (or (@host-vector? x) (@host-map? x) (@host-set? x))
+      (@host-transient x)
+      (throw (adapter/ex* 'java.lang.ClassCastException
+                          "only a vector, map or set can be made transient")))))
+(def ^:private native-persistent!
+  (fn [t] (must-be-transient t) (@host-persistent! t)))
+(def ^:private native-conj!
+  (fn [t & xs] (must-be-transient t) (apply @host-conj! t xs)))
+(def ^:private native-assoc!
+  (fn ([t k v] (must-be-transient t) (@host-assoc! t k v))
+      ([t k v & kvs] (must-be-transient t) (apply @host-assoc! t k v kvs))))
+(def ^:private native-dissoc!
+  (fn [t k & ks] (must-be-transient t) (apply @host-dissoc! t k ks)))
+(def ^:private native-disj!
+  (fn [t & xs] (must-be-transient t) (apply @host-disj! t xs)))
+
+;; into and transduce (M-5): jank's own fold walks the source with jank's
+;; seq/reduce, which aborts on a cohost_object -- and sources are cohost
+;; instances all the time (an eduction, a lazy seq, a record's seq). The
+;; natives are jank's fns when neither side is a cohost instance; an
+;; instance input folds through stock reduce/conj instead, which is the
+;; machinery that knows instances. Stock core vars are resolved lazily,
+;; like the shim's: this namespace cannot require cohost.core.
+(def ^:private stock-reduce (delay (var-get (resolve 'cohost.core/reduce))))
+(def ^:private stock-conj (delay (var-get (resolve 'cohost.core/conj))))
+(def ^:private stock-eduction (delay (var-get (resolve 'cohost.core/eduction))))
+(def ^:private host-into (delay @(get (ns-publics 'clojure.core) 'into)))
+(def ^:private host-transduce (delay @(get (ns-publics 'clojure.core) 'transduce)))
+
+(def ^:private native-into
+  (fn ([to from]
+       (if (or (cpp/cohost_obj.is_cohost to) (cpp/cohost_obj.is_cohost from))
+         (@stock-reduce @stock-conj to from)
+         (@host-into to from)))
+      ([to xform from]
+       (if (or (cpp/cohost_obj.is_cohost to) (cpp/cohost_obj.is_cohost from))
+         (@stock-reduce @stock-conj to (@stock-eduction xform from))
+         (@host-into to xform from)))))
+
+(def ^:private native-transduce
+  (fn transduce*
+    ([xform f coll] (transduce* xform f (f) coll))
+    ([xform f init coll]
+     (if (cpp/cohost_obj.is_cohost coll)
+       (@stock-reduce (xform f) init coll)
+       (@host-transduce xform f init coll)))))
+
+;; sort, sort-by, set, frequencies, group-by (M-5): the same guard one
+;; level up -- a cohost-instance SOURCE is first materialized into a host
+;; vector through stock reduce/conj; jank's own fn then runs on host data
+;; alone. (Elements may still be cohost instances; comparing and hashing
+;; them is what the cohost_object's compare/hasheq slots are for.)
+(def ^:private host-sort (delay @(get (ns-publics 'clojure.core) 'sort)))
+(def ^:private host-sort-by (delay @(get (ns-publics 'clojure.core) 'sort-by)))
+(def ^:private host-set (delay @(get (ns-publics 'clojure.core) 'set)))
+(def ^:private host-frequencies (delay @(get (ns-publics 'clojure.core) 'frequencies)))
+(def ^:private host-group-by (delay @(get (ns-publics 'clojure.core) 'group-by)))
+
+(defn- host-data [coll]
+  (if (cpp/cohost_obj.is_cohost coll)
+    (@stock-reduce @stock-conj [] coll)
+    coll))
+
+(def ^:private native-sort
+  (fn ([coll] (@host-sort (host-data coll)))
+      ([comp coll] (@host-sort comp (host-data coll)))))
+(def ^:private native-sort-by
+  (fn ([keyfn coll] (@host-sort-by keyfn (host-data coll)))
+      ([keyfn comp coll] (@host-sort-by keyfn comp (host-data coll)))))
+(def ^:private native-set
+  (fn [coll] (@host-set (host-data coll))))
+(def ^:private native-frequencies
+  (fn [coll] (@host-frequencies (host-data coll))))
+(def ^:private native-group-by
+  (fn [f coll] (@host-group-by f (host-data coll))))
+
+;; assoc, get, nth, count (M-5): one is_cohost test decides. A cohost
+;; instance goes to the shim's RT fn for the op (that is where instance
+;; dispatch lives); any other value goes straight to jank's own fn,
+;; skipping stock's protocol dispatch. nth keeps RT-nth's bounds guard
+;; on its host branch: jank's own nth out of range throws a native error
+;; no class catch can take, where the JVM's answers
+;; IndexOutOfBoundsException. get's instance branch goes through
+;; RT-find -- RT-get itself is core's get, which is this native.
+(def ^:private shim-RT-count (delay (var-get (resolve 'cohost.shim/RT-count))))
+(def ^:private shim-RT-nth (delay (var-get (resolve 'cohost.shim/RT-nth))))
+(def ^:private shim-RT-find (delay (var-get (resolve 'cohost.shim/RT-find))))
+(def ^:private shim-RT-assoc (delay (var-get (resolve 'cohost.shim/RT-assoc))))
+(def ^:private host-count (delay @(get (ns-publics 'clojure.core) 'count)))
+(def ^:private host-nth (delay @(get (ns-publics 'clojure.core) 'nth)))
+(def ^:private host-get (delay @(get (ns-publics 'clojure.core) 'get)))
+(def ^:private host-assoc (delay @(get (ns-publics 'clojure.core) 'assoc)))
+(def ^:private host-string? (delay @(get (ns-publics 'clojure.core) 'string?)))
+
+(def ^:private native-count
+  (fn [x] (if (cpp/cohost_obj.is_cohost x) (@shim-RT-count x) (@host-count x))))
+(def ^:private native-nth
+  (fn ([c i] (if (cpp/cohost_obj.is_cohost c)
+               (@shim-RT-nth c i)
+               (do (when (and (or (@host-vector? c) (@host-string? c))
+                              (not (< -1 i (@host-count c))))
+                     (throw (adapter/ex* 'java.lang.IndexOutOfBoundsException
+                                         (str "Index " i " out of bounds for length " (@host-count c)))))
+                   (@host-nth c i))))
+      ([c i nf] (if (cpp/cohost_obj.is_cohost c)
+                  (@shim-RT-nth c i nf)
+                  (@host-nth c i nf)))))
+(def ^:private native-get
+  (fn ([m k] (if (cpp/cohost_obj.is_cohost m)
+               (let [e (@shim-RT-find m k)] (if e (val e) nil))
+               (@host-get m k)))
+      ([m k nf] (if (cpp/cohost_obj.is_cohost m)
+                  (let [e (@shim-RT-find m k)] (if e (val e) nf))
+                  (@host-get m k nf)))))
+(def ^:private native-assoc
+  (fn ([m k v] (if (cpp/cohost_obj.is_cohost m)
+                 (@shim-RT-assoc m k v)
+                 (@host-assoc m k v)))
+      ([m k v & kvs] (if (cpp/cohost_obj.is_cohost m)
+                       (reduce (fn [mm [kk vv]] (@shim-RT-assoc mm kk vv))
+                               (@shim-RT-assoc m k v)
+                               (partition 2 kvs))
+                       (apply @host-assoc m k v kvs)))))
 
 (defn type-key
   "The protocol dispatch key of a value."
@@ -1493,6 +1712,10 @@ namespace cohost_obj {
   {:name :jank
    ;; the shim's stock multimethod behind a one-entry cache (X2-1, doc/research/jank-dispatch.md)
    :multimethod-cache? mm-hit
+   ;; A5: a loop local started from an integer literal is a native long, not the
+   ;; C++ int unpatched jank gives it (recur wrapped it at 32 bits); nil on the
+   ;; series build, whose literals are already 64 bit
+   :loop-int-init (when int-wraps? (fn [n] (list 'cpp/long n)))
    :core-ns 'clojure.core
    :catch-all 'cpp/jank.runtime.object_ref
    :read-forms read-forms
@@ -1564,7 +1787,47 @@ namespace cohost_obj {
    ;; the codemod applies them itself, and strips them from what jank sees
    :inline-meta :strip
    :rewrite-inline? true
+   ;; U6-6: the arithmetic and logic the codemod emits reach jank as its own
+   ;; clojure.core ops, which its analyzer inlines and makes native. The shim's
+   ;; Numbers-minus is a 1-2 arity wrapper over -, which is jank's - for those
+   ;; arities; a call of the stock not is a call of jank's not (Clojure's
+   ;; semantics; the stock not stays booted). Numbers-quotient and
+   ;; -remainder keep their wrapper: jank's quot and rem by zero throw without
+   ;; the JVM's "Divide by zero"; Numbers-max and -min keep theirs: jank's
+   ;; (max 1 ##NaN) is 1.0, the JVM's NaN.
+   ;; (A5: not where jank's - wraps at 32 bits: there Numbers-minus is the
+   ;; checked num-minus, and aliasing it back to jank's - would undo it)
+   :static-aliases (if int-wraps? {} {"Numbers-minus" 'clojure.core/-})
+   ;; U6-8: Math/sqrt at the call head is jank's runtime sqrt on the double,
+   ;; inline. A negative argument is the JVM's NaN as a literal: std::sqrt gives
+   ;; a negative-signed NaN, and boxing one crashes jank (probe: (let* [r
+   ;; (cpp/jank.runtime.sqrt -4.0)] (== r r)) segfaults; the shim's sqrt_
+   ;; canonicalizes for the same reason). -0.0 stays -0.0, as on the JVM.
+   ;; Math/round, abs, pow keep the shim: round is floor(a+1/2) (std::llround
+   ;; rounds -2.5 to -3), abs of Long/MIN_VALUE and pow's argument kinds are
+   ;; the shim's already.
+   :math-aliases {"Math-sqrt" (fn [args]
+                                (when (= 1 (count args))
+                                  (let [d (gensym "msqrt")]
+                                    (list 'let* [d (list 'cpp/jank.runtime.to_real (first args))]
+                                          (list 'if (list 'clojure.core/< d 0.0)
+                                                ##NaN
+                                                (list 'cpp/jank.runtime.sqrt d))))))
+                  ;; (/ x y) (Numbers.divide): the shim's wrapper inline. A zero
+                  ;; divisor keeps the wrapper (the JVM's ArithmeticException, or
+                  ;; the IEEE infinity/NaN for a double; jank's own 0.0/0 gives a
+                  ;; negative-signed NaN, which segfaults when boxed); any other
+                  ;; divisor is jank's / (its native and boxed arithmetic)
+                  "Numbers-divide" (fn [args]
+                                     (when (= 2 (count args))
+                                       (let [a (gensym "dva") b (gensym "dvb")]
+                                         (list 'let* [a (first args) b (second args)]
+                                               (list 'if (list 'clojure.core/zero? b)
+                                                     (list 'cohost.shim/Numbers-divide a b)
+                                                     (list 'clojure.core// a b))))))}
+   :core-aliases '#{not}
    :syntax-quote-source? true
+   :loop-rebind-shadow? true
    :lazy-seq (fn [f] (lazy-seq (f)))
    :delay (fn [f] (delay (f)))
    :exception? (fn [x] (type? tag-exception-info x))
@@ -1689,6 +1952,55 @@ namespace cohost_obj {
    :sb-string (fn [sb] (apply str @(inst-field sb 0)))
    ;; H0 spellings: ^long ^double ^bool ^int. boolean does not resolve.
    :native-hints '{long long double double boolean bool int int}
+   ;; M-6b: the H1 kind test inline -- jank's own runtime predicates,
+   ;; which every module can name (the adapter's cohost_tag block cannot
+   ;; be: a cpp/raw namespace is visible only in its own module).
+   ;; is_integer is exactly a host long (integer and small_integer, not
+   ;; big_integer -- a bigint converts, and the cast range-checks it);
+   ;; is_real is exactly a host double.
+   :defn-fn-name? true
+   :prim-kind-test (fn [hint sym]
+                     (case hint
+                       long (list 'cpp/jank.runtime.is_integer sym)
+                       double (list 'cpp/jank.runtime.is_real sym)
+                       nil))
+   ;; Step 4 natives, one name at a time (M-5). :host = jank's own core var.
+   ;; re-find and re-seq are NOT natives: jank's own answer "" for an optional
+   ;; group that did not match, where the JVM's is nil ((re-find #"a(b)?" "a")
+   ;; -> ["a" ""]), which tools.cli reads as a flag's argument. The stock fns
+   ;; over the shim's Matcher (:re-find-at, std::smatch's matched) answer nil.
+   :natives (cond-> {;; atoms on jank are jank's own clojure.lang.Atom (probed
+             ;; 2026-11-02), so swap!/reset! cannot meet a cohost instance.
+             'clojure.core/swap! :host
+             'clojure.core/reset! :host
+             ;; the transient family: jank's fns behind stock's cast
+             ;; check (see native-transient above).
+             'clojure.core/transient native-transient
+             'clojure.core/persistent! native-persistent!
+             'clojure.core/conj! native-conj!
+             'clojure.core/assoc! native-assoc!
+             'clojure.core/dissoc! native-dissoc!
+             'clojure.core/disj! native-disj!
+             'clojure.core/into native-into
+             'clojure.core/transduce native-transduce
+             ;; sort / sort-by are natives only where jank's sort result walks
+             ;; linearly: on apt 0.1-noble native_vector_sequence::next copies its
+             ;; buffer per step (quadratic walks, and (rest (sort [3 1 2])) prints
+             ;; (1 2 3)); the series' 11-sorted-walk fixes it. Probed at boot.
+             'clojure.core/set native-set
+             'clojure.core/frequencies native-frequencies
+             'clojure.core/group-by native-group-by
+             'clojure.core/count native-count
+             'clojure.core/nth native-nth
+             'clojure.core/get native-get
+             'clojure.core/assoc native-assoc}
+              (not sort-walk-broken?) (assoc 'clojure.core/sort native-sort 'clojure.core/sort-by native-sort-by))
+   ;; str is NOT a native here: policy owns str on every host -- an
+   ;; exception's str must reach the shim's toString (JVM rendering), and
+   ;; jank's own str writes jank's. See policy.cljc.
+   ;; a ^long / ^double let*/loop* local: jank types a local by its init, and
+   ;; these return i64 / f64 (runtime/core/math.hpp, always inline)
+   :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
 })
 
 

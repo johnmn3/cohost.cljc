@@ -614,7 +614,12 @@ ABSENT and DIFFER, as printed:
   `(loop [b 0 a a] ...)` fail too); `let` shadowing and a `loop` rebinding a fn parameter compile. The programs'
   inner loops: nbody `(loop [j (inc i) bs bs b b] ...)` and `(loop [j (inc i) e e] ...)`, mandelbrot
   `(loop [x 0 acc acc] ...)`, fannkuch `(loop [p p i 0 j k] ...)`, nsieve `(loop [j (+ i i) flags flags] ...)`.
-  No upstream draft names it yet (doc/upstream/ at c499930). C-2 (doc/perf/jank.md) has the cohost side.
+  The cohost-on-jank `ABSENT` cells of these tables are from a tree before C-2's `:loop-rebind-shadow?` (jank's
+  adapter: true; merged at 210a146, on this tree): with it, doc/perf/jank.md "Programs on cohost-on-jank" runs all
+  four on cohost on jank with the JVM's answers at small sizes; the full-size rows are not re-measured on this tree.
+  In the patched column U6-4 fixes the codegen itself, so jank's own core runs mandelbrot, fannkuch and nsieve
+  there (jank-aot mandelbrot 769.4, fannkuch 506.9, nsieve 131.4 ms on the 19-patch series). No upstream draft
+  named it at c499930.
 - **jank 0.1 integer arithmetic wraps at 32 bits when both operands fit in int32** (jank-jit, jank-aot, cohost on
   jank: pipeline and dispatch `DIFFER`, each the JVM value mod 2^32). Raw jank: `(+ 2147483647 1)` -> `-2147483648`,
   `(* 65536 65536)` -> `0`, `(* 100000 100000)` -> `1410065408`, `(reduce + (range 100000))` -> `704982704`; with
@@ -632,6 +637,16 @@ ABSENT and DIFFER, as printed:
   (JIT -O3), fib 1.20 and tak 1.89 (AOT). On the
   JVM, hinted/unhinted is at most 1.026 (nsieve, min-max 155-453 vs 165-345 ms), 1.005 (mandelbrot) and 0.991
   (nbody): inside the box's noise; fib 0.62, tak 0.43, spectral-norm 0.50.
+
+### cohost on jank from the snapshot (C-3 addendum)
+
+With lane D's D-5 entry in the tree (`dev/perf/jank_snapshot_cli.clj`), `bb bench:programs jank` boots from the
+snapshot when it is fresh (else from the AOT objects, as that entry decides) and records `:boot` per row. Measured
+2026-11-02 1:34 PM ET on `c/bench-programs` merged with `d/jank-cli` (`bb boot:jank-snapshot`: built in 559016 ms,
+`SNAPSHOT-BOOT-MS 633.302331`), `bb bench:programs jank "fib,tak,first-output"`, `:boot :snapshot` on every row:
+first-output median 4293.496 ms (min-max 4051.667-4444.732; the AOT -O3 boot above: 20101.329), fib 484.177 ms,
+tak 1402.188 ms (the program's own time: the same as from the AOT boot, 459.506 and 1488.983). The table above is
+the AOT boot; the coordinator's rerun on a tree with D-5 merged gives the snapshot's.
 
 ### jank without -O against -O3
 
@@ -772,6 +787,20 @@ already in this checkout from the X1-1 done-bar re-run, and the command does not
 - `lazy-pipeline` is x29 (jank-aot) and x121 (cohost on jank) on apt. u2's build carries no walk patch, and its
   jank-aot min-max (1281.872-4429.067) shows the noise of this shared window.
 
+### Two jank binaries: unpatched is the one that ships
+
+Two jank binaries appear in the jank tables from here on. **Unpatched** is the apt package
+`jank 0.1-noble` (`dev/install/jank.sh`), the default of every `bb boot:jank`, `bb bench:jank`
+and `bb bench:programs jank` and of `cohost :jank`: it is what a user installs and the column the
+public numbers are quoted from. **Patched** is jank-lang/jank at the pinned `f3d82d65` with
+cohost's `upstream/jank/patches/series` applied, built by `dev/install/jank-src.sh` and selected
+only by `JANK_BIN=<prefix>/bin/jank`; it is measured beside the unpatched column, never instead
+of it. The patches are not sent upstream (no pull request, issue or branch against jank-lang/jank;
+the drafts under doc/upstream/ stay drafts); whether cohost patches jank in place for its own
+purposes is a later choice. The adapter-side work under `src/cohost/**` (natives, the keys, the
+codemod) is what moves the unpatched column, and it is measured on unpatched jank. In the tables
+of 2026-11-02 the two columns are headed `apt` and `merged`.
+
 ### cohost-max: the merged series (2026-11-02, X1-3)
 
 The plan's scoreboard (jank-MAX §0) on the merged upstream series. Two jank binaries: `apt` is jank 0.1-noble;
@@ -826,7 +855,9 @@ Geomean xJVM (`bb bench:programs table jvm jank-aot jank`, on each binary's reco
   `DIFFER` (the i32 wrap) to `SAME` (12-21).
 - `ABSENT` on both binaries, the same causes as C-1's table. jank's own core: nbody (`Math/sqrt`), spectral-norm
   (`Math/round`), dispatch (`defprotocol`). Both targets: mandelbrot, fannkuch and nsieve (`use of undeclared
-  identifier 'sNN'`, the inner-loop rebinding). Cohost: nbody too.
+  identifier 'sNN'`, the inner-loop rebinding). Cohost: nbody too. These cells are before C-2 (cohost on jank:
+  `:loop-rebind-shadow?`, on this tree) and before U6-4 (the patched column's codegen fix); see "What the ABSENT
+  and DIFFER rows are" above.
 - `bb bench:jank` (stock core / jank's own, 30 cases, geomean of the printed x column): apt x1.77, merged x2.12.
   Booted the same on both: stock 542, from host 171, skipped 78, errors 0.
 
@@ -886,6 +917,22 @@ geomean merged/apt over 11: 0.806
 - The full-suite tables above are the nine-patch binary. This interleave is the eleven-patch one. The next run (X1-4 or
   the coordinator's next merge) re-runs the full suite on the series of that day.
 
+### The two columns on the full suite (X1-4, X1-5, 2026-11-02 evening)
+
+Geomean xJVM of `bb bench:programs table jvm jank-aot jank`, one JVM run per column, the AOT
+roots and the jank cache cleared before each binary; a row counts when it is SAME.
+
+| column | cohost on jank | jank's own AOT |
+|---|---:|---:|
+| UNPATCHED: apt 0.1-noble, cohost 760ef01 (X1-5, 7:52 PM ET) | 15.213 over 16 | 7.095 over 14 |
+| PATCHED: eighteen patches (11 .. 29), own cache (X1-4, 5:24 PM ET) | 6.648 over 20 (unhinted 5.112 over 14, hinted 12.270 over 6) | 1.719 over 17 (unhinted 1.590 over 12, hinted 2.071 over 5) |
+
+The UNPATCHED row is the public figure; it predates U6-5, U6-6 and A5 on this tree and is re-run
+by X1-5 on the current branch. The PATCHED jank-aot rows, ms: fib 70.2, fib-hinted 72.1, tak 182.6,
+tak-hinted 205.6, binary-trees 925.5, sum-overflow 8.0 SAME, sort 27.4, lazy-pipeline 34.4,
+keyword-map 216.2, pipeline 817.3 SAME, json 870.4. On unpatched jank the DIFFER rows stay
+(sum-overflow, sum-overflow-hinted, pipeline, dispatch: the 32-bit wrap) and are not in the geomean.
+
 ## Cohost AOT optimization level
 
 `bb boot:jank` calls `jank-aot-dir` (`bb.edn` lines 14-15), which loads `dev/perf/jank_aot_ensure.clj`. The recompile is one command, `jank --module-path src compile-module cohost.run -O3 --target-dir target/jank-aot`, at `dev/perf/jank_aot_ensure.clj:68-69`. That `-O3` covers `cohost.run` and the namespaces it depends on, including `cohost.shim` and `cohost.hosts.jank-host`. The script requires `cohost/shim.o` and `cohost/hosts/jank_host.o` in that same cache. There is no environment variable for the level. jank's own flag is `-O` / `--optimization`, values 0 through 3. The boot does not read it from the environment. The level is the literal `-O3` on that line, so the default is already `-O3`. `bb bench:programs jank` loads those objects. A second target would repeat the same compile. Default and `-O3` are that run: fib median `126.469398` ms, and the geometric mean of cohost `-O3` / default is `1`.
@@ -917,6 +964,34 @@ geomean merged/apt over 11: 0.806
 | first-output | 127.289412 | 155.165961 | 0.330518 | 2036.561343 | 1997.019663 | 5.288114 | ok |
 
 Geometric mean of the twenty-one jolt / JVM median ratios: `0.683374`. Geometric mean of the twenty-one jolt-cohost / JVM median ratios: `2.404439`.
+
+## Cached boots (D-6 step 1, 2026-11-02 ET)
+
+What each host can cache, measured on one box (lane D's; times are not comparable with other sections'). The boot is `bb boot:<host>`'s whole process (boot, battery, libraries), one run each. The probe (`bash dev/perf/cached_boot_probe.sh <dir>`) is one namespace of 1,000 small fns (`(defn fN [x y] (let [...] (if ... (str ...) (map inc [...]))))`, written per dialect), three runs each, wall seconds: `eval` reads and evaluates it form by form (`load-file`, as cohost's boot evaluates its rewritten forms), `module` requires it with the host's cache empty, `cached` with it warm. A cached boot here means jank's snapshot carried over: the boot's rewritten forms recorded once (D-1's record mode, portable), emitted as the host's modules, loaded through the host's own cache, so a fresh boot skips cohost's reading and rewriting of core.clj and the host's compile of what it rewrote.
+
+| host | boot here | eval / module / cached (s) | what a cached boot can be |
+|---|---|---|---|
+| Basilisp 0.5.1 | 2 m 38.654 s; 529/130/36/96/0, 144/145, 61/61 | 12.731 / 13.128 / 13.008; 12.538 / 12.165 / 12.826; 0.774 / 0.744 / 0.728 | a generated `.lpy` module per booted namespace: `require` compiles it once to `__pycache__/*.lpyc`, then loads the bytecode, 17x faster than evaluating the same forms. Both of its costs (the rewrite in Python, the Python compile of each form) go. **Ranked first.** |
+| ClojureWasm v1.15.4 | 1 m 31.604 s; 555/145/91/0, 143/145, 61/61 | 0.056 / 0.089 / 0.057; 0.058 / 0.059 / 0.057; no cache | evaluating is cheap (1,000 fns in 0.06 s) and `require` caches nothing; `cljw build` makes a binary that still evaluates the script at start (a load-time `(reduce + (range 2e7))` took 1.409 s as a script and 1.449 s built). So its boot is cohost's own reading and rewriting on cljw, and a generated module saves that part, not the eval. |
+| Phel v0.54.0 | 1 m 13.065 s; 591/73/127/0, 145/145, 61/61 | 3.906 / 0.146 / 0.154 (`phel run`); `phel build --no-cache` 10.340 / 6.482 / 6.852 | `phel run` already caches the PHP it compiles (3.9 s first, 0.15 s after); cohost's boot evaluates forms at run time, which that cache does not cover. A generated module run by `phel run` would get it. |
+| let-go 1.13.0 | 19.407 s; 569/105/117/0, 143/145, 61/61 | 0.101 / 0.099 / 0.105; `lg -c` 0.110 / 0.111 / 0.122; `.lgb` 0.019 / 0.020 / 0.019 | `lg -c` compiles to `.lgb` bytecode, 5x faster to load than the source; but the source itself is cheap, so its boot too is mostly cohost's rewrite. |
+| ClojureScript (Node 24.22.1) | 53.161 s (the cljs build included); 518/87/46/140/0, 143/145, 61/61 | not probed (its boot is seconds once built) | the compiled JS of a generated module (cljs.main caches the build). |
+| jolt v0.8.23 | 11.391 s; 466/199/63/63/0, 145/145, 61/61 | not probed (the fastest boot) | -- |
+
+### Basilisp's cached boot (D-6)
+
+Built as ranked: `bb boot:lpy-snapshot` records a Basilisp boot with the twelve libraries (`dev/perf/lpy_snapshot_record.lpy`, D-1's record mode, unchanged), emits one `.lpy` module per booted namespace (`dev/perf/jank_snapshot_emit.clj --host lpy`) into `target/lpy-snapshot/src/`, and loads them once so Basilisp compiles their bytecode (`__pycache__/*.lpyc`). Its key (`dev/perf/lpy_snapshot_ensure.clj`) is one sha256 over the stock sources, `src/cohost`, the emitter and the `lpy_snapshot_*` scripts, and `basilisp version`; a stale one is rebuilt (`LPY-SNAPSHOT-STALE another key` after an emitter change, shown), never loaded. `bb boot:lpy` boots from it when it is fresh, else boots as before. A build: 184,127 ms.
+
+The emitter's Basilisp dialect: `.lpy` files, `basilisp.core/ns` headers (the replay's first call clears the refers Basilisp's ns form always makes), `(quote ns//)` written `(basilisp.core/symbol "ns" "/")` (Basilisp's reader takes no qualified `/`), Basilisp's reader position meta dropped. Two record/emit fixes it needed, for every host: a top-level `set!` of `*warn-on-reflection*` / `*unchecked-math*` is not recorded (it runs inside the load's binding; replayed outside it, it throws), and a regex is written with `\r \n \t` escaped (a raw CR in a `.lpy` becomes LF when Python reads it).
+
+`basilisp run -p src dev/perf/lpy_snapshot_run.lpy` (boot!) against `bb boot:lpy` (fresh cache), alternating, `BOOT-MS` the boot alone:
+
+| | runs (BOOT-MS) | median | process (boot + batteries) | battery, libraries |
+|---|---|---:|---|---|
+| boot! | 55087.051 / 55374.238 / 55274.832 | 55,275 ms | 1 m 58.101 s / 1 m 56.750 s / 1 m 55.722 s | 144/145, 61/61 |
+| the cached boot | 2994.445 / 3099.626 / 3418.538 | 3,100 ms | 21.642 / 22.889 / 23.480 s | 144/145, 61/61 |
+
+17.8x on the boot. The battery's one failure is the same on both: numeric tower, `(= 1 1.0)` is `true` on Basilisp (doc/REPORT.md).
 
 ## Basilisp, ClojureWasm, Phel, let-go
 
@@ -1254,6 +1329,16 @@ Notes:
   unset (4 of 4), the same tree; not the key's.
 - The reduce and sort arms of X4-1 (`doc/research/jank-workarounds.md`): swept in X3-2, below.
 - Next keys as they merge: the fn name on defn (M-9).
+
+The keys that only jank sets (no cross-host sweep: each is a jank codegen fact):
+
+| key | jank's value | what it does | measured |
+|---|---|---|---|
+| `:native-hints` | `{long long, double double, boolean bool, int int}` | the primitive hints passed through as native tags (H0/H1, U6-5) | doc/perf/jank.md "Type hints" |
+| `:native-local-casts` | `{long cpp/jank.runtime.to_int, double cpp/jank.runtime.to_real}` | a hinted let*/loop* local's init through the host's typed conversion | U6-5 |
+| `:defn-fn-name?` | true | the def's name on its fn*: self-calls are direct | doc/perf/jank.md "Emission gaps" |
+| `:static-aliases` | `{"Numbers-minus" clojure.core/-}` | the shim's `-` wrapper emitted as jank's `-` | doc/perf/jank.md "Emission gaps" (M-9) |
+| `:core-aliases` | `#{not}` | a call of the stock `not` emitted as jank's `not`; the stock fn stays booted | U6-6: with `-` and `not` as jank's own ops, fib cohost/jank-aot 5.09x -> 3.18x, tak 5.76x -> 2.82x |
 
 ### `:sort-host-compare?` (X3-2): X4-1's sort arm on every host
 

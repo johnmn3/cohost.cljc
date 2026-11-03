@@ -1,0 +1,31 @@
+;; D-8: a project's snapshot, the recording. Boot from the core's snapshot
+;; (the module path is the snapshot's), add the project's source roots, then
+;; record what loading the app's namespaces does, and write those events
+;; (dev/perf/jank_snapshot_emit.clj --project turns them into modules).
+;;   jank --module-path <snapshot path> run dev/perf/jank_snapshot_project_record.jank -- \
+;;     --stock <abs stock root> --out <events.edn> --root <dir> ... --lib <ns> ...
+(require 'cohost.run)
+(require 'cohost.boot)
+(require 'cohost.adapter)
+
+(def opts
+  (loop [args (seq (or *command-line-args* ())) o {:roots [] :libs []}]
+    (if-let [[a b & more] args]
+      (case a
+        "--stock" (recur more (assoc o :stock b))
+        "--out" (recur more (assoc o :out b))
+        "--root" (recur more (update o :roots conj b))
+        "--lib" (recur more (update o :libs conj (symbol b)))
+        (recur (next args) o))
+      o)))
+
+(cohost.boot/boot-from-snapshot! {:root (:stock opts)})
+(doseq [d (:roots opts)] (cohost.boot/add-source-root! d))
+(cohost.boot/snapshot-start!)
+(doseq [lib (:libs opts)]
+  (cohost.adapter/try-all (fn [] (cohost.boot/load-lib! lib))
+                          (fn [e] (println "RECORD-LIB-ERROR" lib (cohost.adapter/error-message e)))))
+(let [ev (cohost.boot/snapshot-stop!)
+      text (pr-str ev)]
+  (cohost.adapter/spit-file (:out opts) text)
+  (println "PROJECT-EVENTS" (count ev) "bytes" (count text)))

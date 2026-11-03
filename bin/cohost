@@ -25,8 +25,8 @@
 (def stock-root (str repo "/resources/cohost/clojure-1.12.0"))
 (def cache-dir (str (fs/home) "/.cache/cohost"))
 
-(def wired ["cljs" "jolt" "lpy" "cljw" "phel" "lg"])
-(def hosts (set (concat ["jvm" "cljrs" "jank"] wired)))
+(def wired ["cljs" "jolt" "lpy" "cljw" "phel" "lg" "jank"])
+(def hosts (set (concat ["jvm" "cljrs"] wired)))
 
 (defn die [code & lines]
   (doseq [l lines] (binding [*out* *err*] (println l)))
@@ -34,17 +34,31 @@
 
 (defn usage []
   (die 2
-       "usage: cohost :<host> <clojure CLI args...>"
-       (str "  hosts: :jvm " (str/join " " (map #(str ":" %) wired)) "   (:cljrs :jank not wired yet)")
+       "usage: cohost [:<target>] <clojure CLI args...>"
+       "  the target: :<target> first, else :cohost/target in ./deps.edn, else :jvm (the real CLI)"
+       (str "  hosts: :jvm " (str/join " " (map #(str ":" %) wired)) "   (:cljrs not wired yet)")
        "  e.g. cohost :cljs -e \"(+ 1 2)\""
        "       cohost :cljs -M -m demo.main arg1"
        "       cohost :jolt -X demo.core/run :x 1"
        "       cohost :cljs -Spath"))
 
 (defn run-inherit
-  "Run cmd with inherited stdio in dir; -> its exit code."
+  "Run cmd with inherited stdio in dir; -> its exit code. Every child sees
+   COHOST_HOME, the checkout this script runs from (the cohost/app template
+   reads it)."
   [dir cmd]
-  (-> (p/process cmd {:dir dir :inherit true}) deref :exit))
+  (-> (p/process cmd {:dir dir :inherit true :extra-env {"COHOST_HOME" repo}}) deref :exit))
+
+(defn with-templates
+  "The Clojure CLI's arguments for a tool (-T): cohost's deps-new templates
+   (templates/cohost-app) on its classpath, merged into the -Sdeps the
+   arguments carry (the CLI takes one)."
+  [args]
+  (let [lib {'cohost/templates {:local/root (str repo "/templates/cohost-app")}}
+        i (.indexOf ^java.util.List args "-Sdeps")]
+    (if (neg? i)
+      (into ["-Sdeps" (pr-str {:deps lib})] args)
+      (assoc args (inc i) (pr-str (update (edn/read-string (nth args (inc i))) :deps merge lib))))))
 
 ;; --------------------------------------------------------------------------
 ;; arguments, as the Clojure CLI's own script reads them: its options first,
@@ -67,7 +81,7 @@
       (re-matches #"-A(:.*)?" a) (recur more (update o :aliases conj a))
       (re-matches #"-M(:.*)?" a) (assoc o :mode :M :alias a :main more)
       (re-matches #"-X(:.*)?" a) (assoc o :mode :X :alias a :main more)
-      (re-matches #"-T(:.*)?" a) (assoc o :mode :T)
+      (re-matches #"-T.*" a) (assoc o :mode :T)
       ;; anything else starts clojure.main's own arguments
       :else (assoc o :mode :M :main args))))
 
@@ -196,7 +210,35 @@
         (when-not (zero? (run-inherit repo cmd))
           (die 1 "cohost: cljs build failed"))))))
 
-(defn launch! [host cwd config]
+(defn jank-aot-dir!
+  "cohost's own namespaces compiled -O3 (jank-FAST Step 6 stage 1), rebuilt
+   when src/cohost or the jank binary changed: dev/perf/jank_aot_ensure.clj,
+   run from the repo (its paths are the repo's). -> the absolute cache dir."
+  []
+  (let [r (-> (p/process ["bb" "-e" "(println (str \"COHOST-AOT-DIR \" (load-file \"dev/perf/jank_aot_ensure.clj\")))"]
+                         {:dir repo :out :string :err :inherit})
+              deref)
+        dir (some #(second (re-matches #"COHOST-AOT-DIR (.*)" %)) (str/split-lines (:out r)))]
+    (when-not (and (zero? (:exit r)) dir)
+      (die 1 "cohost: jank AOT modules failed (bb -e (load-file \"dev/perf/jank_aot_ensure.clj\") in the repo)"))
+    (str (fs/absolutize (fs/path repo dir)))))
+
+(defn jank-launch
+  "jank: the module path (a fresh snapshot of the booted core, else cohost's
+   AOT objects), whether cohost.cli boots from the snapshot, and the jank
+   process's extra environment (the GC setting): lane D's
+   dev/perf/jank_snapshot_cli.clj, decided in the repo. With a fresh core
+   snapshot and a main namespace (-m, -X), the project's namespaces come
+   from a per-project snapshot, built when stale (D-8)."
+  [cwd roots run]
+  (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
+  (let [l ((resolve 'jank-cli-launch) repo)
+        main-ns (when (#{:main :exec} (get-in run [:main :type])) (get-in run [:main :ns]))
+        proj (when (:snapshot? l)
+               ((resolve 'jank-project-launch) repo cwd roots main-ns (:module-path l) (:env l)))]
+    (merge l proj)))
+
+(defn launch! [host cwd config & [jank]]
   (let [cfg (str config)
         src (str repo "/src")]
     (case host
@@ -209,23 +251,41 @@
       "cljw" (run-inherit cwd ["cljw" "-cp" src "-m" "cohost.cli" cfg])
       "lpy" (run-inherit cwd ["basilisp" "run" "-p" src "-c"
                               (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])
-      "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg]))))
+      "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg])
+      ;; the booted core from a fresh snapshot (else cohost's -O3 AOT objects
+      ;; and a boot of core.clj), cohost.cli and the program JIT-compiled at -O3
+      "jank" (-> (p/process ["jank" "-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg]
+                            {:dir cwd :inherit true :extra-env (:env jank)})
+                 deref :exit))))
 
 ;; --------------------------------------------------------------------------
 
+(defn default-target
+  "The project's target: :cohost/target in ./deps.edn (a keyword, e.g.
+   :jank), else :jvm -- the real Clojure CLI, as `clj` would run it."
+  []
+  (let [f (fs/file "deps.edn")
+        t (when (fs/exists? f)
+            (:cohost/target (try (edn/read-string {:default tagged-literal} (slurp f))
+                                 (catch Exception e
+                                   (die 1 (str "cohost: cannot read deps.edn: " (.getMessage e)))))))]
+    (if t (str/replace (str t) #"^:" "") "jvm")))
+
 (let [args *command-line-args*]
-  (when (or (empty? args) (#{"-h" "--help" "help"} (first args))) (usage))
-  (let [host (str/replace (first args) #"^:" "")
-        rest-args (vec (rest args))
+  (when (#{"-h" "--help" "help"} (first args)) (usage))
+  ;; `cohost :<host> ...` names the target; `cohost ...` takes the project's
+  (let [explicit? (some-> (first args) (str/starts-with? ":"))
+        host (if explicit? (str/replace (first args) #"^:" "") (default-target))
+        rest-args (vec (if explicit? (rest args) args))
         cwd (str (fs/canonicalize "."))
         {:keys [mode] :as o} (parse-args rest-args)]
     (when-not (hosts host)
-      (die 2 (str "cohost: unknown host " (first args) " (hosts: "
+      (die 2 (str "cohost: unknown host :" host " (hosts: "
                   (str/join " " (map #(str ":" %) (sort hosts))) ")")))
     (cond
       ;; the JVM runs the real CLI, whole; tools are JVM programs, on every host
       (or (= host "jvm") (= mode :T) (:describe? o))
-      (System/exit (run-inherit cwd (vec (cons "clojure" rest-args))))
+      (System/exit (run-inherit cwd (vec (cons "clojure" (if (= mode :T) (with-templates rest-args) rest-args)))))
 
       (not (some #{host} wired))
       (die 2 (str "cohost: :" host " is not wired into the CLI yet: its boot is still in flight (doc/hosts/PLAN.md)"))
@@ -240,10 +300,12 @@
           (let [run (if (= mode :X)
                       {:inits [] :main (exec-config (:main o) argmap)}
                       (main-config cwd (concat (when (= mode :M) (:main-opts argmap)) (:main o))))
-                cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))]
+                cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))
+                jank (when (= host "jank") (jank-launch cwd roots run))]
             (fs/create-dirs (fs/parent cfg-file))
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
-                                               :verbose (boolean (System/getenv "COHOST_VERBOSE"))})))
+                                               :verbose (boolean (System/getenv "COHOST_VERBOSE"))}
+                                          (when jank (select-keys jank [:snapshot? :project-snapshot])))))
             ;; System/exit skips finally: the config goes before it
-            (let [code (try (launch! host cwd cfg-file) (finally (fs/delete-if-exists cfg-file)))]
+            (let [code (try (launch! host cwd cfg-file jank) (finally (fs/delete-if-exists cfg-file)))]
               (System/exit code))))))))

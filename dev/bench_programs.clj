@@ -190,12 +190,37 @@
     (spit f (str (harness src (clock "jank-jit") true) "(apply -main *command-line-args*)\n"))
     (run! [jank-bin "-O3" "run" f "--" arg])))
 
+(def jank-raw-round
+  "Math.round for the raw jank twin: floor(a + 1/2) as the JVM computes it
+   (exact: the fraction is compared, not added), NaN 0."
+  "(defn __round [a] (let [a (double a)] (if (NaN? a) 0 (let [t (long a) f (if (< a t) (dec t) t)] (if (>= (- a f) 0.5) (inc f) f)))))\n")
+
+(defn jank-raw-math
+  "U6-8: the raw program as jank compiles it on its own: jank has no
+   java.lang.Math, so Math/sqrt is jank's runtime sqrt (cpp/jank.runtime.sqrt,
+   any number, a double back) and Math/round the JVM's rounding above. The
+   cohost column reads the program as written."
+  [src]
+  (if (or (str/includes? src "Math/sqrt") (str/includes? src "Math/round"))
+    (str jank-raw-round
+         (-> src
+             (str/replace "Math/sqrt" "cpp/jank.runtime.sqrt")
+             (str/replace "Math/round" "__round")))
+    src))
+
+(def jank-bin-stamp
+  "The jank binary's real path, size and mtime: a rebuilt jank recompiles the
+   twins (the stamp held only the source, so a rebuild reused stale modules)."
+  (if-let [p (try (str (fs/real-path (fs/which jank-bin))) (catch Exception _ nil))]
+    (str ";; jank " p " " (fs/size p) " " (fs/file-time->millis (fs/last-modified-time p)) "\n")
+    ""))
+
 (defn aot-dir [id src]
   (let [root (str "target/bench-programs/aot-" (name id) jank-tag)
         file (str root "/src/bench/prog.jank")
         stamp (str root "/stamp")
-        body (str "(ns bench.prog)\n" (harness src (clock "jank-aot") true))]
-    (when-not (and (fs/exists? stamp) (= (slurp stamp) body) (seq (fs/glob root "**/bench/prog.o")))
+        body (str "(ns bench.prog)\n" (harness (jank-raw-math src) (clock "jank-aot") true))]
+    (when-not (and (fs/exists? stamp) (= (slurp stamp) (str jank-bin-stamp body)) (seq (fs/glob root "**/bench/prog.o")))
       (fs/delete-tree root)
       (fs/create-dirs (str root "/src/bench"))
       (spit file body)
@@ -203,7 +228,7 @@
                      "-O3" "--target-dir" root])]
         (when-not (and (zero? (:exit c)) (seq (fs/glob root "**/bench/prog.o")))
           (throw (ex-info "aot-compile" {:err (str (:err c) "\n" (:out c))}))))
-      (spit stamp body))
+      (spit stamp (str jank-bin-stamp body)))
     {:cache (str (first (fs/glob root "_cache/*"))) :src (str root "/src")}))
 
 (defn run-jank-aot [id src arg]
@@ -214,15 +239,42 @@
   ;; cohost's own namespaces AOT (G-12), rebuilt when stale.
   (load-file "dev/perf/jank_aot_ensure.clj"))
 
-(load-file "dev/perf/jank_gc_env.clj")
+(def jank-boot
+  "Which boot the last cohost-on-jank command used: :snapshot or :aot."
+  (atom nil))
+
+(def jank-env
+  "The environment the last cohost-on-jank command needs (D-4's GC setting)."
+  (atom nil))
+
+(defn jank-cohost-cmd
+  "-> {:cmd [...] :env {...}}: cohost.run --eval code on jank. With lane D's
+   snapshot entry in the tree (dev/perf/jank_snapshot_cli.clj, D-5): the
+   snapshot when it is fresh, else the AOT objects, as that entry decides
+   (and its GC env). Without it: cohost's AOT objects (G-12)."
+  [code]
+  (if (fs/exists? "dev/perf/jank_snapshot_cli.clj")
+    (do (load-file "dev/perf/jank_snapshot_cli.clj")
+        (let [repo (str (fs/canonicalize "."))
+              {:keys [module-path snapshot? env]} ((resolve 'jank-cli-launch) repo)]
+          (reset! jank-boot (if snapshot? :snapshot :aot))
+          (reset! jank-env env)
+          {:env env
+           :cmd (if snapshot?
+                  [jank-bin "-O3" "--module-path" module-path "run" (str repo "/dev/perf/jank_snapshot_run.jank")
+                   "--" "--eval" code]
+                  [jank-bin "-O3" "--module-path" module-path "run-main" "cohost.run" "--" "--eval" code])}))
+    (do (reset! jank-boot :aot)
+        ;; jank-MAX A1: cohost's collector environment (dev/perf/jank_gc_env.clj)
+        (load-file "dev/perf/jank_gc_env.clj")
+        (reset! jank-env ((resolve 'jank-gc-env)))
+        {:env @jank-env
+         :cmd [jank-bin "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" code]})))
 
 (defn run-jank-cohost [_ src arg]
   ;; cohost's jank boot has no load-file; --eval reads every form of its argument.
-  ;; jank-MAX A1: cohost's collector environment (dev/perf/jank_gc_env.clj). jank's own
-  ;; targets (jank-jit, jank-aot) keep jank's defaults: they measure jank as shipped.
-  (run! [jank-bin "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--"
-         "--eval" (cohost-source src (clock "jank") arg)]
-        {:extra-env (jank-gc-env)}))
+  (let [{:keys [cmd env]} (jank-cohost-cmd (cohost-source src (clock "jank") arg))]
+    (run! cmd (when env {:extra-env env}))))
 
 (defn run-cljrs [id src arg]
   (let [f (tmp (str (name id) ".clj"))]
@@ -405,7 +457,7 @@
     "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" ok-eval]
     "jank-jit" [jank-bin "-O3" "run" file]
     "jank-aot" (wall-aot-cmd)
-    "jank" [jank-bin "-O3" "--module-path" (str (jank-cohost-dir) ":src") "run-main" "cohost.run" "--" "--eval" ok-eval]
+    "jank" (:cmd (jank-cohost-cmd ok-eval))
     "cljrs" ["cljrs" "run" file]
     "cljrs-cohost" ["cljrs" "run" "--src-path" "src" "--src-path" "target/cljrs-ns"
                     "src/cohost/run.cljc" "--" "--eval" ok-eval]
@@ -431,7 +483,9 @@
 (defn wall-run [id file]
   (let [cmd (wall-cmd id file)
         t0 (System/nanoTime)
-        proc (run! cmd (when (= id "cljrs-cohost") cljrs-env))]
+        proc (run! cmd (cond (= id "cljrs-cohost") cljrs-env
+                             ;; computed by wall-cmd, before the clock started
+                             (= id "jank") (when @jank-env {:extra-env @jank-env})))]
     {:exit (:exit proc) :ms (/ (- (System/nanoTime) t0) 1e6)
      :out (or (:out proc) "") :err (or (:err proc) "")}))
 
@@ -526,6 +580,7 @@
         m (if (:wall p) (measure-wall t p) (measure t p arg))
         jvm (when-not (or (:wall p) (= (:id t) "jvm")) (:result (get (load-results "jvm") (:id p))))
         m (cond-> (assoc m :arg arg)
+            (= (:id t) "jank") (assoc :boot @jank-boot)
             (and (:result m) jvm (not= jvm (:result m)) (not= (:arg (get (load-results "jvm") (:id p))) arg))
             (assoc :note "JVM record is at another size")
             (and (:result m) jvm (not= jvm (:result m)) (= (:arg (get (load-results "jvm") (:id p))) arg))

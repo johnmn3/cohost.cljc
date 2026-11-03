@@ -60,7 +60,15 @@
    ["macroexpand" "(macroexpand-1 '(when x y z))" '(if x (do y z))]
    ["gensym unique" "(let [a (gensym \"g\") b (gensym \"g\")] (and (symbol? a) (not= a b)))" true]
    ["binding dynamic" "(do (def ^:dynamic *d* 1) (defn rd [] *d*) [(rd) (binding [*d* 2] (rd)) (rd)])" [1 2 1]]
+   ;; U6-8: (/ x y) inline on jank keeps the wrapper's zero-divisor answers
+   ["division: IEEE infinities and NaN on a zero divisor, exact otherwise" "(let [z 0 dz 0.0] [(/ 1.0 z) (/ -1 dz) (Double/isNaN (/ 0.0 z)) (/ 6 3) (/ 5 2.0) (/ 7.5 2.5)])" [##Inf ##-Inf true 2 2.5 3.0]]
+   ;; U6-8: Math statics where a host's own op could answer differently
+   ["Math: round half up, abs of Long/MIN_VALUE, sqrt of negatives and -0.0, pow" "(let [x -4 z -0.0] [(Math/round 2.5) (Math/round -2.5) (Math/abs Long/MIN_VALUE) (Double/isNaN (Math/sqrt -1)) (Double/isNaN (Math/sqrt x)) (str (Math/sqrt -0.0)) (str (Math/sqrt z)) (Math/pow 2 0.5) (Math/sqrt 4) (Math/sqrt 2.25)])" [3 -2 -9223372036854775808 true true "-0.0" "-0.0" 1.4142135623730951 2.0 1.5]]
    ["with-redefs" "(do (defn orig [] :orig) [(with-redefs [orig (fn [] :redef)] (orig)) (orig)])" [:redef :orig]]
+   ["redefining a fn during its own recursion" "(do (defn rr [n] (if (pos? n) (do (alter-var-root #'rr (fn [_] (fn [x] :redefined))) (rr (dec n))) :original)) (rr 1))" :redefined]
+   ;; ^:redef keeps the var call on a :defn-fn-name? host (Clojure's direct
+   ;; linking opt-out): a redefinition mid-recursion is seen, on every host
+   ["^:redef: a redefinition during its own recursion is seen" "(do (defn bt-dl2 [x] :new) (defn ^:redef bt-dlr [n] (if (zero? n) :base (do (when (= n 2) (alter-var-root (var bt-dlr) (constantly bt-dl2))) (bt-dlr (dec n))))) (bt-dlr 3))" :new]
    ["alter-var-root var-get" "(do (def vr 1) (alter-var-root #'vr inc) [vr (var-get #'vr) (:name (meta #'vr))])" [2 2 'vr]]
    ["try/catch/finally ex-info" "(let [log (atom [])] [(try (throw (ex-info \"boom\" {:k 1})) (catch Exception e (swap! log conj :caught) (:k (ex-data e))) (finally (swap! log conj :fin))) @log])" [1 [:caught :fin]]]
    ["ex-message ex-cause" "(let [e (ex-info \"outer\" {} (ex-info \"inner\" {}))] [(ex-message e) (ex-message (ex-cause e))])" ["outer" "inner"]]
@@ -103,6 +111,7 @@
    ["Character/isWhitespace is Java's" "[(Character/isWhitespace (char 11)) (Character/isWhitespace (char 8195)) (Character/isWhitespace (char 160))]" [true true false]]
    ["unchecked int arithmetic wraps at 32 bits" "[(unchecked-add-int 2147483647 1) (unchecked-multiply-int 2147483647 2) (unchecked-int 3000000000) (unchecked-byte 300)]" [-2147483648 -2 -1294967296 44]]
    ["string and array index exceptions" "[(try (subs \"abc\" 1 5) (catch StringIndexOutOfBoundsException e :sioobe)) (try (aget (to-array [1]) 5) (catch ArrayIndexOutOfBoundsException e :aioobe))]" [:sioobe :aioobe]]
+   ["an unmatched group is nil" "[(re-find #\"a(b)?\" \"a\") (re-matches #\"(a)|(b)\" \"b\") (re-seq #\"a(b)?\" \"aab\") (re-find #\"^(\\S+)(?:\\s+(.*))?\" \"-v\")]" [["a" nil] ["b" nil "b"] '(["a" nil] ["ab" "b"]) ["-v" "-v" nil]]]
    ["Matcher group spans" "(let [m (re-matcher #\"(\\d)(\\d)|(x)\" \"a12\")] (.find m) [(.start m 1) (.end m 2) (.start m 3)])" [1 3 -1]]
    ["reduce over an eduction; a :tag that is data" "[(reduce + (eduction (filter odd?) [1 2 3 4 5])) (meta ^{:tag :int} [1 2])]" [9 {:tag :int}]]
    ["with-local-vars; #'clojure.core/x is the booted var" "[(with-local-vars [x 1] (var-set x 2) (var-get x)) (= (var clojure.core/map) (var map))]" [2 true]]
@@ -152,6 +161,9 @@
    ["protocol: a redefined record dispatches its new method" "(do (defprotocol BtY (bt-y [s] [s k])) (defrecord BtYR [a b] BtY (bt-y [_] a) (bt-y [_ k] [k b])) (let [r1 [(bt-y (->BtYR 1 2)) (bt-y (->BtYR 1 2) :k)]] (defrecord BtYR [a b] BtY (bt-y [_] b) (bt-y [_ k] [a k])) [r1 (bt-y (->BtYR 1 2)) (bt-y (->BtYR 1 2) :k)]))" [[1 [:k 2]] 2 [1 :k]]]
    ["multimethod: defmethod after a call is seen" "(do (defmulti bt-mm identity) (defmethod bt-mm :default [_] :d) (let [a (bt-mm 1)] (defmethod bt-mm 1 [_] :one) [a (bt-mm 1) (bt-mm 2)]))" [:d :one :d]]
    ["multimethod: derive after a call is seen" "(do (defmulti bt-mh identity) (defmethod bt-mh ::bt-p [_] :p) (defmethod bt-mh :default [_] :d) (let [a (bt-mh ::bt-q)] (derive ::bt-q ::bt-p) [a (bt-mh ::bt-q)]))" [:d :p]]
+   ;; integer arithmetic past 2^31 (A5: unpatched jank wraps + - * at 32 bits; every host must pass)
+   ["+ - * past 2^31 on small integers" "[(+ 2147483647 1) (- -2147483648 1) (* 65536 65536) (* 46341 46341) (- 0 -2147483648) (inc 2147483647) (dec -2147483648)]" [2147483648 -2147483649 4294967296 2147488281 2147483648 2147483648 -2147483649]]
+   ["a sum past 2^31 through reduce, apply and a loop" "[(reduce + (range 100000)) (apply + (range 100000)) (loop [i 0 s 0] (if (< i 100000) (recur (inc i) (+ s i)) s)) (loop [i 0 s 0] (if (< i 70000) (recur (inc i) (+ s (* i 3))) s))]" [4999950000 4999950000 4999950000 7349895000]]
    ["hash-combine hashes its argument as Object.hashCode does" "[(hash-combine 0 \"a\") (hash-combine 0 nil) (hash-combine 1 2) (hash-combine -5 \"hello\")]" [-1640531430 -1640531527 -1640531462 1541369522]]
    ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]
    ;; primitive fn* parameters coerce as JVM Clojure 1.12.0 does (measured
@@ -161,7 +173,27 @@
    ["a ^long parameter rejects a non-number" "(let [f (fn [^long x] x)] (try (f \"a\") (catch ClassCastException e :cce)))" :cce]
    ["a ^long fn recurred from its loop truncates" "(let [f (fn [^long n] (loop [i n a 0] (if (pos? i) (recur (dec i) (+ a i)) a)))] [(f 3.9) (f 4)])" [6 10]]
    ["a ^long fn keeps its :pre" "(try ((fn [^long x] {:pre [(pos? x)]} x) -1) (catch AssertionError e :pre))" :pre]
-   ["a ^long fn destructures its other parameter" "((fn [^long x [a b]] (+ x a b)) 1 [2 3])" 6]])
+   ["a ^long fn destructures its other parameter" "((fn [^long x [a b]] (+ x a b)) 1 [2 3])" 6]
+   ;; U6-5: return and local hints are coerced too (and typed natively on jank)
+   ["a ^long return truncates a double" "(let [f (fn ^long [x] x)] [(f 1.9) (f -1.9) (f 4)])" [1 -1 4]]
+   ["a ^double return widens a long" "(let [f (fn ^double [x] x)] [(f 2) (f 1.5)])" [2.0 1.5]]
+   ["a ^long return rejects a non-number" "(let [f (fn ^long [x] x)] (try (f \"a\") (catch ClassCastException e :cce)))" :cce]
+   ["a ^long return of an arity that recurs" "(let [f (fn ^long [x] (if (pos? x) (recur (dec x)) x))] (f 2.5))" 0]
+   ["a hinted fn recurring on its own name" "(let [f (fn fib ^long [^long n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))] [(f 20) (f 20.7)])" [6765 6765]]
+   ["a ^long let local is a long to arithmetic" "(let [^long x (identity 1.9)] (inc x))" 2]
+   ["a ^long let local rejects a non-number" "(try (let [^long x (identity \"a\")] (inc x)) (catch ClassCastException e :cce))" :cce]
+   ["a ^double let local" "(let [^double x (identity 2)] (+ x 0.5))" 2.5]
+   ["a ^long loop local is a long to arithmetic" "(loop [^long i (identity 2.5) a 0] (if (pos? i) (recur (dec i) (+ a i)) a))" 3]
+   ;; D-11: cohost picks each #? branch by the target's ranking of the keys
+   ;; (:clj, then :default, on every target today), not by source order
+   ["#? the :clj branch over :cljs and :default" "#?(:cljs 1 :clj 2 :default 3)" 2]
+   ["#? a key the ranking lacks falls to :default" "#?(:lpy 1 :default 3)" 3]
+   ["#? the ranking decides, not source order" "#?(:default 3 :clj 2)" 2]
+   ["#?@ splices the :clj branch into a vector" "[0 #?@(:clj [1 2]) 3 #?@(:cljs [4])]" [0 1 2 3]]
+   ["a branch's literal keeps the JVM's meta" "[(meta #?(:clj ^:k [1] :default [])) (meta #?(:clj {:a 1})) (meta #?(:cljs ^:x [] :default ^{:d 1} #{2}))]" [{:k true} nil {:d 1}]]
+   ;; cohost's own: the codemod's provenance of a form (cohost.scan/provenance)
+   ["(cohost) a :clj branch's forms are Java's" "(defmacro bt-prov [] (list 'quote (cohost.scan/provenance &form))) #?(:clj (bt-prov) :default :none)" :java]
+   ["(cohost) text outside a branch has no provenance" "(bt-prov)" nil]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."

@@ -1,0 +1,7 @@
+{:description "A cohost application: stock Clojure 1.12's clojure.core on the target its deps.edn names."
+ ;; the default target; `:target jank` on the command line picks another
+ :target "jvm"
+ :data-fn [cohost.template/data]
+ :transform
+ [["src" "src/{{top/file}}" {"main.tmpl" "{{main/file}}.cljc"}]
+  ["test" "test/{{top/file}}" {"main_test.tmpl" "{{main/file}}_test.cljc"}]]}
