@@ -25,6 +25,9 @@
 ;; first-output is process wall time to the line `ok`: one cold process, one
 ;; discarded process, then 10 processes (median, min-max).
 ;; Records: target/bench-programs/results/<target>.edn (program -> record).
+;; <t>-built targets (jvm-built, jank-built, jolt-built, cljs-built, cljw-built,
+;; lg-built, lpy-built, phel-built) measure the compiled build: what `cohost
+;; -T:build build` makes for <t>, run as target/<name>/run, the same method.
 (require '[babashka.fs :as fs]
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
@@ -77,6 +80,19 @@
    {:id :json :file "bench/programs/json.clj" :arg "30000"}
    {:id :first-output :file "bench/programs/first_output.clj" :wall true}])
 
+;; The compiled builds: each is what `cohost -T:build build` makes for that
+;; target (cohost.build), measured through its target/<name>/run (see
+;; "the compiled builds" below).
+(def built
+  (array-map "jvm-built" {:host :jvm :exe "clojure"}
+             "jank-built" {:host :jank :exe jank-bin}
+             "jolt-built" {:host :jolt :exe "jolt"}
+             "cljs-built" {:host :cljs :exe "node"}
+             "cljw-built" {:host :cljw :exe "cljw"}
+             "lg-built" {:host :lg :exe "lg"}
+             "lpy-built" {:host :lpy :exe "basilisp"}
+             "phel-built" {:host :phel :exe "phel"}))
+
 (def targets
   [{:id "jvm" :exe "clojure"}
    {:id "jvm-cohost" :exe "clojure"}
@@ -98,7 +114,11 @@
    {:id "lg" :exe "lg"}
    {:id "lg-cohost" :exe "lg"}
    {:id "cljrs" :exe "cljrs"}
-   {:id "cljrs-cohost" :exe "cljrs"}])
+   {:id "cljrs-cohost" :exe "cljrs"}
+   ;; the compiled builds
+   {:id "jvm-built" :exe "clojure"} {:id "jank-built" :exe jank-bin} {:id "jolt-built" :exe "jolt"}
+   {:id "cljs-built" :exe "node"} {:id "cljw-built" :exe "cljw"} {:id "lg-built" :exe "lg"}
+   {:id "lpy-built" :exe "basilisp"} {:id "phel-built" :exe "phel"}])
 
 ;; Each own core's clock, in nanoseconds. Every cohost target uses
 ;; (System/nanoTime), which cohost turns into the adapter's :nano-time.
@@ -404,6 +424,75 @@
    "cljs" run-cljs "cljs-cohost" run-cljs-cohost
    "browser" run-browser "browser-cohost" run-browser-cohost})
 
+
+;; ---- the compiled builds
+
+(declare error-text wall-cmd*)
+;; Two generated projects per target, under target/bench-programs/built/:
+;; progs-<t>: every timed program as namespace bench.p.<program> (its source
+;; plus the harness), and bench.main, whose -main takes the program's name
+;; and its size; hello-<t>: a -main that prints ok (first output, without the
+;; programs' load). Each is built once per driver run by `cohost -T:build
+;; build` with this checkout's cohost.build (:local/root), and run as
+;; target/<name>/run args... -- the artifact a user ships.
+
+(def repo-root (str (fs/canonicalize ".")))
+
+(defn- project-deps [host]
+  {:cohost/target host
+   :paths ["src"]
+   :deps {'org.clojure/clojure {:mvn/version "1.12.0"}}
+   :aliases {:build {:deps {'io.github.clojure/tools.build {:git/tag "v0.10.14" :git/sha "1176afd"}
+                            'io.github.johnmn3/cohost.cljc {:local/root repo-root}}
+                     :ns-default 'build}}})
+
+(defn- write-project! [dir host files]
+  (fs/delete-tree dir)
+  (fs/create-dirs (str dir "/src/bench/p"))
+  (spit (str dir "/deps.edn") (pr-str (project-deps host)))
+  (spit (str dir "/build.clj")
+        "(ns build (:require [cohost.build :as cb]))\n(defn build [opts] (cb/build (merge {:main 'bench.main} opts)))\n")
+  (doseq [[rel text] files] (spit (str dir "/src/" rel) text)))
+
+(defn- ns-file [id] (str "bench/p/" (str/replace (name id) "-" "_") ".clj"))
+
+(defn- progs-files []
+  (let [ps (remove :wall programs)]
+    (concat
+     (for [p ps]
+       [(ns-file (:id p)) (str "(ns bench.p." (name (:id p)) ")\n" (harness (slurp (:file p)) "(System/nanoTime)" false))])
+     [["bench/main.clj"
+       (str "(ns bench.main\n  (:require " (str/join " " (map #(str "[bench.p." (name (:id %)) "]") ps)) "))\n"
+            "(defn -main [p s]\n  (case p\n"
+            (str/join "" (map #(str "    " (pr-str (name (:id %))) " (bench.p." (name (:id %)) "/__bench s)\n") ps))
+            "    (println \"unknown program\" p)))\n")]])))
+
+(def ^:private hello-files
+  [["bench/main.clj" "(ns bench.main)\n(defn -main [& _] (println \"ok\"))\n"]])
+
+(def ^:private built-runs (atom {}))
+
+(defn built-run!
+  "target/<name>/run of target id's kind (:progs or :hello), built once per
+   driver run; a failed build is remembered and thrown again."
+  [id kind]
+  (let [r (or (get @built-runs [id kind])
+              (let [host (:host (built id))
+                    dir (str repo-root "/target/bench-programs/built/" (name kind) "-" (name host))
+                    _ (write-project! dir host (if (= kind :progs) (progs-files) hello-files))
+                    b (run! [(str repo-root "/bin/cohost") "-T:build" "build"] {:dir dir})
+                    run (str dir "/target/" (fs/file-name dir) "/run")
+                    r (if (and (zero? (:exit b)) (fs/exists? run))
+                        {:run run}
+                        {:fail (str "build: " (or (error-text (:err b) (:out b)) (str "exit " (:exit b))))})]
+                (swap! built-runs assoc [id kind] r)
+                r))]
+    (if (:fail r) (throw (ex-info "build" {:err (:fail r)})) (:run r))))
+
+(defn run-built [id]
+  (fn [prog _ arg] (run! [(built-run! id :progs) (name prog) arg])))
+(def runners (merge runners (into {} (map (fn [id] [id (run-built id)]) (keys built)))))
+
 ;; ---- first-output
 
 (defn wall-aot-cmd []
@@ -424,6 +513,11 @@
 (def ok-eval "(println \"ok\")")
 
 (defn wall-cmd [id file]
+  (if (built id)
+    [(built-run! id :hello)]
+    (wall-cmd* id file)))
+
+(defn wall-cmd* [id file]
   (case id
     "jvm" ["clojure" "-M" file]
     "jvm-cohost" ["clojure" "-M" "-m" "cohost.run" "--" "--eval" ok-eval]
