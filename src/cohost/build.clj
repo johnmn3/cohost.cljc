@@ -301,7 +301,8 @@ require_once __DIR__ . '/out/cohost/app_main.php';
      not; cohost is checked under phel run, so the built files keep `<?php`
      alone (the same line count: the source maps still line up).
    - -O 0: -O 2 does not finish on these modules (doc/AOT-PLAN.md).
-   - PHP's stack: 64 MB, as bench:phel; 8 MB segfaults on deep lazy seqs."
+   - PHP's stack: 1 GB for run (only what is used is touched): freeing a
+     million-element lazy seq recurses in PHP, past 64 MB; 8 MB segfaults sooner."
   [{:keys [main name]}]
   (let [home (cohost-home)
         out (io/file "target" name)
@@ -339,7 +340,7 @@ require_once __DIR__ . '/out/cohost/app_main.php';
     (spit (io/file out "run.php") phel-run-php)
     (sh! "." "rm" "-rf" (str work))
     (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main, Phel compiled to PHP (made by cohost.build)\n"
-                         "ulimit -s 65536 2>/dev/null\n"
+                         "ulimit -s 1048576 2>/dev/null\n"
                          "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
                          ;; OPcache's file cache (filled by the first run) and the tracing JIT;
                          ;; PHP ignores them where OPcache is not installed

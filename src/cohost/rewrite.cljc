@@ -1489,7 +1489,10 @@
                                        body' (with-markers bs body')
                                        body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')
                                        rest-arg (second (drop-while #(not= '& %) params))
-                                       body' (if (and (:vector-rest-args? ctx) (symbol? rest-arg))
+                                       ;; not for `& _`: Phel binds no param named _, so the wrapper's
+                                       ;; reference would reach PHP's global function _ (gettext)
+                                       body' (if (and (:vector-rest-args? ctx) (symbol? rest-arg)
+                                                      (not= "_" (name rest-arg)))
                                                [(apply list 'let* [rest-arg (list (shim-fn "RT-seq") rest-arg)] body')]
                                                body')]
                                    (emit-arity nm one-arity? (return-hint fn-ret params) params body'
