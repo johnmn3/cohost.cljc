@@ -1,0 +1,13 @@
+(defmacro T [form] `(try (pr-str ~form) (catch IllegalArgumentException e# :IAE) (catch ClassCastException e# :CCE) (catch UnsupportedOperationException e# :UOE) (catch Exception e# :EX)))
+["nil" (T (conj nil 1)) (T (conj nil 1 2))]
+["vector" (T (conj [] 1 2 3)) (T (conj [1] nil)) (T (conj [1]))]
+["zero" (T (conj))]
+["map entry" (T (conj {} [:a 1])) (T (conj {:a 1} {:b 2 :c 3})) (T (conj {:a 1} nil))]
+["map bad" (T (conj {} [1])) (T (conj {} 5))]
+["set list" (T (conj #{} 1 1 2)) (T (conj '(2) 1)) (T (conj () 1 2))]
+["lazy" (T (conj (map inc [1]) 0)) (T (conj (range 2) 9))]
+["sorted" (T (conj (sorted-map) [:b 1] [:a 2])) (T (conj (sorted-set 3 1) 2))]
+["record" (T (do (defrecord CjR [a]) (conj (->CjR 1) [:b 2]))) (T (do (defrecord CjR2 [a]) (into (->CjR2 1) {:b 2})))]
+["string" (T (conj "a" 1))]
+["value use" (T (reduce conj [] [1 2 3])) (T (apply conj [0] [1 2])) (T (let [f conj] (f #{} :x)))]
+["meta kept" (T (meta (conj (with-meta [1] {:m 1}) 2)))]
