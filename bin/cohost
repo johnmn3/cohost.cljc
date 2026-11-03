@@ -291,7 +291,7 @@
                     (do (println (str "cohost: basilisp's cached boot is built (" (quot (- (System/nanoTime) t0) 1000000000) " s)"))
                         (when-let [d (lpy-fresh-src)] {:lpy-src d :snapshot? true}))
                     (do (println "cohost: the cached boot build failed (target/lpy-snapshot.log); this run boots from source") nil)))
-                (finally (fs/delete-if-exists lock))))))))))
+                (finally (fs/delete-if-exists lock)))))))))
 
 (defn launch! [host cwd config & [jank]]
   (let [cfg (str config)
