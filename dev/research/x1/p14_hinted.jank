@@ -1,0 +1,26 @@
+;; X1-10: the hinted twins. Each variant changes one thing between bench/programs/fib.clj
+;; (or tak.clj) and its _hinted twin. Under cohost: bash dev/research/run-cohost-jank.sh
+;; dev/research/x1/p14_hinted.clj; on plain jank: dev/research/x1/p14_hinted.jank (same source).
+(defn fib-dec [n] (if (< n 2) n (+ (fib-dec (dec n)) (fib-dec (- n 2)))))
+(defn fib-minus [n] (if (< n 2) n (+ (fib-minus (- n 1)) (fib-minus (- n 2)))))
+(defn fib-param [^long n] (if (< n 2) n (+ (fib-param (- n 1)) (fib-param (- n 2)))))
+(defn fib-ret ^long [n] (if (< n 2) n (+ (fib-ret (- n 1)) (fib-ret (- n 2)))))
+(defn fib-both ^long [^long n] (if (< n 2) n (+ (fib-both (- n 1)) (fib-both (- n 2)))))
+(defn fib-both-dec ^long [^long n] (if (< n 2) n (+ (fib-both-dec (dec n)) (fib-both-dec (dec (dec n))))))
+(defn tak-dec [x y z] (if (not (< y x)) z (tak-dec (tak-dec (dec x) y z) (tak-dec (dec y) z x) (tak-dec (dec z) x y))))
+(defn tak-minus [x y z] (if (not (< y x)) z (tak-minus (tak-minus (- x 1) y z) (tak-minus (- y 1) z x) (tak-minus (- z 1) x y))))
+(defn tak-param [^long x ^long y ^long z] (if (not (< y x)) z (tak-param (tak-param (- x 1) y z) (tak-param (- y 1) z x) (tak-param (- z 1) x y))))
+(defn tak-both ^long [^long x ^long y ^long z] (if (not (< y x)) z (tak-both (tak-both (- x 1) y z) (tak-both (- y 1) z x) (tak-both (- z 1) x y))))
+(defn tak-both-dec ^long [^long x ^long y ^long z] (if (not (< y x)) z (tak-both-dec (tak-both-dec (dec x) y z) (tak-both-dec (dec y) z x) (tak-both-dec (dec z) x y))))
+(defn run []
+  (bench "fib-dec" #(fib-dec 27))
+  (bench "fib-minus" #(fib-minus 27))
+  (bench "fib-param" #(fib-param 27))
+  (bench "fib-ret" #(fib-ret 27))
+  (bench "fib-both" #(fib-both 27))
+  (bench "fib-both-dec" #(fib-both-dec 27))
+  (bench "tak-dec" #(tak-dec 18 12 6))
+  (bench "tak-minus" #(tak-minus 18 12 6))
+  (bench "tak-param" #(tak-param 18 12 6))
+  (bench "tak-both" #(tak-both 18 12 6))
+  (bench "tak-both-dec" #(tak-both-dec 18 12 6)))

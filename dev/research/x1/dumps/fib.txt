@@ -1,0 +1,5 @@
+=== FORM
+(def fib (fn* fib ([n] (if (clojure.core/< n 2) n (cohost.shim/Numbers-add (fib (clojure.core/dec n)) (fib (if (cpp/jank.runtime.is_integer n) (if (clojure.core/< -2147483649 n) (if (clojure.core/< n 2147483648) (cpp/jank.runtime.promoting_sub n 2) (cohost.shim/Numbers-minus n 2)) (cohost.shim/Numbers-minus n 2)) (cpp/jank.runtime.promoting_sub n 2))))))))
+=== FORM
+(def -run (fn* -run ([s] (fib (parse-long s)))))
+=== RESULT #'cohost.user/-run

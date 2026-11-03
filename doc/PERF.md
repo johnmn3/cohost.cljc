@@ -1443,6 +1443,74 @@ The jank-MAX fleet's scoreboard in two columns: UNPATCHED is apt jank 0.1-noble 
 (`JANK_BIN=/home/user/int-a/jank-inst/bin/jank`; the launcher's 512M applies there too). x1 writes the programs
 table under this heading (X1-5); the `bb bench:jank` table is below (X1-5b).
 
+### Summary for the release (tip `6a1dbaf`)
+
+Every number here is copied from a table below in this section, and each one names its table. The release tip is
+max/main `6a1dbaf`. The rows were measured on the trees listed in the footnotes, which are all ancestors of that tip.
+int-b's X1-8 re-run on `2de1c74` has not landed. When it does, its rows replace the ones marked X1-5 and X1-6.
+
+**Headline.** The geomean of xJVM over the programs that print the JVM's result (`bb bench:programs`, X1-5 with
+X1-6's ten rows):
+
+| | UNPATCHED (apt jank 0.1-noble) | PATCHED (21-patch series) |
+|---|---:|---:|
+| cohost on jank, against the JVM | **6.187** over 28 | **2.637** over 28 |
+| jank's own AOT, against the JVM | 7.508 over 16 (12 programs do not compile or DIFFER) | 1.247 over 27 |
+
+**Startup.** First output on the snapshot (`bb bench:programs jank first-output`, process wall time to `ok`, X1-7,
+3 rounds): UNPATCHED **4386 ms** (3134-4677), PATCHED **4740 ms** (4064-5369). On the AOT modules the figures are
+18452 and 21648 ms. The JVM's own first-output is 985.7 ms (X1-5).
+
+**Ten programs, cohost on jank** (ms, median of 10 timed calls after warm-up; the JVM column is that row's JVM run):
+
+| program | UNPATCHED | PATCHED | JVM | from |
+|---|---:|---:|---:|---|
+| fib 36 | 470.2 | 65.7 | 202.2 | [a] |
+| tak 30 20 10 | 488.0 | 112.5 | 295.2 | [a] |
+| nbody 50000 | 5089.0 | 3838.1 | 268.0 | [a] |
+| spectral-norm 600 | 1144.5 | 583.7 | 225.3 | [a] |
+| mandelbrot 1500 | 721.3 | 544.6 | 250.9 | [b] |
+| binary-trees 18 | 3503.1 | 751.3 | 177.2 | [c] |
+| sort 100000 | 41.6 | 31.1 | 31.2 | [c] |
+| lazy-pipeline 1000000 | 258.6 | 74.5 | 20.3 | [c] |
+| json 30000 | 3580.2 | 2634.4 | 311.4 | [d] |
+| k-nucleotide 2000000 | 1531.8 | 1302.9 | 172.0 | [d] |
+
+- [a] X1-5, one round, max/x1 `0e5d60b` (max/main `034534a`), 12:20-12:46 AM ET, load 3-6, against the 9:59 PM ET JVM run.
+- [b] X1-5, one round, max/x1 `dfa7ce4` (max/main `ecc9a31`), 12:46-1:06 AM ET, load 4-6, against the 9:59 PM ET JVM run.
+- [c] X1-6, three rounds, max/x1 `3713865`, 1:32-3:08 AM ET, load 3.5-7.7. The cell is the median of the three
+  rounds' medians, against the 1:32 AM ET JVM run.
+- [d] X1-5, one round, max/x1 `dd72e52` (`ce94816`), 11:42 PM-12:19 AM ET, load 3-8, against the 9:59 PM ET JVM run.
+
+Not yet in these rows: u3's A6-1 (nbody at jank-aot's speed, about 908 ms apt), u1's A5-6 (fib's per-call cost) and
+u2's A5-5 (doubles printed as the JVM prints them). They landed or are landing after the rows above were measured.
+
+**How to reproduce.**
+- **Install:** apt jank with `bash dev/install/jank.sh`; then, from cohost's root, the series build with
+  `bash dev/install/jank-src.sh` (once), and `bash dev/install/jank-src.sh --patches` after the series changes. The
+  build applies `upstream/jank/patches/series` and installs `/usr/local/lib/jank-dev/bin/jank`.
+- **Picking the column:** set `JANK_BIN=/usr/local/lib/jank-dev/bin/jank` for PATCHED; leave it unset for apt.
+  cohost's launcher gives every jank process `GC_INITIAL_HEAP_SIZE=512M`. A user's own `GC_*` setting wins, and
+  `COHOST_JANK_GC=none` sets nothing (A1).
+- **Commands:** run `bb bench:programs jvm` first, then `bb bench:programs jank-aot` and `bb bench:programs jank`
+  (append `program[:size],...` to run a subset). Build each binary's snapshot once with `bb boot:jank-snapshot`
+  (with JANK_BIN for the series); after that `bb boot:jank` and `bb bench:jank` use it. `bb bench:jank` prints the
+  stock core against jank's own.
+- **Load gate:** on a shared box, start each round only when the 1-minute load is under 8 and free memory is over
+  4 GB, and run one jank process at a time.
+
+**Open gaps** (from the board):
+- **Printing doubles:** pr/print of doubles on jank does not yet print them as the JVM does. `str` does (A5-5); the
+  printer is recorded as a gap.
+- **The reader's Long/MIN:** a recorded gap of A5-5 (the board's wording: "the reader's Long/MIN recorded as gaps").
+- **The chunked filter:** it realizes one element short, 15 against 16, while its source continues (A4-2; chunked
+  map is exact at 32/32/32).
+- **Two non-ASCII battery rows:** "subs count nth first last butlast" and "Character outside ASCII" fail on both
+  binaries. They predate the fleet.
+- **binary-trees:** 4.24x the JVM PATCHED and 19.77x UNPATCHED. The rest of that cost is jank's own allocator
+  (jank-aot PATCHED is 3.43x).
+- **fib:** A5-6, the per-call cost, is in flight. fib(27) went 5.04 -> 1.98 ms on its branch, not yet in these rows.
+
 ### `bb bench:programs`: the program suite against JVM Clojure (X1-5, x1)
 
 Measured 2026-11-02 9:59 PM to 2026-11-03 1:06 AM ET on int-a's box (4 CPUs, 15 GB, shared with five other lanes, no
