@@ -913,6 +913,23 @@
            ;; U6-7's inferred long/double locals may be native
            (nil? (get *num-env* (*plain* x))))))
 
+(defn- int-op-long-operand?
+  "A5-6 (x1's X1-10 cause A): a ^long-hinted or inferred-long local the codemod
+   has not put in *native-ints*. On jank it is a native long inside a typed
+   arity's inner fn* and the wrapper's boxed object elsewhere, so only the
+   expansion that compiles for both takes it: a literal right operand (jank's
+   op with a (cpp/long k) operand, one comparison)."
+  [x]
+  (and (symbol? x) (nil? (namespace x))
+       (not (native-int-form? x)) (not (real-form? x))
+       (let [p (*plain* x)
+             tags (remove nil? [(primitive-hint (:tag (meta x))) (primitive-hint (get *local-tags* x))])
+             kind (get *num-env* p)]
+         ;; (*num-env* holds 'long for a hinted param, :long for an inferred kind)
+         (and (or (seq tags) (contains? #{:long 'long} kind))
+              (every? #{'long} tags)
+              (contains? #{nil :long 'long} kind)))))
+
 ;; A5-4: jank's + - * inc dec on two native longs wrap at 64 bits; Clojure's
 ;; throw ArithmeticException "integer overflow". With both operands inside 32
 ;; bits (or inc/dec away from the i64 ends) no i64 op can overflow: jank's own
@@ -943,7 +960,14 @@
               plus (symbol core "+") minus (symbol core "-") le (symbol core "<=")
               mn1 -9223372036854775807 mx 9223372036854775807
               fast (apply list op args')]
-          (case nm
+          (case (if (and (integer? b) (contains? #{"Numbers-add" "Numbers-minus"} nm)) :literal nm)
+            ;; A5-6: a literal right operand's bound is decided here: one
+            ;; comparison inline, as cheap as jank's own dec
+            :literal (let [k (if (= nm "Numbers-add") b (- b))]
+                       (cond (zero? k) fast
+                             (pos? k) (list 'if (list le a (- mx k)) fast (slow checked args'))
+                             (> k mn1) (list 'if (list le (- mn1 1 k) a) fast (slow checked args'))
+                             :else (slow checked args')))
             ;; a + b stays in i64 iff b < 0 ? a > MIN - b - 1 : a <= MAX - b
             "Numbers-add" (list 'if (list 'if (list lt b 0)
                                           (list lt (list minus (list minus mn1 b) 2) a)
@@ -984,6 +1008,9 @@
                               (when-let [f (and (= 2 (count args)) (get (host/int-op-aliases) nm))]
                                 (cond (and (every? int-op-operand? args) (some symbol? args))
                                       (f args' (or (get (:host-aliases ctx) nm) (static-sym c m)) (not *in-self-arg*))
+                                      ;; A5-6: (- n 1) with n a ^long local: the literal form only
+                                      (and (int-op-long-operand? (first args)) (integer? (second args)))
+                                      (f args' (or (get (:host-aliases ctx) nm) (static-sym c m)) false)
                                       ;; A5-6: a call operand (fib's (+ (fib ..) (fib ..))) is named
                                       ;; once by a let*, outside a self-call's argument
                                       (and (not *in-self-arg*)
