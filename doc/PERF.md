@@ -1467,93 +1467,112 @@ coordinator's NOTICEs named which rows were re-run:
 - sort, lazy-pipeline, pipeline and mandelbrot(-hinted): `dfa7ce4` (max/main `ecc9a31`: A4 and U6-7), 12:46-1:06 AM
   ET, load 4-6.
 
+**X1-6 (2026-11-03, 1:32-3:08 AM ET): ten rows at three rounds.** binary-trees, binary-trees-hinted, binary-trees-14,
+binary-trees-14-hinted, sort, lazy-pipeline, sum-overflow, sum-overflow-hinted, pipeline and first-output were re-run on
+max/x1 `3713865`, which carries `308ec8c`. That was 3 interleaved rounds (in each round, per program and target, apt
+then PATCHED), with every leg started under the load gate (load 3.5-7.7, median 5.1; free memory above 4 GB), one jank
+process at a time. The JVM was run once on those ten programs in the same session (1:32 AM ET, load 2.6). In the
+tables those rows show `rounds 3`. Their cell is the median of the three rounds' medians, the bracket is the min-max of
+the three, and their jvm and xJVM are the new JVM run's. The other 18 rows are X1-5's single round, against the
+9:59 PM ET JVM run. The new JVM run was faster on the allocation rows (binary-trees 177.2 against 307.2 ms), so those
+rows' xJVM are stricter than X1-5's.
+
 jank's own AOT (`bb bench:programs jank-aot`):
 
-| program | size | jvm | UNPATCHED ms (min-max) | xJVM | PATCHED ms (min-max) | xJVM |
-|---|---:|---:|---:|---:|---:|---:|
-| fib | 36 | 202.2 | 80.0 (75.4-117.9) | x0.40 | 100.0 (51.4-104.5) | x0.49 |
-| fib-hinted | 36 | 125.3 | 132.3 (131.2-133.9) | x1.06 | 51.7 (51.4-52.3) | x0.41 |
-| tak | 30 20 10 | 295.2 | 488.2 (477.3-562.9) | x1.65 | 120.8 (119.5-140.9) | x0.41 |
-| tak-hinted | 30 20 10 | 251.4 | 819.5 (805.6-850.0) | x3.26 | 118.2 (118.0-119.0) | x0.47 |
-| nbody | 50000 | 268.0 | ABSENT error: use of undeclared identifier 's59' | - | 786.2 (770.8-862.2) | x2.93 |
-| nbody-hinted | 50000 | 190.0 | ABSENT error: use of undeclared identifier 's61' | - | 802.7 (788.7-840.7) | x4.23 |
-| spectral-norm | 600 | 225.3 | 1924.1 (1849.0-2090.9) | x8.54 | 229.8 (224.1-289.5) | x1.02 |
-| spectral-norm-hinted | 600 | 163.8 | 3992.1 (3288.2-4447.5) | x24.38 | 277.3 (213.2-361.9) | x1.69 |
-| mandelbrot | 1500 | 250.9 | ABSENT error: use of undeclared identifier 's35' | - | 721.2 (617.8-791.8) | x2.87 |
-| mandelbrot-hinted | 1500 | 270.3 | ABSENT error: use of undeclared identifier 's37' | - | 266.4 (239.8-329.6) | x0.99 |
-| binary-trees | 18 | 307.2 | 6045.4 (5800.7-6261.5) | x19.68 | 904.5 (790.3-1162.6) | x2.94 |
-| binary-trees-hinted | 18 | 267.3 | 5739.8 (4836.4-6847.4) | x21.47 | 1173.0 (1133.7-1213.8) | x4.39 |
-| binary-trees-14 | 14 | 6.7 | 598.8 (367.9-1026.4) | x88.97 | 52.2 (48.3-115.0) | x7.76 |
-| binary-trees-14-hinted | 14 | 6.3 | 427.8 (403.2-461.4) | x68.39 | 51.0 (32.8-78.1) | x8.15 |
-| sum-overflow | 1000000 | 15.1 | 127.3 (72.1-236.3) DIFFER | - | 6.3 (6.2-10.6) | x0.42 |
-| sum-overflow-hinted | 1000000 | 0.4 | 8.5 (8.4-8.6) DIFFER | - | 2.0 (1.9-2.1) | x4.84 |
-| sort | 100000 | 61.3 | 37251.9 (26929.7-39501.5) | x607.59 | 29.7 (20.4-41.1) | x0.48 |
-| lazy-pipeline | 1000000 | 33.6 | 1078.8 (690.6-2307.9) | x32.08 | 21.1 (20.6-125.8) | x0.63 |
-| keyword-map | 1000000 | 77.7 | 365.9 (346.9-439.8) | x4.71 | 162.1 (160.3-175.0) | x2.08 |
-| fannkuch | 8 | 612.4 | ABSENT error: use of undeclared identifier 's28' | - | 494.6 (450.5-561.5) | x0.81 |
-| fannkuch-hinted | 8 | 720.2 | ABSENT error: use of undeclared identifier 's30' | - | 504.6 (463.0-537.5) | x0.70 |
-| nsieve | 20 | 244.0 | ABSENT error: use of undeclared identifier 's56'; did you mean ' | - | 106.4 (100.7-126.6) | x0.44 |
-| nsieve-hinted | 20 | 259.7 | ABSENT error: use of undeclared identifier 's58'; did you mean ' | - | 98.1 (93.0-123.4) | x0.38 |
-| k-nucleotide | 2000000 | 172.0 | 549.9 (508.1-578.9) | x3.20 | 270.2 (255.4-439.5) | x1.57 |
-| pipeline | 500000 | 195.9 | 1294.5 (1054.5-1670.2) DIFFER | - | 897.7 (638.2-1002.5) | x4.58 |
-| dispatch | 5000000 | 193.7 | ABSENT error: The symbol `defprotocol` could not be resolved. | - | ABSENT error: The symbol `defprotocol` could not be resolved. | - |
-| json | 30000 | 311.4 | 1685.6 (1658.7-1735.8) | x5.41 | 557.9 (540.1-619.1) | x1.79 |
-| first-output | - | 1417.1 | 805.3 (617.5-1023.4) | x0.57 | 672.9 (478.1-759.5) | x0.47 |
+| program | size | jvm | UNPATCHED ms (min-max) | xJVM | PATCHED ms (min-max) | xJVM | rounds |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fib | 36 | 202.2 | 80.0 (75.4-117.9) | x0.40 | 100.0 (51.4-104.5) | x0.49 | 1 |
+| fib-hinted | 36 | 125.3 | 132.3 (131.2-133.9) | x1.06 | 51.7 (51.4-52.3) | x0.41 | 1 |
+| tak | 30 20 10 | 295.2 | 488.2 (477.3-562.9) | x1.65 | 120.8 (119.5-140.9) | x0.41 | 1 |
+| tak-hinted | 30 20 10 | 251.4 | 819.5 (805.6-850.0) | x3.26 | 118.2 (118.0-119.0) | x0.47 | 1 |
+| nbody | 50000 | 268.0 | ABSENT error: use of undeclared identifier 's59' | - | 786.2 (770.8-862.2) | x2.93 | 1 |
+| nbody-hinted | 50000 | 190.0 | ABSENT error: use of undeclared identifier 's61' | - | 802.7 (788.7-840.7) | x4.23 | 1 |
+| spectral-norm | 600 | 225.3 | 1924.1 (1849.0-2090.9) | x8.54 | 229.8 (224.1-289.5) | x1.02 | 1 |
+| spectral-norm-hinted | 600 | 163.8 | 3992.1 (3288.2-4447.5) | x24.38 | 277.3 (213.2-361.9) | x1.69 | 1 |
+| mandelbrot | 1500 | 250.9 | ABSENT error: use of undeclared identifier 's35' | - | 721.2 (617.8-791.8) | x2.87 | 1 |
+| mandelbrot-hinted | 1500 | 270.3 | ABSENT error: use of undeclared identifier 's37' | - | 266.4 (239.8-329.6) | x0.99 | 1 |
+| binary-trees | 18 | 177.2 | 2970.6 (2904.6-5294.1) | x16.77 | 607.7 (513.2-858.8) | x3.43 | 3 |
+| binary-trees-hinted | 18 | 193.6 | 2957.9 (2749.3-3767.5) | x15.28 | 740.4 (513.3-775.2) | x3.82 | 3 |
+| binary-trees-14 | 14 | 11.3 | 139.4 (114.4-192.5) | x12.31 | 20.2 (19.9-20.4) | x1.78 | 3 |
+| binary-trees-14-hinted | 14 | 6.0 | 169.3 (101.5-247.8) | x28.23 | 20.1 (19.7-36.6) | x3.35 | 3 |
+| sum-overflow | 1000000 | 18.6 | 132.6 (106.4-182.1) DIFFER | - | 10.6 (6.5-12.3) | x0.57 | 3 |
+| sum-overflow-hinted | 1000000 | 0.5 | 8.4 (8.2-8.5) DIFFER | - | 2.0 (1.9-2.0) | x4.05 | 3 |
+| sort | 100000 | 31.2 | 24890.4 (20817.1-34297.7) | x797.74 | 19.4 (19.2-39.1) | x0.62 | 3 |
+| lazy-pipeline | 1000000 | 20.3 | 1370.4 (753.3-1490.5) | x67.66 | 21.2 (20.7-40.5) | x1.05 | 3 |
+| keyword-map | 1000000 | 77.7 | 365.9 (346.9-439.8) | x4.71 | 162.1 (160.3-175.0) | x2.08 | 1 |
+| fannkuch | 8 | 612.4 | ABSENT error: use of undeclared identifier 's28' | - | 494.6 (450.5-561.5) | x0.81 | 1 |
+| fannkuch-hinted | 8 | 720.2 | ABSENT error: use of undeclared identifier 's30' | - | 504.6 (463.0-537.5) | x0.70 | 1 |
+| nsieve | 20 | 244.0 | ABSENT error: use of undeclared identifier 's56'; did you mean ' | - | 106.4 (100.7-126.6) | x0.44 | 1 |
+| nsieve-hinted | 20 | 259.7 | ABSENT error: use of undeclared identifier 's58'; did you mean ' | - | 98.1 (93.0-123.4) | x0.38 | 1 |
+| k-nucleotide | 2000000 | 172.0 | 549.9 (508.1-578.9) | x3.20 | 270.2 (255.4-439.5) | x1.57 | 1 |
+| pipeline | 500000 | 109.3 | 1146.4 (1101.7-1167.0) DIFFER | - | 604.0 (603.5-633.6) | x5.53 | 3 |
+| dispatch | 5000000 | 193.7 | ABSENT error: The symbol `defprotocol` could not be resolved. | - | ABSENT error: The symbol `defprotocol` could not be resolved. | - | 0 |
+| json | 30000 | 311.4 | 1685.6 (1658.7-1735.8) | x5.41 | 557.9 (540.1-619.1) | x1.79 | 1 |
+| first-output | - | 985.7 | 547.1 (539.8-644.2) | x0.56 | 451.0 (427.0-706.2) | x0.46 | 3 |
 
 cohost on jank (`bb bench:programs jank`):
 
-| program | size | jvm | UNPATCHED ms (min-max) | xJVM | PATCHED ms (min-max) | xJVM |
-|---|---:|---:|---:|---:|---:|---:|
-| fib | 36 | 202.2 | 470.2 (454.5-602.0) | x2.33 | 65.7 (65.2-66.0) | x0.32 |
-| fib-hinted | 36 | 125.3 | 700.4 (688.4-708.8) | x5.59 | 65.5 (65.2-66.8) | x0.52 |
-| tak | 30 20 10 | 295.2 | 488.0 (482.3-501.7) | x1.65 | 112.5 (112.4-112.6) | x0.38 |
-| tak-hinted | 30 20 10 | 251.4 | 1551.4 (1542.8-1587.0) | x6.17 | 112.1 (111.8-116.5) | x0.45 |
-| nbody | 50000 | 268.0 | 5089.0 (5046.0-5338.2) | x18.99 | 3838.1 (3682.3-3899.6) | x14.32 |
-| nbody-hinted | 50000 | 190.0 | 5153.0 (4980.8-5248.6) | x27.12 | 3784.6 (3701.1-3853.7) | x19.92 |
-| spectral-norm | 600 | 225.3 | 1144.5 (976.5-1548.6) | x5.08 | 583.7 (465.4-769.2) | x2.59 |
-| spectral-norm-hinted | 600 | 163.8 | 1549.9 (1363.4-1867.2) | x9.46 | 543.0 (542.0-571.8) | x3.32 |
-| mandelbrot | 1500 | 250.9 | 721.3 (671.9-828.4) | x2.87 | 544.6 (505.3-651.6) | x2.17 |
-| mandelbrot-hinted | 1500 | 270.3 | 1139.6 (833.8-1327.4) | x4.22 | 940.3 (852.3-1230.3) | x3.48 |
-| binary-trees | 18 | 307.2 | 6558.0 (5993.1-6891.4) | x21.35 | 1494.9 (1475.0-1719.9) | x4.87 |
-| binary-trees-hinted | 18 | 267.3 | 8182.4 (7238.5-9002.6) | x30.61 | 2008.4 (1816.8-2301.1) | x7.51 |
-| binary-trees-14 | 14 | 6.7 | 331.7 (211.8-447.4) | x49.29 | 75.6 (61.4-241.2) | x11.24 |
-| binary-trees-14-hinted | 14 | 6.3 | 320.3 (227.5-458.2) | x51.21 | 54.4 (45.9-189.3) | x8.69 |
-| sum-overflow | 1000000 | 15.1 | 21.6 (21.1-83.1) | x1.43 | 5.0 (4.9-5.2) | x0.33 |
-| sum-overflow-hinted | 1000000 | 0.4 | 9.3 (9.1-9.7) | x22.94 | 7.8 (7.6-8.7) | x19.36 |
-| sort | 100000 | 61.3 | 68.9 (33.0-153.2) | x1.12 | 57.7 (24.0-103.3) | x0.94 |
-| lazy-pipeline | 1000000 | 33.6 | 184.0 (126.2-397.2) | x5.47 | 72.0 (68.0-344.2) | x2.14 |
-| keyword-map | 1000000 | 77.7 | 520.0 (460.5-527.1) | x6.69 | 366.3 (305.9-369.9) | x4.71 |
-| fannkuch | 8 | 612.4 | 1577.1 (1394.4-1683.8) | x2.58 | 1294.4 (1269.1-1416.2) | x2.11 |
-| fannkuch-hinted | 8 | 720.2 | 1662.1 (1419.4-1777.8) | x2.31 | 1284.8 (1205.5-1356.6) | x1.78 |
-| nsieve | 20 | 244.0 | 456.3 (443.5-521.7) | x1.87 | 281.6 (279.8-284.7) | x1.15 |
-| nsieve-hinted | 20 | 259.7 | 466.4 (444.2-579.8) | x1.80 | 288.0 (285.6-291.5) | x1.11 |
-| k-nucleotide | 2000000 | 172.0 | 1531.8 (1451.6-1646.4) | x8.91 | 1302.9 (1141.8-1661.3) | x7.57 |
-| pipeline | 500000 | 195.9 | 1322.4 (1147.7-1528.7) | x6.75 | 1436.4 (1129.4-1602.5) | x7.33 |
-| dispatch | 5000000 | 193.7 | 1015.3 (991.5-1082.4) | x5.24 | 318.8 (317.9-332.6) | x1.65 |
-| json | 30000 | 311.4 | 3580.2 (3050.0-4805.0) | x11.50 | 2634.4 (2438.0-3089.2) | x8.46 |
-| first-output | - | 1417.1 | 14105.2 (12226.8-15906.3) | x9.95 | 21411.8 (20987.3-25263.7) | x15.11 |
+| program | size | jvm | UNPATCHED ms (min-max) | xJVM | PATCHED ms (min-max) | xJVM | rounds |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fib | 36 | 202.2 | 470.2 (454.5-602.0) | x2.33 | 65.7 (65.2-66.0) | x0.32 | 1 |
+| fib-hinted | 36 | 125.3 | 700.4 (688.4-708.8) | x5.59 | 65.5 (65.2-66.8) | x0.52 | 1 |
+| tak | 30 20 10 | 295.2 | 488.0 (482.3-501.7) | x1.65 | 112.5 (112.4-112.6) | x0.38 | 1 |
+| tak-hinted | 30 20 10 | 251.4 | 1551.4 (1542.8-1587.0) | x6.17 | 112.1 (111.8-116.5) | x0.45 | 1 |
+| nbody | 50000 | 268.0 | 5089.0 (5046.0-5338.2) | x18.99 | 3838.1 (3682.3-3899.6) | x14.32 | 1 |
+| nbody-hinted | 50000 | 190.0 | 5153.0 (4980.8-5248.6) | x27.12 | 3784.6 (3701.1-3853.7) | x19.92 | 1 |
+| spectral-norm | 600 | 225.3 | 1144.5 (976.5-1548.6) | x5.08 | 583.7 (465.4-769.2) | x2.59 | 1 |
+| spectral-norm-hinted | 600 | 163.8 | 1549.9 (1363.4-1867.2) | x9.46 | 543.0 (542.0-571.8) | x3.32 | 1 |
+| mandelbrot | 1500 | 250.9 | 721.3 (671.9-828.4) | x2.87 | 544.6 (505.3-651.6) | x2.17 | 1 |
+| mandelbrot-hinted | 1500 | 270.3 | 1139.6 (833.8-1327.4) | x4.22 | 940.3 (852.3-1230.3) | x3.48 | 1 |
+| binary-trees | 18 | 177.2 | 3503.1 (3063.0-5404.5) | x19.77 | 751.3 (729.9-1101.6) | x4.24 | 3 |
+| binary-trees-hinted | 18 | 193.6 | 3091.3 (2964.6-5262.1) | x15.96 | 765.4 (729.3-1193.5) | x3.95 | 3 |
+| binary-trees-14 | 14 | 11.3 | 141.2 (92.0-189.5) | x12.47 | 25.2 (24.5-25.9) | x2.22 | 3 |
+| binary-trees-14-hinted | 14 | 6.0 | 183.7 (127.5-207.7) | x30.63 | 27.0 (25.4-48.3) | x4.50 | 3 |
+| sum-overflow | 1000000 | 18.6 | 21.7 (21.2-41.2) | x1.17 | 5.0 (5.0-5.0) | x0.27 | 3 |
+| sum-overflow-hinted | 1000000 | 0.5 | 9.2 (9.0-9.6) | x19.02 | 7.9 (7.7-11.5) | x16.24 | 3 |
+| sort | 100000 | 31.2 | 41.6 (31.4-52.6) | x1.33 | 31.1 (24.8-32.1) | x1.00 | 3 |
+| lazy-pipeline | 1000000 | 20.3 | 258.6 (244.5-272.2) | x12.77 | 74.5 (70.1-130.3) | x3.68 | 3 |
+| keyword-map | 1000000 | 77.7 | 520.0 (460.5-527.1) | x6.69 | 366.3 (305.9-369.9) | x4.71 | 1 |
+| fannkuch | 8 | 612.4 | 1577.1 (1394.4-1683.8) | x2.58 | 1294.4 (1269.1-1416.2) | x2.11 | 1 |
+| fannkuch-hinted | 8 | 720.2 | 1662.1 (1419.4-1777.8) | x2.31 | 1284.8 (1205.5-1356.6) | x1.78 | 1 |
+| nsieve | 20 | 244.0 | 456.3 (443.5-521.7) | x1.87 | 281.6 (279.8-284.7) | x1.15 | 1 |
+| nsieve-hinted | 20 | 259.7 | 466.4 (444.2-579.8) | x1.80 | 288.0 (285.6-291.5) | x1.11 | 1 |
+| k-nucleotide | 2000000 | 172.0 | 1531.8 (1451.6-1646.4) | x8.91 | 1302.9 (1141.8-1661.3) | x7.57 | 1 |
+| pipeline | 500000 | 109.3 | 992.7 (992.2-1005.4) | x9.09 | 1028.8 (1007.4-1031.9) | x9.42 | 3 |
+| dispatch | 5000000 | 193.7 | 1015.3 (991.5-1082.4) | x5.24 | 318.8 (317.9-332.6) | x1.65 | 1 |
+| json | 30000 | 311.4 | 3580.2 (3050.0-4805.0) | x11.50 | 2634.4 (2438.0-3089.2) | x8.46 | 1 |
+| first-output | - | 985.7 | 12122.3 (11767.3-16664.9) | x12.30 | 18796.9 (17936.6-27494.4) | x19.07 | 3 |
 
 Geomeans of xJVM over the rows that print the JVM's result (SAME). A DIFFER or ABSENT row is not counted:
 
 | target | UNPATCHED | PATCHED | over the rows SAME in both columns |
 |---|---:|---:|---:|
-| jank-aot | 8.706 over 16 | 1.309 over 27 | 8.706 / 1.272 over 16 |
-| **cohost on jank** | **6.524 over 28** (unhinted 5.316 over 18, hinted 9.431 over 10) | 2.870 over 28 (unhinted 2.675 over 18, hinted 3.256 over 10) | 6.524 / 2.870 over 28 |
+| jank-aot | 7.508 over 16 | 1.247 over 27 | 7.508 / 1.150 over 16 |
+| **cohost on jank** | **6.187 over 28** (unhinted 5.277 over 18, hinted 8.239 over 10) | 2.637 over 28 (unhinted 2.545 over 18, hinted 2.810 over 10) | 6.187 / 2.637 over 28 |
 
-- **The public number is cohost on unpatched jank: 6.524 xJVM over all 28 programs.** Every row runs and prints the
+These are recomputed with X1-6's ten rows. X1-5's one-round figures were 6.524 and 2.870 for cohost, and 8.706 and
+1.309 for jank-aot.
+
+- **The public number is cohost on unpatched jank: 6.187 xJVM over all 28 programs** (6.524 in X1-5's single round). Every row runs and prints the
   JVM's result on both binaries. In X1-3 the same column was 14.818 over 16 (9-patch era, 9c40fa2). Three changes
-  account for most of the drop: the sort gate (32.7 s on 77befea, 68.9 ms here), A4's chunked ranges (lazy-pipeline
-  2880.6 ms in X1-3, 184.0 here), and A5 (sum-overflow, pipeline and dispatch are SAME on apt).
+  account for most of the drop: the sort gate (32.7 s on 77befea, 41.6 ms here), A4's chunked ranges (lazy-pipeline
+  2880.6 ms in X1-3, 258.6 here), and A5 (sum-overflow, pipeline and dispatch are SAME on apt).
 - jank's own core on apt still cannot compile nbody, mandelbrot, fannkuch and nsieve (`use of undeclared identifier
   'sNN'`, the inner-loop rebinding) or dispatch (`defprotocol`). It wraps sum-overflow and pipeline at 32 bits
-  (DIFFER). Its sort is the quadratic walk, 37.3 s.
-- Under cohost, two rows are slower on PATCHED than on UNPATCHED:
-  - pipeline: 1436.4 against 1322.4 ms. The ranges overlap, so one round cannot separate it from noise.
-  - first-output: 21411.8 against 14105.2 ms, 1.5x, outside both ranges. first-output is process wall time to `ok`,
-    which includes loading cohost's AOT modules, and the patched binary has no snapshot (u0's note below).
-- Single-round caveat: the min-max is within one process. Rounds 2-3 run only for rows within 20% of a bar or with a
-  min-max spanning 2x (10:3x NOTICE). On the UNPATCHED cohost column, rows spanning 2x are binary-trees-14(-hinted),
-  sort, lazy-pipeline and sum-overflow; with the binary-trees rows' pre-A1 tree, they are the re-run list.
+  (DIFFER). Its sort is the quadratic walk, 24.9 s.
+- Under cohost, X1-5's single round had two rows slower on PATCHED than on UNPATCHED. At three rounds:
+  - pipeline: 1028.8 (1007.4-1031.9) against 992.7 (992.2-1005.4) ms. That is 1.04x, and the ranges do not overlap,
+    so PATCHED is slower by 4% at three rounds.
+  - first-output: 18796.9 (17936.6-27494.4) against 12122.3 (11767.3-16664.9) ms. That is 1.55x, the same as in X1-5.
+    first-output is process wall time to `ok`, which includes loading cohost's AOT modules, and the patched binary has
+    no snapshot (u0's note below).
+- Moved by more than 20% from the single round, cohost (UNPATCHED / PATCHED):
+  - binary-trees x0.53 / x0.50, binary-trees-hinted x0.38 / x0.38, binary-trees-14 x0.43 / x0.33,
+    binary-trees-14-hinted x0.57 / x0.50. The single round ran at load 12-16 on a pre-A1 tree.
+  - sort x0.60 / x0.54
+  - pipeline x0.75 / x0.72
+  - lazy-pipeline x1.41 slower UNPATCHED (184.0 -> 258.6 ms; PATCHED unchanged)
+  - unchanged within 20%: sum-overflow, sum-overflow-hinted, first-output
 
 **X1-4 (the format regression), closed with u0's X1-5b.** On apt, at every first-parent merge from c499930 to
 6918ca7, `dev/research/p13_format.clj` (`run-cohost-jank.sh`, -O3, 3 interleaved rounds per commit) gave 144-166 ms
