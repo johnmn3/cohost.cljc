@@ -439,14 +439,14 @@
                    v (if-not (profiling)
                        (let [rewritten (rw/rewrite c form')
                              v (host/eval-form rewritten)]
-                         (when (and @snapshot-log (not (snap-skip-form? form'))) (snap! {:op :form :ns ns-sym :form (snap-encode (host/snapshot-form rewritten))}))
+                         (when (and @snapshot-log (not (snap-skip-form? form'))) (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
                          v)
                        (let [t0 (host/nano-time)
                              rewritten (rw/rewrite c form')
                              t1 (host/nano-time)
                              v (host/eval-form rewritten)
                              t2 (host/nano-time)]
-                         (when (and @snapshot-log (not (snap-skip-form? form'))) (snap! {:op :form :ns ns-sym :form (snap-encode (host/snapshot-form rewritten))}))
+                         (when (and @snapshot-log (not (snap-skip-form? form'))) (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
                          (profile-add! :rewrite (- t1 t0))
                          (profile-add! :eval (- t2 t1))
                          (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form)))
@@ -616,7 +616,7 @@
                                  [f a] (host/eval-form rewritten)]
                              (when (fn? f)
                                (swap! state assoc-in [:inlines nm] [f a])
-                               (when @snapshot-log (snap! {:op :inline :sym nm :form (snap-encode (host/snapshot-form rewritten))})))))))))
+                               (when @snapshot-log (snap! {:op :inline :sym nm :form (snap-encode rewritten)})))))))))
 
 (defn- eval-form! [ctx report form name status]
   (host/try-all
@@ -624,7 +624,7 @@
      (if-not (profiling)
        (let [rewritten (rw/rewrite ctx (prepare form))]
          (host/eval-form rewritten)
-         (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode (host/snapshot-form rewritten))}))
+         (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode rewritten)}))
          (host/after-eval form core-ns)
          (capture-inline! ctx form))
        (let [t0 (host/nano-time)
@@ -632,7 +632,7 @@
              rewritten (rw/rewrite ctx prepared)
              t1 (host/nano-time)
              _ (host/eval-form rewritten)
-             _ (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode (host/snapshot-form rewritten))}))
+             _ (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode rewritten)}))
              t2 (host/nano-time)
              _ (host/after-eval form core-ns)
              _ (capture-inline! ctx form)

@@ -1037,9 +1037,6 @@
    :edn-read-string edn-read-string
    :code-form as-code
    :eval (fn [form] (eval (as-code form)))
-   ;; a recorded boot writes the lowered form: the emitted modules are compiled
-   ;; by let-go directly (letfn*, which it lacks, is already a let* of cells)
-   :snapshot-form as-code
    :with-ns with-ns
    :set-current-ns! (fn [ns-sym] (in-ns ns-sym))
    :current-ns (fn [] (ns-name *ns*))
