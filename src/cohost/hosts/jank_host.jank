@@ -2135,6 +2135,8 @@ namespace cohost_assoc {
    :var-set! (fn [v val] (cpp/cohost_var.set_var v val))
    ;; standin exceptions print as their class (the shim asks this first);
    ;; jank's own str of an exception is its #error dump
+   ;; A5-5: jank's str of a double is C's (3e+10, 1e-04); the JVM's is Double.toString
+   :double-str jank-rt/double-str
    :exception-string (fn [e] (let [c (or (get (ex-data e) :cohost/class)
                                          (adapter/exception-class e))]
                                (str c

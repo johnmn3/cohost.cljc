@@ -141,6 +141,7 @@
    :new-exception   [['klass 'msg 'cause] "a host exception of the JVM class klass (a full class symbol), message msg and cause (each nil for none), as the shim raises one: the host's own class where it has one, or an object of its own that prints and reports as that class; nil (the default) when it has neither, and the shim raises an ex-info carrying {:cohost/class klass}"]
    :ex-info?        [['x] "is x an ExceptionInfo as user code sees one? (default: a host exception whose ex-data is not just the shim's class marker)"]
    :exception-string [['e] "Throwable.toString of a host exception as the JVM writes it (the class's full name, then \": message\" when it has one), or nil (the default) when the host's str already does"]
+   :double-str      [['d] "Double.toString of a double as the JVM writes it (3.0E10, 1.0E-4, 0.001), or nil (the default) when the host's str already does"]
    :exception-message [['e] "Throwable.getMessage: e's message, nil when it has none (default: ex-message)"]
    :exception-cause [['e] "Throwable.getCause (default: ex-cause)"]
    ;; host facts
@@ -451,6 +452,7 @@ namespace cohost_err {
     :ex-info? (fn [x] (and ((cap :exception?) x)
                            (let [d (ex-data x)] (and (some? d) (not (contains? d :cohost/class))))))
     :exception-string nil
+    :double-str nil
     :exception-message (fn [e] (ex-message e))
     :exception-cause (fn [e] (ex-cause e))
     :to-array (fn [coll] (to-array coll))
