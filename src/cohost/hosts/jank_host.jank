@@ -685,9 +685,107 @@ namespace cohost_var {
   (when int-wraps?
     (fn [x y] (let [r (cpp/cohost_num.rem x y)] (if (nil? r) (clojure.core/rem x y) r)))))
 
+;; A7-3: (= a b) at the call head on apt (int-wraps?: the series' patch 13 inlines = itself,
+;; and its equal overloads make a bare jank::runtime::equal call fail to compile there).
+;; = on jank is the :host native (A6-1), so a call reaches :core-expansions, not the stock
+;; :inline's Util/equiv. Against an integer literal a host long compares as a native ==
+;; (jank's equal on two boxed integers is the cost: a loop with = 155.6 ms vs == 80.3 per
+;; 1e7 on apt, jank's own AOT 153.2); anything else (a double, a bigint, a ratio, a
+;; non-number) takes jank::runtime::equal (visible from user modules), so (= 3.0 3) stays
+;; false; other operand pairs jank::runtime::equal inline (no var deref and dynamic call),
+;; except a collection literal operand, which keeps the call.
+;; = as a value and the 1 / 3+ arities keep the var.
+(defn- eq-expansion [args]
+  (when (and int-wraps? (= 2 (count args)))
+    (let [[a b] args
+          lit? (fn [x] (and (integer? x) (cpp/jank.runtime.is_integer x)))]
+      (cond (and (lit? b) (not (lit? a)))
+            (let [g (gensym "eqa")]
+              (list 'let* [g a]
+                    (list 'if (list 'cpp/jank.runtime.is_integer g)
+                          (list 'clojure.core/== (list 'cpp/jank.runtime.to_int g) b)
+                          (list 'cpp/jank.runtime.equal g b))))
+            (and (lit? a) (not (lit? b)))
+            (let [g (gensym "eqb")]
+              (list 'let* [g b]
+                    (list 'if (list 'cpp/jank.runtime.is_integer g)
+                          (list 'clojure.core/== a (list 'cpp/jank.runtime.to_int g))
+                          (list 'cpp/jank.runtime.equal a g))))
+            ;; a collection literal operand keeps jank's = call: the typed literal through
+            ;; jank::runtime::equal measured slower (r06 small vectors 186.8 -> 241.7 ms per 1e6)
+            (or (coll? a) (coll? b)) nil
+            :else (list 'cpp/jank.runtime.equal a b)))))
+
 ;; X4-1: the shim's reduce with and without an init (the stock reduce's IReduceInit and
 ;; coll-reduce paths, so transduce and into too) over a range or a vector,
 ;; without jank's per-element seq step; cohost.shim resolves it by name.
+
+;; A7-4 direct var calls (adapter :direct-var-calls; patch 24's call_fast and
+;; var::deref_inline, adapter-side). callN reads the var's root (its deref
+;; when the var was ever thread-bound) and calls a jit_function's fixed arity
+;; through its arity pointer; anything else (a variadic arity, a multimethod,
+;; a keyword, an unbound var) takes object_ref::call as jank's own call does.
+;; The root is read at every call: a redefinition is seen with nothing to
+;; invalidate. The root is private in var.hpp; its member pointer is taken by
+;; the explicit-instantiation rule (access is not checked there).
+(def ^:private dcall-src "
+#include <jank/runtime/var.hpp>
+#include <jank/runtime/obj/jit_function.hpp>
+#include <atomic>
+namespace cohost_dcall {
+  using namespace jank::runtime;
+  using root_mp_t = std::atomic<object_ref> var::*;
+  root_mp_t root_mp();
+  template <root_mp_t M> struct steal { friend root_mp_t root_mp() { return M; } };
+  template struct steal<&var::root>;
+  [[gnu::always_inline]] inline object_ref fn_of(object_ref const v) {
+    auto const vp{ static_cast<var *>(v.ptr()) };
+    if (!vp->thread_bound.load(std::memory_order_relaxed)) { return (vp->*root_mp()).load(); }
+    return vp->deref();
+  }
+  [[gnu::always_inline]] inline obj::jit_function *jf(object_ref const f) {
+    if (jank::runtime::detail::is_tagged_pointer(f.raw()) && f.ptr()->type == object_type::jit_function)
+    { return static_cast<obj::jit_function *>(f.ptr()); }
+    return nullptr;
+  }
+  using o = object_ref const;
+  inline object_ref call0(o v) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_0) { return j->arity_0(f); } return f.call(); }
+  inline object_ref call1(o v, o a) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_1) { return j->arity_1(f, a); } return f.call(a); }
+  inline object_ref call2(o v, o a, o b) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_2) { return j->arity_2(f, a, b); } return f.call(a, b); }
+  inline object_ref call3(o v, o a, o b, o c) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_3) { return j->arity_3(f, a, b, c); } return f.call(a, b, c); }
+  inline object_ref call4(o v, o a, o b, o c, o d) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_4) { return j->arity_4(f, a, b, c, d); } return f.call(a, b, c, d); }
+  inline object_ref call5(o v, o a, o b, o c, o d, o e) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_5) { return j->arity_5(f, a, b, c, d, e); } return f.call(a, b, c, d, e); }
+  inline object_ref call6(o v, o a, o b, o c, o d, o e, o g) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_6) { return j->arity_6(f, a, b, c, d, e, g); } return f.call(a, b, c, d, e, g); }
+}
+")
+;; Declared to the JIT (jit_prc.eval_string): user code compiled later
+;; calls it, and a cpp/raw inside an AOT module is not seen by that JIT (an
+;; (eval '(cpp/raw ..)) is read as an expression). A failed declaration
+;; leaves direct calls off (every call through its var, as before).
+(cpp/raw "#include <jank/runtime/context.hpp>
+#include <jank/runtime/core/truthy.hpp>
+#include <jank/jit/processor.hpp>
+namespace cohost_dcall_init {
+  // false while compiling a module (compile-module: the JIT's eval_string
+  // there fails on every input), else the declaration's success
+  inline bool declare(jank::runtime::object_ref const s) {
+    if (jank::runtime::truthy(jank::runtime::__rt_ctx->compile_files_var->deref())) { return false; }
+    try { jank::runtime::__rt_ctx->jit_prc.eval_string(jank::runtime::to_string(s)); return true; }
+    catch(...) { return false; }
+  }
+}")
+;; declared on the first direct call the codemod emits, never at load
+(def ^:private dcall-state (atom nil))
+(defn- dcall-ready? []
+  (let [s @dcall-state]
+    (if (nil? s) (reset! dcall-state (boolean (cpp/cohost_dcall_init.declare dcall-src))) s)))
+(def ^:private direct-call-heads
+  '[cpp/cohost_dcall.call0 cpp/cohost_dcall.call1 cpp/cohost_dcall.call2 cpp/cohost_dcall.call3
+    cpp/cohost_dcall.call4 cpp/cohost_dcall.call5 cpp/cohost_dcall.call6])
+(defn- direct-var-call [vf args]
+  (let [h (get direct-call-heads (count args))]
+    (when (and h (dcall-ready?)) (apply list h vf args))))
+
 (defn reduce-init [f init coll] (cpp/cohost_reduce.reduce_init f init coll))
 (defn reduce-noinit [f coll]
   (if (cpp/cohost_reduce.reduce_fast coll) (cpp/cohost_reduce.reduce_noinit f coll) (reduce f coll)))
@@ -2071,11 +2169,29 @@ namespace cohost_assoc {
 ;; shape 1.42-2.2, jank's promoting ops 4.3-6.5. Inside a self-call's argument
 ;; no let* compiles (rewrite.cljc's self-call-block-arg?): two objects there
 ;; keep the 32-bit range test.
+;; A5-6c: tests -> one test form (nested ifs ending in false), so an op's fast
+;; and slow arms are each emitted once (LLVM's -O3 on the first call paid for
+;; every copy: nbody's cold call 6 s -> 130 s)
+(defn- all? [tests]
+  (let [tests (remove true? tests)]
+    (cond (some false? tests) false
+          (empty? tests) true
+          :else (reduce (fn [acc t] (list 'if t acc false)) (last tests) (reverse (butlast tests))))))
+
 (defn- int-op-aliases []
   (let [mx 9223372036854775807 mn1 -9223372036854775807
         lt 'clojure.core/< long* (fn [k] (list 'cpp/long k))
         to-int (fn [v] (list 'cpp/jank.runtime.to_int v))
-        is-int (fn [v] (list 'cpp/jank.runtime.is_integer v))]
+        is-int (fn [v] (list 'cpp/jank.runtime.is_integer v))
+        ;; A5-6c: an operand that is not an integer (a real, a ratio, a big
+        ;; integer) takes jank's out-of-line promoting op: no i64 overflow is
+        ;; possible there, so it answers as jank's own op does, and each site
+        ;; is one call. jank's inline add/sub/mul of two objects instantiates
+        ;; its number visitor per site: ~260 ms of LLVM codegen each at the
+        ;; first call (40 sites: 10.4 s; 40 promoting calls: none of that)
+        generic {"Numbers-add" 'cpp/jank.runtime.promoting_add
+                 "Numbers-minus" 'cpp/jank.runtime.promoting_sub
+                 "Numbers-multiply" 'cpp/jank.runtime.promoting_mul}]
     (into {}
           (map (fn [[nm op]]
                  [nm (fn [[x y] checked & [may-let?]]
@@ -2094,9 +2210,14 @@ namespace cohost_assoc {
                            (let [k (if (neg? y) (- y) y)]
                              (if (zero? k) (list op x (long* y))
                                (let [b (quot mx k)]
-                                 (list 'if (list lt (- b) x) (list 'if (list lt x b) (list op x (long* y)) slow) slow))))
-                           ;; two objects, named: the right one as a long when it is an integer
-                           may-let?
+                                 (list 'if (all? [(list lt (- b) x) (list lt x b)]) (list op x (long* y)) slow))))
+                           ;; the self-call-result shape ((+ (f ..) (f ..)) in a self-named fn, the
+                           ;; codemod passes :self-result): A5-6's form, the right operand as a
+                           ;; long and the result compared with the left object. Its two object
+                           ;; comparisons cost first-call codegen per site (A5-6c), but such a fn
+                           ;; has a handful of sites, and the i64 form below took fib(27) from 1.97 ms
+                           ;; to 2.49-2.56 (apt, interleaved x2)
+                           (= may-let? :self-result)
                            (let [q (gensym "iq") r (gensym "ir")
                                  ovf (case nm
                                        "Numbers-add" (list 'if (list lt 0 q) (list lt r x) (list 'if (list lt q 0) (list lt x r) false))
@@ -2105,25 +2226,47 @@ namespace cohost_assoc {
                              (list 'if (is-int y)
                                    (if ovf
                                      (list 'let* [q (to-int y) r (list op x q)] (list 'if ovf slow r))
-                                     ;; mul: both inside 32 bits, else the checked op
                                      (list 'let* [q (to-int y)]
-                                           (list 'if (list lt -2147483649 q)
-                                                 (list 'if (list lt q 2147483648)
-                                                       (list 'if (list lt -2147483649 x)
-                                                             (list 'if (list lt x 2147483648) (list op x q) slow)
-                                                             slow)
-                                                       slow)
-                                                 slow)))
+                                           (list 'if (all? [(list lt -2147483649 q) (list lt q 2147483648)
+                                                            (list lt -2147483649 x) (list lt x 2147483648)])
+                                                 (list op x q) slow)))
+                                   ;; jank's inline op, as A5-6 had it: with the out-of-line
+                                   ;; promoting op here fib(36) read 165 ms against 149
                                    (list op x y)))
-                           ;; two objects inside a self-call argument: both inside 32 bits
+                           ;; two objects (A5-6c): both integers -> both to i64 natives, the
+                           ;; bound test and the op on the natives (none of them instantiates
+                           ;; jank's number visitor; an object < object does, ~240 ms of
+                           ;; first-call codegen each), the checked op past the bound;
+                           ;; otherwise jank's promoting op, one out-of-line call. Named by a
+                           ;; let* outside a self-call's argument, inline (to_int twice) in it.
                            :else
-                           (let [yl (if (integer? y) (long* y) (to-int y))
-                                 small (fn [v then]
-                                         (if (integer? v)
-                                           (if (< -2147483649 v 2147483648) then slow)
-                                           (list 'if (list lt -2147483649 v) (list 'if (list lt v 2147483648) then slow) slow)))
-                                 int-test (fn [v then else] (if (integer? v) then (list 'if (is-int v) then else)))]
-                             (int-test x (int-test y (small x (small y (list op x yl))) (list op x y)) (list op x y))))))]))
+                           (let [named? (and (true? may-let?) (not (integer? x)) (not (integer? y)))
+                                 a (if named? (gensym "ia") (if (integer? x) (long* x) (to-int x)))
+                                 b (if named? (gensym "ib") (if (integer? y) (long* y) (to-int y)))
+                                 sub* (fn [u v] (list 'cpp/jank.runtime.sub u v))
+                                 add* (fn [u v] (list 'cpp/jank.runtime.add u v))
+                                 le 'clojure.core/<=
+                                 in-range (case nm
+                                            ;; a + b in i64 iff b < 0 ? a >= MIN - b : a <= MAX - b
+                                            "Numbers-add" (list 'if (list lt b (long* 0))
+                                                                (list lt (sub* (sub* (long* mn1) b) (long* 2)) a)
+                                                                (list le a (sub* (long* mx) b)))
+                                            ;; a - b in i64 iff b > 0 ? a >= MIN + b : a <= MAX + b
+                                            "Numbers-minus" (list 'if (list lt (long* 0) b)
+                                                                  (list lt (sub* (add* (long* mn1) b) (long* 2)) a)
+                                                                  (list le a (add* (long* mx) b)))
+                                            ;; a * b: both inside 32 bits
+                                            (all? [(list lt (long* -2147483649) a) (list lt a (long* 2147483648))
+                                                   (list lt (long* -2147483649) b) (list lt b (long* 2147483648))]))
+                                 ;; the op on the left object and the right i64 (its result is
+                                 ;; jank's own boxing: a small integer stays a tagged value; an
+                                 ;; i64 op's result would be boxed by the if, an allocation)
+                                 checked-op (list 'if in-range (list op (if (integer? x) a x) b) slow)
+                                 int-tests (remove nil? (map (fn [v] (when-not (integer? v) (is-int v))) [x y]))
+                                 fast (if named? (list 'let* [a (to-int x) b (to-int y)] checked-op) checked-op)
+                                 other (list (generic nm) x y)]
+                             ;; the other arm is one call
+                             (reduce (fn [acc t] (list 'if t acc other)) fast (reverse int-tests))))))]))
           [["Numbers-add" 'cpp/jank.runtime.add]
            ["Numbers-minus" 'cpp/jank.runtime.sub]
            ["Numbers-multiply" 'cpp/jank.runtime.mul]])))
@@ -2157,9 +2300,7 @@ namespace cohost_assoc {
    :native-long-inits (when int-wraps? '#{count})
    ;; A7-1: a vector literal of 1..4 elements is one GC block (jank-rt/vec1..vec4) where jank's
    ;; own literal builds a transient (apt); the series build's own literals are one block already
-   ;; OFF until A7-1's two FAILs are fixed (a redefined record's protocol dispatch; spec's
-   ;; "or alt nilable"): the emission is (when false ...)
-   :vector-literal (when (and false (not (jank-rt/own-small-vectors?)))
+   :vector-literal (when (not (jank-rt/own-small-vectors?))
                      '{1 cohost.hosts.jank-runtime/vec1 2 cohost.hosts.jank-runtime/vec2
                        3 cohost.hosts.jank-runtime/vec3 4 cohost.hosts.jank-runtime/vec4})
    :core-ns 'clojure.core
@@ -2341,7 +2482,9 @@ namespace cohost_assoc {
                      'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))
                      ;; A6-2 cohost_json: map? / vector? through the guarded map?* / vector?*
                      'map? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/map?* (first args))))
-                     'vector? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/vector?* (first args))))}
+                     'vector? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/vector?* (first args))))
+                     ;; A7-3: the 2-arity = on apt (eq-expansion above)
+                     '= (fn [_ args] (eq-expansion args))}
    :syntax-quote-source? true
    :loop-rebind-shadow? true
    :lazy-seq (fn [f] (lazy-seq (f)))
@@ -2552,6 +2695,9 @@ namespace cohost_assoc {
    ;; Keyed on the series, as int-wraps? is: a :rettag probe cannot tell them
    ;; apart (both return 2.5 from (^{:rettag 'long} fn* ([x] x)) 2.5).
    :native-self-calls? (not int-wraps?)
+   ;; A7-4: a call to a fn var of the namespace being compiled reads the
+   ;; var's root and calls its arity directly (cohost_dcall above)
+   :direct-var-calls direct-var-call
    ;; U6-12: C++ twins of self-recursive ^long numeric arities, from cpp/raw
    :cpp-twins? true
    ;; U6-7: infer what is certain (adapter :static-types); U6-9 (b): :unit

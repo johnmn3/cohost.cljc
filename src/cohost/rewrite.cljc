@@ -955,18 +955,21 @@
 ;; if stays native (a boxed branch would box the loop local). No let*: the
 ;; operands are native-int forms, pure, so naming one twice is safe, and a let*
 ;; in a self-call argument does not compile on apt.
-(defn- checked-native [ctx nm op args' checked]
+(defn- checked-native* [ctx nm op args' checked]
   (let [core (namespace (val (first (:native-int-aliases ctx))))
         lt (symbol core "<")
         small? (fn [v] (if (integer? v)
                          (< -2147483649 v 2147483648)
                          (list 'if (list lt -2147483649 v) (list lt v 2147483648) false)))
         slow (fn [f xs] (list 'cpp/jank.runtime.to_int (apply list f xs)))
+        ;; A5-6c: the tests as one test form, so then and else are each
+        ;; emitted once (the old shape copied else per test)
         guard (fn [tests then else]
                 (let [tests (remove true? tests)]
                   (cond (some false? tests) else
                         (empty? tests) then
-                        :else (reduce (fn [acc t] (list 'if t acc else)) then (reverse tests)))))]
+                        :else (list 'if (reduce (fn [acc t] (list 'if t acc false)) (last tests) (reverse (butlast tests)))
+                                    then else))))]
     (case nm
       "Numbers-inc" (let [[a] args'] (list 'if (list lt a 9223372036854775807) (list (symbol core "inc") a)
                                            (slow (static-sym 'clojure.lang.Numbers 'add) [a 1])))
@@ -998,6 +1001,18 @@
             (guard (map small? args') fast (slow checked args'))))
         (apply list op args')))))
 
+(defn- checked-native
+  "A5-6c: checked-native* with each compound operand named once by a let*
+   (its form appears up to five times in the bound tests and the two arms:
+   nested native arithmetic grew as 5^depth). Inside a self-call's argument,
+   where a let* does not compile on apt, the operands stay as written."
+  [ctx nm op args' checked]
+  (if (or *in-self-arg* (not-any? seq? args'))
+    (checked-native* ctx nm op args' checked)
+    (let [gs (mapv (fn [a] (if (seq? a) (gensym "cn") a)) args')
+          bs (vec (mapcat (fn [g a] (when (seq? a) [g a])) gs args'))]
+      (list 'let* bs (checked-native* ctx nm op gs checked)))))
+
 (defn- int-op-call?
   "A5-6: a call form the int-op expansion may name with a let*: a list whose
    head is a plain symbol (not a special form, interop, or a numeric form the
@@ -1008,6 +1023,12 @@
        (not (native-int-form? x)) (not (real-form? x))
        (not (#{\. \/} (first (name (first x)))))
        (not (and (namespace (first x)) (re-find #"^[A-Z]" (namespace (first x)))))))
+
+(defn- self-call-form?
+  "A5-6c: a call of the fn being defined, by its name (*def-name*)."
+  [x]
+  (and (seq? x) (symbol? (first x)) (nil? (namespace (first x))) *def-name*
+       (= (name (first x)) (name *def-name*))))
 
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
@@ -1034,7 +1055,15 @@
                                            (every? #(or (int-op-operand? %) (int-op-call? %)) args))
                                       (let [gs (mapv (fn [a a'] (if (int-op-operand? a) a' (gensym "io"))) args args')
                                             bs (vec (mapcat (fn [g a'] (when (not= g a') [g a'])) gs args'))]
-                                        (list 'let* bs (f gs (or (get (:host-aliases ctx) nm) (static-sym c m)) true)))))
+                                        ;; A5-6c: operands that are all self-calls (fib's) or plain
+                                        ;; operands: :self-result, the host may keep its cheaper-at-run,
+                                        ;; costlier-to-compile form there (a handful of such sites)
+                                        (list 'let* bs (f gs (or (get (:host-aliases ctx) nm) (static-sym c m))
+                                                          (if (and *def-name*
+                                                                   (every? #(or (int-op-operand? %) (self-call-form? %)) args)
+                                                                   (some self-call-form? args))
+                                                            :self-result
+                                                            true))))))
                               ;; U6-8: the adapter's own expansion of a Math static at
                               ;; the call head (nil: keep the shim call)
                               (when-let [mf (get (host/math-aliases) nm)] (mf args'))
@@ -2789,6 +2818,22 @@
               (= 'clojure.core/hash-map (first m))
               (= :jank/source (second m))))))
 
+(defn- direct-var-call
+  "A7-4: (f args...) where f, unqualified and not a local, names a fn var of
+   the namespace being compiled that is neither a macro nor ^:dynamic: the
+   host's direct call of that var (adapter :direct-var-calls), which reads the
+   var's root at every call, so a redefinition is seen. nil keeps the var call."
+  [ctx h args]
+  (when-let [emit (host/direct-var-calls)]
+    (when (and (symbol? h) (nil? (namespace h)) *inline?* *current-ns*
+               (not (contains? *locals* (*plain* h)))
+               (not (contains? *locals* h)))
+      (when-let [v (when-let [r (:resolve-head ctx)] (r h))]
+        (when (and (not (host/macro-var? v))
+                   (= *current-ns* (let [x (host/var-ns v)] (str (if (host/namespace? x) (host/ns-name* x) x))))
+                   (not (:dynamic (host/try-all (fn [] (host/var-meta v)) (fn [_] nil)))))
+          (emit (list 'var h) (vec (rw-all ctx args))))))))
+
 (defn- rw-list [ctx form]
   (if (empty? form)
     form
@@ -2934,7 +2979,9 @@
                           (let [ef (core-expansion ctx h)
                                 args' (when ef (rw-all ctx args))]
                             (or (when ef (ef (binding [*locals* (conj *locals* (*plain* h))] (rw ctx h)) args'))
-                                (apply list (or (core-alias ctx h) (rw ctx h)) (or args' (rw-all ctx args)))))))))]
+                                (let [ca (core-alias ctx h)]
+                                  (or (when-not ca (direct-var-call ctx h args))
+                                      (apply list (or ca (rw ctx h)) (or args' (rw-all ctx args)))))))))))]
       (carry-meta out form))))
 
 ;; A7-1: the adapter's fn for a vector literal of this size (:vector-literal), when the literal
@@ -2942,7 +2989,13 @@
 (def ^:private reader-position-keys #{:line :column :end-line :end-column :file :source :jank/source})
 (defn- vector-literal-fn [form]
   (when-let [m (host/vector-literal)]
-    (when (every? reader-position-keys (keys (meta form)))
+    (when (and (every? reader-position-keys (keys (meta form)))
+               ;; never a vector in a binding or parameter position: some paths hand a whole
+               ;; clause to rw ((bt-y [_ k] body) in a record's specs), where [_ k] must stay a
+               ;; vector. A parameter vector holds only symbols, & and destructuring patterns
+               ;; (vectors, maps); a literal that is data holds a call or an atom
+               (not-any? #(or (vector? %) (map? %)) form)
+               (some #(or (seq? %) (number? %) (string? %) (keyword? %) (char? %) (boolean? %) (nil? %)) form))
       (get m (count form)))))
 
 (defn rw [ctx form]
