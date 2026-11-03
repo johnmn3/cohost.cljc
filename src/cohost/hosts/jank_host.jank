@@ -1929,6 +1929,76 @@ namespace cohost_assoc {
              :object-methods {'append (fn [x & args] (swap! (inst-field x 0) conj (apply str args)) x)
                               'toString (fn [x] (apply str @(inst-field x 0)))})))
 
+;; A5-3/A5-6: + - * of two operands the codemod cannot type, where jank's own
+;; ops wrap at 32 bits (apt). jank's add/sub/mul computes in i64 when its right
+;; operand is a native long (a small integer's i32 payload meets an i64), so the
+;; expansion hands jank the right operand as a long: an integer literal as
+;; (cpp/long k), an integer object through to_int. Clojure's overflow is caught
+;; with the cheapest test that is exact: a literal's bound is decided here (one
+;; comparison inline); two objects compare the result against the left operand
+;; (add/sub) or bound both operands to 32 bits (mul). Any overflow calls the
+;; shim's checked op, which throws. Reals, ratios and big integers take jank's
+;; op as they are. Probe on apt (fib 27): jank's unchecked add 1.19 ms, this
+;; shape 1.42-2.2, jank's promoting ops 4.3-6.5. Inside a self-call's argument
+;; no let* compiles (rewrite.cljc's self-call-block-arg?): two objects there
+;; keep the 32-bit range test.
+(defn- int-op-aliases []
+  (let [mx 9223372036854775807 mn1 -9223372036854775807
+        lt 'clojure.core/< long* (fn [k] (list 'cpp/long k))
+        to-int (fn [v] (list 'cpp/jank.runtime.to_int v))
+        is-int (fn [v] (list 'cpp/jank.runtime.is_integer v))]
+    (into {}
+          (map (fn [[nm op]]
+                 [nm (fn [[x y] checked & [may-let?]]
+                       (let [slow (list checked x y)]
+                         (cond
+                           ;; (op x k): one bound test on x, decided by k
+                           (and (integer? y) (not (integer? x)) (#{"Numbers-add" "Numbers-minus"} nm))
+                           (let [k (if (= nm "Numbers-add") y (- y))
+                                 fast (list op x (long* y))]
+                             (cond (zero? k) fast
+                                   ;; x + k overflows iff x > MAX - k (k > 0), x < MIN - k (k < 0)
+                                   (pos? k) (list 'if (list lt (- mx k) x) slow fast)
+                                   (> k mn1) (list 'if (list lt x (- mn1 1 k)) slow fast)
+                                   :else slow))
+                           (and (integer? y) (not (integer? x)) (= nm "Numbers-multiply"))
+                           (let [k (if (neg? y) (- y) y)]
+                             (if (zero? k) (list op x (long* y))
+                               (let [b (quot mx k)]
+                                 (list 'if (list lt (- b) x) (list 'if (list lt x b) (list op x (long* y)) slow) slow))))
+                           ;; two objects, named: the right one as a long when it is an integer
+                           may-let?
+                           (let [q (gensym "iq") r (gensym "ir")
+                                 ovf (case nm
+                                       "Numbers-add" (list 'if (list lt 0 q) (list lt r x) (list 'if (list lt q 0) (list lt x r) false))
+                                       "Numbers-minus" (list 'if (list lt 0 q) (list lt x r) (list 'if (list lt q 0) (list lt r x) false))
+                                       nil)]
+                             (list 'if (is-int y)
+                                   (if ovf
+                                     (list 'let* [q (to-int y) r (list op x q)] (list 'if ovf slow r))
+                                     ;; mul: both inside 32 bits, else the checked op
+                                     (list 'let* [q (to-int y)]
+                                           (list 'if (list lt -2147483649 q)
+                                                 (list 'if (list lt q 2147483648)
+                                                       (list 'if (list lt -2147483649 x)
+                                                             (list 'if (list lt x 2147483648) (list op x q) slow)
+                                                             slow)
+                                                       slow)
+                                                 slow)))
+                                   (list op x y)))
+                           ;; two objects inside a self-call argument: both inside 32 bits
+                           :else
+                           (let [yl (if (integer? y) (long* y) (to-int y))
+                                 small (fn [v then]
+                                         (if (integer? v)
+                                           (if (< -2147483649 v 2147483648) then slow)
+                                           (list 'if (list lt -2147483649 v) (list 'if (list lt v 2147483648) then slow) slow)))
+                                 int-test (fn [v then else] (if (integer? v) then (list 'if (is-int v) then else)))]
+                             (int-test x (int-test y (small x (small y (list op x yl))) (list op x y)) (list op x y))))))]))
+          [["Numbers-add" 'cpp/jank.runtime.add]
+           ["Numbers-minus" 'cpp/jank.runtime.sub]
+           ["Numbers-multiply" 'cpp/jank.runtime.mul]])))
+
 (def adapter
   {:name :jank
    ;; a thrown jank value no cohost type made: jank's checked integer ops throw
@@ -2046,27 +2116,7 @@ namespace cohost_assoc {
    ;; there can the i64 op overflow, and only that case calls the shim's checked
    ;; op (Clojure's ArithmeticException). Before, every such op was a dynamic
    ;; call of the checked op. No let*: the operands are named twice as they are.
-   :int-op-aliases (if int-wraps?
-                     (into {}
-                           (map (fn [[nm op]]
-                                  [nm (fn [[x y] checked]
-                                        (let [fast (list op x y)
-                                              slow (list checked x y)
-                                              ;; a literal's test is decided here, a local's inline
-                                              int-test (fn [v then else]
-                                                         (if (integer? v) then
-                                                             (list 'if (list 'cpp/jank.runtime.is_integer v) then else)))
-                                              small (fn [v then else]
-                                                      (if (integer? v)
-                                                        (if (< -2147483649 v 2147483648) then else)
-                                                        (list 'if (list 'clojure.core/< -2147483649 v)
-                                                              (list 'if (list 'clojure.core/< v 2147483648) then else)
-                                                              else)))]
-                                          (int-test x (int-test y (small x (small y fast slow) slow) fast) fast)))]))
-                           [["Numbers-add" 'cpp/jank.runtime.promoting_add]
-                            ["Numbers-minus" 'cpp/jank.runtime.promoting_sub]
-                            ["Numbers-multiply" 'cpp/jank.runtime.promoting_mul]])
-                     {})
+   :int-op-aliases (if int-wraps? (int-op-aliases) {})
    ;; U6-8: Math/sqrt at the call head is jank's runtime sqrt on the double,
    ;; inline. A negative argument is the JVM's NaN as a literal: std::sqrt gives
    ;; a negative-signed NaN, and boxing one crashes jank (probe: (let* [r
@@ -2335,8 +2385,7 @@ namespace cohost_assoc {
              ;; A6-1: a vector assoc (up to three pairs) in one C++ call per pair
              ;; (jank-rt/assoc-with); maps, cohost instances, bounds errors as before
              'clojure.core/assoc (jank-rt/assoc-with native-assoc)
-             ;; A6-2's 'clojure.core/conj native-conj entry is superseded by A6-3's conj-with above
-             ;; (one C++ call; coordinator 4:27 AM ET)
+             ;; A6-2's native-conj is superseded by A6-3's jank-rt/conj-with above (one C++ call)
              ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
              ;; at a time (cohost.hosts.jank-runtime)
              'clojure.core/range jank-rt/range
