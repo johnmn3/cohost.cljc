@@ -782,9 +782,14 @@ namespace cohost_dcall_init {
 (def ^:private direct-call-heads
   '[cpp/cohost_dcall.call0 cpp/cohost_dcall.call1 cpp/cohost_dcall.call2 cpp/cohost_dcall.call3
     cpp/cohost_dcall.call4 cpp/cohost_dcall.call5 cpp/cohost_dcall.call6])
+;; not while a snapshot is recorded (cohost.boot's snapshot-log is set): the recorded forms are
+;; compiled one module at a time by `jank compile`, and the cohost_dcall namespace, declared
+;; through the JIT here, is visible in no module (unresolved-cpp-symbol on cohost.core)
+(defn- recording? []
+  (when-let [v (resolve 'cohost.boot/snapshot-log)] (some? @@v)))
 (defn- direct-var-call [vf args]
   (let [h (get direct-call-heads (count args))]
-    (when (and h (dcall-ready?)) (apply list h vf args))))
+    (when (and h (not (recording?)) (dcall-ready?)) (apply list h vf args))))
 
 (defn reduce-init [f init coll] (cpp/cohost_reduce.reduce_init f init coll))
 (defn reduce-noinit [f coll]
