@@ -1435,3 +1435,75 @@ boot (AOT) maxrss 1776172 -> 2166628 KB (1.22x), binary-trees-14 80.86 -> 56.19 
 
 Lane D's D-4 (cohost's mainline, not yet in `max/main`) chose the same 512M on another box for the CLI launch
 (`dev/perf/jank_snapshot_cli.clj`); when `max/main` takes the mainline, that literal should read `(jank-gc-env)`.
+
+## cohost-max: unpatched and patched
+
+The jank-MAX fleet's scoreboard in two columns: UNPATCHED is apt jank 0.1-noble with cohost's launcher (A1's
+`GC_INITIAL_HEAP_SIZE=512M` in effect), PATCHED is the 21-patch series build
+(`JANK_BIN=/home/user/int-a/jank-inst/bin/jank`; the launcher's 512M applies there too). x1 writes the programs
+table under this heading (X1-5); the `bb bench:jank` table is below (X1-5b).
+
+### `bb bench:jank`: the stock core against jank's own core (X1-5b, u0)
+
+Measured 2026-11-02/03, 10:50 PM-12:20 AM ET, on max/x3 @ `ce94816` (= max/main with `651592c` + A1), int-a's box
+(4 CPUs, 15 GB, six lanes, no lock). Legs interleaved per round: apt on the snapshot, apt on the AOT modules
+(`JANK_BIN=/usr/local/bin/jank`), patched on the AOT modules (a `JANK_BIN` binary has no snapshot). Rounds 1-2 ran
+at load 8-14; from round 2's second leg on, each leg started only under the load gate (1-minute load < 8, free
+memory > 4 GB). Rounds 4-5 are two extra AOT pairs for the regex row. x = stock / jank's own (the printed ratio);
+the geomean is over the 30 printed x values of a run, median [range] over the runs.
+
+| | apt, snapshot (3 runs) | apt, AOT (5 runs) | patched, AOT (5 runs) |
+|---|---:|---:|---:|
+| stock core / jank's own core, geomean x | **1.47** [1.38-1.50] | **1.48** [1.38-1.79] | **2.29** [1.87-2.56] |
+
+The patched column's ratio is higher because the series speeds jank's own core more than the stock core
+(lazy-pipeline own core 13x faster, stock 6x).
+
+Per case, stock-side ms median [range], and the median x:
+
+| case | apt-snapshot stock ms | x | apt-aot stock ms | x | patched-aot stock ms | x | patched median above apt AOT max |
+|---|---|---|---|---|---|---|---|
+| fn-call | 1.27 [1.27-1.33] | 2.06 | 1.30 [1.28-1.38] | 2.09 | 0.21 [0.21-0.22] | 1.00 |  |
+| loop-arith | 0.00 [0.00-0.00] | 1.06 | 0.00 [0.00-0.00] | 1.05 | 0.05 [0.05-0.05] | 0.99 | yes |
+| hinted-loop | 0.00 [0.00-0.00] | 0.00 | 0.00 [0.00-0.00] | 0.00 | 0.05 [0.05-0.05] | 0.99 | yes |
+| reduce-range | 3.79 [3.76-11.71] | 0.34 | 3.95 [3.55-7.66] | 0.49 | 0.97 [0.97-0.99] | 0.78 |  |
+| lazy-pipeline | 93.44 [86.22-166.07] | 1.64 | 157.01 [72.17-246.86] | 1.90 | 24.83 [24.81-29.20] | 11.90 |  |
+| transduce | 13.81 [10.06-24.95] | 2.01 | 16.01 [9.65-19.54] | 2.27 | 4.71 [4.69-6.66] | 2.83 |  |
+| into-vector | 4.83 [4.71-12.52] | 0.99 | 5.94 [4.36-8.66] | 1.01 | 1.69 [1.68-1.72] | 1.13 |  |
+| conj-vector | 19.90 [14.32-29.95] | 0.71 | 18.75 [9.91-22.01] | 0.83 | 10.55 [10.24-14.90] | 1.03 |  |
+| transient-vector | 34.81 [22.34-55.47] | 6.52 | 34.95 [23.77-44.97] | 5.61 | 35.18 [34.55-63.49] | 35.30 |  |
+| assoc-map | 34.90 [22.81-57.27] | 1.01 | 22.82 [22.29-50.86] | 0.96 | 22.27 [21.90-39.20] | 1.04 |  |
+| map-lookup | 12.09 [8.07-20.27] | 0.96 | 8.42 [8.26-16.42] | 0.62 | 5.49 [5.38-9.44] | 1.47 |  |
+| keyword-lookup | 8.85 [8.76-12.87] | 0.52 | 4.81 [4.74-8.88] | 0.48 | 1.69 [1.65-1.70] | 1.02 |  |
+| destructure | 21.33 [15.28-37.11] | 1.53 | 25.08 [13.24-25.21] | 1.44 | 6.96 [6.84-10.85] | 4.10 |  |
+| frequencies | 60.65 [56.32-90.67] | 1.31 | 93.62 [37.22-97.74] | 1.70 | 16.45 [16.25-20.55] | 2.98 |  |
+| group-by | 27.63 [22.36-46.44] | 1.08 | 34.59 [18.74-40.17] | 1.02 | 12.14 [12.03-16.42] | 1.03 |  |
+| sort | 48.56 [46.08-60.37] | 1.75 | 37.79 [24.36-52.68] | 1.76 | 10.68 [10.56-14.79] | 1.97 |  |
+| sort-by | 65.31 [44.11-105.46] | 5.27 | 45.19 [41.36-94.08] | 5.16 | 8.48 [7.98-9.22] | 1.01 |  |
+| set-build | 14.00 [9.88-22.78] | 1.07 | 13.69 [9.53-18.14] | 1.04 | 4.91 [4.89-9.07] | 1.09 |  |
+| distinct | 346.44 [324.73-461.66] | 0.93 | 437.98 [192.78-526.05] | 1.07 | 75.65 [74.22-107.36] | 1.12 |  |
+| partition | 121.67 [92.43-202.26] | 1.65 | 160.40 [58.01-243.18] | 1.70 | 34.26 [33.37-56.50] | 1.47 |  |
+| lazy-iterate | 8.67 [5.06-12.88] | 1.65 | 4.83 [4.56-8.99] | 1.29 | 1.55 [1.54-1.60] | 1.70 |  |
+| atom-swap | 9.34 [5.36-13.22] | 1.10 | 5.45 [5.22-9.46] | 1.14 | 4.32 [4.22-4.65] | 1.00 |  |
+| protocol | 19.64 [16.81-28.57] | 0.97 | 12.05 [11.72-24.32] | 0.90 | 3.90 [3.84-4.20] | 0.98 |  |
+| multimethod | 5.29 [3.88-8.03] | 0.18 | 3.93 [3.90-7.96] | 0.15 | 2.19 [2.17-2.45] | 1.62 |  |
+| equality | 0.72 [0.71-0.73] | 0.99 | 0.71 [0.68-0.72] | 1.00 | 0.70 [0.68-0.73] | 0.99 |  |
+| str-build | 60.57 [27.90-74.13] | 3.88 | 39.20 [29.23-65.34] | 4.70 | 16.54 [16.31-31.81] | 6.02 |  |
+| string-join | 56.47 [29.25-71.07] | 0.02 | 27.55 [25.85-113.36] | 0.00 | 27.22 [21.68-41.44] | 0.00 |  |
+| regex | 228.62 [193.13-437.10] | 69.87 | 262.87 [244.39-376.49] | 96.18 | 322.33 [212.62-489.66] | 108.14 |  |
+| format | 366.52 [323.03-732.09] | 107.45 | 310.01 [260.27-596.84] | 102.24 | 420.56 [281.06-559.33] | 229.85 |  |
+| pr-str | 1.00 [1.00-1.00] | 1.00 | 0.97 [0.96-0.98] | 1.00 | 1.02 [1.01-1.05] | 1.04 | yes |
+
+The rows marked: loop-arith and hinted-loop take 0.00 ms on apt because its i32 loop arithmetic wraps and the loop
+folds; the series computes the i64 sum (12-21) in 0.05 ms. pr-str is a 1-ms case (0.97 -> 1.02). No other case's
+patched median is above apt's AOT maximum; regex, flagged after 3 runs (402.92 above 376.49), is not after 5.
+
+**format** (X1-4's open question): stock ms per round, apt AOT / patched AOT: 596.84 / 424.77 (load 13), 461.46 /
+420.56 (8), 277.75 / 329.87 (6), 260.27 / 281.06 (4-5), 310.01 / 559.33 (4-7). The series was faster in two pairs
+and slower in three; the medians are 310.01 and 420.56 with overlapping ranges. A format regression on the
+series is not established at this spread; the low-load pairs (rounds 3-4) put it at 1.08-1.19x if it exists. On
+apt the snapshot leg is not slower than the AOT leg (366.52 vs 310.01, ranges overlapping).
+
+`bb boot:jank` in this tree: apt (snapshot and AOT) 525/171/17 natives/78/0, battery 170/172 (subs count nth first
+last butlast; Character outside ASCII), libraries 62/62; patched 523/171/19 natives/78/0 (sort and sort-by become
+natives where the sort walks linearly, `651592c`), the same 170/172 and 62/62.
