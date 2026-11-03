@@ -18,7 +18,7 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 | stock Clojure on the JVM (the reference) | | | | 1.5 s | 1 | |
 | cohost `:jvm` (the real Clojure CLI) | an uberjar | not yet measured | being measured | 1.4 s | 1 | |
 | cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | being measured | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
-| cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | being measured | 4.5 s | x9.6 (28) | x2.9 (28) |
+| cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | x6.3 (28) | 4.5 s | x9.6 (28) | x2.9 (28) |
 | cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | being measured | 88.6 s | not yet measured | not yet measured |
 | cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | being measured | 94.0 s | x85.2 (15 of 28 so far) | x20.5 (28) |
 | cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | | 8.9 s | x9.1 (28) | x3.9 (25) |
@@ -45,6 +45,48 @@ What `cohost -T:build build` makes on each runtime is in [doc/CLI.md](CLI.md#bui
 form is reached, and its status, is [doc/AOT-PLAN.md](AOT-PLAN.md). Being measured now on Box 4 (the coordinator's
 box), against its own JVM column: `jolt-built`, `lpy-built`, `cljw-built`, then `jvm-built` and `jank-built`. Phel,
 let-go and ClojureScript follow as their AOT forms land.
+
+### Box 4: built apps
+
+Box 4 (4 CPUs, Intel Xeon 2.10 GHz, Linux), the release candidate coord/release4 @ 4497c85 (aot/native-builds merged),
+2026-11-03 from 4:06 AM ET; each program built with `cohost -T:build build` and run as `target/<name>/run`; the JVM
+column is Box 4's own (1:18 AM ET). Median ms (xJVM). Records: `doc/perf/box4/`.
+
+| program | jvm | jolt-built |
+|---|---:|---:|
+| binary-trees | 246.8 | 1275.9 (x5.17) |
+| binary-trees-14 | 10.4 | 63.6 (x6.15) |
+| binary-trees-14-hinted | 14.2 | 152.7 (x10.72) |
+| binary-trees-hinted | 239.7 | 2918.8 (x12.17) |
+| dispatch | 152.8 | 954.1 (x6.24) |
+| fannkuch | 142.1 | 291.0 (x2.05) |
+| fannkuch-hinted | 163.1 | 279.9 (x1.72) |
+| fib | 121.8 | 288.5 (x2.37) |
+| fib-hinted | 76.3 | 8802.3 (x115.34) |
+| first-output | 804.7 | 1074.8 (x1.34) |
+| json | 219.9 | 3817.3 (x17.36) |
+| k-nucleotide | 128.6 | 660.1 (x5.13) |
+| keyword-map | 95.1 | 354.2 (x3.72) |
+| lazy-pipeline | 34.1 | 122.1 (x3.58) |
+| mandelbrot | 187.9 | 1434.2 (x7.63) |
+| mandelbrot-hinted | 174.6 | 1308.7 (x7.49) |
+| nbody | 212.9 | 748.4 (x3.52) |
+| nbody-hinted | 212.5 | 720.2 (x3.39) |
+| nsieve | 212.5 | 1706.5 (x8.03) |
+| nsieve-hinted | 180.2 | 1696.2 (x9.41) |
+| pipeline | 141.0 | 997.3 (x7.07) |
+| sort | 37.3 | 73.4 (x1.97) |
+| spectral-norm | 222.3 | 1402.1 (x6.31) |
+| spectral-norm-hinted | 133.8 | 4150.8 (x31.01) |
+| sum-overflow | 12.9 | 23.7 (x1.84) |
+| sum-overflow-hinted | 0.5 | 2.9 (x5.57) |
+| tak | 260.0 | 439.9 (x1.69) |
+| tak-hinted | 162.0 | 36047.5 (x222.48) |
+| **geomean xJVM** (programs that ran) | 1 | **x6.27** (28) |
+
+jolt's built app is one native binary per program. Its hinted programs are much slower than its plain ones
+(`tak-hinted` x222, `fib-hinted` x115): the same holds for cohost on jolt from source (Box 1), so it is how cohost
+treats type hints on jolt, not the build ([Type hints](#type-hints)).
 
 ## Startup
 
