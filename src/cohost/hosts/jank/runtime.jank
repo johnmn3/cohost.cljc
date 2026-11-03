@@ -9,18 +9,83 @@
 ;;
 ;; Everything here is reached by cohost.hosts.jank-host only, behind the adapter's keys
 ;; (:chunks, :natives); stock code never names it.
-(ns cohost.hosts.jank.runtime)
+(ns cohost.hosts.jank.runtime
+  (:refer-clojure :exclude [range chunk-cons chunk?]))
 
 (cpp/raw "
 #include <jank/runtime/object.hpp>
 #include <jank/runtime/core/make_box.hpp>
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/core/call.hpp>
+#include <jank/runtime/obj/chunked_cons.hpp>
+#include <jank/runtime/obj/array_chunk.hpp>
+#include <jank/runtime/obj/cons.hpp>
+#include <jank/runtime/obj/number.hpp>
 
 namespace cohost_rt {
   using namespace jank::runtime;
 
   /* The extension's version: bumped with every change of its C++ (the AOT stamp already
    * follows this file). */
-  inline object_ref version() { return make_box(static_cast<jank::i64>(1)); }
+  inline object_ref version() { return make_box(static_cast<jank::i64>(2)); }
+
+  /* A4 (a): chunked seqs built from jank's own obj::chunked_cons and obj::array_chunk, so
+   * jank's runtime first/next/seq/count/=/hash/print walk them natively. On apt 0.1-noble
+   * jank's chunk_cons realizes its rest at construction (seq.cpp: make_box<chunked_cons>(chunk,
+   * seq(rest))), so a chunked lazy pipeline is built eagerly and recursively and overflows the
+   * stack near 1e6 elements; and chunked_cons::next hands back its raw tail, so an unrealized
+   * tail that turns out empty breaks next's contract (an extra nil element). These build
+   * chunked_cons only with a tail that is nil or never empty, and never force anything. */
+
+  /* The chunk [start, start + n * step) by step: the values computed in i64. */
+  inline object_ref range_chunk(object_ref const start, object_ref const n, object_ref const step) {
+    auto const a(to_int(start));
+    auto const c(to_int(n));
+    auto const st(to_int(step));
+    jank::native_vector<object_ref> v;
+    v.reserve(static_cast<size_t>(c));
+    for(jank::i64 i{}; i < c; ++i) { v.push_back(make_box(a + i * st)); }
+    return make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0));
+  }
+
+  /* chunked_cons of a chunk and a tail that is nil or a seq known to be non-empty (the
+   * chunked range's own tails). */
+  inline object_ref chunked_cons_of(object_ref const chunk, object_ref const tail) {
+    return make_box<obj::chunked_cons>(chunk, tail);
+  }
+
+  inline bool is_chunk(object_ref const x) { return x.get_type() == object_type::array_chunk; }
+
+  /* The stock chunk-cons ((chunk-cons (chunk b) rest) in map, filter, concat...): rest may be
+   * an unrealized lazy seq that turns out empty. The chunk's last element moves into a cons in
+   * front of rest, so the chunked_cons's tail is a cons (never empty; cons::next seqs its own
+   * tail) and nothing is forced: one element per chunk is walked as a cons. An empty chunk
+   * gives rest itself, as Clojure's chunk-cons does. */
+  inline object_ref chunk_cons(object_ref const chunk, object_ref const rest) {
+    if(chunk.get_type() != object_type::array_chunk) {
+      return jank::runtime::chunk_cons(chunk, rest);
+    }
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    auto const n(c->buffer.size() - c->offset);
+    if(n == 0) { return rest; }
+    auto const tail(make_box<obj::cons>(c->buffer[c->offset + n - 1], rest));
+    if(n == 1) { return tail; }
+    jank::native_vector<object_ref> v(c->buffer.begin() + static_cast<long>(c->offset),
+                                      c->buffer.begin() + static_cast<long>(c->offset + n - 1));
+    return make_box<obj::chunked_cons>(make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0)),
+                                       tail);
+  }
+
+  /* IChunk.reduce over a jank array_chunk: by index, a reduced result returned unopened. */
+  inline object_ref chunk_reduce(object_ref const chunk, object_ref const f, object_ref const init) {
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    object_ref acc{ init };
+    for(auto i(c->offset); i < c->buffer.size(); ++i) {
+      acc = f.call(acc, c->buffer[i]);
+      if(acc.get_type() == object_type::reduced) { return acc; }
+    }
+    return acc;
+  }
 }
 ")
 
@@ -28,3 +93,47 @@ namespace cohost_rt {
   "The C++ extension's version (cohost_rt::version): its presence says the extension loaded."
   []
   (cpp/cohost_rt.version))
+
+(defn chunk-cons
+  "The stock pipeline's chunk-cons on jank: lazy in its rest (cohost_rt::chunk_cons)."
+  [chunk rest]
+  (cpp/cohost_rt.chunk_cons chunk rest))
+
+(defn chunk?
+  "Whether x is one of jank's chunks (an array_chunk)."
+  [x]
+  (cpp/cohost_rt.is_chunk x))
+
+(defn chunk-reduce
+  "IChunk.reduce over a jank chunk: a reduced result returned unopened."
+  [chunk f init]
+  (cpp/cohost_rt.chunk_reduce chunk f init))
+
+(defn- chunked-range*
+  [start end step]
+  (let [left (quot (+ (- end start) (- step (if (pos? step) 1 -1))) step)
+        n (min 32 left)
+        next-start (+ start (* n step))]
+    (cpp/cohost_rt.chunked_cons_of
+      (cpp/cohost_rt.range_chunk start n step)
+      (if (< n left) (lazy-seq (chunked-range* next-start end step)) nil))))
+
+(defn- fixnum? [x] (and (integer? x) (< -4611686018427387904 x 4611686018427387904)))
+
+(defn range
+  "clojure.core/range with a chunked seq for integer arguments (32 per chunk, the JVM's
+   LongRange); anything else is jank's own range. A non-empty integer range is a jank
+   chunked_cons whose tails are nil or non-empty, so chunked-seq? is true and the stock
+   map/filter/reduce take their chunked branches. Its count and nth walk it (the JVM's
+   LongRange answers them in O(1))."
+  ([] (clojure.core/range))
+  ([end] (if (fixnum? end)
+           (if (pos? end) (chunked-range* 0 end 1) '())
+           (clojure.core/range end)))
+  ([start end] (range start end 1))
+  ([start end step]
+   (if (and (fixnum? start) (fixnum? end) (fixnum? step) (not (zero? step)))
+     (if (if (pos? step) (< start end) (> start end))
+       (chunked-range* start end step)
+       '())
+     (clojure.core/range start end step))))

@@ -1492,6 +1492,15 @@ namespace cohost_obj {
 
 (def adapter
   {:name :jank
+   ;; A4 (a): jank's own chunk fns, but a chunk-cons that keeps its rest lazy (jank's realizes it:
+   ;; a chunked pipeline overflows the stack near 1e6 on apt), plus IChunk.reduce over jank's
+   ;; array_chunk; and the integer range as a chunked seq of jank's own chunked_cons
+   ;; (cohost.hosts.jank.runtime). Both are reached only through these keys.
+   :chunks (fn [] {:chunked-seq? chunked-seq? :chunk-first chunk-first :chunk-rest chunk-rest
+                   :chunk-next chunk-next :chunk-buffer chunk-buffer :chunk-append chunk-append
+                   :chunk chunk :chunk-cons jank-rt/chunk-cons
+                   :chunk? jank-rt/chunk? :chunk-reduce jank-rt/chunk-reduce})
+   :natives {'clojure.core/range jank-rt/range}
    ;; the shim's stock multimethod behind a one-entry cache (X2-1, doc/research/jank-dispatch.md)
    :multimethod-cache? mm-hit
    :core-ns 'clojure.core
