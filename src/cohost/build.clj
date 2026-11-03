@@ -13,9 +13,12 @@
 ;;   :cljs  target/<name>/: cohost's ClojureScript host, the stock core
 ;;          sources, the project's and its dependencies' source roots, and
 ;;          run.js (run: node run.js)
-;;   :jolt  target/<name>/: cohost.cli compiled by `jolt build` into one native
-;;          binary, the stock sources, the source roots (no jolt needed)
-;;   :cljw :lg :lpy :phel  target/<name>/: a script bundle -- cohost's
+;;   :jolt  target/<name>/run: one native binary (`jolt build`, release mode):
+;;          the booted core, the libraries and the app's namespaces recorded
+;;          on jolt and compiled ahead of time (no jolt, no sources needed)
+;;   :lpy   target/<name>/: a script bundle plus basilisp's compiled boot
+;;          (.lpy modules and their .lpyc bytecode); run boots from it
+;;   :cljw :lg :phel  target/<name>/: a script bundle -- cohost's
 ;;          sources, the stock sources, the source roots, and `run`, on the
 ;;          host's installed binary (their native packagers refuse cohost's
 ;;          code: doc/CLI.md, "Building")
@@ -187,20 +190,33 @@ process.exit(r.status === null ? 1 : r.status);
                                      " -c \"(require 'cohost.cli) (cohost.cli/-main \\\"$cfg\\\")\" #")
                                 " :snapshot? true")))))
 
-(defn- jolt-native [{:keys [main name]}]
+(defn- jolt-native
+  "jolt's own AOT: the booted core, the libraries and the app's namespaces,
+   recorded on jolt (dev/perf/snapshot_record.cljc), emitted as jolt modules
+   (dev/perf/jank_snapshot_emit.clj --host jolt --main: cohost.app-main boots
+   from them and calls the app's -main) and compiled by `jolt build` (release
+   mode: direct-linked, whole-program inference) into one native binary,
+   target/<name>/run. Nothing is read from source at run time; jolt is not
+   needed to run it."
+  [{:keys [main name]}]
   (let [home (cohost-home)
         out (io/file "target" name)
-        work (io/file "target" "cohost-jolt-build")]
+        work (.getCanonicalFile (io/file "target" "cohost-jolt-build"))
+        events (str (io/file work "events.edn"))
+        ;; the source roots, resolved as `cohost :jolt` resolves them (jars extracted)
+        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jolt" "-Spath")) #":")]
     (sh! "." "rm" "-rf" (str out) (str work))
     (.mkdirs work)
+    (apply sh! home "jolt" "-Scp" "src" "dev/perf/snapshot_record.cljc" "--" "--out" events
+           (concat (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
+    (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "jolt" "--events" events
+         "--out" (str (io/file work "src")) "--main" (str main))
     ;; jolt build reads deps.edn :paths (its -Scp is not honored by build)
-    (spit (io/file work "deps.edn") (pr-str {:paths [(str home "/src")]}))
-    (sh! (str work) "jolt" "build" "-m" "cohost.cli" "-o" "cohost-jolt")
-    (let [roots (bundle-sources! home :jolt out)]
-      (io/make-parents (io/file out "bin" "cohost-jolt"))
-      (io/copy (io/file work "cohost-jolt") (io/file out "bin" "cohost-jolt"))
-      (.setExecutable (io/file out "bin" "cohost-jolt") true false)
-      (write-run! out (launcher main roots "\"$here/bin/cohost-jolt\"")))
+    (spit (io/file work "deps.edn") (pr-str {:paths [(str (io/file work "src")) (str home "/src")]}))
+    (sh! (str work) "jolt" "build" "-m" "cohost.app-main" "-o" "run")
+    (.mkdirs out)
+    (io/copy (io/file work "run") (io/file out "run"))
+    (.setExecutable (io/file out "run") true false)
     (sh! "." "rm" "-rf" (str work))
     (str out "/run")))
 

@@ -42,7 +42,8 @@
 ;; refers its core whatever the ns form says, and the replay's first call
 ;; (snap-begin!, or the library's ns directive) runs the adapter's
 ;; ensure-bare-ns!, which clears the refers as the boot does.
-(def lang (get {"lpy" {:core "basilisp.core" :ext ".lpy" :bare? false}}
+(def lang (get {"lpy" {:core "basilisp.core" :ext ".lpy" :bare? false}
+                "jolt" {:core "clojure.core" :ext ".clj" :bare? true}}
                (:host cli-opts)
                {:core "clojure.core" :ext ".jank" :bare? true}))
 (def C (:core lang))
