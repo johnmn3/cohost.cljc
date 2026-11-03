@@ -1,5 +1,9 @@
 # cohost
 
+> **Pre-alpha. Do not use in production.** Commands, options, build output and the host
+> adapter contract can change without notice or a migration path, and each runtime has
+> known gaps ([Limitations and FAQ](doc/guide/10-limitations-and-faq.md)).
+
 **A Clojure you develop in: `clojure.core`, `clojure.string`, `clojure.test` and the
 rest are Clojure 1.12's own source, unchanged, on the runtime your project picks.**
 
