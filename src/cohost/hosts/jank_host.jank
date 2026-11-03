@@ -1886,6 +1886,14 @@ namespace cohost_assoc {
 
 (def adapter
   {:name :jank
+   ;; a thrown jank value no cohost type made: jank's checked integer ops throw
+   ;; a string -- the series build's + - * "integer overflow" (runtime/core/
+   ;; math.cpp throw_integer_overflow), inc and dec on a native long "Overflow on
+   ;; increment." (math.hpp, both builds) -- which is the JVM's
+   ;; ArithmeticException; any other is the default's RuntimeException
+   :exception-class (fn [e] (if (contains? #{"integer overflow" "Overflow on increment." "Overflow on decrement."} e)
+                              'java.lang.ArithmeticException
+                              'RuntimeException))
    ;; A4 (a): jank's own chunk fns, but a chunk-cons that keeps its rest lazy (jank's realizes it:
    ;; a chunked pipeline overflows the stack near 1e6 on apt), plus IChunk.reduce over jank's
    ;; array_chunk; and the integer range as a chunked seq of jank's own chunked_cons

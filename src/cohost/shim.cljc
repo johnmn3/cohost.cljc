@@ -596,9 +596,13 @@
       true
       ;; Exception and RuntimeException go through the hierarchy too: on the
       ;; JVM they leave Errors (AssertionError, StackOverflowError) alone
-      (let [k (or (:cohost/class (ex-data e))
-                  (when (host/ex-info? e) 'clojure.lang.ExceptionInfo)
-                  (host/exception-class e))]
+      ;; a thrown string (jank's series build throws its integer overflow as
+      ;; one) has no ex-data to read: jank's ex-data throws on it
+      (let [k (if (string? e)
+                (host/exception-class e)
+                (or (:cohost/class (ex-data e))
+                    (when (host/ex-info? e) 'clojure.lang.ExceptionInfo)
+                    (host/exception-class e)))]
         (token-isa? (canon k) c)))))
 
 ;; ---------------------------------------------------------------------------
