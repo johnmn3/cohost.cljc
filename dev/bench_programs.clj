@@ -12,7 +12,8 @@
 ;; - warm-up continues until the median of the last 5 calls moves under 2%
 ;;   from the median of the 5 before the newest call, or 20 calls, or 10 s
 ;;   of warm-up, whichever comes first (the cold call counts);
-;; - then 10 timed calls: MEDIAN-MS (the mean of the middle two), MIN-MS, MAX-MS.
+;; - then 10 timed calls, or as many as fit in 15 s with at least 3 (a call
+;;   of several seconds gains nothing from ten): MEDIAN-MS (the mean of the middle two), MIN-MS, MAX-MS.
 ;; The clock is each core's own: System/nanoTime on the JVM; on a cohost
 ;; target the program's (System/nanoTime) is rewritten by cohost to the shim's
 ;; System-nanoTime, which is the adapter's :nano-time capability; other own
@@ -23,7 +24,7 @@
 ;; folded into a sink carried by the loop and printed at the end, and every
 ;; call's result is checked against the first call's.
 ;; first-output is process wall time to the line `ok`: one cold process, one
-;; discarded process, then 10 processes (median, min-max).
+;; discarded process, then 3 processes (median, min-max), as the startup table.
 ;; Records: target/bench-programs/results/<target>.edn (program -> record).
 ;; <t>-built targets (jvm-built, jank-built, jolt-built, cljs-built, cljw-built,
 ;; lg-built, lpy-built, phel-built) measure the compiled build: what `cohost
@@ -138,7 +139,7 @@
 (defn clock [target-id]
   (or (clocks target-id) "(System/nanoTime)"))
 
-(def timeout-ms 1800000)
+(def timeout-ms 900000)
 
 (defn reason [t]
   (when-not (fs/which (:exe t)) (str "no " (:exe t) " on PATH")))
@@ -169,13 +170,13 @@
        "            d (if (< d 0) (- 0 d) d)]\n"
        "        (if (or (>= n 20) (> (__ms t-start (__now)) 10000.0) (< d 0.02))\n"
        "          (do (println \"PROGRAM-WARMUP\" n)\n"
-       "              (loop [i 0 sink acc wrong bad]\n"
-       "                (if (= i 10)\n"
+       "              (loop [i 0 sink acc wrong bad tt (__now)]\n"
+       "                (if (or (= i 10) (and (>= i 3) (> (__ms tt (__now)) 15000.0)))\n"
        "                  (do (println \"PROGRAM-BAD\" wrong)\n"
        "                      (println \"PROGRAM-SINK\" sink))\n"
        "                  (let [t0 (__now) r (-run s) t1 (__now)]\n"
        "                    (println \"PROGRAM-MS\" (__ms t0 t1))\n"
-       "                    (recur (+ i 1) (__sinkv sink r) (if (= (pr-str r) r0s) wrong (+ wrong 1)))))))\n"
+       "                    (recur (+ i 1) (__sinkv sink r) (if (= (pr-str r) r0s) wrong (+ wrong 1)) tt)))))\n"
        "          (let [t0 (__now) r (-run s) t1 (__now)]\n"
        "            (recur (conj ws (__ms t0 t1)) m (__sinkv acc r)\n"
        "                   (if (= (pr-str r) r0s) bad (+ bad 1)))))))))\n"
@@ -603,7 +604,7 @@
         (or (not= 10 (count ms)) (nil? result))
         {:fail (or (error-text (:err proc) out) (str "exit " (:exit proc)))}
         (pos? bad)
-        {:fail (str bad " of 10 timed calls returned a result other than the first call's " result)}
+        {:fail (str bad " of the timed calls returned a result other than the first call's " result)}
         :else
         (merge (summary ms)
                {:result result
@@ -618,7 +619,7 @@
       (if-not (str/includes? (:out cold) "ok")
         {:fail (or (error-text (:err cold) (:out cold)) (str "exit " (:exit cold)))}
         (do (wall-run (:id t) (:file p))
-            (merge (summary (vec (repeatedly 10 #(:ms (wall-run (:id t) (:file p))))))
+            (merge (summary (vec (repeatedly 3 #(:ms (wall-run (:id t) (:file p))))))
                    {:result "ok" :cold (:ms cold) :warmup 1}))))
     (catch Exception e
       {:fail (or (some-> e ex-data :err error-text) (.getMessage e))})))
@@ -690,7 +691,7 @@
         ratio (fn [i pid] (let [a (get-in recs [i pid :median]) b (get-in jvm [pid :median])]
                             (when (and a b (nil? (get-in recs [i pid :differ]))) (/ a b))))
         row (fn [cells] (println (str "| " (str/join " | " cells) " |")))]
-    (println "Median ms of 10 timed calls (xJVM: median / JVM median).")
+    (println "Median ms of the timed calls: 10, or as many as fit in 15 s with at least 3 (xJVM: median / JVM median).")
     (println)
     (row (concat ["program" "size" "jvm"] others))
     (println (str "|---|---:|" (str/join "" (repeat (inc (count others)) "---:|"))))
@@ -702,7 +703,7 @@
                            (:differ r) (str (fmt (:median r)) " DIFFER")
                            :else (str (fmt (:median r)) " (x" (format "%.2f" (ratio i pid)) ")"))))))
     (println)
-    (println "min-max of the 10 timed calls / the cold call (the first call in a fresh process), ms.")
+    (println "min-max of the timed calls / the cold call (the first call in a fresh process), ms.")
     (println)
     (row (concat ["program"] ids))
     (println (str "|---|" (str/join "" (repeat (count ids) "---:|"))))

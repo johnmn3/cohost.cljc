@@ -60,7 +60,7 @@ Box 1, `main` @ ff30ce1, 2026-11-03 12:41 AM ET (`doc/perf/release-perf/lane-c/s
 - The compiled builds (`cohost -T:build build`) start faster on some runtimes: [Compiled builds](#compiled-builds).
 
 The programs' tables below also carry `first-output`: the wall time to print one line from a one-line program,
-through the benchmark's own launch of each runtime (no project, no library), median of 10 processes.
+through the benchmark's own launch of each runtime (no project, no library), median of 3 processes.
 
 ## Programs
 
@@ -71,8 +71,11 @@ JVM. Ten of them come twice: plain, and with primitive type hints (`^long`, `^do
 performance-minded JVM code.
 
 Method, per program and runtime: one fresh process; the first call is timed as cold; warm-up continues until the
-median of the last 5 calls moves under 2% (at most 20 calls or 10 s); then 10 timed calls, of which the table
-shows the median. Every call's result is checked against the first call's, and the first call's against the JVM's.
+median of the last 5 calls moves under 2% (at most 20 calls or 10 s); then 10 timed calls, or as many as fit in
+15 s with at least 3, of which the table shows the median; a program's process is stopped after 15 minutes. Every
+call's result is checked against the first call's, and the first call's against the JVM's. A call of several seconds
+gains nothing from ten timed calls: the 15 s budget came in on 2026-11-03 at 1:37 AM ET. Boxes 1 to 3 were measured
+with 10 timed calls (and `first-output` over 10 processes) every time; the medians compare all the same.
 
 ### Box 1: the JVM, ClojureScript and jolt
 
