@@ -38,7 +38,7 @@ template `cohost/app`, published from this repository. Plain `clj` makes one; no
 checkout is needed for this step:
 
 ```bash
-clojure -Sdeps '{:deps {io.github.johnmn3/cohost.cljc {:git/sha "7b3d58eaab3445793a9bb413c61badb1d2d17cc6" :deps/root "templates/cohost-app"}}}' -Tnew create :template cohost/app :name acme/myapp
+clojure -Sdeps '{:deps {io.github.johnmn3/cohost.cljc {:git/sha "2704c2179394273d3835e44bbde6b918be18d296" :deps/root "templates/cohost-app"}}}' -Tnew create :template cohost/app :name acme/myapp
 cd myapp
 ```
 
