@@ -20,7 +20,7 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 | cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | being measured | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
 | cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | x6.3 (28) | 4.5 s | x9.6 (28) | x2.9 (28) |
 | cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | being measured | 88.6 s | not yet measured | not yet measured |
-| cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | being measured | 94.0 s | x85.2 (15 of 28 so far) | x20.5 (28) |
+| cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | x72.1 (27, Box 3) | 94.0 s | x85.2 (15 of 28 so far) | x20.5 (28) |
 | cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | | 8.9 s | x9.1 (28) | x3.9 (25) |
 | ClojureScript in Chromium | | | | | not measured | x3.0 (25) |
 | cohost `:phel` (Phel 0.54.0, PHP 8.5) | the app compiled to PHP by `phel build` (OPcache + tracing JIT) | 1.3-2.0 s (Box 1) | being measured | 47.0 s | not yet measured | x23.7 (15 of 28) |
@@ -87,6 +87,45 @@ column is Box 4's own (1:18 AM ET). Median ms (xJVM). Records: `doc/perf/box4/`.
 jolt's built app is one native binary per program. Its hinted programs are much slower than its plain ones
 (`tak-hinted` x222, `fib-hinted` x115): the same holds for cohost on jolt from source (Box 1), so it is how cohost
 treats type hints on jolt, not the build ([Type hints](#type-hints)).
+
+### Box 3: built apps
+
+Box 3 (lane D, 4 CPUs, Linux), coord/release4's artifacts at 4497c85, 2026-11-03 4:37-5:30 AM ET; the JVM column is
+Box 3's own. ClojureWasm's built app is the recorded boot as ClojureWasm modules on the shipped ReleaseSafe `cljw`:
+it skips the boot from source, and its programs run about as fast as cohost on ClojureWasm from source (Box 3, x85
+over the 15 measured). Median ms (xJVM). Records: `doc/perf/built-d/` (d/aot-cljw).
+
+| program | jvm | jvm-built | cljw-built |
+|---|---:|---:|---:|
+| binary-trees | 257.5 | 305.6 (x1.19) | 14426.2 (x56.02) |
+| binary-trees-14 | 11.4 | 19.1 (x1.68) | 649.4 (x57.18) |
+| binary-trees-14-hinted | 9.4 | 12.4 (x1.32) | 1357.1 (x144.79) |
+| binary-trees-hinted | 245.7 | 301.0 (x1.23) | 28215.4 (x114.84) |
+| dispatch | 138.0 | 177.7 (x1.29) | 17447.3 (x126.42) |
+| fannkuch | 148.0 | 162.1 (x1.10) | 6664.3 (x45.03) |
+| fannkuch-hinted | 165.6 | 158.7 (x0.96) | 6508.7 (x39.31) |
+| fib | 163.6 | 150.0 (x0.92) | 8006.8 (x48.94) |
+| fib-hinted | 99.8 | 98.9 (x0.99) | 81055.7 (x811.78) |
+| first-output | 647.3 | 700.1 (x1.08) | 2205.5 (x3.41) |
+| json | 234.0 | 244.5 (x1.04) | 32820.5 (x140.26) |
+| k-nucleotide | 131.1 | 131.3 (x1.00) | 7342.3 (x56.01) |
+| keyword-map | 85.7 | 89.7 (x1.05) | 5125.5 (x59.81) |
+| lazy-pipeline | 32.1 | 37.4 (x1.17) | 8228.5 (x256.57) |
+| mandelbrot | 206.4 | 217.6 (x1.05) | 46419.1 (x224.93) |
+| mandelbrot-hinted | 219.0 | 216.7 (x0.99) | 45755.2 (x208.94) |
+| nbody | 188.4 | 229.7 (x1.22) | 8257.3 (x43.82) |
+| nbody-hinted | 190.0 | 216.0 (x1.14) | 8330.8 (x43.85) |
+| nsieve | 142.5 | 132.3 (x0.93) | 9075.2 (x63.69) |
+| nsieve-hinted | 163.0 | 145.2 (x0.89) | 9535.7 (x58.49) |
+| pipeline | 143.0 | 151.1 (x1.06) | 5867.3 (x41.04) |
+| sort | 36.9 | 50.8 (x1.38) | 5817.6 (x157.58) |
+| spectral-norm | 189.1 | 249.4 (x1.32) | 12874.5 (x68.08) |
+| spectral-norm-hinted | 146.6 | 159.4 (x1.09) | 37298.0 (x254.38) |
+| sum-overflow | 8.9 | 13.1 (x1.47) | 24.4 (x2.75) |
+| sum-overflow-hinted | 0.6 | 1.1 (x1.71) | 54.0 (x87.41) |
+| tak | 317.9 | 367.4 (x1.16) | 26214.4 (x82.47) |
+| tak-hinted | 196.5 | 248.5 (x1.26) | error |
+| **geomean xJVM** (programs that ran) | 1 | **x1.15** (28) | **x72.09** (27) |
 
 ## Startup
 
