@@ -184,7 +184,9 @@
   (let [enc (fn [y] (cond (map? y) (into {} (map (fn [[k v]] [(snap-encode k) (snap-encode v)]) y))
                           (vector? y) (mapv snap-encode y)
                           (set? y) (set (map snap-encode y))
-                          (seq? y) (apply list (map snap-encode y))
+                          ;; an empty one as (): let-go's map over an empty
+                          ;; list with metadata (a reader's :line) yields (nil)
+                          (seq? y) (if (empty? y) () (apply list (map snap-encode y)))
                           :else y))
         m (when (or (symbol? x) (coll? x)) (meta x))
         m (when m (let [m' (apply dissoc m snap-drop-meta)] (when (seq m') m')))
