@@ -136,6 +136,9 @@
    ;; A4-2: a chunked map keeps its whole chunk (Clojure's 32), and realizing its first element
    ;; calls f once per element of that one chunk
    ["chunked map: chunk-first counts 32, f called 32 times for first" "[(count (chunk-first (seq (map inc (range 64))))) (let [a (atom 0)] (first (map (fn [x] (swap! a inc) x) (map inc (range 100)))) @a) (let [a (atom 0)] (first (map (fn [x] (swap! a inc) x) (range 100))) @a)]" [32 32 32]]
+   ;; A6-1: assoc on vectors (one to four pairs, the append, bounds, meta) and maps through the jank
+   ;; adapter's C++ path, Clojure's answers
+   ["assoc on vectors and maps: pairs, append, bounds, meta" "[(assoc [1 2] 0 :a 2 :c) (meta (assoc (with-meta [1] {:m 1}) 0 2)) (try (assoc [1] 3 0) (catch IndexOutOfBoundsException _ :ioobe)) (try (assoc [1] -1 0) (catch IndexOutOfBoundsException _ :ioobe)) (assoc {:a 1} :b 2 :c 3) (assoc [1 2 3] 0 9 1 8 2 7 3 6) (assoc [1.5 2.5] 1 3.5)]" [[:a 2 :c] {:m 1} :ioobe :ioobe {:a 1 :b 2 :c 3} [9 8 7 6] [1.5 3.5]]]
    ["chunk-cons keeps its chunk" "(let [b (chunk-buffer 2)] (chunk-append b 1) (chunk-append b 2) (let [s (chunk-cons (chunk b) (list 3))] [(count (chunk-first s)) (vec s) (chunked-seq? s) (vec (map inc s))]))" [2 [1 2 3] true [2 3 4]]]
    ["String methods" "[(.trim \"  a  \") (.isBlank \" \") (.equalsIgnoreCase \"ABC\" \"abc\") (.repeat \"ab\" 2) (.codePointAt \"abc\" 1) (.strip \" x \")]" ["a" true true "abab" 98 "x"]]
    ["format is java.util.Formatter's" "(format \"%5.2f|%-4d|%x|%,d|%s|%b|%e|%3$X\" 3.14159 42 255 1234567 nil true 1234.5)" " 3.14|42  |ff|1,234,567|null|true|1.234500e+03|FF"]
