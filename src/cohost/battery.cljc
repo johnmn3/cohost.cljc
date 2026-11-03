@@ -164,6 +164,10 @@
    ;; integer arithmetic past 2^31 (A5: unpatched jank wraps + - * at 32 bits; every host must pass)
    ["+ - * past 2^31 on small integers" "[(+ 2147483647 1) (- -2147483648 1) (* 65536 65536) (* 46341 46341) (- 0 -2147483648) (inc 2147483647) (dec -2147483648)]" [2147483648 -2147483649 4294967296 2147488281 2147483648 2147483648 -2147483649]]
    ["a sum past 2^31 through reduce, apply and a loop" "[(reduce + (range 100000)) (apply + (range 100000)) (loop [i 0 s 0] (if (< i 100000) (recur (inc i) (+ s i)) s)) (loop [i 0 s 0] (if (< i 70000) (recur (inc i) (+ s (* i 3))) s))]" [4999950000 4999950000 4999950000 7349895000]]
+   ;; A5-2: / quot rem on integers as Clojure's (jank's / truncates, and on apt i32 min by -1
+   ;; wraps or traps); quot of a double; (int x) past i32 throws
+   ["/ quot rem mod of integers, exact and in i64" "(let [x (identity -2147483648) y (identity -1)] [(== (* (/ 6 4) 2) 3) (== (/ 1 2) 0.5) (/ x y) (quot x y) (rem x y) (mod -7 2) (quot -7 2) (rem 7 -2) (/ 6 3)])" [true true 2147483648 2147483648 0 1 -3 1 2]]
+   ["quot of a double is a double; int past 2^31 throws" "[(quot 7.5 2) (let [x (identity 2147483648)] (try (int x) (catch ArithmeticException e :overflow)))]" [3.0 :overflow]]
    ["hash-combine hashes its argument as Object.hashCode does" "[(hash-combine 0 \"a\") (hash-combine 0 nil) (hash-combine 1 2) (hash-combine -5 \"hello\")]" [-1640531430 -1640531527 -1640531462 1541369522]]
    ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]
    ;; primitive fn* parameters coerce as JVM Clojure 1.12.0 does (measured
