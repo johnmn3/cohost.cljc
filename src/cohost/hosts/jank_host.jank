@@ -695,8 +695,15 @@ namespace cohost_var {
 ;; false; other operand pairs jank::runtime::equal inline (no var deref and dynamic call),
 ;; except a collection literal operand, which keeps the call.
 ;; = as a value and the 1 / 3+ arities keep the var.
+;; Inlines the JIT accepts but a per-module `jank compile` rejects stay out of a snapshot
+;; recording (cohost.boot's snapshot-log is set): cpp/cohost_dcall is declared through the JIT and
+;; visible in no module (unresolved-cpp-symbol); jank::runtime::equal against a raw literal is an
+;; ambiguous overload at -O3. The recorded form keeps the plain call; from source the inline stays.
+(defn- recording? []
+  (when-let [v (resolve 'cohost.boot/snapshot-log)] (some? @@v)))
+
 (defn- eq-expansion [args]
-  (when (and int-wraps? (= 2 (count args)))
+  (when (and int-wraps? (= 2 (count args)) (not (recording?)))
     (let [[a b] args
           lit? (fn [x] (and (integer? x) (cpp/jank.runtime.is_integer x)))]
       (cond (and (lit? b) (not (lit? a)))
@@ -782,11 +789,6 @@ namespace cohost_dcall_init {
 (def ^:private direct-call-heads
   '[cpp/cohost_dcall.call0 cpp/cohost_dcall.call1 cpp/cohost_dcall.call2 cpp/cohost_dcall.call3
     cpp/cohost_dcall.call4 cpp/cohost_dcall.call5 cpp/cohost_dcall.call6])
-;; not while a snapshot is recorded (cohost.boot's snapshot-log is set): the recorded forms are
-;; compiled one module at a time by `jank compile`, and the cohost_dcall namespace, declared
-;; through the JIT here, is visible in no module (unresolved-cpp-symbol on cohost.core)
-(defn- recording? []
-  (when-let [v (resolve 'cohost.boot/snapshot-log)] (some? @@v)))
 (defn- direct-var-call [vf args]
   (let [h (get direct-call-heads (count args))]
     (when (and h (not (recording?)) (dcall-ready?)) (apply list h vf args))))
