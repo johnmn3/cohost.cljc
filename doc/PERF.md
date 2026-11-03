@@ -1661,6 +1661,31 @@ On `034534a` the stock core beats jank's own core on both rows on apt (x < 1), a
 (lazy-pipeline) and 1.18x (sort). `bb boot:jank` there: 518/171/24 natives/78/0, battery 176/178, libraries 62/62
 on all three (the snapshot, apt AOT, patched AOT).
 
+#### Startup in both columns (X1-7, u0)
+
+Measured 2026-11-03, 2:02-3:08 AM ET, max/x3 @ `7b9e692` (= max/main `3713865` + the snapshot taking `JANK_BIN`),
+int-a's box (4 CPUs, 15 GB, six lanes); 3 rounds, the four legs of each column interleaved, every leg under the
+load gate (1-minute load 3.89-7.58, free memory 5-8 GB), one jank process at a time; A1's 512M heap in both
+columns. Snapshot legs ran in a tree with each binary's snapshot built (`bb boot:jank-snapshot`, with
+`JANK_BIN` for the series), AOT legs in a second tree at the same commit with no snapshot. first-output =
+`bb bench:programs jank first-output` (process wall time to `ok`, MEDIAN-MS of its 10 processes); boot =
+`bb boot:jank` wall and maxrss (the battery and the twelve libraries included). Median (min-max) over the 3 rounds:
+
+| startup | UNPATCHED (apt) | PATCHED (21-patch series) | runs |
+|---|---:|---:|---:|
+| first-output ms, snapshot | 4386 (3134-4677) | 4740 (4064-5369) | 3 / 3 |
+| first-output ms, AOT | 18452 (15241-19282) | 21648 (18693-26682) | 3 / 3 |
+| boot:jank s, snapshot | 36 (29-48) | 51 (45-64) | 3 / 3 |
+| boot:jank s, AOT | 212 (203-256) | 225 (219-391) | 3 / 3 |
+| boot:jank maxrss KB, snapshot | 1364408 (1364340-1364444) | 1655792 (1655356-1655924) | 3 / 3 |
+| boot:jank maxrss KB, AOT | 2098080 (2097872-2098504) | 2788008 (2787660-2788092) | 3 / 3 |
+
+The series' binary snapshots: since `7b9e692` the snapshot builder honours `JANK_BIN` (its own root,
+`target/jank-snapshot-<hash of the binary's path>`, and key), and both binaries boot from theirs as
+518/171/24 natives/78/0, battery 190/192, libraries 62/62 (all 16 boots). The snapshot build, once each (the
+time `bb boot:jank-snapshot` prints): apt 438.4 s, PATCHED 558.4 s. The earlier PATCHED first-output cell
+(21412 ms, X1-5) was the AOT path: on its snapshot the series starts in 4.7 s against apt's 4.4 s.
+
 ### The same round on int-b's box (X1-5, int-b; 2026-11-03)
 
 Measured 2026-11-03 12:14 AM to 1:49 AM ET on int-b's box (4 CPUs, 15 GB, shared with lane u4 only; 1-minute load

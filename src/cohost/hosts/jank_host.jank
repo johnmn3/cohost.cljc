@@ -548,6 +548,22 @@ namespace cohost_var {
   (when int-wraps?
     (fn ([x y] (let [r (cpp/cohost_num.mul x y)] (if (nil? r) (int-overflow) r))))))
 
+;; U6-9: odd?/even? as values (:core-value-aliases): jank's own on a host long,
+;; the booted stock fn on anything else (Clojure's IllegalArgumentException for
+;; a non-integer; a bigint's answer)
+(def ^:private stock-odd (delay (var-get (resolve 'cohost.core/odd?))))
+(def ^:private stock-even (delay (var-get (resolve 'cohost.core/even?))))
+(defn odd?* [n] (if (cpp/jank.runtime.is_integer n) (odd? n) (@stock-odd n)))
+(defn even?* [n] (if (cpp/jank.runtime.is_integer n) (even? n) (@stock-even n)))
+(defn- parity-expansion [op stock-head args]
+  (when (= 1 (count args))
+    (let [a (first args)]
+      (cond (and (integer? a) (cpp/jank.runtime.is_integer a)) (list op a)
+            (number? a) nil
+            :else (let [n (gensym "par")]
+                    (list 'let* [n a]
+                          (list 'if (list 'cpp/jank.runtime.is_integer n) (list op n) (list stock-head n))))))))
+
 ;; A5-2: jank's / on two integers truncates ((/ 6 4) is 1 on apt and on the
 ;; series build alike) and wraps at 32 bits on apt; Clojure's is the exact
 ;; quotient or a ratio. The probe runs jank's own / at boot; where it is wrong,
@@ -2027,9 +2043,31 @@ namespace cohost_assoc {
                                                      (if int-div-wrong?
                                                        (list 'cohost.hosts.jank-host/num-divide a b)
                                                        (list 'clojure.core// a b)))))))}
-   ;; A6-1: = is jank's own here ('clojure.core/= :host in :natives), so its calls are
-   ;; emitted as clojure.core/=, which jank's compiler inlines
-   :core-aliases '#{not =}
+   ;; U6-9: the call heads the stock :inline does not reach (not=, and the
+   ;; comparisons at arities other than 2) are jank's own fn; probed on the
+   ;; battery's edge cases against the stock path and the JVM
+   ;; (dev/research/u4/edges.sh: integers, Long/MAX/MIN, reals, NaN, -0.0, a
+   ;; bigint, the shim's integer "ratio", a non-number): every row equal
+   ;; A6-1 (merged by int-a): = is jank's own here too, so its calls are emitted as
+   ;; clojure.core/=, which jank's compiler inlines
+   :core-aliases '#{not = not= < > <= >= ==}
+   ;; U6-9: a booted stock fn passed as a value ((map inc xs), (filter odd? xs))
+   ;; is jank's own fn: the stock inc/pos?/</... bodies already are jank's op
+   ;; (their :inline reaches it), so the value differs only by the var call.
+   ;; even?/odd? are guarded (odd?*, below). + - * stay the stock fns as
+   ;; values: on apt jank's own wrap at 32 bits (A5)
+   :core-value-aliases '{inc clojure.core/inc dec clojure.core/dec
+                         pos? clojure.core/pos? neg? clojure.core/neg? zero? clojure.core/zero?
+                         < clojure.core/< > clojure.core/> <= clojure.core/<= >= clojure.core/>= == clojure.core/==
+                         = clojure.core/= not= clojure.core/not= not clojure.core/not
+                         odd? cohost.hosts.jank-host/odd?* even? cohost.hosts.jank-host/even?*}
+   ;; U6-9: jank's own odd?/even? of a non-integer raise a native C++ exception
+   ;; (no catch reaches it; Clojure's is IllegalArgumentException), so a call
+   ;; is jank's op on a host long (is_integer: integer and small_integer; a
+   ;; native long boxes into it) and the stock fn on anything else (a bigint,
+   ;; a real, a non-number); an integer literal is jank's op directly
+   :core-expansions {'odd? (fn [stock-head args] (parity-expansion 'clojure.core/odd? stock-head args))
+                     'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))}
    :syntax-quote-source? true
    :loop-rebind-shadow? true
    :lazy-seq (fn [f] (lazy-seq (f)))
@@ -2225,7 +2263,8 @@ namespace cohost_assoc {
    ;; a ^long / ^double let*/loop* local: jank types a local by its init, and
    ;; these return i64 / f64 (runtime/core/math.hpp, always inline)
    :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
-   ;; U6-7: infer what is certain (adapter :static-types)
+   ;; U6-7: infer what is certain (adapter :static-types); U6-9 (b): :unit
+   ;; when the run opts in (cohost.rewrite/static-types! :unit)
    :static-types :sound
 })
 
