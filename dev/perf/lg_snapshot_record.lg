@@ -1,0 +1,13 @@
+;; D-10 on let-go: record a boot with the twelve libraries for the cached core
+;; (as dev/perf/lpy_snapshot_record.lpy on Basilisp); the events go to the
+;; file named by the first argument. dev/perf/jank_snapshot_emit.clj --host lg
+;; turns them into one .lg module per namespace.
+;;   lg -source-paths src dev/perf/lg_snapshot_record.lg <events.edn>
+(ns lg-snapshot-record
+  (:require [cohost.run] [cohost.boot] [cohost.bench] [cohost.adapter]))
+
+(cohost.boot/print-report (cohost.boot/boot! {:record? true}))
+(doseq [lib cohost.bench/libs] (cohost.boot/load-lib! lib))
+(let [ev (cohost.boot/snapshot-stop!)]
+  (cohost.adapter/spit-file (first *command-line-args*) (pr-str ev))
+  (println "SNAPSHOT-EVENTS" (count ev)))

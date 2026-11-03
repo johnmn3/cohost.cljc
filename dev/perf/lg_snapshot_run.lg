@@ -1,0 +1,15 @@
+;; D-10 on let-go: boot from the cached core (its modules on -source-paths
+;; before src), or from source with --source; print BOOT-MS, then the batteries.
+;;   lg -source-paths <snapshot src>:src dev/perf/lg_snapshot_run.lg
+(ns lg-snapshot-run
+  (:require [cohost.run] [cohost.adapter] [cohost.boot] [cohost.battery] [cohost.lib-battery]))
+
+(let [src? (= "--source" (first *command-line-args*))
+      t0 (cohost.adapter/nano-time)
+      report (if src? (cohost.boot/boot! {}) (cohost.boot/boot-from-snapshot! {}))
+      ms (/ (double (- (cohost.adapter/nano-time) t0)) 1000000.0)]
+  (println (str "BOOT-MS " ms (if src? " source" " snapshot")))
+  (cohost.boot/print-report report)
+  (cohost.boot/make-user-ns!)
+  (cohost.battery/run-battery! cohost.boot/eval-str)
+  (cohost.lib-battery/run-lib-battery! cohost.boot/eval-str))
