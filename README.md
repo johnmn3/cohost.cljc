@@ -140,6 +140,9 @@ for you.
 `:jank` runs the jank package from jank's apt repository (`dev/install/jank.sh`) as it ships.
 cohost also carries a patch series against jank under `upstream/jank/` for its own measurements
 (`doc/PERF.md`, "Two jank binaries"); nothing selects it unless `JANK_BIN` names a build of it.
+Building it (`bash dev/install/jank-src.sh`, then `--patches`), the adapter keys and C++ blocks this release adds,
+the launcher's collector setting (`GC_INITIAL_HEAP_SIZE=512M`; a value of 2G or more is clamped to 1G) and the known
+gaps are in `doc/perf/jank.md`, "Release 2 (jank-MAX): what ships for jank".
 
 How each runtime is launched, what was verified and how it differs from `clojure`:
 `doc/CLI.md`. Using cohost as a library inside a host (a sub-runtime you hand strings
