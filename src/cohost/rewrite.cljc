@@ -19,6 +19,15 @@
   ;; names defined here that let-go's core also has (it warns of each)
   #?(:lg (:refer-clojure :exclude [starts-with? ends-with?])))
 
+(def ^:dynamic *native-ints*
+  "Loop locals the codemod started from an integer literal through the adapter's
+   :loop-int-init (A5): native longs on jank. A + - * whose every operand is one
+   of them, an integer literal, or such an arithmetic form is emitted as the
+   host's own op (:native-int-aliases), which is exact on two native longs; any
+   other operand goes through the shim's checked Numbers-*. Rebinding a name
+   (let*, loop*, letfn*, fn* params) drops it."
+  #{})
+
 (def ^:dynamic *plain*
   "A symbol taken from a form, bare: the adapter's :plain-symbol (a let-go
    symbol carrying metadata is a wrapper no symbol equals, with no name or
@@ -394,7 +403,7 @@
    passthrough?: leave interop the shim lacks for the host to try (jolt has a
    wide java.* shim of its own); false means it becomes a `cohost.shim/missing-*`
    call that throws (and is reported) when reached."
-  [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? def-meta strip-inline?
+  [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? loop-int-init native-int-aliases def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? cohost-types? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
            instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source? loop-rebind-shadow?]
@@ -485,6 +494,12 @@
    :core-ns core-ns
    :shim-ref shim-ref
    :loop-variadic-recur? (boolean loop-variadic-recur?)
+   ;; nil, or the adapter's :loop-int-init: a loop* binding started from an
+   ;; integer literal starts from (f literal) instead (A5: jank on apt types such a
+   ;; local as a C++ int, and recur wraps it at 32 bits)
+   :loop-int-init loop-int-init
+   ;; nil, or {"Numbers-add" host-+ ...}: where the operands are native longs
+   :native-int-aliases native-int-aliases
    :strip-inline? (boolean strip-inline?)
    ;; metadata every `def` name gets on this host (basilisp: {:redef true}, so
    ;; alter-var-root and with-redefs reach compiled references)
@@ -587,10 +602,27 @@
           :else (do (miss! ctx :static-field c m)
                     (list (shim-fn "missing-static-value") (list 'quote c) (list 'quote m))))))
 
+(defn- native-int-form?
+  "A source form that is a native long under *native-ints*: one of them, an
+   integer literal, or a stock + - * inc dec of such forms."
+  [x]
+  (cond (integer? x) true
+        (symbol? x) (contains? *native-ints* (*plain* x))
+        (seq? x) (let [h (first x)]
+                   (and (symbol? h)
+                        (not (contains? *locals* (*plain* h)))
+                        (contains? #{nil "clojure.core" "cohost.core"} (namespace h))
+                        (contains? #{"+" "-" "*" "inc" "dec"} (name h))
+                        (seq (rest x))
+                        (every? native-int-form? (rest x))))
+        :else false))
+
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
         nm (static-name c m)]
-    (cond (known? ctx nm) (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args')
+    (cond (and (seq *native-ints*) (get (:native-int-aliases ctx) nm) (seq args) (every? native-int-form? args))
+          (apply list (get (:native-int-aliases ctx) nm) args')
+          (known? ctx nm) (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args')
           (:passthrough? ctx) (list '. (imported c) (apply list m args'))
           ;; the head is a call returning the thrower, so the arguments keep the
           ;; positions `(. C (m args))` had: -> and doto insert into them.
@@ -962,7 +994,8 @@
         one-arity? (= 1 (count arities))
         names (into (if nm #{nm} #{})
                     (mapcat (fn [[params]] (filter #(and (symbol? %) (not= '& %)) params)) arities))
-        arities' (binding [*locals* (into *locals* names)]
+        arities' (binding [*locals* (into *locals* names)
+                           *native-ints* (apply disj *native-ints* (map *plain* names))]
                    (doall (map (fn [[params & body]]
                                  (let [ps0 (filter symbol? params)
                                        ps (map *plain* ps0)
@@ -1058,10 +1091,21 @@
     (binding [*locals* (into *locals* syms)
               *local-tags* tags *local-classes* classes *marker-depth* depths
               *loop-locals* (if (and (= h 'loop*) (:loop-rebind-shadow? ctx)) (into *loop-locals* syms) *loop-locals*)]
-      (let [bvec' (rw-bindings ctx bvec)
+      (let [int-init? (fn [[b v]] (and (= h 'loop*) (:loop-int-init ctx) (integer? v) (symbol? b) (nil? (:tag (meta b)))))
+            pairs (partition 2 bvec)
+            ;; inits see the names bound before them: drop every name this form binds,
+            ;; then add the literal-started loop locals for the body
+            bvec' (binding [*native-ints* (apply disj *native-ints* syms)] (rw-bindings ctx bvec))
+            bvec' (if-let [f (and (= h 'loop*) (:loop-int-init ctx))]
+                    (carry-meta (vec (mapcat (fn [[b v] [b0 v0]] [b (if (int-init? [b0 v0]) (f v) v)])
+                                             (partition 2 bvec') pairs))
+                                bvec')
+                    bvec')
+            natives (into (apply disj *native-ints* syms)
+                          (keep (fn [p] (when (int-init? p) (*plain* (first p))))) pairs)
             ;; an empty body is nil: ClojureWasm's let*, loop* and letfn* take
             ;; no empty one
-            body' (or (seq (doall (rw-all ctx body))) [nil])]
+            body' (binding [*native-ints* natives] (or (seq (doall (rw-all ctx body))) [nil]))]
         (if (and (= h 'let*) (seq bs))
           ;; each marker right after its local, so the inits after it see it
           ;; too (a loop*'s bindings are recur's arity: its body gets them)
@@ -1192,7 +1236,10 @@
       more)))
 
 (defn- rw-def [ctx [_ nm & more]]
-  (let [more (self-named-init nm more)
+  (let [;; ^:redef and ^:dynamic keep every call through the var, as under
+        ;; Clojure's direct linking (U6-6)
+        var-call? (let [m (meta nm)] (or (:redef m) (:dynamic m)))
+        more (if var-call? more (self-named-init nm more))
         nm (carry-meta nm nm)
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
@@ -1205,6 +1252,7 @@
         ;; semantic price is pinned by a battery row: an in-flight
         ;; recursion no longer sees a redefinition of the var.
         more' (if (and (host/defn-fn-name?)
+                       (not var-call?)
                        ;; a dotted name is a class or a constructor
                        ;; pseudo-name (deftype's Box.), not a fn name:
                        ;; jank's codegen rejects it on a fn*
