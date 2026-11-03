@@ -19,7 +19,7 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 | cohost `:jvm` (the real Clojure CLI) | an uberjar | not yet measured | x1.00 (28) | 1.4 s | 1 | |
 | cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | being measured | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
 | cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | x6.3 (28) | 4.5 s | x9.6 (28) | x2.9 (28) |
-| cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | being measured | 88.6 s | not yet measured | not yet measured |
+| cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | x3511 (25, at smaller sizes) | 88.6 s | not yet measured | not yet measured |
 | cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | x72.1 (27, Box 3) | 94.0 s | x85.2 (15 of 28 so far) | x20.5 (28) |
 | cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | | 8.9 s | x9.1 (28) | x3.9 (25) |
 | ClojureScript in Chromium | | | | | not measured | x3.0 (25) |
@@ -87,6 +87,45 @@ column is Box 4's own (1:18 AM ET). Median ms (xJVM). Records: `doc/perf/box4/`.
 jolt's built app is one native binary per program. Its hinted programs are much slower than its plain ones
 (`tak-hinted` x222, `fib-hinted` x115): the same holds for cohost on jolt from source (Box 1), so it is how cohost
 treats type hints on jolt, not the build ([Type hints](#type-hints)).
+
+### basilisp's built app, at smaller sizes (Box 4)
+
+At the suite's sizes one call takes basilisp minutes (`fib 36` passed the 15-minute limit on Box 1), so basilisp is
+measured at lane C's smaller sizes, picked so one call on basilisp's own core takes about 5 to 20 s, with Box 4's JVM
+measured at the same sizes (2026-11-03 5:01-5:54 AM ET, 4497c85). Sizes: fib and fib-hinted 24; tak 21 14 7;
+binary-trees 12; sum-overflow 100000; sort 100000; lazy-pipeline 100000; keyword-map 100000; fannkuch 7; nsieve 16;
+k-nucleotide 20000; pipeline 5000; dispatch 50000; mandelbrot 50; nbody 1000; spectral-norm 100; json 1000 (each
+hinted form as its plain one). The built app is cohost on basilisp loading its cached boot; the boot is what the
+build saves, not time per call. Median ms (xJVM). Records: `doc/perf/box4/` (`jvm-small.edn`, `lpy-built-small.edn`).
+
+| program | jvm | lpy-built |
+|---|---:|---:|
+| binary-trees | 3.3 | 7320.6 (x2217.55) |
+| binary-trees-hinted | 5.3 | 15429.5 (x2903.08) |
+| dispatch | 7.6 | 9182.3 (x1208.72) |
+| fannkuch | 20.9 | 13270.7 (x635.15) |
+| fannkuch-hinted | 25.3 | 13561.8 (x535.51) |
+| fib | 0.4 | 5569.6 (x14235.51) |
+| fib-hinted | 0.6 | 19813.4 (x34606.18) |
+| json | 10.7 | 17049.9 (x1589.13) |
+| k-nucleotide | 4.3 | 6405.6 (x1477.68) |
+| keyword-map | 13.4 | 42845.3 (x3203.82) |
+| lazy-pipeline | 2.7 | 16434.4 (x6108.06) |
+| mandelbrot | 0.4 | 6102.4 (x14175.41) |
+| mandelbrot-hinted | 0.3 | 5855.8 (x23207.65) |
+| nbody | 5.8 | 8070.5 (x1389.60) |
+| nbody-hinted | 9.6 | 7920.2 (x827.09) |
+| nsieve | 8.8 | 12509.9 (x1424.12) |
+| nsieve-hinted | 7.8 | 12778.6 (x1629.76) |
+| pipeline | 6.6 | 2144.4 (x325.45) |
+| sort | 57.6 | 23203.0 (x403.03) |
+| spectral-norm | 6.2 | 42080.4 (x6805.51) |
+| spectral-norm-hinted | 3.7 | 79750.5 (x21269.53) |
+| sum-overflow | 3.5 | 4862.3 (x1384.67) |
+| sum-overflow-hinted | 0.1 | 3337.8 (x25264.00) |
+| tak | 1.6 | 13547.4 (x8736.56) |
+| tak-hinted | 0.6 | 85579.8 (x141957.47) |
+| **geomean xJVM** (programs that ran) | 1 | **x3511.27** (25) |
 
 ### Box 3: built apps
 
