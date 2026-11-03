@@ -5,7 +5,7 @@
 Builds are [tools.build](https://clojure.org/guides/tools_build): `cohost -T:build build` runs
 the project's `build.clj` as `clojure -T:build build` does. The template's `build.clj` calls
 `cohost.build/build`, which makes the artifact for the project's runtime (`:target` in the
-task's arguments, else `:cohost/target`, else `:jvm`). Every artifact is a directory
+task's arguments, else `:cohost/target`, else `:jank`). Every artifact is a directory
 `target/<name>/` whose `run` starts the project's `-main` from any directory:
 
 ```bash

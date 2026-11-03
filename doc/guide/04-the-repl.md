@@ -17,5 +17,5 @@ printf '(def x\n  5)\nx (inc x)\n:done\n' | cohost
 # => user=>
 ```
 
-There is no line editing or history: wrap it, as `clj` wraps `clojure`, with `rlwrap cohost`.
+There is no line editing or history: wrap it, as `clj` wraps `clojure`, with `rlwrap cohost` (`brew install rlwrap` on macOS, `sudo apt install rlwrap` on Debian/Ubuntu).
 An nREPL server is not part of `cohost` today.

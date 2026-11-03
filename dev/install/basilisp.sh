@@ -11,6 +11,8 @@ if ! have uv; then
   else curl -LsSf https://astral.sh/uv/install.sh | sh; fi
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
-uv tool install --force "basilisp==$ver"
+# Python 3.13: basilisp's dependency immutables has prebuilt wheels for it (the newest
+# CPython uv would pick otherwise builds it from source, which needs a C compiler)
+uv tool install --force --python 3.13 "basilisp==$ver"
 export PATH="$(uv tool dir --bin):$PATH"
 basilisp version

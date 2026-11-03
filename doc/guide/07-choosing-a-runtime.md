@@ -57,6 +57,24 @@ cohost also carries a patch series against jank under `upstream/jank/` for its o
 
 ## Startup and speed
 
+How long one command of the README takes on each runtime (`cohost -M -m ...` in a new project),
+measured on macOS arm64 on 2026-11-02 (doc/OOTB-MACOS.md, #19), caches warm:
+
+| runtime | per command |
+|---|---|
+| `:jank` | 0.5 s with its core snapshot and the project's build (about 10 s without them; cohost builds both on first use) |
+| `:jvm` (the reference: the real Clojure CLI) | about 1 s |
+| `:jolt` | 1 to 2 s |
+| `:cljs` | about 2 s (5 s for the first build) |
+| `:lg` | 4 to 6 s (10 s the first time) |
+| `:cljw` | about 17 s |
+| `:lpy` | 19 to 25 s from source; its cached boot (built on first use) boots in 3.1 s (Linux, boot alone) |
+| `:phel` | about 22 s |
+
+Those per-command times are the time to run a program; the table below is the time to the
+first line of output and the speed of the programs once running.
+
+
 Measured on one 4-CPU box, one runtime at a time (doc/PERF.md): wall time to the first line
 of output of a one-line program, and the geometric mean, over the suite's programs that ran,
 of each program's time per call against JVM Clojure's.

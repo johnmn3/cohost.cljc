@@ -29,7 +29,7 @@
 (defn- abs-path [repo path]
   (str/join ":" (map (fn [x] (str (fs/absolutize (fs/path repo x)))) (str/split path #":"))))
 
-(defn jank-cli-launch [repo]
+(defn- jank-check [repo]
   (let [r (p/shell {:dir repo :out :string :err :string :continue true}
                    "bb" "-e"
                    (str "(load-file \"dev/perf/jank_snapshot_key.clj\")"
@@ -37,12 +37,47 @@
                         "  (println \"CLI-PATH snapshot\" m)"
                         "  (println \"CLI-PATH aot\" (str (load-file \"dev/perf/jank_aot_ensure.clj\") \":src\")))"))
         lines (str/split-lines (:out r))
-        line (last (filter #(str/starts-with? % "CLI-PATH ") lines))
-        stale (first (filter #(str/starts-with? % "SNAPSHOT-STALE") lines))
-        [_ kind path] (when line (str/split line #" " 3))]
+        line (last (filter #(str/starts-with? % "CLI-PATH ") lines))]
     (when-not line
       (throw (ex-info (str "jank: no module path from dev/perf/jank_snapshot_key.clj: " (:err r)) {})))
-    (when stale (binding [*out* *err*] (println (str "cohost: jank: " stale))))
+    (str/split line #" " 3)))
+
+(defn- jank-build-snapshot!
+  "Builds the core snapshot once, on first use (or after a cohost update made it
+   stale), with one plain line; its output goes to target/jank-snapshot.log. One
+   build at a time: a second cohost command meanwhile runs on the slower path.
+   COHOST_JANK_SNAPSHOT=off: never. -> true when it built."
+  [repo]
+  (let [lock (fs/file repo "target" "jank-snapshot.lock")
+        log (fs/file repo "target" "jank-snapshot.log")]
+    (fs/create-dirs (fs/parent lock))
+    ;; a lock a killed build left behind does not block forever
+    (when (and (fs/exists? lock)
+               (> (- (System/currentTimeMillis) (.toMillis (fs/last-modified-time lock))) (* 30 60 1000)))
+      (fs/delete-tree lock))
+    (binding [*out* *err*]
+      (cond
+        (= "off" (System/getenv "COHOST_JANK_SNAPSHOT")) false
+        (not (.mkdir lock))
+        (do (println "cohost: jank's core snapshot is being built by another cohost command; this one runs on the slower path") false)
+        :else
+        (try
+          (println "cohost: building jank's core snapshot (once per cohost update; about 2 to 6 minutes; log: target/jank-snapshot.log) ...")
+          (let [t0 (System/nanoTime)
+                r (p/shell {:dir repo :out (str log) :err (str log ".err") :continue true}
+                           "bb" "-e" "(load-file \"dev/perf/jank_snapshot_key.clj\") ((resolve 'ensure!))")]
+            (if (zero? (:exit r))
+              (do (println (str "cohost: jank's core snapshot is built (" (quot (- (System/nanoTime) t0) 1000000000) " s); next commands start in about 2 s"))
+                  true)
+              (do (println "cohost: the snapshot build failed (target/jank-snapshot.log); this run uses the slower path")
+                  false)))
+          (finally (fs/delete-if-exists lock)))))))
+
+(defn jank-cli-launch [repo]
+  (let [[_ kind path] (let [c (jank-check repo)]
+                        (if (and (= "aot" (second c)) (jank-build-snapshot! repo))
+                          (jank-check repo)
+                          c))]
     {:module-path (abs-path repo path) :snapshot? (= "snapshot" kind)
      :env (if (= "none" (System/getenv "COHOST_JANK_GC"))
             {}

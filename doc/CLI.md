@@ -17,8 +17,8 @@ Wired: `:cljs :jolt :lpy :cljw :phel :lg :jank`. `:jvm` runs the real Clojure CL
 ## The target
 
 `cohost :<target> ...` names the runtime for one command. Without it, the target is
-`:cohost/target` in `./deps.edn` (a keyword, e.g. `:jank`), and without that `:jvm`: the
-real Clojure CLI runs the command whole, so a project with no key behaves as with `clj`.
+`:cohost/target` in `./deps.edn` (a keyword, e.g. `:lpy`), and without that `:jank`. `:jvm` is the
+reference: the real Clojure CLI runs the command whole, as with `clj`.
 tools.deps ignores the key. `cohost` with no arguments is the REPL.
 
 ## New projects
@@ -36,7 +36,7 @@ exports, for the `:build` alias's `:local/root` on the cohost checkout.
 
 tools.build, as for `clojure`: `cohost -T:build build` runs the project's `build.clj`,
 which calls `cohost.build/build` (`src/cohost/build.clj`, JVM-side). The target is
-`:target` in the task's arguments, else `:cohost/target`, else `:jvm`:
+`:target` in the task's arguments, else `:cohost/target`, else `:jank`:
 
 Every artifact is a directory `target/<name>/` whose `run args...` calls the main's `-main` from any
 directory; the task prints `build: target/<name>/run`. Measured 2026-11-02 on `cohost/app` projects

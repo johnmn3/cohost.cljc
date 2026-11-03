@@ -40,6 +40,7 @@ dir="$hosts_dir/phel-$ver"
 mkdir -p "$dir" && cd "$dir"
 fetch "https://github.com/phel-lang/phel-lang/releases/download/$ver/phel.phar" phel.phar
 say "phel.phar sha256 $(sha256_of phel.phar)"
-printf '#!/bin/sh\nexec "%s" "%s/phel.phar" "$@"\n' "$php" "$dir" > phel
+# -d log_errors=0: PHP's ini (Homebrew's) also logs each warning to stderr, so it printed twice
+printf '#!/bin/sh\nexec "%s" -d log_errors=0 "%s/phel.phar" "$@"\n' "$php" "$dir" > phel
 install_bin phel
 "$bin_dir/phel" --version

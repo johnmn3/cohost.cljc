@@ -28,6 +28,9 @@ case "$os" in
     brew list --versions jank ;;
   linux)
     have apt-get || die "jank's packages are for Debian/Ubuntu (apt); see https://book.jank-lang.org"
+    # jank ships as an apt package, which needs root: ask once, before the piped steps below
+    say "jank's apt package installs system-wide, which needs root"
+    as_root true
     have gpg || as_root apt-get install -y gnupg
     have lsb_release || as_root apt-get install -y lsb-release
     curl -fsS "https://ppa.jank-lang.org/KEY.gpg" | gpg --dearmor | as_root tee /etc/apt/trusted.gpg.d/jank.gpg >/dev/null
@@ -39,3 +42,20 @@ case "$os" in
   windows) die "jank has no Windows build; use WSL (Ubuntu) and rerun there" ;;
 esac
 jank check-health 2>&1 | tail -3 || true
+
+# cohost's core snapshot for jank, so the first cohost command starts fast; bin/cohost builds
+# it on first use too, under the same lock. COHOST_JANK_SNAPSHOT=off skips it.
+repo="$(cd "$(dirname "$0")/../.." && pwd)"
+if [ "${COHOST_JANK_SNAPSHOT:-}" != off ] && have bb && [ -f "$repo/dev/perf/jank_snapshot_key.clj" ]; then
+  mkdir -p "$repo/target"
+  if mkdir "$repo/target/jank-snapshot.lock" 2>/dev/null; then
+    say "building cohost's core snapshot for jank (once; about 2 to 6 minutes; log: target/jank-snapshot.log)"
+    if (cd "$repo" && bb -e '(load-file "dev/perf/jank_snapshot_key.clj") ((resolve (quote ensure!)))') \
+         >"$repo/target/jank-snapshot.log" 2>&1; then
+      say "cohost's core snapshot for jank is built"
+    else
+      say "the snapshot build failed (target/jank-snapshot.log); cohost builds it on first use instead"
+    fi
+    rmdir "$repo/target/jank-snapshot.lock" 2>/dev/null || true
+  fi
+fi

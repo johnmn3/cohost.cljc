@@ -79,7 +79,7 @@
             (recur more cwd)))))
     @fails))
 
-(let [targets (or (seq *command-line-args*) ["jvm"])
+(let [targets (or (seq *command-line-args*) ["jank"])
       fails (reduce + (map check-target targets))]
   (println (str (if (some-> (resolve 'docs?) deref) "docs:check: " "readme:check: ") fails " failing command(s) over " (count targets) " target(s)"))
   (System/exit (if (zero? fails) 0 1)))

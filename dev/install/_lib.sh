@@ -93,8 +93,13 @@ already() {
 # root for system package managers: nothing when root, else sudo
 as_root() {
   if [ "$(id -u 2>/dev/null || echo 1)" = 0 ]; then "$@"
-  elif have sudo; then sudo "$@"
-  else die "needs root for: $* (no sudo)"; fi
+  elif have sudo && sudo -n true 2>/dev/null; then sudo "$@"
+  elif have sudo && (: </dev/tty) 2>/dev/null; then
+    say "root is needed for: $* (sudo asks for your password)"; sudo "$@"
+  elif have sudo; then die "needs root for: $*
+  sudo here needs a password and there is no terminal to ask on: rerun this script in a terminal, or as root"
+  else die "needs root for: $*
+  there is no sudo here: rerun this script as root"; fi
 }
 
 need_brew() { have brew || die "Homebrew is needed on macOS: https://brew.sh"; }

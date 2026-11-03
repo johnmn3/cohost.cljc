@@ -203,7 +203,7 @@ configure() {
   (cd "$JANK_SRC/compiler+runtime" && CC="$JANK_LLVM/bin/clang" CXX="$JANK_LLVM/bin/clang++" ./bin/configure -GNinja \
      -DCMAKE_BUILD_TYPE=Release -Dllvm_dir="$JANK_LLVM" -Djank_local_clang=on \
      -DCMAKE_INSTALL_PREFIX="$JANK_DEV_PREFIX" \
-     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache "${extra[@]}")
+     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ${extra[@]+"${extra[@]}"})
 }
 
 # Before phase 1 of a --patches build that rewrote any file: jank's phase 1 reuses
