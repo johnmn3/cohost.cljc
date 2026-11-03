@@ -62,7 +62,7 @@
         (do (println "cohost: jank's core snapshot is being built by another cohost command; this one runs on the slower path") false)
         :else
         (try
-          (println "cohost: building jank's core snapshot (once per cohost update; about 2 to 6 minutes; log: target/jank-snapshot.log) ...")
+          (println "cohost: building jank's core snapshot (once per cohost update: 2 to 11 minutes measured, longer on a busy machine; log: target/jank-snapshot.log) ...")
           (let [t0 (System/nanoTime)
                 r (p/shell {:dir repo :out (str log) :err (str log ".err") :continue true}
                            "bb" "-e" "(load-file \"dev/perf/jank_snapshot_key.clj\") ((resolve 'ensure!))")]
