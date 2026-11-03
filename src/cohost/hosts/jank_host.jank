@@ -672,6 +672,73 @@ namespace cohost_var {
 ;; X4-1: the shim's reduce with and without an init (the stock reduce's IReduceInit and
 ;; coll-reduce paths, so transduce and into too) over a range or a vector,
 ;; without jank's per-element seq step; cohost.shim resolves it by name.
+
+;; A7-4 direct var calls (adapter :direct-var-calls; patch 24's call_fast and
+;; var::deref_inline, adapter-side). callN reads the var's root (its deref
+;; when the var was ever thread-bound) and calls a jit_function's fixed arity
+;; through its arity pointer; anything else (a variadic arity, a multimethod,
+;; a keyword, an unbound var) takes object_ref::call as jank's own call does.
+;; The root is read at every call: a redefinition is seen with nothing to
+;; invalidate. The root is private in var.hpp; its member pointer is taken by
+;; the explicit-instantiation rule (access is not checked there).
+(def ^:private dcall-src "
+#include <jank/runtime/var.hpp>
+#include <jank/runtime/obj/jit_function.hpp>
+#include <atomic>
+namespace cohost_dcall {
+  using namespace jank::runtime;
+  using root_mp_t = std::atomic<object_ref> var::*;
+  root_mp_t root_mp();
+  template <root_mp_t M> struct steal { friend root_mp_t root_mp() { return M; } };
+  template struct steal<&var::root>;
+  [[gnu::always_inline]] inline object_ref fn_of(object_ref const v) {
+    auto const vp{ static_cast<var *>(v.ptr()) };
+    if (!vp->thread_bound.load(std::memory_order_relaxed)) { return (vp->*root_mp()).load(); }
+    return vp->deref();
+  }
+  [[gnu::always_inline]] inline obj::jit_function *jf(object_ref const f) {
+    if (jank::runtime::detail::is_tagged_pointer(f.raw()) && f.ptr()->type == object_type::jit_function)
+    { return static_cast<obj::jit_function *>(f.ptr()); }
+    return nullptr;
+  }
+  using o = object_ref const;
+  inline object_ref call0(o v) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_0) { return j->arity_0(f); } return f.call(); }
+  inline object_ref call1(o v, o a) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_1) { return j->arity_1(f, a); } return f.call(a); }
+  inline object_ref call2(o v, o a, o b) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_2) { return j->arity_2(f, a, b); } return f.call(a, b); }
+  inline object_ref call3(o v, o a, o b, o c) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_3) { return j->arity_3(f, a, b, c); } return f.call(a, b, c); }
+  inline object_ref call4(o v, o a, o b, o c, o d) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_4) { return j->arity_4(f, a, b, c, d); } return f.call(a, b, c, d); }
+  inline object_ref call5(o v, o a, o b, o c, o d, o e) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_5) { return j->arity_5(f, a, b, c, d, e); } return f.call(a, b, c, d, e); }
+  inline object_ref call6(o v, o a, o b, o c, o d, o e, o g) { auto const f{ fn_of(v) }; if (auto const j{ jf(f) }; j && j->arity_6) { return j->arity_6(f, a, b, c, d, e, g); } return f.call(a, b, c, d, e, g); }
+}
+")
+;; Declared to the JIT (jit_prc.eval_string): user code compiled later
+;; calls it, and a cpp/raw inside an AOT module is not seen by that JIT (an
+;; (eval '(cpp/raw ..)) is read as an expression). A failed declaration
+;; leaves direct calls off (every call through its var, as before).
+(cpp/raw "#include <jank/runtime/context.hpp>
+#include <jank/runtime/core/truthy.hpp>
+#include <jank/jit/processor.hpp>
+namespace cohost_dcall_init {
+  // false while compiling a module (compile-module: the JIT's eval_string
+  // there fails on every input), else the declaration's success
+  inline bool declare(jank::runtime::object_ref const s) {
+    if (jank::runtime::truthy(jank::runtime::__rt_ctx->compile_files_var->deref())) { return false; }
+    try { jank::runtime::__rt_ctx->jit_prc.eval_string(jank::runtime::to_string(s)); return true; }
+    catch(...) { return false; }
+  }
+}")
+;; declared on the first direct call the codemod emits, never at load
+(def ^:private dcall-state (atom nil))
+(defn- dcall-ready? []
+  (let [s @dcall-state]
+    (if (nil? s) (reset! dcall-state (boolean (cpp/cohost_dcall_init.declare dcall-src))) s)))
+(def ^:private direct-call-heads
+  '[cpp/cohost_dcall.call0 cpp/cohost_dcall.call1 cpp/cohost_dcall.call2 cpp/cohost_dcall.call3
+    cpp/cohost_dcall.call4 cpp/cohost_dcall.call5 cpp/cohost_dcall.call6])
+(defn- direct-var-call [vf args]
+  (let [h (get direct-call-heads (count args))]
+    (when (and h (dcall-ready?)) (apply list h vf args))))
+
 (defn reduce-init [f init coll] (cpp/cohost_reduce.reduce_init f init coll))
 (defn reduce-noinit [f coll]
   (if (cpp/cohost_reduce.reduce_fast coll) (cpp/cohost_reduce.reduce_noinit f coll) (reduce f coll)))
@@ -2522,6 +2589,9 @@ namespace cohost_assoc {
    ;; Keyed on the series, as int-wraps? is: a :rettag probe cannot tell them
    ;; apart (both return 2.5 from (^{:rettag 'long} fn* ([x] x)) 2.5).
    :native-self-calls? (not int-wraps?)
+   ;; A7-4: a call to a fn var of the namespace being compiled reads the
+   ;; var's root and calls its arity directly (cohost_dcall above)
+   :direct-var-calls direct-var-call
    ;; U6-7: infer what is certain (adapter :static-types); U6-9 (b): :unit
    ;; when the run opts in (cohost.rewrite/static-types! :unit)
    :static-types :sound
