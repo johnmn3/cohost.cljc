@@ -156,6 +156,178 @@ namespace cohost_rt {
 }
 ")
 
+(cpp/raw "
+#include <jank/runtime/obj/native_vector_sequence.hpp>
+#include <jank/runtime/obj/persistent_vector_sequence.hpp>
+#include <jank/runtime/obj/persistent_string.hpp>
+#include <jank/runtime/obj/character.hpp>
+#include <jank/runtime/core/to_string.hpp>
+#include <gc/gc.h>
+
+/* A4 (c)(d) (u3): the leaves. A second block, beside cohost_rt, so the two lanes' C++ never
+ * share lines. */
+namespace cohost_leaf {
+  using namespace jank::runtime;
+
+  /* A4 (c): jank's sort result is a native_vector_sequence. On apt 0.1-noble its next copies the
+   * whole buffer and hands back a sequence that starts over at index 0 ((rest (sort [3 1 2]))
+   * prints (1 2 3)), so every walk of a sort result is wrong past first and quadratic in time
+   * ((reduce + (sort xs)) over 1e5: 60 s). The result is copied once into a persistent_vector
+   * and handed back as that vector's seq: O(1) next, metadatable, inside jank's visit set, the
+   * sort's meta carried. The series build (patch 11-sorted-walk: a shared buffer_ref, O(1) next)
+   * takes jank's result untouched; the choice is made at compile time on the header's shape. */
+  template <class NVS>
+  object_ref sorted_seq_t(object_ref const r) {
+    if constexpr(requires { typename NVS::buffer_ref; }) {
+      return r;
+    }
+    else {
+      if(r.get_type() != object_type::native_vector_sequence) { return r; }
+      auto const s(expect_object<NVS>(r));
+      if(s->index >= s->data.size()) { return r; }
+      jank::runtime::detail::native_transient_vector t;
+      for(auto i(s->index); i < s->data.size(); ++i) { t.push_back(s->data[i]); }
+      auto const v(make_box<obj::persistent_vector>(t.persistent()));
+      auto const out(make_box<obj::persistent_vector_sequence>(v, static_cast<jank::usize>(0)));
+      auto const m(s->get_meta());
+      if(m.is_nil()) { return out; }
+      return out->with_meta(m);
+    }
+  }
+
+  inline object_ref sorted_seq(object_ref const r) { return sorted_seq_t<obj::native_vector_sequence>(r); }
+
+  /* A4 (d): nth and count of a string or vector in one C++ call. Under cohost each went through
+   * the M-5 natives' guards (is_cohost, vector?/string?, count, then jank's nth: five var derefs
+   * and calls, ~250 ns per string nth on apt). An ASCII byte comes back as one shared character
+   * box per byte value (a table in uncollectable GC memory, so the collector sees its boxes);
+   * anything else -- an index out of range or not an integer, a byte >= 128, another type --
+   * goes to `stock`, the M-5 native, unchanged (its bounds error, cohost instances). */
+  inline object_ref *char_table() {
+    static object_ref *t{ [] {
+      auto const p(static_cast<object_ref *>(GC_MALLOC_UNCOLLECTABLE(128 * sizeof(object_ref))));
+      for(int b{}; b < 128; ++b) { new(p + b) object_ref{ make_box<obj::character>(static_cast<char>(b)) }; }
+      return p;
+    }() };
+    return t;
+  }
+
+  inline object_ref nth_or(object_ref const c, object_ref const i, object_ref const stock) {
+    if(is_integer(i)) {
+      auto const n(to_int(i));
+      auto const t(c.get_type());
+      if(t == object_type::persistent_string) {
+        auto const &d(expect_object<obj::persistent_string>(c)->data);
+        if(0 <= n && n < static_cast<jank::i64>(d.size())) {
+          auto const b(static_cast<unsigned char>(d[static_cast<size_t>(n)]));
+          if(b < 128) { return char_table()[b]; }
+        }
+      }
+      else if(t == object_type::persistent_vector) {
+        auto const &d(expect_object<obj::persistent_vector>(c)->data);
+        if(0 <= n && n < static_cast<jank::i64>(d.size())) { return d[static_cast<size_t>(n)]; }
+      }
+    }
+    return stock.call(c, i);
+  }
+
+  inline object_ref nth_or(object_ref const c, object_ref const i, object_ref const nf, object_ref const stock) {
+    if(is_integer(i)) {
+      auto const n(to_int(i));
+      auto const t(c.get_type());
+      if(t == object_type::persistent_string) {
+        auto const &d(expect_object<obj::persistent_string>(c)->data);
+        if(n < 0 || n >= static_cast<jank::i64>(d.size())) { return nf; }
+        auto const b(static_cast<unsigned char>(d[static_cast<size_t>(n)]));
+        if(b < 128) { return char_table()[b]; }
+      }
+      else if(t == object_type::persistent_vector) {
+        auto const &d(expect_object<obj::persistent_vector>(c)->data);
+        if(n < 0 || n >= static_cast<jank::i64>(d.size())) { return nf; }
+        return d[static_cast<size_t>(n)];
+      }
+    }
+    return stock.call(c, i, nf);
+  }
+
+  inline object_ref count_or(object_ref const c, object_ref const stock) {
+    auto const t(c.get_type());
+    if(t == object_type::persistent_vector) {
+      return make_box(static_cast<jank::i64>(expect_object<obj::persistent_vector>(c)->data.size()));
+    }
+    if(t == object_type::persistent_string) {
+      return make_box(static_cast<jank::i64>(expect_object<obj::persistent_string>(c)->data.size()));
+    }
+    if(t == object_type::nil) { return make_box(static_cast<jank::i64>(0)); }
+    return stock.call(c);
+  }
+
+  /* A4 (d): str. The jank adapter's str (jank_host.jank's 'str override) is variadic through
+   * apply and a lazy map that asks adapter/exception? of every argument. Here: nil writes
+   * nothing, a string / number / keyword / symbol / character / boolean writes what jank's own
+   * str writes (to_string), anything else is handed to `render` (the adapter's one-argument str,
+   * which keeps the exception rendering) and its string appended. */
+  inline bool plain(object_ref const x) {
+    switch(x.get_type()) {
+      case object_type::boolean:
+      case object_type::integer:
+      case object_type::small_integer:
+      case object_type::real:
+      case object_type::small_real:
+      case object_type::keyword:
+      case object_type::symbol:
+      case object_type::character:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  inline void put(jtl::string_builder &b, object_ref const x, object_ref const render) {
+    auto const t(x.get_type());
+    if(t == object_type::nil) { return; }
+    if(t == object_type::persistent_string) { b(expect_object<obj::persistent_string>(x)->data); return; }
+    if(plain(x)) { jank::runtime::to_string(x, b); return; }
+    auto const r(render.call(x));
+    if(r.get_type() == object_type::persistent_string) { b(expect_object<obj::persistent_string>(r)->data); }
+    else { jank::runtime::to_string(r, b); }
+  }
+
+  inline object_ref str1(object_ref const render, object_ref const a) {
+    auto const t(a.get_type());
+    if(t == object_type::persistent_string) { return a; }
+    if(t == object_type::nil) { return make_box<obj::persistent_string>(jtl::immutable_string{}); }
+    if(!plain(a)) { return render.call(a); }
+    jtl::string_builder b;
+    jank::runtime::to_string(a, b);
+    return make_box<obj::persistent_string>(b.release());
+  }
+
+  inline object_ref str2(object_ref const render, object_ref const a, object_ref const c) {
+    jtl::string_builder b;
+    put(b, a, render); put(b, c, render);
+    return make_box<obj::persistent_string>(b.release());
+  }
+
+  inline object_ref str3(object_ref const render, object_ref const a, object_ref const c, object_ref const d) {
+    jtl::string_builder b;
+    put(b, a, render); put(b, c, render); put(b, d, render);
+    return make_box<obj::persistent_string>(b.release());
+  }
+
+  /* any number of arguments, as a seq (the variadic arity's rest) after three fixed ones */
+  inline object_ref strn(object_ref const render, object_ref const a, object_ref const c, object_ref const d,
+                         object_ref const more) {
+    jtl::string_builder b;
+    put(b, a, render); put(b, c, render); put(b, d, render);
+    for(auto s(jank::runtime::seq(more)); !s.is_nil(); s = jank::runtime::next(s)) {
+      put(b, jank::runtime::first(s), render);
+    }
+    return make_box<obj::persistent_string>(b.release());
+  }
+}
+")
+
 (defn version
   "The C++ extension's version (cohost_rt::version): its presence says the extension loaded."
   []
@@ -230,3 +402,33 @@ namespace cohost_rt {
       (let [[n rest] (cpp/cohost_rt.count_chunked_head coll)]
         (if (nil? rest) n (+ n (stock-count rest))))
       (stock-count coll))))))
+
+
+(defn sorted-seq
+  "A4 (c): jank's sort result as a seq whose walk is linear and right on apt
+   (cohost_leaf::sorted_seq); the series build's result untouched."
+  [r]
+  (cpp/cohost_leaf.sorted_seq r))
+
+(defn nth-with
+  "A4 (d): an nth fn for cohost.core: a string or vector at an in-range integer index in one C++
+   call (cohost_leaf::nth_or); everything else by `stock`."
+  [stock]
+  (fn ([c i] (cpp/cohost_leaf.nth_or c i stock))
+      ([c i nf] (cpp/cohost_leaf.nth_or c i nf stock))))
+
+(defn count-fast-with
+  "A4 (d): a count fn: a vector, string or nil in one C++ call (cohost_leaf::count_or); else `stock`."
+  [stock]
+  (fn [c] (cpp/cohost_leaf.count_or c stock)))
+
+(defn str-with
+  "A4 (d): str for cohost.core on jank: fixed arities, one string builder, plain values written
+   as jank's own str writes them, anything else through `render` (the adapter's one-argument
+   str, which keeps the exception rendering)."
+  [render]
+  (fn ([] "")
+      ([a] (cpp/cohost_leaf.str1 render a))
+      ([a b] (cpp/cohost_leaf.str2 render a b))
+      ([a b c] (cpp/cohost_leaf.str3 render a b c))
+      ([a b c & more] (cpp/cohost_leaf.strn render a b c more))))
