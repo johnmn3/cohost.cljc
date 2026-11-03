@@ -1023,7 +1023,9 @@
    binds every local from them (a hinted one coerced), so recur still targets
    the loop with its own arity."
   [h bvec0 out]
-  (let [hints (mapv (fn [[b _]] (when (symbol? b) (primitive-hint (:tag (meta b))))) (partition 2 bvec0))]
+  ;; (first pair), not [[b _]]: Phel compiles the unused `_` to a PHP variable it never
+  ;; assigns but still captures in the inner closure, one "Undefined variable" warning per call
+  (let [hints (mapv (fn [pair] (let [b (first pair)] (when (symbol? b) (primitive-hint (:tag (meta b)))))) (partition 2 bvec0))]
     (if-not (and (#{'let* 'loop*} h) (some some? hints))
       out
       (let [[_ bvec' & body] out

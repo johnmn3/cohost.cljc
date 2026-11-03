@@ -20,8 +20,13 @@ export PATH="$HOME/cohost/bin:$PATH"
 clojure -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
 ```
 
+The `export` lasts for this shell; add it to `~/.zshrc` (or `~/.bashrc`) to keep `cohost` on
+PATH. On Windows, `bin\cohost.cmd` runs `bin/cohost` with `bb`.
+
 Each runtime other than the JVM is its own install: `dev/install/<runtime>.sh` in the
-checkout (see [Choosing a runtime](07-choosing-a-runtime.md)).
+checkout, on Linux and macOS (and Windows under Git Bash where the runtime ships for it), or
+`bash dev/install/all.sh` for every one (see [Choosing a runtime](07-choosing-a-runtime.md)).
+`cohost :<target> ...` with the runtime missing names the script that installs it.
 
 ## A project
 

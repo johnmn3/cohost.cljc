@@ -33,6 +33,8 @@
 ;; PATH). Its AOT objects live under their own roots (suffix: sha256 of the
 ;; binary's real path, 12 hex), so the apt jank and a source build never load
 ;; each other's objects.
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/perf/sha256.clj"))
+
 (def jank-bin
   (let [b (System/getenv "JANK_BIN")]
     (if (str/blank? b) "jank" b)))
@@ -40,9 +42,7 @@
 (def jank-tag
   (if (= "jank" jank-bin)
     ""
-    (str "-" (subs (-> (shell {:out :string :in (str (fs/real-path jank-bin))} "sha256sum")
-                       :out str/trim)
-                   0 12))))
+    (str "-" (subs (cohost.dev.sha256/sha256-hex (str (fs/real-path jank-bin))) 0 12))))
 
 ;; Sizes: one JVM call takes 100-1000 ms after warm-up (measured 2026-11-02).
 (def programs
