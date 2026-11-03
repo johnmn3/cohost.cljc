@@ -186,7 +186,8 @@
    ["a ^long loop local is a long to arithmetic" "(loop [^long i (identity 2.5) a 0] (if (pos? i) (recur (dec i) (+ a i)) a))" 3]
    ;; U6-7: what the codemod infers (:static-types) must leave every value Clojure's
    ["an inferred long local rebound to a string" "(let [x 1 x (str x \"!\")] x)" "1!"]
-   ["a loop local whose recur passes a string" "(loop [i 0 acc []] (if (< (count acc) 3) (recur (str i \"a\") (conj acc i)) acc))" [0 "0a" "0aa"]]
+   ["a hinted local rebound unhinted" "(let [^long x 1 x (str x \"!\")] x)" "1!"]
+   ["a loop local whose recur passes a string" "(loop [i (count []) acc []] (if (< (count acc) 3) (recur (str i \"a\") (conj acc i)) acc))" [0 "0a" "0aa"]]
    ["an inferred double local" "(let [a 1.5 b (* a 2)] b)" 3.0]
    ["inferred long arithmetic and count" "(let [a 2 b (* a 21) c (inc b)] [b c (count [1 2 3])])" [42 43 3]]
    ["a local named like a core fn is no core fn" "(let [+ (fn [a b] (str a b)) q (+ 1 2)] q)" "12"]
@@ -195,7 +196,7 @@
    ["an if whose branches agree" "(let [a 7 b (if (pos? a) (dec a) (inc a))] b)" 6]
    ["a guarded arity given longs and doubles" "(let [f (fn [a b] (+ a b))] [(f 1 2) (f 1.5 2) (f 1 2.5)])" [3 3.5 3.5]]
    ["a guarded loop over a double parameter" "(let [f (fn [x] (loop [i 0 a 0.0] (if (< i x) (recur (inc i) (+ a 0.5)) a)))] [(f 4) (f 4.5)])" [2.0 2.5]]
-   ["a speculated self-call given a double" "(let [f (fn fib [n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))] [(f 20) (f 20.5)])" [6765 12238.0]]
+   ["a self-calling fn given a double" "(let [f (fn fib [n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))] [(f 20) (f 20.5)])" [6765 12238.0]]
    ["a param guessed long beside a long, given longs and doubles" "(let [f (fn [i j] (/ 1.0 (+ (* (+ i j) 0.5) i)))] [(f 1 1) (f 1.5 0.5)])" [0.5 0.4]]
    ["a param guessed double beside a double, given a long" "(let [f (fn [x] (* x 2.5))] [(f 2) (f 0.5)])" [5.0 1.25]]
    ;; D-11: cohost picks each #? branch by the target's ranking of the keys
