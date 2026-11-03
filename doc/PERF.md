@@ -1371,3 +1371,67 @@ alone.
   compare through the adapter's own `:interned-var` / `:var-get`.
 - On Chromium the host's compare through JS `Array.prototype.sort` was slower than the shim's wrapper.
 
+
+## jank's collector environment (jank-MAX A1)
+
+Apt jank 0.1-noble (UNPATCHED) starts bdwgc from its own defaults; patch 19 compiles a default initial heap into
+`jank_init` when `GC_INITIAL_HEAP_SIZE` is unset. A1 sets the collector environment from cohost's side for every jank
+process cohost launches: `dev/perf/jank_gc_env.clj` (`GC_INITIAL_HEAP_SIZE=512M`; a `GC_*` variable the user sets
+wins key by key; `COHOST_JANK_GC=none` sets nothing), passed by `bb.edn`'s `jank!` (boot:jank on the snapshot or the
+AOT modules, boot:jank-snapshot, boot:jank-jit, bench:jank) and the tasks that shell jank directly (boot:jank-profile,
+boot:jank-aot), and by `bench:programs`' cohost-on-jank target (`jank-jit`/`jank-aot` keep jank as shipped). The
+snapshot bakes no heap: bdwgc reads the variable at `GC_init`. Commit `d537775`. Measured 2026-11-02, 7:30-10:20 PM
+ET, apt jank, `max/main` @ `8434556`, box 4 CPUs / 15 GB shared with lanes u1 and u5 (no lock).
+
+**The matrix** (3 interleaved rounds per cell, run as three parallel streams with the cell order rotated, load 4-11;
+median [min-max]; ms unless named; heap:divisor, 3 = bdwgc's default divisor; `boot` = `bb boot:jank` on the
+snapshot, `bootaot` = `JANK_BIN=/usr/local/bin/jank bb boot:jank`). Every one of the 42 boots: 542/171/78/0,
+147/149, 61/61; `run.sh 17` (counts only) identical in every cell.
+
+| row | none | 128M:2 | 128M:3 | 256M:2 | 256M:3 | 512M:2 | 512M:3 |
+|---|---|---|---|---|---|---|---|
+| run18 [i i] ms | 1628.4 [1000-1775] | 452.0 [377-723] | 470.0 [340-1055] | 340.0 [309-398] | 949.8 [341-1141] | 516.2 [466-548] | 768.7 [386-941] |
+| run18 bt ms | 372.2 [205-389] | 214.9 [131-807] | 122.4 [114-216] | 123.2 [108-199] | 303.9 [192-395] | 153.6 [122-264] | 194.4 [84-318] |
+| prog binary-trees-14 | 217.2 [205-363] | 467.2 [430-508] | 279.0 [233-341] | 237.3 [142-338] | 433.0 [391-521] | 172.2 [143-303] | 246.6 [152-315] |
+| prog lazy-pipeline | 3772.3 [3423-5192] | 6308.9 [4132-6508] | 2656.0 [1805-3913] | 2774.2 [2281-4949] | 5905.6 [5448-9522] | 3565.1 [3298-6454] | 3168.5 [2239-5740] |
+| prog keyword-map | 1012.7 [847-1137] | 1804.1 [1551-2205] | 918.7 [567-1006] | 649.9 [517-766] | 1372.4 [924-1448] | 763.0 [689-1361] | 638.9 [509-674] |
+| prog json | 8156.5 [6725-13866] | 14194.1 [12822-14478] | 10135.8 [8997-13604] | 7937.6 [6131-12611] | 13300.5 [12752-13373] | 8598.6 [6262-13036] | 12586.9 [6313-13162] |
+| boot wall s | 38.0 [26-51] | 77.4 [66-85] | 46.5 [37-79] | 39.2 [35-94] | 55.5 [24-75] | 36.8 [35-66] | 35.2 [24-90] |
+| boot maxrss KB | 801708.0 [795736-805040] | 888104.0 [887880-888344] | 887976.0 [887960-888128] | 1029900.0 [1029848-1030072] | 1030152.0 [1029960-1030208] | 1314140.0 [1314120-1314200] | 1314144.0 [1314032-1314208] |
+| bootaot wall s | 204.6 [173-335] | 443.1 [247-464] | 331.7 [215-449] | 347.7 [198-506] | 232.9 [174-411] | 213.6 [203-236] | 184.5 [175-462] |
+| bootaot maxrss KB | 1778432.0 [1778280-1795964] | 1817704.0 [1817696-1817920] | 1782320.0 [1782288-1782576] | 1888680.0 [1888628-1892588] | 1888776.0 [1888644-1888872] | 2172876.0 [2172660-2172884] | 2176196.0 [2172716-2176400] |
+
+512M beats bdwgc's defaults on 6 of 8 timed rows at either divisor (256M:2: 5, 128M:3: 4); at divisor 3 it wins
+keyword-map and both boot walls outright. Boot maxrss: 1.64x apt's on the snapshot path, 1.22x on the AOT path
+(within the 2x bar). The three streams made the program rows noisy, so they were measured again:
+
+**Re-measure, one stream** (4 rounds, order rotated, `bb bench:programs jank`, MEDIAN-MS, median of the 4 rounds):
+
+| program | none | 256M:2 | 512M |
+|---|---:|---:|---:|
+| binary-trees-14 | 160.4 | 136.1 | **114.6** |
+| json | 5251.6 | 4541.4 | **3922.5** |
+| keyword-map | 609.8 | 469.0 | **465.0** |
+| lazy-pipeline | **2052.2** | 2506.2 | 2876.3 |
+
+**Before / after** (`COHOST_JANK_GC=none` / the default, 3 interleaved rounds):
+
+| measure | before | after |
+|---|---|---|
+| `bb bench:jank`, snapshot leg: stock geomean over 29 cases | 1 | **0.506** (15 cases below every before run, 0 above; format 413.66 -> 276.57 ms, sort 103.92 -> 24.16, lazy-pipeline 231.52 -> 62.34) |
+| `bb bench:jank`, AOT leg | 1 | **0.856** (11 below, 7 above; format 408.81 -> 316.16) |
+| `bench:programs jank` binary-trees-14 | 159.85 / 166.89 / 383.68 | 177.05 / 185.11 / 390.79 |
+| `bench:programs jank` lazy-pipeline | 2376.57 / 2859.33 / 3114.86 | 3957.01 / 4028.63 / 4121.70 |
+| `bb boot:jank` (snapshot) maxrss KB | 795580 / 802448 / 805212 | 1313788 / 1314248 / 1314428 |
+
+lazy-pipeline is slower with the larger heap in both program measurements; binary-trees-14 was faster in the
+single-stream re-measure and level in the before/after. The default stays 512M: it wins bench:jank on both legs,
+`run.sh 18`, and three of the four program rows.
+
+**PATCHED** (`JANK_BIN` = a source build carrying 19-gc-defaults, `/usr/local/lib/jank-dev`: 11 13 14 12-21 18 19;
+3 rounds): not a no-op. Patch 19 applies its own heap only when the variable is unset, so cohost's 512M replaces it:
+boot (AOT) maxrss 1776172 -> 2166628 KB (1.22x), binary-trees-14 80.86 -> 56.19 ms; boots 542/171/78/0, 147/149,
+61/61 both ways. `COHOST_JANK_GC=none` gives a patched binary its own default.
+
+Lane D's D-4 (cohost's mainline, not yet in `max/main`) chose the same 512M on another box for the CLI launch
+(`dev/perf/jank_snapshot_cli.clj`); when `max/main` takes the mainline, that literal should read `(jank-gc-env)`.

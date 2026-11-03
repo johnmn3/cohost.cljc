@@ -19,6 +19,15 @@
   ;; names defined here that let-go's core also has (it warns of each)
   #?(:lg (:refer-clojure :exclude [starts-with? ends-with?])))
 
+(def ^:dynamic *native-reals*
+  "A5-3: let*/loop* locals statically real under *native-ints*' regime (a
+   :native-int-aliases host): started from a real literal or from real
+   arithmetic (real-form?). An arithmetic op with a real operand cannot wrap,
+   so it is emitted as the host's own op directly -- no test, no checked call --
+   which keeps the host typing the local as a native double. Rebinding a name
+   drops it."
+  #{})
+
 (def ^:dynamic *native-ints*
   "Loop locals the codemod started from an integer literal through the adapter's
    :loop-int-init (A5): native longs on jank. A + - * whose every operand is one
@@ -626,11 +635,49 @@
                         (every? native-int-form? (rest x))))
         :else false))
 
+(defn- real-form?
+  "A source form that is certainly a real under *native-reals*: a real literal,
+   one of those locals, or a stock + - * / with a real operand (Clojure's
+   contagion: an op with a double operand is a double)."
+  [x]
+  (cond (float? x) true
+        (symbol? x) (contains? *native-reals* (*plain* x))
+        (seq? x) (let [h (first x)]
+                   (and (symbol? h)
+                        (not (contains? *locals* (*plain* h)))
+                        (contains? #{nil "clojure.core" "cohost.core"} (namespace h))
+                        (contains? #{"+" "-" "*" "/"} (name h))
+                        (seq (rest x))
+                        (boolean (some real-form? (rest x)))))
+        :else false))
+
+(def ^:private real-div-statics #{"Numbers-divide"})
+
+(defn- real-static
+  "A5-3, on a :native-int-aliases host: Numbers-add/minus/multiply with a real
+   operand is the host's own op directly; Numbers-divide with one is the host's
+   / on a nonzero divisor and the shim's answer, typed double, on zero (the
+   wrapper's IEEE result; the host's own 0.0/0 is a negative-signed NaN). nil
+   otherwise."
+  [ctx nm args args']
+  (when (and (seq args) (some real-form? args))
+    (if-let [op (get (:native-int-aliases ctx) nm)]
+      (apply list op args')
+      (when (and (contains? real-div-statics nm) (= 2 (count args')) (seq (:native-int-aliases ctx)))
+        (let [a (gensym "rda") b (gensym "rdb") core (namespace (val (first (:native-int-aliases ctx))))]
+          (list 'let* [a (first args') b (second args')]
+                (list 'if (list (symbol core "zero?") b)
+                      (list 'cpp/jank.runtime.to_real (list (static-sym 'clojure.lang.Numbers 'divide) a b))
+                      (list (symbol core "/") a b))))))))
+
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
-        nm (static-name c m)]
+        nm (static-name c m)
+        ;; A5-3: a real operand on a :native-int-aliases host
+        real' (when (seq (:native-int-aliases ctx)) (real-static ctx nm args args'))]
     (cond (and (seq *native-ints*) (get (:native-int-aliases ctx) nm) (seq args) (every? native-int-form? args))
           (apply list (get (:native-int-aliases ctx) nm) args')
+          real' real'
           (known? ctx nm) (or ;; U6-8: the adapter's own expansion of a Math static at
                               ;; the call head (nil: keep the shim call)
                               (when-let [mf (get (host/math-aliases) nm)] (mf args'))
@@ -1077,7 +1124,8 @@
         names (into (if nm #{nm} #{})
                     (mapcat (fn [[params]] (filter #(and (symbol? %) (not= '& %)) params)) arities))
         arities' (binding [*locals* (into *locals* names)
-                           *native-ints* (apply disj *native-ints* (map *plain* names))]
+                           *native-ints* (apply disj *native-ints* (map *plain* names))
+                           *native-reals* (apply disj *native-reals* (map *plain* names))]
                    (doall (map (fn [[params & body]]
                                  (let [ps0 (filter symbol? params)
                                        ps (map *plain* ps0)
@@ -1360,7 +1408,18 @@ nil))
             pairs (partition 2 bvec)
             ;; inits see the names bound before them: drop every name this form binds,
             ;; then add the literal-started loop locals for the body
-            bvec' (binding [*native-ints* (apply disj *native-ints* syms)] (rw-bindings ctx bvec))
+            bvec' (binding [*native-ints* (apply disj *native-ints* syms)
+                            *native-reals* (apply disj *native-reals* syms)] (rw-bindings ctx bvec))
+            ;; A5-3: the locals this form starts real (a real literal, or real
+            ;; arithmetic over the reals before it), on a :native-int-aliases host
+            reals (if (seq (:native-int-aliases ctx))
+                    (reduce (fn [acc [b v]]
+                              (if (and (symbol? b) (nil? (:tag (meta b)))
+                                       (binding [*native-reals* acc] (real-form? v)))
+                                (conj acc (*plain* b))
+                                (disj acc (*plain* b))))
+                            (apply disj *native-reals* syms) pairs)
+                    (apply disj *native-reals* syms))
             bvec' (if-let [f (and (= h 'loop*) (:loop-int-init ctx))]
                     (carry-meta (vec (mapcat (fn [[b v] [b0 v0]] [b (if (int-init? [b0 v0]) (f v) v)])
                                              (partition 2 bvec') pairs))
@@ -1370,7 +1429,7 @@ nil))
                           (keep (fn [p] (when (int-init? p) (*plain* (first p))))) pairs)
             ;; an empty body is nil: ClojureWasm's let*, loop* and letfn* take
             ;; no empty one
-            body' (binding [*native-ints* natives *num-env* body-env] (or (seq (doall (rw-all ctx body))) [nil]))]
+            body' (binding [*native-ints* natives *native-reals* reals *num-env* body-env] (or (seq (doall (rw-all ctx body))) [nil]))]
         (if (and (= h 'let*) (seq bs))
           ;; each marker right after its local, so the inits after it see it
           ;; too (a loop*'s bindings are recur's arity: its body gets them)
