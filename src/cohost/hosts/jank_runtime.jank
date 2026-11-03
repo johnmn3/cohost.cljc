@@ -162,8 +162,8 @@ namespace cohost_rt {
 #include <jank/runtime/obj/persistent_string.hpp>
 #include <jank/runtime/obj/character.hpp>
 #include <jank/runtime/core/to_string.hpp>
+#include <jank/runtime/core/meta.hpp>
 #include <gc/gc.h>
-#include <cstdlib>
 
 /* A4 (c)(d) (u3): the leaves. A second block, beside cohost_rt, so the two lanes' C++ never
  * share lines. */
@@ -178,25 +178,32 @@ namespace cohost_leaf {
    * sort's meta carried. The series build (patch 11-sorted-walk: a shared buffer_ref, O(1) next)
    * takes jank's result untouched; the choice is made at compile time on the header's shape. */
   template <class NVS>
-  object_ref sorted_seq_t(object_ref const r) {
-    if constexpr(requires { typename NVS::buffer_ref; }) {
-      return r;
+  object_ref sorted_seq_t(object_ref const r, object_ref const m) {
+    if(r.get_type() != object_type::native_vector_sequence) { return r; }
+    auto const s(expect_object<NVS>(r));
+    constexpr bool shared{ requires { typename NVS::buffer_ref; } };
+    auto const &data([&]() -> auto const & {
+      if constexpr(shared) { return *s->data; } else { return s->data; }
+    }());
+    if(s->index >= data.size()) { return r; }
+    /* the series: next is O(1) already, so its result stands, unless the collection had meta:
+     * the JVM's sort keeps it ((with-meta (seq a) (meta coll))) and cohost reads no meta on the
+     * series' native_vector_sequence (its sort result reads nil under cohost), so then the copy */
+    if constexpr(shared) {
+      if(m.is_nil()) { return r; }
     }
-    else {
-      if(r.get_type() != object_type::native_vector_sequence) { return r; }
-      auto const s(expect_object<NVS>(r));
-      if(s->index >= s->data.size()) { return r; }
-      jank::runtime::detail::native_transient_vector t;
-      for(auto i(s->index); i < s->data.size(); ++i) { t.push_back(s->data[i]); }
-      auto const v(make_box<obj::persistent_vector>(t.persistent()));
-      auto const out(make_box<obj::persistent_vector_sequence>(v, static_cast<jank::usize>(0)));
-      auto const m(s->get_meta());
-      if(m.is_nil()) { return out; }
-      return out->with_meta(m);
-    }
+    jank::runtime::detail::native_transient_vector t;
+    for(auto i(s->index); i < data.size(); ++i) { t.push_back(data[i]); }
+    auto const v(make_box<obj::persistent_vector>(t.persistent()));
+    auto const out(make_box<obj::persistent_vector_sequence>(v, static_cast<jank::usize>(0)));
+    if(m.is_nil()) { return out; }
+    return out->with_meta(m);
   }
 
-  inline object_ref sorted_seq(object_ref const r) { return sorted_seq_t<obj::native_vector_sequence>(r); }
+  /* r: jank's sort result; m: the sorted collection's meta (nil for none) */
+  inline object_ref sorted_seq(object_ref const r, object_ref const m) {
+    return sorted_seq_t<obj::native_vector_sequence>(r, m);
+  }
 
   /* A4 (d): nth and count of a string or vector in one C++ call. Under cohost each went through
    * the M-5 natives' guards (is_cohost, vector?/string?, count, then jank's nth: five var derefs
@@ -323,20 +330,6 @@ namespace cohost_leaf {
     return make_box<obj::persistent_string>(b.release());
   }
 
-  /* A4 (e): the small vector. Building [i i] under cohost on apt costs ~3.5x what it costs in
-   * plain jank (2e6: ~2 s against ~0.6 s), and the difference is the collector, not the vector:
-   * Boehm collects once per (heap / free-space divisor) bytes allocated and every collection
-   * marks cohost's whole live heap (the booted core: ~700 MB RSS). The same loop with
-   * GC_INITIAL_HEAP_SIZE=1G runs at plain jank's speed (+0.9 GB RSS); a free-space divisor of
-   * 1 (Boehm's default 3) collects a third as often for +~0.1 GB. Set once at the adapter's
-   * install, unless the environment already names one (GC_FREE_SPACE_DIVISOR wins). */
-  inline object_ref gc_tune(object_ref const divisor) {
-    if(is_integer(divisor) && to_int(divisor) > 0 && !std::getenv(\"GC_FREE_SPACE_DIVISOR\")) {
-      GC_set_free_space_divisor(static_cast<GC_word>(to_int(divisor)));
-    }
-    return make_box(static_cast<jank::i64>(GC_get_free_space_divisor()));
-  }
-
   /* any number of arguments, as a seq (the variadic arity's rest) after three fixed ones */
   inline object_ref strn(object_ref const render, object_ref const a, object_ref const c, object_ref const d,
                          object_ref const more) {
@@ -427,10 +420,11 @@ namespace cohost_leaf {
 
 
 (defn sorted-seq
-  "A4 (c): jank's sort result as a seq whose walk is linear and right on apt
-   (cohost_leaf::sorted_seq); the series build's result untouched."
-  [r]
-  (cpp/cohost_leaf.sorted_seq r))
+  "A4 (c): jank's sort result r as a seq whose walk is linear and right on apt
+   (cohost_leaf::sorted_seq), carrying m (the sorted collection's meta) as the JVM's sort does;
+   on the series build r itself, with m."
+  [r m]
+  (cpp/cohost_leaf.sorted_seq r m))
 
 (defn nth-with
   "A4 (d): an nth fn for cohost.core: a string or vector at an in-range integer index in one C++
@@ -456,8 +450,3 @@ namespace cohost_leaf {
       ([a b c d] (cpp/cohost_leaf.str4 render a b c d))
       ([a b c d & more] (cpp/cohost_leaf.strn render a b c (cons d more)))))
 
-(defn gc-tune!
-  "A4 (e): Boehm's free-space divisor for cohost on jank (cohost_leaf::gc_tune); a positive
-   integer, or nil to leave the collector as it is. Returns the divisor in effect."
-  [divisor]
-  (cpp/cohost_leaf.gc_tune divisor))

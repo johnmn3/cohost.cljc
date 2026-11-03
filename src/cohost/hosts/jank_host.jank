@@ -1029,12 +1029,13 @@ namespace cohost_obj {
 ;; A4 (c): jank's sort result walked through jank-rt/sorted-seq (on apt its next restarts at
 ;; the first element and copies the buffer: (rest (sort [3 1 2])) was (1 2 3), any walk of a
 ;; sort result quadratic); the series build's result passes untouched.
+(defn- sorted-of [d r] (jank-rt/sorted-seq r (meta d)))
 (def ^:private native-sort
-  (fn ([coll] (jank-rt/sorted-seq (@host-sort (host-data coll))))
-      ([comp coll] (jank-rt/sorted-seq (@host-sort comp (host-data coll))))))
+  (fn ([coll] (let [d (host-data coll)] (sorted-of d (@host-sort d))))
+      ([comp coll] (let [d (host-data coll)] (sorted-of d (@host-sort comp d))))))
 (def ^:private native-sort-by
-  (fn ([keyfn coll] (jank-rt/sorted-seq (@host-sort-by keyfn (host-data coll))))
-      ([keyfn comp coll] (jank-rt/sorted-seq (@host-sort-by keyfn comp (host-data coll))))))
+  (fn ([keyfn coll] (let [d (host-data coll)] (sorted-of d (@host-sort-by keyfn d))))
+      ([keyfn comp coll] (let [d (host-data coll)] (sorted-of d (@host-sort-by keyfn comp d))))))
 (def ^:private native-set
   (fn [coll] (@host-set (host-data coll))))
 (def ^:private native-frequencies
@@ -2065,12 +2066,5 @@ namespace cohost_obj {
    :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
 })
 
-
-;; A4 (e): the jank adapter's collector setting (jank-rt/gc-tune!): Boehm's free-space divisor,
-;; 1 against its default 3 (allocation-heavy loops 1.5-2x on apt for ~+0.1 GB RSS: each collection
-;; marks the whole booted core). nil leaves the collector alone; GC_FREE_SPACE_DIVISOR in the
-;; environment wins.
-(def gc-free-space-divisor 1)
-(jank-rt/gc-tune! gc-free-space-divisor)
 
 (adapter/install! adapter)
