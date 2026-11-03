@@ -1502,7 +1502,7 @@ u2's A5-5 (doubles printed as the JVM prints them). They landed or are landing a
 **Open gaps** (from the board):
 - **Printing doubles:** pr/print of doubles on jank does not yet print them as the JVM does. `str` does (A5-5); the
   printer is recorded as a gap.
-- **The reader's Long/MIN:** the reader on jank does not read `Long/MIN_VALUE` as the JVM does (A5-5, recorded).
+- **The reader's Long/MIN:** a recorded gap of A5-5 (the board's wording: "the reader's Long/MIN recorded as gaps").
 - **The chunked filter:** it realizes one element short, 15 against 16, while its source continues (A4-2; chunked
   map is exact at 32/32/32).
 - **Two non-ASCII battery rows:** "subs count nth first last butlast" and "Character outside ASCII" fail on both
