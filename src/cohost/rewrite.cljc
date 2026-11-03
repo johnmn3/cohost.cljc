@@ -590,7 +590,10 @@
 (defn- rw-static [ctx c m args]
   (let [args' (rw-all ctx args)
         nm (static-name c m)]
-    (cond (known? ctx nm) (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args')
+    (cond (known? ctx nm) (or ;; U6-8: the adapter's own expansion of a Math static at
+                              ;; the call head (nil: keep the shim call)
+                              (when-let [mf (get (host/math-aliases) nm)] (mf args'))
+                              (apply list (or (get (:host-aliases ctx) nm) (static-sym c m)) args'))
           (:passthrough? ctx) (list '. (imported c) (apply list m args'))
           ;; the head is a call returning the thrower, so the arguments keep the
           ;; positions `(. C (m args))` had: -> and doto insert into them.
