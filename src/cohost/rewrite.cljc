@@ -1742,13 +1742,14 @@ nil))
                                              (partition 2 bvec') pairs))
                                 bvec')
                     bvec')
-            ;; U6-10: a let*/loop* local started from a call that always returns a long
+            ;; U6-10: a let* local started from a call that always returns a long
             ;; (the adapter's :native-long-inits, jank on apt: count) gets the host's
             ;; native conversion at its init and joins *native-ints*; one started from
             ;; arithmetic over native longs (native-int-form?) joins them as it is (its
             ;; emitted form is already a native long). In order: an init sees the
-            ;; locals typed before it.
-            long-inits (when (seq (:native-int-aliases ctx)) (host/native-long-inits))
+            ;; locals typed before it. Not a loop* local: its recur may pass anything
+            ;; ((loop [i (count xs)] ... (recur (str i))): typing it is a native error)
+            long-inits (when (and (= h 'let*) (seq (:native-int-aliases ctx))) (host/native-long-inits))
             long-call? (fn [v] (and (seq? v) (symbol? (first v))
                                     (not (contains? *locals* (*plain* (first v))))
                                     (contains? #{nil "clojure.core" "cohost.core"} (namespace (first v)))
