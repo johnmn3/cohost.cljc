@@ -2252,6 +2252,15 @@ namespace cohost_assoc {
                                            (list 'if (list 'clojure.core/char? c)
                                                  (list 'clojure.core/int c)
                                                  (list 'cohost.shim/RT-intCast c))))))
+                  ;; A7-3: (= a b) (the stock :inline's Util/equiv, which on jank is jank's own =) at
+                  ;; the call head is jank's runtime equal, inline: no var deref and no dynamic
+                  ;; call per test (~13 ns on apt, where jank 0.1 does not inline its =).
+                  ;; jank::runtime::equal(object_ref, object_ref) is visible from user modules
+                  ;; (probed on apt with char literals, chars from nth, native loop locals, mixed
+                  ;; numbers, NaN). = as a value keeps jank's var; 1 and 3+ arities keep the call
+                  "Util-equiv" (fn [args]
+                                 (when (= 2 (count args))
+                                   (list 'cpp/jank.runtime.equal (first args) (second args))))
                   "Util-identical" (fn [args]
                                      (when (= 2 (count args))
                                        (let [[a b] args]
