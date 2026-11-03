@@ -18,3 +18,4 @@
 29-variadic-multi.patch
 32-real-speculation.patch
 31-bt-alloc.patch
+34-callsite-variadic-multi.patch
