@@ -17,7 +17,7 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 |---|---|---:|---:|---:|---:|---:|
 | stock Clojure on the JVM (the reference) | | | | 1.5 s | 1 | |
 | cohost `:jvm` (the real Clojure CLI) | an uberjar | not yet measured | x1.00 (28) | 1.4 s | 1 | |
-| cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | being measured | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
+| cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | not in this release: programs with type hints fail to build | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
 | cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | x6.3 (28) | 4.5 s | x9.6 (28) | x2.9 (28) |
 | cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | x3511 (25, at smaller sizes) | 88.6 s | not yet measured | not yet measured |
 | cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | x72.1 (27, Box 3) | 94.0 s | x79.3 (27) | x20.5 (28) |
