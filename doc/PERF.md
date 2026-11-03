@@ -1560,7 +1560,7 @@ Geomeans of xJVM over the rows that print the JVM's result (SAME). A DIFFER or A
 with no step. `bb bench:jank`'s format row, A B x3, was 144.68 ms at c499930 against 134.68 at 6918ca7. The snapshot
 boot was 211.25 against AOT 163.91, with the ranges overlapping. So apt has no format regression to name. The 80.9 ms
 baseline is below every number this box gives at its 120-250 ms noise (x1, 2026-11-02 7:27 PM ET; probes
-`dev/research/p13_format.clj` and `run-cohost-jank-snapshot.sh`). The patched leg is u0's format row above: medians
+`dev/research/p13_format.clj` and `run-cohost-jank-snapshot.sh`). The patched leg is u0's format row below: medians
 310.01 apt against 420.56 patched with overlapping ranges, so a regression is not established either.
 
 ### `bb bench:jank`: the stock core against jank's own core (X1-5b, u0)
