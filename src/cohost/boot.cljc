@@ -413,6 +413,11 @@
                                      (boolean (and n (host/try-all (fn [] (some? (host/interned-var n s)))
                                                                    (fn [_] false))))))})))
 
+(defonce ^:private pending-host-forms
+  ;; Forms a directive owes the eval loop: evaluated as top-level forms,
+  ;; in the namespace the directive left, before the next form is read.
+  (atom []))
+
 (declare eval-top)
 (declare directive)
 (declare directive!)
@@ -455,9 +460,14 @@
   [c ns-sym form lib?]
   (host/with-ns ns-sym
     (fn [] (if-let [d (directive form)]
-             (let [r (directive! d)]
-               (snap! {:op :directive :ns ns-sym :d d})
-               r)
+             (let [r (directive! d)
+                   _ (snap! {:op :directive :ns ns-sym :d d})
+                   fs (seq @pending-host-forms)
+                   _ (when fs (reset! pending-host-forms []))]
+               (loop [r r fs fs]
+                 (if fs
+                   (recur (eval-top c (second r) (first fs) lib?) (next fs))
+                   r)))
              (let [form' (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
                    v (if-not (profiling)
                        (let [rewritten (rw/rewrite c form')
@@ -1163,6 +1173,28 @@
     (host/refer! ns-sym target (reduce (fn [m k] (let [v (get opts k)] (if (nil? v) m (assoc m k v))))
                                        {} (keys opts)))))
 
+(defn- pass-cpp-clauses!
+  "The C++ passthrough's ns clauses, handed to the host that takes them:
+   an :include header becomes a (cpp/raw \"#include <h>\") form -- a ./
+   name is quoted instead, as the host's include macro spells it -- and
+   a :refer-global becomes a clojure.core/refer-global call. They are
+   NOT evaluated here: measured, a cpp/raw evaluated from inside the ns
+   form's own evaluation does not leave the header visible to the next
+   form of the same eval call, while the same form evaluated at top
+   level does. So they are queued on pending-host-forms and eval-in*
+   evaluates them as top-level forms, in the new namespace, before the
+   next form. ns! collects these only under :cpp?; on every other host
+   the clauses are dropped silently."
+  [target clauses]
+  (doseq [[k & args] clauses]
+    (case k
+      :include (doseq [h args]
+                 (swap! pending-host-forms conj
+                        (list 'cpp/raw (if (and (>= (count h) 2) (= "./" (subs h 0 2)))
+                                         (str "#include \"" h "\"")
+                                         (str "#include <" h ">")))))
+      :refer-global (swap! pending-host-forms conj (cons 'clojure.core/refer-global args)))))
+
 (defn- ns! [nm clauses]
   (let [nm (unquote* nm)
         target (if-let [m (get @(:renames (ctx)) (str nm))] (symbol m) nm)
@@ -1171,6 +1203,7 @@
         attrs (first (filter map? (take 2 clauses)))
         ns-meta (merge (meta nm) attrs (when doc {:doc doc}))
         clauses (filter sequential? clauses)
+        cpp-clauses (when (host/cpp?) (filter #(contains? #{:include :refer-global} (first %)) clauses))
         rc (some #(when (= :refer-clojure (first %)) (apply hash-map (rest %))) clauses)]
     (host/ensure-bare-ns! target)
     #?(:cljs nil
@@ -1185,6 +1218,7 @@
         :use (require! target args true)
         :import (import! target args)
         nil))
+    (when cpp-clauses (pass-cpp-clauses! target cpp-clauses))
     target))
 
 (defn- directive!

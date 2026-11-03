@@ -88,8 +88,10 @@
 
 (def rankings
   "Every target's ranking of the reader-conditional keys, best first, by the
-   adapter's :name. Today every target ranks :clj, then :default: the branch
-   the JVM's Clojure takes."
+   adapter's :name. Every target but jank ranks :clj, then :default: the
+   branch the JVM's Clojure takes. Jank ranks its own key first, so a
+   #?(:jank ...) arm -- the C++ passthrough's home -- is the branch taken
+   there, falling back to :clj."
   {:clj [:clj :default]
    :jolt [:clj :default]
    :lpy [:clj :default]
@@ -97,7 +99,7 @@
    :cljs [:clj :default]
    :cljw [:clj :default]
    :lg [:clj :default]
-   :jank [:clj :default]
+   :jank [:jank :clj :default]
    :cljrs [:clj :default]})
 
 (def default-ranking [:clj :default])

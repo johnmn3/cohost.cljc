@@ -444,12 +444,27 @@
   "java.lang.Object's methods: a call of one on a hinted local is no checkcast"
   #{"toString" "hashCode" "equals" "getClass" "notify" "notifyAll" "wait"})
 
+(defn- cpp-tag
+  "The symbol of a cpp/... tag (written plainly or quoted), else nil."
+  [t]
+  (let [t (if (and (seq? t) (= 'quote (first t))) (second t) t)]
+    (when (and (symbol? t) (= "cpp" (namespace t))) t)))
+
+(defn- cpp-form?
+  "A form whose head is a cpp/... symbol: the host's own interop."
+  [x]
+  (and (seq? x) (symbol? (first x)) (= "cpp" (namespace (first x)))))
+
 (defn- hint-tags
   "*local-tags* once syms are bound: a sym hinted with a checked class gains its
-   class token; any other bound here shadows an outer one."
+   class token; any other bound here shadows an outer one. On a :cpp? host a
+   ^cpp/... tag is kept as the tag symbol itself: the local's native type,
+   which a member call on it reads (rw-method) and nothing casts to."
   [tags syms]
   (reduce (fn [m s] (let [t (:tag (meta s)) s (*plain* s)]
-                      (if-let [c (and (symbol? t) (get checked-hints t))] (assoc m s c) (dissoc m s))))
+                      (cond (and (symbol? t) (get checked-hints t)) (assoc m s (get checked-hints t))
+                            (and (host/cpp?) (cpp-tag t)) (assoc m s (cpp-tag t))
+                            :else (dissoc m s))))
           tags syms))
 
 (def ^:private checked-tokens (set (vals checked-hints)))
@@ -1100,6 +1115,12 @@
   ;; xs: the target and the arguments as written -- none at all in a
   ;; `(.m)` a threading macro will fill, so no target is invented
   (let [xs' (rw-all ctx xs)
+        ;; a cpp target on a :cpp? host -- a cpp/... form, or a local
+        ;; hinted ^cpp/... -- is the host's own member access: the dot
+        ;; form as written, no shim dispatcher and no checked cast
+        cpp-target' (and (host/cpp?)
+                         (or (cpp-form? (first xs))
+                             (and (symbol? (first xs)) (cpp-tag (get *local-tags* (*plain* (first xs)))))))
         ;; a target hinted with a checked class: the JVM's checkcast first, to
         ;; the class declaring the method (Object's methods need no cast:
         ;; clojure.string/upper-case of a keyword is its toString upper-cased)
@@ -1116,7 +1137,9 @@
                 (:passthrough? ctx) nil
                 :else (do (miss! ctx :method m)
                           (list (shim-fn "missing-method") (list 'quote m))))]
-    (if f
+    (if cpp-target'
+      (host-form xs')
+      (if f
       (let [d (str "dot$" (name m))]
         (cond
           ;; (.reduce (chunk-first s) f val): IChunk.reduce, a reduced result
@@ -1134,7 +1157,7 @@
           :else (apply list (list (shim-fn "dot") (name m) f) xs')))
       ;; the host's own interop, spelled as the source spelled it (a record
       ;; field read by (.f r) is a field there, not a zero-argument method)
-      (host-form xs'))))
+      (host-form xs')))))
 
 (declare class-token)
 
@@ -1188,30 +1211,42 @@
         own? (and (= 1 (count catches))
                   (let [[_ c b] (first catches)]
                     (and (= c (:catch-all ctx)) (symbol? b) (starts-with? (name (*plain* b)) "e__stock"))))
-        catch-clause
+        ;; a catch of a cpp/... class on a :cpp? host is the host's own
+        ;; catch, emitted as a sibling clause (jank's try takes several
+        ;; typed catches); the folded dispatch below could only fold it
+        ;; into an instance? test, a type in value position there
+        cpp-catch? (fn [[_ c]] (and (host/cpp?) (symbol? c) (some? (cpp-tag c))))
+        cpp-clause (fn [[_ c b & cb]]
+                     [(apply list 'catch (*plain* c) b
+                             (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb))))])
+        ;; the JVM-class catches, folded into one host catch-all clause
+        ;; whose body dispatches on the class, in order
+        fold (fn [cs]
+               (when (seq cs)
+                 (let [e (gensym "e__stock")
+                       clauses (map (fn [[_ c b & cb]]
+                                      (let [c (declass c)]
+                                        [(cond (contains? catch-all-classes c) true
+                                               (class-sym? c) (list (shim-fn "catches?") (list 'quote (imported c)) e)
+                                               :else (list 'instance? c e))
+                                         (apply list 'let* [b e] (or (seq (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb)))) [nil]))]))
+                                    cs)
+                       chain (reduce (fn [else [test then]]
+                                       (if (true? test) then (list 'if test then else)))
+                                     (list 'throw e)
+                                     (reverse clauses))]
+                   [(list 'catch (:catch-all ctx) e chain)])))
+        catch-clauses
         (if own?
           (let [[_ c b & cb] (first catches)]
             [(apply list 'catch c b (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb))))])
-          (when (seq catches)
-            (let [e (gensym "e__stock")
-                  ;; one host catch; dispatch on the JVM class inside it, in order.
-                  clauses (map (fn [[_ c b & cb]]
-                                 (let [c (declass c)]
-                                   [(cond (contains? catch-all-classes c) true
-                                          ;; a JVM class: the shim's class test, of the class
-                                          ;; the namespace imported under that name
-                                          (class-sym? c) (list (shim-fn "catches?") (list 'quote (imported c)) e)
-                                          ;; a host class (js/Error, a record): the host's instance?
-                                          :else (list 'instance? c e))
-                                    ;; (an empty catch body is nil: ClojureWasm's let* takes no empty one)
-                                    (apply list 'let* [b e] (or (seq (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb)))) [nil]))]))
-                               catches)
-                  chain (reduce (fn [else [test then]]
-                                  (if (true? test) then (list 'if test then else)))
-                                (list 'throw e)
-                                (reverse clauses))]
-              [(list 'catch (:catch-all ctx) e chain)])))]
-    (apply list 'try (concat exprs catch-clause finallys))))
+          (if-not (some cpp-catch? catches)
+            (fold catches)
+            ;; source order kept: runs of JVM catches fold together,
+            ;; cpp catches stand as siblings between them
+            (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (fold g)))
+                    (partition-by cpp-catch? catches))))]
+    (apply list 'try (concat exprs catch-clauses finallys))))
 
 (defn- rw-params [params]
   (carry-meta (mapv #(if (symbol? %) (carry-meta % %) %) params) params))
@@ -2440,6 +2475,10 @@
   (let [s0 s
         s (restock ctx (declass (*plain* s)))]
     (cond
+      ;; a cpp/... symbol on a :cpp? host is the host's own name for a C++
+      ;; type or value: it stands as written, named here so no class rule
+      ;; below can grow into eating it
+      (and (host/cpp?) (namespace s) (= "cpp" (namespace s))) (carry-meta s s0)
     ;; a policy replacement names the shim by its qualified symbol
       (and (namespace s) (= shim-ns (namespace s))) (shim-fn (name s))
       (and (namespace s) (class-sym? (symbol (namespace s))))
@@ -2901,6 +2940,11 @@
                                        (rw-new ctx c (nnext form))
                                        (apply list 'new c (rw-all ctx (nnext form)))))
             (= h 'try) (rw-try ctx form)
+            ;; a cpp/... head on a :cpp? host: the host's own interop form.
+            ;; The head stands as written; the arguments are rewritten as
+            ;; program, except cpp/raw's, which are C++ source text
+            (and (host/cpp?) (symbol? h) (= "cpp" (namespace h)))
+            (if (= 'cpp/raw h) (apply list h args) (apply list h (rw-all ctx args)))
             (= h 'fn*) (rw-fn* ctx form)
             ;; cljrs's fn is a special form (policy :special), so the stock
             ;; macro never runs and a ^long on a plain parameter would be

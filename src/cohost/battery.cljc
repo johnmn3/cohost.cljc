@@ -264,7 +264,19 @@
    ["a branch's literal keeps the JVM's meta" "[(meta #?(:clj ^:k [1] :default [])) (meta #?(:clj {:a 1})) (meta #?(:cljs ^:x [] :default ^{:d 1} #{2}))]" [{:k true} nil {:d 1}]]
    ;; cohost's own: the codemod's provenance of a form (cohost.scan/provenance)
    ["(cohost) a :clj branch's forms are Java's" "(defmacro bt-prov [] (list 'quote (cohost.scan/provenance &form))) #?(:clj (bt-prov) :default :none)" :java]
-   ["(cohost) text outside a branch has no provenance" "(bt-prov)" nil]])
+   ["(cohost) text outside a branch has no provenance" "(bt-prov)" nil]
+   ;; the C++ passthrough (jank only; the :default arm keeps the row's
+   ;; value on the other hosts, which never see the cpp forms)
+   ["(cpp) a cpp/ call in value position" "#?(:jank (cpp/jank.runtime.is_integer 5) :default true)" true]
+   ["(cpp) a cpp catch stands as a sibling clause" "#?(:jank (try (throw (cpp/std.runtime_error \"boom\")) (catch cpp/std.exception e :cpp) (catch Exception e :jvm)) :default :cpp)" :cpp]
+   ["(cpp) a stock catch still folds beside a cpp catch" "#?(:jank (try (throw (ex-info \"x\" {})) (catch cpp/std.exception e :cpp) (catch Exception e :jvm)) :default :jvm)" :jvm]
+   ;; the size is cast to cpp/long and the vector is not deleted: on jank's
+   ;; JIT eval path a local of a member-typedef type (vector::size_type)
+   ;; is materialized with its template arguments dropped, and cpp/delete
+   ;; of a template type misses a JIT symbol -- two jank defects with
+   ;; plain-jank repros, recorded in the M lane's cpp-passthrough report
+   ["(cpp) :include in an ns, a native vector's size" "#?(:jank (ns bt.cpp (:include \"vector\")) :default (ns bt.cpp)) #?(:jank (let [v (cpp/new (cpp/std.vector cpp/int64_t)) n (cpp/cast cpp/long (cpp/.size v))] n) :default 0)" 0]
+   ["(cpp) a ^cpp/ hint on a parameter" "#?(:jank ((fn [^cpp/long n] (+ n 1)) 41) :default 42)" 42]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."

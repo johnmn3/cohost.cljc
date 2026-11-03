@@ -83,6 +83,29 @@ host where that host's bench says they pay (`doc/perf/HISTORY.md`, "Cross-host")
 `cohost.adapter/contract` carries each one's doc; a new host leaves them off until its own
 bench says otherwise ([Adding a host](09-adding-a-host.md)).
 
+## The C++ passthrough (jank)
+
+The `:cpp?` capability (jank alone) lets user code use jank's own `cpp/` interop directly,
+the way a JVM program uses Java interop. Four codemod rules, all under that one gate:
+
+- A form headed by a `cpp/…` symbol keeps its head and has its arguments rewritten as
+  program — except `cpp/raw`, whose arguments are C++ source text and pass verbatim. A
+  bare `cpp/…` symbol likewise stands as written.
+- A `catch` of a `cpp/…` class is emitted as a real sibling catch clause, in source
+  order; the stock classes still fold into the one dispatch clause between them.
+- A member call whose target is a `cpp/…` form, or a local hinted `^cpp/…`, is emitted
+  as the host's own dot form — no shim dispatcher, no checked cast. The `^cpp/…` hint
+  itself rides into the emitted form untouched.
+- Two `ns` clauses are handed to the host, each as its own top-level form, the way
+  jank's own core does it: `:include` becomes a top-level `(cpp/raw "#include <h>")`
+  (a `./` name is quoted instead), whose text lands in the global prelude every later
+  form sees, and `:refer-global` becomes a top-level `clojure.core/refer-global` call.
+  On every other host the clauses are dropped silently.
+
+Reader conditionals pick the `:jank` branch on jank (every other target still picks
+`:clj`, then `:default`), so one file serves all hosts: the `cpp/` forms live under
+`#?(:jank … :default …)`, and the battery carries rows for each rule in that shape.
+
 ## Where the code is
 
 ```
