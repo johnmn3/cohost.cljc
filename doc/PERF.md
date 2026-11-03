@@ -2008,3 +2008,135 @@ happens on the series build too, where jank's `/` is already correct, and with a
 which A5-3's rule (`*native-reals*`: a real operand takes the host op directly) would keep direct. A fix belongs at
 the producer, u2's A5-2 divide clause: keep `clojure.core//` when either operand is a known real, and stand down on a
 build whose `/` is correct, as A5's own boot probe does for `+ - *`.
+
+### The tip 22b2b88 on int-a's box (X1-14, x1)
+
+The 15 rows that X1-8's set does not carry, plus pipeline and first-output, which overlap it for a cross-box check.
+Measured 2026-11-03, 5:49-8:14 AM ET, on max/x1 = max/main `22b2b88`, int-a's box (4 CPUs, 15 GB, shared, no lock).
+
+Method:
+- 3 interleaved rounds. In each round, per program and target, apt ran first, then PATCHED
+  (`JANK_BIN=/home/user/int-a/jank-inst/bin/jank`, the 21 patches).
+- Every leg started under the load gate (1-minute load < 8, free memory > 4 GB; load 3.3-7.7, median 5.0). One jank
+  process ran at a time, and none was killed.
+- The JVM ran once over the 15, at the start of the session.
+- Each cell is the median of the three rounds' medians, with the min-max of the three.
+- "vs X1-5/6" is this cell over the table above (X1-6's three rounds for the ten rows it re-ran, X1-5's single round
+  for the rest). Arrows mark a move of more than 20%: ↑ slower, ↓ faster.
+
+The hinted rows (binary-trees-hinted, binary-trees-14-hinted, fannkuch-hinted, nsieve-hinted) ran on `22b2b88`. That is
+before u5's U6-11 (`80853ff`) and U6-12 (`4e549f1`), which change the hinted fns on apt. Raw logs:
+`/home/user/logs/x1-x114{a,b}.log`.
+
+jank's own AOT (`bb bench:programs jank-aot`):
+
+| program | jvm | UNPATCHED ms (min-max) | xJVM | vs X1-5/6 | PATCHED ms (min-max) | xJVM | vs X1-5/6 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| binary-trees | 261.6 | 3711.0 (2936.7-4871.4) | x14.18 | x1.25 **↑** | 610.2 (509.8-666.4) | x2.33 | x1.00 |
+| binary-trees-hinted | 313.0 | 3936.1 (2831.7-4959.3) | x12.57 | x1.33 **↑** | 584.5 (504.8-708.6) | x1.87 | x0.79 **↓** |
+| binary-trees-14 | 8.3 | 155.8 (129.9-226.5) | x18.73 | x1.12 | 23.2 (19.9-40.3) | x2.78 | x1.15 |
+| binary-trees-14-hinted | 5.9 | 133.6 (118.2-151.7) | x22.61 | x0.79 **↓** | 20.3 (19.9-20.5) | x3.44 | x1.01 |
+| sort | 31.8 | 24972.2 (18118.4-26296.3) | x784.45 | x1.00 | 19.4 (19.0-26.0) | x0.61 | x1.00 |
+| lazy-pipeline | 38.2 | 978.8 (682.3-1392.0) | x25.65 | x0.71 **↓** | 33.8 (26.5-41.0) | x0.89 | x1.59 **↑** |
+| keyword-map | 120.4 | 376.7 (338.8-616.4) | x3.13 | x1.03 | 162.3 (156.1-237.1) | x1.35 | x1.00 |
+| fannkuch | 201.2 | ABSENT error: use of undeclared identifier 's28' | - | - | 589.5 (510.2-762.0) | x2.93 | x1.19 |
+| fannkuch-hinted | 233.4 | ABSENT error: use of undeclared identifier 's30' | - | - | 541.0 (495.3-583.6) | x2.32 | x1.07 |
+| nsieve | 253.1 | ABSENT error: use of undeclared identifier 's56'; did you mean ' | - | - | 101.9 (101.8-107.3) | x0.40 | x0.96 |
+| nsieve-hinted | 198.4 | ABSENT error: use of undeclared identifier 's58'; did you mean ' | - | - | 107.3 (106.1-112.8) | x0.54 | x1.09 |
+| k-nucleotide | 196.2 | 543.1 (505.5-582.2) | x2.77 | x0.99 | 285.1 (271.1-302.1) | x1.45 | x1.06 |
+| pipeline | 140.1 | 1134.1 (981.4-1543.5) DIFFER | - | x0.99 | 663.9 (598.7-938.5) | x4.74 | x1.10 |
+| dispatch | 190.5 | ABSENT error: The symbol `defprotocol` could not be resolved. | - | - | ABSENT error: The symbol `defprotocol` could not be resolved. | - | - |
+| first-output | 1416.6 | 749.4 (550.3-942.4) | x0.53 | x1.37 **↑** | 468.9 (440.9-628.1) | x0.33 | x1.04 |
+
+cohost on jank (`bb bench:programs jank`), every row SAME on both binaries:
+
+| program | jvm | UNPATCHED ms (min-max) | xJVM | vs X1-5/6 | PATCHED ms (min-max) | xJVM | vs X1-5/6 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| binary-trees | 261.6 | 4749.4 (2723.2-4900.2) | x18.15 | x1.36 **↑** | 609.1 (591.6-860.0) | x2.33 | x0.81 |
+| binary-trees-hinted | 313.0 | 4030.3 (2813.5-4458.4) | x12.88 | x1.30 **↑** | 774.0 (590.7-1220.9) | x2.47 | x1.01 |
+| binary-trees-14 | 8.3 | 149.5 (107.4-163.6) | x17.97 | x1.06 | 20.0 (19.3-39.6) | x2.41 | x0.79 **↓** |
+| binary-trees-14-hinted | 5.9 | 138.9 (114.3-159.3) | x23.50 | x0.76 **↓** | 21.1 (19.8-27.8) | x3.57 | x0.78 **↓** |
+| sort | 31.8 | 38.1 (37.9-75.0) | x1.20 | x0.92 | 29.0 (28.5-29.7) | x0.91 | x0.93 |
+| lazy-pipeline | 38.2 | 159.5 (119.6-166.4) | x4.18 | x0.62 **↓** | 36.4 (36.2-41.6) | x0.95 | x0.49 **↓** |
+| keyword-map | 120.4 | 340.5 (324.6-412.4) | x2.83 | x0.65 **↓** | 289.3 (233.1-385.2) | x2.40 | x0.79 **↓** |
+| fannkuch | 201.2 | 983.7 (951.6-1045.4) | x4.89 | x0.62 **↓** | 525.6 (460.9-590.7) | x2.61 | x0.41 **↓** |
+| fannkuch-hinted | 233.4 | 911.8 (875.3-1398.8) | x3.91 | x0.55 **↓** | 514.3 (451.6-706.8) | x2.20 | x0.40 **↓** |
+| nsieve | 253.1 | 461.7 (455.9-628.2) | x1.82 | x1.01 | 297.4 (286.3-301.2) | x1.17 | x1.06 |
+| nsieve-hinted | 198.4 | 472.4 (469.8-517.0) | x2.38 | x1.01 | 295.7 (289.9-298.5) | x1.49 | x1.03 |
+| k-nucleotide | 196.2 | 453.3 (445.7-459.5) | x2.31 | x0.30 **↓** | 420.5 (402.7-592.3) | x2.14 | x0.32 **↓** |
+| pipeline | 140.1 | 915.5 (902.3-1235.2) | x6.53 | x0.92 | 921.3 (918.2-1010.7) | x6.57 | x0.90 |
+| dispatch | 190.5 | 1153.0 (1015.1-1884.3) | x6.05 | x1.14 | 352.4 (325.3-418.1) | x1.85 | x1.11 |
+| first-output | 1416.6 | 13096.5 (12514.9-15041.8) | x9.24 | x1.08 | 18205.6 (18128.9-28143.0) | x12.85 | x0.97 |
+
+Geomeans over these 15 rows (a subset of the 28, so not the scoreboard figure; u0 recomputes the 28-row geomean on one
+tip with int-b's X1-13):
+
+- cohost on jank: UNPATCHED 5.403 over 15, PATCHED 2.341 over 15
+- jank-aot: UNPATCHED 12.406 over 9, PATCHED 1.392 over 14
+
+Rows moved by more than 20% against X1-5/X1-6, cohost on jank:
+
+- **faster on both columns:**
+  - k-nucleotide: x0.30 / x0.32 (1531.8 -> 453.3 / 1302.9 -> 420.5 ms)
+  - fannkuch: x0.62 / x0.41; fannkuch-hinted: x0.55 / x0.40
+  - lazy-pipeline: x0.62 / x0.49
+  - keyword-map: x0.65 / x0.79
+  - binary-trees-14-hinted: x0.76 / x0.78
+- **faster on PATCHED only:** binary-trees-14, x0.79
+- **slower on UNPATCHED:**
+  - binary-trees: x1.36 (3503.1 -> 4749.4)
+  - binary-trees-hinted: x1.30 (3091.3 -> 4030.3)
+  - The PATCHED cells did not move (609.1, 774.0). The UNPATCHED ranges overlap X1-6's (2723.2-4900.2 against
+    3063.0-5404.5). So these two are not established as regressions; they are named for the next tip.
+- **within 20%:** sort, nsieve(-hinted), pipeline, dispatch, first-output
+- **pipeline:** 915.5 / 921.3. PATCHED is still not faster (X1-6: 992.7 / 1028.8), but at 1.01x it is now inside the
+  ranges.
+- **first-output:** 13096.5 / 18205.6. PATCHED is still slower, 1.39x; it has no snapshot.
+
+jank-aot moved too: slower are lazy-pipeline PATCHED x1.59 (21.2 -> 33.8 ms), first-output UNPATCHED x1.37, binary-trees
+UNPATCHED x1.25 and binary-trees-hinted UNPATCHED x1.33; faster are lazy-pipeline UNPATCHED x0.71, binary-trees-hinted
+PATCHED x0.79 and binary-trees-14-hinted UNPATCHED x0.79.
+
+### X1-13: the tip ec07bac on int-b's box
+
+Measured 2026-11-03, 7:18 AM to 8:37 AM ET, on int-b's box (4 CPUs, 15 GB RAM), shared with lane u4. One-minute load was 1.09 3.39 (min, max). The method is X1-8's: one JVM run, then 3 interleaved rounds, per program UNPATCHED (apt 0.1-noble) then PATCHED (jank-main, the 21-patch series), jank-aot then cohost-on-jank. A cell is the median of the 3 round medians, with xJVM and the min-max over all 3 rounds. The tree is max/main **ec07bac** (A5-8, A7-2, A6-3, A6-4, U6-11 + the series delta, A5-6, A5-4). The last column is cohost's change from X1-5, as in X1-8; the changes from X1-8 are listed below the table. spectral-norm(-hinted)'s PATCHED cells are **pre-A5-7**; the post-A5-7 cell on f9b77a1 follows. Raw data: `/home/user/logs/intb-x113.log`.
+
+| program | jvm | jank-aot UNPATCHED | jank-aot PATCHED | cohost UNPATCHED | cohost PATCHED | cohost vs X1-5 (UNPATCHED / PATCHED) |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 98.8 | 75.9 (x0.77; 72.7-89.8) | 50.2 (x0.51; 49.3-54.3) | 147.3 (x1.49; 142.0-157.0) | 64.0 (x0.65; 62.2-76.8) | -68% / -2% (457.4 / 65.4) |
+| fib-hinted | 64.4 | 133.4 (x2.07; 127.4-178.1) | 50.6 (x0.79; 49.3-52.4) | 288.4 (x4.48; 273.5-341.0) | 65.5 (x1.02; 62.8-68.8) | -58% / +0% (689.8 / 65.3) |
+| tak | 218.9 | 453.7 (x2.07; 434.5-511.3) | 117.3 (x0.54; 113.8-170.3) | 473.9 (x2.16; 459.7-521.0) | 110.9 (x0.51; 108.5-114.1) | -2% / -3% (483.1 / 114.3) |
+| tak-hinted | 120.5 | 776.1 (x6.44; 755.9-845.5) | 119.6 (x0.99; 113.7-151.2) | 1025.9 (x8.51; 981.1-1121.0) | 113.4 (x0.94; 107.5-131.4) | -31% / +1% (1490.0 / 112.3) |
+| mandelbrot | 149.1 | ABSENT | 551.3 (x3.70; 537.2-635.0) | 601.6 (x4.03; 580.1-653.2) | 238.1 (x1.60; 228.4-286.2) | +0% / -49% (599.0 / 467.1) |
+| mandelbrot-hinted | 145.2 | ABSENT | 224.0 (x1.54; 216.9-274.9) | 572.2 (x3.94; 551.3-701.3) | 224.9 (x1.55; 207.6-281.9) | -27% / -71% (781.2 / 762.9) |
+| spectral-norm | 165.2 | 1785.2 (x10.81; 1685.5-1981.8) | 214.4 (x1.30; 202.8-272.3) | 811.8 (x4.91; 770.5-870.2) | 660.1 (x4.00; 605.8-718.7) | +24% / +54% (656.4 / 427.6) |
+| spectral-norm-hinted | 106.2 | 1904.6 (x17.93; 1832.7-2078.1) | 197.7 (x1.86; 191.8-214.5) | 1038.7 (x9.78; 982.7-1153.4) | 743.7 (x7.00; 689.3-812.2) | -18% / +28% (1263.1 / 579.1) |
+| nbody | 148.1 | ABSENT | 826.4 (x5.58; 785.1-906.1) | 751.6 (x5.07; 682.8-834.1) | 578.9 (x3.91; 533.4-634.4) | -85% / -85% (5114.7 / 3808.7) |
+| sum-overflow | 10.1 | 61.6 (x6.13; 57.6-70.1) DIFFER | 6.2 (x0.62; 6.0-6.5) | 19.8 (x1.97; 18.8-75.4) | 5.2 (x0.51; 5.0-5.3) | -8% / +3% (21.4 / 5.0) |
+| sum-overflow-hinted | 0.6 | 8.6 (x13.56; 8.1-8.9) DIFFER | 1.9 (x2.93; 1.8-2.2) | 8.5 (x13.39; 8.0-13.4) | 2.5 (x4.00; 2.5-2.7) | -5% / -69% (8.9 / 8.2) |
+| sort | 30.5 | 18014.6 (x590.49; 9912.9-24858.4) | 21.9 (x0.72; 18.7-45.0) | 29.7 (x0.97; 27.2-97.7) | 28.1 (x0.92; 21.8-61.5) | -7% / -11% (31.9 / 31.7) |
+| lazy-pipeline | 27.2 | 706.2 (x25.98; 553.5-1082.8) | 22.4 (x0.82; 21.0-97.9) | 112.6 (x4.14; 71.2-177.4) | 36.8 (x1.35; 35.0-222.5) | -33% / -48% (167.1 / 70.2) |
+| pipeline | 97.2 | 802.7 (x8.26; 777.3-941.6) DIFFER | 633.5 (x6.52; 584.6-744.7) | 689.2 (x7.09; 604.7-825.5) | 540.5 (x5.56; 504.1-612.0) | -27% / -43% (941.2 / 951.8) |
+| json | 163.4 | 1385.8 (x8.48; 1305.3-1741.0) | 546.8 (x3.35; 512.4-625.5) | 1108.4 (x6.78; 1045.8-1278.3) | 748.5 (x4.58; 688.6-881.0) | -18% / -20% (1356.2 / 931.2) |
+- cohost on jank PATCHED: geomean xJVM 1.777 over 15 programs
+- cohost on jank UNPATCHED: geomean xJVM 4.225 over 15 programs
+- jank-aot PATCHED: geomean xJVM 1.486 over 15 programs
+- jank-aot UNPATCHED: geomean xJVM 9.329 over 9 programs
+
+Change from X1-8 (b33cfd0, the table above), cohost median ms, UNPATCHED / PATCHED; rows that moved more than 20% are in bold:
+
+- fib-hinted: **689.1 -> 288.4 (-58%)** / 66.0 -> 65.5 (-1%)
+- fib: **393.7 -> 147.3 (-63%)** / 66.3 -> 64.0 (-3%)
+- json: **1482.4 -> 1108.4 (-25%)** / **942.3 -> 748.5 (-21%)**
+- lazy-pipeline: **160.7 -> 112.6 (-30%)** / **64.9 -> 36.8 (-43%)**
+- mandelbrot-hinted: **761.6 -> 572.2 (-25%)** / **786.7 -> 224.9 (-71%)**
+- mandelbrot: 605.3 -> 601.6 (-1%) / **469.2 -> 238.1 (-49%)**
+- nbody: **2572.2 -> 751.6 (-71%)** / **2198.7 -> 578.9 (-74%)**
+- pipeline: **1016.9 -> 689.2 (-32%)** / **994.3 -> 540.5 (-46%)**
+- sort: **42.6 -> 29.7 (-30%)** / 32.7 -> 28.1 (-14%)
+- spectral-norm-hinted: **1302.0 -> 1038.7 (-20%)** / 899.2 -> 743.7 (-17%)
+- spectral-norm: 679.3 -> 811.8 (+20%) / 733.6 -> 660.1 (-10%)
+- sum-overflow-hinted: 9.0 -> 8.5 (-5%) / **8.1 -> 2.5 (-69%)**
+- sum-overflow: **27.6 -> 19.8 (-28%)** / 5.1 -> 5.2 (+2%)
+- tak-hinted: **1498.7 -> 1025.9 (-32%)** / 113.9 -> 113.4 (-0%)
+- tak: 491.1 -> 473.9 (-4%) / 113.8 -> 110.9 (-3%)
