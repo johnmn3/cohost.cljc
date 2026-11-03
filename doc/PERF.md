@@ -9,29 +9,42 @@ on the JVM measured on the same box, so ratios compare across boxes and millisec
 
 ## At a glance
 
-| runtime | startup: a hello-world `-main` | programs, against stock Clojure on the JVM (geomean) | the runtime's own Clojure, same programs (geomean) |
-|---|---:|---:|---:|
-| stock Clojure on the JVM (the reference) | 1.5 s | 1 | |
-| cohost `:jvm` (runs the real Clojure CLI) | 1.4 s | 1 | |
-| cohost `:jank` (jank 0.1, apt) | 2.6 s | x10.0 (24 of 28 programs) | x6.3 compiled ahead of time (14 of 28) |
-| cohost `:jolt` (jolt 0.8.23, Chez Scheme) | 4.5 s | x9.6 (28) | x2.9 (28) |
-| cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | 8.9 s | x9.1 (28) | x3.9 (25) |
-| ClojureScript in Chromium | | not measured | x3.0 (25) |
-| cohost `:lg` (let-go 1.13.0, Go) | 15.4 s | not yet measured | x46.6 (11 of 28 so far) |
-| cohost `:phel` (Phel 0.54.0, PHP 8.5) | 47.0 s | not yet measured | x23.7 (15 of 28) |
-| cohost `:lpy` (basilisp 0.5.1, Python) | 88.6 s | not yet measured | not yet measured |
-| cohost `:cljw` (ClojureWasm 1.15.4) | 94.0 s | not yet measured | x20.5 (28) |
+Clojure deploys ahead of time, and so does cohost: `cohost -T:build build` makes an app in each runtime's own compiled
+form ([Built apps](#built-apps), [doc/AOT-PLAN.md](AOT-PLAN.md)). Those are the numbers that count for a deployed
+program; running from source (`cohost :<runtime> ...`) is what development costs.
+
+| runtime | the built app (`cohost -T:build build`) | built: `run you` | built: programs (geomean xJVM) | from source: startup | from source: programs | the runtime's own Clojure |
+|---|---|---:|---:|---:|---:|---:|
+| stock Clojure on the JVM (the reference) | | | | 1.5 s | 1 | |
+| cohost `:jvm` (the real Clojure CLI) | an uberjar | not yet measured | being measured | 1.4 s | 1 | |
+| cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | being measured | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
+| cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | being measured | 4.5 s | x9.6 (28) | x2.9 (28) |
+| cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | being measured | 88.6 s | not yet measured | not yet measured |
+| cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | being measured | 94.0 s | not yet measured | x20.5 (28) |
+| cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | | 8.9 s | x9.1 (28) | x3.9 (25) |
+| ClojureScript in Chromium | | | | | not measured | x3.0 (25) |
+| cohost `:phel` (Phel 0.54.0, PHP 8.5) | boots from source (`phel build -O 2`: in progress) | | | 47.0 s | not yet measured | x23.7 (15 of 28) |
+| cohost `:lg` (let-go 1.13.0, Go) | boots from source (bytecode and Go: in progress) | | | 15.4 s | not yet measured | x46.6 (11 of 28 so far) |
 
 How to read it:
 
 - **"Programs"** is the geometric mean, over the suite's programs that ran and gave the JVM's answer, of each
   program's time per call (warmed up) divided by stock Clojure's on the JVM. x10 means ten times as long.
+- **"Built"** runs each program as an app built by `cohost -T:build build` (`bb bench:programs <runtime>-built`).
+  `run you` is the README's built app, run from another directory (jank: Linux, 2026-11-02; jolt, basilisp,
+  ClojureWasm: macOS arm64, 2026-11-03, from aot/native-builds).
+- **"From source"** is `cohost :<runtime>`, which boots `clojure.core` from Clojure's source (jank and basilisp load a
+  cached boot instead). Startup is the median of 3 wall times of `cohost :<runtime> -M -m demo.main` in
+  `dev/cli-demo` ([Startup](#startup)).
 - **"The runtime's own Clojure"** runs the same programs on the runtime's own core library instead of on
-  Clojure's, which cohost boots. It is what the runtime's own dialect costs, so the gap between the two columns is
-  what running Clojure's own `clojure.core` costs on that runtime.
-- **Startup** is the median of 3 wall times of `cohost :<runtime> -M -m demo.main` in `dev/cli-demo` (it requires
-  one library namespace and prints a line), caches warm. cohost boots `clojure.core` from Clojure's source at every
-  start, except on jank, which loads a compiled snapshot of the booted core ([Startup](#startup)).
+  Clojure's. The gap to it is what running Clojure's own `clojure.core` costs on that runtime.
+
+## Built apps
+
+What `cohost -T:build build` makes on each runtime is in [doc/CLI.md](CLI.md#building); how each runtime's own AOT
+form is reached, and its status, is [doc/AOT-PLAN.md](AOT-PLAN.md). Being measured now on Box 4 (the coordinator's
+box), against its own JVM column: `jolt-built`, `lpy-built`, `cljw-built`, then `jvm-built` and `jank-built`. Phel,
+let-go and ClojureScript follow as their AOT forms land.
 
 ## Startup
 
@@ -59,7 +72,7 @@ Box 1, `main` @ ff30ce1, 2026-11-03 12:41 AM ET (`doc/perf/release-perf/lane-c/s
   command builds it (225 s on Box 4), then `cohost :lpy -M -m demo.main` took 21.0 s and 18.4 s there (release
   candidate b2ec699, 2026-11-03 1:48 AM ET, while another check ran on the box), against the 88.6 s above, which
   booted from source.
-- The compiled builds (`cohost -T:build build`) start faster on some runtimes: [Compiled builds](#compiled-builds).
+- The compiled builds (`cohost -T:build build`) start faster on some runtimes: [Built apps](#built-apps).
 
 The programs' tables below also carry `first-output`: the wall time to print one line from a one-line program,
 through the benchmark's own launch of each runtime (no project, no library), median of 3 processes.
@@ -279,11 +292,6 @@ them (`:native-hints`, [How it works](guide/08-how-it-works.md#performance-keys)
   SORT-ROW.
 - **Patched jank.** cohost carries a patch series against jank (`upstream/jank/`) that fixes the 32-bit wrap,
   the sort walk and more; it is used only when `JANK_BIN` names a build of it. These tables are the jank that ships.
-
-## Compiled builds
-
-Not yet measured (`bb bench:programs <runtime>-built`, the artifact `cohost -T:build build` makes for each
-runtime, run as `target/<name>/run`).
 
 ## What makes a runtime fast or slow on cohost
 
