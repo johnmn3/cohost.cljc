@@ -36,7 +36,7 @@ namespace cohost_rt {
 
   /* The extension's version: bumped with every change of its C++ (the AOT stamp already
    * follows this file). */
-  inline object_ref version() { return make_box(static_cast<jank::i64>(2)); }
+  inline object_ref version() { return make_box(static_cast<jank::i64>(3)); }
 
   /* A4 (a): chunked seqs built from jank's own obj::chunked_cons and obj::array_chunk, so
    * jank's runtime first/next/seq/count/=/hash/print walk them natively. On apt 0.1-noble
@@ -45,6 +45,15 @@ namespace cohost_rt {
    * stack near 1e6 elements; and chunked_cons::next hands back its raw tail, so an unrealized
    * tail that turns out empty breaks next's contract (an extra nil element). These build
    * chunked_cons only with a tail that is nil or never empty, and never force anything. */
+
+  /* array_chunk::buffer is a native_vector on apt 0.1-noble and a jtl::ref to one on the series
+   * build (patch 11-sorted-walk shares it across chunk_next steps): buf() gives the vector on both,
+   * so the extension compiles on either binary. */
+  template <class B>
+  inline auto &buf(B &b) {
+    if constexpr(requires { b->size(); }) { return *b; }
+    else { return b; }
+  }
 
   inline bool is_chunk(object_ref const x) { return x.get_type() == object_type::array_chunk; }
   inline bool is_chunked_cons(object_ref const x) { return x.get_type() == object_type::chunked_cons; }
@@ -76,17 +85,17 @@ namespace cohost_rt {
       return jank::runtime::chunk_cons(chunk, rest);
     }
     auto const c(expect_object<obj::array_chunk>(chunk));
-    auto const n(c->buffer.size() - c->offset);
+    auto const n(buf(c->buffer).size() - c->offset);
     if(n == 0) { return rest; }
     bool const unrealized_lazy{ rest.get_type() == object_type::lazy_sequence
                                 && expect_object<obj::lazy_sequence>(rest)->fn.is_some() };
     if(!unrealized_lazy) {
       return make_box<obj::chunked_cons>(chunk, rest.is_nil() ? rest : rest.seq());
     }
-    auto const tail(make_box<obj::cons>(c->buffer[c->offset + n - 1], rest));
+    auto const tail(make_box<obj::cons>(buf(c->buffer)[c->offset + n - 1], rest));
     if(n == 1) { return tail; }
-    jank::native_vector<object_ref> v(c->buffer.begin() + static_cast<long>(c->offset),
-                                      c->buffer.begin() + static_cast<long>(c->offset + n - 1));
+    jank::native_vector<object_ref> v(buf(c->buffer).begin() + static_cast<long>(c->offset),
+                                      buf(c->buffer).begin() + static_cast<long>(c->offset + n - 1));
     return make_box<obj::chunked_cons>(make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0)),
                                        tail);
   }
@@ -96,16 +105,16 @@ namespace cohost_rt {
   inline object_ref chunk_map(object_ref const f, object_ref const chunk) {
     auto const c(expect_object<obj::array_chunk>(chunk));
     jank::native_vector<object_ref> v;
-    v.reserve(c->buffer.size() - c->offset);
-    for(auto i(c->offset); i < c->buffer.size(); ++i) { v.push_back(f.call(c->buffer[i])); }
+    v.reserve(buf(c->buffer).size() - c->offset);
+    for(auto i(c->offset); i < buf(c->buffer).size(); ++i) { v.push_back(f.call(buf(c->buffer)[i])); }
     return make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0));
   }
 
   inline object_ref chunk_filter(object_ref const pred, object_ref const chunk) {
     auto const c(expect_object<obj::array_chunk>(chunk));
     jank::native_vector<object_ref> v;
-    for(auto i(c->offset); i < c->buffer.size(); ++i) {
-      auto const e(c->buffer[i]);
+    for(auto i(c->offset); i < buf(c->buffer).size(); ++i) {
+      auto const e(buf(c->buffer)[i]);
       if(truthy(pred.call(e))) { v.push_back(e); }
     }
     return make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0));
@@ -124,7 +133,7 @@ namespace cohost_rt {
         auto const cc(expect_object<obj::chunked_cons>(cur));
         if(cc->head.get_type() != object_type::array_chunk) { break; }
         auto const c(expect_object<obj::array_chunk>(cc->head));
-        n += static_cast<jank::i64>(c->buffer.size() - c->offset);
+        n += static_cast<jank::i64>(buf(c->buffer).size() - c->offset);
         cur = cc->tail.is_nil() ? cc->tail : cc->tail.seq();
       }
       else if(t == object_type::cons) { ++n; cur = cur.next(); }
@@ -138,8 +147,8 @@ namespace cohost_rt {
   inline object_ref chunk_reduce(object_ref const chunk, object_ref const f, object_ref const init) {
     auto const c(expect_object<obj::array_chunk>(chunk));
     object_ref acc{ init };
-    for(auto i(c->offset); i < c->buffer.size(); ++i) {
-      acc = f.call(acc, c->buffer[i]);
+    for(auto i(c->offset); i < buf(c->buffer).size(); ++i) {
+      acc = f.call(acc, buf(c->buffer)[i]);
       if(acc.get_type() == object_type::reduced) { return acc; }
     }
     return acc;
