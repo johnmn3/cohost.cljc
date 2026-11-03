@@ -1818,6 +1818,46 @@ namespace cohost_obj {
                                                          false)
                                                (list 'clojure.core/nth c k)
                                                (list 'cohost.shim/RT-nth c k))))))
+                    ;; calls of the booted nth / count / assoc (M-5's natives,
+                    ;; which take no :inline): the same test at the call head,
+                    ;; the booted fn (head) otherwise
+                    'nth (fn [head args]
+                           (when (= 2 (count args))
+                             (let [c (gensym "nc") k (gensym "nk")]
+                               (list 'let* [c (first args) k (second args)]
+                                     (list 'if (list 'if (list 'cpp/jank.runtime.is_vector c)
+                                                     (list 'if (list 'clojure.core/integer? k)
+                                                           (list 'clojure.core/< -1 k (list 'clojure.core/count c))
+                                                           false)
+                                                     false)
+                                           (list 'clojure.core/nth c k)
+                                           (list head c k))))))
+                    'count (fn [head args]
+                             (when (= 1 (count args))
+                               (let [c (gensym "cc")]
+                                 (list 'let* [c (first args)]
+                                       (list 'if (list 'cpp/jank.runtime.is_vector c)
+                                             (list 'clojure.core/count c)
+                                             (list head c))))))
+                    ;; (assoc v k x ...) on jank's vector, every key an integer in
+                    ;; 0..count (assoc at count appends; past it the JVM throws
+                    ;; IndexOutOfBoundsException, which the booted assoc keeps)
+                    'assoc (fn [head args]
+                             (when (and (>= (count args) 3) (odd? (count args)))
+                               (let [m (gensym "am")
+                                     syms (vec (repeatedly (dec (count args)) #(gensym "ak")))
+                                     binds (vec (concat [m (first args)] (interleave syms (rest args))))
+                                     ks (take-nth 2 syms)
+                                     ;; every key below the original count: no
+                                     ;; pair appends, so the count holds for all
+                                     ok (cons 'clojure.core/and (cons (list 'cpp/jank.runtime.is_vector m)
+                                                         (map (fn [k] (list 'clojure.core/and (list 'clojure.core/integer? k)
+                                                                            (list 'clojure.core/< -1 k (list 'clojure.core/count m))))
+                                                              ks)))]
+                                 (list 'let* binds
+                                       (list 'if ok
+                                             (apply list 'clojure.core/assoc m syms)
+                                             (apply list head m syms))))))
                     "RT-count" (fn [args]
                                  (when (= 1 (count args))
                                    (let [c (gensym "cc")]

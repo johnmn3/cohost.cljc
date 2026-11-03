@@ -1959,6 +1959,16 @@
                 (swap! c assoc n (or a false))
                 a))))))))
 
+(defn- call-alias
+  "U6-7: the adapter's :vector-aliases entry for a call of a booted stock core
+   fn (a symbol key: nth, count, get, assoc), given the head the call would
+   otherwise use and the rewritten args: a form that takes the host's own op
+   on the host's own collection and the booted fn otherwise, or nil."
+  [ctx h args']
+  (when-let [n (stock-name ctx h)]
+    (when-let [f (get (host/vector-aliases) (symbol (name n)))]
+      (f (rw ctx h) args'))))
+
 (defn- rewritten-macro?
   "Does h name a macro whose expansion the codemod rewrites (a stock or user
    macro, not the host's own)?"
@@ -2146,7 +2156,9 @@
                       ;; arguments without inlining (the expansion inlines them)
                       (if (and *inline?* (rewritten-macro? ctx h))
                         (binding [*inline?* false] (apply list (rw ctx h) (doall (rw-all ctx args))))
-                        (apply list (or (core-alias ctx h) (rw ctx h)) (rw-all ctx args)))))]
+                        (let [args' (rw-all ctx args)]
+                          (or (call-alias ctx h args')
+                              (apply list (or (core-alias ctx h) (rw ctx h)) args'))))))]
       (carry-meta out form))))
 
 (defn rw [ctx form]
