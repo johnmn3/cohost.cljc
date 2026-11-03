@@ -23,8 +23,8 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 | cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | x72.1 (27, Box 3) | 94.0 s | x85.2 (15 of 28 so far) | x20.5 (28) |
 | cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | x10.7 (28, Box 3) | 8.9 s | x9.1 (28) | x3.9 (25) |
 | ClojureScript in Chromium | | | | | not measured | x3.0 (25) |
-| cohost `:phel` (Phel 0.54.0, PHP 8.5) | the app compiled to PHP by `phel build` (OPcache + tracing JIT) | 1.3-2.0 s (Box 1) | x142.9 (21 of 28 so far, Box 1) | 47.0 s | not yet measured | x23.7 (15 of 28) |
-| cohost `:lg` (let-go 1.13.0, Go) | boots from source (bytecode and Go: in progress) | | | 15.4 s | not yet measured | x46.6 (11 of 28 so far) |
+| cohost `:phel` (Phel 0.54.0, PHP 8.5) | the app compiled to PHP by `phel build` (OPcache + tracing JIT) | 1.3-2.0 s (Box 1) | x131.6 (28, Box 1) | 47.0 s | not yet measured | x23.7 (15 of 28) |
+| cohost `:lg` (let-go 1.13.0, Go) | boots from source (bytecode and Go: in progress) | | | 15.4 s | being measured | x19.3 (28) |
 
 How to read it:
 
@@ -126,6 +126,45 @@ build saves, not time per call. Median ms (xJVM). Records: `doc/perf/box4/` (`jv
 | tak | 1.6 | 13547.4 (x8736.56) |
 | tak-hinted | 0.6 | 85579.8 (x141957.47) |
 | **geomean xJVM** (programs that ran) | 1 | **x3511.27** (25) |
+
+### Box 1: built apps
+
+Box 1 (lane C, 4 CPUs, Linux), Phel's built app (`phel build` of the recorded boot, run under OPcache with the tracing
+JIT), c/aot-phel, 2026-11-03 before 6:24 AM ET; the JVM column is Box 1's own. Every program gives the JVM's answer;
+`lazy-pipeline` needs the 1 GB stack the built run asks for. Median ms (xJVM). Records:
+`doc/perf/release-perf/lane-c/phel-built.edn`.
+
+| program | jvm | phel-built |
+|---|---:|---:|
+| binary-trees | 249.0 | 35480.9 (x142.49) |
+| binary-trees-14 | 12.2 | 1190.7 (x97.29) |
+| binary-trees-14-hinted | 9.9 | 1761.4 (x177.79) |
+| binary-trees-hinted | 253.1 | 37066.8 (x146.47) |
+| dispatch | 175.2 | 89711.8 (x512.16) |
+| fannkuch | 229.0 | 23483.0 (x102.54) |
+| fannkuch-hinted | 198.2 | 19500.0 (x98.40) |
+| fib | 164.8 | 7251.9 (x43.99) |
+| fib-hinted | 90.6 | 46850.2 (x516.84) |
+| first-output | 815.0 | 1694.1 (x2.08) |
+| json | 285.1 | 80520.4 (x282.42) |
+| k-nucleotide | 156.4 | 11713.7 (x74.90) |
+| keyword-map | 130.6 | 7934.6 (x60.77) |
+| lazy-pipeline | 32.8 | 38482.9 (x1173.78) |
+| mandelbrot | 245.7 | 96933.5 (x394.50) |
+| mandelbrot-hinted | 236.9 | 95526.8 (x403.30) |
+| nbody | 225.6 | 35374.0 (x156.78) |
+| nbody-hinted | 256.3 | 34703.7 (x135.38) |
+| nsieve | 273.8 | 25145.4 (x91.84) |
+| nsieve-hinted | 282.8 | 17520.3 (x61.96) |
+| pipeline | 216.7 | 28527.3 (x131.65) |
+| sort | 42.9 | 1577.9 (x36.82) |
+| spectral-norm | 241.9 | 53851.3 (x222.62) |
+| spectral-norm-hinted | 143.8 | 62462.7 (x434.47) |
+| sum-overflow | 9.9 | 1748.8 (x177.18) |
+| sum-overflow-hinted | 0.9 | 35.7 (x41.41) |
+| tak | 457.0 | 13625.4 (x29.81) |
+| tak-hinted | 229.1 | 188884.6 (x824.43) |
+| **geomean xJVM** (programs that ran) | 1 | **x131.55** (28) |
 
 ### Box 3: built apps
 
@@ -342,8 +381,8 @@ against 9.6 MB. Records and the exact install commands: `doc/perf/cljw-releasefa
 ### Box 4: let-go and Phel
 
 Box 4: 4 CPUs (Intel Xeon, 2.10 GHz), Linux, let-go 1.13.0, PHP 8.3.6; the JVM column is this box's own
-(2026-11-03 1:18 AM ET). `lg` is let-go's own core, 11 of the 28 programs so far (1:20 to 1:42 AM ET, 10 timed calls
-each; the full column is being rerun). `phel` is Phel's own core, all 28 programs (2:29 to 2:43 AM ET, the 15 s
+(2026-11-03 1:18 AM ET). `lg` is let-go's own core, all 28 programs (release4 @ 53164fc, 6:09 to 6:23 AM ET, the 15 s
+budget). `phel` is Phel's own core, all 28 programs (2:29 to 2:43 AM ET, the 15 s
 budget, ffcc0cb): 15 run with the JVM's answer, `json` gives another answer, and 12 fail on Phel's own dialect
 (type hints, Java's `Math`, the unresolved symbol `w` in `dispatch`, a crash in `lazy-pipeline`). Phel and let-go
 through cohost are being measured.
@@ -351,35 +390,35 @@ Records: `doc/perf/box4/`.
 
 | program | jvm | lg | phel |
 |---|---:|---:|---:|
-| binary-trees | 246.8 | 10137.5 (x41.07) | 16357.1 (x66.27) |
-| binary-trees-14 | 10.4 | not yet measured | 661.5 (x63.90) |
-| binary-trees-14-hinted | 14.2 | not yet measured | error |
-| binary-trees-hinted | 239.7 | not yet measured | error |
-| dispatch | 152.8 | not yet measured | error |
-| fannkuch | 142.1 | not yet measured | 3792.0 (x26.69) |
-| fannkuch-hinted | 163.1 | not yet measured | 3640.5 (x22.32) |
-| fib | 121.8 | 4638.3 (x38.09) | 3169.3 (x26.03) |
-| fib-hinted | 76.3 | 4952.0 (x64.89) | error |
-| first-output | 804.7 | not yet measured | 91.9 (x0.11) |
-| json | 219.9 | not yet measured | 4746.0, differs |
-| k-nucleotide | 128.6 | not yet measured | 4974.2 (x38.68) |
-| keyword-map | 95.1 | not yet measured | 4304.8 (x45.27) |
-| lazy-pipeline | 34.1 | not yet measured | error |
-| mandelbrot | 187.9 | 20880.5 (x111.14) | 103936.6 (x553.21) |
-| mandelbrot-hinted | 174.6 | 21376.8 (x122.40) | error |
-| nbody | 212.9 | 2280.9 (x10.72) | error |
-| nbody-hinted | 212.5 | 2278.5 (x10.72) | error |
-| nsieve | 212.5 | not yet measured | 3843.8 (x18.08) |
-| nsieve-hinted | 180.2 | not yet measured | 3914.8 (x21.72) |
-| pipeline | 141.0 | not yet measured | 5146.2 (x36.49) |
-| sort | 37.3 | not yet measured | 120.5 (x3.23) |
-| spectral-norm | 222.3 | 8078.9 (x36.34) | error |
-| spectral-norm-hinted | 133.8 | 9240.4 (x69.04) | error |
-| sum-overflow | 12.9 | not yet measured | 774.5 (x60.04) |
-| sum-overflow-hinted | 0.5 | not yet measured | error |
-| tak | 260.0 | 15141.9 (x58.23) | 5406.7 (x20.79) |
-| tak-hinted | 162.0 | 15874.0 (x97.97) | error |
-| **geomean xJVM** (programs that ran) | 1 | **x46.64** (11) | **x23.71** (15) |
+| binary-trees | 246.8 | 9834.4 (x39.84) | 16357.1 (x66.27) |
+| binary-trees-14 | 10.4 | 464.3 (x44.85) | 661.5 (x63.90) |
+| binary-trees-14-hinted | 14.2 | 472.0 (x33.12) | error |
+| binary-trees-hinted | 239.7 | 9781.0 (x40.80) | error |
+| dispatch | 152.8 | 3181.9 (x20.83) | error |
+| fannkuch | 142.1 | 1617.2 (x11.38) | 3792.0 (x26.69) |
+| fannkuch-hinted | 163.1 | 1604.8 (x9.84) | 3640.5 (x22.32) |
+| fib | 121.8 | 4792.2 (x39.35) | 3169.3 (x26.03) |
+| fib-hinted | 76.3 | 4787.2 (x62.73) | error |
+| first-output | 804.7 | 12.3 (x0.02) | 91.9 (x0.11) |
+| json | 219.9 | 4136.3 (x18.81) | 4746.0, differs |
+| k-nucleotide | 128.6 | 2028.9 (x15.78) | 4974.2 (x38.68) |
+| keyword-map | 95.1 | 1172.1 (x12.32) | 4304.8 (x45.27) |
+| lazy-pipeline | 34.1 | 849.7 (x24.90) | error |
+| mandelbrot | 187.9 | 20078.6 (x106.87) | 103936.6 (x553.21) |
+| mandelbrot-hinted | 174.6 | 20330.2 (x116.41) | error |
+| nbody | 212.9 | 2266.5 (x10.65) | error |
+| nbody-hinted | 212.5 | 2228.2 (x10.49) | error |
+| nsieve | 212.5 | 774.1 (x3.64) | 3843.8 (x18.08) |
+| nsieve-hinted | 180.2 | 801.8 (x4.45) | 3914.8 (x21.72) |
+| pipeline | 141.0 | 6684.4 (x47.39) | 5146.2 (x36.49) |
+| sort | 37.3 | 252.3 (x6.77) | 120.5 (x3.23) |
+| spectral-norm | 222.3 | 7793.8 (x35.06) | error |
+| spectral-norm-hinted | 133.8 | 8986.0 (x67.14) | error |
+| sum-overflow | 12.9 | 41.8 (x3.24) | 774.5 (x60.04) |
+| sum-overflow-hinted | 0.5 | 82.4 (x156.74) | error |
+| tak | 260.0 | 15315.1 (x58.90) | 5406.7 (x20.79) |
+| tak-hinted | 162.0 | 16065.7 (x99.15) | error |
+| **geomean xJVM** (programs that ran) | 1 | **x19.29** (28) | **x23.71** (15) |
 
 basilisp is measured on Box 1; its rows go in as each column finishes.
 
