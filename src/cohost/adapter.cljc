@@ -119,6 +119,7 @@
    :math-aliases    [[] "{shim static name (a string, \"Math-sqrt\") -> (fn [args]) returning the form a call (Math/sqrt x) becomes on this host, or nil to keep the shim call}: the host's own math op at the call head, where its value is the JVM's for every argument (a probe per op; ops whose semantics differ keep the shim wrapper). Default {}"]
    :static-aliases  [[] "{shim static name (a string) -> the host core's symbol}: statics the host-aliases? scan cannot match because the shim's value is a wrapper with its own body, where that wrapper's semantics are the host op's on this host (jank: Numbers-minus is jank's -). Merged over the scan's aliases. Default {}"]
    :core-aliases    [[] "#{stock core name}: calls of these booted stock core fns are emitted as the host core's fn of that name, whose semantics are the stock fn's on this host, so the host's compiler sees (and may inline) its own op; the stock fn stays booted for every other use (apply, a value, with-redefs of the booted var). Default #{}"]
+   :static-types    [[] "nil (the default) or :unit: the static typing level this host allows beyond the source's own hints. :unit (U6-9 (b)) types a defn's parameter from call-site evidence within one compilation unit (one eval-str: the program text cohost compiles together; cohost.rewrite/unit-param-kinds): when every call site of a defn that is not ^:dynamic or ^:redef, defined once in the unit and never used as a value (an argument, apply, var, a mention inside a macro the walk does not read) passes a certainly-long (or certainly-double) value in a position, that parameter enters the fn through the host's native conversion (:native-local-casts) and is a native local in the body. It applies only when the run also opts in ((cohost.rewrite/static-types! :unit); the bench's COHOST_STATIC_TYPES=unit). UNSOUND outside the unit, exactly: a caller the unit did not contain (a later eval, the REPL, a redefinition of a caller) that passes another kind gets the host's native conversion instead of Clojure's arithmetic: on jank a real passed to a long parameter or a non-number to either raises a native error no catch reaches, where Clojure computes with the real or throws ClassCastException; a bigint passed to a long parameter is range-checked to a long. Inside the unit it is sound: a kind is recorded only from literals, hints, count, typed arithmetic, loop locals whose every recur keeps the kind, and (map/mapv/filter... (fn [i] ...) (range n)) elements"]
    :core-value-aliases [[] "{stock core name -> a host symbol}: where a booted stock core fn appears as a VALUE (an argument, (map inc xs), (filter odd? xs), a let binding's init), the codemod emits that host fn instead, whose semantics are the stock fn's on every input on this host (a probe per name: dev/research/u4/edges.sh). Price, the same as :core-aliases': a with-redefs or alter-var-root of the booted core var is not seen by a value read the codemod already emitted, and the value is not identical? to the booted var's fn. Default {}"]
    :core-expansions [[] "{stock core name -> (fn [stock-head args] form-or-nil)}: the form a call of that booted stock core fn becomes at the call head on this host (args rewritten; stock-head the rewritten head, for the case the host op does not cover), nil to keep the call: a guard around the host's own op where its semantics differ from the stock fn's on some inputs (jank: odd?/even? of a non-integer). Default {}"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
@@ -366,6 +367,7 @@ namespace cohost_err {
     :math-aliases {}
     :core-aliases #{}
     :core-value-aliases {}
+    :static-types nil
     :core-expansions {}
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
@@ -644,6 +646,7 @@ namespace cohost_err {
 (defn math-aliases [] (or (cap :math-aliases) {}))
 (defn core-aliases [] (or (cap :core-aliases) #{}))
 (defn core-value-aliases [] (or (cap :core-value-aliases) {}))
+(defn static-types [] (cap :static-types))
 (defn core-expansions [] (or (cap :core-expansions) {}))
 (defn env-locals "The local symbols of a macro's &env." [env]
   (try-all (fn [] (filter symbol? ((cap :env-locals) env)))))

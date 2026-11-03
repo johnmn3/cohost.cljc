@@ -43,6 +43,219 @@
    namespace of its own); identity elsewhere."
   identity)
 
+;; ---------------------------------------------------------------------------
+;; U6-9 (b): :static-types :unit -- parameter kinds from call-site evidence
+;; within one compilation unit (one eval-str: the program cohost compiles
+;; together). Opt-in (static-types! :unit); off, nothing below runs.
+
+(def static-types
+  "nil (the default) or :unit: the static typing level the codemod applies
+   beyond the source's own hints. :unit types a defn's parameter from its
+   call sites in the same compilation unit (unit-param-kinds), and is UNSOUND
+   outside that unit: a later caller (another eval, the REPL) passing a value
+   of another kind to a typed parameter gets the host's native conversion
+   error (jank: a real to a long parameter, a non-number to either) where
+   Clojure would have computed or thrown a ClassCastException; a
+   redefinition of a typed fn's caller with other argument kinds is that
+   caller. The bench opts in; nothing else does."
+  (atom nil))
+
+(defn static-types! "Set the :static-types level (nil or :unit) -> it." [level] (reset! static-types level))
+
+(def ^:dynamic *unit-params*
+  "{defn name symbol {arity-count [kind-or-nil ...]}} for the unit being
+   evaluated (:static-types :unit), kind :long or :double. nil: none."
+  nil)
+
+(def ^:dynamic *unit-arities*
+  "The *unit-params* entry of the defn whose init fn* is being rewritten;
+   nil inside any nested fn*."
+  nil)
+
+(declare primitive-hint pattern-syms)
+
+(defn- uk-head
+  "The bare name of a head symbol written unqualified or clojure.core/-qualified."
+  [h]
+  (when (and (symbol? h) (contains? #{nil "clojure.core"} (namespace h))) (name h)))
+
+(defn- uk-kind
+  "The kind (:long, :double or nil) a source form certainly has, given env
+   {local -> kind or nil}: an integer or real literal, a typed local, + - *
+   inc dec over typed operands (Clojure's contagion: any double is a
+   double), / with a double operand, count, (long x), (double x),
+   Math/sqrt, an if whose branches agree."
+  [env x]
+  (cond (and (integer? x) (not= \N (last (pr-str x)))) :long
+        (float? x) :double
+        (symbol? x) (get env x)
+        (and (seq? x) (seq x) (not (contains? env (first x))))
+        (let [h (first x) n (uk-head h) args (rest x)
+              ks (map #(uk-kind env %) args)]
+          (cond (= h 'Math/sqrt) :double
+                (contains? #{"inc" "dec"} n) (when (= 1 (count args)) (#{:long :double} (first ks)))
+                (contains? #{"+" "-" "*"} n) (when (and (seq args) (every? some? ks)) (if (some #{:double} ks) :double :long))
+                (= "/" n) (when (and (seq args) (every? some? ks) (some #{:double} ks)) :double)
+                (= "count" n) (when (= 1 (count args)) :long)
+                (= "long" n) (when (= 1 (count args)) :long)
+                (= "double" n) (when (= 1 (count args)) :double)
+                (= "if" n) (let [[_ a b] args ka (uk-kind env a)] (when (and ka (= 3 (count args)) (= ka (uk-kind env b))) ka))
+                :else nil))
+        :else nil))
+
+(def ^:private uk-plain-heads
+  "Heads whose arguments are all evaluated expressions (special forms and
+   macros the walk understands)."
+  #{"if" "do" "when" "when-not" "if-not" "and" "or" "cond" "throw" "not"})
+
+(def ^:private uk-range-fns
+  "Fns whose first argument is called with each element of their second."
+  #{"map" "mapv" "filter" "filterv" "remove" "keep" "run!" "some" "every?"})
+
+(defn- uk-params-env [env params kinds]
+  (reduce (fn [e [i p]]
+            (if (symbol? p)
+              (let [h (primitive-hint (:tag (meta p)))]
+                (assoc e (*plain* p) (or ({'long :long 'double :double} h) (get kinds i))))
+              (reduce #(assoc %1 %2 nil) e (pattern-syms p))))
+          env (map-indexed vector params)))
+
+(defn- uk-walk
+  "Walk source form x with env, recording into st (a volatile of {:sites
+   {name {k [kind-vectors]}} :escaped #{names}}) when record?; recur
+   collects the kinds of the recur forms targeting the innermost loop or
+   arity (a volatile or nil). macro? says whether an unknown head names a
+   macro: every unit name inside one escapes (its expansion is unknown)."
+  [{:keys [unit st macro? R recur-sink record?] :as o} env x]
+  (let [walk (fn ([y] (uk-walk o env y)) ([e y] (uk-walk o e y)))
+        esc! (fn [y] (when record? (vswap! st update :escaped into (filter #(contains? unit %) (filter symbol? (tree-seq coll? seq y))))))
+        fn-arities (fn [env form]
+                     (let [more (rest form)
+                           more (if (symbol? (first more)) (rest more) more)
+                           arities (if (vector? (first more)) [more] (filter seq? more))]
+                       (doseq [[params & body] arities :when (vector? params)]
+                         (let [e (uk-params-env env params nil)]
+                           (doseq [b body] (uk-walk (assoc o :recur-sink nil) e b))))))]
+    (cond
+      (symbol? x) (when (and record? (contains? unit x) (not (contains? env x)))
+                    (vswap! st update :escaped conj x))
+      (map? x) (doseq [[k v] x] (walk k) (walk v))
+      (or (vector? x) (set? x)) (doseq [y x] (walk y))
+      (and (seq? x) (seq x))
+      (let [h (first x) n (uk-head h) args (rest x)]
+        (cond
+          (not (symbol? h)) (doseq [y x] (walk y))
+          (contains? env h) (doseq [y args] (walk y))
+          (and (contains? unit h) (nil? (namespace h)))
+          (do (when record? (vswap! st update-in [:sites h (count args)] (fnil conj []) (mapv #(uk-kind env %) args)))
+              (doseq [y args] (walk y)))
+          (= n "quote") nil
+          (= n "var") (esc! args)
+          (= n "def") (doseq [y (drop 2 x)] (walk y))
+          (contains? #{"defn" "defn-"} n)
+          (let [nm (second x)
+                more (drop 2 x)
+                more (drop-while #(or (string? %) (map? %)) more)
+                arities (if (vector? (first more)) [more] (filter seq? more))]
+            (doseq [[params & body] arities :when (vector? params)]
+              (let [e (uk-params-env env params (get-in R [nm (count params)]))
+                    sink (volatile! [])]
+                (doseq [b body] (uk-walk (assoc o :recur-sink sink) e b))
+                ;; a recur to the arity rebinds its params: a call site
+                (when (and record? (contains? unit nm))
+                  (doseq [ks @sink] (vswap! st update-in [:sites nm (count params)] (fnil conj []) ks))))))
+          (contains? #{"fn" "fn*"} n) (fn-arities env x)
+          (contains? #{"let" "let*"} n)
+          (let [[bvec & body] args]
+            (if-not (vector? bvec)
+              (esc! x)
+              (let [e (reduce (fn [e [b v]]
+                                (walk e v)
+                                (if (symbol? b) (assoc e (*plain* b) (uk-kind e v))
+                                    (reduce #(assoc %1 %2 nil) e (pattern-syms b))))
+                              env (partition 2 bvec))]
+                (doseq [b body] (walk e b)))))
+          (contains? #{"loop" "loop*"} n)
+          (let [[bvec & body] args]
+            (if-not (and (vector? bvec) (every? symbol? (take-nth 2 bvec)))
+              (esc! x)
+              (let [pairs (partition 2 bvec)
+                    _ (doseq [[_ v] pairs] (walk v))
+                    names (map (comp *plain* first) pairs)
+                    k0 (mapv (fn [[_ v]] (uk-kind env v)) pairs)
+                    ;; the greatest fixpoint: assume the init kinds, drop a
+                    ;; local any recur passes another kind for
+                    ks (loop [ks k0 i 0]
+                         (let [sink (volatile! [])
+                               e (into env (map vector names ks))]
+                           (doseq [b body] (uk-walk (assoc o :record? false :recur-sink sink) e b))
+                           (let [ks' (vec (map-indexed (fn [j k] (when (and k (every? #(= k (get % j)) @sink)) k)) ks))]
+                             (if (or (= ks' ks) (> i 4)) ks' (recur ks' (inc i))))))
+                    e (into env (map vector names ks))]
+                (doseq [b body] (uk-walk (assoc o :recur-sink nil) e b)))))
+          (= n "recur") (do (when recur-sink (vswap! recur-sink conj (mapv #(uk-kind env %) args)))
+                            (doseq [y args] (walk y)))
+          (contains? uk-plain-heads n) (doseq [y args] (walk y))
+          (and (namespace h) (not= "clojure.core" (namespace h))) (doseq [y args] (walk y))
+          (macro? h) (esc! x)
+          ;; (mapv (fn [i] ...) (range n)): i is a long ((range x) of one
+          ;; argument counts from 0 by 1; of two typed-long bounds, the same)
+          (and (contains? uk-range-fns n) (= 2 (count args))
+               (let [[f c] args]
+                 (and (seq? f) (contains? #{"fn" "fn*"} (uk-head (first f)))
+                      (vector? (second f)) (= 1 (count (second f))) (symbol? (first (second f)))
+                      (seq? c) (= "range" (uk-head (first c)))
+                      (or (= 2 (count c))
+                          (and (= 3 (count c)) (= :long (uk-kind env (nth c 1))) (= :long (uk-kind env (nth c 2))))))))
+          (let [[f c] args
+                p (*plain* (first (second f)))]
+            (doseq [b (drop 2 f)] (uk-walk (assoc o :recur-sink nil) (assoc env p :long) b))
+            (walk c))
+          :else (doseq [y args] (walk y))))
+      :else nil)))
+
+(defn unit-param-kinds
+  "U6-9 (b): {defn name {arity-count [kind-or-nil ...]}} for the top-level
+   defns of forms (one compilation unit) whose every call site in the unit
+   passes a value of a certain kind in a position, with the fn never used as
+   a value (an argument, apply, var, a mention inside a macro the walk does
+   not understand), not ^:dynamic or ^:redef, defined once. A parameter with
+   a hint of its own is left to the hint. macro?: (fn [head-symbol]) -> true
+   for a macro. The least fixpoint over the call graph: a kind is recorded
+   only from kinds already established."
+  [forms macro?]
+  (let [defn-name (fn [f] (when (and (seq? f) (contains? #{"defn" "defn-"} (uk-head (first f))) (symbol? (second f)))
+                            (second f)))
+        def-name (fn [f] (when (and (seq? f) (= "def" (uk-head (first f))) (symbol? (second f))) (second f)))
+        names (keep defn-name forms)
+        dup (set (concat (keep def-name forms) (for [[k v] (frequencies names) :when (> v 1)] k)))
+        unit (set (remove (fn [nm] (or (dup nm) (:dynamic (meta nm)) (:redef (meta nm)))) names))
+        arities (into {} (for [f forms :let [nm (defn-name f)] :when (contains? unit nm)]
+                           (let [more (drop-while #(or (string? %) (map? %)) (drop 2 f))]
+                             [nm (vec (keep #(when (and (vector? %) (every? symbol? %) (not (some #{'&} %))) %)
+                                            (if (vector? (first more)) [(first more)] (map first (filter seq? more)))))])))]
+    (if (empty? unit)
+      {}
+      (loop [R {} i 0]
+        (let [st (volatile! {:sites {} :escaped #{}})]
+          (doseq [f forms] (uk-walk {:unit unit :st st :macro? macro? :R R :record? true} {} f))
+          (let [{:keys [sites escaped]} @st
+                R' (into {} (for [nm unit :when (not (contains? escaped nm))
+                                  :let [m (into {} (for [ps (get arities nm)
+                                                         :let [k (count ps)
+                                                               ss (get-in sites [nm k])
+                                                               ks (mapv (fn [j p]
+                                                                          (when (and (seq ss) (nil? (primitive-hint (:tag (meta p)))))
+                                                                            (let [k0 (get (first ss) j)]
+                                                                              (when (and k0 (every? #(= k0 (get % j)) ss)) k0))))
+                                                                        (range k) ps)]
+                                                         :when (some some? ks)]
+                                                     [k ks]))]
+                                  :when (seq m)]
+                              [nm m]))]
+            (if (or (= R' R) (> i 6)) R' (recur R' (inc i)))))))))
+
+
 ;; Dispatch-branch timers used to wrap every rewrite call. The macro was
 ;; defined in this namespace, which self-hosted ClojureScript does not expand,
 ;; so each call returned nil and the battery was empty. The wrappers are gone.
@@ -1044,17 +1257,35 @@
         one-arity? (= 1 (count arities))
         names (into (if nm #{nm} #{})
                     (mapcat (fn [[params]] (filter #(and (symbol? %) (not= '& %)) params)) arities))
+        ;; U6-9 (b): this fn*'s :unit parameter kinds (a defn's init only)
+        ua *unit-arities*
         arities' (binding [*locals* (into *locals* names)
                            *native-ints* (apply disj *native-ints* (map *plain* names))
-                           *native-reals* (apply disj *native-reals* (map *plain* names))]
+                           *native-reals* (apply disj *native-reals* (map *plain* names))
+                           *unit-arities* nil]
                    (doall (map (fn [[params & body]]
                                  (let [ps0 (filter symbol? params)
                                        ps (map *plain* ps0)
                                        tags (hint-tags *local-tags* ps0)
                                        classes (class-tags *local-classes* (map (fn [p] [p nil]) ps))
                                        [bs depths] (markers-for ps tags classes)
-                                       body' (binding [*local-tags* tags *local-classes* classes *marker-depth* depths]
+                                       ;; [[param kind]]: typed by call-site evidence, no hint of its own
+                                       ukp (when-let [ks (and ua (every? symbol? params) (not (some #(= '& (*plain* %)) params))
+                                                              (get ua (count params)))]
+                                             (keep (fn [[p k]] (when (and k (nil? (primitive-hint (:tag (meta p))))) [(bare-sym p) k]))
+                                                   (map vector params ks)))
+                                       casts (host/native-local-casts)
+                                       ukp (when (and (seq ukp) casts (get casts 'long) (get casts 'double)) ukp)
+                                       body' (binding [*local-tags* tags *local-classes* classes *marker-depth* depths
+                                                       *native-ints* (into *native-ints* (keep (fn [[p k]] (when (= k :long) p)) ukp))
+                                                       *native-reals* (into *native-reals* (keep (fn [[p k]] (when (= k :double) p)) ukp))]
                                                (doall (rw-all ctx body)))
+                                       ;; the host's native conversion at entry: the param is then
+                                       ;; a native local (jank: to_int / to_real)
+                                       body' (if (seq ukp)
+                                               [(apply list 'let* (vec (mapcat (fn [[p k]] [p (list (get casts (if (= k :long) 'long 'double)) p)]) ukp))
+                                                       (or (seq body') [nil]))]
+                                               body')
                                        body' (with-markers bs body')
                                        body' (if (:loop-variadic-recur? ctx) (loop-variadic-recur params body') body')
                                        rest-arg (second (drop-while #(not= '& %) params))
@@ -1307,7 +1538,11 @@
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
              nm)
         nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)
-        more' (rw-all ctx more)
+        ;; U6-9 (b): the :unit parameter kinds of this def's fn, when its init is one
+        ua (when (and *unit-params* (not var-call?) (seq more)
+                      (let [i (last more)] (and (seq? i) (symbol? (*plain* (first i))) (contains? #{"fn" "fn*"} (name (*plain* (first i)))))))
+             (get *unit-params* (bare-sym nm)))
+        more' (binding [*unit-arities* ua] (doall (rw-all ctx more)))
         ;; a host whose defn names its fn (jank's own does): carry the
         ;; def's name onto an unnamed fn* value, so self-recursion is a
         ;; direct call instead of a var deref and a dynamic call. The

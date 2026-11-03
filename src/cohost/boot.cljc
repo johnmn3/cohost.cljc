@@ -1303,7 +1303,22 @@
          ns0 (if session? (or @session-ns user-ns) user-ns)
          ;; [last value, current namespace]: each form is read after the one
          ;; before it ran, in the namespace it left (::kw after an ns form)
-         at (atom [nil ns0])]
+         at (atom [nil ns0])
+         ;; U6-9 (b): :static-types :unit -- this source text is one compilation
+         ;; unit; its defns' parameter kinds from their call sites (a read
+         ;; failure types nothing)
+         unit (when (and (= :unit @rw/static-types) (= :unit (host/static-types)))
+                (host/try-all
+                 (fn []
+                   (let [forms (atom [])]
+                     (host/with-ns ns0
+                       (fn []
+                         (host/read-forms src (fn [f] (swap! forms conj f)))
+                         (rw/unit-param-kinds @forms
+                                              (fn [h] (boolean (when-let [v ((:resolve-head c) h)]
+                                                                 (host/macro-var? v)))))))))
+                 (fn [_] nil)))]
+     (binding [rw/*unit-params* unit]
      (try
        (host/with-ns ns0
          (fn []
@@ -1314,7 +1329,7 @@
                                     (reset! at [v ns'])
                                     (when-let [f (:on-value opts)] (f v ns')))))))
        (first @at)
-       (finally (when session? (reset! session-ns (second @at))))))))
+       (finally (when session? (reset! session-ns (second @at)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; report
