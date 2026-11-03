@@ -209,7 +209,11 @@ namespace cohost_rt {
     b(jtl::immutable_string{ out.data(), out.size() });
   }
 
-  inline bool is_double(object_ref const x) { return x.get_type() == object_type::real; }
+  /* a double: jank boxes one as a small_real (make_box of any floating point), a real otherwise */
+  inline bool is_double(object_ref const x) {
+    auto const t(x.get_type());
+    return t == object_type::small_real || t == object_type::real;
+  }
 
   inline object_ref double_str(object_ref const x) {
     jtl::string_builder b;
@@ -369,7 +373,7 @@ namespace cohost_leaf {
     auto const t(x.get_type());
     if(t == object_type::nil) { return; }
     if(t == object_type::persistent_string) { b(expect_object<obj::persistent_string>(x)->data); return; }
-    if(x.get_type() == object_type::real) { cohost_rt::jvm_double_into(to_real(x), b); return; } /* A5-5 (u2) */
+    if(cohost_rt::is_double(x)) { cohost_rt::jvm_double_into(to_real(x), b); return; } /* A5-5 (u2) */
     if(plain(x)) { jank::runtime::to_string(x, b); return; }
     auto const r(render.call(x));
     if(r.get_type() == object_type::persistent_string) { b(expect_object<obj::persistent_string>(r)->data); }
@@ -380,7 +384,7 @@ namespace cohost_leaf {
     auto const t(a.get_type());
     if(t == object_type::persistent_string) { return a; }
     if(t == object_type::nil) { return make_box<obj::persistent_string>(jtl::immutable_string{}); }
-    if(t == object_type::real) { return cohost_rt::double_str(a); } /* A5-5 (u2) */
+    if(cohost_rt::is_double(a)) { return cohost_rt::double_str(a); } /* A5-5 (u2) */
     if(!plain(a)) { return render.call(a); }
     jtl::string_builder b;
     jank::runtime::to_string(a, b);
