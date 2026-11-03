@@ -2082,6 +2082,8 @@ namespace cohost_obj {
    ;; a ^long / ^double let*/loop* local: jank types a local by its init, and
    ;; these return i64 / f64 (runtime/core/math.hpp, always inline)
    :native-local-casts '{long cpp/jank.runtime.to_int double cpp/jank.runtime.to_real}
+   ;; U6-7: infer what is certain (adapter :static-types)
+   :static-types :sound
 })
 
 
