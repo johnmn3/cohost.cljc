@@ -274,8 +274,12 @@
         (conj! out (symbol k))))
     (persistent out)))
 
+;; (into {} (map f) coll) is not Phel's: its into takes no transducer
 (defn- ns-interns* [ns-sym]
-  (into {} (map (fn [k] [k (var-of ns-sym k)])) (def-names ns-sym false)))
+  (into {} (map (fn [k] [k (var-of ns-sym k)]) (def-names ns-sym false))))
+
+(defn- ns-publics* [ns-sym]
+  (into {} (map (fn [k] [k (var-of ns-sym k)]) (def-names ns-sym true))))
 
 (defn- refer-one! [into-ns sym from-ns]
   (.addRefer (genv) (ns-str into-ns) (Symbol/create (str sym)) (Symbol/create (ns-str from-ns))))
@@ -847,6 +851,9 @@
    :mark-macro! mark-macro!
    :core-extras {'extend extend*
                  'resolve resolve-var 'ns-resolve ns-resolve* 'the-ns the-ns* 'ns-name ns-name*
+                 ;; phel.core's answer {"name" value}: Clojure's is {name-symbol var}
+                 ;; (clojure.test's run-tests walks ns-interns for the vars' :test)
+                 'ns-interns ns-interns* 'ns-publics ns-publics*
                  'intern (fn ([ns sym] (or (var-of ns sym) (intern! ns sym unbound)))
                              ([ns sym val] (intern! ns sym val)))
                  're-pattern re-pattern*

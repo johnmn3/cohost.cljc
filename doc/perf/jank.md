@@ -328,7 +328,7 @@ H1 pays for a parameter hint that a loop inside the function carries.
 
 The carried `^double` loop is ratio `0.104536075688026` (hinted median `1006832` ns, plain `9631431` ns). The carried `^long` loop is `0.12509229668370744`. The carried `^jtl.i64` loop is `0.12441975920648726`. In the generated C++ the carried value stays native, `+` / `-` / `<` call the primitive `jank::runtime` overloads, and `into_object` runs on the way out of the function.
 
-H1 loses when the hinted function is the thing the loop calls, and the body returns `(+ a b)`, `(< a b)`, or `(inc a)`.
+H1 loses, on jank 0.1-noble as shipped, when the hinted function is the thing the loop calls, and the body returns `(+ a b)`, `(< a b)`, or `(inc a)`. (An unpatched-jank fact, not a jank fact: on the full patch series the same probe ties or wins; "Hints at every position", below.)
 
 | body | ratio hinted/plain |
 |---|---:|
@@ -342,7 +342,7 @@ Those bodies do unbox. They then box the result with `into_object` before the ca
 
 Return-type hints are unused (`ret_only` has no convert). `let` and `loop` local hints are unused: the locals case ratio is `0.9990883268691141`, and `locals_hinted` and `locals_plain` emit the same C++, including `static_cast<int>`. A `^double` on the loop limit, with locals that start at the literal `0.0`, is ratio `0.9979486512483109`.
 
-H1's map, from the spellings above: `long` -> `long`, `double` -> `double`, `boolean` -> `bool` (the symbol `boolean` does not resolve), `int` -> `int`. `jtl.i64` and `jank.i64` are the `long long` spelling of a 64-bit integer. Apply it to `fn*` parameter vectors. Leave return hints and `let` / `loop` local hints stripped. Strings, keywords, and every other tag stay stripped.
+H1's map, from the spellings above: `long` -> `long`, `double` -> `double`, `boolean` -> `bool` (the symbol `boolean` does not resolve), `int` -> `int`. `jtl.i64` and `jank.i64` are the `long long` spelling of a 64-bit integer. Apply it to `fn*` parameter vectors. Leave return hints and `let` / `loop` local hints stripped. (Superseded by U6-5, below: returns and locals pass through now.) Strings, keywords, and every other tag stay stripped.
 
 Step 5 does not end at H0: the carried-loop cases gain. The gain is inside the hinted function. Hinting `+`, `<`, or `inc` themselves, so each call boxes on the way out, loses.
 
@@ -848,7 +848,7 @@ Every call-heavy case: `fn-call` 3.8x, `loop-arith` and `hinted-loop` fold to no
 
 ## Type hints (H1)
 
-Measured 2026-11-01 ET on jank `0.1-noble`. The commands ran on `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. The branch was then rebased onto `b61bf0e5856c78d06605e6c32682534a61edf32c`; those commits touch `doc/upstream/` and `doc/hosts/jank-FAST.md` only, so the boots were not run again. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped.
+Measured 2026-11-01 ET on jank `0.1-noble`. The commands ran on `67b4cbf2a03fe878586530f2c3f29b0bb8008f44`. The branch was then rebased onto `b61bf0e5856c78d06605e6c32682534a61edf32c`; those commits touch `doc/upstream/` and `doc/hosts/jank-FAST.md` only, so the boots were not run again. H0's ratios stand: a parameter hint pays when a loop inside the fn carries it (0.104536075688026 to 0.12509229668370744) and loses when the hinted fn is called from a loop (1.2439739613238427 to 1.5236294423788295). Return hints and let/loop local hints stay stripped. (Superseded by U6-5, below: returns and locals pass through now.)
 
 JVM Clojure 1.12.0, `clojure -M -e` of the four shapes the battery now runs:
 
@@ -1358,3 +1358,184 @@ ABSENT rows (six hinted programs were absent), tak-hinted's warm median
 0.60 ms beats tak's 2.39, and fib-hinted runs (86.5 median, unsettled spread,
 vs fib 10.95). `bb boot:jvm` battery 144/145 (the eduction row above fails
 on the base too), libraries 61/61; `bb boot:jank` 143/145, 61/61.
+
+## Programs on cohost-on-jank
+
+C-2 (jank-FAST Step 8). nbody, mandelbrot, fannkuch and nsieve fail on cohost on jank, and they fail the same way on
+jank's own core (`jank -O3 run`, and `compile-module -O3`): this is not a cohost bug but jank 0.1's, and cohost can
+work around it in its codemod. Measured 2026-11-02 on jank 0.1-noble, cohost at `c499930`; programs from
+`c/bench-programs` (`bb bench:programs jank`, doc/PERF.md "Programs against JVM Clojure").
+
+**The cause (all four).** jank 0.1's C++ codegen fails on a `loop*` that binds a name an enclosing `loop*` binds:
+`error: use of undeclared identifier 'sNN'`. The init does not matter (`(loop [a a] ...)`, `(loop [a (inc a)] ...)`,
+`(loop [b 0 a a] ...)` all fail); `let` shadowing, and a `loop` rebinding a fn parameter, compile. Each program has
+one such inner loop. The same form rebound through a fresh name, `(loop [x__1 x] (let [x x__1] ...))`, compiles and
+gives the JVM's answer on raw jank and on cohost (one form per process: after a failed C++ compile, later forms in the
+same cohost process failed to link, `JIT session error: Symbols not found: [ ...try_object... ]`, then `Failed to
+find symbol: 'cohost_user$let_73_0'`).
+
+**The owning file.** cohost's codemod: `src/cohost/rewrite.cljc`, `rw-let*` (every `loop*` cohost evaluates passes
+through it, the user's `loop` after the stock macro expands it). The fix needs a capability, so it touches the shared
+layer: `src/cohost/adapter.cljc` (`:loop-rebind-shadow?`, doc, default `false`, accessor), `src/cohost/boot.cljc`
+(passes it to the rewrite options), and one key in `src/cohost/hosts/jank_host.jank` (lane M's file):
+`:loop-rebind-shadow? true`. With it set, `rw-let*` rewrites `(loop* [a init ...] body)`, `a` bound by an enclosing
+`loop*`, to `(loop* [a__N init ...] (let* [a a__N] body))` (recur is positional, so the loop is the same; the hint
+meta moves to `a__N`). Every other host's default leaves its forms byte-identical. The patch is the commit
+"C-2 proposed fix" on `c/jank-programs`, for the coordinator to order where it lands; with it:
+`bb boot:jank` -> stock 542, host 171, skipped 78, errors 0; battery 143/145; libraries 61/61 (unchanged), and the
+four programs run on cohost on jank with the JVM's results (below, small sizes: `bb bench:programs jank
+"nbody:200,mandelbrot:40,fannkuch:6,nsieve:12"` -> -169027, 967, -77, 564, the same as `bb bench:programs jvm` at
+those sizes).
+
+### nbody
+
+- Error (cohost on jank, `bb bench:programs jank nbody`): `Unable to compile C++ source. -- nil:7:1: error: use of
+  undeclared identifier 's34'` (nbody-hinted the same). jank's own core first fails on `Math/sqrt` (`The symbol
+  'Math/sqrt' could not be resolved`), so the G-13 note "runs on jank's own core" did not hold.
+- The loops: `energy`'s `(loop [j (inc i) e e] ...)` inside `(loop [i 0 e 0.0] ...)`, and `advance`'s
+  `(loop [j (inc i) bs bs b b] ...)` inside `(loop [i 0 bs bs] ...)`.
+- Repro: `(loop [i 0 e 0.0] (if (= i 2) e (recur (inc i) (loop [j 0 e e] (if (= j 2) e (recur (inc j) (+ e 1.0)))))))`
+  -> JVM `4.0`; raw jank `error: use of undeclared identifier 's31'`; cohost on jank the same.
+- With the fix: -169027 at size 200, the JVM's.
+
+### mandelbrot
+
+- Error: `Unable to compile C++ source. -- nil:7:1: error: use of undeclared identifier 's36'` (hinted `'s38'`);
+  jank's own core `use of undeclared identifier 's35'`.
+- The loop: `(loop [x 0 acc acc] ...)` inside `(loop [y 0 acc 0] ...)`.
+- Repro: `(loop [y 0 acc 0] (if (= y 2) acc (recur (inc y) (loop [x 0 acc acc] (if (= x 2) acc (recur (inc x) (inc acc)))))))`
+  -> JVM `4`; raw jank `'s31'`; cohost on jank the same. Rebound: `4` on both.
+- With the fix: 967 at size 40, the JVM's.
+
+### fannkuch
+
+- Error: `Unable to compile C++ source. -- nil:6:1: error: use of undeclared identifier 's28'` (hinted `'s30'`);
+  jank's own core `'s28'`.
+- The loop: `flips`' `(loop [p p i 0 j k] ...)` inside `(loop [p (vec p) f 0] ...)`.
+- Repro: `(loop [p [1 0] f 0] (if (zero? (p 0)) f (recur (loop [p p i 0] (if (< i 1) (recur (assoc p 0 (p 1) 1 (p 0)) (inc i)) p)) (inc f))))`
+  -> JVM `1`; raw jank `'s27'`; cohost on jank the same.
+- With the fix: -77 at size 6, the JVM's.
+
+### nsieve
+
+- Error: `Unable to compile C++ source. -- nil:10:1: error: use of undeclared identifier 's61'` (hinted `'s63'`);
+  jank's own core `'s56'`.
+- The loop: `(loop [j (+ i i) flags flags] ...)` inside `(loop [i 2 cnt 0 flags flags] ...)`.
+- Repro: `(loop [i 0 flags [true true]] (if (= i 2) flags (recur (inc i) (loop [j i flags flags] (if (>= j 2) flags (recur (+ j 2) (assoc flags j false)))))))`
+  -> JVM `[false false]`; raw jank `'s30'`; cohost on jank the same.
+- With the fix: 564 at size 12, the JVM's.
+
+No bench program changes: the programs are portable Clojure; the failure is the host's, and the codemod is where
+cohost absorbs it. Upstream: no draft in doc/upstream/ names this codegen bug yet (Step 7).
+
+## Step 5 H1, the inline test (M-6b, 2026-11-02)
+
+The kind test is emitted inline on jank through the `:prim-kind-test`
+capability (default nil; every other host keeps the shim call):
+`jank.runtime.is_integer` for a long hint, `jank.runtime.is_real` for a
+double hint -- jank's own runtime predicates, visible from every module,
+with exactly the kind semantics (a host long, never a bigint; a host
+double, never a decimal). `bb bench:programs jank`, the one quiet run:
+fib 262.26, fib-hinted 326.88 (x1.25; was x2.14 with the shim call);
+tak 19.44, tak-hinted 21.68 (x1.12; was x2.13). The residual is the
+`is_integer` call itself, ~24 ns per entry: it is a runtime-library
+call, not an inlined tag read. The true inline read exists --
+`(cpp/.get_type x)` returns the `object_type` -- but comparing it
+through Clojure measured 4x slower than the call (the tag boxes on the
+way into a Clojure value), and the enum-cast spellings resisted six
+attempts. An emitted cpp call cannot name the adapter's cpp/raw block
+either: a cpp namespace is visible only in its own module.
+
+## Hints at every position (U6-5, 2026-11-02)
+
+H0 and H1 above measured and shipped the parameter position only ("leave return hints and
+let/loop local hints stripped"). U6-5 (jank-MAX, u5; merged at max/main 4144744) passes every
+position through, each coerced as the JVM coerces on every host:
+
+- a parameter: an arity that loops or calls itself hands the coerced values to an inner fn*
+  whose parameters carry the native tags (`:native-hints`); a single-arity def names that inner
+  fn* after itself, so its self-calls are jank's native named recursion. A leaf called from
+  elsewhere stays coerced and untagged: an ungated inner fn* on every hinted arity measured a
+  hinted leaf 5.5x worse on the patched build (414989 us against 75344 per 2e6 calls);
+- a return: the arglist's tag, else defn's `:rettag`, else the name's tag, becomes the inner
+  fn*'s `:rettag`; a fn-level recur stays inside a loop* under the coercion;
+- a let*/loop* local: the coerced init goes through `:native-local-casts`
+  (`cpp/jank.runtime.to_int` / `to_real`), which jank types natively.
+
+On unpatched apt (H0 re-run, `jank run -O3 --eager dev/perf/jank_h0_bench.jank`, 3 runs,
+hinted/plain): call-long 1.39-1.42, call-double 1.24-1.26, fib 27 ^long leaf 1.61-1.66,
+down-long/double 0.12-0.13, locals 1.00-1.03, a return-only hint 0.98-0.99. Apt honors a parameter
+hint natively (a loop over it wins 8x; a hinted leaf called from elsewhere loses 1.2-1.7x: the
+typed entry converts) and ignores a return hint and a local's tag; the cast above is what makes a
+hinted local native on apt. On the full patch series the same probe ties or wins on every row
+(call-long 1.00-1.03, fib leaf 1.00-1.04): 28/32 type the plain twin too, so H0's "a hinted
+leaf loses" is an unpatched-jank fact, not a jank fact.
+
+`bb bench:programs`, apt, cohost on jank, two rounds before -> after, ms (jank-aot in
+parentheses): fib-hinted 2003/2086 -> 414/410 (141), tak-hinted 11997/12458 -> 2407/1806 (823),
+binary-trees-14-hinted 263/203 -> 250/193 (131), sum-overflow-hinted flat. After/jank-aot:
+fib-hinted 15.2x -> 3.0x, tak-hinted 15.1x -> 2.2x, binary-trees-14-hinted 1.7x -> 1.5x,
+sum-overflow-hinted 1.0x. Patched: 21.7x -> 5.0x, 48.8x -> 6.9x, 2.0x -> 1.3x, 1.5x -> 1.4x.
+JVM boot 158/158 on the merge. The remainder is the ops through vars (U6-6), allocation (U5-4)
+and the hinted leaf (U6-7's guarded speculation; in flight, not in this tree).
+
+## Emission gaps (M-9, 2026-11-02)
+
+A def whose value is an unnamed `fn*` carries the def's name onto the
+`fn*` on jank (the `:defn-fn-name?` capability; jank's own `defn` emits
+the same shape), so self-recursion is a direct call instead of a var
+deref and a dynamic call. R's P6 (`JANK_O=3`, medians of 5): fib-stock
+73,445,800 ns -> 19,823,645; fib-stock / fib-fn-def x3.57 -> x1.00.
+Dotted def names are skipped (deftype's `Box.` constructor is not a fn
+name; jank's codegen rejects it on a `fn*`). The semantic price is
+pinned by the battery row "redefining a fn during its own recursion":
+the JVM answers `:redefined` (the recursion goes through the var),
+jank answers `:original` -- raw jank's own `defn` answer -- and the row
+stands as a documented host fact. Clojure's direct linking lets
+`^:redef` and `^:dynamic` opt a var out; that opt-out for the self-call
+naming is in flight (jank-MAX U6-6, under the same `:defn-fn-name?`
+key) and not in this tree: on jank today every closure-free def is
+named. One codemod lesson from the same
+work: a raw `(.method ...)` form inside rewrite.cljc breaks the boot
+(the file is rewritten by itself); plain fn calls only there.
+
+Of the shim statics, `Numbers-minus` is now the host's `-` on jank:
+the wrapper checked nothing (the host's `-` throws on nil and on a
+non-number, as the JVM's static does), so the static is the twin and
+`host-aliases` fires. The divide family keeps its wrappers -- jank's
+own `quot`/`rem`/`/` die with SIGFPE on a zero divisor where the JVM
+throws `ArithmeticException` -- and max/min keep theirs (jank's
+`(min 1 ##NaN)` answers 1.0; the JVM's static answers NaN).
+
+`bb bench:jank` after all of it (two runs, host ms constant, stock ms
+as printed): transient-vector x5.07 / x5.37 (was x14.07 in Step 4's
+bench), transduce x11.28 / x11.14, into-vector x5.51 / x5.88,
+set-build x4.22 / x4.34, group-by x1.97 / x2.60, frequencies x2.39 /
+x2.25. Read with care: the bench's stock side still carries first-use
+JIT compilation inside its timed loops (Step 3's profile put it at
+12-34% of a case), and which case pays it moves when the emitted shape
+of every stock fn changes -- into-vector's stock ms went 10.26 ->
+~38 while its host ms never moved. The remaining gap in the
+collection cases is the per-element call path through stock
+`reduce`/transducer step fns, which neither the name nor the twins
+reach; a steady-state per-case method (Step 8) is the instrument that
+can price what is left.
+
+## A cohost-owned runtime for unpatched jank (A4, in flight on max/a4)
+
+Under the ruling, the runtime half of the patch series (the sorted walk, in-place reduce, chunked
+range and vector seqs, string nth, a small vector) is being ported to a cohost-owned C++ extension,
+`cohost.hosts.jank.runtime` (`src/cohost/hosts/jank/`), that unpatched jank loads through its
+`cpp/` interop at boot, its types reaching the stock core through `:chunks` and `:natives`. Not on
+this branch: in flight on `max/a4` (1d67c92). Measured so far on apt (u2, step 0):
+
+- a `cpp/raw` block in a jank module costs +0.3-0.4 s per JIT boot and nothing under AOT or the
+  snapshot; the PCH never holds it;
+- jank's `visit_object` panics on an `object_type` past its maximum, so a cohost type cannot join
+  jank's seq, chunk or equality behaviors: every op on it goes through the shim. The chunk kind
+  is therefore jank's own `obj::chunked_cons` over `obj::array_chunk`;
+- apt's `chunked_cons` realizes its tail at construction (`seq.cpp`:
+  `make_box<chunked_cons>(chunk, seq(rest))`), so a chunked lazy pipeline over `obj::range` is
+  built eagerly and recursively: `(count (map inc (range 1e6)))` over a chunked range exits 139
+  at 1e6 (5e5 works), in jank's own `map` and under cohost alike. 15b-17 fixes it in the patched
+  column; the extension's chunk-cons never forces its rest.

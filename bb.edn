@@ -34,10 +34,23 @@
             (when (= "jank" jank-bin)
               (load-file "dev/perf/jank_snapshot_key.clj")
               ((resolve 'fresh-path)))))
+  docs:check {:doc "README.md's and doc/guide's bash blocks, run as written against one fresh cohost/app project per target: bb docs:check [target ...] (default jvm)"
+              :task (do (def docs? true) (load-file "dev/cli-demo/readme_check.clj"))}
+  readme:check {:doc "README.md's bash blocks, run as written against a fresh cohost/app project per target: bb readme:check [target ...] (default jvm)"
+                :task (load-file "dev/cli-demo/readme_check.clj")}
+  cli:check {:doc "the cohost CLI against the Clojure CLI on the demo (dev/cli-demo): bb cli:check [target ...]; one line per target x case: SAME, ABSENT or DIFF"
+             :task (load-file "dev/cli-demo/check.clj")}
   boot:jolt {:doc "jolt (Chez Scheme): the `jolt` binary on PATH"
              :task (shell "jolt" "-Scp" "src" "-m" "cohost.run")}
-  boot:lpy  {:doc "basilisp (Python): the uv/pip-installed `basilisp` on PATH"
-             :task (shell "basilisp" "run" "-p" "src" "-c" "(require 'cohost.run) (cohost.run/-main)")}
+  ;; D-6: from the cached boot when it is fresh (never stale); else boot!
+  ;; as before. bb boot:lpy-snapshot builds it (dev/perf/lpy_snapshot_ensure.clj).
+  boot:lpy  {:doc "basilisp (Python): the uv/pip-installed `basilisp` on PATH; from the cached boot when fresh"
+             :task (if-let [snap (do (load-file "dev/perf/lpy_snapshot_ensure.clj") ((resolve 'lpy-fresh-src)))]
+                     (shell "basilisp" "run" "-p" snap "-p" "src" "dev/perf/lpy_snapshot_run.lpy" "--snapshot")
+                     (shell "basilisp" "run" "-p" "src" "-c" "(require 'cohost.run) (cohost.run/-main)"))}
+  boot:lpy-snapshot {:doc "basilisp: build the cached boot when stale (record, emit, compile the bytecode), then boot from it and run the batteries"
+                     :task (let [snap (do (load-file "dev/perf/lpy_snapshot_ensure.clj") ((resolve 'lpy-ensure!)))]
+                             (shell "basilisp" "run" "-p" snap "-p" "src" "dev/perf/lpy_snapshot_run.lpy" "--snapshot"))}
   boot:jvm  {:doc "JVM Clojure as the host (the reference adapter)"
              :task (shell "clojure" "-M" "-m" "cohost.run")}
   boot:cljs {:doc "ClojureScript, self-hosted on Node: compile the bootstrap build, then run it"
@@ -151,6 +164,16 @@
                                      "run" "dev/perf/jank_snapshot_run.jank" "--" *command-line-args*)
                               (throw (ex-info (str "boot:jank-snapshot runs the default jank only; with JANK_BIN="
                                                    jank-bin " use bb boot:jank (its AOT modules)") {})))}
+  ;; D-7: a native executable of a project's app on jank (src/cohost/build_jank.clj;
+  ;; lane C's cohost.build calls the same build! for cohost -T:build jank-exe).
+  build:jank {:doc "jank: bb build:jank <project-dir> <main-ns> [name] -- the app as one native executable (<project>/target/jank/<name>), rebuilt when stale"
+              :task (let [[dir main nm] *command-line-args*
+                          project (str (babashka.fs/canonicalize dir))
+                          spath (:out (babashka.process/shell {:dir project :out :string} (str (babashka.fs/canonicalize "bin/cohost")) ":jank" "-Spath"))
+                          roots (vec (remove clojure.string/blank? (clojure.string/split (clojure.string/trim spath) (re-pattern ":"))))]
+                      (load-file "src/cohost/build_jank.clj")
+                      (println ((resolve 'cohost.build-jank/build!)
+                                {:repo (str (babashka.fs/canonicalize ".")) :project project :roots roots :main main :name nm})))}
   bench:cljw {:doc "cohost.bench on ClojureWasm (target/bench-cljw.edn)"
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "cljw" "-cp" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
