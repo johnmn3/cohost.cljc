@@ -62,6 +62,10 @@
    ["binding dynamic" "(do (def ^:dynamic *d* 1) (defn rd [] *d*) [(rd) (binding [*d* 2] (rd)) (rd)])" [1 2 1]]
    ;; U6-8: (/ x y) inline on jank keeps the wrapper's zero-divisor answers
    ["division: IEEE infinities and NaN on a zero divisor, exact otherwise" "(let [z 0 dz 0.0] [(/ 1.0 z) (/ -1 dz) (Double/isNaN (/ 0.0 z)) (/ 6 3) (/ 5 2.0) (/ 7.5 2.5)])" [##Inf ##-Inf true 2 2.5 3.0]]
+   ;; U6-7: nth / count on vectors through the host's own ops, everything else through RT
+   ["nth and count: vectors, strings, lists, an index from a local" "(let [v [4 5 6] i 2] [(nth [1 2 3] 1) (count [1 2]) (count \"abc\") (nth \"abc\" 1) (nth (list 1 2) 1) (nth v i) (count v) (nth v 7 :nf)])" [2 2 3 \b 2 6 3 :nf]]
+   ;; U6-7: assoc on vectors through the host's own op (keys in range), else the booted assoc
+   ["assoc: vector keys in range, an append, a map" "(let [v [4 5 6] k 1] [(assoc v 0 :a 2 :c) (assoc v k :b) (assoc v 3 :d) (assoc {:a 1} :b 2) (assoc v 0 1 1 2 2 3)])" [[:a 5 :c] [4 :b 6] [4 5 6 :d] {:a 1 :b 2} [1 2 3]]]
    ;; U6-8: Math statics where a host's own op could answer differently
    ["Math: round half up, sqrt of negatives and -0.0, pow" "(let [x -4 z -0.0] [(Math/round 2.5) (Math/round -2.5) (Double/isNaN (Math/sqrt -1)) (Double/isNaN (Math/sqrt x)) (neg? (/ 1.0 (Math/sqrt -0.0))) (neg? (/ 1.0 (Math/sqrt z))) (Math/pow 2 0.5) (Math/sqrt 4) (Math/sqrt 2.25)])" [3 -2 true true true true 1.4142135623730951 2.0 1.5]]
    ["with-redefs" "(do (defn orig [] :orig) [(with-redefs [orig (fn [] :redef)] (orig)) (orig)])" [:redef :orig]]
