@@ -1,0 +1,12 @@
+;; D-6: Basilisp's cached boot, the recording (as dev/perf/jank_snapshot_record.jank):
+;; a boot with record mode on and the twelve libraries; the events to the
+;; file named by the first argument.
+;;   basilisp run -p src dev/perf/lpy_snapshot_record.lpy <events.edn>
+(require 'cohost.run)
+(require 'cohost.boot)
+(require 'cohost.bench)
+(cohost.boot/print-report (cohost.boot/boot! {:record? true}))
+(doseq [lib cohost.bench/libs] (cohost.boot/load-lib! lib))
+(let [ev (cohost.boot/snapshot-stop!)]
+  (spit (first *command-line-args*) (pr-str ev))
+  (println "SNAPSHOT-EVENTS" (count ev)))

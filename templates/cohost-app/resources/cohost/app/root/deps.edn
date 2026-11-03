@@ -12,5 +12,6 @@
   :test {:extra-paths ["test"] :exec-fn {{top/ns}}.{{main/ns}}-test/run}
   ;; cohost -T:build build
   :build {:deps {io.github.clojure/tools.build {:git/tag "v0.10.14" :git/sha "1176afd"}
-                 cohost/cohost {:local/root "{{cohost-root}}"}}
+                 ;; cohost.build, from the public repo at the commit the template came from
+                 io.github.johnmn3/cohost.cljc {:git/sha "{{cohost-sha}}"}}
           :ns-default build}}}

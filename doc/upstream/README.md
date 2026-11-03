@@ -1,6 +1,8 @@
 # Upstream drafts
 
-Drafts only. Nothing here has been filed. Each file is one bug, with the command that was run and the output it printed. Hosts: jank `0.1-noble` (`jank compiler jank-0.1-alpha`) and clojurust `cljrs 0.2.32`. jank-11 to jank-21 (lane R, order R-2, 2026-11-02) are the performance and correctness items of doc/research/jank-faster-than-jvm.md; their repro scripts are under `dev/research/upstream/`.
+Drafts only. Nothing here has been filed, and by the ruling of 2026-11-02 nothing is: the jank
+drafts are the record behind `upstream/jank/patches`, which cohost keeps for its own measurement.
+Each file is one bug, with the command that was run and the output it printed. Hosts: jank `0.1-noble` (`jank compiler jank-0.1-alpha`) and clojurust `cljrs 0.2.32`. jank-11 to jank-21 (lane R, order R-2, 2026-11-02) are the performance and correctness items of doc/research/jank-faster-than-jvm.md; their repro scripts are under `dev/research/upstream/`.
 
 | draft | status |
 |---|---|

@@ -6,7 +6,9 @@
 
 (def options
   [["-g" "--greeting WORD" "the greeting" :default "hello"]
-   ["-n" "--times N" "how many lines" :default 1 :parse-fn parse-long]])
+   ["-n" "--times N" "how many lines" :default 1 :parse-fn parse-long]
+   ;; a flag: no argument (tools.cli reads that from an unmatched regex group)
+   ["-l" "--loud" "upper-case the greeting"]])
 
 (defn greeting [word user]
   (str word ", " (greeter/name-of user) "!"))
@@ -16,7 +18,8 @@
     (if (seq errors)
       (do (println (str/join "\n" errors)) (System/exit 2))
       (dotimes [_ (:times options)]
-        (println (greeting (:greeting options) (or (first arguments) "jvm-user")))))))
+        (println (cond-> (greeting (:greeting options) (or (first arguments) "jvm-user"))
+                   (:loud options) str/upper-case))))))
 
 (defn run
   "-X:run: the alias's :exec-args, then the command line's key value pairs."

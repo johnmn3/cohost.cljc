@@ -81,6 +81,7 @@
    :macro-def-style [[] ":meta when `(def ^:macro x (fn [&form &env ...]))` + mark-macro! makes a macro; :defmacro when only a defmacro form does"]
    :macro-wrap-style [[] ":root when a macro's fn can be replaced after definition (alter-var-root); :source when its body must be wrapped at definition"]
    :code-form       [['form] "nil (the default), or a fn making a macro's expansion code the host's compiler takes back: applied to every expansion the codemod rewrites (ClojureWasm re-analyses no array seq, which is what a fn's & rest args are there)"]
+   :loop-int-init   [['n] "nil (the default), or a fn of an integer literal -> the form a loop* binding started from that literal starts from instead. jank on unpatched apt: (cpp/long n), since jank types a literal-initialized loop local as a C++ int and recur converts back into it, wrapping at 32 bits (draft jank-21; A5). The series build (12-21) needs none: nil there"]
    :multimethod-cache? [[] "nil (the default): a stock multimethod looks its method up through its state atom's per-dispatch-value cache on every call; true: through a one-entry cache of (state, hierarchy) -> {dispatch value method} checked first, with no atom swap (cohost.shim mf-fast-method); or a fn [cell state-atom dv] -> the cached method or nil, the host's own one-call hit check of that cell ([state-value hierarchy-ref hierarchy-value {dv method}]), nil falling to mf-fast-method (jank's, a cpp/raw call; other hosts off until measured)"]
    :sort-host-compare? [[] "nil (the default): sort and a sorted coll's compare call the stock compare through the shim's comparator wrapper; true: when the comparator is the stock core's compare (whose body is the host's compare), the host's compare itself (X3-2; jank does this unconditionally, X4-1)"]
    :snapshot-emit   [['event] "nil (the default). When boot! runs with {:record? true}, each recorded event is passed to this fn if it is one. Off, and nil, do not call it"]
@@ -115,6 +116,7 @@
    :with-meta       [['x 'm] "x with its metadata replaced by m: the host's with-meta (the default), or the type's own on a :cohost-types host, whose instances the host's with-meta cannot touch"]
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
+   :math-aliases    [[] "{shim static name (a string, \"Math-sqrt\") -> (fn [args]) returning the form a call (Math/sqrt x) becomes on this host, or nil to keep the shim call}: the host's own math op at the call head, where its value is the JVM's for every argument (a probe per op; ops whose semantics differ keep the shim wrapper). Default {}"]
    :static-aliases  [[] "{shim static name (a string) -> the host core's symbol}: statics the host-aliases? scan cannot match because the shim's value is a wrapper with its own body, where that wrapper's semantics are the host op's on this host (jank: Numbers-minus is jank's -). Merged over the scan's aliases. Default {}"]
    :core-aliases    [[] "#{stock core name}: calls of these booted stock core fns are emitted as the host core's fn of that name, whose semantics are the stock fn's on this host, so the host's compiler sees (and may inline) its own op; the stock fn stays booted for every other use (apply, a value, with-redefs of the booted var). Default #{}"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
@@ -360,6 +362,7 @@ namespace cohost_err {
     :static-types nil
     :host-aliases? true
     :static-aliases {}
+    :math-aliases {}
     :core-aliases #{}
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
@@ -399,6 +402,7 @@ namespace cohost_err {
     :code-form nil
     :snapshot-emit nil
     :multimethod-cache? nil
+    :loop-int-init nil
     :sort-host-compare? nil
     :shim-ref nil
     :variadic-recur-style :jvm
@@ -637,7 +641,9 @@ namespace cohost_err {
   []
   (when-let [m (current)] (:native-local-casts m)))
 (defn host-aliases? [] (boolean (cap :host-aliases?)))
+(defn loop-int-init "The adapter's :loop-int-init fn, or nil." [] (get @installed :loop-int-init))
 (defn static-aliases [] (or (cap :static-aliases) {}))
+(defn math-aliases [] (or (cap :math-aliases) {}))
 (defn core-aliases [] (or (cap :core-aliases) #{}))
 (defn env-locals "The local symbols of a macro's &env." [env]
   (try-all (fn [] (filter symbol? ((cap :env-locals) env)))))
@@ -646,11 +652,19 @@ namespace cohost_err {
 (defn slurp-file [path] ((cap :slurp) path))
 (defn spit-file [path s] ((cap :spit) path s))
 (defn read-forms
-  "cb of each top-level form of src, read as the JVM reads a .cljc: cohost.scan
-   resolves its reader conditionals (:clj, else :default) before the host's
-   reader sees the text, so every host takes the branch the JVM takes."
-  [src cb]
-  ((cap :read-forms) (if (neg? ((cap :index-of) src "#?" 0)) src (scan/resolve-conditionals src #{":clj"})) cb))
+  "cb of each top-level form of src. cohost.scan resolves its reader
+   conditionals before the host's reader sees the text, by this target's
+   ranking of the platform keys (cohost.scan/rankings; :clj, then :default,
+   on every target today), so every host takes the same branch whatever its
+   own reader would. path (when src is a file's) is where it came from: while
+   a form is read, cohost.scan/provenance says which key's code it is."
+  ([src cb] (read-forms src cb nil))
+  ([src cb path]
+   (let [[text spans] (if (neg? ((cap :index-of) src "#?" 0))
+                        [src []]
+                        (scan/resolve-conditionals+spans src (scan/ranking (:name (current)))))]
+     (scan/with-source text spans path
+       (fn [tick] ((cap :read-forms) text (fn [form] (tick) (cb form))))))))
 (defn read-string* ([s] ((cap :read-string) s)) ([s opts] ((cap :read-string) s opts)))
 (defn plain-symbol "x, a name taken from a form: the bare symbol (adapter :plain-symbol)." [x] ((cap :plain-symbol) x))
 (defn host-read-string [s] (if-let [f (get @installed :host-read-string)] (f s) (read-string* s)))
