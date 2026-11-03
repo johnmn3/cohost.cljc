@@ -17,6 +17,7 @@
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
 (load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_inputs.clj"))
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/sha256.clj"))
 
 (def ^:private root "target/jank-snapshot")
 (def ^:private src-dir (str root "/src"))
@@ -32,9 +33,8 @@
 
 (defn snapshot-key []
   (let [files (input-files)
-        sums (:out (shell {:out :string :in (str/join "\n" files)} "xargs" "-d" "\n" "sha256sum"))]
-    (-> (shell {:out :string :in (str sums "jank " (jank-version) "\n")} "sha256sum")
-        :out str/trim (str/split #"\s+") first)))
+        sums (cohost.dev.sha256/sha256sum-listing files)]
+    (cohost.dev.sha256/sha256-hex (str sums "jank " (jank-version) "\n"))))
 
 (defn- caches [] (mapv str (fs/glob aot-dir "_cache/*")))
 

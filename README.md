@@ -23,6 +23,9 @@ export PATH="$HOME/cohost/bin:$PATH"
 clojure -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
 ```
 
+The `export` lasts for this shell; add the same line to `~/.zshrc` (or `~/.bashrc`) to keep
+`cohost` on PATH. On Windows, run `bin\cohost.cmd` (it runs `bin/cohost` with `bb`).
+
 ## A new project
 
 Projects come from [deps-new](https://github.com/seancorfield/deps-new), with cohost's
@@ -78,7 +81,8 @@ cohost -Sdeps '{:deps {org.clojure/tools.cli {:mvn/version "1.2.245"}}}' -e "(re
 ```
 
 A library's Clojure sources load through cohost, so they run on stock `clojure.core` on
-any runtime. `cohost -Spath` prints the source roots.
+any runtime. `cohost :<target> -Spath` prints the source roots it loads from (on `:jvm` it is
+the Clojure CLI's own `-Spath`, the classpath).
 
 ## Tests
 
@@ -138,6 +142,18 @@ for you.
 | `:lg` | let-go (Go) | yes | `dev/install/lg.sh` |
 | `:cljrs` | clojurust (Rust) | not yet | `dev/install/cljrs.sh` |
 
+Every `dev/install/<host>.sh` runs on Linux x86_64 and macOS (arm64; x86_64 where the
+host publishes a build), and under Git Bash on Windows where the host ships for Windows
+(jolt; let-go through `go install`; basilisp). Each installs its pinned version, checks the
+release checksum, skips the work when that version is already on PATH (`COHOST_FORCE=1`
+reinstalls), and puts binaries in `/usr/local/bin` when it is writable, else `~/.local/bin`
+(`COHOST_BIN` picks another). Missing toolchains come with it: uv for basilisp, PHP 8.5 for
+Phel (Homebrew on macOS, ppa:ondrej/php on Ubuntu), Rust for clojurust (rustup). jank comes
+from jank's apt repository on Ubuntu and from jank's Homebrew tap on macOS, which Homebrew
+asks you to trust once (`brew trust --formula jank-lang/jank/jank`; or run the script with
+`COHOST_TRUST_TAPS=1`). `bash dev/install/all.sh` installs every runtime and reports any it
+could not.
+
 What differs from one runtime to the next, and startup and speed for each:
 [Choosing a runtime](doc/guide/07-choosing-a-runtime.md). The per-host performance switches:
 [How it works](doc/guide/08-how-it-works.md#performance-keys).
@@ -160,7 +176,7 @@ The guide covers each part of using cohost; every command in it runs, as written
 
 Also: [the `cohost` command's reference](doc/CLI.md), [embedding cohost in a host
 program](doc/EMBEDDING.md), [performance](doc/PERF.md), [the measurements and host
-facts](doc/REPORT.md).
+facts](doc/REPORT.md), [an out-of-the-box run on macOS and its paper cuts](doc/OOTB-MACOS.md).
 
 ## Developing cohost
 

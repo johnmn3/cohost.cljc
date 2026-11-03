@@ -27,7 +27,9 @@ data, edn, template, test, math, stacktrace, repl and clojure.spec.alpha. On the
 jolt-conformance corpus (4,942 rows) the stock core on jolt passes 4,306 (495 fail, 141 error);
 jolt's own core passes 4,468 (2026-10-30, the same jolt).
 
-`:jank` runs the jank package from jank's apt repository (`dev/install/jank.sh`) as it ships.
+`:jank` runs the jank package from jank's apt repository on Ubuntu, or jank's Homebrew tap on
+macOS arm64 (`dev/install/jank.sh`; Homebrew asks you to trust the tap once:
+`brew trust --formula jank-lang/jank/jank`), as it ships.
 cohost also carries a patch series against jank under `upstream/jank/` for its own measurements
 (`doc/PERF.md`, "Two jank binaries"); nothing selects it unless `JANK_BIN` names a build of it.
 
