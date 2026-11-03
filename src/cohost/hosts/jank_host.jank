@@ -1248,21 +1248,6 @@ namespace cohost_assoc {
 
 ;; ---------------------------------------------------------------------------
 ;; A6-2 cohost_json: the json program's per-operation costs on jank (dev/research/a6/json_*).
-;; conj: the stock conj is a var call to RT-conj (the shim's cohost-type check) and then
-;; jank's conj, three dynamic calls per element (p08 conj+into: +170 ms per 1e6 over plain
-;; jank on the series build). A jank collection takes jank's conj directly; a cohost
-;; instance the shim's RT-conj, as the stock path does (its descriptor's :conj, or the
-;; ClassCastException).
-(def ^:private shim-RT-conj (delay (var-get (resolve 'cohost.shim/RT-conj))))
-(def ^:private host-conj (delay @(get (ns-publics 'clojure.core) 'conj)))
-(def ^:private native-conj
-  (fn ([] [])
-      ([c] c)
-      ([c x] (if (cpp/cohost_obj.is_cohost c) (@shim-RT-conj c x) (@host-conj c x)))
-      ([c x & xs] (if (cpp/cohost_obj.is_cohost c)
-                    (reduce (fn [cc y] (@shim-RT-conj cc y)) (@shim-RT-conj c x) xs)
-                    (apply @host-conj c x xs)))))
-
 ;; A6-2 cohost_json: map? / vector? (chunks' cond chain): a cohost instance (a record is a
 ;; map on the JVM, a deftype may implement IPersistentVector) takes the booted stock fn; any
 ;; other value jank's own, whose answer is the stock fn's on jank's collections
