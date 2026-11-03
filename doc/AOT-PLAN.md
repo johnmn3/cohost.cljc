@@ -138,3 +138,12 @@ Guide 07 listed basilisp at 166/167; on ab3cd28 its source boot gives 165/167, a
 - `dev/perf/snapshot_run.cljc` on the emitted modules passes the same core and library
   batteries as the boot from source.
 - `bb docs:check <runtime>`; `bb bench:programs <runtime>-built` gives the JVM's answers.
+
+### Gates passed, per runtime
+
+| runtime | `run you` from another directory | snapshot_run.cljc (modules = source boot) | `bb docs:check` | `<runtime>-built` gives the JVM's answers |
+|---|---|---|---|---|
+| jolt | yes (macOS) | yes: 167/167, 62/62 (macOS) | pass, 0 failing (Linux, 4497c85, 2026-11-03 3:32 AM ET) | being measured (Linux) |
+| basilisp | yes (macOS) | yes: 165/167, 62/62 (macOS) | pass, 22/22 (Linux, 4497c85, 3:42 AM ET) | being measured (Linux) |
+| ClojureWasm (modules) | yes (macOS) | yes: 165/167, 62/62 (macOS) | pass, 0 failing (Linux, 4497c85, 4:06 AM ET) | being measured (Linux) |
+| Phel | not yet | yes: 195/205, 62/62, the same 10 rows as the source boot (lane C, c/aot-phel @ ba31a84) | not yet | not yet |
