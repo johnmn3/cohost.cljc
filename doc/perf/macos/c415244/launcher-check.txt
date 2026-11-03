@@ -1,0 +1,19 @@
+== bb boot:jank-snapshot
+rc=0
+SNAPSHOT-STALE key d3b94cd68dde49a851ae86c222dfd11d26830ca6632688fe6d8d57d63c2d2441 is not 91c754bbfd4c5ba61a1c3f6a572498d4cbf250aec3e025edfcc085f19fbd5001
+SNAPSHOT-BUILT 91c754bbfd4c5ba61a1c3f6a572498d4cbf250aec3e025edfcc085f19fbd5001 in 156851 ms
+battery: 214/216 stock behaviors pass
+libraries: 62/62 cases pass across 12 clojure.* libraries
+bb boot:jank-snapshot  183.71s user 5.69s system 101% cpu 3:07.36 total
+== 1: cohost :jank -m demo.main you
+hello, you!
+../../bin/cohost :jank -m demo.main you  1.29s user 0.16s system 61% cpu 2.345 total
+== 2: cohost :jank -m demo.main you
+hello, you!
+../../bin/cohost :jank -m demo.main you  1.25s user 0.09s system 100% cpu 1.335 total
+== 3: cohost :jank -e '(+ 1 2)'
+3
+../../bin/cohost :jank -e '(+ 1 2)'  0.51s user 0.07s system 100% cpu 0.578 total
+== ls
+-rwxr-xr-x@ 1 john  staff  91493016 Nov  3 13:07 ../../target/jank-snapshot/aot/cohost-jank
+

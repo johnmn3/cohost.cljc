@@ -1,0 +1,1 @@
+Apple M5, 10 cores (4P+6E), 32 GB, macOS 26.5; OpenJDK 26.0.1, Clojure CLI 1.12.5.1645, bb 1.12.218; jank 0.1 (Homebrew tap, arm64-apple-darwin25.5.0-f06292e476b8a74...), jolt 0.8.23, basilisp 0.5.1 (Python 3.12.13), ClojureWasm 1.15.4 ReleaseSafe, Phel 0.54.0 on PHP 8.5.12, let-go 1.13.0, ClojureScript 1.12.42 on Node 22.22.3; cohost c0431c6

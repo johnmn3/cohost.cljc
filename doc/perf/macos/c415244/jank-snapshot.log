@@ -1,0 +1,56 @@
+SNAPSHOT-STALE key d3b94cd68dde49a851ae86c222dfd11d26830ca6632688fe6d8d57d63c2d2441 is not 91c754bbfd4c5ba61a1c3f6a572498d4cbf250aec3e025edfcc085f19fbd5001
+AOT-FRESH
+AOT-DIR target/jank-aot/_cache/arm64-apple-darwin25.5.0-efb16dc579b15d708c8ea9e0fe4f46672ec00793030fe784582529ec05b342cb
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 514   from host: 171   natives: 28   skipped: 78   errors: 0
+SNAPSHOT-EVENTS 1453 bytes 778118
+MODULE cohost.core target/jank-snapshot/src/cohost/core.jank 522
+MODULE cohost.walk target/jank-snapshot/src/cohost/walk.jank 10
+MODULE cohost.set target/jank-snapshot/src/cohost/set.jank 14
+MODULE cohost.string target/jank-snapshot/src/cohost/string.jank 25
+MODULE cohost.zip target/jank-snapshot/src/cohost/zip.jank 29
+MODULE cohost.data target/jank-snapshot/src/cohost/data.jank 14
+MODULE cohost.edn target/jank-snapshot/src/cohost/edn.jank 2
+MODULE cohost.template target/jank-snapshot/src/cohost/template.jank 2
+MODULE cohost.test target/jank-snapshot/src/cohost/test.jank 59
+MODULE cohost.stacktrace target/jank-snapshot/src/cohost/stacktrace.jank 6
+MODULE cohost.math target/jank-snapshot/src/cohost/math.jank 45
+MODULE cohost.repl target/jank-snapshot/src/cohost/repl.jank 15
+MODULE cohost.spec.alpha target/jank-snapshot/src/cohost/spec/alpha.jank 139
+MODULE cohost.spec.gen.alpha target/jank-snapshot/src/cohost/spec/gen/alpha.jank 20
+MODULE cohost.snapshot target/jank-snapshot/src/cohost/snapshot.jank 10
+Note: Looks like your first run with these flags. Building pre-compiled header… done!
+SNAPSHOT-BUILT 91c754bbfd4c5ba61a1c3f6a572498d4cbf250aec3e025edfcc085f19fbd5001 in 156851 ms
+SNAPSHOT-BOOT-MS 127.479
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 514   from host: 171   natives: 28   skipped: 78   errors: 0
+battery: 214/216 stock behaviors pass
+   FAIL subs count nth first last butlast
+        got      "ERR Unterminated vector."
+        expected ["el" 5 2 :d \a 3 (1 2)]
+   FAIL Character outside ASCII
+        got      "ERR Unexpected end of file."
+        expected [true true true false]
+libraries: 62/62 cases pass across 12 clojure.* libraries
+  clojure.walk  7/7
+  clojure.set  5/5
+  clojure.string  10/10
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
+  clojure.zip  7/7
+  clojure.data  5/5
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
+  clojure.edn  4/4
+  clojure.template  2/2
+  clojure.test  4/4
+  clojure.math  7/7
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
+  clojure.stacktrace  2/2
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
+  clojure.repl  3/3
+     not loaded on this host (expected; its cases do not need it): source-fn: The symbol `proxy` could not be resolved.
+     not loaded on this host (expected; its cases do not need it): set-break-handler!: The symbol `sun.misc.Signal/handle` could not be resolved.
+  clojure.spec.alpha  6/6
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
+     not loaded on this host (expected; its cases do not need it): fspec-impl: A cpp_type expression was found during codegen, but that should not be possible.
+SNAPSHOT-LIBS-BATTERY-MS 2721.110125
+bb boot:jank-snapshot  183.71s user 5.69s system 101% cpu 3:07.36 total
