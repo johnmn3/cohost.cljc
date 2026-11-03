@@ -109,7 +109,7 @@ namespace cohost_rt {
       return jank::runtime::chunk_cons(chunk, rest);
     }
     auto const c(expect_object<obj::array_chunk>(chunk));
-    if(c->buffer.size() == c->offset) { return rest; }
+    if(buf(c->buffer).size() == c->offset) { return rest; }
     return make_box<obj::chunked_cons>(chunk, rest);
   }
 
