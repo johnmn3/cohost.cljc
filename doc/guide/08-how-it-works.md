@@ -93,7 +93,7 @@ src/cohost/
   policy.cljc        skip / take-from-host / replace, per form of core.clj;
                      per-library adjustments
   boot.cljc          the boot loop, macro wrapping, the loader, eval-str, reports
-  battery.cljc       208 stock behaviors checked after a boot
+  battery.cljc       216 stock behaviors checked after a boot
   lib_battery.cljc   12 clojure.* libraries, checked against JVM Clojure's answers
   corpus.cljc        the conformance-corpus scoreboard
   corpus_report.cljc its report (no dependencies: babashka merges the two sides)

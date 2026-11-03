@@ -10,14 +10,14 @@ command. The same source runs on each; what differs is the host underneath.
 
 | target | runtime | core battery | library battery | install |
 |---|---|---:|---:|---|
-| `:jvm` | JVM Clojure (the real CLI) | 208/208 | 62/62 | the Clojure CLI |
-| `:jolt` | jolt 0.8.23 (Chez Scheme) | 206/208 | 62/62 | `dev/install/jolt.sh` |
-| `:jank` | jank 0.1 (C++/LLVM) | 206/208 | 62/62 | `dev/install/jank.sh` |
-| `:cljs` | ClojureScript 1.12.42, self-hosted, on Node | 205/208 | 62/62 | Node |
-| `:lpy` | basilisp 0.5.1 (Python) | 201/208 | 62/62 | `dev/install/basilisp.sh` |
-| `:cljw` | ClojureWasm 1.15.4 | 202/208 | 62/62 | `dev/install/cljw.sh` |
-| `:phel` | Phel 0.54.0 (PHP 8.5) | 198/208 | 62/62 | `dev/install/phel.sh` |
-| `:lg` | let-go 1.13.0 (Go) | 202/208 | 62/62 | `dev/install/lg.sh` |
+| `:jvm` | JVM Clojure (the real CLI) | 216/216 | 62/62 | the Clojure CLI |
+| `:jolt` | jolt 0.8.23 (Chez Scheme) | 213/216 | 62/62 | `dev/install/jolt.sh` |
+| `:jank` | jank 0.1 (C++/LLVM) | 214/216 | 62/62 | `dev/install/jank.sh` |
+| `:cljs` | ClojureScript 1.12.42, self-hosted, on Node | 214/216 | 62/62 | Node |
+| `:lpy` | basilisp 0.5.1 (Python) | 205/216 | 62/62 | `dev/install/basilisp.sh` |
+| `:cljw` | ClojureWasm 1.15.4 | 209/216 | 62/62 | `dev/install/cljw.sh` |
+| `:phel` | Phel 0.54.0 (PHP 8.5) | 204/216 | 62/62 | `dev/install/phel.sh` |
+| `:lg` | let-go 1.13.0 (Go) | 209/216 | 62/62 | `dev/install/lg.sh` |
 | `:cljrs` | clojurust 0.2.32 (Rust) | not wired into `cohost` | | `dev/install/cljrs.sh` |
 
 The core battery checks behaviors of `clojure.core` against JVM Clojure 1.12's answers; the
