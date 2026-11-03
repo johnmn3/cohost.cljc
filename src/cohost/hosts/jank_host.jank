@@ -372,6 +372,55 @@ namespace cohost_reduce {
     return res;
   }
 }
+// A5: + - * on unpatched jank wrap at 32 bits on two small integers (jank's
+// small_integer payload is i32 and its add/sub/mul arms compute in it: draft
+// jank-12). These are the shim's Numbers-add/minus/multiply on jank when the
+// boot probe sees the wrap: two small integers in i64 (no overflow possible),
+// two integers checked in i64 (nil back on overflow: the caller throws
+// ArithmeticException integer overflow, as Clojure's Numbers does), anything
+// else (reals, ratios, big numbers) jank's own arm.
+#include <jank/runtime/core/math.hpp>
+#include <jank/runtime/core/make_box.hpp>
+namespace cohost_num {
+  using namespace jank::runtime;
+  inline bool int_operand(object_ref const x) {
+    auto const t(x.get_type());
+    return t == object_type::small_integer || t == object_type::integer;
+  }
+  inline object_ref add(object_ref a, object_ref b) {
+    if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
+      return make_box(static_cast<jank::i64>(detail::as_integer(a.raw())) + static_cast<jank::i64>(detail::as_integer(b.raw())));
+    }
+    if (int_operand(a) && int_operand(b)) {
+      jank::i64 r{};
+      if (__builtin_add_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
+      return make_box(r);
+    }
+    return jank::runtime::add(a, b);
+  }
+  inline object_ref sub(object_ref a, object_ref b) {
+    if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
+      return make_box(static_cast<jank::i64>(detail::as_integer(a.raw())) - static_cast<jank::i64>(detail::as_integer(b.raw())));
+    }
+    if (int_operand(a) && int_operand(b)) {
+      jank::i64 r{};
+      if (__builtin_sub_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
+      return make_box(r);
+    }
+    return jank::runtime::sub(a, b);
+  }
+  inline object_ref mul(object_ref a, object_ref b) {
+    if (detail::is_tagged_small_int(a.raw()) && detail::is_tagged_small_int(b.raw())) {
+      return make_box(static_cast<jank::i64>(detail::as_integer(a.raw())) * static_cast<jank::i64>(detail::as_integer(b.raw())));
+    }
+    if (int_operand(a) && int_operand(b)) {
+      jank::i64 r{};
+      if (__builtin_mul_overflow(to_int(a), to_int(b), &r)) { return make_box<obj::nil>(); }
+      return make_box(r);
+    }
+    return jank::runtime::mul(a, b);
+  }
+}
 namespace cohost_var {
   using namespace jank::runtime;
   inline object_ref set_dynamic(object_ref v) {
@@ -389,6 +438,24 @@ namespace cohost_var {
   }
 }
 ")
+
+;; A5: integer + - * correct past 2^31 on unpatched jank. The probe runs jank's
+;; own + at boot: where it wraps (apt 0.1-noble) the shim's Numbers-add /
+;; minus / multiply are these (the C++ above, one call); where it does not (the
+;; series build, 12-21), they stay nil and the shim keeps jank's own fns, which
+;; the codemod then aliases inline.
+(def ^:private int-wraps? (not= 2147483648 (+ (identity 2147483647) 1)))
+(defn- int-overflow [] (throw (adapter/ex* 'java.lang.ArithmeticException "integer overflow")))
+(def num-add
+  (when int-wraps?
+    (fn ([x y] (let [r (cpp/cohost_num.add x y)] (if (nil? r) (int-overflow) r))))))
+(def num-minus
+  (when int-wraps?
+    (fn ([x] (let [r (cpp/cohost_num.sub 0 x)] (if (nil? r) (int-overflow) r)))
+        ([x y] (let [r (cpp/cohost_num.sub x y)] (if (nil? r) (int-overflow) r))))))
+(def num-multiply
+  (when int-wraps?
+    (fn ([x y] (let [r (cpp/cohost_num.mul x y)] (if (nil? r) (int-overflow) r))))))
 
 ;; X4-1: the shim's reduce with and without an init (the stock reduce's IReduceInit and
 ;; coll-reduce paths, so transduce and into too) over a range or a vector,
@@ -1640,6 +1707,10 @@ namespace cohost_obj {
   {:name :jank
    ;; the shim's stock multimethod behind a one-entry cache (X2-1, doc/research/jank-dispatch.md)
    :multimethod-cache? mm-hit
+   ;; A5: a loop local started from an integer literal is a native long, not the
+   ;; C++ int unpatched jank gives it (recur wrapped it at 32 bits); nil on the
+   ;; series build, whose literals are already 64 bit
+   :loop-int-init (when int-wraps? (fn [n] (list 'cpp/long n)))
    :core-ns 'clojure.core
    :catch-all 'cpp/jank.runtime.object_ref
    :read-forms read-forms
@@ -1719,7 +1790,9 @@ namespace cohost_obj {
    ;; -remainder keep their wrapper: jank's quot and rem by zero throw without
    ;; the JVM's "Divide by zero"; Numbers-max and -min keep theirs: jank's
    ;; (max 1 ##NaN) is 1.0, the JVM's NaN.
-   :static-aliases {"Numbers-minus" 'clojure.core/-}
+   ;; (A5: not where jank's - wraps at 32 bits: there Numbers-minus is the
+   ;; checked num-minus, and aliasing it back to jank's - would undo it)
+   :static-aliases (if int-wraps? {} {"Numbers-minus" 'clojure.core/-})
    ;; U6-8: Math/sqrt at the call head is jank's runtime sqrt on the double,
    ;; inline. A negative argument is the JVM's NaN as a literal: std::sqrt gives
    ;; a negative-signed NaN, and boxing one crashes jank (probe: (let* [r
@@ -1887,9 +1960,11 @@ namespace cohost_obj {
                        double (list 'cpp/jank.runtime.is_real sym)
                        nil))
    ;; Step 4 natives, one name at a time (M-5). :host = jank's own core var.
-   :natives {'clojure.core/re-seq :host
-             'clojure.core/re-find :host
-             ;; atoms on jank are jank's own clojure.lang.Atom (probed
+   ;; re-find and re-seq are NOT natives: jank's own answer "" for an optional
+   ;; group that did not match, where the JVM's is nil ((re-find #"a(b)?" "a")
+   ;; -> ["a" ""]), which tools.cli reads as a flag's argument. The stock fns
+   ;; over the shim's Matcher (:re-find-at, std::smatch's matched) answer nil.
+   :natives {;; atoms on jank are jank's own clojure.lang.Atom (probed
              ;; 2026-11-02), so swap!/reset! cannot meet a cohost instance.
              'clojure.core/swap! :host
              'clojure.core/reset! :host

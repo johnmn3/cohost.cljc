@@ -4,8 +4,15 @@ Pinned base: jank-lang/jank `f3d82d65499920f81216e9235bd5d3a34a968e3f` (2026-11-
 apt package `0.1-noble` (`jank compiler jank-0.1-alpha`) ships headers and `core.jank` byte-identical
 to that commit; the compiler's `.cpp` files are only in the clone.
 
+These patches are cohost's measurement column, not a contribution: they are never sent to
+jank-lang/jank (no pull request, issue or branch), and `doc/upstream/` stays drafts. The series
+is applied only by `dev/install/jank-src.sh`; nothing in `bb.edn` or `bin/cohost` selects the
+resulting binary unless `JANK_BIN` names it (ruling of 2026-11-02 6:2x PM ET: unpatched jank
+ships, the patched column is shown beside it). The series holds 21 patches (11 through 34, with
+12-21, 15a-16 and 15b-17 folded), one per draft in `doc/upstream/jank-11..34`.
+
 - `patches/series`: the patches in apply order (`git apply` from the clone's root), one per draft
-  in `doc/upstream/jank-11..21`.
+  in `doc/upstream/jank-11..34`.
 - `dev/install/jank-src.sh` (lane U0): builds the pinned sha with the series applied into
   `/usr/local/lib/jank-dev`; `JANK_BIN` points cohost's jank tasks and `dev/research` runners at it.
 
