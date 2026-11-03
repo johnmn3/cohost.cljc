@@ -420,6 +420,18 @@
   (let [c (or (ctx) (let [c (make-ctx)] (swap! state assoc :ctx c) c))]
     (first (eval-top c ns-sym form))))
 
+(defn- eval-rewritten
+  "host/eval-form of a rewritten form. U6-12: a (do (cpp/raw ...) ... form)
+   the codemod made for a C++ twin is evaluated one form at a time, so the
+   cpp/raw declarations exist before the form naming them is analyzed (jank
+   analyzes a whole do first)."
+  [rewritten]
+  (if (and (seq? rewritten) (= 'do (first rewritten)) (next rewritten)
+           (let [x (second rewritten)] (and (seq? x) (= 'cpp/raw (first x)))))
+    (loop [fs (seq (rest rewritten)) v nil]
+      (if fs (recur (next fs) (host/eval-form (first fs))) v))
+    (host/eval-form rewritten)))
+
 (defn- eval-in*
   "-> [value namespace-after]. lib? (a library's top-level form): scan for new
    macros only after a form that can make one; the loader scans once more
@@ -433,13 +445,13 @@
              (let [form' (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
                    v (if-not (profiling)
                        (let [rewritten (rw/rewrite c form')
-                             v (host/eval-form rewritten)]
+                             v (eval-rewritten rewritten)]
                          (when (and @snapshot-log (not (snap-skip-form? form'))) (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
                          v)
                        (let [t0 (host/nano-time)
                              rewritten (rw/rewrite c form')
                              t1 (host/nano-time)
-                             v (host/eval-form rewritten)
+                             v (eval-rewritten rewritten)
                              t2 (host/nano-time)]
                          (when (and @snapshot-log (not (snap-skip-form? form'))) (snap! {:op :form :ns ns-sym :form (snap-encode rewritten)}))
                          (profile-add! :rewrite (- t1 t0))

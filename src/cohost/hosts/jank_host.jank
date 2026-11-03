@@ -2592,6 +2592,8 @@ namespace cohost_assoc {
    ;; A7-4: a call to a fn var of the namespace being compiled reads the
    ;; var's root and calls its arity directly (cohost_dcall above)
    :direct-var-calls direct-var-call
+   ;; U6-12: C++ twins of self-recursive ^long numeric arities, from cpp/raw
+   :cpp-twins? true
    ;; U6-7: infer what is certain (adapter :static-types); U6-9 (b): :unit
    ;; when the run opts in (cohost.rewrite/static-types! :unit)
    :static-types :sound
