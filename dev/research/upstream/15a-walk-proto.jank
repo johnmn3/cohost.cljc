@@ -1,0 +1,78 @@
+;; u3 (U3-1): the 15a walk (sequence_range.cpp of upstream/jank/patches/15a-16-in-place-walks.patch, copied) compiled
+;; through cpp/raw against the installed jank runtime: checks it against reduce on 25 seq kinds (results equal, a second
+;; walk equal, the walked object prints the same after) and times it. bash dev/research/upstream/run.sh 15a-walk-proto
+(cpp/raw "
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/obj/reduced.hpp>
+namespace u3w {
+  using namespace jank::runtime;
+  static bool steps_in_place(object_ref const s)
+  { return s.has_behavior(object_behavior::sequence_like_in_place) && s.get_type() != object_type::chunked_cons; }
+  static object_ref walk_own(object_ref s, bool &owned)
+  {
+    owned = false;
+    while(s.is_some() && s.get_type() == object_type::lazy_sequence) { s = s.seq(); }
+    if(s.is_nil()) { return {}; }
+    if(steps_in_place(s)) { auto const f{ s.fresh_seq() }; if(f.is_nil()) { return {}; } owned = true; return f; }
+    return s;
+  }
+  static object_ref walk_begin(object_ref const s, bool &owned)
+  {
+    owned = false;
+    if(s.is_nil()) { return {}; }
+    if(s.get_type() == object_type::lazy_sequence) { return walk_own(s.seq(), owned); }
+    auto const f{ s.fresh_seq() };
+    if(f.is_nil()) { return {}; }
+    if(f.get_type() == object_type::lazy_sequence) { return walk_own(f.seq(), owned); }
+    owned = steps_in_place(f);
+    return f;
+  }
+  static object_ref walk_next(object_ref const s, bool &owned)
+  {
+    if(owned) { auto n{ s.next_in_place() }; if(n.is_nil()) { return {}; } if(n == s) { return n; } return walk_own(n, owned); }
+    return walk_own(s.next(), owned);
+  }
+  object_ref reduce(object_ref const f, object_ref const init, object_ref const s)
+  {
+    object_ref res{ init };
+    bool owned{};
+    for(auto d{ walk_begin(s, owned) }; d.is_some(); d = walk_next(d, owned))
+    {
+      res = f.call(res, d.first());
+      if(res.get_type() == object_type::reduced) { return expect_object<obj::reduced>(res)->val; }
+    }
+    return res;
+  }
+}
+")
+(defn wreduce [f init coll] (cpp/u3w.reduce f init coll))
+(def cases
+  {:vector [1 2 3 4 5] :empty-vector [] :list '(1 2 3) :cons-list (cons 0 '(1 2 3))
+   :cons-vec (cons 0 [1 2]) :lazy-map (map inc [1 2 3]) :lazy-empty (map inc [])
+   :range (range 100) :range-step (range 0 1000 7) :range-real (range 0.5 70.5 1.0)
+   :iterate (take 50 (iterate inc 0)) :concat (concat [1 2] '(3 4) (range 5 40))
+   :string "hello" :map {:a 1 :b 2} :set #{1 2 3} :sorted (sorted-map 1 2 3 4)
+   :nil nil :lazy-of-lazy (lazy-seq (lazy-seq [1 2 3])) :cons-lazy (cons 0 (lazy-seq [1 2 3]))
+   :mapcat (mapcat (fn [x] [x x]) (range 70)) :repeat (repeat 40 1) :filter (filter odd? (range 100))
+   :chunked (map inc (range 100)) :seq-of-vec (seq [1 2 3]) :keys (keys {:a 1 :b 2})})
+(def ok (volatile! 0))
+(doseq [[k c] cases]
+  (let [before (pr-str c)
+        a (reduce conj [] c)
+        b (wreduce conj [] c)
+        b2 (wreduce conj [] c)
+        after (pr-str c)]
+    (if (and (= a b b2) (= before after))
+      (vswap! ok inc)
+      (println "MISMATCH" k a b b2 before after))))
+(println "walk-proto cases" (count cases) "ok" @ok)
+(println "reduced" (wreduce (fn [a x] (if (= x 5) (reduced a) (+ a x))) 0 (range 100)))
+(def v (vec (range 1000000)))
+(timed "reduce + over 1e6 vector" (fn [] (reduce + v)))
+(timed "proto walk reduce + over 1e6 vector" (fn [] (wreduce + 0 v)))
+(timed "reduce-kv over the same vector" (fn [] (reduce-kv (fn [a _ x] (+ a x)) 0 v)))
+(timed "reduce + over (range 1e6)" (fn [] (reduce + (range 1000000))))
+(timed "proto walk reduce + over (range 1e6)" (fn [] (wreduce + 0 (range 1000000))))
+(def l (apply list (range 1000000)))
+(timed "reduce + over a 1e6 list" (fn [] (reduce + l)))
+(timed "proto walk reduce + over a 1e6 list" (fn [] (wreduce + 0 l)))

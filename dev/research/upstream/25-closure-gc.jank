@@ -1,0 +1,30 @@
+;; jank-25: a lazy seq's per-chunk frame is a closure and a lazy_sequence, and both boxes carry fields
+;; almost none of them use; the collector re-marks the live heap each time its 128 MiB fills.
+;; Bytes come from GC_get_total_bytes around one call (after a warm call); GC_size is the block a box takes.
+(cpp/raw "namespace r25 {
+  inline long so_closure() { return sizeof(jank::runtime::obj::jit_closure); }
+  inline long so_lazy() { return sizeof(jank::runtime::obj::lazy_sequence); }
+  inline long so_ccons() { return sizeof(jank::runtime::obj::chunked_cons); }
+  inline long so_range() { return sizeof(jank::runtime::obj::integer_range); }
+}")
+(defn bytes-of [label n f]
+  (f)
+  (let [b0 (cpp/GC_get_total_bytes) _ (f) b1 (cpp/GC_get_total_bytes)]
+    (println label "bytes" (- b1 b0) "per element" (/ (- b1 b0) (double n)))))
+(println "sizeof jit_closure" (cpp/r25.so_closure) "lazy_sequence" (cpp/r25.so_lazy) "chunked_cons" (cpp/r25.so_ccons) "integer_range" (cpp/r25.so_range))
+(def r (range 64))
+(bytes-of "fn capturing two locals" 100000 #(dotimes [_ 100000] (let [a r b r] (fn [] [a b]))))
+(bytes-of "lazy-seq capturing two locals" 100000 #(dotimes [_ 100000] (let [a r b r] (lazy-seq (cons a b)))))
+(def n 1000000)
+(bytes-of "count (filter odd? (map inc (range 1e6)))" n #(count (filter odd? (map inc (range n)))))
+(timed "count (filter odd? (map inc (range 1e6)))" (fn [] (count (filter odd? (map inc (range n))))))
+(timed "loop equivalent" (fn [] (loop [i 0 c 0] (if (< i n) (recur (inc i) (if (odd? (inc i)) (inc c) c)) c))))
+(defn build [d] (if (zero? d) nil (let [d (dec d)] [(build d) (build d)])))
+(defn check [t] (if (nil? t) 1 (+ 1 (check (t 0)) (check (t 1)))))
+(timed "binary-trees: 16 x (check (build 14))" (fn [] (loop [i 0 s 0] (if (< i 16) (recur (inc i) (+ s (check (build 14)))) s))))
+(timed "binary-trees: 1 x (check (build 18))" (fn [] (check (build 18))))
+;; closures still behave: one arity, several arities, variadic, letfn (deferred captures), meta
+(let [a 1 b 2 f (fn [] [a b]) g (fn ([x] [a x]) ([x y] [b x y])) h (fn [x & more] [a x more])]
+  (letfn [(ev? [k] (if (zero? k) true (od? (dec k)))) (od? [k] (if (zero? k) false (ev? (dec k))))]
+    (println "closures =>" (f) (g 1) (g 1 2) (h 1 2 3) (ev? 10) (meta (with-meta f {:m 1})) (f))))
+(println "lazy seq meta =>" (meta (with-meta (lazy-seq [1]) {:k 1})) (meta (with-meta (seq (map inc (range 40))) {:c 1})) (meta (with-meta (range 5) {:r 1})))
