@@ -1457,7 +1457,7 @@ the geomean is over the 30 printed x values of a run, median [range] over the ru
 | stock core / jank's own core, geomean x | **1.47** [1.38-1.50] | **1.48** [1.38-1.79] | **2.29** [1.87-2.56] |
 
 The patched column's ratio is higher because the series speeds jank's own core more than the stock core
-(lazy-pipeline own core 13x faster, stock 6x).
+(lazy-pipeline, AOT medians: jank's own 82.39 -> 2.10 ms, 39x; the stock core 157.01 -> 24.83 ms, 6.3x).
 
 Per case, stock-side ms median [range], and the median x:
 
