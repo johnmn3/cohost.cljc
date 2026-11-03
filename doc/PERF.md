@@ -20,7 +20,7 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 | cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | being measured | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
 | cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | being measured | 4.5 s | x9.6 (28) | x2.9 (28) |
 | cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | being measured | 88.6 s | not yet measured | not yet measured |
-| cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | being measured | 94.0 s | not yet measured | x20.5 (28) |
+| cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | being measured | 94.0 s | x85.2 (15 of 28 so far) | x20.5 (28) |
 | cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | | 8.9 s | x9.1 (28) | x3.9 (25) |
 | ClojureScript in Chromium | | | | | not measured | x3.0 (25) |
 | cohost `:phel` (Phel 0.54.0, PHP 8.5) | boots from source (`phel build -O 2`: in progress) | | | 47.0 s | not yet measured | x23.7 (15 of 28) |
@@ -177,41 +177,42 @@ Box 2: 4 CPUs, Linux, jank 0.1-noble from jank's apt repository (what `dev/insta
 ### Box 3: ClojureWasm
 
 Box 3: 4 CPUs, Linux, ClojureWasm 1.15.4, nothing else running; the JVM column is this box's own. `cljw` is
-ClojureWasm's own core, all 28 programs (2026-11-03 12:39 to 1:19 AM ET). Median ms of 10 timed calls after warm-up
-(xJVM in parens). cohost on ClojureWasm (`cljw-cohost`) is running and fills in here when it finishes. Records:
-`doc/perf/release-perf-d/` (lane D, d/release-perf @ 8c83afe).
+ClojureWasm's own core, all 28 programs (2026-11-03 12:39 to 1:19 AM ET, 10 timed calls each). `cljw-cohost` is
+Clojure's core booted by cohost on ClojureWasm, 16 of the 28 programs (ffcc0cb's method, 2:35 to 3:40 AM ET; stopped
+for the native-build work; `tak-hinted` reached the 15-minute limit). Median ms (xJVM in parens). Records:
+`doc/perf/release-perf-d/` (lane D, d/release-perf @ a2fe7a6).
 
-| program | jvm | cljw |
-|---|---:|---:|
-| binary-trees | 257.5 | 11297.2 (x43.87) |
-| binary-trees-14 | 11.4 | 454.1 (x39.99) |
-| binary-trees-14-hinted | 9.4 | 463.8 (x49.48) |
-| binary-trees-hinted | 245.7 | 10026.0 (x40.81) |
-| dispatch | 138.0 | 2835.2 (x20.54) |
-| fannkuch | 148.0 | 2811.3 (x18.99) |
-| fannkuch-hinted | 165.6 | 3049.3 (x18.41) |
-| fib | 163.6 | 6167.9 (x37.70) |
-| fib-hinted | 99.8 | 5362.0 (x53.70) |
-| first-output | 647.3 | 21.1 (x0.03) |
-| json | 234.0 | 4149.4 (x17.73) |
-| k-nucleotide | 131.1 | 1887.1 (x14.40) |
-| keyword-map | 85.7 | 832.3 (x9.71) |
-| lazy-pipeline | 32.1 | 119.9 (x3.74) |
-| mandelbrot | 206.4 | 37737.1 (x182.86) |
-| mandelbrot-hinted | 219.0 | 37954.1 (x173.32) |
-| nbody | 188.4 | 2757.8 (x14.64) |
-| nbody-hinted | 190.0 | 2654.6 (x13.97) |
-| nsieve | 142.5 | 1742.7 (x12.23) |
-| nsieve-hinted | 163.0 | 1636.1 (x10.04) |
-| pipeline | 143.0 | 2372.0 (x16.59) |
-| sort | 36.9 | 92.4 (x2.50) |
-| spectral-norm | 189.1 | 9853.7 (x52.10) |
-| spectral-norm-hinted | 146.6 | 11221.8 (x76.54) |
-| sum-overflow | 8.9 | 25.3 (x2.85) |
-| sum-overflow-hinted | 0.6 | 58.8 (x95.08) |
-| tak | 317.9 | 25820.4 (x81.23) |
-| tak-hinted | 196.5 | 22689.9 (x115.49) |
-| **geomean xJVM** (programs that ran) | 1 | **x20.48** (28) |
+| program | jvm | cljw | cljw-cohost |
+|---|---:|---:|---:|
+| binary-trees | 257.5 | 11297.2 (x43.87) | 14358.3 (x55.76) |
+| binary-trees-14 | 11.4 | 454.1 (x39.99) | 723.8 (x63.74) |
+| binary-trees-14-hinted | 9.4 | 463.8 (x49.48) | 1358.5 (x144.94) |
+| binary-trees-hinted | 245.7 | 10026.0 (x40.81) | 28770.1 (x117.10) |
+| dispatch | 138.0 | 2835.2 (x20.54) | not yet measured |
+| fannkuch | 148.0 | 2811.3 (x18.99) | not yet measured |
+| fannkuch-hinted | 165.6 | 3049.3 (x18.41) | not yet measured |
+| fib | 163.6 | 6167.9 (x37.70) | 8247.3 (x50.41) |
+| fib-hinted | 99.8 | 5362.0 (x53.70) | 82115.5 (x822.40) |
+| first-output | 647.3 | 21.1 (x0.03) | not yet measured |
+| json | 234.0 | 4149.4 (x17.73) | not yet measured |
+| k-nucleotide | 131.1 | 1887.1 (x14.40) | not yet measured |
+| keyword-map | 85.7 | 832.3 (x9.71) | not yet measured |
+| lazy-pipeline | 32.1 | 119.9 (x3.74) | not yet measured |
+| mandelbrot | 206.4 | 37737.1 (x182.86) | 45244.9 (x219.24) |
+| mandelbrot-hinted | 219.0 | 37954.1 (x173.32) | 45521.4 (x207.87) |
+| nbody | 188.4 | 2757.8 (x14.64) | 9090.3 (x48.24) |
+| nbody-hinted | 190.0 | 2654.6 (x13.97) | 8482.5 (x44.64) |
+| nsieve | 142.5 | 1742.7 (x12.23) | not yet measured |
+| nsieve-hinted | 163.0 | 1636.1 (x10.04) | not yet measured |
+| pipeline | 143.0 | 2372.0 (x16.59) | not yet measured |
+| sort | 36.9 | 92.4 (x2.50) | not yet measured |
+| spectral-norm | 189.1 | 9853.7 (x52.10) | 12813.6 (x67.76) |
+| spectral-norm-hinted | 146.6 | 11221.8 (x76.54) | 37976.1 (x259.01) |
+| sum-overflow | 8.9 | 25.3 (x2.85) | 24.4 (x2.76) |
+| sum-overflow-hinted | 0.6 | 58.8 (x95.08) | 58.0 (x93.94) |
+| tak | 317.9 | 25820.4 (x81.23) | 25634.5 (x80.64) |
+| tak-hinted | 196.5 | 22689.9 (x115.49) | error |
+| **geomean xJVM** (programs that ran) | 1 | **x20.48** (28) | **x85.17** (15) |
 
 ### Box 4: let-go and Phel
 
