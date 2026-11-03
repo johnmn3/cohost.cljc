@@ -304,7 +304,10 @@
       ;; Phel compiles to PHP files under $TMPDIR/phel and never removes them: give
       ;; each run its own TMPDIR and remove it after
       "phel" (let [tmp (str (fs/create-temp-dir {:prefix "cohost-phel-"}))]
-               (try (-> (p/process ["phel" "run" "dev/phel_cli.phel" cfg]
+               ;; PHP's C stack: 1 GB (a limit reserves address space only). Under the
+               ;; default 8 MB, PHP segfaults on a long realized lazy seq ((count (map
+               ;; inc (range 100000))) in Phel itself; the battery's chunked laziness row)
+               (try (-> (p/process ["sh" "-c" "ulimit -s 1048576 2>/dev/null; exec phel run dev/phel_cli.phel \"$1\"" "cohost-phel" cfg]
                                    {:dir repo :inherit true :extra-env {"COHOST_HOME" repo "TMPDIR" tmp}})
                         deref :exit)
                     (finally (fs/delete-tree tmp))))

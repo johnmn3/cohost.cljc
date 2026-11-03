@@ -118,7 +118,8 @@
   boot:cljw {:doc "ClojureWasm (Zig): the `cljw` binary on PATH (v1.15.4)"
              :task (shell "cljw" "-cp" "src" "-m" "cohost.run")}
   boot:phel {:doc "Phel (PHP 8.5): the `phel` wrapper over phel.phar on PATH (v0.54.0)"
-             :task (shell "phel" "run" "dev/phel_main.phel")}
+             ;; PHP's C stack 1 GB: under 8 MB a long realized lazy seq segfaults PHP (bin/cohost)
+             :task (shell "bash" "-c" "ulimit -s 1048576 && exec phel run dev/phel_main.phel")}
   boot:lg   {:doc "let-go (Go): the `lg` binary on PATH (v1.13.0); it has no -m, so dev/lg_main.lg calls cohost.run"
              :task (shell "lg" "-source-paths" "src" "dev/lg_main.lg")}
   ;; CLJRS_IR_THRESHOLD=1: clojurust lowers a fn to its IR on the first call,
@@ -178,12 +179,12 @@
   bench:cljw {:doc "cohost.bench on ClojureWasm (target/bench-cljw.edn)"
               :task (do (babashka.fs/create-dirs "target")
                         (apply shell "cljw" "-cp" "src" "-m" "cohost.run" "--bench" (git-rev) *command-line-args*))}
-  bench:phel {:doc "cohost.bench on Phel (target/bench-phel.edn), with a 64 MB C stack"
+  bench:phel {:doc "cohost.bench on Phel (target/bench-phel.edn), with a 1 GB C stack"
               ;; Phel's own count of a long lazy seq, sort, frequencies and
               ;; distinct of 50,000-100,000 items recurse past PHP's default
               ;; 8 MB C stack and segfault (doc/REPORT.md)
               :task (do (babashka.fs/create-dirs "target")
-                        (apply shell "bash" "-c" "ulimit -s 65536 && exec phel run dev/phel_main.phel \"$@\"" "bench-phel"
+                        (apply shell "bash" "-c" "ulimit -s 1048576 && exec phel run dev/phel_main.phel \"$@\"" "bench-phel"
                                "--bench" (git-rev) *command-line-args*))}
   bench:lg  {:doc "cohost.bench on let-go (target/bench-lg.edn)"
              :task (do (babashka.fs/create-dirs "target")
