@@ -1860,9 +1860,11 @@ namespace cohost_obj {
                        double (list 'cpp/jank.runtime.is_real sym)
                        nil))
    ;; Step 4 natives, one name at a time (M-5). :host = jank's own core var.
-   :natives {'clojure.core/re-seq :host
-             'clojure.core/re-find :host
-             ;; atoms on jank are jank's own clojure.lang.Atom (probed
+   ;; re-find and re-seq are NOT natives: jank's own answer "" for an optional
+   ;; group that did not match, where the JVM's is nil ((re-find #"a(b)?" "a")
+   ;; -> ["a" ""]), which tools.cli reads as a flag's argument. The stock fns
+   ;; over the shim's Matcher (:re-find-at, std::smatch's matched) answer nil.
+   :natives {;; atoms on jank are jank's own clojure.lang.Atom (probed
              ;; 2026-11-02), so swap!/reset! cannot meet a cohost instance.
              'clojure.core/swap! :host
              'clojure.core/reset! :host

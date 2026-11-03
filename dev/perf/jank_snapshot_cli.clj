@@ -23,6 +23,7 @@
 (require '[babashka.fs :as fs]
          '[babashka.process :as p]
          '[clojure.string :as str])
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_inputs.clj"))
 
 (defn- abs-path [repo path]
   (str/join ":" (map (fn [x] (str (fs/absolutize (fs/path repo x)))) (str/split path #":"))))
@@ -65,7 +66,7 @@
     (apply str (map #(format "%02x" (bit-and % 0xff)) (.digest d)))))
 
 (defn- project-key [repo roots main]
-  (let [files (sort (mapcat (fn [r] (map str (filter fs/regular-file? (fs/glob r "**")))) roots))
+  (let [files (sort (mapcat source-files roots))
         sums (if (seq files)
                (:out (p/shell {:out :string :in (str/join "\n" files)} "xargs" "-d" "\n" "sha256sum"))
                "")]

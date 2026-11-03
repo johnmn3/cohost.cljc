@@ -21,16 +21,20 @@ clojure -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
 
 ## A new project
 
-Projects come from [deps-new](https://github.com/seancorfield/deps-new); cohost ships
-the template `cohost/app`:
+Projects come from [deps-new](https://github.com/seancorfield/deps-new), with cohost's
+template `cohost/app`, published from this repository. Plain `clj` makes one; no cohost
+checkout is needed for this step:
 
 ```bash
-cohost -Tnew create :template cohost/app :name acme/myapp
+clojure -Sdeps '{:deps {io.github.johnmn3/cohost.cljc {:git/sha "17da7b94608251a7b22bc6ba3eff0fbd6115c577" :deps/root "templates/cohost-app"}}}' -Tnew create :template cohost/app :name acme/myapp
 cd myapp
 ```
 
 That gives `deps.edn`, `src/acme/myapp.cljc`, `test/acme/myapp_test.cljc` and
-`build.clj`.
+`build.clj`; `:target jank` (or any runtime below) at the end of the command writes that
+runtime into `deps.edn`. From a cohost checkout, `cohost -Tnew create :template cohost/app
+:name acme/myapp` is the same template at the checkout's commit. The project's `:build`
+alias names cohost by that commit too, so `-T:build` works with or without a checkout.
 
 ## Run it
 
@@ -91,7 +95,7 @@ whose `build` makes the artifact for the project's runtime: a directory `target/
 whose `run` starts your `-main`, from any directory:
 
 ```bash
-# targets: jvm jolt cljs cljw lg lpy phel
+# targets: jvm jolt jank cljs cljw lg lpy phel
 cohost -T:build build                               # => build: target/myapp/run
 (cd /tmp && "$OLDPWD"/target/myapp/run you)         # => Hello, you!
 ```
@@ -140,42 +144,24 @@ cohost also carries a patch series against jank under `upstream/jank/` for its o
 How each runtime is launched, what was verified and how it differs from `clojure`:
 `doc/CLI.md`. Using cohost as a library inside a host (a sub-runtime you hand strings
 to): [`doc/EMBEDDING.md`](doc/EMBEDDING.md).
+What differs from one runtime to the next, and startup and speed for each:
+[Choosing a runtime](doc/guide/07-choosing-a-runtime.md).
 
-## How it works
+## The guide
 
-Every non-JVM Clojure (jolt, basilisp, ClojureScript, ...) re-implements
-`clojure.core` by hand against a conformance corpus: broad, never total, and
-subtly different at every edge. cohost takes the other route. It reads
-Clojure's own `core.clj` (vendored unchanged from the 1.12.0 tag, EPL) and
-runs it on the host, form by form, then loads `clojure.string`,
-`clojure.walk`, `clojure.spec.alpha` and the rest the same way, each into its
-own namespace:
+The guide covers each part of using cohost; every command in it runs, as written, in
+`bb docs:check`.
 
-1. a **codemod** (`cohost.rewrite`) turns the JVM interop the sources are
-   written against — `(. clojure.lang.RT (cons x s))`,
-   `(clojure.lang.Numbers/add x y)`, `(new clojure.lang.LazySeq f)`,
-   `(.withMeta x m)`, `(instance? clojure.lang.IFn x)`,
-   `(catch IllegalArgumentException e ...)`, a namespace's
-   `(:import (java.util.regex Pattern Matcher))` — into calls on
-2. a **shim** (`cohost.shim`) that maps the `clojure.lang` / `java.*`
-   surface onto the host's own data structures: the host's vector *is* the
-   `PersistentVector`, its seq *is* the `ISeq`, `RT/first` is the host's
-   `first`. What the host lacks (iterators, a `java.util.regex.Matcher`,
-   `StringBuilder`, `java.lang.Math`, class tokens, the JVM exception
-   hierarchy, multimethods, refs) the shim builds from what it has;
-3. a **boot and loader** (`cohost.boot`) that evals each form of core.clj
-   into `cohost.core`, a namespace that refers nothing from the host's core,
-   so every name core.clj defines is the stock one — `let`, `fn`, `defn`,
-   destructuring, lazy seqs, transducers, `for`, `doseq`, `defmulti`,
-   `binding`, `re-find` — straight from Rich's file; then boots each library
-   a `require` names into its own namespace (`clojure.walk` into
-   `cohost.walk`), honoring its `ns` form. Macros are wrapped so what they
-   *emit* is rewritten too;
-4. a **policy** (`cohost.policy`) that says which forms of core.clj are the
-   JVM itself (proxies, gen-class, agents, the class loader, `java.io`) and
-   are skipped, and which names are the host's facade over its runtime
-   (printing, the reader, namespaces, `case`, `deftype`, protocols) and are
-   taken from the host.
+1. [Getting started](doc/guide/01-getting-started.md)
+2. [The cohost command](doc/guide/02-the-cohost-command.md): every option, exit codes, errors
+3. [deps.edn and libraries](doc/guide/03-deps-and-libraries.md): Maven, git, `:local/root`, how a dependency's `.cljc` reads
+4. [The REPL](doc/guide/04-the-repl.md)
+5. [Testing](doc/guide/05-testing.md)
+6. [Building and deploying](doc/guide/06-building.md): the artifact per runtime
+7. [Choosing a runtime](doc/guide/07-choosing-a-runtime.md): what differs per runtime, startup and speed
+8. [How cohost works](doc/guide/08-how-it-works.md): the codemod, the shim, the adapter, the boot, snapshots
+9. [Adding a host](doc/guide/09-adding-a-host.md)
+10. [Limitations and FAQ](doc/guide/10-limitations-and-faq.md)
 
 Underneath is a **host adapter contract** (`cohost.adapter`): one map of
 named capabilities a clojure-like implements to plug in — read/eval in a
@@ -234,6 +220,9 @@ perf passes, is in `doc/PERF.md`.
 `doc/REPORT.md` has the measurements, what each host lacked and how the shim
 or the adapter answers it, the conformance-corpus scoreboard, and what is
 deliberately left out.
+Also: [the `cohost` command's reference](doc/CLI.md), [embedding cohost in a host
+program](doc/EMBEDDING.md), [performance](doc/PERF.md), [the measurements and host
+facts](doc/REPORT.md).
 
 ## Developing cohost
 
