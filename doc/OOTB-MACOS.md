@@ -33,8 +33,8 @@ from the template at `c6b8eaa`.
 | 13 | no Windows entry point for `bin/cohost` | fixed (untested on Windows) |
 | 14 | Homebrew 5 refuses jank's tap until trusted | handled: script stops with the command |
 | 15 | default target is `:jvm`; nothing reaches cohost-on-a-host by default | open (docs) |
-| 16 | jank's core snapshot is never built automatically, and goes stale on any update | open |
-| 17 | first `:jank` run: 58 s, one cryptic line | open |
+| 16 | jank's core snapshot is never built automatically, and goes stale on any update | fixed (d/jank-first-run): `dev/install/jank.sh` builds it after the install; the first `cohost :jank` command builds it when missing or stale |
+| 17 | first `:jank` run: 58 s, one cryptic line | fixed (d/jank-first-run): one plain line ("cohost: building jank's core snapshot, a few minutes ... once per cohost update"), then "... is built (N s)"; never two builds at once (a second command says so and runs without it). Linux, a fresh tree: built once (536 s, a second command compiling beside it), then `-M -m demo.main` 1.955 s, `-e` 1.807 s (median of 3) |
 | 18 | `:lpy` is ~20 s per command (34 s first, silent); the CLI never uses the lpy snapshot | open |
 | 19 | `:cljw` ~17 s, `:phel` ~22 s per command; no user-facing numbers | open (docs) |
 | 20 | Phel leaves compiled files in `$TMPDIR/phel/tmp` and never cleans them | open |
@@ -42,7 +42,7 @@ from the template at `c6b8eaa`.
 | 22 | rustup `--no-modify-path`: `cljrs` isn't on PATH afterwards | documented by the script |
 | 23 | `rlwrap` suggested, no install hint | open (docs) |
 | 24 | deps-new on JDK 26 prints 3 `Final field ... mutated reflectively` warnings | upstream |
-| 25 | `bb boot:jank-snapshot` prints `load error: set! ...` lines while passing | open |
+| 25 | `bb boot:jank-snapshot` prints `load error: set! ...` lines while passing | fixed (d/jank-first-run): one line per library, `skipped on this host (expected): set!, ...` |
 | 26 | `jank-src.sh` is Debian/root-only | open |
 | 27 | the template pins `c6b8eaa`; fixes reach new projects only at the next release | release step |
 | 28 | Windows: the Clojure CLI is a PowerShell module, and `bin/cohost` runs `clojure` | open, untested |

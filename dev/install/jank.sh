@@ -46,7 +46,7 @@ jank check-health 2>&1 | tail -3 || true
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 if command -v bb >/dev/null 2>&1; then
   mkdir -p "$repo/target"
-  echo "cohost: building jank's core snapshot, a few minutes (2-6 measured), once per cohost update"
+  echo "cohost: building jank's core snapshot, a few minutes (2 to 9 measured), once per cohost update"
   if (cd "$repo" && bb -e '(load-file "dev/perf/jank_snapshot_ensure.clj")' > "$repo/target/jank-snapshot-build.log" 2>&1); then
     echo "cohost: jank's core snapshot is built"
   else

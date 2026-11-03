@@ -75,7 +75,7 @@
         :else
         (do (fs/create-dirs (str repo "/target"))
             (spit lock (str (.pid (java.lang.ProcessHandle/current)) "\n"))
-            (println (str "cohost: building jank's core snapshot, a few minutes (2-6 measured), once per cohost update"
+            (println (str "cohost: building jank's core snapshot, a few minutes (2 to 9 measured), once per cohost update"
                           " (log: " log ")"))
             (try
               (let [t0 (System/nanoTime)
