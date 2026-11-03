@@ -1,0 +1,30 @@
+== docs:check jank: docs:check: 0 failing command(s) over 1 target(s)
+== docs:check jolt: docs:check: 0 failing command(s) over 1 target(s)
+== docs:check lpy: docs:check: 0 failing command(s) over 1 target(s)
+== docs:check cljw: docs:check: 0 failing command(s) over 1 target(s)
+== docs:check phel: docs:check: 4 failing command(s) over 1 target(s)
+   FAIL cohost -T:build build
+        expected ["build: target/myapp/run"]
+        got      [] exit 1
+        stderr   Execution error (ExceptionInfo) at cohost.build/sh! (build.clj:70).
+   build: bash -c ulimit -s 65536 && exec phel run dev/phel_snapshot_record.phel "$@" phel-record --out /private/var/folders/3v/ch6snwh508359sfnslq7tdk40000gn/T/cohost-readme-17448329003095238938/myapp/target/cohost-phel-build/events.edn --root /private/var/folders/3v/ch6snwh508359sfnslq7tdk40000gn/
+   FAIL (cd /tmp && "$OLDPWD"/target/myapp/run you)
+        expected ["Hello, you!"]
+        got      [] exit 127
+        stderr   bash: line 1: /private/var/folders/3v/ch6snwh508359sfnslq7tdk40000gn/T/cohost-readme-17448329003095238938/myapp/target/myapp/run: No such file or directory
+   PASS cohost :jvm -M -m acme.myapp
+   PASS cohost -M -m acme.myapp you
+   --
+   FAIL cohost -T:build build
+        expected ["build: target/myapp/run"]
+        got      [] exit 1
+        stderr   Execution error (ExceptionInfo) at cohost.build/sh! (build.clj:70).
+   build: bash -c ulimit -s 65536 && exec phel run dev/phel_snapshot_record.phel "$@" phel-record --out /private/var/folders/3v/ch6snwh508359sfnslq7tdk40000gn/T/cohost-readme-17448329003095238938/myapp/target/cohost-phel-build/events.edn --root /private/var/folders/3v/ch6snwh508359sfnslq7tdk40000gn/
+   FAIL (cd /tmp && "$OLDPWD"/target/myapp/run you)
+        expected ["Hello, you!"]
+        got      [] exit 127
+        stderr   bash: line 1: /private/var/folders/3v/ch6snwh508359sfnslq7tdk40000gn/T/cohost-readme-17448329003095238938/myapp/target/myapp/run: No such file or directory
+   docs:check: 4 failing command(s) over 1 target(s)
+== docs:check lg: docs:check: 0 failing command(s) over 1 target(s)
+== docs:check cljs: docs:check: 0 failing command(s) over 1 target(s)
+== docs:check jvm: docs:check: 0 failing command(s) over 1 target(s)

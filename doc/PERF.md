@@ -3,8 +3,9 @@
 How fast Clojure runs on cohost, on each runtime, against stock Clojure on the JVM.
 
 *Measured 2026-11-02/03 on cohost `main` @ ff30ce1 (the program columns on 6eec4e2, whose code is ff30ce1's for
-every runtime except jank's `sort`; see [jank](#jank)). Two 4-CPU Linux boxes; every ratio is against stock Clojure
-on the JVM measured on the same box, so ratios compare across boxes and milliseconds do not. Raw records:
+every runtime except jank's `sort`; see [jank](#jank)). Four 4-CPU Linux boxes and, from
+2026-11-03, a macOS box (Apple M5, [below](#macos-apple-m5-built-apps-on-c0431c6)); every ratio is against stock
+Clojure on the JVM measured on the same box, so ratios compare across boxes and milliseconds do not. Raw records:
 `doc/perf/release-perf/`. cohost is pre-alpha; these numbers will move.*
 
 ## At a glance
@@ -17,14 +18,14 @@ program; running from source (`cohost :<runtime> ...`) is what development costs
 |---|---|---:|---:|---:|---:|---:|
 | stock Clojure on the JVM (the reference) | | | | 1.5 s | 1 | |
 | cohost `:jvm` (the real Clojure CLI) | an uberjar | not yet measured | x1.00 (28) | 1.4 s | 1 | |
-| cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | x4.39 (28, Box 4); x3.40 (28, macOS) | 2.6 s | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
-| cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | x6.3 (28); x6.56 on c0431c6 | 4.5 s | x9.6 (28) | x2.9 (28) |
+| cohost `:jank` (jank 0.1, apt) | one native executable: the booted core and the app compiled `-O3` | 0.93 s | x4.39 (28, Box 4); x3.40 (28, macOS; x3.36 on c415244) | 2.6 s (1.3 s with the launcher, macOS) | x10.0 (24 of 28) | x6.3 compiled ahead of time (14 of 28) |
+| cohost `:jolt` (jolt 0.8.23, Chez Scheme) | one native binary (`jolt build`, release mode) | 0.37 s (macOS) | x6.3 (28); x6.56 on c0431c6; x7.13 (28, macOS) | 4.5 s | x9.6 (28) | x2.9 (28) |
 | cohost `:lpy` (basilisp 0.5.1, Python) | the booted core as `.lpy` modules + `.lpyc` bytecode | 1.9 s (macOS) | x3511 (25, at smaller sizes) | 88.6 s | not yet measured | not yet measured |
-| cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | x72.1 (27, Box 3) | 94.0 s | x79.3 (27) | x20.5 (28) |
-| cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | x10.7 (28, Box 3) | 8.9 s | x9.1 (28) | x3.9 (25) |
+| cohost `:cljw` (ClojureWasm 1.15.4) | the booted core as ClojureWasm modules (`cljw build`: in progress) | 0.9 s (macOS) | x72.1 (27, Box 3); x111.9 (28, macOS) | 94.0 s | x79.3 (27) | x20.5 (28) |
+| cohost `:cljs` (ClojureScript 1.12.42 on Node 24) | boots from source (`:advanced`: in progress) | | x10.7 (28, Box 3); x10.33 (28, macOS) | 8.9 s | x9.1 (28) | x3.9 (25) |
 | ClojureScript in Chromium | | | | | not measured | x3.0 (25) |
-| cohost `:phel` (Phel 0.54.0, PHP 8.5) | the app compiled to PHP by `phel build` (OPcache + tracing JIT) | 1.3-2.0 s (Box 1) | x131.6 (28, Box 1) | 47.0 s | not yet measured | x23.7 (15 of 28) |
-| cohost `:lg` (let-go 1.13.0, Go) | boots from source (bytecode and Go: in progress) | | | 15.4 s | x118.9 (25) | x19.3 (28) |
+| cohost `:phel` (Phel 0.54.0, PHP 8.5) | the app compiled to PHP by `phel build` (OPcache + tracing JIT) | 1.3-2.0 s (Box 1) | x131.6 (28, Box 1); does not build on macOS ([why](#macos-apple-m5-built-apps-on-c0431c6)) | 47.0 s | not yet measured | x23.7 (15 of 28) |
+| cohost `:lg` (let-go 1.13.0, Go) | boots from source (bytecode and Go: in progress) | | x167.7 (23 of 28, macOS, partial) | 15.4 s | x118.9 (25) | x19.3 (28) |
 
 How to read it:
 
@@ -166,9 +167,61 @@ The first measurement of jank's built app (hinted programs did not build before 
 | tak-hinted | 147.4 | 127.6 (x0.87) | 37246.1 (x252.71) |
 | **geomean xJVM** (programs that ran) | 1 | **x4.39** (28) | **x6.56** (28) |
 
-The macOS box (Apple silicon, the user's agent) measured the same column on c0431c6: x3.40 over 28 (unhinted x3.29,
-hinted x3.61), first-output 190 ms against the JVM's 195 -- the built app at the JVM's start time, and about twice as
-fast as cohost on jank through the JIT on that box (x6.0 the night before). Its records land when its branch is pushed.
+### macOS (Apple M5): built apps on c0431c6
+
+The macOS box: Apple M5, 10 cores (4 performance + 6 efficiency), 32 GB, macOS 26.5; jank 0.1 from jank's Homebrew
+tap, jolt 0.8.23, ClojureWasm 1.15.4 (ReleaseSafe), ClojureScript 1.12.42 on Node 22.22.3, let-go 1.13.0, OpenJDK
+26.0.1. A desktop in use: the load average was 3.2 to 4.8 when each column started, with the JVM column under the same
+load. coord/docs6 @ c0431c6, 2026-11-03 11:36 AM to 12:58 PM ET, full sizes, one column at a time; each program built
+with `cohost -T:build build` and run as `target/<name>/run`. Median ms (xJVM). Records: `doc/perf/macos/`.
+
+| program | size | jvm | jank-built | jolt-built | cljs-built | cljw-built | lg-built |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fib | 36 | 74.708 | 67.928 (x0.91) | 130.741 (x1.75) | 322.055 (x4.31) | 5098.077 (x68.24) | 2425.223 (x32.46) |
+| fib-hinted | 36 | 34.268 | 35.327 (x1.03) | 4206.422 (x122.75) | 1398.200 (x40.80) | 43772.013 (x1277.36) | 23992.906 (x700.16) |
+| tak | 30 20 10 | 166.967 | 236.666 (x1.42) | 246.790 (x1.48) | 1180.974 (x7.07) | 16034.161 (x96.03) | 8449.643 (x50.61) |
+| tak-hinted | 30 20 10 | 96.212 | 53.417 (x0.56) | 17270.906 (x179.51) | 5739.285 (x59.65) | 174731.810 (x1816.11) | 96783.625 (x1005.94) |
+| nbody | 50000 | 105.905 | 320.600 (x3.03) | 320.623 (x3.03) | 656.933 (x6.20) | 4665.750 (x44.06) | 5713.667 (x53.95) |
+| nbody-hinted | 50000 | 103.851 | 313.317 (x3.02) | 308.316 (x2.97) | 656.551 (x6.32) | 4481.611 (x43.15) | 5786.063 (x55.72) |
+| spectral-norm | 600 | 47.036 | 472.361 (x10.04) | 535.232 (x11.38) | 1072.402 (x22.80) | 7475.272 (x158.93) | 31896.437 (x678.12) |
+| spectral-norm-hinted | 600 | 35.850 | 359.299 (x10.02) | 1804.778 (x50.34) | 1419.341 (x39.59) | 20886.649 (x582.61) | 41212.102 (x1149.56) |
+| mandelbrot | 1500 | 74.681 | 314.787 (x4.22) | 633.740 (x8.49) | 1999.767 (x26.78) | 23032.948 (x308.42) | 105893.570 (x1417.95) |
+| mandelbrot-hinted | 1500 | 67.482 | 314.371 (x4.66) | 653.555 (x9.68) | 1976.852 (x29.29) | 24830.915 (x367.96) | 103869.878 (x1539.22) |
+| binary-trees | 18 | 86.079 | 317.546 (x3.69) | 614.648 (x7.14) | 616.920 (x7.17) | 7654.334 (x88.92) | 10757.743 (x124.97) |
+| binary-trees-hinted | 18 | 82.499 | 313.285 (x3.80) | 1381.326 (x16.74) | 861.245 (x10.44) | 14470.009 (x175.40) | 14825.082 (x179.70) |
+| binary-trees-14 | 14 | 4.865 | 16.517 (x3.40) | 28.825 (x5.93) | 27.898 (x5.73) | 345.036 (x70.93) | 514.088 (x105.68) |
+| binary-trees-14-hinted | 14 | 4.625 | 16.870 (x3.65) | 64.901 (x14.03) | 38.862 (x8.40) | 716.141 (x154.85) | 694.659 (x150.20) |
+| sum-overflow | 1000000 | 2.259 | 11.948 (x5.29) | 8.941 (x3.96) | 2.907 (x1.29) | 9.143 (x4.05) | 17.831 (x7.89) |
+| sum-overflow-hinted | 1000000 | 0.272 | 4.998 (x18.37) | 1.975 (x7.26) | 27.949 (x102.72) | 33.339 (x122.53) | 1245.054 (x4576.01) |
+| sort | 100000 | 12.036 | 16.746 (x1.39) | 30.283 (x2.52) | 35.565 (x2.95) | 2793.302 (x232.08) | 521.800 (x43.35) |
+| lazy-pipeline | 1000000 | 11.119 | 50.016 (x4.50) | 42.408 (x3.81) | 95.558 (x8.59) | 5176.009 (x465.52) | 2180.609 (x196.12) |
+| keyword-map | 1000000 | 42.878 | 163.930 (x3.82) | 155.691 (x3.63) | 268.741 (x6.27) | 2159.509 (x50.36) | 9035.674 (x210.73) |
+| fannkuch | 8 | 85.449 | 259.477 (x3.04) | 102.851 (x1.20) | 284.862 (x3.33) | 3149.211 (x36.85) | 2601.613 (x30.45) |
+| fannkuch-hinted | 8 | 66.586 | 264.048 (x3.97) | 104.372 (x1.57) | 282.058 (x4.24) | 3162.471 (x47.49) | 2611.476 (x39.22) |
+| nsieve | 20 | 45.185 | 210.294 (x4.65) | 655.085 (x14.50) | 618.926 (x13.70) | 5716.244 (x126.51) | 4282.136 (x94.77) |
+| nsieve-hinted | 20 | 46.443 | 211.787 (x4.56) | 656.889 (x14.14) | 613.560 (x13.21) | 5595.779 (x120.49) | 4360.395 (x93.89) |
+| k-nucleotide | 2000000 | 52.055 | 201.978 (x3.88) | 343.834 (x6.61) | 505.158 (x9.70) | 3410.723 (x65.52) | not run |
+| pipeline | 500000 | 60.428 | 303.887 (x5.03) | 338.817 (x5.61) | 249.230 (x4.12) | 2910.599 (x48.17) | not run |
+| dispatch | 5000000 | 70.423 | 331.125 (x4.70) | 431.117 (x6.12) | 1083.630 (x15.39) | 13114.865 (x186.23) | not run |
+| json | 30000 | 73.510 | 461.360 (x6.28) | 1534.653 (x20.88) | 788.606 (x10.73) | 17993.490 (x244.78) | not run |
+| first-output | - | 195.405 | 190.284 (x0.97) | 339.495 (x1.74) | 1838.310 (x9.41) | 849.960 (x4.35) | not run |
+| **geomean xJVM** (programs that ran) | | 1 | **x3.40** (28) | **x7.13** (28) | **x10.33** (28) | **x111.9** (28) | **x167.7** (23) |
+
+- **jank's built app runs at the JVM's speed on the call-heavy programs:** `tak-hinted` x0.56, `fib` x0.91,
+  `fib-hinted` x1.03, and first-output 190 ms against the JVM's 195. The geomean is x3.40 over all 28, every one with
+  the JVM's answer (the 32-bit wrap of jank's own core does not show here). Against jank's own core on the programs
+  both run: [jank](#jank).
+- **On the launcher release (c415244, `main`)** the same column gives x3.36 over 28, each row within 5% of c0431c6's.
+  The built app does not change on that branch.
+- **let-go's column is partial** (23 of 28): the run was stopped for the launcher test before k-nucleotide, pipeline,
+  dispatch, json and first-output.
+- **Phel's built app does not build on macOS.** The build runs `ulimit -s 65536 && exec phel ...`
+  (`src/cohost/build.clj`, the recording and `phel build` steps; `dev/perf/phel_snapshot.sh`). macOS's hard stack
+  limit is 65520 KB, so `ulimit` fails ("Operation not permitted") and Phel never runs. `docs:check phel` fails on the
+  same two build steps; the other seven runtimes pass `docs:check` on c0431c6. The rest of cohost already tolerates
+  it (`ulimit -s 1048576 2>/dev/null; exec ...`); a fix: `ulimit -s 65536 2>/dev/null || ulimit -s hard; exec ...`.
+- Not measured on this box yet: jvm-built, basilisp's built app at the smaller sizes, the from-source columns, and
+  the startup table.
 
 ### Box 1: built apps
 
@@ -268,6 +321,10 @@ Box 1, `main` @ ff30ce1, 2026-11-03 12:41 AM ET (`doc/perf/release-perf/lane-c/s
 - `:jank` loads a snapshot of the booted core, built once by `bb boot:jank-snapshot` in the cohost checkout
   (about 12 minutes) and rebuilt when cohost or jank changes. Without a fresh snapshot, jank boots from cohost's
   ahead-of-time objects, which is slower.
+- **The jank launcher** (c415244, `main`): `cohost :jank` execs a native binary, cohost.cli compiled with the booted
+  core, built with the snapshot. On the macOS box the snapshot and launcher build in 156.9 s (battery 214/216,
+  libraries 62/62; peak about 2.9 GB); then `cohost :jank -m demo.main you` takes 2.35 s and 1.34 s, and
+  `cohost :jank -e '(+ 1 2)'` 0.58 s. The launcher is 91.5 MB there (`doc/perf/macos/c415244/`).
 - Every other runtime reads, rewrites and evaluates `clojure.core` and the libraries the program requires at
   every start. That is the whole difference between 4.5 s on jolt and 94 s on ClojureWasm: how fast each one
   evaluates Clojure's own source. basilisp has a cached boot, and since this release the `cohost` command uses it: the first
@@ -498,6 +555,14 @@ them (`:native-hints`, [How it works](guide/08-how-it-works.md#performance-keys)
 - **sort.** jank 0.1's own `sort` result walks quadratically (each `next` copies the buffer), which is the x352-x602
   in jank's own columns. cohost on jank uses Clojure's own sort there (a boot probe picks; `main` since ff30ce1):
   SORT-ROW.
+- **cohost's built app against jank's own core** (macOS box). Over the 13 programs jank's own core runs and all
+  three columns answer as the JVM does: jank-jit x6.66, jank-aot x6.47, and cohost's built app (c0431c6) **x2.37**,
+  about 2.7 times as fast as jank's own `clojure.core`. The gap: `sort` (x1.39 against x217), `lazy-pipeline` (x4.5
+  against x32.4), the four binary-trees (x3.4-3.8 against x7.9-9.7), `tak-hinted` (x0.56 against x3.84). jank's own
+  core leads on `fib` (x0.72 against x0.91) and `keyword-map` (x3.43 against x3.82). jank's own columns were measured
+  the night before (0c8834f, the same bench method and jank binary, against that run's JVM column):
+  `doc/perf/macos/jank-own-0c8834f/`. cohost's built app runs all 27 programs (28 rows with first-output); jank's
+  own core runs 13 of them with the JVM's answer.
 - **Patched jank.** cohost carries a patch series against jank (`upstream/jank/`) that fixes the 32-bit wrap,
   the sort walk and more; it is used only when `JANK_BIN` names a build of it. These tables are the jank that ships.
 

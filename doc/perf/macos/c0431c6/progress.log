@@ -1,0 +1,31 @@
+2026-11-03 11:16:33 GATE pass: snapshot built 150 s; second run 0.60 s; ~/cohost @ c0431c6
+2026-11-03 11:16:41 START docs-jank load=[{ 3.22 2.79 2.72 }]
+2026-11-03 11:19:10 END   docs-jank rc=0 149s
+2026-11-03 11:19:10 START docs-jolt load=[{ 3.20 2.98 2.80 }]
+2026-11-03 11:19:55 END   docs-jolt rc=0 45s
+2026-11-03 11:19:55 START docs-lpy load=[{ 3.18 2.99 2.82 }]
+2026-11-03 11:22:01 END   docs-lpy rc=0 126s
+2026-11-03 11:22:01 START docs-cljw load=[{ 3.50 3.24 2.94 }]
+2026-11-03 11:27:34 END   docs-cljw rc=0 333s
+2026-11-03 11:27:34 START docs-phel load=[{ 3.23 3.29 3.06 }]
+2026-11-03 11:33:37 END   docs-phel rc=1 363s
+2026-11-03 11:33:37 START docs-lg load=[{ 3.05 3.45 3.23 }]
+2026-11-03 11:35:10 END   docs-lg rc=0 93s
+2026-11-03 11:35:10 START docs-cljs load=[{ 4.62 3.74 3.35 }]
+2026-11-03 11:35:56 END   docs-cljs rc=0 46s
+2026-11-03 11:35:56 START docs-jvm load=[{ 4.27 3.79 3.39 }]
+2026-11-03 11:36:09 END   docs-jvm rc=0 13s
+2026-11-03 11:36:09 START col-jvm load=[{ 4.32 3.81 3.40 }]
+2026-11-03 11:36:47 END   col-jvm rc=0 38s
+2026-11-03 11:36:47 START col-jank-built load=[{ 3.64 3.69 3.38 }]
+2026-11-03 11:43:07 END   col-jank-built rc=0 380s
+2026-11-03 11:43:07 START col-jolt-built load=[{ 3.50 3.62 3.43 }]
+2026-11-03 11:48:24 END   col-jolt-built rc=0 317s
+2026-11-03 11:48:24 START col-cljw-built load=[{ 3.25 3.47 3.43 }]
+2026-11-03 12:20:23 END   col-cljw-built rc=0 1919s
+2026-11-03 12:20:23 START col-phel-built load=[{ 3.80 3.39 3.31 }]
+2026-11-03 12:20:30 END   col-phel-built rc=0 7s
+2026-11-03 12:20:30 START col-cljs-built load=[{ 3.82 3.41 3.32 }]
+2026-11-03 12:26:58 END   col-cljs-built rc=0 388s
+2026-11-03 12:26:58 START col-lg-built load=[{ 4.76 3.69 3.41 }]
+2026-11-03 13:04:27 STOPPED during col-lg-built (7+ of 28): coord/jank-launcher test
