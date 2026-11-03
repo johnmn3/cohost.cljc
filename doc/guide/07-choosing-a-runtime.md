@@ -22,6 +22,10 @@ command. The same source runs on each; what differs is the host underneath.
 The core battery checks behaviors of `clojure.core` against JVM Clojure 1.12's answers; the
 library battery runs twelve `clojure.*` libraries the same way.
 
+`:jank` runs the jank package from jank's apt repository (`dev/install/jank.sh`) as it ships.
+cohost also carries a patch series against jank under `upstream/jank/` for its own measurements
+(`doc/PERF.md`, "Two jank binaries"); nothing selects it unless `JANK_BIN` names a build of it.
+
 ## What differs, in plain words
 
 - **Numbers.** ClojureScript and basilisp have one number type: `(= 1 1.0)` is true there,

@@ -138,7 +138,8 @@ for you.
 | `:cljrs` | clojurust (Rust) | not yet | `dev/install/cljrs.sh` |
 
 What differs from one runtime to the next, and startup and speed for each:
-[Choosing a runtime](doc/guide/07-choosing-a-runtime.md).
+[Choosing a runtime](doc/guide/07-choosing-a-runtime.md). The per-host performance switches:
+[How it works](doc/guide/08-how-it-works.md#performance-keys).
 
 ## The guide
 
