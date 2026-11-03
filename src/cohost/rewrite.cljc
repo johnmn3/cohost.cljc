@@ -2583,7 +2583,7 @@ nil))
 
 ;; A7-1: the adapter's fn for a vector literal of this size (:vector-literal), when the literal
 ;; carries no metadata but its reader position
-(def ^:private reader-position-keys #{:line :column :end-line :end-column :file :source})
+(def ^:private reader-position-keys #{:line :column :end-line :end-column :file :source :jank/source})
 (defn- vector-literal-fn [form]
   (when-let [m (host/vector-literal)]
     (when (every? reader-position-keys (keys (meta form)))
