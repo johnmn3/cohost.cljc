@@ -16,9 +16,13 @@ its own; a table below waits on the RC-2 sha.
   with `bash dev/install/jank-src.sh --patches`; that rebuilds only what changed, and starts phase 1 fresh when any
   file changed. Select it with `JANK_BIN=/usr/local/lib/jank-dev/bin/jank`.
 - **What follows JANK_BIN:** every jank task (`bb boot:jank`, `bb boot:jank-snapshot`, `bb bench:jank`,
-  `bb bench:programs jank`) and `bin/cohost`. Each binary has its own AOT objects and its own snapshot
-  (`target/jank-aot-<hash>`, `target/jank-snapshot-<hash>`, keyed by the binary's path, size and mtime). Build a
-  binary's snapshot once with `bb boot:jank-snapshot`; after that, its boots and benches load it.
+  `bb bench:programs jank`). `bin/cohost` does not: it always runs the `jank` on PATH (bin/cohost:257).
+- **Per-binary caches:** a JANK_BIN binary has its own AOT objects under `target/jank-aot-<sha256 of the
+  binary's real path, 12 hex>`, whose stamp also records the binary's version, size and mtime
+  (dev/perf/jank_aot_ensure.clj). Its snapshot is under `target/jank-snapshot-<the same hash>`, keyed by the
+  binary's version, path, size and mtime (dev/perf/jank_snapshot_key.clj). With no JANK_BIN, the roots are the
+  plain `target/jank-aot` and `target/jank-snapshot`. Build a binary's snapshot once with `bb boot:jank-snapshot`;
+  after that, its boots and benches load it.
 - **Locale:** run jank and its build under `LC_ALL=C.UTF-8`. Under the C locale jank's lexer rejects non-ASCII
   string literals.
 
@@ -42,9 +46,9 @@ sees UNPATCHED jank's 32-bit wrap; "both" means set on both binaries.
 |---|---|---|---|
 | `:cpp-twins?` | nil | true (both) | A self-recursive arity with all-`^long` parameters and a numeric body gets a C++ twin (checked `+ - *`), called under the long guard. An overflow or a non-long argument runs the arity as written (U6-12). |
 | `:native-self-calls?` | nil | PATCHED only | Typed parameters pass natively on a self-call and `:rettag` is honored (patch 20). On apt a hinted fn recurses through an untagged inner fn* instead (U6-11). |
-| `:direct-var-calls` | - | if A7-4 is in at the cut | Direct same-unit calls (A7-4). Parked at the time of writing. |
+| `:direct-var-calls` | nil | (if A7-4 is in at the cut; this row is deleted if it is not in RC-2) | Direct same-unit calls (A7-4). |
 | `:vector-literal` | nil | off | Small vector literals emitted as one-block vectors (A7-1). The emission is off until its two battery FAILs clear. |
-| `:multimethod-invoke` | - | if A7-5 is in at the cut | The multimethod hit path (A7-5). |
+| `:multimethod-invoke` | nil | (if A7-5 is in at the cut; this row is deleted if it is not in RC-2) | The multimethod hit path (A7-5). |
 | `:double-str` | nil | both | `str` / `.toString` / `Double/toString` of a double as the JVM writes it (`3.0E10`, `1.0E-4`; A5-5). |
 | `:native-long-inits` | nil | apt: `#{count}` | A `let*` local started from `count` (or from arithmetic over native longs) is a native long (U6-10). |
 | `:static-types` | nil | `:sound` (both) | The codemod infers numeric types it is certain of (U6-7). `:unit` (opt-in, `COHOST_STATIC_TYPES=unit` for the bench) also types a defn's parameters from its call sites in one unit, and is unsound outside that unit (see the key's doc). |
@@ -52,6 +56,9 @@ sees UNPATCHED jank's 32-bit wrap; "both" means set on both binaries.
 | `:core-expansions` | {} | both | A call of a stock core fn becomes a guarded host form (`mod`, `odd?`/`even?`, `map?`/`vector?` for json). |
 | `:int-op-aliases` | {} | apt | `+ - *` of two untyped operands is jank's promoting op inline, with the shim's checked call only when two integers overflow (A5-3). |
 | `:exception-class` | (fn) | both | Native overflow messages map to `ArithmeticException`, so `(catch ArithmeticException ...)` sees them (A5-4). |
+
+`:multimethod-cache?` (the shim's MultiFn with a one-entry cache; jank sets a `cpp/raw` hit check) is older: it
+came with X2-1 (`465f2b6`), which is already in the previous cut (`6bd1472`), so it is not in this release's table.
 
 ### The extension's blocks
 
@@ -61,16 +68,16 @@ the adapter's keys (`:chunks`, `:natives`); stock code never names it.
 
 | block | what it makes native | binary |
 |---|---|---|
-| `cohost_rt` | Chunked seqs on jank's chunk types (`chunk_cons`, the chunked `map` and `filter`, `chunk_reduce`); the JVM's double printer (`jvm_double_into`, `double_str`); the one-block small vector (A7-1, emission off). | both. The chunk code reads the chunk through `buf()`, so it compiles on the series too. |
-| `cohost_leaf` | The leaves: a sort result walked linearly (`sorted_seq`; apt's `native_vector_sequence` restarts at index 0 and walks quadratically), and `nth`, `count`, `get`, `conj` and a vector's `assoc` in one C++ call each (A4, A6-3). | the sort fix on apt only (the series' patch 11 makes it unneeded, chosen at compile time); the rest on both |
+| `cohost_rt` | Chunked seqs on jank's chunk types (`chunk_cons`, the chunked `map` and `filter`, `chunk_reduce`); the JVM's double printer (`jvm_double_into`, `double_str`); the one-block small vector (A7-1, emission off). | both. The chunk code reads the chunk through `buf()` on both builds (jank_runtime.jank:60). It compiles and boots on the series: the PATCHED boots of X1-7 and A1-2 load it. |
+| `cohost_leaf` | The leaves: a sort result walked linearly (`sorted_seq`; apt's `native_vector_sequence` restarts at index 0 and walks quadratically), and `nth`, `count`, `get`, `conj` and a vector's `assoc` in one C++ call each (A4, A6-3). | the sort fix on apt only (the series' patch 11 makes it unneeded, and the block chooses at compile time from the header's shape, per its comment at jank_runtime.jank:294-300; not probed separately); the rest on both |
 | `cohost_num` | `+ - *` of two integers in i64, checked, with nil on overflow so the shim throws `ArithmeticException` (A5). | apt (when the boot probe sees the 32-bit wrap) |
 | `cohost_assoc` | `assoc` of keys and values on a vector, with one bounds check (`oob`). | both |
 | `cohost_obj` | cohost instances (records, deftypes) as jank objects with a descriptor: `count`, `conj`, `assoc`, `dissoc`, `nth`, `meta` and protocol dispatch through it. | both |
 | `cohost_reduce` | `reduce` with an init over a range or a vector without jank's per-element seq step; `into`, `transduce`, `frequencies` and `group-by` over it (X4-1, A7-2). | both (apt's walk, or jank's own on the series) |
 | `cohost_sort` | `sort` with the host's compare when the comparator is the stock `compare` (X4-1). | both |
-| A6-2 (json) | `map?` / `vector?` through a guarded jank op, `(int c)` of a char and `nil?` inline: the json program's per-operation costs. | both |
+| `cohost_json` (A6-2) | `map?` / `vector?` through a guarded jank op, `(int c)` of a char and `nil?` inline: the json program's per-operation costs. | both |
 | A6-4 | `get-in` / `assoc-in` / `update-in` in one walk over cohost's own `get` and `assoc`. | both |
-| A7-3 | (if it is in at the cut) | - |
+| A7-3 | (if it is in at the cut; this row is deleted if it is not in RC-2) | |
 
 ### Known gaps (the board's list)
 
