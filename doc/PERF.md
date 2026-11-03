@@ -1627,3 +1627,17 @@ apt the snapshot leg is not slower than the AOT leg (366.52 vs 310.01, ranges ov
 `bb boot:jank` in this tree: apt (snapshot and AOT) 525/171/17 natives/78/0, battery 170/172 (subs count nth first
 last butlast; Character outside ASCII), libraries 62/62; patched 523/171/19 natives/78/0 (sort and sort-by become
 natives where the sort walks linearly, `651592c`), the same 170/172 and 62/62.
+
+**On max/main `034534a`** (A4's extension: chunked ranges, the linear sorted walk, string nth; max/x3 @
+`66329bd`), one round under the load gate (load 4.5-6.8, free 5-7 GB), 2026-11-03 1:00-1:09 AM ET. Stock ms /
+x, jank's own ms in brackets; the table above is on `ce94816`, before it:
+
+| row | apt, snapshot | apt, AOT | patched, AOT |
+|---|---|---|---|
+| sort | **10.78** / x0.31 (own 33.99); was 48.56 | **19.38** / x0.59 (own 32.37); was 37.79 | **6.49** / x1.18 (own 5.46); was 10.68 |
+| lazy-pipeline | **20.02** / x0.23 (own 86.43); was 93.44 | **15.25** / x0.06 (own 244.93); was 157.01 | **7.17** / x3.40 (own 2.10); was 24.83 |
+| geomean x over the 30 cases (this one round) | 1.22 | 1.22 | 2.05 |
+
+On `034534a` the stock core beats jank's own core on both rows on apt (x < 1), and on the series it is within 3.4x
+(lazy-pipeline) and 1.18x (sort). `bb boot:jank` there: 518/171/24 natives/78/0, battery 176/178, libraries 62/62
+on all three (the snapshot, apt AOT, patched AOT).
