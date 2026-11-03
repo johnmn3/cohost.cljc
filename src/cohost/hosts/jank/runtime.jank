@@ -10,7 +10,7 @@
 ;; Everything here is reached by cohost.hosts.jank-host only, behind the adapter's keys
 ;; (:chunks, :natives); stock code never names it.
 (ns cohost.hosts.jank.runtime
-  (:refer-clojure :exclude [range chunk-cons chunk?]))
+  (:refer-clojure :exclude [range chunk-cons chunk? map filter count]))
 
 (cpp/raw "
 #include <jank/runtime/object.hpp>
@@ -21,6 +21,8 @@
 #include <jank/runtime/obj/array_chunk.hpp>
 #include <jank/runtime/obj/cons.hpp>
 #include <jank/runtime/obj/number.hpp>
+#include <jank/runtime/obj/persistent_vector.hpp>
+#include <jank/runtime/core/truthy.hpp>
 
 namespace cohost_rt {
   using namespace jank::runtime;
@@ -55,6 +57,7 @@ namespace cohost_rt {
   }
 
   inline bool is_chunk(object_ref const x) { return x.get_type() == object_type::array_chunk; }
+  inline bool is_chunked_cons(object_ref const x) { return x.get_type() == object_type::chunked_cons; }
 
   /* The stock chunk-cons ((chunk-cons (chunk b) rest) in map, filter, concat...): rest may be
    * an unrealized lazy seq that turns out empty. The chunk's last element moves into a cons in
@@ -74,6 +77,49 @@ namespace cohost_rt {
                                       c->buffer.begin() + static_cast<long>(c->offset + n - 1));
     return make_box<obj::chunked_cons>(make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0)),
                                        tail);
+  }
+
+  /* The stock chunked branch of map / filter in one C++ loop over a chunk: f (pred) called once
+   * per element in order, the results in a new chunk (u5's 23-chunk-branch, adapter-side). */
+  inline object_ref chunk_map(object_ref const f, object_ref const chunk) {
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    jank::native_vector<object_ref> v;
+    v.reserve(c->buffer.size() - c->offset);
+    for(auto i(c->offset); i < c->buffer.size(); ++i) { v.push_back(f.call(c->buffer[i])); }
+    return make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0));
+  }
+
+  inline object_ref chunk_filter(object_ref const pred, object_ref const chunk) {
+    auto const c(expect_object<obj::array_chunk>(chunk));
+    jank::native_vector<object_ref> v;
+    for(auto i(c->offset); i < c->buffer.size(); ++i) {
+      auto const e(c->buffer[i]);
+      if(truthy(pred.call(e))) { v.push_back(e); }
+    }
+    return make_box<obj::array_chunk>(std::move(v), static_cast<size_t>(0));
+  }
+
+  /* count of a seq that starts as a jank chunked_cons: a chunk at a time (jank's own walk steps
+   * a chunked_cons by chunk_next, which on apt copies the whole chunk per element), the cons /
+   * lazy_sequence links between chunks one by one. */
+  /* [n rest]: rest nil when the whole seq was counted, else the part still to count. */
+  inline object_ref count_chunked_head(object_ref const x) {
+    jank::i64 n{};
+    object_ref cur{ x };
+    while(!cur.is_nil()) {
+      auto const t(cur.get_type());
+      if(t == object_type::chunked_cons) {
+        auto const cc(expect_object<obj::chunked_cons>(cur));
+        if(cc->head.get_type() != object_type::array_chunk) { break; }
+        auto const c(expect_object<obj::array_chunk>(cc->head));
+        n += static_cast<jank::i64>(c->buffer.size() - c->offset);
+        cur = cc->tail.is_nil() ? cc->tail : cc->tail.seq();
+      }
+      else if(t == object_type::cons) { ++n; cur = cur.next(); }
+      else if(t == object_type::lazy_sequence) { cur = cur.seq(); }
+      else { break; }
+    }
+    return make_box<obj::persistent_vector>(std::in_place, make_box(n), cur);
   }
 
   /* IChunk.reduce over a jank array_chunk: by index, a reduced result returned unopened. */
@@ -137,3 +183,40 @@ namespace cohost_rt {
        (chunked-range* start end step)
        '())
      (clojure.core/range start end step))))
+
+(defn map
+  "clojure.core/map (the adapter's native, A4 (a)): (map f coll) takes a jank chunked seq a chunk
+   at a time through one C++ loop (cohost_rt::chunk_map) and keeps its result chunked and lazy;
+   every other arity is jank's own map."
+  ([f] (clojure.core/map f))
+  ([f coll]
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (if (chunked-seq? s)
+         (chunk-cons (cpp/cohost_rt.chunk_map f (chunk-first s)) (map f (chunk-rest s)))
+         (cons (f (first s)) (map f (rest s)))))))
+  ([f c1 c2] (clojure.core/map f c1 c2))
+  ([f c1 c2 c3] (clojure.core/map f c1 c2 c3))
+  ([f c1 c2 c3 & colls] (apply clojure.core/map f c1 c2 c3 colls)))
+
+(defn filter
+  "clojure.core/filter (the adapter's native, A4 (a)): (filter pred coll) as map above
+   (cohost_rt::chunk_filter); (filter pred) is jank's own."
+  ([pred] (clojure.core/filter pred))
+  ([pred coll]
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (if (chunked-seq? s)
+         (chunk-cons (cpp/cohost_rt.chunk_filter pred (chunk-first s)) (filter pred (chunk-rest s)))
+         (let [f (first s) r (rest s)]
+           (if (pred f) (cons f (filter pred r)) (filter pred r))))))))
+
+(defn count-with
+  "A count fn for cohost.core: a seq that starts as a jank chunked_cons is counted a chunk at a
+   time (cohost_rt::count_chunked_head); the rest, and anything else, by `stock-count`."
+  [stock-count]
+  (fn [coll]
+    (if (cpp/cohost_rt.is_chunked_cons coll)
+      (let [[n rest] (cpp/cohost_rt.count_chunked_head coll)]
+        (if (nil? rest) n (+ n (stock-count rest))))
+      (stock-count coll))))

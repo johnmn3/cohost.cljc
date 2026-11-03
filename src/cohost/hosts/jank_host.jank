@@ -810,6 +810,7 @@ namespace cohost_obj {
 ;; the shim's class-of, resolved lazily: the shim requires this adapter
 ;; (through cohost.hosts.auto), so this namespace cannot require it back
 (def ^:private shim-class-of (delay (var-get (resolve 'cohost.shim/class-of))))
+(def ^:private shim-rt-count (delay (var-get (resolve 'cohost.shim/RT-count))))
 (def ^:private shim-string-format (delay (var-get (resolve 'cohost.shim/String-format))))
 (def ^:private shim-supers (delay (var-get (resolve 'cohost.shim/class-supers))))
 (def ^:private shim-bases (delay (var-get (resolve 'cohost.shim/class-bases))))
@@ -1500,7 +1501,10 @@ namespace cohost_obj {
                    :chunk-next chunk-next :chunk-buffer chunk-buffer :chunk-append chunk-append
                    :chunk chunk :chunk-cons jank-rt/chunk-cons
                    :chunk? jank-rt/chunk? :chunk-reduce jank-rt/chunk-reduce})
-   :natives {'clojure.core/range jank-rt/range}
+   :natives {'clojure.core/range jank-rt/range
+             'clojure.core/map jank-rt/map
+             'clojure.core/filter jank-rt/filter
+             'clojure.core/count (jank-rt/count-with (fn [x] (@shim-rt-count x)))}
    ;; the shim's stock multimethod behind a one-entry cache (X2-1, doc/research/jank-dispatch.md)
    :multimethod-cache? mm-hit
    :core-ns 'clojure.core
@@ -1518,8 +1522,12 @@ namespace cohost_obj {
    ;; the type layer above: deftype & friends are the adapter's own macros
    ;; and fns, marked as macros when they are interned into cohost.core
    :type-method-style :cohost-types
+   ;; chunk-cons: the stock chunked branches take core.clj's chunk fns from the host
+   ;; (policy/chunk-names); jank's own chunk-cons realizes its rest (A4 (a)), so cohost.core
+   ;; gets the lazy one instead
    :core-extras (assoc type-core-extras 'eduction eduction*
-                                        'read-string jank-read-string)
+                                        'read-string jank-read-string
+                                        'chunk-cons jank-rt/chunk-cons)
    :intern! (fn [ns-sym sym val]
               (let [v (intern ns-sym sym val)]
                 (when (and (= 'cohost.core ns-sym) (contains? type-macro-names sym))
