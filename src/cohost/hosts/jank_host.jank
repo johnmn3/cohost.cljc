@@ -11,6 +11,7 @@
 (ns cohost.hosts.jank-host
   (:require [cohost.adapter :as adapter]
             [cohost.scan :as scan]
+            [cohost.hosts.jank.runtime :as jank-rt]
             [clojure.string :as string]))
 
 ;; ---------------------------------------------------------------------------

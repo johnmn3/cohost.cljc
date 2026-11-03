@@ -1,0 +1,30 @@
+;; cohost's jank runtime extension (A4, the RULING of 2026-11-02 6:2x PM ET): C++ that
+;; unpatched jank loads through its own cpp/ interop when cohost boots. jank's tree is untouched;
+;; jank's authors are free to take any of it. The C++ lives in cpp/raw blocks in this module
+;; (the pattern jank_host.jank's cohost_obj / cohost_sort use) rather than in a .hpp: a header
+;; would need -I on every jank command and every AOT compile, a cpp/raw block needs nothing.
+;; Cost (A4 step 0, measured on apt 0.1-noble): under AOT (bb boot:jank, the snapshot) the
+;; block is compiled into this module's object once; on the JIT path (boot:jank-jit) it is
+;; compiled at every boot (about 0.03 s per KB of C++); jank's PCH never holds it.
+;;
+;; Everything here is reached by cohost.hosts.jank-host only, behind the adapter's keys
+;; (:chunks, :natives); stock code never names it.
+(ns cohost.hosts.jank.runtime)
+
+(cpp/raw "
+#include <jank/runtime/object.hpp>
+#include <jank/runtime/core/make_box.hpp>
+
+namespace cohost_rt {
+  using namespace jank::runtime;
+
+  /* The extension's version: bumped with every change of its C++ (the AOT stamp already
+   * follows this file). */
+  inline object_ref version() { return make_box(static_cast<jank::i64>(1)); }
+}
+")
+
+(defn version
+  "The C++ extension's version (cohost_rt::version): its presence says the extension loaded."
+  []
+  (cpp/cohost_rt.version))
