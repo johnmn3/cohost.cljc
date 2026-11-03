@@ -1890,7 +1890,9 @@ namespace cohost_obj {
                                                (list 'if (list 'clojure.core/zero? b)
                                                      (list 'cohost.shim/Numbers-divide a b)
                                                      (list 'clojure.core// a b))))))}
-   :core-aliases '#{not}
+   ;; A6-1: = is jank's own here ('clojure.core/= :host in :natives), so its calls are
+   ;; emitted as clojure.core/=, which jank's compiler inlines
+   :core-aliases '#{not =}
    :syntax-quote-source? true
    :loop-rebind-shadow? true
    :lazy-seq (fn [f] (lazy-seq (f)))
@@ -2066,7 +2068,9 @@ namespace cohost_obj {
              ;; (~160 ns per char comparison on apt)
              'clojure.core/= :host
              'clojure.core/get native-get
-             'clojure.core/assoc native-assoc
+             ;; A6-1: a vector assoc (up to three pairs) in one C++ call per pair
+             ;; (jank-rt/assoc-with); maps, cohost instances, bounds errors as before
+             'clojure.core/assoc (jank-rt/assoc-with native-assoc)
              ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
              ;; at a time (cohost.hosts.jank-runtime)
              'clojure.core/range jank-rt/range
