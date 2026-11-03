@@ -1,0 +1,5 @@
+=== FORM
+(def tak (fn* tak ([x y z] (if (clojure.core/not (clojure.core/< y x)) z (tak (tak (clojure.core/dec x) y z) (tak (clojure.core/dec y) z x) (tak (clojure.core/dec z) x y))))))
+=== FORM
+(def -run (fn* -run ([s] (let* [r (read-string (str "[" s "]"))] (tak (nth r 0) (nth r 1) (nth r 2))))))
+=== RESULT #'cohost.user/-run

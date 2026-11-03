@@ -1559,3 +1559,82 @@ last element into a cons in front of an unrealized rest (chunk-first one short).
   laziness and `pred`'s call count are the JVM's.
 - `dev/research/a4/chunk_first.sh` on both columns: 32 / 15 / 32 / 32 / 32 / true (JVM 32 / 16 /
   32 / 32 / 32 / true).
+
+## Hinted twins: why ^long makes the public column slower (X1-10, 2026-11-03)
+
+On apt jank, cohost runs the hinted bench programs slower than the plain ones (X1-5/X1-6): fib-hinted 700 vs fib 470 ms,
+tak-hinted 1551 vs 488. On the JVM and on the patched build, the twins are equal. Two probes, on max/main `6a1dbaf`:
+
+- the forms cohost hands jank: `bash dev/research/x1/dump_rewrite.sh <file>` (it wraps the adapter's `:eval`
+  capability and prints each form)
+- the timings: `dev/research/x1/p14_hinted.clj`, which has one variant per difference between fib.clj / tak.clj and
+  their twins. It ran under cohost (`run-cohost-jank.sh`) and on plain jank (`run-jank.sh … aot`, the same source),
+  on both binaries, with JANK_O=3. `dev/research/x1/p14_run.sh` ran 3 rounds, apt then patched per round, every leg
+  under the load gate (load 5.1-6.2, free memory 5-7 GB). Each cell is the median of the three rounds' medians, with
+  their min-max, in ms. fib is (fib 27), tak is (tak 18 12 6).
+
+What the hinted defn becomes (dump, apt). These are the forms that differ from the plain twin:
+
+1. The **param coercion wrapper**. `(defn f ^long [^long n] BODY)` becomes `(fn* f ([n] (let* [n (if (is_integer n) n
+   (if (number? n) (long n) (throw …)))] (let* [ret ((fn* f ([n] BODY')) n)] <the same coercion of ret>))))`.
+   - BODY' runs in a fresh inner `fn*` of the same name, and recursion goes to that inner fn, so the coercions run
+     once per top-level call.
+   - With a return hint alone (`fib-ret`), there is no inner fn: every call coerces its result.
+2. **The arithmetic on the hinted local.**
+   - In BODY', `(- n 1)` and `(- n 2)` on a `^long` local become `cohost.shim/Numbers-minus` calls, the generic boxed
+     shim op.
+   - On an untagged local, the same expression is A5-3's inline int-op path: an `is_integer` test, a 32-bit range
+     test, and `cpp/jank.runtime.promoting_sub`.
+   - The cause is `int-op-operand?` (rewrite.cljc:896). It admits only a local with no tag (`(nil? (get *local-tags*
+     x)) (nil? (:tag (meta x)))`), on the assumption that a tagged local is native. On apt the hinted param is not
+     native: the wrapper rebinds it to the boxed object. So it falls out of both the int-op clause and A5-4's
+     checked-native clause, and lands in the shim.
+3. **The source itself.** fib-hinted.clj and tak-hinted.clj write `(- n 1)` where fib.clj and tak.clj write
+   `(dec n)`. `dec` stays `clojure.core/dec`, jank's own. `(- n 1)` goes through A5-3's guard.
+
+`(+ (f …) (f …))` is `cohost.shim/Numbers-add` in both twins, so it is not a difference.
+
+| probe variant | cohost apt | cohost patched | plain jank apt | plain jank patched |
+|---|---:|---:|---:|---:|
+| fib-dec (fib.clj) | 5.13 (5.08-6.43) | 0.86 | 1.00 | 0.68 |
+| fib-minus: `(- n 1)` for `dec` | 6.27 (6.26-14.62) | 0.86 | 1.62 | 0.76 |
+| fib-param: `^long n` only | 9.01 (8.79-9.13) | 0.86 | 1.83 | 0.74 |
+| fib-ret: `^long` return only | 7.74 (7.53-7.76) | 6.68 (3.06-7.06) | 1.27 | 0.74 |
+| fib-both (fib_hinted.clj) | 16.81 (8.97-17.22), bimodal: 17.2, 9.0, 16.8 | 0.87 | 1.79 | 0.75 |
+| fib-both-dec: hinted, with `dec` | 4.50 (3.94-8.45) | 0.86 | 1.93 | 0.76 |
+| tak-dec (tak.clj) | 0.30 | 0.07 | 0.32 | 0.06 |
+| tak-minus | 0.48 | 0.07 | 0.26 | 0.07 |
+| tak-param | 0.89 (0.88-0.92) | 0.07 | 0.58 | 0.06 |
+| tak-both (tak_hinted.clj) | 0.90 (0.89-1.28) | 0.07 | 0.49 | 0.07 |
+| tak-both-dec | 0.53 (0.53-0.54) | 0.07 | 0.51 | 0.06 |
+
+The causes, each with its probe rows and an owner:
+
+- **(A) A hinted local leaves A5-3's int-op path for the boxed shim op.** fib-minus -> fib-param is x1.44 (6.27 ->
+  9.01 ms); tak-minus -> tak-param is x1.85 (0.48 -> 0.89). This is the largest single cost, and fib-both's stable
+  mode (9.0) equals fib-param.
+  - The fix belongs to `int-op-operand?` / the int-op clause: a hinted local that the codemod has not made native on
+    jank (the wrapper's let*-coerced param) should take the same inline path.
+  - Owner: **u1** (the int-op path).
+  - Expected: fib-param -> about fib-minus (6.3), and tak-param -> about 0.48.
+- **(B) `(- x 1)` costs more than `dec` through A5-3's guard.** fib-dec -> fib-minus is x1.22 (5.13 -> 6.27); tak-dec ->
+  tak-minus is x1.60 (0.30 -> 0.48).
+  - This is the program's source, not the hint. It is also the int-op path's cost for a literal 1 against jank's
+    native `dec`. u1's A5-6, unmerged, replaces the guard with an i64 right operand. Its fib(27) on apt went 5.04 ->
+    1.98 ms with `+`.
+  - Owner: **u1** (A5-6 covers it).
+  - If the twins should differ only in hints, `bench/programs/*_hinted.clj` could use `dec` too. That is a bench
+    change, u0/C-1's call, not made here.
+- **(C) The wrapper's inner `fn*`, for tak.** tak-dec -> tak-both-dec is x1.77 (0.30 -> 0.53). Both use `dec`, and
+  both-dec has the wrapper. The coercion runs once per top call, so the cost is the recursion through the inner
+  `fn*`'s self-name (3 args) instead of the var.
+  - fib-both-dec does not pay it (4.50, below fib-dec), so it shows only for tak's three-argument self-calls.
+  - Owner: **u5** (the typed-param rule that emits the wrapper). The direction: emit the coercion into the defn's own
+    arity, without an inner fn, or name the inner fn differently so that recursion stays on the var.
+- **(D) fib-both is bimodal (9.0 or 17 ms) on apt.** It is not explained by a form difference: its forms equal
+  fib-param's plus the return coercion, which runs once. To re-measure after (A).
+- **Plain jank on apt pays for hints too.** fib 1.00 -> 1.79, tak 0.32 -> 0.49. jank-aot's fib-hinted is 132 vs fib 80
+  ms (X1-5), so part of the hinted rows' xJVM is jank's own and not cohost's.
+- **On the patched build every twin costs the same (0.86 / 0.07), except fib-ret** (return hint only, 3.1-7.1 against
+  0.86): the per-call return coercion there defeats the series' native returns (patch 20). For **u5**, the same
+  wrapper: no bench program has a return hint alone, so it does not show in the table.

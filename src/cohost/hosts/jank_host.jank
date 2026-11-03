@@ -2094,10 +2094,11 @@ namespace cohost_assoc {
    ;; battery's edge cases against the stock path and the JVM
    ;; (dev/research/u4/edges.sh: integers, Long/MAX/MIN, reals, NaN, -0.0, a
    ;; bigint, the shim's integer "ratio", a non-number): every row equal
+   ;; A6-1 (u3): = joins them: it is jank's own here ('clojure.core/= :host in :natives)
    ;; A6-2 cohost_json: true? false? string? are jank's own too (no :inline in the stock
    ;; core, so each was a var call; jank's answer on nil, the booleans, a computed boolean,
    ;; a string, a char, a keyword, a number, a vector: the stock fn's)
-   :core-aliases '#{not not= < > <= >= == true? false? string?}
+   :core-aliases '#{not not= = < > <= >= == true? false? string?}
    ;; U6-9: a booted stock fn passed as a value ((map inc xs), (filter odd? xs))
    ;; is jank's own fn: the stock inc/pos?/</... bodies already are jank's op
    ;; (their :inline reaches it), so the value differs only by the var call.
@@ -2296,7 +2297,9 @@ namespace cohost_assoc {
              ;; (~160 ns per char comparison on apt)
              'clojure.core/= :host
              'clojure.core/get native-get
-             'clojure.core/assoc native-assoc
+             ;; A6-1: a vector assoc (up to three pairs) in one C++ call per pair
+             ;; (jank-rt/assoc-with); maps, cohost instances, bounds errors as before
+             'clojure.core/assoc (jank-rt/assoc-with native-assoc)
              ;; A6-2 cohost_json: conj without the stock layers (native-conj above)
              'clojure.core/conj native-conj
              ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
