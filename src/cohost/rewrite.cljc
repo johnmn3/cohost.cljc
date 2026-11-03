@@ -1431,6 +1431,19 @@
                           (concat calls (loop-recurs body')))
                   (or (nil? ret) (= ret (infer-num env (last body'))))))))))
 
+(def ^:private twin-count (atom 0))
+
+(defn- twin-name
+  "U6-12: a C++ identifier for nm's twin, unique in the process: the namespace
+   and the name with every other character an underscore, and a counter (a
+   gensym's name can carry a $ that cpp/ symbol resolution does not take)."
+  [nm]
+  (let [alnum (fn [x] (apply str (map (fn [c] (if (or (<= (int \a) (int c) (int \z)) (<= (int \A) (int c) (int \Z))
+                                                        (<= (int \0) (int c) (int \9)))
+                                                  c \_))
+                                       (str x))))]
+    (str "cohost_twin_" (alnum *current-ns*) "_" (alnum (name (*plain* (bare-sym nm)))) "_" (swap! twin-count inc))))
+
 (defn- twin-cpp
   "U6-12: the C++ of a self-recursive hinted arity in the numeric subset, or
    nil. pnames are the ^long parameters (plain symbols), nm the fn's name, f
@@ -1729,7 +1742,7 @@
                                                                     (= 'long (primitive-hint (:tag (meta %)))))
                                                               params)
                                                       (mentions-sym? (*plain* (bare-sym nm)) body))
-                                             (str "cohost_twin" (gensym "")))
+                                             (twin-name nm))
                                          code (when f (twin-cpp nm pn f body))]
                                      (if-not code
                                        arity
