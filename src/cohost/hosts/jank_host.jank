@@ -180,6 +180,7 @@ namespace cohost_math {
 #include <jank/runtime/core/math.hpp>
 #include <jank/runtime/core/truthy.hpp>
 #include <jank/runtime/obj/integer_range.hpp>
+#include <jank/runtime/obj/range.hpp>
 #include <jank/runtime/obj/persistent_vector.hpp>
 #include <jank/runtime/obj/reduced.hpp>
 #include <jank/runtime/obj/persistent_string.hpp>
@@ -310,8 +311,32 @@ namespace cohost_sort {
 // any other coll goes to runtime::reduce itself. Removed when jank-15 lands.
 namespace cohost_reduce {
   using namespace jank::runtime;
+  // A4 (a): the adapter's integer range is jank's obj::range (chunked); its integer start, step
+  // and count, or false for any other range.
+  inline bool int_range(object_ref coll, jank::i64 &a, jank::i64 &st, jank::i64 &n) {
+    if(coll.get_type() != object_type::range) { return false; }
+    auto const *r = static_cast<obj::range const *>(coll.ptr());
+    if(!is_integer(r->start) || !is_integer(r->end) || !is_integer(r->step)) { return false; }
+    a = to_int(r->start);
+    st = to_int(r->step);
+    auto const e(to_int(r->end));
+    if(st == 0) { return false; }
+    n = st > 0 ? (e - a + st - 1) / st : (e - a + st + 1) / st;
+    if(n < 0) { n = 0; }
+    return true;
+  }
   inline object_ref reduce_init(object_ref f, object_ref init, object_ref coll) {
     object_ref res{ init };
+    jank::i64 ra{}, rst{}, rn{};
+    if(int_range(coll, ra, rst, rn)) {
+      for(jank::i64 k{}; k < rn; ++k) {
+        res = f.call(res, make_box(ra + k * rst));
+        if(res.get_type() == object_type::reduced) {
+          return expect_object<obj::reduced>(res)->val;
+        }
+      }
+      return res;
+    }
     switch(coll.get_type()) {
       case object_type::integer_range: {
         auto const *r = static_cast<obj::integer_range const *>(coll.ptr());
@@ -344,9 +369,23 @@ namespace cohost_reduce {
   // other coll to jank's own reduce.
   inline bool reduce_fast(object_ref coll) {
     auto const t(coll.get_type());
-    return t == object_type::integer_range || t == object_type::persistent_vector;
+    jank::i64 a{}, st{}, n{};
+    return t == object_type::integer_range || t == object_type::persistent_vector
+      || int_range(coll, a, st, n);
   }
   inline object_ref reduce_noinit(object_ref f, object_ref coll) {
+    jank::i64 ra{}, rst{}, rn{};
+    if(int_range(coll, ra, rst, rn)) {
+      if(rn == 0) { return f.call(); }
+      object_ref res{ make_box(ra) };
+      for(jank::i64 k{ 1 }; k < rn; ++k) {
+        res = f.call(res, make_box(ra + k * rst));
+        if(res.get_type() == object_type::reduced) {
+          return expect_object<obj::reduced>(res)->val;
+        }
+      }
+      return res;
+    }
     if(coll.get_type() == object_type::integer_range) {
       auto const *r = static_cast<obj::integer_range const *>(coll.ptr());
       jank::usize const n{ r->count() };
