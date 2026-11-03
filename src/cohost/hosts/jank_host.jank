@@ -2333,8 +2333,7 @@ namespace cohost_assoc {
              ;; A6-1: a vector assoc (up to three pairs) in one C++ call per pair
              ;; (jank-rt/assoc-with); maps, cohost instances, bounds errors as before
              'clojure.core/assoc (jank-rt/assoc-with native-assoc)
-             ;; A6-2 cohost_json: conj without the stock layers (native-conj above)
-             'clojure.core/conj native-conj
+             ;; A6-2's native-conj is superseded by A6-3's jank-rt/conj-with above (one C++ call)
              ;; A4 (a): the integer range chunked, map/filter a chunk at a time, count a chunk
              ;; at a time (cohost.hosts.jank-runtime)
              'clojure.core/range jank-rt/range
