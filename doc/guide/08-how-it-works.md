@@ -68,7 +68,7 @@ on jank, where compiling is the expensive part:
 ## Performance keys
 
 Seven capabilities of the host contract are performance switches, default off, turned on per
-host where that host's bench says they pay (`doc/PERF.md`, "Cross-host"):
+host where that host's bench says they pay (`doc/perf/HISTORY.md`, "Cross-host"):
 
 - `:multimethod-cache?`: the shim's multimethod with a one-entry dispatch cache (JVM, jolt,
   ClojureWasm, Phel, ClojureScript on Node and in Chromium, jank).

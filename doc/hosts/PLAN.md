@@ -26,7 +26,7 @@ basilisp today. A host is done when all of these hold:
 - **Battery:** passes 139/139, except rows that are documented host facts in
   `doc/REPORT.md`, such as `(= 1 1.0)` on hosts with one number type.
 - **Library battery:** 61/61.
-- **Bench:** `bb bench:<host>` writes `target/bench-<host>.edn`, and `doc/PERF.md` has the
+- **Bench:** `bb bench:<host>` writes `target/bench-<host>.edn`, and `doc/perf/HISTORY.md` has the
   host's column.
 - **Docs:** `README.md`'s status table and `doc/REPORT.md` have the host's row and host
   facts.
@@ -183,7 +183,7 @@ The milestones are the same for every host:
 - **M2** — boot reports `errors: 0`.
 - **M3** — the battery passes 139 minus documented host facts.
 - **M4** — the library battery passes 61/61.
-- **M5** — `bb bench:<host>` writes its EDN, and `doc/PERF.md` gets the column.
+- **M5** — `bb bench:<host>` writes its EDN, and `doc/perf/HISTORY.md` gets the column.
 - **M6** — `:natives` opt-ins, each gated by the battery and the bench's JVM check. Last
   come README, REPORT and the HANDOFF entry.
 
@@ -335,7 +335,7 @@ Size each adapter against its analogs:
 5. **A2** no-`&env` path and **A4** binding composition, then **let-go** M1–M5.
 6. **A4** `macroexpand-1`/binding/`read-string` fallbacks, then **clojurust** M1–M5.
 7. **A3** type layer and **J0–J2**, then **jank** M1–M5.
-8. **M6** for each host; the README status table; `doc/REPORT.md`; `doc/PERF.md`.
+8. **M6** for each host; the README status table; `doc/REPORT.md`; `doc/perf/HISTORY.md`.
 
 Each host lands on its own commit once its milestones pass. Never land a host with a red
 battery row that is not a documented host fact.

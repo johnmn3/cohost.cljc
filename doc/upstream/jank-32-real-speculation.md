@@ -26,7 +26,7 @@ The values Clojure prints (already right), an untyped fn called with reals as fa
 
 ## Actual
 
-`down-d` (a loop from an untyped param called with a real) is 3.7x its hinted twin; an nbody step with untyped `n bx cx` 1.6x; the mandelbrot inner loop boxed. The nested loop does not compile, which is why mandelbrot, fannkuch and nsieve are ABSENT on every jank target of cohost's bench:programs (doc/PERF.md).
+`down-d` (a loop from an untyped param called with a real) is 3.7x its hinted twin; an nbody step with untyped `n bx cx` 1.6x; the mandelbrot inner loop boxed. The nested loop does not compile, which is why mandelbrot, fannkuch and nsieve are ABSENT on every jank target of cohost's bench:programs (doc/perf/HISTORY.md).
 
 ## Where it is in the source
 

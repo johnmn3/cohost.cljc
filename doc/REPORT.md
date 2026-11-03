@@ -707,7 +707,7 @@ arose (measured 2026-10-31 ET):
   is a 32-bit `int` too (`doc/upstream/jank-12-i32-add.md`, `jank-21-int32-loop-local.md`). With
   a wider operand the result is 64-bit. `inc` and `dec` promote; an i64 overflow wraps without
   throwing. On the bench this is the `DIFFER` of sum-overflow, pipeline and dispatch
-  (doc/PERF.md). Stock core.clj on jank inherits it wherever the host's own `+` is reached. The
+  (doc/perf/HISTORY.md). Stock core.clj on jank inherits it wherever the host's own `+` is reached. The
   adapter-side correction (a checked i64 entry behind the shim's `Numbers-add`/`-minus`/
   `-multiply` on jank, enabled by a boot probe that detects the wrap, with literal-initialized
   loop locals typed i64) is in flight (jank-MAX A5) and not in this tree; the patch

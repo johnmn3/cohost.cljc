@@ -9,7 +9,7 @@ of agents can run in parallel. Coordination: `coord/cohost-max/` in johnmn3/atom
 
 Goal: `bb bench:programs jank` (cohost's stock core booted on jank, every Step 8 program)
 below 1.0 against JVM Clojure 1.12 on the geometric mean, with every row `SAME`. The first
-pass measured 10.34 (doc/PERF.md); jank's own core AOT measured 0.71, which is the floor
+pass measured 10.34 (doc/perf/HISTORY.md); jank's own core AOT measured 0.71, which is the floor
 cohost can approach, and the upstream lanes move that floor too.
 
 | measure | command | now | target |
@@ -95,7 +95,7 @@ expected delta with its basis. Orders are dispatched in `coord/cohost-max/orders
 - U2-1: jank-11: `native_vector_sequence::next` and `array_chunk::chunk_next` share the buffer.
   Done-bar: `run.sh 11-sorted-walk` prints `sort-nth-half` and `sort-reduce` within 3x of
   `sort-first` at every size. Delta: the sort/sort-by bench cases from x15/x27 toward x1
-  (doc/PERF.md "jank baseline"); any program that sorts.
+  (doc/perf/HISTORY.md "jank baseline"); any program that sorts.
 - U2-2: jank-13: uncomment `=`'s `:inline`; fix `assoc`'s `:inline-arities`. Done-bar:
   `run.sh 13-eq-inline` prints `loop-with-=` within 1.2x of `loop-with-==`; `assoc` of three
   args reaches `cpp/jank.runtime.assoc` (the C++ dump shows no var deref). Delta: 13 ns per `=`
@@ -170,7 +170,7 @@ expected delta with its basis. Orders are dispatched in `coord/cohost-max/orders
 
 - Owns: `bench/programs/` additions only (`binary_trees` at depth 14 as a second size,
   `sum_overflow.clj` whose result exceeds 2^31 so `SAME` catches the i32 wrap, a `sort` program),
-  `dev/bench_programs.clj`'s size table, doc/PERF.md's "Programs" section for the new rows.
+  `dev/bench_programs.clj`'s size table, doc/perf/HISTORY.md's "Programs" section for the new rows.
   C-1 owns the driver's method and the -O3 flag; X1 rebases on C-1's branch.
 - X1-1: the three programs on every target, with their JVM results; the suite's table re-run
   on jank-aot and cohost-on-jank. Done-bar: `bb bench:programs jvm` and `jank-aot` print the
@@ -196,9 +196,9 @@ expected delta with its basis. Orders are dispatched in `coord/cohost-max/orders
   multimethod cache, aliasable statics, natives patterns, the `let`/`loop` shortcut), measure it
   on each other host with `bb bench:<host> --quick` (median of 3) and turn the key on where no
   case gets worse and the geomean improves; run that host's battery and libraries. Done-bar per
-  host: the bench table before/after in doc/PERF.md, batteries unchanged. Needs the hosts
+  host: the bench table before/after in doc/perf/HISTORY.md, batteries unchanged. Needs the hosts
   installed (dev/install/*.sh; the user's approval per box). Delta: the multimethod case is x5.0
-  on the JVM, x4.2 Node, x3.8 Chromium, x3.7 basilisp today (doc/PERF.md): the first candidate.
+  on the JVM, x4.2 Node, x3.8 Chromium, x3.7 basilisp today (doc/perf/HISTORY.md): the first candidate.
 
 ### X4, workarounds (wave 1, after R-4)
 

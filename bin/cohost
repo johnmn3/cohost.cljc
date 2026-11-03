@@ -30,6 +30,18 @@
 (def cache-dir (str (fs/home) "/.cache/cohost"))
 
 (def wired ["cljs" "jolt" "lpy" "cljw" "phel" "lg" "jank"])
+
+;; the program each wired host runs, and how to get it
+(def host-bins
+  {"cljs" ["node" "node 18+ (https://nodejs.org, or: brew install node)"]
+   "jolt" ["jolt" "bash dev/install/jolt.sh"]
+   "lpy" ["basilisp" "bash dev/install/basilisp.sh"]
+   "cljw" ["cljw" "bash dev/install/cljw.sh"]
+   "phel" ["phel" "bash dev/install/phel.sh"]
+   "lg" ["lg" "bash dev/install/lg.sh"]
+   "jank" ["jank" "bash dev/install/jank.sh"]})
+
+(def path-sep java.io.File/pathSeparator)
 (def hosts (set (concat ["jvm" "cljrs"] wired)))
 
 (defn die [code & lines]
@@ -138,16 +150,17 @@
        :roots (vec (keep (fn [entry]
                            (let [abs (str (fs/absolutize (under cwd entry)))]
                              (cond
+                               (str/blank? entry) nil
                                (fs/directory? abs) abs
                                (str/ends-with? abs ".jar")
-                               (when-not (re-find #"/org/clojure/clojure/[^/]+/clojure-[^/]+\.jar$" abs)
+                               (when-not (re-find #"[/\\]org[/\\]clojure[/\\]clojure[/\\][^/\\]+[/\\]clojure-[^/\\]+\.jar$" abs)
                                  (extract-jar! abs))
                                (fs/exists? abs) (do (binding [*out* *err*]
                                                       (println (str "cohost: skipping classpath entry " abs)))
                                                     nil)
                                ;; a :paths entry that does not exist: as for clj, nothing
                                :else nil)))
-                         (str/split (str/trim (last lines)) #":")))})))
+                         (str/split (str/trim (last lines)) (re-pattern (java.util.regex.Pattern/quote path-sep)))))})))
 
 ;; --------------------------------------------------------------------------
 ;; clojure.main's arguments, and clojure.run.exec's
@@ -242,6 +255,44 @@
                ((resolve 'jank-project-launch) repo cwd roots main-ns (:module-path l) (:env l)))]
     (merge l proj)))
 
+(defn- lpy-fresh-src
+  "basilisp's cached boot (dev/perf/lpy_snapshot_ensure.clj, decided in the repo):
+   its modules' directory when fresh, else nil."
+  []
+  (let [r (p/shell {:dir repo :out :string :err :string :continue true} "bb" "-e"
+                   "(load-file \"dev/perf/lpy_snapshot_ensure.clj\") (println \"LPY-SRC\" (or ((resolve 'lpy-fresh-src)) \"-\"))")
+        l (last (filter #(str/starts-with? % "LPY-SRC ") (str/split-lines (:out r))))
+        d (when l (subs l 8))]
+    (when (and d (not= "-" d)) (str (fs/absolutize (fs/path repo d))))))
+
+(defn lpy-launch
+  "basilisp: boot from the cached boot when it is fresh; build it on first use (or
+   after a cohost update), one build at a time, with one plain line (its output in
+   target/lpy-snapshot.log). COHOST_LPY_SNAPSHOT=off: never. -> {:lpy-src dir
+   :snapshot? true}, or nil (this run boots core.clj from source)."
+  []
+  (when-not (= "off" (System/getenv "COHOST_LPY_SNAPSHOT"))
+    (or (when-let [d (lpy-fresh-src)] {:lpy-src d :snapshot? true})
+        (let [lock (fs/file repo "target" "lpy-snapshot.lock")
+              log (fs/file repo "target" "lpy-snapshot.log")]
+          (fs/create-dirs (fs/parent lock))
+          (when (and (fs/exists? lock)
+                     (> (- (System/currentTimeMillis) (.toMillis (fs/last-modified-time lock))) (* 30 60 1000)))
+            (fs/delete-tree lock))
+          (binding [*out* *err*]
+            (if-not (.mkdir lock)
+              (do (println "cohost: basilisp's cached boot is being built by another cohost command; this one boots from source") nil)
+              (try
+                (println "cohost: building basilisp's cached boot (once per cohost update; about 2 to 4 minutes; log: target/lpy-snapshot.log) ...")
+                (let [t0 (System/nanoTime)
+                      r (p/shell {:dir repo :out (str log) :err (str log ".err") :continue true} "bb" "-e"
+                                 "(load-file \"dev/perf/lpy_snapshot_ensure.clj\") ((resolve 'lpy-ensure!))")]
+                  (if (zero? (:exit r))
+                    (do (println (str "cohost: basilisp's cached boot is built (" (quot (- (System/nanoTime) t0) 1000000000) " s)"))
+                        (when-let [d (lpy-fresh-src)] {:lpy-src d :snapshot? true}))
+                    (do (println "cohost: the cached boot build failed (target/lpy-snapshot.log); this run boots from source") nil)))
+                (finally (fs/delete-if-exists lock)))))))))
+
 (defn launch! [host cwd config & [jank]]
   (let [cfg (str config)
         src (str repo "/src")]
@@ -250,11 +301,18 @@
       ;; source directories); cohost.cli moves to the project directory
       "cljs" (do (ensure-cljs-build!)
                  (run-inherit repo ["node" (str repo "/target/cljs-cli/main.js") cfg]))
-      "phel" (run-inherit repo ["phel" "run" "dev/phel_cli.phel" cfg])
+      ;; Phel compiles to PHP files under $TMPDIR/phel and never removes them: give
+      ;; each run its own TMPDIR and remove it after
+      "phel" (let [tmp (str (fs/create-temp-dir {:prefix "cohost-phel-"}))]
+               (try (-> (p/process ["phel" "run" "dev/phel_cli.phel" cfg]
+                                   {:dir repo :inherit true :extra-env {"COHOST_HOME" repo "TMPDIR" tmp}})
+                        deref :exit)
+                    (finally (fs/delete-tree tmp))))
       "jolt" (run-inherit cwd ["jolt" "-Scp" src "-m" "cohost.cli" cfg])
       "cljw" (run-inherit cwd ["cljw" "-cp" src "-m" "cohost.cli" cfg])
-      "lpy" (run-inherit cwd ["basilisp" "run" "-p" src "-c"
-                              (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])
+      "lpy" (run-inherit cwd (vec (concat ["basilisp" "run"]
+                                          (when-let [d (:lpy-src jank)] ["-p" d])
+                                          ["-p" src "-c" (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])))
       "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg])
       ;; the booted core from a fresh snapshot (else cohost's -O3 AOT objects
       ;; and a boot of core.clj), cohost.cli and the program JIT-compiled at -O3
@@ -264,16 +322,28 @@
 
 ;; --------------------------------------------------------------------------
 
+(defn implicit-main?
+  "clojure.main options with no -M before them (`cohost -e ...`): the Clojure CLI
+   still runs them but warns that the implicit form is deprecated."
+  [o]
+  (and (= :M (:mode o)) (nil? (:alias o)) (seq (:main o))))
+
+(defn with-explicit-M
+  "The arguments with -M before clojure.main's own, as `clojure -M -e ...`."
+  [args o]
+  (let [i (- (count args) (count (:main o)))]
+    (vec (concat (take i args) ["-M"] (drop i args)))))
+
 (defn default-target
   "The project's target: :cohost/target in ./deps.edn (a keyword, e.g.
-   :jank), else :jvm -- the real Clojure CLI, as `clj` would run it."
+   :lpy), else :jank. :jvm is the reference: the real Clojure CLI, as `clj` runs it."
   []
   (let [f (fs/file "deps.edn")
         t (when (fs/exists? f)
             (:cohost/target (try (edn/read-string {:default tagged-literal} (slurp f))
                                  (catch Exception e
                                    (die 1 (str "cohost: cannot read deps.edn: " (.getMessage e)))))))]
-    (if t (str/replace (str t) #"^:" "") "jvm")))
+    (if t (str/replace (str t) #"^:" "") "jank")))
 
 (let [args *command-line-args*]
   (when (#{"-h" "--help" "help"} (first args)) (usage))
@@ -289,15 +359,22 @@
     (cond
       ;; the JVM runs the real CLI, whole; tools are JVM programs, on every host
       (or (= host "jvm") (= mode :T) (:describe? o))
-      (System/exit (run-inherit cwd (vec (cons "clojure" (if (= mode :T) (with-templates rest-args) rest-args)))))
+      (System/exit (run-inherit cwd (vec (cons "clojure" (cond (= mode :T) (with-templates rest-args)
+                                                               (implicit-main? o) (with-explicit-M rest-args o)
+                                                               :else rest-args)))))
 
       (not (some #{host} wired))
       (die 2 (str "cohost: :" host " is not wired into the CLI yet: its boot is still in flight (doc/hosts/PLAN.md)"))
 
+      (not (fs/which (first (host-bins host))))
+      (let [[b how] (host-bins host)]
+        (die 1 (str "cohost: :" host " runs on `" b "`, which is not on PATH")
+             (str "  install it: " (if (str/starts-with? how "bash ") (str "bash " repo "/" (subs how 5)) how))))
+
       :else
       (let [{:keys [roots argmap]} (resolve-deps cwd o)]
         (cond
-          (:spath? o) (println (str/join ":" roots))
+          (:spath? o) (println (str/join path-sep roots))
           (:prepare? o) (binding [*out* *err*]
                           (println (str "cohost: prepared " (count roots) " source roots under " cache-dir)))
           :else
@@ -305,7 +382,7 @@
                       {:inits [] :main (exec-config (:main o) argmap)}
                       (main-config cwd (concat (when (= mode :M) (:main-opts argmap)) (:main o))))
                 cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))
-                jank (when (= host "jank") (jank-launch cwd roots run))]
+                jank (case host "jank" (jank-launch cwd roots run) "lpy" (lpy-launch) nil)]
             (fs/create-dirs (fs/parent cfg-file))
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
                                                :verbose (boolean (System/getenv "COHOST_VERBOSE"))}

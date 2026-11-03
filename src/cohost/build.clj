@@ -41,7 +41,7 @@
   (let [f (io/file "deps.edn")
         t (or (:target opts)
               (when (.exists f) (:cohost/target (edn/read-string {:default tagged-literal} (slurp f))))
-              :jvm)]
+              :jank)]
     (keyword (str/replace (name t) #"^:" ""))))
 
 (defn- build-api [sym] (requiring-resolve (symbol "clojure.tools.build.api" (name sym))))

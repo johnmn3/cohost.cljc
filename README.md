@@ -21,7 +21,15 @@ You need [Babashka](https://babashka.org) and the
 git clone https://github.com/johnmn3/cohost.cljc ~/cohost
 export PATH="$HOME/cohost/bin:$PATH"
 clojure -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
+bash ~/cohost/dev/install/jank.sh     # the default runtime, and its core snapshot (once, a few minutes)
 ```
+
+`jank.sh` installs jank (Homebrew on macOS; jank's apt package on Debian/Ubuntu, which needs
+root: the script says so and stops if it cannot get it) and builds its core snapshot, so the
+first command starts fast. The other runtimes install the same way (`dev/install/<host>.sh`,
+or `dev/install/all.sh` for every one); `cljrs.sh` puts cargo's bin directory on PATH only
+for that shell: add `$HOME/.cargo/bin` to PATH as for `cohost` below. The `export` lasts for this shell; add the same line to `~/.zshrc` (or `~/.bashrc`) to keep
+`cohost` on PATH. On Windows, run `bin\cohost.cmd` (it runs `bin/cohost` with `bb`).
 
 ## A new project
 
@@ -30,13 +38,14 @@ template `cohost/app`, published from this repository. Plain `clj` makes one; no
 checkout is needed for this step:
 
 ```bash
-clojure -Sdeps '{:deps {io.github.johnmn3/cohost.cljc {:git/sha "c6b8eaa9983d6cf7f14fa1c6d6e56a4c93ef89bf" :deps/root "templates/cohost-app"}}}' -Tnew create :template cohost/app :name acme/myapp
+clojure -Sdeps '{:deps {io.github.johnmn3/cohost.cljc {:git/sha "7b3d58eaab3445793a9bb413c61badb1d2d17cc6" :deps/root "templates/cohost-app"}}}' -Tnew create :template cohost/app :name acme/myapp
 cd myapp
 ```
 
 That gives `deps.edn`, `src/acme/myapp.cljc`, `test/acme/myapp_test.cljc` and
-`build.clj`; `:target jank` (or any runtime below) at the end of the command writes that
-runtime into `deps.edn`. From a cohost checkout, `cohost -Tnew create :template cohost/app
+`build.clj`. The project runs on jank: its `deps.edn` names `:cohost/target :jank`.
+`:target <host>` at the end of the command picks another runtime (any of the table below);
+`:target jvm` is the reference, the real Clojure CLI that cohost is checked against. From a cohost checkout, `cohost -Tnew create :template cohost/app
 :name acme/myapp` is the same template at the checkout's commit. The project's `:build`
 alias names cohost by that commit too, so `-T:build` works with or without a checkout.
 
@@ -65,7 +74,7 @@ printf '(require (quote [clojure.string :as str]))\n(str/upper-case "hi")\n' | c
 # => user=>
 ```
 
-On a terminal it reads a line at a time; wrap it in `rlwrap` for editing and history.
+On a terminal it reads a line at a time; wrap it in `rlwrap` for editing and history (`brew install rlwrap`, `sudo apt install rlwrap`).
 
 ## Dependencies
 
@@ -78,7 +87,8 @@ cohost -Sdeps '{:deps {org.clojure/tools.cli {:mvn/version "1.2.245"}}}' -e "(re
 ```
 
 A library's Clojure sources load through cohost, so they run on stock `clojure.core` on
-any runtime. `cohost -Spath` prints the source roots.
+any runtime. `cohost :<target> -Spath` prints the source roots it loads from (on `:jvm` it is
+the Clojure CLI's own `-Spath`, the classpath).
 
 ## Tests
 
@@ -116,8 +126,8 @@ The runtime is a key in `deps.edn`:
  :paths ["src"]}
 ```
 
-A project without the key runs on the JVM (the real `clojure`). `cohost :<target> ...`
-overrides the key for one command:
+A project without the key runs on jank. `:jvm` is the reference: the real `clojure`, which every
+check compares the other runtimes with. `cohost :<target> ...` overrides the key for one command:
 
 ```bash
 cohost :jvm -M -m acme.myapp      # => Hello, world!
@@ -138,9 +148,27 @@ for you.
 | `:lg` | let-go (Go) | yes | `dev/install/lg.sh` |
 | `:cljrs` | clojurust (Rust) | not yet | `dev/install/cljrs.sh` |
 
+Every `dev/install/<host>.sh` runs on Linux x86_64 and macOS (arm64; x86_64 where the
+host publishes a build), and under Git Bash on Windows where the host ships for Windows
+(jolt; let-go through `go install`; basilisp). Each installs its pinned version, checks the
+release checksum, skips the work when that version is already on PATH (`COHOST_FORCE=1`
+reinstalls), and puts binaries in `/usr/local/bin` when it is writable, else `~/.local/bin`
+(`COHOST_BIN` picks another). Missing toolchains come with it: uv for basilisp, PHP 8.5 for
+Phel (Homebrew on macOS, ppa:ondrej/php on Ubuntu), Rust for clojurust (rustup). jank comes
+from jank's apt repository on Ubuntu and from jank's Homebrew tap on macOS, which Homebrew
+asks you to trust once (`brew trust --formula jank-lang/jank/jank`; or run the script with
+`COHOST_TRUST_TAPS=1`). `bash dev/install/all.sh` installs every runtime and reports any it
+could not.
+
 What differs from one runtime to the next, and startup and speed for each:
 [Choosing a runtime](doc/guide/07-choosing-a-runtime.md). The per-host performance switches:
 [How it works](doc/guide/08-how-it-works.md#performance-keys).
+
+jank, as its apt package and Homebrew formula ship today, has known gaps cohost cannot hide:
+integers wrap at 32 bits (a fix is in progress upstream), `coll?` is false on lazy seqs, and
+two character rows of the battery fail under the C locale (`LANG` unset). The details, and each
+runtime's other gaps: [Limitations and FAQ](doc/guide/10-limitations-and-faq.md) and
+`doc/REPORT.md`.
 
 ## The guide
 
@@ -160,7 +188,7 @@ The guide covers each part of using cohost; every command in it runs, as written
 
 Also: [the `cohost` command's reference](doc/CLI.md), [embedding cohost in a host
 program](doc/EMBEDDING.md), [performance](doc/PERF.md), [the measurements and host
-facts](doc/REPORT.md).
+facts](doc/REPORT.md), [an out-of-the-box run on macOS and its paper cuts](doc/OOTB-MACOS.md).
 
 ## Developing cohost
 

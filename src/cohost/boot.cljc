@@ -34,7 +34,7 @@
 (def ^:private prof+
   ;; jank's + wraps at 32 bits, so the timers sum with +'; basilisp has no +'
   ;; (its + is Python's unbounded int)
-  #?(:lpy + :default +'))
+  #?(:lpy + :cljs + :default +'))
 
 (defn- profile-add! [k dt]
   (when (and (profiling) dt)

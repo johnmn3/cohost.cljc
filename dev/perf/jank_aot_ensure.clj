@@ -19,6 +19,7 @@
          '[babashka.process :refer [shell]]
          '[clojure.string :as str])
 (load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/jank_inputs.clj"))
+(load-file (str (babashka.fs/parent (babashka.fs/absolutize *file*)) "/sha256.clj"))
 
 (def jank-bin
   (let [b (System/getenv "JANK_BIN")]
@@ -31,7 +32,7 @@
 (def ^:private aot-root
   (if-let [p (jank-bin-path)]
     (str "target/jank-aot-"
-         (subs (-> (shell {:out :string :in p} "sha256sum") :out str/trim) 0 12))
+         (subs (cohost.dev.sha256/sha256-hex p) 0 12))
     "target/jank-aot"))
 
 (defn- cohost-files [] (source-files "src/cohost"))
@@ -39,13 +40,8 @@
 (defn source-hash []
   (let [files (cohost-files)
         _ (when (empty? files) (throw (ex-info "no files under src/cohost" {})))
-        sums (:out (shell {:out :string :in (str/join "\n" files)}
-                          "xargs" "-d" "\n" "sha256sum"))]
-    (-> (shell {:out :string :in sums} "sha256sum")
-        :out
-        str/trim
-        (str/split #"\s+")
-        first)))
+        sums (cohost.dev.sha256/sha256sum-listing files)]
+    (cohost.dev.sha256/sha256-hex sums)))
 
 (defn jank-version []
   (let [v (str/trim (:out (shell {:out :string} jank-bin "print-binary-version")))]

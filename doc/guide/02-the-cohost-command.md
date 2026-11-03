@@ -9,8 +9,9 @@ cohost [:<target>] <clojure CLI arguments...>
 ## The target
 
 The first argument may name the runtime: `cohost :cljs -e '(+ 1 2)'`. Without it, the
-runtime is `:cohost/target` in `./deps.edn`, and without that `:jvm`, which runs the real
-Clojure CLI unchanged (so a project without the key behaves exactly as with `clj`).
+runtime is `:cohost/target` in `./deps.edn`, and without that `:jank`. `:jvm` runs the real
+Clojure CLI unchanged: the reference cohost is checked against (`cohost :jvm ...`, or
+`:cohost/target :jvm`).
 
 ## Arguments, as the Clojure CLI reads them
 

@@ -25,7 +25,7 @@ Owns `src/cohost/hosts/jank_host.jank` and the `:jank` branches of `src/cohost/s
    two Character host facts. Done-bar: jank-FAST Step 1's.
 2. Step 2: the full bench baseline and the runtime profile (the boot's split and profile moved to
    lane G, 2026-11-01, as G-8: it feeds Step 6 stage 2). Push the numbers
-   (doc/PERF.md, doc/perf/jank.md) before starting Step 3: lane G reads them.
+   (doc/perf/HISTORY.md, doc/perf/jank.md) before starting Step 3: lane G reads them.
 3. Step 3: the cheap adapter/shim wins (type tests by tag, the C++ instance guard, capability
    lookups, the syntax-quote metadata pass).
 4. Step 4: natives for jank.

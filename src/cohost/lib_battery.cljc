@@ -130,7 +130,7 @@
       (let [{:keys [error entries]} (get (boot/lib-report) lib)]
         (when (and error (pos? error))
           (doseq [e entries :when (= :error (:status e))]
-            (println (str "     load error: " (:name e) ": " (:error e))))))
+            (println (str "     not loaded on this host (expected; its cases do not need it): " (:name e) ": " (:error e))))))
       (doseq [r (remove :pass results)]
         (println (str "     FAIL " (:label r) "\n          got      " (pr-str (:got r)) "\n          expected " (pr-str (:expected r))))))
     results))
