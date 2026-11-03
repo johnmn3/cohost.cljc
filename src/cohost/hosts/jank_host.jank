@@ -685,6 +685,37 @@ namespace cohost_var {
   (when int-wraps?
     (fn [x y] (let [r (cpp/cohost_num.rem x y)] (if (nil? r) (clojure.core/rem x y) r)))))
 
+;; A7-3: (= a b) at the call head on apt (int-wraps?: the series' patch 13 inlines = itself,
+;; and its equal overloads make a bare jank::runtime::equal call fail to compile there).
+;; = on jank is the :host native (A6-1), so a call reaches :core-expansions, not the stock
+;; :inline's Util/equiv. Against an integer literal a host long compares as a native ==
+;; (jank's equal on two boxed integers is the cost: a loop with = 155.6 ms vs == 80.3 per
+;; 1e7 on apt, jank's own AOT 153.2); anything else (a double, a bigint, a ratio, a
+;; non-number) takes jank::runtime::equal (visible from user modules), so (= 3.0 3) stays
+;; false; other operand pairs jank::runtime::equal inline (no var deref and dynamic call),
+;; except a collection literal operand, which keeps the call.
+;; = as a value and the 1 / 3+ arities keep the var.
+(defn- eq-expansion [args]
+  (when (and int-wraps? (= 2 (count args)))
+    (let [[a b] args
+          lit? (fn [x] (and (integer? x) (cpp/jank.runtime.is_integer x)))]
+      (cond (and (lit? b) (not (lit? a)))
+            (let [g (gensym "eqa")]
+              (list 'let* [g a]
+                    (list 'if (list 'cpp/jank.runtime.is_integer g)
+                          (list 'clojure.core/== (list 'cpp/jank.runtime.to_int g) b)
+                          (list 'cpp/jank.runtime.equal g b))))
+            (and (lit? a) (not (lit? b)))
+            (let [g (gensym "eqb")]
+              (list 'let* [g b]
+                    (list 'if (list 'cpp/jank.runtime.is_integer g)
+                          (list 'clojure.core/== a (list 'cpp/jank.runtime.to_int g))
+                          (list 'cpp/jank.runtime.equal a g))))
+            ;; a collection literal operand keeps jank's = call: the typed literal through
+            ;; jank::runtime::equal measured slower (r06 small vectors 186.8 -> 241.7 ms per 1e6)
+            (or (coll? a) (coll? b)) nil
+            :else (list 'cpp/jank.runtime.equal a b)))))
+
 ;; X4-1: the shim's reduce with and without an init (the stock reduce's IReduceInit and
 ;; coll-reduce paths, so transduce and into too) over a range or a vector,
 ;; without jank's per-element seq step; cohost.shim resolves it by name.
@@ -2408,7 +2439,9 @@ namespace cohost_assoc {
                      'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))
                      ;; A6-2 cohost_json: map? / vector? through the guarded map?* / vector?*
                      'map? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/map?* (first args))))
-                     'vector? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/vector?* (first args))))}
+                     'vector? (fn [_ args] (when (= 1 (count args)) (list 'cohost.hosts.jank-host/vector?* (first args))))
+                     ;; A7-3: the 2-arity = on apt (eq-expansion above)
+                     '= (fn [_ args] (eq-expansion args))}
    :syntax-quote-source? true
    :loop-rebind-shadow? true
    :lazy-seq (fn [f] (lazy-seq (f)))
