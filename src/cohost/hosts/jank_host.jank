@@ -2316,11 +2316,16 @@ namespace cohost_assoc {
    ;; (cohost.core also gets the concat* its syntax-quote expands through:
    ;; cohost renames clojure.core/concat* there with every other core name)
    ;; a compiled jank program (the launcher) has no module path: a per-project
-   ;; snapshot's directories are added at run time (cohost.cli :module-paths)
+   ;; snapshot's directories are added at run time (cohost.cli :module-paths).
+   ;; The call (module_loader.add_path) is defined by the launcher's entry,
+   ;; cohost.app-main (dev/perf/jank_snapshot_key.clj): jank's static runtime
+   ;; has no add_path to link, and a built app (--runtime static) compiles this
+   ;; file too. Without that entry (a built app, the run-main path): nothing.
    :add-module-path! (fn [path]
-                       (let [p (str path)]
-                         (-> cpp/jank.runtime.__rt_ctx (.-module_loader) (.add_path (.to_string p)))
-                         nil))
+                       (when-let [n (find-ns 'cohost.app-main)]
+                         (when-let [v (ns-resolve n 'add-module-path!)]
+                           (@v path)))
+                       nil)
    :ensure-bare-ns! (fn [ns-sym]
                       (create-ns ns-sym)
                       (when (= 'cohost.core ns-sym) (intern ns-sym 'concat* concat-star))

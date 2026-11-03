@@ -88,6 +88,13 @@
 (def ^:private launcher-entry
   (str "(clojure.core/ns cohost.app-main\n"
        "  (:require [cohost.snapshot] [cohost.cli]))\n"
+       ";; a directory the module loader searches from now on: the per-project\n"
+       ";; snapshot's (the jank adapter's :add-module-path! calls this; it is\n"
+       ";; defined here because jank's static runtime has no add_path to link)\n"
+       "(clojure.core/defn add-module-path! [path]\n"
+       "  (clojure.core/let [p (clojure.core/str path)]\n"
+       "    (clojure.core/-> cpp/jank.runtime.__rt_ctx (.-module_loader) (.add_path (.to_string p)))\n"
+       "    nil))\n"
        "(clojure.core/defn -main [& args]\n"
        "  (clojure.core/apply cohost.cli/-main args))\n"))
 
