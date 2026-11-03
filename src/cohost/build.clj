@@ -340,7 +340,12 @@ require_once __DIR__ . '/out/cohost/app_main.php';
     (sh! "." "rm" "-rf" (str work))
     (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main, Phel compiled to PHP (made by cohost.build)\n"
                          "ulimit -s 65536 2>/dev/null\n"
-                         "exec " php " \"$(cd \"$(dirname \"$0\")\" && pwd)/run.php\" \"$@\"\n"))))
+                         "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
+                         ;; OPcache's file cache (filled by the first run) and the tracing JIT;
+                         ;; PHP ignores them where OPcache is not installed
+                         "mkdir -p \"$here/.opcache\" 2>/dev/null\n"
+                         "exec " php " -d opcache.enable_cli=1 -d opcache.file_cache=\"$here/.opcache\" -d opcache.file_cache_only=1"
+                         " -d opcache.jit=tracing -d opcache.jit_buffer_size=64M \"$here/run.php\" \"$@\"\n"))))
 
 (defn- jank-exe [{:keys [main name]}]
   (let [home (cohost-home)
