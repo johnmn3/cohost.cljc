@@ -158,7 +158,43 @@ Box 2: 4 CPUs, Linux, jank 0.1-noble from jank's apt repository (what `dev/insta
 
 ### Box 3: let-go, Phel, basilisp, ClojureWasm
 
-Not yet measured; these runtimes' programs come in the next update of this page.
+Box 3: 4 CPUs, Linux, ClojureWasm 1.15.4, the JVM column this box's own; median ms of 10 timed calls after warm-up
+(xJVM in parens). ClojureWasm's own core so far: 8 of the 28 programs; the rest, cohost on ClojureWasm, and let-go,
+Phel and basilisp (each on its own core and through cohost) are being measured and fill in here as each column
+finishes. Records: doc/perf/release-perf-d/.
+
+| program | jvm | cljw |
+|---|---:|---:|
+| binary-trees | 257.5 | not yet measured |
+| binary-trees-14 | 11.4 | not yet measured |
+| binary-trees-14-hinted | 9.4 | not yet measured |
+| binary-trees-hinted | 245.7 | not yet measured |
+| dispatch | 138.0 | not yet measured |
+| fannkuch | 148.0 | not yet measured |
+| fannkuch-hinted | 165.6 | not yet measured |
+| fib | 163.6 | 6188.6 (x37.83) |
+| fib-hinted | 99.8 | 5294.5 (x53.02) |
+| first-output | 647.3 | not yet measured |
+| json | 234.0 | not yet measured |
+| k-nucleotide | 131.1 | not yet measured |
+| keyword-map | 85.7 | not yet measured |
+| lazy-pipeline | 32.1 | not yet measured |
+| mandelbrot | 206.4 | not yet measured |
+| mandelbrot-hinted | 219.0 | not yet measured |
+| nbody | 188.4 | 2773.1 (x14.72) |
+| nbody-hinted | 190.0 | 2722.9 (x14.33) |
+| nsieve | 142.5 | not yet measured |
+| nsieve-hinted | 163.0 | not yet measured |
+| pipeline | 143.0 | not yet measured |
+| sort | 36.9 | not yet measured |
+| spectral-norm | 189.1 | 9978.5 (x52.76) |
+| spectral-norm-hinted | 146.6 | 11204.1 (x76.41) |
+| sum-overflow | 8.9 | not yet measured |
+| sum-overflow-hinted | 0.6 | not yet measured |
+| tak | 317.9 | 26086.5 (x82.06) |
+| tak-hinted | 196.5 | 22565.5 (x114.86) |
+| **geomean xJVM** (programs that ran) | 1 | **x44.75** (8) |
+
 
 ### Type hints
 
