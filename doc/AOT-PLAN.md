@@ -106,7 +106,7 @@ runs both batteries. This is the correctness gate for each runtime's modules.
 8. **The bench.** The `<runtime>-built` columns measure these artifacts. Re-run them for
    jolt and lpy (this branch) and add the results to doc/PERF.md's "Compiled builds".
 9. **Docs.** Update doc/CLI.md "Building": what each artifact holds and what it needs at
-   run time.
+   run time. **Done** for jolt, basilisp and ClojureWasm (2026-11-03); each later runtime updates its row.
 
 ## Shared changes, checked on every runtime that snapshots
 
@@ -122,8 +122,7 @@ and booted, with both batteries (macOS arm64, 2026-11-03):
 | ClojureWasm | 165/167 | 62/62 | its source boot |
 | basilisp (`bb boot:lpy-snapshot`) | 165/167 | 62/62 | its source boot, on this branch and on its base ab3cd28 (`numeric tower` and `hash = identical` fail on all three) |
 
-Guide 07 lists basilisp at 166/167. On ab3cd28 its source boot gives 165/167, so that row
-is out of date.
+Guide 07 listed basilisp at 166/167; on ab3cd28 its source boot gives 165/167, and the row now says so.
 
 ## Gates for each runtime
 

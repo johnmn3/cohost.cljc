@@ -42,20 +42,20 @@ Every artifact is a directory `target/<name>/` whose `run args...` calls the mai
 directory; the task prints `build: target/<name>/run`. Measured 2026-11-02 on `cohost/app` projects
 (`run you` from `/tmp` -> `Hello, you!`):
 
-| target | `target/<name>/` holds | needs at run time | measured (bb readme:check, 2026-11-02 2:06-2:27 PM ET) |
+| target | `target/<name>/` holds | needs at run time | measured (`run you` from `/tmp`; bb readme:check, 2026-11-02 2:06-2:27 PM ET, unless the row says) |
 |---|---|---|---|
 | `:jvm` | `<name>.jar` (tools.build uberjar, `clojure.main` as its main; no `:gen-class` in code every target reads), `run` (`java -jar ... -m <main>`) | java | yes |
 | `:cljs` | cohost's ClojureScript host build (`target/cljs-cli`), the stock sources, the source roots, `run.js`, `run` | node | yes |
-| `:jolt` | `bin/cohost-jolt` (`jolt build -m cohost.cli`, 36 MB, 36 s), the stock sources, the source roots, `run` | nothing: ran with jolt off `PATH` | yes |
-| `:cljw` | a script bundle: cohost's sources, the stock sources, the source roots, `run` (`cljw -cp ... -m cohost.cli`) | cljw | yes (an argument with spaces and quotes too) |
+| `:jolt` | `run` itself: one native binary (`jolt build`, release mode: direct-linked, whole-program inference) holding the booted core, the libraries and the app's namespaces, recorded on jolt and compiled ahead of time (54 MB) | nothing: no jolt, no sources | yes: `run you` 0.37 s; batteries 167/167 and 62/62 from the modules (macOS arm64 M5, 2026-11-03, aot/native-builds) |
+| `:cljw` | the recorded boot as ClojureWasm modules (`snapshot/`: the core, the libraries, the app's namespaces, `cohost.app-main`), cohost's sources, `run` (`cljw -cp snapshot:cohost/src -m cohost.app-main`) | cljw | yes: boot 0.83 s against about 17 s from source, `run` 0.9 s; batteries 165/167 and 62/62, as from source (macOS arm64 M5, 2026-11-03, aot/native-builds) |
 | `:lg` | a script bundle, `run` (`lg -source-paths ... lg_cli.lg`) | lg | yes (the same argument) |
-| `:lpy` | a script bundle, `run` (`basilisp run -p ... -c ...`) | basilisp | yes (`bb readme:check lpy`, 2026-11-02) |
+| `:lpy` | a script bundle plus basilisp's compiled boot (the booted core as `.lpy` modules with their `.lpyc` bytecode, mtimes kept), `run` (`basilisp run -p snapshot -p cohost/src ...`) | basilisp | yes: `run` 1.9 s against 19-25 s from source (macOS arm64 M5, 2026-11-03, aot/native-builds) |
 | `:phel` | a script bundle with `phel-config.php`, `run` (`phel run dev/phel_cli.phel` in the bundle's `cohost/`) | php + phel | yes (`bb readme:check phel`, 2026-11-02) |
 | `:jank` | `run` itself: one native executable (`cohost.build-jank`): the booted core's snapshot and the project's namespaces compiled `-O3`, jank's static runtime; rebuilt when stale (state in `cohost-build/`) | nothing: it links only libc, libstdc++, libgcc_s, libm | yes (`Hello, you!` in 0.926 s, median of 3, from another directory) |
 | `:cljrs` | not yet: cohost's clojurust boot is parked and the CLI does not run it (`bin/cohost`: not wired) | | |
 
-Why cljw and lg ship a script bundle and not their own native packaging (measured on cohost.cli): `cljw build -m
-cohost.cli -o out -cp src` stops with `build failed: UnsupportedValueTag`; `lg -source-paths src -b out entry.lg`
+What is not native yet ([doc/AOT-PLAN.md](AOT-PLAN.md)): `cljw build` of the emitted modules stops with `build failed:
+UnsupportedValueTag`, so `:cljw` ships the modules for cljw to run; `lg -source-paths src -b out entry.lg`
 stops with `unsupported value type for serialization: *vm.Ratio` (and with `-entry-frame-entry`: `-entry-frame-entry
 requires -c and a namespace/main or namespace/-main value`).
 
