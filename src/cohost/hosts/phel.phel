@@ -71,6 +71,24 @@
 ;; files: __DIR__ here is the source directory at build time
 (when-not (php/class_exists "cohost\\hosts\\phel\\Pattern" false)
   (php/eval (str "require_once " (php/var_export (str __DIR__ "/phel_host.php") true) ";")))
+;; Clojure's promoting ops (+' *' -' inc' dec') give a long when the result
+;; fits and a BigInt only past it (or when an argument is one); Phel's give a
+;; BigInt always ((*' 2 3) is a Phel\Lang\BigInt), which PHP's own typed
+;; functions refuse (range: "must be of type int|float"). The shim's promoting
+;; Numbers ops (Long/valueOf's digit loop among them) take these.
+(defn- demote [args r]
+  (if (and (php/instanceof r BigInt)
+           (not (some #(php/instanceof % BigInt) args))
+           (.fitsInPhpInt r))
+    (.toInt r)
+    r))
+(defn add-p [& xs] (demote xs (apply +' xs)))
+(defn mul-p [& xs] (demote xs (apply *' xs)))
+(defn sub-p [& xs] (demote xs (apply -' xs)))
+(defn inc-p [x] (demote [x] (inc' x)))
+(defn dec-p [x] (demote [x] (dec' x)))
+(def- promoting {'+' 'add-p '*' 'mul-p '-' 'sub-p 'inc' 'inc-p 'dec' 'dec-p})
+
 (def- pattern-class "cohost\\hosts\\phel\\Pattern")
 (defn- pattern? [x] (php/is_a x pattern-class))
 (defn re-literal [src]
@@ -873,8 +891,10 @@
    ;; its format is PHP's sprintf: core.clj's boots over the shim's Formatter)
    ;; record?, which Phel lacks: a struct no deftype made
    :resolve-core (fn [sym]
-                   (if (= 'record? sym)
-                     (var-of 'cohost.hosts.phel 'record?*)
+                   (cond
+                     (= 'record? sym) (var-of 'cohost.hosts.phel 'record?*)
+                     (contains? promoting sym) (var-of 'cohost.hosts.phel (get promoting sym))
+                     :else
                      (let [v (when-not (contains? '#{intern format read-string} sym) (var-of 'phel.core sym))]
                        (when (and v (not (:private (meta v)))) v))))
    :user-type? user-type?
