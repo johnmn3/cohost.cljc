@@ -1,0 +1,20 @@
+;; A6-3 (u3): k-nucleotide's and keyword-map's operations alone, 1e6 each, the same source under
+;; cohost (knuc_kwmap.clj) and in plain jank (knuc_kwmap.jank). K = k-nucleotide, M = keyword-map.
+(def N 1000000)
+(def dna (loop [i 0 a 42 out []] (if (= i N) out (let [a (mod (+ (* a 3877) 29573) 139968)] (recur (inc i) a (conj out (nth "acgt" (mod a 4))))))))
+(def ks [:keyword-map-sentinel-key-alpha :keyword-map-sentinel-key-bravo :keyword-map-sentinel-key-charlie :keyword-map-sentinel-key-delta :keyword-map-sentinel-key-echo :keyword-map-sentinel-key-foxtrot :keyword-map-sentinel-key-golf :keyword-map-sentinel-key-hotel :keyword-map-sentinel-key-india :keyword-map-sentinel-key-juliett :keyword-map-sentinel-key-kilo :keyword-map-sentinel-key-lima :keyword-map-sentinel-key-mike :keyword-map-sentinel-key-november :keyword-map-sentinel-key-oscar :keyword-map-sentinel-key-papa])
+(def m16 (zipmap ks (range 16)))
+(def k0 (nth ks 3))
+(defn run []
+  (bench "K0 loop-only" #(loop [i 0 s 0] (if (< i N) (recur (inc i) (inc s)) s)))
+  (bench "K1 (nth dna i)" #(loop [i 0 s nil] (if (< i N) (recur (inc i) (nth dna i)) s)))
+  (bench "K2 (= (nth dna i) \\t)" #(loop [i 0 s 0] (if (< i N) (recur (inc i) (if (= (nth dna i) \t) (inc s) s)) s)))
+  (bench "K3 conj 1e6" #(count (loop [i 0 out []] (if (< i N) (recur (inc i) (conj out i)) out))))
+  (bench "K4 (nth \"acgt\" (mod i 4))" #(loop [i 0 s nil] (if (< i N) (recur (inc i) (nth "acgt" (mod i 4))) s)))
+  (bench "K5 (mod (+ (* a 3877) 29573) 139968)" #(loop [i 0 a 42] (if (< i N) (recur (inc i) (mod (+ (* a 3877) 29573) 139968)) a)))
+  (bench "K6 (>= (inc i) n)" #(loop [i 0 s 0] (if (>= (inc i) N) s (recur (inc i) (inc s)))))
+  (bench "M1 (get m k)" #(loop [i 0 s nil] (if (< i N) (recur (inc i) (get m16 k0)) s)))
+  (bench "M2 (assoc m k v)" #(loop [i 0 m m16] (if (< i N) (recur (inc i) (assoc m k0 i)) (count m))))
+  (bench "M3 (nth ks (mod i 16))" #(loop [i 0 s nil] (if (< i N) (recur (inc i) (nth ks (mod i 16))) s)))
+  (bench "M4 (mod (+ acc v) 1000003)" #(loop [i 0 acc 0] (if (< i N) (recur (inc i) (mod (+ acc i) 1000003)) acc)))
+  (bench "M5 (m k) and (k m)" #(loop [i 0 s nil] (if (< i N) (recur (inc i) (k0 m16)) s))))
