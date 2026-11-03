@@ -1613,12 +1613,14 @@
                                                          *native-ints* (into *native-ints* (keep (fn [[p t]] (when (= 'long t) p))) ptypes)
                                                          *native-reals* (into *native-reals* (keep (fn [[p t]] (when (= 'double t) p))) ptypes)]
                                                  (doall (rw-all ctx body))))
-                                       ;; U6-11 (E): on a :native-int-aliases host, a ^long / ^double
-                                       ;; param takes the path an untyped one gets: coerced, then the
+                                       ;; U6-11 (E): on a host with native casts (jank, both columns), a
+                                       ;; ^long / ^double param takes the path an untyped one gets: coerced, then the
                                        ;; host's native conversion at entry, and the body rewritten with
                                        ;; it in A5's native sets -- no inner fn*, no boxed param (x1's
-                                       ;; X1-11: the wrapper cost every hinted twin on apt)
-                                       htypes (when (and (seq (:native-int-aliases ctx)) casts (get casts 'long) (get casts 'double)
+                                       ;; X1-11: the wrapper cost every hinted twin on apt; on the
+                                       ;; series the inner fn* was still allocated per call, codegen
+                                       ;; of md-inside-h: _jank_fn(2) and call_fast per call)
+                                       htypes (when (and casts (get casts 'long) (get casts 'double)
                                                          (not (some #(= '& (*plain* %)) ps0)))
                                                 (not-empty (into {} (keep (fn [p] (let [h (primitive-hint (:tag (meta p)))]
                                                                                     (when (#{'long 'double} h) [(*plain* (bare-sym p)) h]))))
