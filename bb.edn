@@ -13,9 +13,15 @@
           ;; jank binary changed (dev/perf/jank_aot_ensure.clj).
           (defn jank-aot-dir []
             (load-file "dev/perf/jank_aot_ensure.clj"))
+          ;; The jank binary every jank task runs: JANK_BIN, default jank on
+          ;; PATH (a source build: dev/install/jank-src.sh, upstream/jank/README.md)
+          (def jank-bin (let [b (System/getenv "JANK_BIN")]
+                          (if (clojure.string/blank? b) "jank" b)))
           ;; The AOT snapshot's module path when the snapshot is fresh, else
           ;; nil; never builds it (bb boot:jank-snapshot does). Its key:
-          ;; dev/perf/jank_snapshot_key.clj.
+          ;; dev/perf/jank_snapshot_key.clj. Only for the default jank: the key
+          ;; reads `jank print-binary-version`, which a source build's patches do
+          ;; not move, so a JANK_BIN binary boots from its own AOT modules.
           ;; jank-FAST research item 1 (S3-1): the jank tasks that evaluate
           ;; cohost run its JIT at -O3. COHOST_JANK_O=-O0 (or any level), or
           ;; =none for the command line without -O (as before).
@@ -23,10 +29,11 @@
             (let [o (System/getenv "COHOST_JANK_O")]
               (cond (nil? o) ["-O3"] (= "none" o) [] :else [o])))
           (defn jank! [& args]
-            (apply babashka.process/shell (concat ["jank"] (jank-o) args)))
+            (apply babashka.process/shell (concat [jank-bin] (jank-o) args)))
           (defn jank-snapshot-path []
-            (load-file "dev/perf/jank_snapshot_key.clj")
-            ((resolve 'fresh-path))))
+            (when (= "jank" jank-bin)
+              (load-file "dev/perf/jank_snapshot_key.clj")
+              ((resolve 'fresh-path)))))
   docs:check {:doc "README.md's and doc/guide's bash blocks, run as written against one fresh cohost/app project per target: bb docs:check [target ...] (default jvm)"
               :task (do (def docs? true) (load-file "dev/cli-demo/readme_check.clj"))}
   readme:check {:doc "README.md's bash blocks, run as written against a fresh cohost/app project per target: bb readme:check [target ...] (default jvm)"
@@ -129,7 +136,7 @@
   ;; jank-FAST Step 2. Phase timers inside boot! ({:profile? true} only) plus
   ;; the twelve libraries. One run. Median of three: dev/perf/jank_boot_profile.sh
   boot:jank-profile {:doc "jank boot with phase timers (doc/perf/jank.md, Boot profile). One run."
-                     :task (shell "jank" "--module-path" "src" "run" "dev/perf/jank_boot_profile.jank")}
+                     :task (shell jank-bin "--module-path" "src" "run" "dev/perf/jank_boot_profile.jank")}
   ;; Same profile after the AOT modules boot:jank loads. Median of three:
   ;; dev/perf/jank_aot_profile.sh
   boot:jank-aot-profile {:doc "jank boot profile with cohost namespaces AOT'd -O3. One run."
@@ -142,7 +149,7 @@
   ;; inward and the module can be compiled with the rest of cohost.run.
   ;; Load-time medians: dev/perf/jank_aot_time.sh
   boot:jank-aot {:doc "jank: AOT cohost's namespaces (-O3, including cohost.hosts.jank-host and cohost.shim) and boot through the load stamp. See dev/perf/jank_aot_time.sh."
-                 :task (apply shell "jank" "--module-path" (str (jank-aot-dir) ":src")
+                 :task (apply shell jank-bin "--module-path" (str (jank-aot-dir) ":src")
                               "run" "dev/perf/jank_aot_load.jank" "--" *command-line-args*)}
   ;; jank-FAST Step 6 stage 2. Boot from the AOT snapshot of the booted core
   ;; and libraries (target/jank-snapshot/, generated, not committed). The
@@ -150,8 +157,13 @@
   ;; loaded stale: dev/perf/jank_snapshot_ensure.clj. Args as boot:jank
   ;; (--no-libs, --bench [--quick]).
   boot:jank-snapshot {:doc "jank: boot from the AOT snapshot (rebuilt first when stale), then the batteries or --bench. See dev/perf/jank_snapshot_ensure.clj."
-                      :task (apply jank! "--module-path" (load-file "dev/perf/jank_snapshot_ensure.clj")
-                                   "run" "dev/perf/jank_snapshot_run.jank" "--" *command-line-args*)}
+                      ;; the default jank only: the snapshot key reads print-binary-version,
+                      ;; which a source build's patches do not move
+                      :task (if (= "jank" jank-bin)
+                              (apply jank! "--module-path" (load-file "dev/perf/jank_snapshot_ensure.clj")
+                                     "run" "dev/perf/jank_snapshot_run.jank" "--" *command-line-args*)
+                              (throw (ex-info (str "boot:jank-snapshot runs the default jank only; with JANK_BIN="
+                                                   jank-bin " use bb boot:jank (its AOT modules)") {})))}
   ;; D-7: a native executable of a project's app on jank (src/cohost/build_jank.clj;
   ;; lane C's cohost.build calls the same build! for cohost -T:build jank-exe).
   build:jank {:doc "jank: bb build:jank <project-dir> <main-ns> [name] -- the app as one native executable (<project>/target/jank/<name>), rebuilt when stale"
@@ -190,7 +202,7 @@
   boot:all  {:doc "every host that is on PATH"
              :task (doseq [[t exe] [["boot:jolt" "jolt"] ["boot:lpy" "basilisp"] ["boot:jvm" "clojure"]
                                     ["boot:cljw" "cljw"] ["boot:phel" "phel"] ["boot:lg" "lg"]
-                                    ["boot:cljrs" "cljrs"] ["boot:jank" "jank"]]]
+                                    ["boot:cljrs" "cljrs"] ["boot:jank" jank-bin]]]
                      (if (babashka.fs/which exe)
                        (do (println (str "== " t " ==")) (shell "bb" t))
                        (println (str "== " t " == (skipped: no " exe " on PATH)"))))}}}

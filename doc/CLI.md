@@ -135,6 +135,14 @@ the config names. `:jank` runs `jank -O3 --module-path <cohost's -O3 AOT objects
 run-main cohost.cli -- <config>`; the objects are `dev/perf/jank_aot_ensure.clj`'s, rebuilt
 when `src/cohost` or the jank binary changed (the first run after a change compiles them).
 
+Two environment variables reach every jank command cohost runs (`bin/cohost :jank`, `bb boot:jank`,
+`bb bench:jank`, `bb bench:programs jank|jank-jit|jank-aot`): `JANK_BIN` names the jank binary
+(default `jank` on PATH; a source build gets its own AOT objects under
+`target/jank-aot-<12 hex of sha256(realpath)>` and its own bench records, and `bb boot:jank-snapshot`
+refuses it, since the snapshot's key reads `jank print-binary-version`, which a patch does not
+move), and `COHOST_JANK_O` is the JIT optimization flag (default `-O3`; `none` passes no `-O`;
+any other value, e.g. `-O0`, replaces it).
+
 ## jank: where `cohost :jank` spends its time
 
 Measured 2026-11-02 ET in `dev/cli-demo` with a fresh snapshot, `bash dev/perf/jank_snapshot_cli_parts.sh`: each part is its own command, three runs, seconds (the jank parts run the launch's own `jank -O3 ... run-main cohost.cli` with a config that stops at that point).
@@ -251,6 +259,9 @@ re-run on these fixes and matched the earlier numbers.
   the host's own message ("Could not locate nope/ns.jolt …").
 - **Names print under `cohost.*`**: `#'clojure.core/map` prints
   `#'cohost.core/map`, as everywhere in cohost (doc/REPORT.md).
+- **On `:jank`, integer arithmetic on two small integers wraps at 32 bits** (jank 0.1's own
+  `+`, `-`, `*`; doc/REPORT.md's host facts). A sum past 2^31 is wrong until A5 lands (in flight,
+  jank-MAX A5; not in this tree).
 - **The REPL** (`cohost` with no main option, as `clj`) reads a line at a time, on a
   terminal or a pipe: a prompt, lines until they hold whole forms, each value printed
   (the forms of one line under one prompt), an error reported and the REPL goes on, as

@@ -149,6 +149,11 @@
    ["a map is no var" "(var? {:ns 'a :name 'b :macro? false})" false]
    ["extend-protocol to concrete classes" "(do (defprotocol BtSh (bt-area [s])) (extend-protocol BtSh clojure.lang.PersistentVector (bt-area [v] (count v)) clojure.lang.PersistentHashSet (bt-area [s] :set)) [(bt-area [1 2]) (bt-area #{1})])" [2 :set]]
    ["with-redefs of a protocol method" "(do (defprotocol BtRP (bt-rp [x])) (extend-protocol BtRP Long (bt-rp [x] :orig)) (defn bt-callrp [] (bt-rp 1)) (with-redefs [bt-rp (fn [_] :redef)] (bt-callrp)))" :redef]
+   ;; dispatch caches (X2-1, doc/research/jank-dispatch.md): a call fills a cache; these change what it holds
+   ["protocol: extend-type after a call reaches the type" "(do (defprotocol BtX (bt-x [s])) (deftype BtXT [a]) (extend-protocol BtX Object (bt-x [_] :obj)) (let [t (->BtXT 1) r1 (bt-x t)] (extend-type BtXT BtX (bt-x [_] :ext)) [r1 (bt-x t)]))" [:obj :ext]]
+   ["protocol: a redefined record dispatches its new method" "(do (defprotocol BtY (bt-y [s] [s k])) (defrecord BtYR [a b] BtY (bt-y [_] a) (bt-y [_ k] [k b])) (let [r1 [(bt-y (->BtYR 1 2)) (bt-y (->BtYR 1 2) :k)]] (defrecord BtYR [a b] BtY (bt-y [_] b) (bt-y [_ k] [a k])) [r1 (bt-y (->BtYR 1 2)) (bt-y (->BtYR 1 2) :k)]))" [[1 [:k 2]] 2 [1 :k]]]
+   ["multimethod: defmethod after a call is seen" "(do (defmulti bt-mm identity) (defmethod bt-mm :default [_] :d) (let [a (bt-mm 1)] (defmethod bt-mm 1 [_] :one) [a (bt-mm 1) (bt-mm 2)]))" [:d :one :d]]
+   ["multimethod: derive after a call is seen" "(do (defmulti bt-mh identity) (defmethod bt-mh ::bt-p [_] :p) (defmethod bt-mh :default [_] :d) (let [a (bt-mh ::bt-q)] (derive ::bt-q ::bt-p) [a (bt-mh ::bt-q)]))" [:d :p]]
    ["hash-combine hashes its argument as Object.hashCode does" "[(hash-combine 0 \"a\") (hash-combine 0 nil) (hash-combine 1 2) (hash-combine -5 \"hello\")]" [-1640531430 -1640531527 -1640531462 1541369522]]
    ["empty of a record throws, as defrecord's does" "(do (defrecord BtEmpty [a]) [(try (empty (->BtEmpty 1)) (catch UnsupportedOperationException e :uoe)) (empty (with-meta [1] {:m 1}))])" [:uoe []]]
    ;; primitive fn* parameters coerce as JVM Clojure 1.12.0 does (measured
@@ -168,7 +173,17 @@
    ["a branch's literal keeps the JVM's meta" "[(meta #?(:clj ^:k [1] :default [])) (meta #?(:clj {:a 1})) (meta #?(:cljs ^:x [] :default ^{:d 1} #{2}))]" [{:k true} nil {:d 1}]]
    ;; cohost's own: the codemod's provenance of a form (cohost.scan/provenance)
    ["(cohost) a :clj branch's forms are Java's" "(defmacro bt-prov [] (list 'quote (cohost.scan/provenance &form))) #?(:clj (bt-prov) :default :none)" :java]
-   ["(cohost) text outside a branch has no provenance" "(bt-prov)" nil]])
+   ["(cohost) text outside a branch has no provenance" "(bt-prov)" nil]
+   ;; U6-5: return and local hints are coerced too (and typed natively on jank)
+   ["a ^long return truncates a double" "(let [f (fn ^long [x] x)] [(f 1.9) (f -1.9) (f 4)])" [1 -1 4]]
+   ["a ^double return widens a long" "(let [f (fn ^double [x] x)] [(f 2) (f 1.5)])" [2.0 1.5]]
+   ["a ^long return rejects a non-number" "(let [f (fn ^long [x] x)] (try (f \"a\") (catch ClassCastException e :cce)))" :cce]
+   ["a ^long return of an arity that recurs" "(let [f (fn ^long [x] (if (pos? x) (recur (dec x)) x))] (f 2.5))" 0]
+   ["a hinted fn recurring on its own name" "(let [f (fn fib ^long [^long n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))] [(f 20) (f 20.7)])" [6765 6765]]
+   ["a ^long let local is a long to arithmetic" "(let [^long x (identity 1.9)] (inc x))" 2]
+   ["a ^long let local rejects a non-number" "(try (let [^long x (identity \"a\")] (inc x)) (catch ClassCastException e :cce))" :cce]
+   ["a ^double let local" "(let [^double x (identity 2)] (+ x 0.5))" 2.5]
+   ["a ^long loop local is a long to arithmetic" "(loop [^long i (identity 2.5) a 0] (if (pos? i) (recur (dec i) (+ a i)) a))" 3]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."

@@ -1,0 +1,14 @@
+;; jank-30: an integer past 2^31 is heap-allocated (the inline payload is 32 bits), so with
+;; 12-21's correct i64 sums every add past 2^31 allocates: reduce + over a 1e6 vector.
+(def v (vec (range 1000000)))
+(println "sums" (reduce + v) (reduce + (range 1000000)) (let [n (count v)] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (nth v i))) s))))
+(println "edges" (+ 2147483647 1) (* 65536 65536) (- -2147483648 1)
+         (+ 140737488355327 1) (- -140737488355328 1) (* 140737488355327 2) (* 3037000499 3037000499)
+         (try (+ 9223372036854775807 1) (catch :default e :overflow))
+         (try (* 4611686018427387904 2) (catch :default e :overflow))
+         (= 140737488355328 (+ 140737488355327 1)) (hash 3000000000) (hash (+ 2999999999 1))
+         (= (+ 2999999999 1) 3000000000) (get {3000000000 :k} (+ 2999999999 1)) (str (+ 2999999999 1)) (pr-str [(- 5000000000)]))
+(timed "reduce + over 1e6 vector (sum passes 2^31)" (fn [] (reduce + v)))
+(timed "loop nth over the same vector" (fn [] (let [n (count v)] (loop [i 0 s 0] (if (< i n) (recur (inc i) (+ s (nth v i))) s)))))
+(timed "reduce + v from 3e9" (fn [] (reduce + 3000000000 v)))
+(timed "reduce + over the first 60000 (inside i32)" (fn [] (reduce + (subvec v 0 60000))))

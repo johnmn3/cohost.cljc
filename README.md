@@ -100,6 +100,9 @@ cohost -T:build build                               # => build: target/myapp/run
 (cd /tmp && "$OLDPWD"/target/myapp/run you)         # => Hello, you!
 ```
 
+`:jank` builds through `bb build:jank <project-dir> <main-ns> [name]` for now (`doc/CLI.md`,
+"A native executable on jank").
+
 What is inside for each runtime (an uberjar, a native binary, a bundle) is in
 `doc/CLI.md` ("Building").
 
@@ -172,13 +175,20 @@ bb eval:jolt '(require (quote [clojure.string :as str]))' '(str/split "a,b" #","
 bb lint:reader-order                      # cohost's #? arms: :jolt and :cljw ahead of :clj, nothing after :default
 ```
 
-The five hosts in progress (`doc/hosts/PLAN.md`) have the same tasks: `bb boot:cljw`,
-`boot:phel`, `boot:lg`, `boot:cljrs`, `boot:jank` and their `bench:` twins. Each one's
-install is `dev/install/<host>.sh`.
+Two `bb boot:cljs` (or `bench:cljs`, or the CLI's cljs build) at once share
+`~/.cljs/.aot_cache/<cljs version>` and can corrupt it: a concurrent compile left
+`cljs/spec/alpha.js` truncated, and every later cljs boot failed with
+`SyntaxError: missing ) after argument list` until that entry was deleted. Run cljs compiles one
+at a time, or give each its own cache.
+
+The hosts of `doc/hosts/PLAN.md` have the same tasks: `bb boot:cljw`, `boot:phel`, `boot:lg`,
+`boot:cljrs` and their `bench:` twins. jank's are `bb boot:jank` (from the snapshot or the AOT
+objects), `bb boot:jank-jit`, `bb bench:jank`, `bb bench:programs jank` and `bb build:jank`.
+Each one's install is `dev/install/<host>.sh`.
 
 Each boots core.clj, prints the boot report (booted / from host / skipped /
 errors, every error's root cause, the interop the shim lacks), runs
-`cohost.battery` — 133 stock behaviors evaluated in a namespace that sees only
+`cohost.battery` — 159 stock behaviors evaluated in a namespace that sees only
 the booted core — and then `cohost.lib-battery`: twelve `clojure.*`
 libraries required through the loader, each case checked against the value
 JVM Clojure 1.12.0 gives. `cohost.run/-main` takes `--verbose`, `--no-libs`
