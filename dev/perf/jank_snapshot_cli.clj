@@ -29,21 +29,73 @@
 (defn- abs-path [repo path]
   (str/join ":" (map (fn [x] (str (fs/absolutize (fs/path repo x)))) (str/split path #":"))))
 
-(defn jank-cli-launch [repo]
-  (let [r (p/shell {:dir repo :out :string :err :string :continue true}
-                   "bb" "-e"
-                   (str "(load-file \"dev/perf/jank_snapshot_key.clj\")"
-                        "(if-let [m ((resolve 'fresh-path))]"
-                        "  (println \"CLI-PATH snapshot\" m)"
-                        "  (println \"CLI-PATH aot\" (str (load-file \"dev/perf/jank_aot_ensure.clj\") \":src\")))"))
-        lines (str/split-lines (:out r))
+(defn- in-repo
+  "Run bb code in the repo, in a child whose output is captured (the CLI's
+   stdout stays the program's). -> its stdout lines."
+  [repo code]
+  (let [r (p/shell {:dir repo :out :string :err :string :continue true} "bb" "-e" code)]
+    (str/split-lines (str (:out r) "\n" (:err r)))))
+
+(defn- snapshot-fresh
+  "{:path <module path>} when the core snapshot is fresh, else {:stale why}."
+  [repo]
+  (let [lines (in-repo repo (str "(load-file \"dev/perf/jank_snapshot_key.clj\")"
+                                 "(when-let [m ((resolve 'fresh-path))] (println \"CLI-PATH snapshot\" m))"))
         line (last (filter #(str/starts-with? % "CLI-PATH ") lines))
-        stale (first (filter #(str/starts-with? % "SNAPSHOT-STALE") lines))
-        [_ kind path] (when line (str/split line #" " 3))]
-    (when-not line
-      (throw (ex-info (str "jank: no module path from dev/perf/jank_snapshot_key.clj: " (:err r)) {})))
-    (when stale (binding [*out* *err*] (println (str "cohost: jank: " stale))))
-    {:module-path (abs-path repo path) :snapshot? (= "snapshot" kind)
+        stale (first (filter #(str/starts-with? % "SNAPSHOT-STALE") lines))]
+    (if line {:path (nth (str/split line #" " 3) 2)} {:stale (or stale "SNAPSHOT-STALE")})))
+
+(defn- pid-alive?
+  "Is process pid (a string) running? ProcessHandle: Linux and macOS alike."
+  [pid]
+  (boolean (when-let [n (some-> pid parse-long)]
+             (.orElse (.map (java.lang.ProcessHandle/of n) (reify java.util.function.Function (apply [_ h] (.isAlive ^java.lang.ProcessHandle h)))) false))))
+
+(defn build-snapshot!
+  "OOTB #16/#17: build jank's core snapshot now, in the foreground, with one
+   plain progress line on stderr (its own output goes to
+   target/jank-snapshot-build.log). Never two at once: a lock holds the
+   builder's pid; while another command builds, this one does not wait.
+   -> true when this call built it."
+  [repo why]
+  (let [lock (str repo "/target/jank-snapshot-build.lock")
+        log (str repo "/target/jank-snapshot-build.log")
+        held (when (fs/exists? lock) (str/trim (slurp lock)))]
+    (binding [*out* *err*]
+      (cond
+        (= "0" (System/getenv "COHOST_JANK_REBUILD"))
+        (do (println (str "cohost: jank's core snapshot is " (if (str/includes? why "no stamp") "not built" "out of date")
+                          "; this run boots without it (slower). To build it: (cd " repo " && bb boot:jank-snapshot)"))
+            false)
+
+        (pid-alive? held)
+        (do (println (str "cohost: jank's core snapshot is being built by another command (pid " held "); this run boots without it"))
+            false)
+
+        :else
+        (do (fs/create-dirs (str repo "/target"))
+            (spit lock (str (.pid (java.lang.ProcessHandle/current)) "\n"))
+            (println (str "cohost: building jank's core snapshot, a few minutes (2-6 measured), once per cohost update"
+                          " (log: " log ")"))
+            (try
+              (let [t0 (System/nanoTime)
+                    r (p/shell {:dir repo :out (java.io.File. log) :err :out :continue true}
+                               "bb" "-e" "(load-file \"dev/perf/jank_snapshot_ensure.clj\")")]
+                (if (zero? (:exit r))
+                  (do (println (str "cohost: jank's core snapshot is built (" (quot (- (System/nanoTime) t0) 1000000000) " s)")) true)
+                  (do (println (str "cohost: building jank's core snapshot failed (see " log "); this run boots without it")) false)))
+              (finally (fs/delete-if-exists lock))))))))
+
+(defn jank-cli-launch [repo]
+  (let [d (snapshot-fresh repo)
+        d (if (:path d) d (if (build-snapshot! repo (:stale d)) (snapshot-fresh repo) d))
+        path (or (:path d)
+                 (let [lines (in-repo repo "(println \"CLI-PATH aot\" (str (load-file \"dev/perf/jank_aot_ensure.clj\") \":src\"))")
+                       line (last (filter #(str/starts-with? % "CLI-PATH ") lines))]
+                   (when-not line
+                     (throw (ex-info (str "jank: no module path from dev/perf/jank_aot_ensure.clj: " (str/join "\n" lines)) {})))
+                   (nth (str/split line #" " 3) 2)))]
+    {:module-path (abs-path repo path) :snapshot? (boolean (:path d))
      :env (if (= "none" (System/getenv "COHOST_JANK_GC"))
             {}
             (into {} (remove (fn [[k _]] (System/getenv k)) {"GC_INITIAL_HEAP_SIZE" "512M"})))}))

@@ -128,9 +128,13 @@
       (println (str "  " lib "  " (count (filter :pass results)) "/" (count results)
                     (when require-error (str "   require failed: " require-error))))
       (let [{:keys [error entries]} (get (boot/lib-report) lib)]
+        ;; a definition this host cannot load (proxy of a JVM class,
+        ;; sun.misc.Signal, a set! of a JVM-only var) is skipped; the rest of
+        ;; the library loads. Expected, so one line names them (OOTB #25).
         (when (and error (pos? error))
-          (doseq [e entries :when (= :error (:status e))]
-            (println (str "     load error: " (:name e) ": " (:error e))))))
+          (println (str "     skipped on this host (expected): "
+                        (apply str (interpose ", " (distinct (map (fn [e] (str (:name e)))
+                                                                  (filter (fn [e] (= :error (:status e))) entries)))))))))
       (doseq [r (remove :pass results)]
         (println (str "     FAIL " (:label r) "\n          got      " (pr-str (:got r)) "\n          expected " (pr-str (:expected r))))))
     results))
