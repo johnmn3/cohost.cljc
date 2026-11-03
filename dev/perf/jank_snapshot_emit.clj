@@ -58,7 +58,16 @@
   (cond
     (and (map? x) (contains? x :cohost.snap/val) (contains? x :cohost.snap/meta))
     (let [v (decode (:cohost.snap/val x))
-          m (decode (:cohost.snap/meta x))]
+          m (decode (:cohost.snap/meta x))
+          ;; U6-12b (B2): a native tag the codemod gives a fn* param is the
+          ;; data (quote long) at eval; written as ^(quote long) into a module,
+          ;; jank's analyzer reads it as a cpp/ type expression and fails
+          ;; ("Unable to find `quote` within the global namespace"): write it
+          ;; as the symbol it quotes, ^long, which jank reads the same
+          t (:tag m)
+          m (if (and (seq? t) (= 'quote (first t)) (symbol? (second t)) (nil? (nnext t)))
+              (assoc m :tag (second t))
+              m)]
       (if (instance? clojure.lang.IObj v) (with-meta v m) v))
     (map? x) (into {} (map (fn [[k v]] [(decode k) (decode v)]) x))
     (vector? x) (mapv decode x)

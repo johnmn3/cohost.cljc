@@ -2799,6 +2799,22 @@
               (= 'clojure.core/hash-map (first m))
               (= :jank/source (second m))))))
 
+(defn- direct-var-call
+  "A7-4: (f args...) where f, unqualified and not a local, names a fn var of
+   the namespace being compiled that is neither a macro nor ^:dynamic: the
+   host's direct call of that var (adapter :direct-var-calls), which reads the
+   var's root at every call, so a redefinition is seen. nil keeps the var call."
+  [ctx h args]
+  (when-let [emit (host/direct-var-calls)]
+    (when (and (symbol? h) (nil? (namespace h)) *inline?* *current-ns*
+               (not (contains? *locals* (*plain* h)))
+               (not (contains? *locals* h)))
+      (when-let [v (when-let [r (:resolve-head ctx)] (r h))]
+        (when (and (not (host/macro-var? v))
+                   (= *current-ns* (let [x (host/var-ns v)] (str (if (host/namespace? x) (host/ns-name* x) x))))
+                   (not (:dynamic (host/try-all (fn [] (host/var-meta v)) (fn [_] nil)))))
+          (emit (list 'var h) (vec (rw-all ctx args))))))))
+
 (defn- rw-list [ctx form]
   (if (empty? form)
     form
@@ -2944,7 +2960,9 @@
                           (let [ef (core-expansion ctx h)
                                 args' (when ef (rw-all ctx args))]
                             (or (when ef (ef (binding [*locals* (conj *locals* (*plain* h))] (rw ctx h)) args'))
-                                (apply list (or (core-alias ctx h) (rw ctx h)) (or args' (rw-all ctx args)))))))))]
+                                (let [ca (core-alias ctx h)]
+                                  (or (when-not ca (direct-var-call ctx h args))
+                                      (apply list (or ca (rw ctx h)) (or args' (rw-all ctx args)))))))))))]
       (carry-meta out form))))
 
 ;; A7-1: the adapter's fn for a vector literal of this size (:vector-literal), when the literal
@@ -2952,7 +2970,13 @@
 (def ^:private reader-position-keys #{:line :column :end-line :end-column :file :source :jank/source})
 (defn- vector-literal-fn [form]
   (when-let [m (host/vector-literal)]
-    (when (every? reader-position-keys (keys (meta form)))
+    (when (and (every? reader-position-keys (keys (meta form)))
+               ;; never a vector in a binding or parameter position: some paths hand a whole
+               ;; clause to rw ((bt-y [_ k] body) in a record's specs), where [_ k] must stay a
+               ;; vector. A parameter vector holds only symbols, & and destructuring patterns
+               ;; (vectors, maps); a literal that is data holds a call or an atom
+               (not-any? #(or (vector? %) (map? %)) form)
+               (some #(or (seq? %) (number? %) (string? %) (keyword? %) (char? %) (boolean? %) (nil? %)) form))
       (get m (count form)))))
 
 (defn rw [ctx form]
