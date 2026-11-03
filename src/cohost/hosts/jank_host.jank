@@ -1900,6 +1900,9 @@ namespace cohost_assoc {
    ;; C++ int unpatched jank gives it (recur wrapped it at 32 bits); nil on the
    ;; series build, whose literals are already 64 bit
    :loop-int-init (when int-wraps? (fn [n] (list 'cpp/long n)))
+   ;; U6-10: a let*/loop* local started from (count x) is a native long (to_int of
+   ;; jank's count, always an integer), beside A5's literal-started loop locals
+   :native-long-inits (when int-wraps? '#{count})
    :core-ns 'clojure.core
    :catch-all 'cpp/jank.runtime.object_ref
    :read-forms read-forms
