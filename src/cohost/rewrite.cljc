@@ -82,8 +82,8 @@
 (defn- uk-kind
   "The kind (:long, :double or nil) a source form certainly has, given env
    {local -> kind or nil}: an integer or real literal, a typed local, + - *
-   inc dec over typed operands (Clojure's contagion: any double is a
-   double), / with a double operand, count, (long x), (double x),
+   / with a double operand (Clojure's contagion: a double, or a throw),
+   + - * over longs, inc dec of a typed operand, count, (long x), (double x),
    Math/sqrt, an if whose branches agree."
   [env x]
   (cond (and (integer? x) (not= \N (last (pr-str x)))) :long
@@ -94,8 +94,10 @@
               ks (map #(uk-kind env %) args)]
           (cond (= h 'Math/sqrt) :double
                 (contains? #{"inc" "dec"} n) (when (= 1 (count args)) (#{:long :double} (first ks)))
-                (contains? #{"+" "-" "*"} n) (when (and (seq args) (every? some? ks)) (if (some #{:double} ks) :double :long))
-                (= "/" n) (when (and (seq args) (every? some? ks) (some #{:double} ks)) :double)
+                ;; a double operand makes the result a double whatever the others
+                ;; are (or the op throws): Clojure's contagion, A5-3's real-form?
+                (contains? #{"+" "-" "*" "/"} n) (cond (and (seq args) (some #{:double} ks)) :double
+                                                       (and (seq args) (not= "/" n) (every? #{:long} ks)) :long)
                 (= "count" n) (when (= 1 (count args)) :long)
                 (= "long" n) (when (= 1 (count args)) :long)
                 (= "double" n) (when (= 1 (count args)) :double)
