@@ -54,6 +54,12 @@
         env {"PATH" (str repo "/bin:" (System/getenv "PATH"))}
         fails (atom 0)]
     (println (str "== target " target " in " dir))
+    ;; The README's install step (dev/install/jank.sh, not run here) builds jank's core snapshot; build it the same
+    ;; way first, so the first command is not timed on a 2-to-11-minute build (2026-11-03: it hit the 600 s limit).
+    (when (and (= target "jank") (not= "off" (System/getenv "COHOST_JANK_SNAPSHOT")))
+      (println "== jank: building cohost's core snapshot first, as the README's install step does")
+      (p/shell {:dir repo :out :string :err :string :continue true}
+               "bb" "-e" "(load-file \"dev/perf/jank_snapshot_key.clj\") ((resolve (quote ensure!)))"))
     (loop [[{:keys [cmd expect]} & more] (mapcat commands (filter #(run-block? % target) (mapcat (comp blocks slurp) (doc-files))))
            cwd dir]
       (when cmd
