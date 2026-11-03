@@ -2,8 +2,9 @@
 ;;
 ;; The stamp beside the objects is two lines: a hash of every regular file
 ;; under src/cohost (path and bytes), and `jank print-binary-version`. A
-;; missing object, a missing stamp, or a mismatch deletes the cache and
-;; recompiles cohost.run at -O3 before anything loads those objects.
+;; missing object, a missing stamp, or a mismatch recompiles cohost.run at
+;; -O3 before anything loads those objects: incrementally (only the stale
+;; modules) unless another jank binary made them (recompile! below).
 ;;
 ;; Loading this file recompiles when the stamp is stale and returns the
 ;; cache directory (the value of the trailing ensure! call).
@@ -56,10 +57,22 @@
        (shim-object? cache)
        (= [hash version] (read-stamp cache))))
 
-(defn- recompile! [hash version]
+(defn- recompile!
+  "Recompile cohost.run -O3 into the cache. The objects already there are kept
+   when this jank binary made them (D-9: jank 0.1's compile-module recompiles
+   only a module whose source is newer than its object, and cohost's sources
+   define no macros, so an unchanged module's object stays right); another
+   binary's, or COHOST_JANK_SNAPSHOT=full, delete the cache first."
+  [hash version]
+  (let [runs (run-objects)
+        old (when (= 1 (count runs)) (read-stamp (cache-of-run (first runs))))]
+    (when (and (fs/exists? (fs/path aot-root "_cache"))
+               (or (not= version (second old)) (> (count runs) 1)
+                   (= "full" (System/getenv "COHOST_JANK_SNAPSHOT"))))
+      (fs/delete-tree (fs/path aot-root "_cache"))))
   (println "AOT-RECOMPILE")
-  (when (fs/exists? (fs/path aot-root "_cache"))
-    (fs/delete-tree (fs/path aot-root "_cache")))
+  ;; the stamp goes first: an interrupted compile leaves no fresh-looking cache
+  (doseq [r (run-objects)] (fs/delete-if-exists (stamp-file (cache-of-run r))))
   (fs/create-dirs aot-root)
   (shell "jank" "--module-path" "src" "compile-module" "cohost.run"
          "-O3" "--target-dir" aot-root)

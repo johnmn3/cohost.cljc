@@ -28,6 +28,45 @@
 (defn- abs-path [repo path]
   (str/join ":" (map (fn [x] (str (fs/absolutize (fs/path repo x)))) (str/split path #":"))))
 
+;; D-9 step 3: a stale snapshot is rebuilt in the background while this run
+;; boots without it (the AOT path); the next run after the rebuild boots from
+;; it. The rebuild is incremental (dev/perf/jank_snapshot_key.clj rebuild!),
+;; measured 62-155 s for a one-line change (doc/CLI.md), against ~20 s more on
+;; every run that takes the AOT path: printing the command instead would leave
+;; every run slow until someone runs it. One rebuild at a time: a lock holds
+;; its pid (a dead pid's lock is taken over); its output goes to
+;; target/jank-snapshot-rebuild.log. A rebuild never makes a half-built
+;; snapshot loadable: the stamp is written last. COHOST_JANK_REBUILD=0: no
+;; background rebuild, the command is printed instead. The rebuild runs nice'd
+;; (the run beside it keeps the CPU it needs).
+(defn- pid-alive? [pid] (and pid (fs/exists? (str "/proc/" pid))))
+
+(defn rebuild-in-background!
+  "Start the snapshot's rebuild in repo unless one is running; one stderr line
+   says which. -> the rebuild's pid, or nil."
+  [repo]
+  (let [lock (str repo "/target/jank-snapshot-rebuild.lock")
+        log (str repo "/target/jank-snapshot-rebuild.log")
+        held (when (fs/exists? lock) (str/trim (slurp lock)))]
+    (cond
+      (= "0" (System/getenv "COHOST_JANK_REBUILD"))
+      (do (println (str "cohost: jank: this run boots without the snapshot; to rebuild it: (cd " repo " && bb boot:jank-snapshot)")) nil)
+
+      (and (seq held) (pid-alive? held))
+      (do (println (str "cohost: jank: the snapshot is being rebuilt (pid " held ", " log "); this run boots without it")) nil)
+
+      :else
+      (let [_ (fs/create-dirs (str repo "/target"))
+            proc (p/process {:dir repo :out (java.io.File. log) :err :out :in nil}
+                            "nice" "-n" "10" "bb" "-e"
+                            (str "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"
+                                 "(babashka.fs/delete-if-exists \"target/jank-snapshot-rebuild.lock\")"))
+            pid (str (.pid ^java.lang.Process (:proc proc)))]
+        (spit lock (str pid "\n"))
+        (println (str "cohost: jank: rebuilding the snapshot in the background (pid " pid ", " log
+                      "); this run boots without it"))
+        pid))))
+
 (defn jank-cli-launch [repo]
   (let [r (p/shell {:dir repo :out :string :err :string :continue true}
                    "bb" "-e"
@@ -41,7 +80,7 @@
         [_ kind path] (when line (str/split line #" " 3))]
     (when-not line
       (throw (ex-info (str "jank: no module path from dev/perf/jank_snapshot_key.clj: " (:err r)) {})))
-    (when stale (binding [*out* *err*] (println (str "cohost: jank: " stale))))
+    (when stale (binding [*out* *err*] (println (str "cohost: jank: " stale)) (rebuild-in-background! repo)))
     {:module-path (abs-path repo path) :snapshot? (= "snapshot" kind)
      :env (if (= "none" (System/getenv "COHOST_JANK_GC"))
             {}
