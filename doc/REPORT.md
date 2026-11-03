@@ -647,6 +647,11 @@ arose (measured 2026-10-31 ET):
 
 - `(= 1 1.0)` is `true` on ClojureScript (one number type) and on basilisp
   (Python `1 == 1.0`).
+- On the JVM host the row "reduce over an eduction; a :tag that is data" fails with
+  `LC_ALL=C.UTF-8` exported (`clojure.core.Eduction cannot be cast to clojure.lang.IReduce`,
+  7 of 7 boots) and passes with LANG/LC_ALL unset (4 of 4) on the same tree (Clojure 1.12.0,
+  Java 21). A locale-dependent path in the JVM host or the shim; not found. `bb boot:jvm` is
+  run with the locale unset.
 - `Matcher.start(g)` / `end(g)` on ClojureWasm: its `java.util.regex.Matcher` has
   `find`, `group`, `start` and `end` for the whole match only (`Matcher.zig`), and
   no group positions. The row "Matcher group spans" fails with the shim's "not
@@ -696,6 +701,25 @@ arose (measured 2026-10-31 ET):
   (the shim's format carries the battery row "format is
   java.util.Formatter's"); a native that diverges is a host fact, not a
   native.
+- jank 0.1 (the apt package) computes `+`, `-` and `*` of two integers that both fit in 32 bits
+  in a C++ `int`: `(+ 2147483647 1)` is `-2147483648`, `(* 65536 65536)` is `0`,
+  `(reduce + (range 100000))` is `704982704`; a loop local initialized from an integer literal
+  is a 32-bit `int` too (`doc/upstream/jank-12-i32-add.md`, `jank-21-int32-loop-local.md`). With
+  a wider operand the result is 64-bit. `inc` and `dec` promote; an i64 overflow wraps without
+  throwing. On the bench this is the `DIFFER` of sum-overflow, pipeline and dispatch
+  (doc/PERF.md). Stock core.clj on jank inherits it wherever the host's own `+` is reached. The
+  adapter-side correction (a checked i64 entry behind the shim's `Numbers-add`/`-minus`/
+  `-multiply` on jank, enabled by a boot probe that detects the wrap, with literal-initialized
+  loop locals typed i64) is in flight (jank-MAX A5) and not in this tree; the patch
+  `12-21-i64-arithmetic` fixes it in the patched column only.
+- jank's `coll?` is false for a lazy seq: `(coll? (doall (map identity [1])))` is `false`
+  (true on the JVM). A walk gated on `coll?` (clojure.walk's, tree-seq's) skips lazy seqs on
+  jank; cohost's own codemod walkers descend into any seq for this reason.
+- `(rest (sort [3 1 2]))` prints `(1 2 3)` on jank 0.1: its sorted-vector seq's equality, hash
+  and printing ignore the seq's index. cohost's `sort` is the shim's, so stock code does not see
+  it; jank's own does (fixed in the patched column by 11-sorted-walk).
+- Running `jank` by bare name from a directory that holds an entry named `jank` segfaults; call it
+  by path, as cohost's launcher does.
 
 ## The design that fell out
 

@@ -96,6 +96,9 @@ cohost -T:build build                               # => build: target/myapp/run
 (cd /tmp && "$OLDPWD"/target/myapp/run you)         # => Hello, you!
 ```
 
+`:jank` builds through `bb build:jank <project-dir> <main-ns> [name]` for now (`doc/CLI.md`,
+"A native executable on jank").
+
 What is inside for each runtime (an uberjar, a native binary, a bundle) is in
 `doc/CLI.md` ("Building").
 
@@ -129,6 +132,10 @@ for you.
 | `:phel` | Phel (PHP) | yes | `dev/install/phel.sh` |
 | `:lg` | let-go (Go) | yes | `dev/install/lg.sh` |
 | `:cljrs` | clojurust (Rust) | not yet | `dev/install/cljrs.sh` |
+
+`:jank` runs the jank package from jank's apt repository (`dev/install/jank.sh`) as it ships.
+cohost also carries a patch series against jank under `upstream/jank/` for its own measurements
+(`doc/PERF.md`, "Two jank binaries"); nothing selects it unless `JANK_BIN` names a build of it.
 
 How each runtime is launched, what was verified and how it differs from `clojure`:
 `doc/CLI.md`. Using cohost as a library inside a host (a sub-runtime you hand strings
@@ -175,7 +182,8 @@ named capabilities a clojure-like implements to plug in — read/eval in a
 namespace, var and namespace surgery, four constructors, regex search
 primitives, the host's `Math`, the type predicates behind the class tokens.
 Adapters ship for **jolt**, **basilisp**, **ClojureScript (self-hosted, Node
-and browser)**, **ClojureWasm**, **Phel**, **let-go** and the **JVM** (as the reference host).
+and browser)**, **ClojureWasm**, **Phel**, **let-go**, **jank** (`hosts/jank_host.jank`) and
+the **JVM** (as the reference host).
 
 It is the method of [clinj](https://github.com/johnmn3/clinj) ("WINE, not an
 emulator": shim the JDK surface the code calls, run the real source
@@ -183,10 +191,11 @@ unchanged) applied to the language's own core and libraries; the roadmap
 (`doc/ROADMAP.md`) points the same loader at `tools.deps`, the wider Clojure
 ecosystem, nREPL and shadow-cljs.
 
-## Status (measured 2026-10-30)
+## Status (measured 2026-10-30; jank 2026-11-02)
 
-| host | core.clj (791 top-level forms): stock / from host / natives / skipped / errors | core battery (139) | libraries (12, 61 cases) |
+| host | core.clj (791 top-level forms): stock / from host / natives / skipped / errors | core battery (159) | libraries (12, 62 cases) |
 |---|---|---:|---:|
+| jank 0.1-noble (apt), 2026-11-02 | 521 / 171 / 21 / 78 / **0** | 157/159 | **62/62** |
 | jolt v0.8.23 | 466 / 199 / 63 / 63 / **0** | **139/139** | **61/61** |
 | JVM Clojure 1.12.0 (reference adapter) | 465 / 202 / 66 / 58 / **0** | **139/139** | **61/61** |
 | ClojureScript 1.12.42 self-hosted, Node 24 and Chromium | 518 / 87 / 46 / 140 / **0** | **137/139** | **61/61** |
@@ -194,6 +203,11 @@ ecosystem, nREPL and shadow-cljs.
 | ClojureWasm v1.15.4 (2026-10-31) | 555 / 145 / 0 / 91 / **0** | **137/139** | **61/61** |
 | Phel v0.54.0 on PHP 8.5 (2026-10-31) | 591 / 73 / 0 / 127 / **0** | **139/139** | **61/61** |
 | let-go v1.13.0 on Go (2026-10-31) | 569 / 105 / 0 / 117 / **0** | **137/139** | **61/61** |
+
+The battery has 159 rows and the libraries 62 cases on this tree: the jank row is this tree's
+(`bb boot:jank` on apt 0.1-noble, 2026-11-02), and `bb boot:jvm` with LANG unset prints 159/159
+and 62/62 here. The other rows were measured 2026-10-30 at 139 rows and 61 cases and are not
+re-measured on this tree.
 
 The core battery's misses are host facts:
 - `(= 1 1.0)` is true in JavaScript and Python.
@@ -203,6 +217,10 @@ The core battery's misses are host facts:
 - On let-go, a regex Matcher has no group positions either (Go's RE2 gives none), and
   its sets and map keys hash and compare a deftype instance by identity: the type's own
   `equals` and `hashCode` answer `=` and `hash`, not a let-go set.
+- On jank, strings and chars are byte-based under the C locale ("Character outside ASCII";
+  under C.UTF-8 the "subs count nth first last butlast" row fails instead).
+- On jank, redefining a closure-free fn during its own recursion keeps the original (jank's
+  own defn's answer; doc/REPORT.md).
 
 "Natives" are the host's own fns standing in for stock ones (see below).
 
@@ -232,13 +250,20 @@ bb eval:jolt '(require (quote [clojure.string :as str]))' '(str/split "a,b" #","
 bb lint:reader-order                      # cohost's #? arms: :jolt and :cljw ahead of :clj, nothing after :default
 ```
 
-The five hosts in progress (`doc/hosts/PLAN.md`) have the same tasks: `bb boot:cljw`,
-`boot:phel`, `boot:lg`, `boot:cljrs`, `boot:jank` and their `bench:` twins. Each one's
-install is `dev/install/<host>.sh`.
+Two `bb boot:cljs` (or `bench:cljs`, or the CLI's cljs build) at once share
+`~/.cljs/.aot_cache/<cljs version>` and can corrupt it: a concurrent compile left
+`cljs/spec/alpha.js` truncated, and every later cljs boot failed with
+`SyntaxError: missing ) after argument list` until that entry was deleted. Run cljs compiles one
+at a time, or give each its own cache.
+
+The hosts of `doc/hosts/PLAN.md` have the same tasks: `bb boot:cljw`, `boot:phel`, `boot:lg`,
+`boot:cljrs` and their `bench:` twins. jank's are `bb boot:jank` (from the snapshot or the AOT
+objects), `bb boot:jank-jit`, `bb bench:jank`, `bb bench:programs jank` and `bb build:jank`.
+Each one's install is `dev/install/<host>.sh`.
 
 Each boots core.clj, prints the boot report (booted / from host / skipped /
 errors, every error's root cause, the interop the shim lacks), runs
-`cohost.battery` — 133 stock behaviors evaluated in a namespace that sees only
+`cohost.battery` — 159 stock behaviors evaluated in a namespace that sees only
 the booted core — and then `cohost.lib-battery`: twelve `clojure.*`
 libraries required through the loader, each case checked against the value
 JVM Clojure 1.12.0 gives. `cohost.run/-main` takes `--verbose`, `--no-libs`
@@ -255,11 +280,12 @@ src/cohost/
   policy.cljc        skip / take-from-host / replace, per form of core.clj;
                      per-library adjustments
   boot.cljc          the boot loop, macro wrapping, the loader, eval-str, reports
-  battery.cljc       133 stock behaviors checked after a boot
+  battery.cljc       159 stock behaviors checked after a boot
   lib_battery.cljc   12 clojure.* libraries, checked against JVM Clojure's answers
   corpus.cljc        the conformance-corpus scoreboard
   corpus_report.cljc its report (no dependencies: babashka merges the two sides)
   run.cljc           -main: install adapter, boot, report, batteries
+  build_jank.clj     a project's app as one native jank executable (D-7)
   shim_names.clj     compile-time helper for the ClojureScript build
   hosts/
     auto.cljc        requires the adapter for the host reading the file
@@ -272,12 +298,14 @@ src/cohost/
     phel.phel        Phel (PHP 8.5)
     phel_host.php    the JVM classes Phel's adapter builds in PHP (Pattern, Math)
     lg.lg            let-go (Go)
+    jank_host.jank   jank (C++/LLVM); the cohost_tag / cpp/raw block
 resources/cohost/clojure-1.12.0/   core.clj & co., the clojure.* libraries and
                                    clojure.spec.alpha, unchanged (EPL-1.0)
 dev/browser_boot.py  serves the browser build and runs it under Playwright
 dev/corpus_jvm.clj   the corpus gap evaluated on JVM Clojure (bb corpus:jvm)
 dev/phel_main.phel   bb boot:phel's entry (cohost.run's -main under phel run)
 dev/lg_main.lg       bb boot:lg's entry (let-go has no -m)
+dev/install/jank-src.sh  jank from source with upstream/jank/patches (measurement only)
 doc/REPORT.md      the measurements
 doc/ROADMAP.md     where this goes
 LICENSE            0BSD for cohost's own code; the vendored sources keep EPL-1.0
@@ -341,6 +369,19 @@ from qualified name to implementation:
 
 `doc/perf/HANDOFF.md` says which natives each host has today and where the
 remaining time goes.
+
+### Performance keys
+
+Seven capabilities are performance switches, default off, turned on per host where that host's
+bench says they pay (`doc/PERF.md`, "Cross-host"): `:multimethod-cache?` (the shim's MultiFn
+with a one-entry dispatch cache: JVM, jolt, ClojureWasm, Phel, ClojureScript on Node and in
+Chromium, jank), `:sort-host-compare?` (the host's compare when the comparator is the stock
+`compare`: let-go, Phel; jank always), and five jank sets alone: `:native-hints` (which primitive
+hints the host compiles as native types), `:native-local-casts` (the host's conversion for a
+hinted `let`/`loop` local), `:defn-fn-name?` (a def's name carried onto its fn*, so a self-call
+is a direct call), `:static-aliases` (a shim static emitted as the host's own op: jank's `-`),
+`:core-aliases` (a stock core fn emitted as the host's own: jank's `not`). The contract in
+`cohost.adapter/contract` carries each one's doc.
 
 ## License and provenance
 
