@@ -846,6 +846,10 @@ jvm`, then `bb bench:programs jank-aot` and `bb bench:programs jank` on apt and 
 | json | 30000 | 389.482 | 2331.012 (x5.98) | 1148.436 (x2.95) | 10164.134 (x26.10) | 7702.754 (x19.78) |
 | first-output | - | 1482.445 | 674.079 (x0.45) | 819.871 (x0.55) | 17545.517 (x11.84) | 16793.854 (x11.33) |
 
+The DIFFER cells in the apt columns (sum-overflow, sum-overflow-hinted) are jank 0.1's 32-bit wrap of integer
+`+`/`*` (doc/REPORT.md): they stay DIFFER on apt jank until A5 lands; the merged-series columns, built with the patch
+series, give the JVM's answer.
+
 Geomean xJVM (`bb bench:programs table jvm jank-aot jank`, on each binary's records):
 
 - jank's own AOT: apt 5.842 over 14 programs, merged 2.545 over 17. Over the 14 that both run SAME: apt 5.842,
