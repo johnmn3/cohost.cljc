@@ -72,7 +72,9 @@
    nil inside any nested fn*."
   nil)
 
-(declare primitive-hint pattern-syms)
+;; one name per declare: Phel's declare declares only its first
+(declare primitive-hint)
+(declare pattern-syms)
 
 (defn- uk-head
   "The bare name of a head symbol written unqualified or clojure.core/-qualified."
@@ -238,31 +240,36 @@
                             (second f)))
         def-name (fn [f] (when (and (seq? f) (= "def" (uk-head (first f))) (symbol? (second f))) (second f)))
         names (keep defn-name forms)
-        dup (set (concat (keep def-name forms) (for [[k v] (frequencies names) :when (> v 1)] k)))
+        dup (set (concat (keep def-name forms) (keep (fn [[k v]] (when (> v 1) k)) (frequencies names))))
         unit (set (remove (fn [nm] (or (dup nm) (:dynamic (meta nm)) (:redef (meta nm)))) names))
-        arities (into {} (for [f forms :let [nm (defn-name f)] :when (contains? unit nm)]
-                           (let [more (drop-while #(or (string? %) (map? %)) (drop 2 f))]
-                             [nm (vec (keep #(when (and (vector? %) (every? symbol? %) (not (some #{'&} %))) %)
-                                            (if (vector? (first more)) [(first more)] (map first (filter seq? more)))))])))]
+        ;; keep, not for: cohost's own source reads on Phel, whose for is another macro
+        arities (into {} (keep (fn [f]
+                                 (let [nm (defn-name f)]
+                                   (when (contains? unit nm)
+                                     (let [more (drop-while #(or (string? %) (map? %)) (drop 2 f))]
+                                       [nm (vec (keep #(when (and (vector? %) (every? symbol? %) (not (some #{'&} %))) %)
+                                                      (if (vector? (first more)) [(first more)] (map first (filter seq? more)))))]))))
+                               forms))]
     (if (or (empty? unit) (not (unit-kinds?)))
       {}
       (loop [R {} i 0]
         (let [st (volatile! {:sites {} :escaped #{}})]
           (doseq [f forms] (uk-walk {:unit unit :st st :macro? macro? :R R :record? true} {} f))
           (let [{:keys [sites escaped]} @st
-                R' (into {} (for [nm unit :when (not (contains? escaped nm))
-                                  :let [m (into {} (for [ps (get arities nm)
-                                                         :let [k (count ps)
-                                                               ss (get-in sites [nm k])
-                                                               ks (mapv (fn [j p]
-                                                                          (when (and (seq ss) (nil? (primitive-hint (:tag (meta p)))))
-                                                                            (let [k0 (get (first ss) j)]
-                                                                              (when (and k0 (every? #(= k0 (get % j)) ss)) k0))))
-                                                                        (range k) ps)]
-                                                         :when (some some? ks)]
-                                                     [k ks]))]
-                                  :when (seq m)]
-                              [nm m]))]
+                R' (into {} (keep (fn [nm]
+                                    (when-not (contains? escaped nm)
+                                      (let [m (into {} (keep (fn [ps]
+                                                               (let [k (count ps)
+                                                                     ss (get-in sites [nm k])
+                                                                     ks (mapv (fn [j p]
+                                                                                (when (and (seq ss) (nil? (primitive-hint (:tag (meta p)))))
+                                                                                  (let [k0 (get (first ss) j)]
+                                                                                    (when (and k0 (every? #(= k0 (get % j)) ss)) k0))))
+                                                                              (range k) ps)]
+                                                                 (when (some some? ks) [k ks])))
+                                                             (get arities nm)))]
+                                        (when (seq m) [nm m]))))
+                                  unit))]
             (if (or (= R' R) (> i 6)) R' (recur R' (inc i)))))))))
 
 
@@ -1281,7 +1288,11 @@
   (or (primitive-hint (:tag (meta params))) fn-hint))
 
 (declare self-call-block-arg?)
-(declare infer-num loop-recurs core-op infer-here?)
+;; one name per declare: Phel's declare declares only its first
+(declare infer-num)
+(declare loop-recurs)
+(declare core-op)
+(declare infer-here?)
 
 (def ^:private numeric-ops
   #{"+" "-" "*" "/" "inc" "dec" "<" ">" "<=" ">=" "==" "zero?" "pos?" "neg?" "quot" "rem" "mod" "max" "min"})

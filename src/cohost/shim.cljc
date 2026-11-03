@@ -127,7 +127,9 @@
 
 ;; (to-array nil) is an empty array on the JVM; some hosts reject nil
 (defn- to-array* [coll] (host/host-array (if (nil? coll) [] coll)))
-(declare h-cohost-inst? h-instance-desc)
+;; one name per declare: Phel's declare declares only its first
+(declare h-cohost-inst?)
+(declare h-instance-desc)
 (def ^:private host-record?
   ;; on a :cohost-types host a record is a cohost type instance of kind
   ;; :record; the host's own record? (jank's) knows none of them
