@@ -1574,6 +1574,9 @@ namespace cohost_obj {
    ;; (max 1 ##NaN) is 1.0, the JVM's NaN.
    :static-aliases {"Numbers-minus" 'clojure.core/-}
    :core-aliases '#{not}
+   ;; Clojure's direct linking: a defn's own recursive calls are jank's named
+   ;; recursion (its native entry); ^:redef / ^:dynamic keep the var call
+   :direct-linking? true
    :syntax-quote-source? true
    :lazy-seq (fn [f] (lazy-seq (f)))
    :delay (fn [f] (delay (f)))

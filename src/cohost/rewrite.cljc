@@ -1413,35 +1413,32 @@
    deftest's :test fn, core.clj's :inline fns."
   [:test :inline :inline-arities])
 
-(defn- hinted-fn-init?
-  "An anonymous (fn ...) or (fn* ...) with a primitive hint on a parameter, an
-   arglist or the form (:rettag)."
+(defn- anonymous-fn-init?
+  "An anonymous (fn ...) or (fn* ...): no name of its own."
   [x]
   (and (seq? x) (symbol? (first x))
        (contains? #{"fn" "fn*"} (name (*plain* (first x))))
-       (not (symbol? (second x)))
-       (let [arities (if (vector? (second x)) [(rest x)] (filter seq? (rest x)))]
-         (boolean (or (primitive-hint (:rettag (meta x)))
-                      (some (fn [[params]]
-                              (and (vector? params)
-                                   (or (primitive-hint (:tag (meta params)))
-                                       (some #(and (symbol? %) (primitive-hint (:tag (meta %)))) params))))
-                            arities))))))
+       (not (symbol? (second x)))))
 
 (defn- self-named-init
-  "On a host that compiles native hints, a def whose init is a hinted anonymous
-   fn gets the var's name as the fn's own name, as jank's defn does: the hinted
-   arity's self-calls then reach its native entry (emit-arity's inner fn*)
-   instead of re-entering the coercing outer arity through the var."
+  "A def whose init is an anonymous fn gets the var's name as the fn's own
+   name, as jank's defn does, so its self-calls are the host's named
+   recursion (its native entry) rather than calls through the var:
+   on a :direct-linking? host only, every such def except a ^:redef or
+   ^:dynamic var's (Clojure's direct linking: a redefinition no longer reaches
+   the fn's own recursive calls; ^:redef and ^:dynamic opt out). A hinted
+   arity's self-calls then reach its native entry (emit-arity's inner fn*),
+   and an unhinted one's its guarded speculation (U6-7)."
   [nm more]
-  (let [init (last more)]
-    (if (and (host/native-hints) (symbol? nm)
-             (or (hinted-fn-init? init)
-                 ;; U6-7: an unhinted fn that calls its own var, for speculation
-                 (and (infer-here?) (seq? init) (symbol? (first init))
-                      (contains? #{"fn" "fn*"} (name (*plain* (first init))))
-                      (not (symbol? (second init)))
-                      (mentions-sym? (*plain* (bare-sym nm)) (rest init)))))
+  (let [init (last more)
+        opt-out? (let [m (meta nm)] (or (:redef m) (:dynamic m)))]
+    (if (and (symbol? nm)
+             ;; a name with a dot (a deftype's Box. constructor var) is not a
+             ;; name jank's fn* can take: its codegen names the C++ function after it
+             (not (some #{"."} (map str (name nm))))
+             ;; the key is the only gate (u1/u5, 2026-11-02): off it, Clojure
+             ;; calls through the var, hinted or not, so a redefinition is seen
+             (host/direct-linking?) (not opt-out?) (anonymous-fn-init? init))
       (concat (butlast more)
               [(with-meta (apply list (first init) (bare-sym nm) (rest init)) (meta init))])
       more)))
