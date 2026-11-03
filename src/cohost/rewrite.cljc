@@ -399,7 +399,13 @@
    ;; {shim static name -> the host core's symbol} where the shim's static is
    ;; the host's own fn: emitted instead, so the host's compiler sees (and may
    ;; inline) its own +, first, get ...
-   :host-aliases (or host-aliases {})
+   :host-aliases (merge (or host-aliases {})
+                        ;; the adapter's own (wrappers whose semantics are the
+                        ;; host op's there), marked as the scan marks its
+                        (into {} (map (fn [[nm sym]] [nm (with-meta sym {:cohost/host true})]))
+                              (host/static-aliases)))
+   ;; {stock name -> host symbol or false}: core-alias's cache
+   :core-aliases (atom {})
    ;; resolve-head: (fn [sym]) -> the var a head symbol names in the namespace
    ;; being compiled; stock-name: (fn [var]) -> its name when it is a var of the
    ;; booted core; rewritten-macro?: (fn [var]) is it a macro whose expansion the
@@ -1502,6 +1508,30 @@
   [ctx h]
   (when-let [v (head-var ctx h)] ((:stock-name ctx) v)))
 
+(defn- core-alias
+  "The host core's own symbol for a call head h naming a booted stock core fn
+   the adapter lists in :core-aliases (its semantics are the stock fn's on
+   that host), when the host core has a fn of that name: emitted instead of
+   the booted var, so the host's compiler sees its own op (jank inlines
+   clojure.core/not). nil otherwise."
+  [ctx h]
+  (let [names (host/core-aliases)]
+    (when (seq names)
+      (when-let [n (stock-name ctx h)]
+        (when (contains? names (symbol (name n)))
+          (let [c (:core-aliases ctx)
+                hit (get @c n ::none)]
+            (if (not= ::none hit)
+              (when hit hit)
+              (let [a ((:try-all ctx)
+                       (fn []
+                         (let [hv (host/resolve-core (symbol (name n)))
+                               r (when hv (host/var-root hv))]
+                           (when (and (fn? r) (not (host/macro-var? hv)))
+                             (with-meta (symbol (str (host/core-ns-sym)) (name n)) {:cohost/host true})))))]
+                (swap! c assoc n (or a false))
+                a))))))))
+
 (defn- rewritten-macro?
   "Does h name a macro whose expansion the codemod rewrites (a stock or user
    macro, not the host's own)?"
@@ -1689,7 +1719,7 @@
                       ;; arguments without inlining (the expansion inlines them)
                       (if (and *inline?* (rewritten-macro? ctx h))
                         (binding [*inline?* false] (apply list (rw ctx h) (doall (rw-all ctx args))))
-                        (apply list (rw ctx h) (rw-all ctx args)))))]
+                        (apply list (or (core-alias ctx h) (rw ctx h)) (rw-all ctx args)))))]
       (carry-meta out form))))
 
 (defn rw [ctx form]
