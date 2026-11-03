@@ -1641,3 +1641,65 @@ x, jank's own ms in brackets; the table above is on `ce94816`, before it:
 On `034534a` the stock core beats jank's own core on both rows on apt (x < 1), and on the series it is within 3.4x
 (lazy-pipeline) and 1.18x (sort). `bb boot:jank` there: 518/171/24 natives/78/0, battery 176/178, libraries 62/62
 on all three (the snapshot, apt AOT, patched AOT).
+
+### The same round on int-b's box (X1-5, int-b; 2026-11-03)
+
+Measured 2026-11-03 12:14 AM to 1:49 AM ET on int-b's box (4 CPUs, 15 GB, shared with lane u4 only; 1-minute load
+1.4-3.8 through the round, no lock). One round, the same method as above: one JVM run (`bb bench:programs jvm`, at
+the round's start, on 24b6bef: plain JVM Clojure, independent of cohost's tree), then per program the UNPATCHED process
+(apt jank 0.1-noble, checkout /home/user/x15) and the PATCHED one (`JANK_BIN=/usr/local/lib/jank-main/bin/jank`, f3d82d65
++ max/main's 21-patch series, checkout /home/user/x15p), jank-aot then cohost-on-jank, each binary with its own
+`XDG_CACHE_HOME`. Cell = the median of 10 timed calls (ms) after warm-up, xJVM against this round's JVM run, min-max of
+the 10 calls in brackets. Raw: `/home/user/logs/intb-x15.log`, `intb-x15-table-apt.txt`, `intb-x15-table-main.txt` (int-b's box).
+
+Rows by tree (max/main moved three times during the round; the coordinator's NOTICEs named what stands):
+- fib, fib-hinted, tak: `05de696` (A5-3 in).
+- tak-hinted, nbody: `034534a` (A4 in).
+- every other program: `ecc9a31` (u5's U6-7 part). lazy-pipeline and pipeline predate u3's A4-2 (`17b27f3`), which
+  changes those two only.
+
+| program | size | jvm | jank-aot UNPATCHED | jank-aot PATCHED | cohost UNPATCHED | cohost PATCHED |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 36 | 111.492 | 78.512 (x0.70) (76.926-89.994) | 51.297 (x0.46) (49.487-51.938) | 457.447 (x4.10) (442.017-493.590) | 65.384 (x0.59) (63.143-66.219) |
+| fib-hinted | 36 | 62.077 | 129.642 (x2.09) (126.422-136.144) | 50.609 (x0.82) (49.508-55.770) | 689.799 (x11.11) (669.478-735.879) | 65.259 (x1.05) (62.835-69.462) |
+| tak | 30 20 10 | 206.222 | 452.213 (x2.19) (438.782-482.160) | 114.015 (x0.55) (113.818-119.466) | 483.089 (x2.34) (466.701-514.221) | 114.295 (x0.55) (113.700-114.979) |
+| tak-hinted | 30 20 10 | 114.101 | 897.203 (x7.86) (817.615-1265.864) | 117.146 (x1.03) (113.419-138.665) | 1490.039 (x13.06) (1464.319-1526.014) | 112.321 (x0.98) (108.595-114.555) |
+| nbody | 50000 | 140.882 | ABSENT (-) | 861.866 (x6.12) (805.515-900.270) | 5114.671 (x36.30) (4912.630-5346.648) | 3808.716 (x27.03) (3576.263-3952.097) |
+| nbody-hinted | 50000 | 135.877 | ABSENT (-) | 833.460 (x6.13) (762.726-901.561) | 5103.281 (x37.56) (4951.028-5670.455) | 3864.402 (x28.44) (3763.601-4085.186) |
+| spectral-norm | 600 | 152.544 | 1913.217 (x12.54) (1848.107-2050.785) | 214.666 (x1.41) (208.827-216.869) | 656.382 (x4.30) (641.365-701.371) | 427.587 (x2.80) (410.249-470.707) |
+| spectral-norm-hinted | 600 | 98.826 | 2070.087 (x20.95) (2005.561-2253.333) | 198.639 (x2.01) (193.800-240.136) | 1263.055 (x12.78) (1223.855-1307.492) | 579.066 (x5.86) (543.363-641.197) |
+| mandelbrot | 1500 | 137.090 | ABSENT (-) | 557.828 (x4.07) (547.109-633.134) | 598.959 (x4.37) (587.116-642.481) | 467.138 (x3.41) (449.869-491.220) |
+| mandelbrot-hinted | 1500 | 132.668 | ABSENT (-) | 226.288 (x1.71) (223.748-267.727) | 781.201 (x5.89) (746.739-871.658) | 762.907 (x5.75) (742.259-868.787) |
+| binary-trees | 18 | 156.628 | 2992.592 (x19.11) (2844.471-3117.074) | 489.532 (x3.13) (475.043-523.703) | 2760.479 (x17.62) (2715.331-2854.458) | 694.461 (x4.43) (678.970-750.084) |
+| binary-trees-hinted | 18 | 150.554 | 2948.567 (x19.58) (2863.712-3193.268) | 477.657 (x3.17) (468.607-486.315) | 2842.930 (x18.88) (2751.522-3005.279) | 717.660 (x4.77) (707.801-739.374) |
+| binary-trees-14 | 14 | 13.812 | 96.057 (x6.95) (92.109-121.411) | 20.936 (x1.52) (20.447-37.862) | 98.136 (x7.10) (91.175-135.831) | 24.859 (x1.80) (23.919-59.033) |
+| binary-trees-14-hinted | 14 | 11.603 | 92.904 (x8.01) (88.987-99.196) | 19.706 (x1.70) (18.608-36.232) | 99.308 (x8.56) (95.368-135.751) | 24.874 (x2.14) (24.179-58.606) |
+| sum-overflow | 1000000 | 7.361 | 59.133 DIFFER (56.382-61.655) | 6.333 (x0.86) (6.250-7.330) | 21.417 (x2.91) (21.117-22.550) | 5.037 (x0.68) (4.876-5.215) |
+| sum-overflow-hinted | 1000000 | 0.406 | 7.914 DIFFER (7.825-7.977) | 2.073 (x5.10) (1.952-2.582) | 8.935 (x21.98) (8.885-9.015) | 8.174 (x20.11) (8.074-9.956) |
+| sort | 100000 | 31.270 | 17573.653 (x562.01) (12811.513-24461.618) | 18.395 (x0.59) (18.102-34.086) | 31.884 (x1.02) (30.017-71.300) | 31.691 (x1.01) (24.156-76.801) |
+| lazy-pipeline | 1000000 | 24.428 | 675.644 (x27.66) (591.164-1261.324) | 22.478 (x0.92) (21.972-92.743) | 167.122 (x6.84) (129.021-365.789) | 70.153 (x2.87) (66.699-223.819) |
+| keyword-map | 1000000 | 61.239 | 313.388 (x5.12) (305.374-320.347) | 200.312 (x3.27) (187.431-289.189) | 400.895 (x6.55) (364.314-466.060) | 300.143 (x4.90) (251.010-338.934) |
+| fannkuch | 8 | 109.550 | ABSENT (-) | 568.139 (x5.19) (508.317-594.931) | 1817.205 (x16.59) (1732.242-1944.048) | 1315.302 (x12.01) (1198.140-1408.178) |
+| fannkuch-hinted | 8 | 102.505 | ABSENT (-) | 458.094 (x4.47) (426.870-485.467) | 1581.610 (x15.43) (1513.952-1648.806) | 1166.244 (x11.38) (1100.938-1242.609) |
+| nsieve | 20 | 143.716 | ABSENT (-) | 108.224 (x0.75) (103.306-123.204) | 504.311 (x3.51) (466.594-594.615) | 295.331 (x2.05) (290.680-303.640) |
+| nsieve-hinted | 20 | 114.970 | ABSENT (-) | 99.701 (x0.87) (94.568-114.114) | 477.106 (x4.15) (466.140-522.419) | 289.457 (x2.52) (279.723-346.358) |
+| k-nucleotide | 2000000 | 99.256 | 464.328 (x4.68) (449.251-571.221) | 270.469 (x2.72) (247.484-300.016) | 513.569 (x5.17) (493.271-535.826) | 499.681 (x5.03) (448.695-584.861) |
+| pipeline | 500000 | 104.420 | 834.210 DIFFER (798.597-929.202) | 610.541 (x5.85) (589.944-648.836) | 941.232 (x9.01) (912.975-1053.425) | 951.759 (x9.11) (904.163-1028.103) |
+| dispatch | 5000000 | 139.496 | ABSENT (-) | ABSENT (-) | 996.419 (x7.14) (964.886-1092.768) | 374.105 (x2.68) (365.870-415.398) |
+| json | 30000 | 164.735 | 1711.658 (x10.39) (1643.788-1769.960) | 543.392 (x3.30) (529.171-553.266) | 1356.156 (x8.23) (1325.642-1500.394) | 931.230 (x5.65) (873.724-990.175) |
+| first-output | - | 512.285 | 451.757 (x0.88) (428.989-477.519) | 432.751 (x0.84) (414.372-494.354) | 11525.333 (x22.50) (11199.616-12371.708) | 18550.214 (x36.21) (17606.990-20008.465) |
+
+Geomeans (each over the programs present; ABSENT and DIFFER rows are excluded by the driver):
+- UNPATCHED: jank-aot: geomean xJVM 8.264 over 16 programs (unhinted 8.015 over 11, hinted 8.839 over 5); cohost on jank: jank: geomean xJVM 8.184 over 28 programs (unhinted 6.468 over 18, hinted 12.502 over 10).
+- PATCHED: jank-aot: geomean xJVM 1.867 over 27 programs (unhinted 1.730 over 17, hinted 2.125 over 10); cohost on jank: jank: geomean xJVM 3.844 over 28 programs (unhinted 3.418 over 18, hinted 4.749 over 10).
+
+The UNPATCHED cohost geomean is the public number: **8.184x the JVM over all 28 programs, every RESULT SAME**. On apt,
+jank's own AOT prints DIFFER on sum-overflow, sum-overflow-hinted and pipeline (the i32 wrap); cohost's stock core gives
+Clojure's values on every row (A5). ABSENT on apt jank-aot: nbody(-hinted), mandelbrot(-hinted), fannkuch(-hinted),
+nsieve(-hinted), dispatch, from compile errors in jank's own core on apt; cohost runs all of them.
+
+`bb bench:jank` (stock core / jank's own core, geomean of the printed x values), A B x3 at load 2.0-3.8: UNPATCHED x1.29,
+x1.57, x1.29 (29, 28, 29 cases); PATCHED x2.13, x2.10, x2.11 (29 cases). On apt six cases print `[differ: ...]` in
+every round: atom-swap, hinted-loop, loop-arith, protocol, reduce-range and transduce. The host (jank's own) value
+wraps at 32 bits, and the stock (cohost) value is Clojure's. So on apt those x values compare a correct result with a
+wrong one, and the UNPATCHED geomean flatters jank's own core.
