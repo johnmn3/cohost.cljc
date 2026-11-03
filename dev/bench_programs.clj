@@ -609,7 +609,8 @@
           result (first (lines-of out "PROGRAM-RESULT"))
           bad (some-> (first (lines-of out "PROGRAM-BAD")) num long)]
       (cond
-        (or (not= 10 (count ms)) (nil? result))
+        ;; the timed loop ran to its end (PROGRAM-SINK) with 3 to 10 calls (the 15 s budget, b2ec699)
+        (or (nil? result) (empty? (lines-of out "PROGRAM-SINK")) (not (<= 3 (count ms) 10)))
         {:fail (or (error-text (:err proc) out) (str "exit " (:exit proc)))}
         (pos? bad)
         {:fail (str bad " of the timed calls returned a result other than the first call's " result)}
