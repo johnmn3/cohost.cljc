@@ -67,7 +67,10 @@
 ;; Pattern for the same source. Phel's emitter writes no object: code holding
 ;; one is written (re-literal source) (see walk-code).
 
-(php/eval (str "require_once " (php/var_export (str __DIR__ "/phel_host.php") true) ";"))
+;; A built app (cohost.build) loads phel_host.php itself, from beside the compiled
+;; files: __DIR__ here is the source directory at build time
+(when-not (php/class_exists "cohost\\hosts\\phel\\Pattern" false)
+  (php/eval (str "require_once " (php/var_export (str __DIR__ "/phel_host.php") true) ";")))
 (def- pattern-class "cohost\\hosts\\phel\\Pattern")
 (defn- pattern? [x] (php/is_a x pattern-class))
 (defn re-literal [src]

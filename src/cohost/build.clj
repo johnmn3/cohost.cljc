@@ -254,6 +254,99 @@ process.exit(r.status === null ? 1 : r.status);
     (sh! "." "rm" "-rf" (str work))
     (str out "/run")))
 
+(defn- phel-runtime
+  "[php phar] from the phel on PATH (dev/install/phel.sh writes it as
+   `exec <php> <phel.phar> \"$@\"`)."
+  []
+  (let [w (str/trim (sh! "." "sh" "-c" "command -v phel"))
+        [_ php phar] (re-find #"exec\s+(\S+)\s+(\S+\.phar)" (slurp w))]
+    (when-not phar (throw (ex-info (str "build: cannot find phel.phar in " w) {})))
+    [php phar]))
+
+(def ^:private phel-config
+  "<?php
+// written by cohost.build: the modules cohost.app-main reaches, compiled by phel build
+ini_set('precision', '-1');
+use Phel\\Config\\PhelConfig;
+use Phel\\Config\\ProjectLayout;
+return PhelConfig::forProject(ProjectLayout::Flat)
+    ->withSrcDirs(['closure'])
+    ->withTestDirs([])
+    ->withBuildDestDir('out');
+")
+
+(def ^:private phel-run-php
+  "<?php
+// run.php args...: the app's -main, from the compiled modules (made by cohost.build)
+ini_set('precision', '-1');
+require 'phar://' . __DIR__ . '/phel.phar/vendor/autoload.php';
+\\Phel\\Phel::setupRuntimeArgs($argv[0] ?? __FILE__, array_slice($argv ?? [], 1));
+// eval at run time (cohost's eval-str) needs Phel's compiler: its framework bootstrap
+\\Phel\\Phel::bootstrap(__DIR__);
+// the adapter's PHP classes, from here (the compiled adapter's __DIR__ is the build's)
+require_once __DIR__ . '/out/cohost/hosts/phel_host.php';
+require_once __DIR__ . '/out/cohost/app_main.php';
+\\Phel::getDefinition('cohost.app_main', '-main')->__invoke(...array_slice($argv ?? [], 1));
+")
+
+(defn- phel-native
+  "Phel's own AOT: the booted core, the libraries and the app's namespaces,
+   recorded on Phel (dev/phel_snapshot_record.phel), emitted as Phel modules
+   (--host phel --main: cohost.app-main boots from them and calls the app's
+   -main), and the namespaces cohost.app-main reaches compiled to PHP by
+   `phel build` (dev/perf/phel_closure.clj: phel build compiles every
+   namespace it finds). target/<name>/: the compiled PHP (no .phel sources),
+   Phel's runtime (phel.phar) and `run`, on PHP 8.5.
+   - The build's files open with declare(strict_types=1) and `phel run`'s do
+     not; cohost is checked under phel run, so the built files keep `<?php`
+     alone (the same line count: the source maps still line up).
+   - -O 0: -O 2 does not finish on these modules (doc/AOT-PLAN.md).
+   - PHP's stack: 64 MB, as bench:phel; 8 MB segfaults on deep lazy seqs."
+  [{:keys [main name]}]
+  (let [home (cohost-home)
+        out (io/file "target" name)
+        work (.getCanonicalFile (io/file "target" "cohost-phel-build"))
+        events (str (io/file work "events.edn"))
+        modules (str (io/file work "modules"))
+        [php phar] (phel-runtime)
+        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":phel" "-Spath")) #":")
+        big-stack (fn [& cmd] (apply sh! (str work) "bash" "-c" (str "ulimit -s 65536 && exec \"$@\"") "phel-build" cmd))]
+    (sh! "." "rm" "-rf" (str out) (str work))
+    (.mkdirs work)
+    ;; record from the checkout: its phel-config.php lists src
+    (apply sh! home "bash" "-c" "ulimit -s 65536 && exec phel run dev/phel_snapshot_record.phel \"$@\"" "phel-record"
+           "--out" events (concat (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
+    (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "phel" "--events" events "--out" modules "--main" (str main))
+    (let [closure (sh! home "bb" "dev/perf/phel_closure.clj" "cohost.app-main" modules (str home "/src"))]
+      (doseq [[_ f] (map #(str/split % #" " 2) (str/split-lines (str/trim closure)))]
+        (let [rel (cond (str/starts-with? f modules) (subs f (inc (count modules)))
+                        :else (subs f (inc (count (str home "/src")))))]
+          (io/make-parents (io/file work "closure" rel))
+          (io/copy (io/file f) (io/file work "closure" rel)))))
+    (io/copy (io/file home "src/cohost/hosts/phel_host.php") (io/file work "closure/cohost/hosts/phel_host.php"))
+    (spit (io/file work "phel-config.php") phel-config)
+    (big-stack php phar "build" "--no-cache" "-O" "0")
+    (.mkdirs out)
+    (copy-tree! (io/file work "out") (io/file out "out"))
+    (doseq [f (file-seq (io/file out "out")) :when (.isFile f)]
+      (cond (str/ends-with? (.getName f) ".phel") (.delete f)
+            (str/ends-with? (.getName f) ".php")
+            (let [t (slurp f)]
+              (when (str/starts-with? t "<?php declare(strict_types=1);\n")
+                (spit f (str "<?php\n" (subs t (count "<?php declare(strict_types=1);\n"))))))))
+    (io/copy (io/file home "src/cohost/hosts/phel_host.php") (io/file out "out/cohost/hosts/phel_host.php"))
+    (io/copy (io/file phar) (io/file out "phel.phar"))
+    (spit (io/file out "run.php") phel-run-php)
+    (sh! "." "rm" "-rf" (str work))
+    (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main, Phel compiled to PHP (made by cohost.build)\n"
+                         "ulimit -s 65536 2>/dev/null\n"
+                         "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
+                         ;; OPcache's file cache (filled by the first run) and the tracing JIT;
+                         ;; PHP ignores them where OPcache is not installed
+                         "mkdir -p \"$here/.opcache\" 2>/dev/null\n"
+                         "exec " php " -d opcache.enable_cli=1 -d opcache.file_cache=\"$here/.opcache\" -d opcache.file_cache_only=1"
+                         " -d opcache.jit=tracing -d opcache.jit_buffer_size=64M \"$here/run.php\" \"$@\"\n"))))
+
 (defn- jank-exe [{:keys [main name]}]
   (let [home (cohost-home)
         ;; the source roots, resolved as `cohost :jank` resolves them (jars extracted)
@@ -277,7 +370,8 @@ process.exit(r.status === null ? 1 : r.status);
       :jolt (jolt-native opts)
       :lpy (lpy-native opts)
       :cljw (cljw-snapshot opts)
-      (:lg :phel) (script-bundle t opts)
+      :lg (script-bundle t opts)
+      :phel (phel-native opts)
       :jank (jank-exe opts)
       (do (println (str "build: not yet on " t))
           (throw (ex-info (str "build: not yet on " t) {:target t}))))]
