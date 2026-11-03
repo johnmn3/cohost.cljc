@@ -46,7 +46,10 @@
                 ;; let-go: each form as text, read by cohost's reader and
                 ;; evaluated through the adapter (its eval lowers cohost's
                 ;; special forms, letfn* and the rest, for let-go's compiler)
-                "lg" {:core "core" :ext ".lg" :bare? false :text? true}}
+                ;; let-go prints a regex with every backslash doubled
+                ;; (pr-str #"\r?\n" -> #"\\r?\\n", its str too), so a
+                ;; recorded source is halved back (:regex-halve?)
+                "lg" {:core "core" :ext ".lg" :bare? false :text? true :regex-halve? true}}
                (:host cli-opts)
                {:core "clojure.core" :ext ".jank" :bare? true}))
 (def C (:core lang))
@@ -102,7 +105,8 @@
   (let [esc (fn [^String p] (-> p (str/replace "\r" "\\r") (str/replace "\n" "\\n") (str/replace "\t" "\\t")))
         walk (fn walk [x]
                (let [y (cond
-                         (instance? java.util.regex.Pattern x) (re-pattern (esc (str x)))
+                         (instance? java.util.regex.Pattern x)
+                         (re-pattern (esc (cond-> (str x) (:regex-halve? lang) (str/replace "\\\\" "\\"))))
                          (map? x) (into (empty x) (map (fn [[k v]] [(walk k) (walk v)]) x))
                          (vector? x) (mapv walk x)
                          (set? x) (set (map walk x))
