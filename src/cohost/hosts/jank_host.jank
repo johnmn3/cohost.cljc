@@ -1878,8 +1878,9 @@ namespace cohost_obj {
              'clojure.core/disj! native-disj!
              'clojure.core/into native-into
              'clojure.core/transduce native-transduce
-             'clojure.core/sort native-sort
-             'clojure.core/sort-by native-sort-by
+             ;; sort and sort-by stay stock (cohost's own sort): on apt jank
+             ;; 0.1 jank's sort result walks quadratically and (rest (sort
+             ;; [3 1 2])) gives (1 2 3) (cohost-max, 2026-11-02; u3's A4 (c)).
              'clojure.core/set native-set
              'clojure.core/frequencies native-frequencies
              'clojure.core/group-by native-group-by
