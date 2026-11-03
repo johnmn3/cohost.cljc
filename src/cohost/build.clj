@@ -190,6 +190,40 @@ process.exit(r.status === null ? 1 : r.status);
                                      " -c \"(require 'cohost.cli) (cohost.cli/-main \\\"$cfg\\\")\" #")
                                 " :snapshot? true")))))
 
+(defn- record-and-emit!
+  "Record a boot on host t with the app's source roots and main namespace
+   (dev/perf/snapshot_record.cljc), and emit it as t's modules under
+   work/src, cohost.app-main among them (boot from them, call main's -main).
+   cmd: the host command that runs a script with cohost's src on its path,
+   as a vector ending where the script goes."
+  [home t main work record-cmd]
+  (let [events (str (io/file work "events.edn"))
+        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") (str ":" (name t)) "-Spath")) #":")]
+    (apply sh! home (concat (record-cmd "dev/perf/snapshot_record.cljc")
+                            ["--out" events] (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
+    (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" (name t) "--events" events
+         "--out" (str (io/file work "src")) "--main" (str main))
+    (str (io/file work "src"))))
+
+(defn- cljw-snapshot
+  "ClojureWasm: its native binary (`cljw build`) refuses cohost's code
+   (UnsupportedValueTag), so the artifact ships the recorded boot as cljw
+   modules (the core, the libraries, the app) and runs cohost.app-main from
+   them: no boot from Clojure's source."
+  [{:keys [main name]}]
+  (let [home (cohost-home)
+        out (io/file "target" name)
+        work (.getCanonicalFile (io/file "target" "cohost-cljw-build"))]
+    (sh! "." "rm" "-rf" (str out) (str work))
+    (.mkdirs work)
+    (let [src (record-and-emit! home :cljw main work (fn [script] ["cljw" script "-cp" "src"]))]
+      (copy-tree! src (io/file out "snapshot"))
+      (copy-tree! (str home "/src") (io/file out "cohost/src")))
+    (sh! "." "rm" "-rf" (str work))
+    (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main on cohost (made by cohost.build)\n"
+                         "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
+                         "exec cljw -cp \"$here/snapshot:$here/cohost/src\" -m cohost.app-main \"$@\"\n"))))
+
 (defn- jolt-native
   "jolt's own AOT: the booted core, the libraries and the app's namespaces,
    recorded on jolt (dev/perf/snapshot_record.cljc), emitted as jolt modules
@@ -242,7 +276,8 @@ process.exit(r.status === null ? 1 : r.status);
       :cljs (cljs-bundle opts)
       :jolt (jolt-native opts)
       :lpy (lpy-native opts)
-      (:cljw :lg :phel) (script-bundle t opts)
+      :cljw (cljw-snapshot opts)
+      (:lg :phel) (script-bundle t opts)
       :jank (jank-exe opts)
       (do (println (str "build: not yet on " t))
           (throw (ex-info (str "build: not yet on " t) {:target t}))))]

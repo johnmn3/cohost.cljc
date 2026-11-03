@@ -31,8 +31,8 @@ runs both batteries. This is the correctness gate for each runtime's modules.
 | jolt | `jolt build`: one binary. Release mode direct-links and inlines over a direct-linked `clojure.core`, with whole-program inference (unboxed numerics). `--closed-world` also tree-shakes | **done:** record, emit `--host jolt`, `jolt build` in release mode. Batteries 167/167 and 62/62 from the modules; app `run` 0.37 s |
 | basilisp | compiled namespaces cached as `.lpyc` bytecode; `--inline-functions` / `--generate-auto-inlines` | **done:** ships the cached boot (`.lpy` + `.lpyc`); `run` 1.9 s, down from 19–25 s booting from source. Inline flags: to try |
 | Phel | `phel build -O 2` (inlining; the default is level 0) to PHP; PHP OPcache with the tracing JIT (`opcache.enable_cli=1 opcache.jit=tracing`) | spike: see below |
-| let-go | `.lgb` bytecode (`lg -c`); standalone binaries (bytecode appended to `lg`); AOT that lowers IR to native Go (`ir.passes.pipeline/lower-ns-to-go`, tagged `lg` build; fib(35) 2.42 s → 0.11 s in their benchmark) | spike: see below |
-| ClojureWasm | `cljw build`, a native binary; the runtime itself as a ReleaseFast Zig build (`-Doptimize=ReleaseFast`; it ships ReleaseSafe) | spike: see below |
+| let-go | `.lgb` bytecode (`lg -c`); standalone binaries (bytecode appended to `lg`); AOT that lowers IR to native Go (`ir.passes.pipeline/lower-ns-to-go`, tagged `lg` build; fib(35) 2.42 s → 0.11 s in their benchmark) | **spike blocked:** recording works (7 s, 1,323 events), but the emitted modules don't load. The recorded forms still hold special forms (`letfn*`) that cohost's lg adapter lowers only at eval time. See item 4 |
+| ClojureWasm | `cljw build`, a native binary; the runtime itself as a ReleaseFast Zig build (`-Doptimize=ReleaseFast`; it ships ReleaseSafe) | **done as modules:** the artifact ships the recorded boot as cljw modules and runs `cohost.app-main` from them. Batteries 165/167 (as from source) and 62/62; boot 0.83 s against about 17 s; app `run` 0.9 s. `cljw build` of those modules: still `UnsupportedValueTag` |
 | ClojureScript | Closure `:advanced` | plan only: see below |
 
 ## Items, in order
@@ -48,6 +48,11 @@ runs both batteries. This is the correctness gate for each runtime's modules.
      cohost on Phel 26 ms → 21 ms; startup unchanged at about 23 s, all of it the boot
      from source, which the build removes).
 4. **let-go**
+   - **Recording must capture the forms after the adapter's lowering** — what the
+     adapter hands let-go's compiler — not the rewritten forms before it. Without that,
+     the emitted module fails: `Can't resolve letfn* in this context` (core.clj:95,
+     `cons`). jank, jolt, basilisp and cljw have these special forms natively, which is
+     why their modules load as recorded.
    - First, bytecode: `lg -c` of the emitted modules. cohost.cli itself fails today with
      `unsupported value type for serialization: *vm.Ratio`. Find the Ratio constant;
      emit it as `(/ n d)` or report it upstream.
@@ -57,6 +62,10 @@ runs both batteries. This is the correctness gate for each runtime's modules.
    - `cljw build` of the emitted modules. cohost.cli itself fails with
      `build failed: UnsupportedValueTag`. Find the value; work around it or report upstream.
    - ReleaseFast is a property of the cljw binary, not of cohost: a separate measurement.
+   - **Upstream bug, found here:** when stdout is a file, cljw writes at offset 0 and
+     ignores append mode. `run x >> log` overwrites the start of `log`, and three runs
+     appended to one file leave one line. This hits `cohost :cljw` and anything that
+     logs cljw output to a file. Report it to ClojureWasm.
 6. **ClojureScript.** Emit `.cljs` modules and compile them with the JVM ClojureScript
    compiler under `:advanced`. The obstacle: cohost's macros are defined at boot, inside
    the self-hosted runtime, so the JVM compiler doesn't have them. Two ways in:
