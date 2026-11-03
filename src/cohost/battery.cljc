@@ -164,16 +164,6 @@
    ["a ^long fn recurred from its loop truncates" "(let [f (fn [^long n] (loop [i n a 0] (if (pos? i) (recur (dec i) (+ a i)) a)))] [(f 3.9) (f 4)])" [6 10]]
    ["a ^long fn keeps its :pre" "(try ((fn [^long x] {:pre [(pos? x)]} x) -1) (catch AssertionError e :pre))" :pre]
    ["a ^long fn destructures its other parameter" "((fn [^long x [a b]] (+ x a b)) 1 [2 3])" 6]
-   ;; D-11: cohost picks each #? branch by the target's ranking of the keys
-   ;; (:clj, then :default, on every target today), not by source order
-   ["#? the :clj branch over :cljs and :default" "#?(:cljs 1 :clj 2 :default 3)" 2]
-   ["#? a key the ranking lacks falls to :default" "#?(:lpy 1 :default 3)" 3]
-   ["#? the ranking decides, not source order" "#?(:default 3 :clj 2)" 2]
-   ["#?@ splices the :clj branch into a vector" "[0 #?@(:clj [1 2]) 3 #?@(:cljs [4])]" [0 1 2 3]]
-   ["a branch's literal keeps the JVM's meta" "[(meta #?(:clj ^:k [1] :default [])) (meta #?(:clj {:a 1})) (meta #?(:cljs ^:x [] :default ^{:d 1} #{2}))]" [{:k true} nil {:d 1}]]
-   ;; cohost's own: the codemod's provenance of a form (cohost.scan/provenance)
-   ["(cohost) a :clj branch's forms are Java's" "(defmacro bt-prov [] (list 'quote (cohost.scan/provenance &form))) #?(:clj (bt-prov) :default :none)" :java]
-   ["(cohost) text outside a branch has no provenance" "(bt-prov)" nil]
    ;; U6-5: return and local hints are coerced too (and typed natively on jank)
    ["a ^long return truncates a double" "(let [f (fn ^long [x] x)] [(f 1.9) (f -1.9) (f 4)])" [1 -1 4]]
    ["a ^double return widens a long" "(let [f (fn ^double [x] x)] [(f 2) (f 1.5)])" [2.0 1.5]]
@@ -183,7 +173,17 @@
    ["a ^long let local is a long to arithmetic" "(let [^long x (identity 1.9)] (inc x))" 2]
    ["a ^long let local rejects a non-number" "(try (let [^long x (identity \"a\")] (inc x)) (catch ClassCastException e :cce))" :cce]
    ["a ^double let local" "(let [^double x (identity 2)] (+ x 0.5))" 2.5]
-   ["a ^long loop local is a long to arithmetic" "(loop [^long i (identity 2.5) a 0] (if (pos? i) (recur (dec i) (+ a i)) a))" 3]])
+   ["a ^long loop local is a long to arithmetic" "(loop [^long i (identity 2.5) a 0] (if (pos? i) (recur (dec i) (+ a i)) a))" 3]
+   ;; D-11: cohost picks each #? branch by the target's ranking of the keys
+   ;; (:clj, then :default, on every target today), not by source order
+   ["#? the :clj branch over :cljs and :default" "#?(:cljs 1 :clj 2 :default 3)" 2]
+   ["#? a key the ranking lacks falls to :default" "#?(:lpy 1 :default 3)" 3]
+   ["#? the ranking decides, not source order" "#?(:default 3 :clj 2)" 2]
+   ["#?@ splices the :clj branch into a vector" "[0 #?@(:clj [1 2]) 3 #?@(:cljs [4])]" [0 1 2 3]]
+   ["a branch's literal keeps the JVM's meta" "[(meta #?(:clj ^:k [1] :default [])) (meta #?(:clj {:a 1})) (meta #?(:cljs ^:x [] :default ^{:d 1} #{2}))]" [{:k true} nil {:d 1}]]
+   ;; cohost's own: the codemod's provenance of a form (cohost.scan/provenance)
+   ["(cohost) a :clj branch's forms are Java's" "(defmacro bt-prov [] (list 'quote (cohost.scan/provenance &form))) #?(:clj (bt-prov) :default :none)" :java]
+   ["(cohost) text outside a branch has no provenance" "(bt-prov)" nil]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."

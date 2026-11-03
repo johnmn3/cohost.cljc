@@ -100,9 +100,6 @@ cohost -T:build build                               # => build: target/myapp/run
 (cd /tmp && "$OLDPWD"/target/myapp/run you)         # => Hello, you!
 ```
 
-`:jank` builds through `bb build:jank <project-dir> <main-ns> [name]` for now (`doc/CLI.md`,
-"A native executable on jank").
-
 What is inside for each runtime (an uberjar, a native binary, a bundle) is in
 `doc/CLI.md` ("Building").
 
@@ -189,7 +186,7 @@ Each one's install is `dev/install/<host>.sh`.
 
 Each boots core.clj, prints the boot report (booted / from host / skipped /
 errors, every error's root cause, the interop the shim lacks), runs
-`cohost.battery` — 159 stock behaviors evaluated in a namespace that sees only
+`cohost.battery` — 167 stock behaviors evaluated in a namespace that sees only
 the booted core — and then `cohost.lib-battery`: twelve `clojure.*`
 libraries required through the loader, each case checked against the value
 JVM Clojure 1.12.0 gives. `cohost.run/-main` takes `--verbose`, `--no-libs`
