@@ -8,3 +8,4 @@ node_modules/
 # dev/perf/phel_snapshot.sh: the emitted Phel modules and the run directory
 /phel-snap/
 /phel-snap-run/
+/phel-snap-build/
