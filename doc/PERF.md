@@ -41,15 +41,17 @@ The benchmark programs and the method: [Method](#method). To measure your own ma
 
 | runtime | from source | cached boot | built app (`run you`) |
 |---|---:|---:|---:|
-| jank | — | 1.34 s (`-m demo.main`; the first run 2.35 s), `-e` 0.58 s | — |
+| jank | — | 0.55 s (`-m demo.main`, warm), `-e` 0.59 s | — |
 | jolt | — | — | 0.37 s |
 | basilisp | — | — | 1.9 s |
 | ClojureWasm | — | — | 0.9 s |
 | JVM, ClojureScript, let-go, Phel | — | — | — |
 
-jank's cached boot is the launcher of c415244: the snapshot and the launcher build in 156.9 s (`bb boot:jank-snapshot`;
-batteries 214/216 and 62/62; the binary 91.5 MB). The built apps' `run you` are the README's app, run from another
-directory (2026-11-03, aot/native-builds).
+jank's cached boot is the launcher with the per-project snapshot (main d016cf5): the first `cohost :jank` command of
+a project took 219 s here (155.5 s the snapshot and launcher, `SNAPSHOT-BUILT`; about 64 s the project's namespaces
+compiled ahead), then 0.54-0.55 s per run. On the launcher alone (c415244) `-m demo.main` took 1.34 s. The snapshot
+and launcher: batteries 214/216 and 62/62, the binary 91.5 MB. The built apps' `run you` are the README's app, run
+from another directory (2026-11-03, aot/native-builds).
 
 ### Speed (geomean xJVM, programs counted)
 
