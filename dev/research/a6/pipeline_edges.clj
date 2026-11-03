@@ -1,0 +1,10 @@
+(defmacro T [form] `(try (pr-str ~form) (catch IllegalArgumentException e# :IAE) (catch ClassCastException e# :CCE) (catch UnsupportedOperationException e# :UOE) (catch IndexOutOfBoundsException e# :IOOBE) (catch Exception e# :EX)))
+["setup" (T (do (defrecord PeR [a b]) :ok))]
+["get-in" (T [(get-in {:a {:b 1}} [:a :b]) (get-in {:a {:b 1}} [:a :c]) (get-in nil [:a]) (get-in {:a 1} []) (get-in {:a 1} nil) (get-in [[1 2] [3 4]] [1 0]) (get-in "abc" [1]) (get-in {:a [1 {:b 2}]} '(:a 1 :b)) (get-in {nil 5} [nil])])]
+["get-in nf" (T [(get-in {:a {:b 1}} [:a :c] :nf) (get-in {:a false} [:a] :nf) (get-in {:a nil} [:a] :nf) (get-in {:a {:b nil}} [:a :b :c] :nf) (get-in {} [] :nf) (get-in nil [:x] :nf)])]
+["assoc-in" (T [(assoc-in {} [:a :b] 1) (assoc-in {:a {:b 1}} [:a :c] 2) (assoc-in nil [:a] 1) (assoc-in [[1 2]] [0 1] 9) (assoc-in {:a [1 2]} [:a 2] 3) (assoc-in (sorted-map :b 1) [:a] 0) (assoc-in {} [] 1) (assoc-in {} (list :x :y) 1)])]
+["assoc-in bad" (T (assoc-in [1 2] [5] 0)) (T (assoc-in {:a 1} [:a :b] 2))]
+["update-in" (T [(update-in {:a {:b 1}} [:a :b] inc) (update-in {} [:a :b] (fnil + 0) 5) (update-in {:a 1} [:a] + 1 2) (update-in {:a 1} [:a] + 1 2 3) (update-in {:a 1} [:a] + 1 2 3 4) (update-in {:a 1} [:a] + 1 2 3 4 5) (update-in {:a 1} [:a] + 1 2 3 4 5 6) (update-in nil [:a] (fnil inc 0)) (update-in [[1]] [0 0] inc) (update-in {} [] (constantly 7))])]
+["records" (T [(get-in {:r (->PeR 1 2)} [:r :a]) (assoc-in {:r (->PeR 1 2)} [:r :b] 9) (update-in (->PeR {:x 1} 2) [:a :x] inc) (get-in (->PeR {:x 1} 2) [:a :x]) (assoc-in (->PeR 1 2) [:c] 3)])]
+["the program's step" (T (reduce (fn [m i] (-> m (assoc :n i) (update-in [:a :b] (fnil + 0) i) (assoc-in [:xs (mod i 32)] {:v (* i i)}))) {} (range 40)))]
+["as values" (T [(map get-in [{:a {:b 1}}] [[:a :b]]) (apply update-in [{:a 1} [:a] inc]) (reduce (fn [m k] (assoc-in m [k k] 1)) {} [:a :b])])]
