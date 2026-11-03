@@ -7,9 +7,14 @@
 ;; block is compiled into this module's object once; on the JIT path (boot:jank-jit) it is
 ;; compiled at every boot (about 0.03 s per KB of C++); jank's PCH never holds it.
 ;;
+;; The namespace has no `jank` segment: jank's codegen puts a module's C++ in a namespace made
+;; of its segments, and a cohost::hosts::jank::runtime there shadows ::jank::runtime for every
+;; name the generated code uses (the snapshot build fails: "no member named 'obj' in namespace
+;; 'cohost::hosts::jank::runtime'").
+;;
 ;; Everything here is reached by cohost.hosts.jank-host only, behind the adapter's keys
 ;; (:chunks, :natives); stock code never names it.
-(ns cohost.hosts.jank.runtime
+(ns cohost.hosts.jank-runtime
   (:refer-clojure :exclude [range chunk-cons chunk? map filter count]))
 
 (cpp/raw "
