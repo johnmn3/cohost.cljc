@@ -13,9 +13,12 @@
 ;;   :cljs  target/<name>/: cohost's ClojureScript host, the stock core
 ;;          sources, the project's and its dependencies' source roots, and
 ;;          run.js (run: node run.js)
-;;   :jolt  target/<name>/: cohost.cli compiled by `jolt build` into one native
-;;          binary, the stock sources, the source roots (no jolt needed)
-;;   :cljw :lg :lpy :phel  target/<name>/: a script bundle -- cohost's
+;;   :jolt  target/<name>/run: one native binary (`jolt build`, release mode):
+;;          the booted core, the libraries and the app's namespaces recorded
+;;          on jolt and compiled ahead of time (no jolt, no sources needed)
+;;   :lpy   target/<name>/: a script bundle plus basilisp's compiled boot
+;;          (.lpy modules and their .lpyc bytecode); run boots from it
+;;   :cljw :lg :phel  target/<name>/: a script bundle -- cohost's
 ;;          sources, the stock sources, the source roots, and `run`, on the
 ;;          host's installed binary (their native packagers refuse cohost's
 ;;          code: doc/CLI.md, "Building")
@@ -67,12 +70,18 @@
       (throw (ex-info (str "build: " (str/join " " cmd) " failed") {:out (:out r) :err (:err r)})))
     (:out r)))
 
-(defn- copy-tree! [from to]
+(defn- copy-tree!
+  "Copy a directory's files, keeping their modification times: a host's
+   bytecode cache (basilisp's .lpyc) is checked against its source's mtime."
+  [from to]
   (doseq [f (file-seq (io/file from)) :when (.isFile f)]
     (let [rel (subs (.getPath f) (inc (count (.getPath (io/file from)))))
           out (io/file to rel)]
       (io/make-parents out)
-      (io/copy f out))))
+      (java.nio.file.Files/copy (.toPath f) (.toPath out)
+                                (into-array java.nio.file.CopyOption
+                                            [java.nio.file.StandardCopyOption/REPLACE_EXISTING
+                                             java.nio.file.StandardCopyOption/COPY_ATTRIBUTES])))))
 
 (def ^:private run-js
   "// run.js: node run.js args... -> the project's -main on cohost's ClojureScript host
@@ -123,7 +132,7 @@ process.exit(r.status === null ? 1 : r.status);
   "The bundle's `run`: writes the config cohost.cli reads (absolute paths
    from its own directory, the arguments as EDN strings) and runs launch,
    a shell command line ending in the config path."
-  [main roots launch]
+  [main roots launch & [extra-cfg]]
   (str "#!/bin/sh\n"
        "# run [args...]: " main "'s -main on cohost (made by cohost.build)\n"
        "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
@@ -131,7 +140,7 @@ process.exit(r.status === null ? 1 : r.status);
        "args=''; for a in \"$@\"; do args=\"$args $(q \"$a\")\"; done\n"
        "roots=''; for r in " (str/join " " roots) "; do roots=\"$roots $(q \"$here/$r\")\"; done\n"
        "cfg=$(mktemp \"${TMPDIR:-/tmp}/cohost-run-XXXXXX\")\n"
-       "printf '{:stock-root %s :roots [%s] :cwd %s :inits [] :main {:type :main :ns %s :args [%s]}}' "
+       "printf '{:stock-root %s :roots [%s] :cwd %s :inits [] :main {:type :main :ns %s :args [%s]}" (or extra-cfg "") "}' "
        "\"$(q \"$here/stock\")\" \"$roots\" \"$(q \"$PWD\")\" \"$(q " (pr-str (str main)) ")\" \"$args\" > \"$cfg\"\n"
        launch " \"$cfg\"\n"
        "code=$?\nrm -f \"$cfg\"\nexit $code\n"))
@@ -161,20 +170,87 @@ process.exit(r.status === null ? 1 : r.status);
         (io/copy (io/file home f) (io/file out "cohost" f)))
       (write-run! out (launcher main roots (script-launch t))))))
 
-(defn- jolt-native [{:keys [main name]}]
+(defn- lpy-native
+  "basilisp's own compiled form: the booted core's cached boot (lane D's D-6:
+   the recorded boot emitted as .lpy modules, with the .lpyc bytecode basilisp
+   compiled for them) ships in the bundle, and run boots from it, as
+   `cohost :lpy` does, instead of from Clojure's source."
+  [{:keys [main name]}]
   (let [home (cohost-home)
         out (io/file "target" name)
-        work (io/file "target" "cohost-jolt-build")]
+        r (sh! home "bb" "-e" "(load-file \"dev/perf/lpy_snapshot_ensure.clj\") (println \"LPY-SRC\" ((resolve (quote lpy-ensure!))))")
+        snap (some #(second (re-matches #"LPY-SRC (.+)" %)) (str/split-lines r))]
+    (when-not snap (throw (ex-info "build: basilisp's cached boot did not build" {:out r})))
+    (sh! "." "rm" "-rf" (str out))
+    (let [roots (bundle-sources! home :lpy out)]
+      (copy-tree! (str home "/src") (io/file out "cohost/src"))
+      (copy-tree! (str (io/file home snap)) (io/file out "cohost/snapshot"))
+      (write-run! out (launcher main roots
+                                (str "basilisp run -p \"$here/cohost/snapshot\" -p \"$here/cohost/src\""
+                                     " -c \"(require 'cohost.cli) (cohost.cli/-main \\\"$cfg\\\")\" #")
+                                " :snapshot? true")))))
+
+(defn- record-and-emit!
+  "Record a boot on host t with the app's source roots and main namespace
+   (dev/perf/snapshot_record.cljc), and emit it as t's modules under
+   work/src, cohost.app-main among them (boot from them, call main's -main).
+   cmd: the host command that runs a script with cohost's src on its path,
+   as a vector ending where the script goes."
+  [home t main work record-cmd]
+  (let [events (str (io/file work "events.edn"))
+        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") (str ":" (name t)) "-Spath")) #":")]
+    (apply sh! home (concat (record-cmd "dev/perf/snapshot_record.cljc")
+                            ["--out" events] (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
+    (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" (name t) "--events" events
+         "--out" (str (io/file work "src")) "--main" (str main))
+    (str (io/file work "src"))))
+
+(defn- cljw-snapshot
+  "ClojureWasm: its native binary (`cljw build`) refuses cohost's code
+   (UnsupportedValueTag), so the artifact ships the recorded boot as cljw
+   modules (the core, the libraries, the app) and runs cohost.app-main from
+   them: no boot from Clojure's source."
+  [{:keys [main name]}]
+  (let [home (cohost-home)
+        out (io/file "target" name)
+        work (.getCanonicalFile (io/file "target" "cohost-cljw-build"))]
     (sh! "." "rm" "-rf" (str out) (str work))
     (.mkdirs work)
+    (let [src (record-and-emit! home :cljw main work (fn [script] ["cljw" script "-cp" "src"]))]
+      (copy-tree! src (io/file out "snapshot"))
+      (copy-tree! (str home "/src") (io/file out "cohost/src")))
+    (sh! "." "rm" "-rf" (str work))
+    (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main on cohost (made by cohost.build)\n"
+                         "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
+                         "exec cljw -cp \"$here/snapshot:$here/cohost/src\" -m cohost.app-main \"$@\"\n"))))
+
+(defn- jolt-native
+  "jolt's own AOT: the booted core, the libraries and the app's namespaces,
+   recorded on jolt (dev/perf/snapshot_record.cljc), emitted as jolt modules
+   (dev/perf/jank_snapshot_emit.clj --host jolt --main: cohost.app-main boots
+   from them and calls the app's -main) and compiled by `jolt build` (release
+   mode: direct-linked, whole-program inference) into one native binary,
+   target/<name>/run. Nothing is read from source at run time; jolt is not
+   needed to run it."
+  [{:keys [main name]}]
+  (let [home (cohost-home)
+        out (io/file "target" name)
+        work (.getCanonicalFile (io/file "target" "cohost-jolt-build"))
+        events (str (io/file work "events.edn"))
+        ;; the source roots, resolved as `cohost :jolt` resolves them (jars extracted)
+        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jolt" "-Spath")) #":")]
+    (sh! "." "rm" "-rf" (str out) (str work))
+    (.mkdirs work)
+    (apply sh! home "jolt" "-Scp" "src" "dev/perf/snapshot_record.cljc" "--" "--out" events
+           (concat (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
+    (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "jolt" "--events" events
+         "--out" (str (io/file work "src")) "--main" (str main))
     ;; jolt build reads deps.edn :paths (its -Scp is not honored by build)
-    (spit (io/file work "deps.edn") (pr-str {:paths [(str home "/src")]}))
-    (sh! (str work) "jolt" "build" "-m" "cohost.cli" "-o" "cohost-jolt")
-    (let [roots (bundle-sources! home :jolt out)]
-      (io/make-parents (io/file out "bin" "cohost-jolt"))
-      (io/copy (io/file work "cohost-jolt") (io/file out "bin" "cohost-jolt"))
-      (.setExecutable (io/file out "bin" "cohost-jolt") true false)
-      (write-run! out (launcher main roots "\"$here/bin/cohost-jolt\"")))
+    (spit (io/file work "deps.edn") (pr-str {:paths [(str (io/file work "src")) (str home "/src")]}))
+    (sh! (str work) "jolt" "build" "-m" "cohost.app-main" "-o" "run")
+    (.mkdirs out)
+    (io/copy (io/file work "run") (io/file out "run"))
+    (.setExecutable (io/file out "run") true false)
     (sh! "." "rm" "-rf" (str work))
     (str out "/run")))
 
@@ -199,7 +275,9 @@ process.exit(r.status === null ? 1 : r.status);
       :jvm (jvm-uber opts)
       :cljs (cljs-bundle opts)
       :jolt (jolt-native opts)
-      (:cljw :lg :lpy :phel) (script-bundle t opts)
+      :lpy (lpy-native opts)
+      :cljw (cljw-snapshot opts)
+      (:lg :phel) (script-bundle t opts)
       :jank (jank-exe opts)
       (do (println (str "build: not yet on " t))
           (throw (ex-info (str "build: not yet on " t) {:target t}))))]
