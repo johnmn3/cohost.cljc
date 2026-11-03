@@ -2140,3 +2140,9 @@ Change from X1-8 (b33cfd0, the table above), cohost median ms, UNPATCHED / PATCH
 - sum-overflow: **27.6 -> 19.8 (-28%)** / 5.1 -> 5.2 (+2%)
 - tak-hinted: **1498.7 -> 1025.9 (-32%)** / 113.9 -> 113.4 (-0%)
 - tak: 491.1 -> 473.9 (-4%) / 113.8 -> 110.9 (-3%)
+
+Post-A5-7 cell (max/main **f9b77a1**, u2's A5-7: the inline `/` keeps jank's own `/` with a known double operand),
+PATCHED only, 3 rounds, 8:38-8:55 AM ET, load about 2 (u4's probe beside it): spectral-norm **339.2 ms** (338.4 /
+339.2 / 350.4), spectral-norm-hinted **412.9 ms** (412.4 / 412.9 / 427.3), RESULT 784791 SAME. That beats the
+ec07bac rows above (660.1 / 743.7 ms, pre-A5-7) and X1-5's 427.6 / 579.1; the regression X1-12 found is closed (bar
+<= 430 ms met). Raw data: `/home/user/logs/intb-x113sn.log`.
