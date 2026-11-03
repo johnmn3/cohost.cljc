@@ -462,6 +462,22 @@ namespace cohost_var {
   (when int-wraps?
     (fn ([x y] (let [r (cpp/cohost_num.mul x y)] (if (nil? r) (int-overflow) r))))))
 
+;; U6-9: odd?/even? as values (:core-value-aliases): jank's own on a host long,
+;; the booted stock fn on anything else (Clojure's IllegalArgumentException for
+;; a non-integer; a bigint's answer)
+(def ^:private stock-odd (delay (var-get (resolve 'cohost.core/odd?))))
+(def ^:private stock-even (delay (var-get (resolve 'cohost.core/even?))))
+(defn odd?* [n] (if (cpp/jank.runtime.is_integer n) (odd? n) (@stock-odd n)))
+(defn even?* [n] (if (cpp/jank.runtime.is_integer n) (even? n) (@stock-even n)))
+(defn- parity-expansion [op stock-head args]
+  (when (= 1 (count args))
+    (let [a (first args)]
+      (cond (and (integer? a) (cpp/jank.runtime.is_integer a)) (list op a)
+            (number? a) nil
+            :else (let [n (gensym "par")]
+                    (list 'let* [n a]
+                          (list 'if (list 'cpp/jank.runtime.is_integer n) (list op n) (list stock-head n))))))))
+
 ;; X4-1: the shim's reduce with and without an init (the stock reduce's IReduceInit and
 ;; coll-reduce paths, so transduce and into too) over a range or a vector,
 ;; without jank's per-element seq step; cohost.shim resolves it by name.
@@ -1832,7 +1848,29 @@ namespace cohost_obj {
                                                (list 'if (list 'clojure.core/zero? b)
                                                      (list 'cohost.shim/Numbers-divide a b)
                                                      (list 'clojure.core// a b))))))}
-   :core-aliases '#{not}
+   ;; U6-9: the call heads the stock :inline does not reach (not=, and the
+   ;; comparisons at arities other than 2) are jank's own fn; probed on the
+   ;; battery's edge cases against the stock path and the JVM
+   ;; (dev/research/u4/edges.sh: integers, Long/MAX/MIN, reals, NaN, -0.0, a
+   ;; bigint, the shim's integer "ratio", a non-number): every row equal
+   :core-aliases '#{not not= < > <= >= ==}
+   ;; U6-9: a booted stock fn passed as a value ((map inc xs), (filter odd? xs))
+   ;; is jank's own fn: the stock inc/pos?/</... bodies already are jank's op
+   ;; (their :inline reaches it), so the value differs only by the var call.
+   ;; even?/odd? are guarded (odd?*, below). + - * stay the stock fns as
+   ;; values: on apt jank's own wrap at 32 bits (A5)
+   :core-value-aliases '{inc clojure.core/inc dec clojure.core/dec
+                         pos? clojure.core/pos? neg? clojure.core/neg? zero? clojure.core/zero?
+                         < clojure.core/< > clojure.core/> <= clojure.core/<= >= clojure.core/>= == clojure.core/==
+                         = clojure.core/= not= clojure.core/not= not clojure.core/not
+                         odd? cohost.hosts.jank-host/odd?* even? cohost.hosts.jank-host/even?*}
+   ;; U6-9: jank's own odd?/even? of a non-integer raise a native C++ exception
+   ;; (no catch reaches it; Clojure's is IllegalArgumentException), so a call
+   ;; is jank's op on a host long (is_integer: integer and small_integer; a
+   ;; native long boxes into it) and the stock fn on anything else (a bigint,
+   ;; a real, a non-number); an integer literal is jank's op directly
+   :core-expansions {'odd? (fn [stock-head args] (parity-expansion 'clojure.core/odd? stock-head args))
+                     'even? (fn [stock-head args] (parity-expansion 'clojure.core/even? stock-head args))}
    :syntax-quote-source? true
    :loop-rebind-shadow? true
    :lazy-seq (fn [f] (lazy-seq (f)))

@@ -119,6 +119,8 @@
    :math-aliases    [[] "{shim static name (a string, \"Math-sqrt\") -> (fn [args]) returning the form a call (Math/sqrt x) becomes on this host, or nil to keep the shim call}: the host's own math op at the call head, where its value is the JVM's for every argument (a probe per op; ops whose semantics differ keep the shim wrapper). Default {}"]
    :static-aliases  [[] "{shim static name (a string) -> the host core's symbol}: statics the host-aliases? scan cannot match because the shim's value is a wrapper with its own body, where that wrapper's semantics are the host op's on this host (jank: Numbers-minus is jank's -). Merged over the scan's aliases. Default {}"]
    :core-aliases    [[] "#{stock core name}: calls of these booted stock core fns are emitted as the host core's fn of that name, whose semantics are the stock fn's on this host, so the host's compiler sees (and may inline) its own op; the stock fn stays booted for every other use (apply, a value, with-redefs of the booted var). Default #{}"]
+   :core-value-aliases [[] "{stock core name -> a host symbol}: where a booted stock core fn appears as a VALUE (an argument, (map inc xs), (filter odd? xs), a let binding's init), the codemod emits that host fn instead, whose semantics are the stock fn's on every input on this host (a probe per name: dev/research/u4/edges.sh). Price, the same as :core-aliases': a with-redefs or alter-var-root of the booted core var is not seen by a value read the codemod already emitted, and the value is not identical? to the booted var's fn. Default {}"]
+   :core-expansions [[] "{stock core name -> (fn [stock-head args] form-or-nil)}: the form a call of that booted stock core fn becomes at the call head on this host (args rewritten; stock-head the rewritten head, for the case the host op does not cover), nil to keep the call: a guard around the host's own op where its semantics differ from the stock fn's on some inputs (jank: odd?/even? of a non-integer). Default {}"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
    :native-hints    [[] "nil (the default), or {hint-symbol host-type-symbol}: primitive fn* parameter hints this host compiles as native types (long, double, int, boolean). nil leaves every other host's rewritten forms without native tags."]
    :prim-kind-test  [[] "nil (the default), or a fn of [hint sym] returning the form that tests whether sym is already of the hinted kind, which the codemod emits in place of the shim's kind test (cohost.shim/long-kind? / double-kind?). jank's returns a cpp tag test, inlined by its compiler. nil keeps the shim call."]
@@ -363,6 +365,8 @@ namespace cohost_err {
     :static-aliases {}
     :math-aliases {}
     :core-aliases #{}
+    :core-value-aliases {}
+    :core-expansions {}
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
               (let [fs (into {} (map (fn [n] [(keyword (name n)) (try-all (fn [] (some-> ((cap :resolve-core) n) ((cap :var-get)))))])
@@ -639,6 +643,8 @@ namespace cohost_err {
 (defn static-aliases [] (or (cap :static-aliases) {}))
 (defn math-aliases [] (or (cap :math-aliases) {}))
 (defn core-aliases [] (or (cap :core-aliases) #{}))
+(defn core-value-aliases [] (or (cap :core-value-aliases) {}))
+(defn core-expansions [] (or (cap :core-expansions) {}))
 (defn env-locals "The local symbols of a macro's &env." [env]
   (try-all (fn [] (filter symbol? ((cap :env-locals) env)))))
 (defn empty-queue [] ((cap :empty-queue)))

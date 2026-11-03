@@ -1371,6 +1371,8 @@
       (contains? @(:user-types ctx) s)
       (boolean (when-let [f (:interned? ctx)] (f s)))))
 
+(declare core-value-alias)
+
 (defn- rw-symbol [ctx s]
   (let [s0 s
         s (restock ctx (declass (*plain* s)))]
@@ -1382,7 +1384,7 @@
           (let [c (symbol (namespace s))] (if (= c (imported c)) s (symbol (str (imported c)) (name s)))))
 
       (and (class-sym? s) (not (user-name? ctx s))) (list 'quote (class-token s))
-      :else (carry-meta s s0))))
+      :else (or (core-value-alias ctx s) (carry-meta s s0)))))
 
 (def ^:private extend-heads (set '[extend extend-type extend-protocol]))
 
@@ -1714,6 +1716,28 @@
                 (swap! c assoc n (or a false))
                 a))))))))
 
+(defn- core-value-alias
+  "U6-9: the host symbol the adapter's :core-value-aliases gives for a symbol s
+   in a value position naming a booted stock core fn (not a local, not
+   qualified to another namespace), marked as a host symbol. nil otherwise."
+  [ctx s]
+  (let [m (host/core-value-aliases)]
+    (when (and (seq m) (symbol? s)
+               (contains? #{nil "clojure.core" "cohost.core"} (namespace s))
+               (not (contains? *locals* s)))
+      (when-let [n (stock-name ctx s)]
+        (when-let [a (get m (symbol (name n)))]
+          (with-meta a {:cohost/host true}))))))
+
+(defn- core-expansion
+  "U6-9: the adapter's :core-expansions fn for a call head h naming a booted
+   stock core fn, or nil."
+  [ctx h]
+  (let [m (host/core-expansions)]
+    (when (seq m)
+      (when-let [n (stock-name ctx h)]
+        (get m (symbol (name n)))))))
+
 (defn- rewritten-macro?
   "Does h name a macro whose expansion the codemod rewrites (a stock or user
    macro, not the host's own)?"
@@ -1901,7 +1925,10 @@
                       ;; arguments without inlining (the expansion inlines them)
                       (if (and *inline?* (rewritten-macro? ctx h))
                         (binding [*inline?* false] (apply list (rw ctx h) (doall (rw-all ctx args))))
-                        (apply list (or (core-alias ctx h) (rw ctx h)) (rw-all ctx args)))))]
+                        (let [ef (core-expansion ctx h)
+                              args' (when ef (rw-all ctx args))]
+                          (or (when ef (ef (binding [*locals* (conj *locals* (*plain* h))] (rw ctx h)) args'))
+                              (apply list (or (core-alias ctx h) (rw ctx h)) (or args' (rw-all ctx args))))))))]
       (carry-meta out form))))
 
 (defn rw [ctx form]
