@@ -150,10 +150,10 @@
    (U6-7, :static-types): a primitive-hinted fn* parameter (coerced on entry),
    a hinted let/loop local, and a local inferred from its init."
   {})
-(def ^:dynamic *num-fns*
-  "{fn-name long|double}: during a speculation check, the return type assumed
-   for the fn's own name (U6-7)."
-  {})
+(def ^:dynamic *def-name*
+  "The plain name of the var whose def init is being rewritten (U6-7): a fn
+   calling it calls itself."
+  nil)
 (def ^:dynamic *loop-locals*
   "Names bound by the loop* forms enclosing the form being rewritten (only
    tracked when the host sets :loop-rebind-shadow?)."
@@ -948,27 +948,6 @@
 
 (declare infer-num loop-recurs core-op infer-here?)
 
-(defn- self-call-args
-  "Every occurrence of nm in body: a vector of each call's argument list, or
-   nil when nm also occurs other than as a call head (a value, a nested fn's
-   own binding of the name) -- then nothing is assumed."
-  [nm body]
-  (letfn [(walk [x]
-            (cond
-              (= nm x) [::escapes]
-              (not (branch? x)) []
-              (seq? x)
-              (let [h (first x) n (when (symbol? h) (name (*plain* h)))]
-                (cond
-                  (= "quote" n) []
-                  (= nm (when (symbol? h) (*plain* h)))
-                  (let [inner (mapcat walk (rest x))]
-                    (if (some #{::escapes} inner) [::escapes] (cons (vec (rest x)) inner)))
-                  :else (mapcat walk x)))
-              :else (mapcat walk (seq x))))]
-    (let [r (doall (walk body))]
-      (when-not (some #{::escapes} r) (vec r)))))
-
 (def ^:private numeric-ops
   #{"+" "-" "*" "/" "inc" "dec" "<" ">" "<=" ">=" "==" "zero?" "pos?" "neg?" "quot" "rem" "mod" "max" "min"})
 
@@ -1016,39 +995,6 @@
       (run! #(walk env0 %) body)
       @kinds)))
 
-(defn- speculation
-  "U6-7, :static-types on a :native-hints host: an unhinted single-arity fn
-   named nm whose every parameter is a plain symbol, assumed to take and return
-   longs: when every self-call's arguments and the body's tail are long under
-   that assumption, the arity is (if (and (long-kind? p) ...) native boxed):
-   long arguments run an inner fn* nm with ^long parameters (its self-calls are
-   the host's native named recursion), anything else runs the body as written,
-   so every value is Clojure's. Returns the arity's body forms, or nil."
-  [nm single? params body']
-  (let [spells (host/native-hints)
-        names (mapv #(*plain* (bare-sym %)) params)]
-    (when (and (infer-here?) spells (get spells 'long) single? nm (seq params)
-               (every? #(and (symbol? %) (not= '& (*plain* %)) (nil? (primitive-hint (:tag (meta %))))) params))
-      (let [nm (*plain* (bare-sym nm))
-            env (reduce #(assoc %1 %2 'long) (apply dissoc *num-env* nm names) names)
-            calls (self-call-args nm body')]
-        (when (and (seq calls)
-                   (binding [*num-fns* (assoc *num-fns* nm 'long)
-                             *locals* (into *locals* (conj names nm))]
-                     ;; a self-call and a recur to the arity both reach the
-                     ;; typed inner fn*: every argument of either is long
-                     (and (every? (fn [args] (and (= (count args) (count names))
-                                                  (every? #(= 'long (infer-num env %)) args)))
-                                  (concat calls (loop-recurs body')))
-                          (= 'long (infer-num env (last body'))))))
-          (let [sp (get spells 'long)
-                ips (mapv #(with-meta % {:tag (list 'quote sp)}) names)
-                ;; the tail is long under the assumption: the inner fn*'s
-                ;; native return (:rettag, as a hinted return's)
-                inner (with-meta (list 'fn* nm (cons ips body')) {:rettag (list 'quote sp)})
-                guard (apply list 'and (map #(kind-test 'long %) names))]
-            [(list 'if guard (apply list inner names) (if (next body') (apply list 'do body') (first body')))]))))))
-
 (defn- emit-arity
   "One fn* arity. A primitive hint is coerced on every host, so the value
    matches the JVM: a parameter's on entry, a return's on exit (the JVM's
@@ -1066,9 +1012,7 @@
   ([nm single? ret-hint params body' typed]
    (let [hints (mapv (fn [p] (when (symbol? p) (primitive-hint (:tag (meta p))))) params)]
      (if-not (or (some some? hints) ret-hint)
-       (if-let [spec (speculation nm single? params body')]
-         (apply list (rw-params params) spec)
-         (if-let [[ptypes tbody] typed]
+       (if-let [[ptypes tbody] typed]
            ;; U6-7: the params guessed numeric, under a guard on their kinds:
            ;; the typed body binds them through the host's native conversion
            ;; (its locals infer from them), anything else runs the body as is
@@ -1079,7 +1023,7 @@
                     [(list 'if guard
                            (apply list 'let* binds tbody)
                            (if (next body') (apply list 'do body') (first body')))]))
-           (apply list (rw-params params) body')))
+           (apply list (rw-params params) body'))
        (let [body' (or (seq body') '(nil))
              binds (into [] (mapcat (fn [p h]
                                       (when h (let [s (bare-sym p)] [s (coerce-form h s)])))
@@ -1154,7 +1098,14 @@
                                        ;; U6-7: a second rewrite with the numeric params typed,
                                        ;; for a guarded arity (not when a hint or a cast is missing)
                                        casts (host/native-local-casts)
+                                       ;; not for a fn that calls itself (its name or its
+                                       ;; def's var): jank 0.1 binds a var self-call with a
+                                       ;; native argument to the fn being defined, so a
+                                       ;; redefinition mid-recursion is missed (battery:
+                                       ;; "redefining a fn during its own recursion")
                                        ptypes (when (and (infer-here?) (host/native-hints) casts
+                                                         (not (some #(and % (mentions-sym? % body))
+                                                                    [(when nm (*plain* (bare-sym nm))) *def-name*]))
                                                          (not (some #(= '& (*plain* %)) ps0))
                                                          (not (some #(primitive-hint (:tag (meta %))) ps0)))
                                                 (not-empty (into {} (filter (fn [[_ t]] (get casts t)))
@@ -1259,9 +1210,7 @@
                    ta (infer-num env a) tb (when (some? b) (infer-num env b))]
                (when (and ta (= ta tb)) ta))
         "do" (when (seq args) (infer-num env (last args)))
-        (let [h (first x)]
-          (when (and (symbol? h) (nil? (namespace h)))
-            (get *num-fns* (*plain* h))))))
+nil))
     :else nil))
 
 (defn- loop-recurs
@@ -1357,13 +1306,19 @@
         (if (= h 'let*)
           ;; the rewritten vector may hold markers ([b v m nil]): walk it and
           ;; rebind a hinted local right after its own binding
-          (let [hinted (into {} (keep (fn [[[b _] hint]] (when hint [(*plain* (bare-sym b)) [hint (::inferred (meta b))]]))
-                                      (map vector (partition 2 bvec0) hints)))
-                bvec'' (vec (mapcat (fn [[b v]]
-                                      (if-let [[hint inf] (and (symbol? b) (get hinted (*plain* (bare-sym b))))]
-                                        (let [s (bare-sym b)] [b v s (hinted-local-init hint s inf)])
-                                        [b v]))
-                                    pairs))]
+          ;; by position, not by name: a name bound twice ((let [x 1 x (str x)]))
+          ;; carries each binding's own hint; a marker pair matches no source one
+          (let [src (vec (map (fn [[b _] hint] [(when (symbol? b) (*plain* (bare-sym b))) hint (when (symbol? b) (::inferred (meta b)))])
+                              (partition 2 bvec0) hints))
+                bvec'' (loop [ps (seq pairs) i 0 acc []]
+                         (if-let [[b v] (first ps)]
+                           (let [[nm hint inf] (get src i)
+                                 own? (and (< i (count src)) (symbol? b) (= nm (*plain* (bare-sym b))))]
+                             (recur (next ps) (if own? (inc i) i)
+                                    (if (and own? hint)
+                                      (let [s (bare-sym b)] (conj acc b v s (hinted-local-init hint s inf)))
+                                      (conj acc b v))))
+                           acc))]
             (apply list h bvec'' body))
           (let [syms (map (fn [[b _]] (bare-sym b)) pairs)
                 infs (map (fn [[b _]] (when (symbol? b) (::inferred (meta b)))) (partition 2 bvec0))
@@ -1519,6 +1474,18 @@
        (contains? #{"fn" "fn*"} (name (*plain* (first x))))
        (not (symbol? (second x)))))
 
+(defn- source-fn-inside?
+  "fn*-inside? on a source form, before expansion: a nested form headed by a
+   symbol named fn or fn* in any namespace (clojure.core/fn from a
+   syntax-quote, cohost.core/fn), or by letfn / reify, which expand to one."
+  [form]
+  (cond (seq? form) (let [h (first form)]
+                      (and (not (and (symbol? h) (= "quote" (name h))))
+                           (or (and (symbol? h) (contains? #{"fn" "fn*" "letfn" "letfn*" "reify" "reify*"} (name (*plain* h))))
+                               (boolean (some source-fn-inside? form)))))
+        (coll? form) (boolean (some source-fn-inside? form))
+        :else false))
+
 (defn- self-named-init
   "A def whose init is an anonymous fn gets the var's name as the fn's own
    name, as jank's defn does, so its self-calls are the host's named
@@ -1526,8 +1493,8 @@
    only (the key is the only gate: off it, Clojure calls through the var,
    hinted or not, so a redefinition is seen), with M-9's guards. Done before
    the rewrite, so the fn's arities know their name: a hinted arity's
-   self-calls reach its native entry (emit-arity's inner fn*), an unhinted
-   one's its guarded speculation (U6-7). rw-def's own naming (M-9) then finds
+   self-calls reach its native entry (emit-arity's inner fn*). rw-def's own
+   naming (M-9) then finds
    the fn named."
   [nm more]
   (let [init (last more)]
@@ -1537,7 +1504,11 @@
              ;; fn* holding closures breaks jank's compile-module codegen
              ;; (see fn*-inside?)
              (not (some #{\.} (str nm)))
-             (not (some fn*-inside? (rest init))))
+             ;; on the source: a closure written fn, fn*, clojure.core/fn or
+             ;; a macro that makes one (letfn, reify ...) -- any seq whose
+             ;; head names fn or fn*, as the rewritten form's fn*-inside?
+             ;; would see after expansion
+             (not (some source-fn-inside? (rest init))))
       (concat (butlast more)
               [(with-meta (apply list (first init) (bare-sym nm) (rest init)) (meta init))])
       more)))
@@ -1552,7 +1523,7 @@
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
              nm)
         nm (if-let [dm (:def-meta ctx)] (vary-meta nm merge dm) nm)
-        more' (rw-all ctx more)
+        more' (binding [*def-name* (when (symbol? nm) (*plain* (bare-sym nm)))] (doall (rw-all ctx more)))
         ;; a host whose defn names its fn (jank's own does): carry the
         ;; def's name onto an unnamed fn* value, so self-recursion is a
         ;; direct call instead of a var deref and a dynamic call. The
