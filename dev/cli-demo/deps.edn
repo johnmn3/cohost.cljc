@@ -1,0 +1,8 @@
+;; The cohost CLI's demo (doc/CLI.md): a Maven library, a :local/root library and
+;; stock clojure.string in one main. bb cli:check runs it on every target.
+{:paths ["src"]
+ :deps {org.clojure/tools.cli {:mvn/version "1.2.245"}
+        demo/greeter {:local/root "greeter"}}
+ :aliases {:main {:main-opts ["-m" "demo.main"]}
+           :run {:exec-fn demo.main/run
+                 :exec-args {:user "jvm-user" :greeting "hello"}}}}

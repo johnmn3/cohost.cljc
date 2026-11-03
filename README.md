@@ -1,48 +1,175 @@
-# cohost.cljc
+# cohost
 
-**Boot the stock `clojure/core.clj` — and Clojure's own standard libraries —
-inside a clojure-like.**
+**A Clojure you develop in: `clojure.core`, `clojure.string`, `clojure.test` and the
+rest are Clojure 1.12's own source, unchanged, on the runtime your project picks.**
 
-Every non-JVM Clojure (jolt, basilisp, ClojureScript, ...) re-implements
-`clojure.core` by hand against a conformance corpus: broad, never total, and
-subtly different at every edge. cohost takes the other route. It reads
-Clojure's own `core.clj` (vendored unchanged from the 1.12.0 tag, EPL) and
-runs it on the host, form by form, then loads `clojure.string`,
-`clojure.walk`, `clojure.spec.alpha` and the rest the same way, each into its
-own namespace:
+You write ordinary Clojure, use `deps.edn`, Maven and git dependencies, a REPL, `-M`,
+`-X`, `-T` and tools.build exactly as with `clj`. The command is `cohost` instead of
+`clojure`; where your code runs is one key in `deps.edn`.
 
-1. a **codemod** (`cohost.rewrite`) turns the JVM interop the sources are
-   written against — `(. clojure.lang.RT (cons x s))`,
-   `(clojure.lang.Numbers/add x y)`, `(new clojure.lang.LazySeq f)`,
-   `(.withMeta x m)`, `(instance? clojure.lang.IFn x)`,
-   `(catch IllegalArgumentException e ...)`, a namespace's
-   `(:import (java.util.regex Pattern Matcher))` — into calls on
-2. a **shim** (`cohost.shim`) that maps the `clojure.lang` / `java.*`
-   surface onto the host's own data structures: the host's vector *is* the
-   `PersistentVector`, its seq *is* the `ISeq`, `RT/first` is the host's
-   `first`. What the host lacks (iterators, a `java.util.regex.Matcher`,
-   `StringBuilder`, `java.lang.Math`, class tokens, the JVM exception
-   hierarchy, multimethods, refs) the shim builds from what it has;
-3. a **boot and loader** (`cohost.boot`) that evals each form of core.clj
-   into `cohost.core`, a namespace that refers nothing from the host's core,
-   so every name core.clj defines is the stock one — `let`, `fn`, `defn`,
-   destructuring, lazy seqs, transducers, `for`, `doseq`, `defmulti`,
-   `binding`, `re-find` — straight from Rich's file; then boots each library
-   a `require` names into its own namespace (`clojure.walk` into
-   `cohost.walk`), honoring its `ns` form. Macros are wrapped so what they
-   *emit* is rewritten too;
-4. a **policy** (`cohost.policy`) that says which forms of core.clj are the
-   JVM itself (proxies, gen-class, agents, the class loader, `java.io`) and
-   are skipped, and which names are the host's facade over its runtime
-   (printing, the reader, namespaces, `case`, `deftype`, protocols) and are
-   taken from the host.
+## Install
+
+You need [Babashka](https://babashka.org) and the
+[Clojure CLI](https://clojure.org/guides/install_clojure). Then:
+
+```bash
+# not checked: installs
+git clone https://github.com/johnmn3/cohost.cljc ~/cohost
+export PATH="$HOME/cohost/bin:$PATH"
+clojure -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
+```
+
+## A new project
+
+Projects come from [deps-new](https://github.com/seancorfield/deps-new), with cohost's
+template `cohost/app`, published from this repository. Plain `clj` makes one; no cohost
+checkout is needed for this step:
+
+```bash
+clojure -Sdeps '{:deps {io.github.johnmn3/cohost.cljc {:git/sha "17da7b94608251a7b22bc6ba3eff0fbd6115c577" :deps/root "templates/cohost-app"}}}' -Tnew create :template cohost/app :name acme/myapp
+cd myapp
+```
+
+That gives `deps.edn`, `src/acme/myapp.cljc`, `test/acme/myapp_test.cljc` and
+`build.clj`; `:target jank` (or any runtime below) at the end of the command writes that
+runtime into `deps.edn`. From a cohost checkout, `cohost -Tnew create :template cohost/app
+:name acme/myapp` is the same template at the checkout's commit. The project's `:build`
+alias names cohost by that commit too, so `-T:build` works with or without a checkout.
+
+## Run it
+
+```bash
+cohost -M -m acme.myapp           # => Hello, world!
+cohost -M:main you                # => Hello, you!
+cohost -X:run :who '"cohost"'     # => Hello, cohost!
+cohost -e '(+ 1 2)'               # => 3
+```
+
+`-M -m ns args` calls `ns/-main`, `-M:alias` adds the alias's `:main-opts`, `-X` calls a
+function with a map (an alias's `:exec-fn` and `:exec-args`, then `key value` pairs from
+the command line), and `-e`/`-i`/a script path run as `clojure.main` runs them.
+
+## The REPL
+
+`cohost` with no main option is the REPL, as `clj` is:
+
+```bash
+printf '(require (quote [clojure.string :as str]))\n(str/upper-case "hi")\n' | cohost
+# => Clojure 1.12.0
+# => user=> nil
+# => user=> "HI"
+# => user=>
+```
+
+On a terminal it reads a line at a time; wrap it in `rlwrap` for editing and history.
+
+## Dependencies
+
+`deps.edn` is resolved by tools.deps itself (through the Clojure CLI), so Maven
+coordinates, git deps, `:local/root`, aliases and `-Sdeps` work as they do for `clj`:
+
+```bash
+cohost -Sdeps '{:deps {org.clojure/tools.cli {:mvn/version "1.2.245"}}}' -e "(require '[clojure.tools.cli :as cli])" -e '(:options (cli/parse-opts ["-v"] [["-v" "--verbose"]]))'
+# => {:verbose true}
+```
+
+A library's Clojure sources load through cohost, so they run on stock `clojure.core` on
+any runtime. `cohost -Spath` prints the source roots.
+
+## Tests
+
+`clojure.test`, through the template's `:test` alias:
+
+```bash
+cohost -X:test
+# => Testing acme.myapp-test
+# => Ran 1 tests containing 2 assertions.
+# => 0 failures, 0 errors.
+```
+
+## Building
+
+Builds are [tools.build](https://clojure.org/guides/tools_build): `cohost -T:build <task>`
+runs the project's `build.clj`, as `clojure -T:build` does. cohost adds `cohost.build`,
+whose `build` makes the artifact for the project's runtime: a directory `target/<name>/`
+whose `run` starts your `-main`, from any directory:
+
+```bash
+# targets: jvm jolt jank cljs cljw lg lpy phel
+cohost -T:build build                               # => build: target/myapp/run
+(cd /tmp && "$OLDPWD"/target/myapp/run you)         # => Hello, you!
+```
+
+`:jank` builds through `bb build:jank <project-dir> <main-ns> [name]` for now (`doc/CLI.md`,
+"A native executable on jank").
+
+What is inside for each runtime (an uberjar, a native binary, a bundle) is in
+`doc/CLI.md` ("Building").
+
+## Choosing a runtime
+
+The runtime is a key in `deps.edn`:
+
+```clojure
+{:cohost/target :jank
+ :paths ["src"]}
+```
+
+A project without the key runs on the JVM (the real `clojure`). `cohost :<target> ...`
+overrides the key for one command:
+
+```bash
+cohost :jvm -M -m acme.myapp      # => Hello, world!
+```
+
+`cohost -Tnew create :template cohost/app :name acme/myapp :target jank` writes the key
+for you.
+
+| target | runtime | `cohost` command | install |
+|---|---|---|---|
+| `:jvm` | JVM Clojure (the real Clojure CLI) | yes | the Clojure CLI |
+| `:jolt` | jolt (Chez Scheme) | yes | `dev/install/jolt.sh` |
+| `:jank` | jank (C++/LLVM) | yes | `dev/install/jank.sh` |
+| `:cljs` | ClojureScript, self-hosted on Node | yes | node |
+| `:lpy` | basilisp (Python) | yes | `dev/install/basilisp.sh` |
+| `:cljw` | ClojureWasm | yes | `dev/install/cljw.sh` |
+| `:phel` | Phel (PHP) | yes | `dev/install/phel.sh` |
+| `:lg` | let-go (Go) | yes | `dev/install/lg.sh` |
+| `:cljrs` | clojurust (Rust) | not yet | `dev/install/cljrs.sh` |
+
+`:jank` runs the jank package from jank's apt repository (`dev/install/jank.sh`) as it ships.
+cohost also carries a patch series against jank under `upstream/jank/` for its own measurements
+(`doc/PERF.md`, "Two jank binaries"); nothing selects it unless `JANK_BIN` names a build of it.
+
+How each runtime is launched, what was verified and how it differs from `clojure`:
+`doc/CLI.md`. Using cohost as a library inside a host (a sub-runtime you hand strings
+to): [`doc/EMBEDDING.md`](doc/EMBEDDING.md).
+What differs from one runtime to the next, and startup and speed for each:
+[Choosing a runtime](doc/guide/07-choosing-a-runtime.md).
+
+## The guide
+
+The guide covers each part of using cohost; every command in it runs, as written, in
+`bb docs:check`.
+
+1. [Getting started](doc/guide/01-getting-started.md)
+2. [The cohost command](doc/guide/02-the-cohost-command.md): every option, exit codes, errors
+3. [deps.edn and libraries](doc/guide/03-deps-and-libraries.md): Maven, git, `:local/root`, how a dependency's `.cljc` reads
+4. [The REPL](doc/guide/04-the-repl.md)
+5. [Testing](doc/guide/05-testing.md)
+6. [Building and deploying](doc/guide/06-building.md): the artifact per runtime
+7. [Choosing a runtime](doc/guide/07-choosing-a-runtime.md): what differs per runtime, startup and speed
+8. [How cohost works](doc/guide/08-how-it-works.md): the codemod, the shim, the adapter, the boot, snapshots
+9. [Adding a host](doc/guide/09-adding-a-host.md)
+10. [Limitations and FAQ](doc/guide/10-limitations-and-faq.md)
 
 Underneath is a **host adapter contract** (`cohost.adapter`): one map of
 named capabilities a clojure-like implements to plug in — read/eval in a
 namespace, var and namespace surgery, four constructors, regex search
 primitives, the host's `Math`, the type predicates behind the class tokens.
 Adapters ship for **jolt**, **basilisp**, **ClojureScript (self-hosted, Node
-and browser)**, **ClojureWasm**, **Phel**, **let-go** and the **JVM** (as the reference host).
+and browser)**, **ClojureWasm**, **Phel**, **let-go**, **jank** (`hosts/jank_host.jank`) and
+the **JVM** (as the reference host).
 
 It is the method of [clinj](https://github.com/johnmn3/clinj) ("WINE, not an
 emulator": shim the JDK surface the code calls, run the real source
@@ -50,10 +177,11 @@ unchanged) applied to the language's own core and libraries; the roadmap
 (`doc/ROADMAP.md`) points the same loader at `tools.deps`, the wider Clojure
 ecosystem, nREPL and shadow-cljs.
 
-## Status (measured 2026-10-30)
+## Status (measured 2026-10-30; jank 2026-11-02)
 
-| host | core.clj (791 top-level forms): stock / from host / natives / skipped / errors | core battery (139) | libraries (12, 61 cases) |
+| host | core.clj (791 top-level forms): stock / from host / natives / skipped / errors | core battery (159) | libraries (12, 62 cases) |
 |---|---|---:|---:|
+| jank 0.1-noble (apt), 2026-11-02 | 521 / 171 / 21 / 78 / **0** | 157/159 | **62/62** |
 | jolt v0.8.23 | 466 / 199 / 63 / 63 / **0** | **139/139** | **61/61** |
 | JVM Clojure 1.12.0 (reference adapter) | 465 / 202 / 66 / 58 / **0** | **139/139** | **61/61** |
 | ClojureScript 1.12.42 self-hosted, Node 24 and Chromium | 518 / 87 / 46 / 140 / **0** | **137/139** | **61/61** |
@@ -61,6 +189,11 @@ ecosystem, nREPL and shadow-cljs.
 | ClojureWasm v1.15.4 (2026-10-31) | 555 / 145 / 0 / 91 / **0** | **137/139** | **61/61** |
 | Phel v0.54.0 on PHP 8.5 (2026-10-31) | 591 / 73 / 0 / 127 / **0** | **139/139** | **61/61** |
 | let-go v1.13.0 on Go (2026-10-31) | 569 / 105 / 0 / 117 / **0** | **137/139** | **61/61** |
+
+The battery has 159 rows and the libraries 62 cases on this tree: the jank row is this tree's
+(`bb boot:jank` on apt 0.1-noble, 2026-11-02), and `bb boot:jvm` with LANG unset prints 159/159
+and 62/62 here. The other rows were measured 2026-10-30 at 139 rows and 61 cases and are not
+re-measured on this tree.
 
 The core battery's misses are host facts:
 - `(= 1 1.0)` is true in JavaScript and Python.
@@ -70,6 +203,10 @@ The core battery's misses are host facts:
 - On let-go, a regex Matcher has no group positions either (Go's RE2 gives none), and
   its sets and map keys hash and compare a deftype instance by identity: the type's own
   `equals` and `hashCode` answer `=` and `hash`, not a let-go set.
+- On jank, strings and chars are byte-based under the C locale ("Character outside ASCII";
+  under C.UTF-8 the "subs count nth first last butlast" row fails instead).
+- On jank, redefining a closure-free fn during its own recursion keeps the original (jank's
+  own defn's answer; doc/REPORT.md).
 
 "Natives" are the host's own fns standing in for stock ones (see below).
 
@@ -83,10 +220,14 @@ perf passes, is in `doc/PERF.md`.
 `doc/REPORT.md` has the measurements, what each host lacked and how the shim
 or the adapter answers it, the conformance-corpus scoreboard, and what is
 deliberately left out.
+Also: [the `cohost` command's reference](doc/CLI.md), [embedding cohost in a host
+program](doc/EMBEDDING.md), [performance](doc/PERF.md), [the measurements and host
+facts](doc/REPORT.md).
 
-## Run it
+## Developing cohost
 
 ```bash
+# not checked: cohost's own tasks, run in the cohost checkout
 bb boot:jolt      # jolt on PATH
 bb boot:lpy       # basilisp on PATH  (uv tool install basilisp)
 bb boot:cljs      # ClojureScript, self-hosted on Node (needs the clojure CLI + node)
@@ -98,55 +239,25 @@ bb eval:jolt '(require (quote [clojure.string :as str]))' '(str/split "a,b" #","
 bb lint:reader-order                      # cohost's #? arms: :jolt and :cljw ahead of :clj, nothing after :default
 ```
 
-The five hosts in progress (`doc/hosts/PLAN.md`) have the same tasks: `bb boot:cljw`,
-`boot:phel`, `boot:lg`, `boot:cljrs`, `boot:jank` and their `bench:` twins. Each one's
-install is `dev/install/<host>.sh`.
+Two `bb boot:cljs` (or `bench:cljs`, or the CLI's cljs build) at once share
+`~/.cljs/.aot_cache/<cljs version>` and can corrupt it: a concurrent compile left
+`cljs/spec/alpha.js` truncated, and every later cljs boot failed with
+`SyntaxError: missing ) after argument list` until that entry was deleted. Run cljs compiles one
+at a time, or give each its own cache.
+
+The hosts of `doc/hosts/PLAN.md` have the same tasks: `bb boot:cljw`, `boot:phel`, `boot:lg`,
+`boot:cljrs` and their `bench:` twins. jank's are `bb boot:jank` (from the snapshot or the AOT
+objects), `bb boot:jank-jit`, `bb bench:jank`, `bb bench:programs jank` and `bb build:jank`.
+Each one's install is `dev/install/<host>.sh`.
 
 Each boots core.clj, prints the boot report (booted / from host / skipped /
 errors, every error's root cause, the interop the shim lacks), runs
-`cohost.battery` — 133 stock behaviors evaluated in a namespace that sees only
+`cohost.battery` — 159 stock behaviors evaluated in a namespace that sees only
 the booted core — and then `cohost.lib-battery`: twelve `clojure.*`
 libraries required through the loader, each case checked against the value
 JVM Clojure 1.12.0 gives. `cohost.run/-main` takes `--verbose`, `--no-libs`
 and `--eval src ...` (evaluate instead of the batteries) on every host, e.g.
 `node target/cljs-node/main.js --eval "(binding [*print-length* 2] (pr-str (range)))"`.
-
-## The `cohost` command
-
-`bin/cohost` puts the Clojure CLI's face on any host: `cohost :cljs -e "(+ 1 2)"`
-boots stock Clojure on ClojureScript and evaluates. A `deps.edn` in the directory
-is resolved with tools.deps (through the Clojure CLI itself), and its namespaces,
-jars included, load on the host through the ordinary loader: `-e`, `-i`, `-m`,
-scripts, `-X`, `-Spath`, `-Sdeps` and the aliases' `:main-opts` / `:exec-fn` /
-`:exec-args` behave as `clojure.main` and `clojure.run.exec` do. Wired: `:cljs
-:jolt :lpy :cljw :phel :lg`; `:jvm` runs the real CLI. Design, the verified
-matrix and the differences: `doc/CLI.md`.
-
-## Use it
-
-```clojure
-(require 'cohost.hosts.auto)                ; installs this host's adapter
-(require '[cohost.boot :as boot])
-
-(boot/boot!)                                ; -> the report map
-(boot/make-user-ns!)                        ; cohost.user sees only stock
-(boot/eval-str "(->> (range 10) (map inc) (filter even?) (reduce +))")   ; 30
-(boot/eval-str "(require '[clojure.set :as set])")                      ; the stock clojure.set
-(boot/eval-str "(set/union #{1} #{2})")                                 ; #{1 2}
-(boot/eval-str "(ns my.app (:require [clojure.string :as str])) (str/upper-case \"hi\")")
-```
-
-`cohost.core/map`, `cohost.core/let` and the rest are the stock definitions;
-`(meta #'cohost.core/map)` carries core.clj's docstring and arglists.
-`eval-str` reads each form of its source after the one before it ran, in the
-namespace that one left current, as a REPL session does (a `::kw` after an
-`ns` form is that namespace's), and keeps the namespace for the next call:
-after the `ns` form above, `(boot/eval-str "*ns*")` is `my.app`. A
-`require` (or an `ns` form's `:require`) of a library whose source is on the
-source roots boots it stock — `clojure.X` into `cohost.X`, any other library
-under its own name — and falls back to the host's own `require` otherwise.
-`boot/add-source-root!` adds a directory to search; `boot/lib-report` says
-what each library's load did.
 
 ## Layout
 
@@ -158,11 +269,12 @@ src/cohost/
   policy.cljc        skip / take-from-host / replace, per form of core.clj;
                      per-library adjustments
   boot.cljc          the boot loop, macro wrapping, the loader, eval-str, reports
-  battery.cljc       133 stock behaviors checked after a boot
+  battery.cljc       159 stock behaviors checked after a boot
   lib_battery.cljc   12 clojure.* libraries, checked against JVM Clojure's answers
   corpus.cljc        the conformance-corpus scoreboard
   corpus_report.cljc its report (no dependencies: babashka merges the two sides)
   run.cljc           -main: install adapter, boot, report, batteries
+  build_jank.clj     a project's app as one native jank executable (D-7)
   shim_names.clj     compile-time helper for the ClojureScript build
   hosts/
     auto.cljc        requires the adapter for the host reading the file
@@ -175,12 +287,14 @@ src/cohost/
     phel.phel        Phel (PHP 8.5)
     phel_host.php    the JVM classes Phel's adapter builds in PHP (Pattern, Math)
     lg.lg            let-go (Go)
+    jank_host.jank   jank (C++/LLVM); the cohost_tag / cpp/raw block
 resources/cohost/clojure-1.12.0/   core.clj & co., the clojure.* libraries and
                                    clojure.spec.alpha, unchanged (EPL-1.0)
 dev/browser_boot.py  serves the browser build and runs it under Playwright
 dev/corpus_jvm.clj   the corpus gap evaluated on JVM Clojure (bb corpus:jvm)
 dev/phel_main.phel   bb boot:phel's entry (cohost.run's -main under phel run)
 dev/lg_main.lg       bb boot:lg's entry (let-go has no -m)
+dev/install/jank-src.sh  jank from source with upstream/jank/patches (measurement only)
 doc/REPORT.md      the measurements
 doc/ROADMAP.md     where this goes
 LICENSE            0BSD for cohost's own code; the vendored sources keep EPL-1.0
@@ -244,6 +358,19 @@ from qualified name to implementation:
 
 `doc/perf/HANDOFF.md` says which natives each host has today and where the
 remaining time goes.
+
+### Performance keys
+
+Seven capabilities are performance switches, default off, turned on per host where that host's
+bench says they pay (`doc/PERF.md`, "Cross-host"): `:multimethod-cache?` (the shim's MultiFn
+with a one-entry dispatch cache: JVM, jolt, ClojureWasm, Phel, ClojureScript on Node and in
+Chromium, jank), `:sort-host-compare?` (the host's compare when the comparator is the stock
+`compare`: let-go, Phel; jank always), and five jank sets alone: `:native-hints` (which primitive
+hints the host compiles as native types), `:native-local-casts` (the host's conversion for a
+hinted `let`/`loop` local), `:defn-fn-name?` (a def's name carried onto its fn*, so a self-call
+is a direct call), `:static-aliases` (a shim static emitted as the host's own op: jank's `-`),
+`:core-aliases` (a stock core fn emitted as the host's own: jank's `not`). The contract in
+`cohost.adapter/contract` carries each one's doc.
 
 ## License and provenance
 
