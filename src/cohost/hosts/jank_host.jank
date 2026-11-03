@@ -2148,8 +2148,8 @@ namespace cohost_assoc {
                            ;; codemod passes :self-result): A5-6's form, the right operand as a
                            ;; long and the result compared with the left object. Its two object
                            ;; comparisons cost first-call codegen per site (A5-6c), but such a fn
-                           ;; has a handful of sites, and this form keeps fib(27) at 1.97 ms where
-                           ;; the i64 form below takes 2.49-2.56 (apt, interleaved x2)
+                           ;; has a handful of sites, and the i64 form below took fib(27) from 1.97 ms
+                           ;; to 2.49-2.56 (apt, interleaved x2)
                            (= may-let? :self-result)
                            (let [q (gensym "iq") r (gensym "ir")
                                  ovf (case nm
@@ -2163,7 +2163,9 @@ namespace cohost_assoc {
                                            (list 'if (all? [(list lt -2147483649 q) (list lt q 2147483648)
                                                             (list lt -2147483649 x) (list lt x 2147483648)])
                                                  (list op x q) slow)))
-                                   (list (generic nm) x y)))
+                                   ;; jank's inline op, as A5-6 had it: with the out-of-line
+                                   ;; promoting op here fib(36) read 165 ms against 149
+                                   (list op x y)))
                            ;; two objects (A5-6c): both integers -> both to i64 natives, the
                            ;; bound test and the op on the natives (none of them instantiates
                            ;; jank's number visitor; an object < object does, ~240 ms of
