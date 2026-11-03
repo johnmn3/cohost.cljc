@@ -1086,22 +1086,56 @@ namespace cohost_obj {
       ([m k nf] (if (cpp/cohost_obj.is_cohost m)
                   (let [e (@shim-RT-find m k)] (if e (val e) nf))
                   (@host-get m k nf)))))
-(defn- assoc-1 [m k v]
-  (if (cpp/cohost_obj.is_cohost m)
-    (@shim-RT-assoc m k v)
-    (do (when (and (@host-vector? m) (number? k) (not (<= 0 k (@host-count m))))
-          (throw (adapter/ex* 'java.lang.IndexOutOfBoundsException
-                              (str "Index " k " out of bounds for length " (@host-count m)))))
-        (@host-assoc m k v))))
+(cpp/raw "
+#include <jank/runtime/obj/persistent_vector.hpp>
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/core/make_box.hpp>
+namespace cohost_assoc {
+  using namespace jank::runtime;
+  // assoc's keys k, then every other element of kvs, on jank's vector m:
+  // nil when each integer key is in [0, n] (n grows by one at each append),
+  // else [key n] for the first one outside it. m not a vector: nil.
+  inline object_ref oob(object_ref m, object_ref k, object_ref kvs) {
+    if (m.is_nil() || m.get_type() != object_type::persistent_vector) { return make_box<obj::nil>(); }
+    jank::i64 n = static_cast<jank::i64>(static_cast<obj::persistent_vector const *>(m.ptr())->data.size());
+    object_ref key{ k };
+    object_ref rest{ kvs };
+    while (true) {
+      auto const t(key.get_type());
+      if (t == object_type::small_integer || t == object_type::integer) {
+        jank::i64 const i{ to_int(key) };
+        if (i < 0 || i > n) { return make_box<obj::persistent_vector>(std::in_place, key, make_box(n)); }
+        if (i == n) { ++n; }
+      }
+      if (rest.is_nil()) { break; }
+      key = jank::runtime::first(rest);
+      rest = jank::runtime::next(rest);
+      if (rest.is_nil()) { break; }
+      rest = jank::runtime::next(rest);
+    }
+    return make_box<obj::nil>();
+  }
+}
+")
+(defn- assoc-oob [[k n]]
+  (throw (adapter/ex* 'java.lang.IndexOutOfBoundsException
+                      (str "Index " k " out of bounds for length " n))))
 ;; jank's own assoc on its vector raises a native C++ exception for an
 ;; index past the end; Clojure throws IndexOutOfBoundsException. Index
 ;; (count v) is the append and stays jank's assoc; a negative index or
 ;; one past (count v) throws Clojure's exception, the same guard nth has.
+;; One C++ call checks every key (nbody's variadic assoc is the hot path).
 (def ^:private native-assoc
-  (fn ([m k v] (assoc-1 m k v))
-      ([m k v & kvs] (reduce (fn [mm [kk vv]] (assoc-1 mm kk vv))
-                             (assoc-1 m k v)
-                             (partition 2 kvs)))))
+  (fn ([m k v] (if (cpp/cohost_obj.is_cohost m)
+                 (@shim-RT-assoc m k v)
+                 (let [bad (cpp/cohost_assoc.oob m k nil)]
+                   (if (nil? bad) (@host-assoc m k v) (assoc-oob bad)))))
+      ([m k v & kvs] (if (cpp/cohost_obj.is_cohost m)
+                       (reduce (fn [mm [kk vv]] (@shim-RT-assoc mm kk vv))
+                               (@shim-RT-assoc m k v)
+                               (partition 2 kvs))
+                       (let [bad (cpp/cohost_assoc.oob m k kvs)]
+                         (if (nil? bad) (apply @host-assoc m k v kvs) (assoc-oob bad)))))))
 
 (defn type-key
   "The protocol dispatch key of a value."
@@ -1863,6 +1897,34 @@ namespace cohost_obj {
    ;; (A5: not where jank's - wraps at 32 bits: there Numbers-minus is the
    ;; checked num-minus, and aliasing it back to jank's - would undo it)
    :static-aliases (if int-wraps? {} {"Numbers-minus" 'clojure.core/-})
+   ;; A5-3: where jank's + - * wrap (apt), two untyped operands (a local or an
+   ;; integer literal; rewrite.cljc's int-op-operand?) take jank's promoting op
+   ;; inline -- i64 arithmetic, and reals, ratios and big integers as jank's own
+   ;; op gives them -- unless both are integers and one is outside 32 bits: only
+   ;; there can the i64 op overflow, and only that case calls the shim's checked
+   ;; op (Clojure's ArithmeticException). Before, every such op was a dynamic
+   ;; call of the checked op. No let*: the operands are named twice as they are.
+   :int-op-aliases (if int-wraps?
+                     (into {}
+                           (map (fn [[nm op]]
+                                  [nm (fn [[x y] checked]
+                                        (let [fast (list op x y)
+                                              slow (list checked x y)
+                                              ;; a literal's test is decided here, a local's inline
+                                              int-test (fn [v then else]
+                                                         (if (integer? v) then
+                                                             (list 'if (list 'cpp/jank.runtime.is_integer v) then else)))
+                                              small (fn [v then else]
+                                                      (if (integer? v)
+                                                        (if (< -2147483649 v 2147483648) then else)
+                                                        (list 'if (list 'clojure.core/< -2147483649 v)
+                                                              (list 'if (list 'clojure.core/< v 2147483648) then else)
+                                                              else)))]
+                                          (int-test x (int-test y (small x (small y fast slow) slow) fast) fast)))]))
+                           [["Numbers-add" 'cpp/jank.runtime.promoting_add]
+                            ["Numbers-minus" 'cpp/jank.runtime.promoting_sub]
+                            ["Numbers-multiply" 'cpp/jank.runtime.promoting_mul]])
+                     {})
    ;; U6-8: Math/sqrt at the call head is jank's runtime sqrt on the double,
    ;; inline. A negative argument is the JVM's NaN as a literal: std::sqrt gives
    ;; a negative-signed NaN, and boxing one crashes jank (probe: (let* [r
