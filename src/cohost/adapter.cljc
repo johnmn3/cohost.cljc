@@ -114,6 +114,8 @@
    :with-meta       [['x 'm] "x with its metadata replaced by m: the host's with-meta (the default), or the type's own on a :cohost-types host, whose instances the host's with-meta cannot touch"]
    :env-locals      [['env] "the local names in a macro's &env, for the rewrite of its expansion; default: the keys of a map env (the JVM's)"]
    :host-aliases?   [[] "true when the codemod may emit the host core's own symbol for a shim static whose value is that fn (RT-first as first), which the host's compiler can inline; false where that compiler inlines a core fn by expanding a template unhygienically in the caller's namespace (basilisp: (+ x 1) inside cohost.core). Default true"]
+   :static-aliases  [[] "{shim static name (a string) -> the host core's symbol}: statics the host-aliases? scan cannot match because the shim's value is a wrapper with its own body, where that wrapper's semantics are the host op's on this host (jank: Numbers-minus is jank's -). Merged over the scan's aliases. Default {}"]
+   :core-aliases    [[] "#{stock core name}: calls of these booted stock core fns are emitted as the host core's fn of that name, whose semantics are the stock fn's on this host, so the host's compiler sees (and may inline) its own op; the stock fn stays booted for every other use (apply, a value, with-redefs of the booted var). Default #{}"]
    :natives         [[] "{qualified-sym impl}: the host's own implementation of a stock fn, opted into one at a time; cohost.core (or the stock library's namespace) gets impl instead of evaluating the stock definition, and a name with no entry boots the stock one. 'clojure.core/frequencies or 'clojure.string/join; impl is a fn (the adapter's source names the host's own: frequencies) or :host (the host core's var of that name, clojure.core only). Default {}"]
    :native-hints    [[] "nil (the default), or {hint-symbol host-type-symbol}: the primitive hints (long, double, int, boolean) this host compiles as native types. Positions: a fn* parameter (an arity that loops or calls itself: the coerced value goes to an inner fn* whose parameter carries the type; a leaf called from elsewhere stays untyped, H0 measured it losing on jank), a return (the inner fn*'s :rettag, the type the host spells for the arity's return hint), and a let*/loop* local through :native-local-casts. Every position is coerced as the JVM coerces on every host; nil leaves every other host's rewritten forms without native tags."]
    :static-types    [[] "nil (the default), :sound or :unit (U6-7): the codemod infers numeric types from the source and passes them as hints at the positions :native-hints takes. :sound types only what is certain: a let*/loop* local from a numeric literal, typed arithmetic (+ - * inc dec; / of doubles), count, an if whose branches agree, a primitive-hinted parameter or local; a loop* local only while every recur argument in its position has its type. Nothing Clojure computes changes: an inferred local gets the host's native conversion of a value already of that type. And a guarded speculation (patch 28's, adapter-side): an unhinted single-arity fn that calls itself, whose self-call arguments and tail are long when its parameters and its own result are assumed long, runs (if (and (long-kind? p) ...) <an inner fn* of its name with ^long parameters> <the body as written>); a def'd fn that calls its own var is named for it, as jank's defn names every fn, so its self-calls reach that inner fn. Every value is Clojure's: a non-long argument runs the body as written. Any other unhinted arity whose plain parameters are direct operands of numeric core fns runs (if (and (<kind>? p) ...) (let* [p (<conversion> p) ...] <the body, rewritten again with p typed>) <the body as written>), the kind double when, in one such call, a sibling operand is certainly double (a literal, a typed form or local), else long: its loop and let locals then infer from p. The speculated inner fn* also carries :rettag long (its tail is long under the assumption). :unit is reserved (call-site typing of params across one compilation unit, unsound for a later redefinition or an outside caller): the guarded arities above already cover its cases soundly, so :unit types nothing more today. Inferred in user code only (not cohost.core nor a clojure.* library)."]
@@ -351,6 +353,8 @@ namespace cohost_err {
     :native-local-casts nil
     :static-types nil
     :host-aliases? true
+    :static-aliases {}
+    :core-aliases #{}
     :env-locals (fn [env] (when (map? env) (keys env)))
     :chunks (fn []
               (let [fs (into {} (map (fn [n] [(keyword (name n)) (try-all (fn [] (some-> ((cap :resolve-core) n) ((cap :var-get)))))])
@@ -610,6 +614,8 @@ namespace cohost_err {
   []
   (when-let [m (current)] (:native-local-casts m)))
 (defn host-aliases? [] (boolean (cap :host-aliases?)))
+(defn static-aliases [] (or (cap :static-aliases) {}))
+(defn core-aliases [] (or (cap :core-aliases) #{}))
 (defn env-locals "The local symbols of a macro's &env." [env]
   (try-all (fn [] (filter symbol? ((cap :env-locals) env)))))
 (defn empty-queue [] ((cap :empty-queue)))

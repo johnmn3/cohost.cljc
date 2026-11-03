@@ -1564,6 +1564,16 @@ namespace cohost_obj {
    ;; the codemod applies them itself, and strips them from what jank sees
    :inline-meta :strip
    :rewrite-inline? true
+   ;; U6-6: the arithmetic and logic the codemod emits reach jank as its own
+   ;; clojure.core ops, which its analyzer inlines and makes native. The shim's
+   ;; Numbers-minus is a 1-2 arity wrapper over -, which is jank's - for those
+   ;; arities; a call of the stock not is a call of jank's not (Clojure's
+   ;; semantics; the stock not stays booted). Numbers-quotient and
+   ;; -remainder keep their wrapper: jank's quot and rem by zero throw without
+   ;; the JVM's "Divide by zero"; Numbers-max and -min keep theirs: jank's
+   ;; (max 1 ##NaN) is 1.0, the JVM's NaN.
+   :static-aliases {"Numbers-minus" 'clojure.core/-}
+   :core-aliases '#{not}
    :syntax-quote-source? true
    :lazy-seq (fn [f] (lazy-seq (f)))
    :delay (fn [f] (delay (f)))
