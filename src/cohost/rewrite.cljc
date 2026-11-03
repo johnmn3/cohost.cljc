@@ -1192,7 +1192,10 @@
       more)))
 
 (defn- rw-def [ctx [_ nm & more]]
-  (let [more (self-named-init nm more)
+  (let [;; ^:redef and ^:dynamic keep every call through the var, as under
+        ;; Clojure's direct linking (U6-6)
+        var-call? (let [m (meta nm)] (or (:redef m) (:dynamic m)))
+        more (if var-call? more (self-named-init nm more))
         nm (carry-meta nm nm)
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
              (vary-meta nm (fn [m] (reduce (fn [m k] (if (contains? m k) (update m k #(rw ctx %)) m)) m code-meta-keys)))
@@ -1205,6 +1208,7 @@
         ;; semantic price is pinned by a battery row: an in-flight
         ;; recursion no longer sees a redefinition of the var.
         more' (if (and (host/defn-fn-name?)
+                       (not var-call?)
                        ;; a dotted name is a class or a constructor
                        ;; pseudo-name (deftype's Box.), not a fn name:
                        ;; jank's codegen rejects it on a fn*

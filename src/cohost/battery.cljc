@@ -62,6 +62,9 @@
    ["binding dynamic" "(do (def ^:dynamic *d* 1) (defn rd [] *d*) [(rd) (binding [*d* 2] (rd)) (rd)])" [1 2 1]]
    ["with-redefs" "(do (defn orig [] :orig) [(with-redefs [orig (fn [] :redef)] (orig)) (orig)])" [:redef :orig]]
    ["redefining a fn during its own recursion" "(do (defn rr [n] (if (pos? n) (do (alter-var-root #'rr (fn [_] (fn [x] :redefined))) (rr (dec n))) :original)) (rr 1))" :redefined]
+   ;; ^:redef keeps the var call on a :defn-fn-name? host (Clojure's direct
+   ;; linking opt-out): a redefinition mid-recursion is seen, on every host
+   ["^:redef: a redefinition during its own recursion is seen" "(do (defn bt-dl2 [x] :new) (defn ^:redef bt-dlr [n] (if (zero? n) :base (do (when (= n 2) (alter-var-root (var bt-dlr) (constantly bt-dl2))) (bt-dlr (dec n))))) (bt-dlr 3))" :new]
    ["alter-var-root var-get" "(do (def vr 1) (alter-var-root #'vr inc) [vr (var-get #'vr) (:name (meta #'vr))])" [2 2 'vr]]
    ["try/catch/finally ex-info" "(let [log (atom [])] [(try (throw (ex-info \"boom\" {:k 1})) (catch Exception e (swap! log conj :caught) (:k (ex-data e))) (finally (swap! log conj :fin))) @log])" [1 [:caught :fin]]]
    ["ex-message ex-cause" "(let [e (ex-info \"outer\" {} (ex-info \"inner\" {}))] [(ex-message e) (ex-message (ex-cause e))])" ["outer" "inner"]]
