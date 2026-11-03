@@ -234,7 +234,7 @@ cohost :jank -Spath                           # the source roots
 
 jank before this change: `cohost: :jank is not wired into the CLI yet` on every case. Wiring it took the launch
 above and one host arm in `cohost.cli/exit!`: jank 0.1's `flush` throws `TODO: port flesh`, so jank exits through
-`std::exit`, which flushes standard output. `:cljrs` is not wired: cohost's clojurust boot is parked (doc/PERF.md).
+`std::exit`, which flushes standard output. `:cljrs` is not wired: cohost's clojurust boot is parked (doc/perf/HISTORY.md).
 
 ## Verified (2026-10-31 ET)
 

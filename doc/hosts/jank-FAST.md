@@ -1,13 +1,13 @@
 # jank: the course to fast (plan, 2026-11-01 ET)
 
 Branch `claude/youthful-euler-gquikf` at `98e5eb2`. jank 0.1 (apt `0.1-noble`). Read first:
-doc/HANDOFF.md (jank section), doc/hosts/jank-J0.md, doc/PERF.md, doc/perf/HANDOFF.md.
+doc/HANDOFF.md (jank section), doc/hosts/jank-J0.md, doc/perf/HISTORY.md, doc/perf/HANDOFF.md.
 
 ## The scoreboard ("fast" means these numbers)
 
 1. **Startup**: `boot-ms` + `libs-ms` in `target/bench-jank.edn`. Measured today (quick run on
    `98e5eb2`): boot **44.2 s**, libraries **36.2 s**. For scale: JVM Clojure 1.3 s, jolt 2.5 s
-   boot (doc/PERF.md). Goal: jolt's range.
+   boot (doc/perf/HISTORY.md). Goal: jolt's range.
 2. **Runtime, stock core against jank's own core**: the `xN` column of `bb bench:jank`
    (`bb bench:report`). Goal: every case within x1.5, as the JVM (x1.1) and jolt (x1.4) are.
 3. **Correctness never moves**: `bb boot:jank` battery and library battery stay at or above
@@ -57,7 +57,7 @@ on both sides.
 
 ## Step 2. Measure, then profile (no code changes)
 
-1. Full `bb bench:jank`; record `target/bench-jank.edn` and the table in doc/PERF.md as the
+1. Full `bb bench:jank`; record `target/bench-jank.edn` and the table in doc/perf/HISTORY.md as the
    baseline column.
 2. Profile the boot and the five worst cases with jank's own profiler (`jank --profile
    --profile-output <file> ...`) and with `--perf` (Linux perf events; install `perf` only with
@@ -174,7 +174,7 @@ on the host's own core and on cohost's stock core booted there, all on one box:
   would write (H1 passes them to jank).
 - each run reports the median of 5 after a warm-up, plus a cold single run (JIT hosts differ).
 **Done-bar**: `bb bench:programs <host>` on every host; a table of each program's time against
-JVM Clojure, the geometric mean per host, hinted and unhinted, in doc/PERF.md.
+JVM Clojure, the geometric mean per host, hinted and unhinted, in doc/perf/HISTORY.md.
 
 ## Order and what each step is checked by
 
