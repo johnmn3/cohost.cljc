@@ -53,6 +53,7 @@
    :alias!          [['into-ns 'alias 'target] "alias target (a namespace symbol) as alias in into-ns"]
    :set-current-ns! [['ns-sym] "make ns-sym current for the rest of the caller's with-ns extent (reads and evals)"]
    :require-host!   [['lib] "the host's own require of lib (no stock source for it); throws when absent"]
+   :add-module-path! [['path] "a directory the host's require searches from now on (jank: a compiled program has no module path); the default does nothing"]
    :core-extras     [[] "{sym value}: core names the host's core lacks and the adapter supplies (cljs: extend)"]
    :resolve-core    [['sym] "the host core's public var handle for sym, or nil"]
    :var-get         [['h] "current value (the thread binding when there is one)"]
@@ -359,6 +360,7 @@ namespace cohost_err {
                                   (alter-var-root #'*ns* (constantly (the-ns ns-sym)))))
                          :cljs (unsupported :set-current-ns!) :phel (unsupported :set-current-ns!) :jank (fn [ns-sym] (in-ns ns-sym)) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
     :require-host! #?(:cljs (unsupported :require-host!) :phel (unsupported :require-host!) :default (fn [lib] (require lib)))
+    :add-module-path! (fn [_path] nil)
     :core-extras {}
     :host-type nil
     :expand-macro nil
@@ -622,6 +624,7 @@ namespace cohost_err {
 (defn alias! [into-ns a target] ((cap :alias!) into-ns a target))
 (defn set-current-ns! [ns-sym] ((cap :set-current-ns!) ns-sym))
 (defn require-host! [lib] ((cap :require-host!) lib))
+(defn add-module-path! [path] ((cap :add-module-path!) path))
 (defn math-fns [] (get @installed :math {}))
 (defn upper-case [s] ((cap :upper-case) s))
 (defn lower-case [s] ((cap :lower-case) s))

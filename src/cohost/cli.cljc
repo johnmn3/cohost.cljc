@@ -10,6 +10,7 @@
 ;;    :cwd        "/abs/project"
 ;;    :snapshot?  true      ; jank: boot from the fresh snapshot on the module path
 ;;    :project-snapshot "cohost.project"  ; jank: the project's snapshot entry, when fresh
+;;    :module-paths ["<dir>" ...]          ; jank's launcher: the project snapshot's directories, added at run time
 ;;    :inits      [[:e "(src)"] [:i "/abs/init.clj"] ...]       ; in the order given
 ;;    :main       {:type :main :ns "demo.main" :args ["a"]}     ; -m
 ;;              | {:type :script :path "/abs/s.clj" :args [...]}
@@ -208,6 +209,9 @@ namespace cohost_io {
     ;; :project-snapshot -- the module of a fresh per-project snapshot (the
     ;; project's namespaces compiled ahead, bin/cohost's jank launch): its
     ;; libraries load from their modules
+    ;; :module-paths -- its directories, added for a host whose require has no
+    ;; module path (jank's compiled launcher)
+    (doseq [p (:module-paths cfg)] (host/add-module-path! p))
     (when-let [m (:project-snapshot cfg)] (host/require-host! (symbol m)))
     ;; clojure.main's namespace: user, seeing the stock core (a session
     ;; starts in cohost.user, and moves there)

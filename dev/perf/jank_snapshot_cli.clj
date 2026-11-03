@@ -143,4 +143,6 @@
               (println "cohost: jank: the project's ahead-of-time build failed; running without it")
               (println (:err (or r3 r2 r1)))))))
       (when (and (fs/exists? stamp) (cache))
-        {:module-path (str (cache) ":" src ":" core-path) :project-snapshot "cohost.project"}))))
+        {:module-path (str (cache) ":" src ":" core-path) :project-snapshot "cohost.project"
+         ;; the launcher binary adds these at run time (cohost.cli :module-paths)
+         :project-paths [(cache) src]}))))

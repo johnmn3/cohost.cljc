@@ -2315,6 +2315,12 @@ namespace cohost_assoc {
    :read-forms read-forms
    ;; (cohost.core also gets the concat* its syntax-quote expands through:
    ;; cohost renames clojure.core/concat* there with every other core name)
+   ;; a compiled jank program (the launcher) has no module path: a per-project
+   ;; snapshot's directories are added at run time (cohost.cli :module-paths)
+   :add-module-path! (fn [path]
+                       (let [p (str path)]
+                         (-> cpp/jank.runtime.__rt_ctx (.-module_loader) (.add_path (.to_string p)))
+                         nil))
    :ensure-bare-ns! (fn [ns-sym]
                       (create-ns ns-sym)
                       (when (= 'cohost.core ns-sym) (intern ns-sym 'concat* concat-star))
