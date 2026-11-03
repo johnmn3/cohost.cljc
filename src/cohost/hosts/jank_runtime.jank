@@ -354,7 +354,13 @@ namespace cohost_leaf {
    * maps). nbody does 25 three-pair vector assocs per step: 3.5 us each through the native's
    * reduce over (partition 2 kvs) on the series build, 0.5 us in plain jank. */
   inline object_ref assoc_vec(object_ref const m, object_ref const k, object_ref const v) {
-    if(m.get_type() != object_type::persistent_vector || !is_integer(k)) { return jank_nil; }
+    /* A6-3: jank's array and hash maps take jank's own assoc (what the M-5 native reaches for
+     * them after its is_cohost / vector checks) */
+    auto const mt(m.get_type());
+    if(mt == object_type::persistent_array_map || mt == object_type::persistent_hash_map) {
+      return jank::runtime::assoc(m, k, v);
+    }
+    if(mt != object_type::persistent_vector || !is_integer(k)) { return jank_nil; }
     auto const pv(expect_object<obj::persistent_vector>(m));
     auto const n(to_int(k));
     if(n < 0 || n > static_cast<jank::i64>(pv->data.size())) { return jank_nil; }
@@ -378,6 +384,27 @@ namespace cohost_leaf {
     auto const r(assoc_vec(m, k, v));
     if(r.is_nil()) { return stock.call(m, k, v, k2, v2, k3, v3); }
     return assoc2(r, k2, v2, k3, v3, stock);
+  }
+
+  /* A6-3: get on jank's array / hash map and conj onto jank's vector in one C++ call (jank's own
+   * get / conj, which the M-5 natives and the shim's RT-conj reach for these types after their
+   * checks); anything else goes to `stock`. */
+  inline bool plain_map(object_ref const m) {
+    auto const t(m.get_type());
+    return t == object_type::persistent_array_map || t == object_type::persistent_hash_map;
+  }
+
+  inline object_ref get_or(object_ref const m, object_ref const k, object_ref const stock) {
+    return plain_map(m) ? jank::runtime::get(m, k) : stock.call(m, k);
+  }
+
+  inline object_ref get_or(object_ref const m, object_ref const k, object_ref const nf, object_ref const stock) {
+    return plain_map(m) ? jank::runtime::get(m, k, nf) : stock.call(m, k, nf);
+  }
+
+  inline object_ref conj_or(object_ref const c, object_ref const x, object_ref const stock) {
+    if(c.get_type() == object_type::persistent_vector) { return expect_object<obj::persistent_vector>(c)->conj(x); }
+    return stock.call(c, x);
   }
 
   /* A4 (d): str. The jank adapter's str (jank_host.jank's 'str override) is variadic through
@@ -587,3 +614,20 @@ namespace cohost_leaf {
       ([m k v k2 v2] (cpp/cohost_leaf.assoc2 m k v k2 v2 stock))
       ([m k v k2 v2 k3 v3] (cpp/cohost_leaf.assoc3 m k v k2 v2 k3 v3 stock))
       ([m k v k2 v2 k3 v3 & kvs] (apply stock m k v k2 v2 k3 v3 kvs))))
+
+(defn get-with
+  "A6-3: a get fn for cohost.core: jank's array / hash map in one C++ call (cohost_leaf::get_or);
+   everything else by `stock`."
+  [stock]
+  (fn ([m k] (cpp/cohost_leaf.get_or m k stock))
+      ([m k nf] (cpp/cohost_leaf.get_or m k nf stock))))
+
+(defn conj-with
+  "A6-3: conj for cohost.core: onto jank's vector in one C++ call (cohost_leaf::conj_or); anything
+   else by `rt-conj` (the shim's RT-conj, which stock conj calls), with stock conj's arities."
+  [rt-conj]
+  (fn ([] [])
+      ([c] c)
+      ([c x] (cpp/cohost_leaf.conj_or c x rt-conj))
+      ([c x & xs] (loop [c (cpp/cohost_leaf.conj_or c x rt-conj) xs xs]
+                    (if xs (recur (cpp/cohost_leaf.conj_or c (first xs) rt-conj) (next xs)) c)))))
