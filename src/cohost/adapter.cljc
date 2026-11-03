@@ -204,7 +204,8 @@
    :sorted-comparator [['x] "the comparator a sorted collection was built with (default: compare)"]
    :multifn?        [['x] "is x the host's own multimethod?"]
    ;; hooks
-   :after-eval      [['form 'ns-sym] "called after each form the boot evals (optional)"]])
+   :after-eval      [['form 'ns-sym] "called after each form the boot evals (optional)"]
+   :snapshot-form   [['form] "the form a recorded boot (snapshot) writes for a form the boot evals: what the host's compiler is given. Default: the form as rewritten. let-go: its :eval's lowering (as-code), since the emitted modules are compiled by let-go directly, not through :eval"]])
 
 (def contract
   "capability -> [arglist doc]"
@@ -489,7 +490,8 @@ namespace cohost_err {
     :sorted? (fn [_] false)
     :sorted-comparator (fn [_] compare)
     :multifn? (fn [_] false)
-    :after-eval (fn [_ _] nil)}))
+    :after-eval (fn [_ _] nil)
+    :snapshot-form identity}))
 
 (def required
   "Capabilities every host must provide (no sensible generic default)."
@@ -688,6 +690,7 @@ namespace cohost_err {
 (defn eval-form [form] ((cap :eval) form))
 (defn error-message [e] ((cap :error-message) e))
 (defn after-eval [form ns-sym] ((cap :after-eval) form ns-sym))
+(defn snapshot-form [form] ((cap :snapshot-form) form))
 
 (defn ns-interns-map [ns-sym] ((cap :ns-interns) ns-sym))
 (defn interned-var [ns-sym sym] ((cap :interned-var) ns-sym sym))
