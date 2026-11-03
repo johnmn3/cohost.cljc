@@ -171,7 +171,16 @@
    ["a ^long let local is a long to arithmetic" "(let [^long x (identity 1.9)] (inc x))" 2]
    ["a ^long let local rejects a non-number" "(try (let [^long x (identity \"a\")] (inc x)) (catch ClassCastException e :cce))" :cce]
    ["a ^double let local" "(let [^double x (identity 2)] (+ x 0.5))" 2.5]
-   ["a ^long loop local is a long to arithmetic" "(loop [^long i (identity 2.5) a 0] (if (pos? i) (recur (dec i) (+ a i)) a))" 3]])
+   ["a ^long loop local is a long to arithmetic" "(loop [^long i (identity 2.5) a 0] (if (pos? i) (recur (dec i) (+ a i)) a))" 3]
+   ;; U6-7: what the codemod infers (:static-types) must leave every value Clojure's
+   ["an inferred long local rebound to a string" "(let [x 1 x (str x \"!\")] x)" "1!"]
+   ["a loop local whose recur passes a string" "(loop [i 0 acc []] (if (< (count acc) 3) (recur (str i \"a\") (conj acc i)) acc))" [0 "0a" "0aa"]]
+   ["an inferred double local" "(let [a 1.5 b (* a 2)] b)" 3.0]
+   ["inferred long arithmetic and count" "(let [a 2 b (* a 21) c (inc b)] [b c (count [1 2 3])])" [42 43 3]]
+   ["a local named like a core fn is no core fn" "(let [+ (fn [a b] (str a b)) q (+ 1 2)] q)" "12"]
+   ["an inferred long loop" "(loop [i 0 s 0] (if (< i 5) (recur (inc i) (+ s i)) s))" 10]
+   ["a local from count" "(let [n (count \"abc\") m (* n 2)] m)" 6]
+   ["an if whose branches agree" "(let [a 7 b (if (pos? a) (dec a) (inc a))] b)" 6]])
 
 (defn run-battery!
   "eval-str: source string -> value. Prints a tally and every failure."
