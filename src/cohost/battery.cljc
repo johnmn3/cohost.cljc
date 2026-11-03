@@ -37,6 +37,11 @@
    ["cat dedupe-xf halt-when?" "(into [] (comp cat (dedupe)) [[1 1] [2 2 3]])" [1 2 3]]
    ["juxt comp partial complement constantly fnil" "[((juxt inc dec) 5) ((comp str inc) 1) ((partial + 1) 2) ((complement odd?) 3) ((constantly 7) 1 2) ((fnil + 10) nil 1)]" [[6 4] "2" 3 false 7 11]]
    ["every-pred some-fn memoize trampoline" "[((every-pred odd? pos?) 3) ((some-fn odd? neg?) 2) (let [m (memoize inc)] [(m 1) (m 1)]) (trampoline (fn f [n] (if (pos? n) #(f (dec n)) :done)) 5)]" [true false [2 2] :done]]
+   ;; A4 (a): a range and the map/filter over it are chunked seqs on jank (jank's obj::range and
+   ;; chunked_cons); what the stock core and the reader see of them must be Clojure's
+   ["chunked range = hash print count" "(let [r (range 70) m (map inc r) f (filter odd? m)] [(= r (range 70)) (= m (range 1 71)) (= (hash m) (hash (range 1 71))) (pr-str (take 3 f)) (count r) (count m) (count f) (count (range 5 0 -2)) (vec (range 0 10 4))])" [true true true "(1 3 5)" 70 70 35 3 [0 4 8]]]
+   ["chunked seq seq next last meta" "(let [m (map inc (range 32))] [(seq (filter neg? (range 70))) (count (next m)) (last (map inc (range 65))) (first (next (filter odd? (range 100)))) (meta (with-meta (range 3) {:m 1})) (coll? (range 3)) (seq? (map inc (range 3)))])" [nil 31 65 3 {:m 1} true true]]
+   ["chunked laziness" "[(vec (take 5 (map inc (range 1000000000000)))) (first (filter #(> % 100000) (map inc (range 1000000000000)))) (reduce + 0 (map inc (range 100))) (into [] (map inc) (range 5))]" [[1 2 3 4 5] 100001 5050 [1 2 3 4 5]]]
    ["sort sort-by compare" "[(sort [3 1 2]) (sort > [3 1 2]) (sort-by - [3 1 2]) (sort-by :k [{:k 2} {:k 1}]) (compare [1 2] [1 3])]" ['(1 2 3) '(3 2 1) '(3 2 1) '({:k 1} {:k 2}) -1]]
    ["max-key min-key apply max" "[(max-key count \"a\" \"bbb\" \"cc\") (min-key count \"a\" \"bbb\") (apply max [1 5 3])]" ["bbb" "a" 5]]
    ["str keyword symbol name namespace" "[(str :a 1 \"b\" nil) (keyword \"ns\" \"n\") (symbol \"ns/n\") (name :ns/n) (namespace 'ns/n) (keyword 'x) (name \"s\")]" [":a1b" :ns/n 'ns/n "n" "ns" :x "s"]]

@@ -20,6 +20,7 @@
 #include <jank/runtime/obj/chunked_cons.hpp>
 #include <jank/runtime/obj/array_chunk.hpp>
 #include <jank/runtime/obj/cons.hpp>
+#include <jank/runtime/obj/lazy_sequence.hpp>
 #include <jank/runtime/obj/range.hpp>
 #include <jank/runtime/obj/number.hpp>
 #include <jank/runtime/obj/persistent_vector.hpp>
@@ -56,11 +57,15 @@ namespace cohost_rt {
     return n < 0 ? 0 : n;
   }
 
-  /* The stock chunk-cons ((chunk-cons (chunk b) rest) in map, filter, concat...): rest may be
-   * an unrealized lazy seq that turns out empty. The chunk's last element moves into a cons in
-   * front of rest, so the chunked_cons's tail is a cons (never empty; cons::next seqs its own
-   * tail) and nothing is forced: one element per chunk is walked as a cons. An empty chunk
-   * gives rest itself, as Clojure's chunk-cons does. */
+  /* The stock chunk-cons ((chunk-cons (chunk b) rest) in map, filter, concat...). A rest that is
+   * not an unrealized lazy seq (nil, a list, a vector, an already realized lazy seq) is seq'd
+   * here, which forces nothing new: the chunk stays whole, as Clojure's ChunkedCons keeps it.
+   * An unrealized lazy rest (the stock pipeline's own (map f (chunk-rest s))) may turn out
+   * empty, and apt's chunked_cons::next would hand it back raw: then the chunk's last element
+   * moves into a cons in front of the unrealized rest, so the chunked_cons's tail is a cons
+   * (never empty; cons::next seqs its own tail) and nothing is forced. The one difference a
+   * program can see: chunk-first of such a seq is one element short. An empty chunk gives rest
+   * itself, as Clojure's chunk-cons does. */
   inline object_ref chunk_cons(object_ref const chunk, object_ref const rest) {
     if(chunk.get_type() != object_type::array_chunk) {
       return jank::runtime::chunk_cons(chunk, rest);
@@ -68,6 +73,11 @@ namespace cohost_rt {
     auto const c(expect_object<obj::array_chunk>(chunk));
     auto const n(c->buffer.size() - c->offset);
     if(n == 0) { return rest; }
+    bool const unrealized_lazy{ rest.get_type() == object_type::lazy_sequence
+                                && expect_object<obj::lazy_sequence>(rest)->fn.is_some() };
+    if(!unrealized_lazy) {
+      return make_box<obj::chunked_cons>(chunk, rest.is_nil() ? rest : rest.seq());
+    }
     auto const tail(make_box<obj::cons>(c->buffer[c->offset + n - 1], rest));
     if(n == 1) { return tail; }
     jank::native_vector<object_ref> v(c->buffer.begin() + static_cast<long>(c->offset),
