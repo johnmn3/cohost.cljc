@@ -747,11 +747,16 @@
 ;; ---------------------------------------------------------------------------
 ;; Numbers
 
-(def Numbers-add +)
+;; (jank: where unpatched jank's + - * wrap at 32 bits, the adapter's checked
+;; i64 entries, A5; nil elsewhere, and on every other host these are the host's own)
+#?(:jank (def ^:private jank-int-arith
+           (fn [nm] (some-> (resolve (symbol "cohost.hosts.jank-host" nm)) var-get))))
+(def Numbers-add #?(:jank (or (jank-int-arith "num-add") +) :default +))
 (def Numbers-addP (host-fn '+' +))
-(def Numbers-minus (fn ([x] (- x)) ([x y] (- x y))))
+(def Numbers-minus #?(:jank (or (jank-int-arith "num-minus") (fn ([x] (- x)) ([x y] (- x y))))
+                      :default (fn ([x] (- x)) ([x y] (- x y)))))
 (def Numbers-minusP (host-fn '-' -))
-(def Numbers-multiply *)
+(def Numbers-multiply #?(:jank (or (jank-int-arith "num-multiply") *) :default *))
 (def Numbers-multiplyP (host-fn '*' *))
 ;; a double divided by zero is an infinity or NaN, as IEEE 754 and the JVM
 ;; say (jolt's / as a value and basilisp's Python division throw instead)
