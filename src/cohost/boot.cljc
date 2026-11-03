@@ -1353,7 +1353,7 @@
   (swap! state dissoc :profile :profile-bucket)
   (let [[_ report] (boot-setup! root)]
     (reset! snap-report report)
-    (swap! state assoc :snapshot-libs libs)
+    (swap! state assoc :snapshot-libs libs :core-libs libs)
     nil))
 
 (defn snap-take! "take-from-host! of nm, as the boot did." [nm]
@@ -1434,6 +1434,32 @@
   (let [outer (peek (::snap-outer @state))]
     (swap! state (fn [st] (-> st (assoc :loading outer) (update ::snap-outer pop)))))
   nil)
+
+(defn compile-lib!
+  "cohost's compile (D-10), as clojure.core/compile: lib and every library it
+   loads that is not the core snapshot's (the stock core and its twelve
+   libraries) are loaded again from source with record mode on, and the
+   recorded events kept in (:compiled-events @state): the CLI writes them to
+   the project's compiled-namespace directory when the run ends, and the
+   launcher compiles them into the host's modules there (jank objects,
+   Basilisp's .lpy and bytecode) before the command returns. Inside a run
+   that records already (a project's first run), lib just loads: that record
+   takes it once. -> lib."
+  [lib]
+  (let [lib (symbol (str lib))
+        core (conj (set (keys (:core-libs @state))) 'clojure.core)
+        project? (fn [[l _]] (not (contains? core l)))]
+    (swap! state assoc :compile-requested true)
+    (if @snapshot-log
+      (load-lib! lib)
+      (do (swap! state (fn [st] (-> st
+                                    (update :libs (fn [m] (into {} (remove project? m))))
+                                    (update :snapshot-libs (fn [m] (into {} (remove project? m)))))))
+          (snapshot-start!)
+          (try (load-lib! lib)
+               (finally
+                 (swap! state update :compiled-events (fn [ev] (into (or ev []) (snapshot-stop!))))))))
+    lib))
 
 (defn register-snapshot-libs!
   "A project snapshot's entry: {lib module} of its library modules, which

@@ -169,7 +169,17 @@
           held (when (fs/exists? lock) (str/trim (slurp lock)))]
       (cond
         (and (fs/exists? stamp) (= k (str/trim (slurp stamp))) (cache))
-        {:module-path (str (cache) ":" src ":" core-path) :project-snapshot "cohost.project"}
+        (let [events (str dir "/events.edn")]
+          (fs/delete-if-exists events)
+          ;; (compile 'ns) in this run writes events (and a marker): they
+          ;; compile now, before the command returns
+          {:module-path (str (cache) ":" src ":" core-path) :project-snapshot "cohost.project"
+           :compile-events events
+           :after-run (fn [] (when (fs/exists? (str events ".compile"))
+                               (fs/delete-if-exists (str events ".compile"))
+                               (binding [*out* *err*]
+                                 (println "cohost: jank: compiling what (compile ...) loaded")
+                                 (jank-project-build! repo dir core-path k env))))})
 
         (and (seq held) (pid-alive? held))
         (binding [*out* *err*] (println (str "cohost: jank: the project's namespaces are being compiled (" dir "/build.log); this run loads them from source")) nil)
@@ -181,7 +191,13 @@
           {:record-libs events
            :after-run
            (fn []
-             (when (fs/exists? events)
+             (cond
+               (fs/exists? (str events ".compile"))
+               (do (fs/delete-if-exists (str events ".compile"))
+                   (binding [*out* *err*]
+                     (println "cohost: jank: compiling what (compile ...) loaded")
+                     (jank-project-build! repo dir core-path k env)))
+               (fs/exists? events)
                (let [proc (p/process {:dir repo :out (java.io.File. (str dir "/build.log")) :err :out :in nil
                                       :extra-env env}
                                      "nice" "-n" "10" "bb" "-e"

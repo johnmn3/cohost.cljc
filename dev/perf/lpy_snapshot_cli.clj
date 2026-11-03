@@ -95,7 +95,15 @@
           held (when (fs/exists? lock) (str/trim (slurp lock)))]
       (cond
         (and (fs/exists? stamp) (= k (str/trim (slurp stamp))))
-        {:paths [(str dir "/src")] :project-snapshot "cohost.project"}
+        (let [events (str dir "/events.edn")]
+          (fs/delete-if-exists events)
+          {:paths [(str dir "/src")] :project-snapshot "cohost.project"
+           :compile-events events
+           :after-run (fn [] (when (fs/exists? (str events ".compile"))
+                               (fs/delete-if-exists (str events ".compile"))
+                               (binding [*out* *err*]
+                                 (println "cohost: lpy: compiling what (compile ...) loaded")
+                                 (lpy-project-build! repo dir core-src k))))})
 
         (and (seq held) (pid-alive? held))
         (binding [*out* *err*] (println (str "cohost: lpy: the project's namespaces are being compiled (" dir "/build.log); this run loads them from source")) nil)
@@ -107,12 +115,17 @@
           {:record-libs events
            :after-run
            (fn []
+             (if (fs/exists? (str events ".compile"))
+               (do (fs/delete-if-exists (str events ".compile"))
+                   (binding [*out* *err*]
+                     (println "cohost: lpy: compiling what (compile ...) loaded")
+                     (lpy-project-build! repo dir core-src k)))
              (when (and (fs/exists? events)
                         (start-background! repo lock (str dir "/build.log")
                                            (str "(load-file " (pr-str (str repo "/dev/perf/lpy_snapshot_cli.clj")) ")"
                                                 "(lpy-project-build! " (pr-str repo) " " (pr-str dir) " " (pr-str core-src) " " (pr-str k) ")")))
                (binding [*out* *err*]
-                 (println (str "cohost: lpy: compiling the project's namespaces in the background for the next run (" dir "/build.log)")))))})))))
+                 (println (str "cohost: lpy: compiling the project's namespaces in the background for the next run (" dir "/build.log)"))))))})))))
 
 (defn lpy-prepare!
   "cohost :lpy -P: the cached core when stale (foreground), then the project's

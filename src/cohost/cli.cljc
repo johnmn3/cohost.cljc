@@ -209,6 +209,9 @@ namespace cohost_io {
     ;; project's namespaces compiled ahead, bin/cohost's jank launch): its
     ;; libraries load from their modules
     (when-let [m (:project-snapshot cfg)] (host/require-host! (symbol m)))
+    ;; compile (D-10): cohost's, which records what it loads for the
+    ;; launcher to compile, in place of the host's
+    (host/intern! boot/core-ns 'compile boot/compile-lib!)
     ;; clojure.main's namespace: user, seeing the stock core (a session
     ;; starts in cohost.user, and moves there)
     (boot/make-user-ns!)
@@ -219,9 +222,16 @@ namespace cohost_io {
     ;; ends; the launcher compiles them after the run, so the next run loads
     ;; them compiled
     (when (:record-libs cfg) (boot/snapshot-start!))
-    (let [code (run-cli! cfg)]
-      (when-let [p (:record-libs cfg)]
-        (host/try-all (fn [] (host/spit-file p (pr-str (boot/snapshot-stop!)))) (fn [_] nil)))
+    (let [code (run-cli! cfg)
+          recorded (when (:record-libs cfg) (boot/snapshot-stop!))
+          ;; (compile 'ns) -- D-10: its events, for the launcher to compile
+          ;; now (the marker asks it to before the command returns)
+          compiled (:compiled-events @boot/state)]
+      (when-let [p (or (:record-libs cfg) (:compile-events cfg))]
+        (when (or (seq recorded) (seq compiled))
+          (host/try-all (fn [] (host/spit-file p (pr-str (vec (concat recorded compiled))))
+                          (when (:compile-requested @boot/state) (host/spit-file (str p ".compile") "compile\n")))
+                        (fn [_] nil))))
       (exit! code))))
 
 #?(:cljs (set! *main-cli-fn* -main))
