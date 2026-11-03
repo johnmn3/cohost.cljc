@@ -1741,7 +1741,8 @@ nil))
 ;; A5-8: which literal-started loop* locals stay native longs. A recur of this loop (not one
 ;; inside a nested loop*/loop/fn*/fn/letfn*, nor quoted) must pass, in each such local's
 ;; position, an int-safe form: an integer literal, one of the candidate locals or an outer
-;; native long, a stock + - * inc dec of int-safe forms, or an if whose branches both are.
+;; native long, a stock + - * inc dec (or unchecked-inc / -dec / -add / -subtract / -multiply /
+;; -negate: longs too, dotimes' step) of int-safe forms, or an if whose branches both are.
 ;; A local whose recur passes anything else (a double: (recur (+ x 0.5)); a call result)
 ;; stays boxed, as Clojure's would be. Iterated to a fixpoint: dropping one local can make
 ;; another's recur argument unsafe.
@@ -1768,7 +1769,9 @@ nil))
                           (cond (= n "if") (and (nil? (namespace h)) (= 4 (count x))
                                                 (int-safe? natives (nth x 2)) (int-safe? natives (nth x 3)))
                                 (contains? #{nil "clojure.core" "cohost.core"} (namespace h))
-                                (and (contains? #{"+" "-" "*" "inc" "dec"} n)
+                                (and (contains? #{"+" "-" "*" "inc" "dec" "unchecked-inc" "unchecked-dec"
+                                                  "unchecked-add" "unchecked-subtract" "unchecked-multiply"
+                                                  "unchecked-negate"} n)
                                      (seq (rest x))
                                      (every? #(int-safe? natives %) (rest x)))
                                 :else false))))
