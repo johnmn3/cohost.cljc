@@ -621,11 +621,19 @@ namespace cohost_err {
 (defn slurp-file [path] ((cap :slurp) path))
 (defn spit-file [path s] ((cap :spit) path s))
 (defn read-forms
-  "cb of each top-level form of src, read as the JVM reads a .cljc: cohost.scan
-   resolves its reader conditionals (:clj, else :default) before the host's
-   reader sees the text, so every host takes the branch the JVM takes."
-  [src cb]
-  ((cap :read-forms) (if (neg? ((cap :index-of) src "#?" 0)) src (scan/resolve-conditionals src #{":clj"})) cb))
+  "cb of each top-level form of src. cohost.scan resolves its reader
+   conditionals before the host's reader sees the text, by this target's
+   ranking of the platform keys (cohost.scan/rankings; :clj, then :default,
+   on every target today), so every host takes the same branch whatever its
+   own reader would. path (when src is a file's) is where it came from: while
+   a form is read, cohost.scan/provenance says which key's code it is."
+  ([src cb] (read-forms src cb nil))
+  ([src cb path]
+   (let [[text spans] (if (neg? ((cap :index-of) src "#?" 0))
+                        [src []]
+                        (scan/resolve-conditionals+spans src (scan/ranking (:name (current)))))]
+     (scan/with-source text spans path
+       (fn [tick] ((cap :read-forms) text (fn [form] (tick) (cb form))))))))
 (defn read-string* ([s] ((cap :read-string) s)) ([s opts] ((cap :read-string) s opts)))
 (defn plain-symbol "x, a name taken from a form: the bare symbol (adapter :plain-symbol)." [x] ((cap :plain-symbol) x))
 (defn host-read-string [s] (if-let [f (get @installed :host-read-string)] (f s) (read-string* s)))

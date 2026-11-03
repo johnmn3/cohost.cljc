@@ -96,6 +96,8 @@ namespace cohost_io {
                        (= 10 (aget buf 0)) (text acc)
                        :else (recur (conj acc (aget buf 0)))))))
      :phel (let [l (php/fgets php/STDIN)] (if (= l false) nil (php/rtrim l "\r\n")))
+     ;; basilisp's read-line does not answer nil at the end of input
+     :lpy (try (python/input) (catch python/EOFError _ nil))
      ;; jank 0.1's read-line throws "TODO: port read-line"
      :jank (cpp/cohost_io.read_line)
      :default (read-line)))
