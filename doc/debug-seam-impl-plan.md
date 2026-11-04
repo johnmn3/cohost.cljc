@@ -136,10 +136,8 @@ this plan then improves).
 
 ## Status
 
-- 2026-11-04 -- U2 DONE (this branch). Checks: jvm REPL probe through
-  cohost.cli on the JVM host -- (+ 1 2) => 3, *1 => 3, (+ 10 20) => 30,
-  *2 => 3, thrown ex-info sets *e (its #error print shows :cause "boom"),
-  no shift on error. Jank: not yet run (the jank REPL probe rides the
-  runner gate on j). Battery/libraries: unchanged code paths for the
-  battery; full numbers taken at the runner gate. Checks passing: jvm
-  #7 (and the *e half of #6); jank 0/14 measured so far.
+Reports live on atom.broker branch `muse/cohost-reports`,
+`docs/cohost/debug-seam/REPORTS.md` (private; this repo is public).
+This section keeps only the sha and the gate line per unit.
+
+- U2 @ 892637d -- jvm 1/14 (#5 REPL vars, probed); jank unmeasured.
