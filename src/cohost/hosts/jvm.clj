@@ -67,7 +67,11 @@
    ;; shim's ex-ctor, the booted core's ex-info fn) -- elide them so the
    ;; first frame is the caller's, as for a directly constructed exception
    :ex-trace (fn [e]
-               (let [ctor-frame? (fn [^StackTraceElement el]
+               ;; not an exception (a shim Thread is a state atom, e.g.):
+               ;; it has no trace, and must not be cast to one
+               (if-not (instance? Throwable e)
+                 []
+                 (let [ctor-frame? (fn [^StackTraceElement el]
                                    (let [c (.getClassName el)]
                                      (or (.startsWith c "cohost.shim$")
                                          (.startsWith c "cohost.adapter$")
@@ -83,7 +87,7 @@
                  (mapv (fn [^StackTraceElement el]
                          [(symbol (.getClassName el)) (symbol (.getMethodName el))
                           (.getFileName el) (.getLineNumber el)])
-                       (drop-while ctor-frame? (.getStackTrace ^Throwable e)))))
+                       (drop-while ctor-frame? (.getStackTrace ^Throwable e))))))
    :nano-time (fn [] (System/nanoTime))
    :current-time-millis (fn [] (System/currentTimeMillis))
    :math-ceil (fn [x] (Math/ceil x))
