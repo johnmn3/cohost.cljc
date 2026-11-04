@@ -20,7 +20,8 @@
 ;; jank's static runtime links every module it was compiled with. It cannot
 ;; eval or load code that was not in the build (no JIT in the static runtime).
 (ns cohost.build-jank
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]))
 
@@ -78,16 +79,35 @@
    "dev/perf/jank_snapshot_run.jank" "dev/perf/jank_aot_ensure.clj"
    "src/cohost/build_jank.clj"])
 
+(defn- project-cpp
+  "The project's :cpp key in its deps.edn -- the build key for an app whose
+   C++ half needs more than the cpp/raw blocks in its sources:
+     :cpp {:include-dirs [\"cpp/vendor/uWebSockets/src\" ...]
+           :sources      [\"cpp/vendor/uSockets/src/bsd.c\" ...]
+           :libs         [\"z\" ...]}
+   Paths are relative to the project. -> {:dirs [abs ...] :sources [abs ...]
+   :libs [name ...]}, or nil when the project has no :cpp key."
+  [project]
+  (let [f (io/file project "deps.edn")]
+    (when (.exists f)
+      (when-let [cpp (:cpp (edn/read-string {:default tagged-literal} (slurp f)))]
+        {:dirs (mapv #(abs project %) (:include-dirs cpp))
+         :sources (mapv #(abs project %) (:sources cpp))
+         :libs (vec (:libs cpp))}))))
+
 (defn input-key
   "One sha256 over every input of the executable."
-  [{:keys [repo roots main name]}]
+  [{:keys [repo roots main name project]}]
   (let [repo-files (concat (files-under (abs repo "resources/cohost/clojure-1.12.0"))
                            (files-under (abs repo "src/cohost"))
                            (map #(abs repo %) snapshot-scripts))
         root-files (mapcat files-under roots)
+        cpp (when project (project-cpp project))
+        cpp-files (when cpp (concat (:sources cpp) (mapcat files-under (:dirs cpp))))
         version (str/trim (sh! repo {} (jank-bin) "print-binary-version"))]
-    (sha256 (str/join "\n" (concat (map #(str % " " (file-sha %)) (concat repo-files root-files))
-                                   [(str "jank " version) (str "main " main) (str "name " name)])))))
+    (sha256 (str/join "\n" (concat (map #(str % " " (file-sha %)) (concat repo-files root-files cpp-files))
+                                   [(str "jank " version) (str "main " main) (str "name " name)
+                                    (when cpp (str "cpp " cpp))])))))
 
 (defn build!
   "Build (when stale) the executable of the app whose -main is in main.
@@ -124,9 +144,30 @@
         ;; 3. the modules and the entry
         (log (last (str/split-lines (sh! repo {} "bb" (abs repo "dev/perf/jank_snapshot_emit.clj")
                                           "--events" events "--out" src "--main" (str main)))))
-        ;; 4. one executable
-        (sh! repo gc (jank-bin) "-O3" "--module-path" (str src ":" (abs repo "src")) "compile" "cohost.app-main"
-              "--runtime" "static" "--name" name "--target-dir" target)
+        ;; 3.5 the project's :cpp sources, compiled and archived for the link
+        (let [cpp (project-cpp project)
+              cpp-flags (when cpp
+                          (let [objs (mapv (fn [i s]
+                                             (let [o (abs work (str "cpp" i ".o"))
+                                                   cc (if (str/ends-with? s ".c")
+                                                        (or (System/getenv "CC") "cc")
+                                                        (or (System/getenv "CXX") "c++"))]
+                                               (apply sh! work {} cc "-O3"
+                                                      (concat (mapcat (fn [d] ["-I" d]) (:dirs cpp))
+                                                              (when-not (str/ends-with? s ".c") ["-std=c++17"])
+                                                              ["-c" s "-o" o]))
+                                               o))
+                                           (range) (:sources cpp))
+                                lib (abs work "libcpp.a")]
+                            (apply sh! work {} "ar" "rcs" lib objs)
+                            (log "JANK-EXE-CPP" lib (count objs) "objects")
+                            (concat (mapcat (fn [d] ["-I" d]) (:dirs cpp))
+                                    ["-L" work "-l" "cpp"]
+                                    (mapcat (fn [l] ["-l" l]) (:libs cpp)))))]
+          ;; 4. one executable
+          (apply sh! repo gc (jank-bin) "-O3" "--module-path" (str src ":" (abs repo "src")) "compile" "cohost.app-main"
+                 "--runtime" "static" "--name" name "--target-dir" target
+                 (or cpp-flags [])))
         (when-not (.exists (io/file exe))
           (throw (ex-info (str "cohost.build-jank: jank compile wrote no " exe) {})))
         (spit stamp (str k "\n"))
