@@ -142,3 +142,4 @@ This section keeps only the sha and the gate line per unit.
 
 - U2 @ 892637d -- jvm 1/14 (#5 REPL vars, probed); jank unmeasured.
 - U1 @ 2dc8a9c -- jvm 2/14 (#1 report parity probed, #5); jank unmeasured.
+- U8 @ 3003aec -- jvm 2/14 (#1 with stock names in frames, #5); jank unmeasured.
