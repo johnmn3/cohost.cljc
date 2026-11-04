@@ -1,0 +1,5 @@
+(defn inner [x] (throw (ex-info "r" {:x x})))
+(inner 5)
+*e
+(+ 1 2)
+*1

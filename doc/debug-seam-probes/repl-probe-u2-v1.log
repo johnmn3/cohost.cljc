@@ -1,0 +1,10 @@
+cohost: building jank's core snapshot and launcher (once per cohost update: 11 minutes measured on a busy Linux box; log: target/jank-snapshot.log) ...
+cohost: jank's core snapshot is built (507 s); next commands start in about 2 s
+Clojure 1.12.0
+user=> #'user/inner
+user=> Execution error (ExceptionInfo).
+r
+user=> nil
+user=> 3
+user=> nil
+user=> 
