@@ -64,6 +64,18 @@
   (when-let [v (host/interned-var boot/core-ns 'ex-data)]
     (host/try-all (fn [] ((host/var-root v) e)) (fn [_] nil))))
 
+(defn- display-frame
+  "A trace frame as reports show it: its class under the display name
+   (U8: a booted stock library's frames read clojure.*, not cohost.*)."
+  [frame]
+  (assoc frame 0 (shim/display-class-name (first frame))))
+
+(defn- display-symbol
+  [sym]
+  (if-let [ns (namespace sym)]
+    (symbol (str (shim/display-class-name (symbol ns))) (name sym))
+    sym))
+
 (defn- throwable->map
   "clojure.main's datafied throwable, built over adapter data: :via walks
    the cause chain outermost first (at most 8), each entry's :type from
@@ -81,12 +93,12 @@
                       (cond-> {:type (host/try-all (fn [] (shim/class-of x))
                                                    (fn [_] 'java.lang.Exception))
                                :message (host/exception-message x)
-                               :at (first (host/ex-trace x))}
+                               :at (when-let [f (first (host/ex-trace x))] (display-frame f))}
                         (some? d) (assoc :data d))))
                   chain)
         data (:data (first via))]
     {:via via
-     :trace (host/ex-trace e)
+     :trace (mapv display-frame (host/ex-trace e))
      :cause (peek via)
      :data data
      :phase (get data :clojure.error/phase :execution)}))
@@ -159,7 +171,7 @@
          (cond-> top-data
            line (assoc :clojure.error/line line)
            file (assoc :clojure.error/source file)
-           (and fsource fmethod) (assoc :clojure.error/symbol (java-loc->source fsource fmethod))
+           (and fsource fmethod) (assoc :clojure.error/symbol (display-symbol (java-loc->source fsource fmethod)))
            type (assoc :clojure.error/class type)
            message (assoc :clojure.error/cause message)))
 
@@ -171,7 +183,7 @@
          (cond-> {:clojure.error/class type}
            err-line (assoc :clojure.error/line err-line)
            message (assoc :clojure.error/cause message)
-           (or sfn (and fsource fmethod)) (assoc :clojure.error/symbol (or sfn (java-loc->source fsource fmethod)))
+           (or sfn (and fsource fmethod)) (assoc :clojure.error/symbol (or sfn (display-symbol (java-loc->source fsource fmethod))))
            file (assoc :clojure.error/source file)
            problems (assoc :clojure.error/spec data))))
      :clojure.error/phase phase)))

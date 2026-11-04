@@ -340,6 +340,26 @@
 
 (declare Charset?)
 
+(def ^:private stock-lib-names
+  ;; the booted stock libraries: their classes are cohost's codemod homes
+  ;; (cohost.core, cohost.string, ...) over the stock sources
+  #{"core" "core.protocols" "string" "set" "walk" "zip" "data" "edn"
+    "math" "repl" "stacktrace" "template" "test" "spec.alpha" "spec.gen.alpha"})
+
+(defn display-class-name
+  "A class token as reports display it: a booted stock library's class
+   shows under its clojure.* name (cohost.core$map -> clojure.core$map,
+   cohost.core -> clojure.core); cohost's own namespaces (shim, boot,
+   adapter, cli) and all other classes keep their names."
+  [class]
+  (let [s (str class)
+        dollar (h-index-of s "$" 0)
+        head (if (neg? dollar) s (subs s 0 dollar))]
+    (if (and (> (count head) 7) (= (subs head 0 7) "cohost.")
+             (contains? stock-lib-names (subs head 7)))
+      (symbol (str "clojure." (subs head 7) (if (neg? dollar) "" (subs s dollar))))
+      class)))
+
 (defn class-of
   "The JVM class token (a symbol) of a host value."
   [x]
@@ -2657,7 +2677,7 @@
 (def -setStackTrace (fn [e _trace] e))
 ;; a frame is the adapter's [class method file line] vector; the accessors
 ;; read its slots, as java.lang.StackTraceElement's do
-(def -getClassName (fn [frame] (str (nth frame 0))))
+(def -getClassName (fn [frame] (str (display-class-name (nth frame 0)))))
 (def -getMethodName (fn [frame] (str (nth frame 1))))
 (def -getFileName (fn [frame] (nth frame 2)))
 (def -getLineNumber (fn [frame] (nth frame 3)))
