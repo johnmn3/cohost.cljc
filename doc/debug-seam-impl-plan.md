@@ -133,3 +133,13 @@ a coordinator report per unit. The 14 checklist items run in full at
 the end (they are also the capstone's close-out validations — the
 capstone validates the *current* seam and records the same numbers
 this plan then improves).
+
+## Status
+
+- 2026-11-04 -- U2 DONE (this branch). Checks: jvm REPL probe through
+  cohost.cli on the JVM host -- (+ 1 2) => 3, *1 => 3, (+ 10 20) => 30,
+  *2 => 3, thrown ex-info sets *e (its #error print shows :cause "boom"),
+  no shift on error. Jank: not yet run (the jank REPL probe rides the
+  runner gate on j). Battery/libraries: unchanged code paths for the
+  battery; full numbers taken at the runner gate. Checks passing: jvm
+  #7 (and the *e half of #6); jank 0/14 measured so far.

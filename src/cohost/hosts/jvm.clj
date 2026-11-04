@@ -47,6 +47,7 @@
    :namespace? (fn [x] (instance? clojure.lang.Namespace x))
    :var-bound? (fn [v] (bound? v))
    :var-thread-bound? (fn [v] (thread-bound? v))
+   :var-set! (fn [v val] (.set ^clojure.lang.Var v val))
    ;; the JVM's natives are JVM Clojure's own fns, the stock ones compiled:
    ;; the shared set and what jolt answers otherwise
    :natives (merge java/natives

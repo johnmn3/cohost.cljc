@@ -136,27 +136,44 @@ namespace cohost_io {
             (contains? #{" " "\n" "\t" "\r" ","} c) (recur (inc i) depth false form?)
             :else (recur (inc i) depth false true)))))))
 
-(defn- repl-var!
-  "Set a REPL state var (*1 *2 *3 *e) in the booted core, as clojure.main's
-   REPL maintains them. The root is set: the driver's own var-set! would
-   land in whatever binding frame the current call happens to run in, and
-   the session's later forms read the root. Best effort per host -- a host
-   that cannot set them keeps the old REPL behavior."
-  [sym v]
-  (host/try-all
-   (fn [] (when-let [h (host/interned-var boot/core-ns sym)] (host/set-var-root! h (fn [_] v))))
-   (fn [_] nil)))
+(def ^:private repl-vars
+  ;; The booted core's *1 *2 *3 *e var handles, fetched once (lazily, on the
+  ;; first REPL): the values of one eval in the session's user namespace.
+  (atom nil))
+
+(defn- repl-var-handles! []
+  (or @repl-vars
+      (reset! repl-vars
+              (host/try-all
+               (fn [] (boot/eval-str "[#'*1 #'*2 #'*3 #'*e]" {:session? false}))
+               (fn [_] nil)))))
+
+(defn- repl-set!
+  "Set one REPL state var the way clojure.main does: the thread binding
+   when this host thread-binds it (the JVM host does, under clojure.main),
+   else its root. Hosts with neither are a no-op (try-all)."
+  [h v]
+  (when h
+    (host/try-all
+     (fn [] (if (host/var-thread-bound? h)
+              (host/var-set! h v)
+              (host/set-var-root! h (fn [_] v))))
+     (fn [_] nil))))
 
 (defn- repl-shift!
-  "clojure.main's REPL bookkeeping after a form evaluates to v: *1 is the
-   last value, *2 and *3 the ones before it."
+  "clojure.main's REPL bookkeeping after a form evaluates to v: *3 takes
+   *2's value, *2 takes *1's, *1 takes v."
   [v]
-  (let [get (fn [sym] (host/try-all
-                       (fn [] (when-let [h (host/interned-var boot/core-ns sym)] (host/var-root h)))
-                       (fn [_] nil)))]
-    (repl-var! '*3 (get '*2))
-    (repl-var! '*2 (get '*1))
-    (repl-var! '*1 v)))
+  (when-let [[v1 v2 v3 _] (repl-var-handles!)]
+    (repl-set! v3 (host/try-all (fn [] (host/var-root v2)) (fn [_] nil)))
+    (repl-set! v2 (host/try-all (fn [] (host/var-root v1)) (fn [_] nil)))
+    (repl-set! v1 v)))
+
+(defn- repl-error!
+  "After a form throws in the REPL: *e takes the exception; no shift."
+  [e]
+  (when-let [[_ _ _ ve] (repl-var-handles!)]
+    (repl-set! ve e)))
 
 (defn- repl!
   "clojure.main's REPL, a line at a time: a prompt, lines read until they
@@ -175,7 +192,7 @@ namespace cohost_io {
             (let [last-ns (atom ns)]
               (host/try-all
                (fn [] (boot/eval-str buf {:on-value (fn [v n] (stock-prn v) (repl-shift! v) (reset! last-ns n))}))
-               (fn [e] (repl-var! '*e e) (report-error! e)))
+               (fn [e] (repl-error! e) (report-error! e)))
               (recur "" true @last-ns))
             (recur buf false ns)))))))
 
