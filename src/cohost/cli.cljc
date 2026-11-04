@@ -136,6 +136,28 @@ namespace cohost_io {
             (contains? #{" " "\n" "\t" "\r" ","} c) (recur (inc i) depth false form?)
             :else (recur (inc i) depth false true)))))))
 
+(defn- repl-var!
+  "Set a REPL state var (*1 *2 *3 *e) in the booted core, as clojure.main's
+   REPL maintains them. The root is set: the driver's own var-set! would
+   land in whatever binding frame the current call happens to run in, and
+   the session's later forms read the root. Best effort per host -- a host
+   that cannot set them keeps the old REPL behavior."
+  [sym v]
+  (host/try-all
+   (fn [] (when-let [h (host/interned-var boot/core-ns sym)] (host/set-var-root! h (fn [_] v))))
+   (fn [_] nil)))
+
+(defn- repl-shift!
+  "clojure.main's REPL bookkeeping after a form evaluates to v: *1 is the
+   last value, *2 and *3 the ones before it."
+  [v]
+  (let [get (fn [sym] (host/try-all
+                       (fn [] (when-let [h (host/interned-var boot/core-ns sym)] (host/var-root h)))
+                       (fn [_] nil)))]
+    (repl-var! '*3 (get '*2))
+    (repl-var! '*2 (get '*1))
+    (repl-var! '*1 v)))
+
 (defn- repl!
   "clojure.main's REPL, a line at a time: a prompt, lines read until they
    hold whole forms, each form's value printed (the forms of one line under
@@ -152,8 +174,8 @@ namespace cohost_io {
           (if (complete? buf)
             (let [last-ns (atom ns)]
               (host/try-all
-               (fn [] (boot/eval-str buf {:on-value (fn [v n] (stock-prn v) (reset! last-ns n))}))
-               (fn [e] (report-error! e)))
+               (fn [] (boot/eval-str buf {:on-value (fn [v n] (stock-prn v) (repl-shift! v) (reset! last-ns n))}))
+               (fn [e] (repl-var! '*e e) (report-error! e)))
               (recur "" true @last-ns))
             (recur buf false ns)))))))
 
