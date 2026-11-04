@@ -77,12 +77,12 @@
                 (if (:help options)
                   (println summary)
                   (try (native/serve! (:port options))
-                       (catch ExceptionInfo e (println (ex-message e))))))
+                       (catch clojure.lang.ExceptionInfo e (println (ex-message e))))))
       "bench" (let [{:keys [options summary]} (cli/parse-opts more bench-spec)]
                 (if (:help options)
                   (println summary)
                   (try (println (run-bench options))
-                       (catch ExceptionInfo e (println (ex-message e))))))
+                       (catch clojure.lang.ExceptionInfo e (println (ex-message e))))))
       (do (println "httpbench needs jank")
           (println "usage: httpbench serve --port P | httpbench bench --url URL --requests N --concurrency C [--json]")))))
 

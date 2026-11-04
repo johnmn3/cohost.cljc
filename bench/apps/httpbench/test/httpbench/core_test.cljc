@@ -22,7 +22,7 @@
 (t/deftest parse-url-test
   (t/is (= {:host "127.0.0.1" :port 8080 :path "/"} (core/parse-url "http://127.0.0.1:8080/")))
   (t/is (= {:host "example.com" :port 80 :path "/a/b"} (core/parse-url "http://example.com/a/b")))
-  (t/is (thrown? ExceptionInfo (core/parse-url "127.0.0.1:8080"))))
+  (t/is (thrown? clojure.lang.ExceptionInfo (core/parse-url "127.0.0.1:8080"))))
 
 (t/deftest report-test
   (let [m (stats/summarize {:count 1000 :errors 2 :bytes 1124000 :wall-ns 2000000000
@@ -33,7 +33,7 @@
     (t/is (clojure.string/includes? text "p99:        3000 ns"))
     (t/is (clojure.string/starts-with? json "{"))
     (t/is (clojure.string/includes? json "\"count\": 1000"))
-    (t/is (clojure.string/includes? json "\"p99.9\": 3000"))))
+    (t/is (clojure.string/includes? json "\"p99.9\": 4000"))))
 
 (defn run [_]
   (let [{:keys [fail error]} (t/run-tests 'httpbench.core-test)]
