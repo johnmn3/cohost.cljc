@@ -62,6 +62,28 @@
                    :chunk-reduce (fn [c f init] (.reduce ^clojure.lang.IChunk c f init))})
    :delay (fn [f] (clojure.lang.Delay. f))
    :exception? (fn [x] (instance? Throwable x))
+   ;; the trace as data; the head frames of a shim-constructed exception
+   ;; are the construction machinery itself (the adapter's ex-info, the
+   ;; shim's ex-ctor, the booted core's ex-info fn) -- elide them so the
+   ;; first frame is the caller's, as for a directly constructed exception
+   :ex-trace (fn [e]
+               (let [ctor-frame? (fn [^StackTraceElement el]
+                                   (let [c (.getClassName el)]
+                                     (or (.startsWith c "cohost.shim$")
+                                         (.startsWith c "cohost.adapter$")
+                                         (.startsWith c "cohost.core$ex_info")
+                                         ;; the apply machinery the construction
+                                         ;; was reached through (a directly
+                                         ;; constructed exception's trace starts
+                                         ;; at its caller instead)
+                                         (= c "clojure.lang.AFn")
+                                         (= c "clojure.lang.RestFn")
+                                         (= c "clojure.lang.Var")
+                                         (.startsWith c "clojure.core$apply"))))]
+                 (mapv (fn [^StackTraceElement el]
+                         [(symbol (.getClassName el)) (symbol (.getMethodName el))
+                          (.getFileName el) (.getLineNumber el)])
+                       (drop-while ctor-frame? (.getStackTrace ^Throwable e)))))
    :nano-time (fn [] (System/nanoTime))
    :current-time-millis (fn [] (System/currentTimeMillis))
    :math-ceil (fn [x] (Math/ceil x))

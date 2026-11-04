@@ -153,6 +153,7 @@
    :double-str      [['d] "Double.toString of a double as the JVM writes it (3.0E10, 1.0E-4, 0.001), or nil (the default) when the host's str already does"]
    :exception-message [['e] "Throwable.getMessage: e's message, nil when it has none (default: ex-message)"]
    :exception-cause [['e] "Throwable.getCause (default: ex-cause)"]
+   :ex-trace        [['e] "the exception's stack as data: a vector of [class method file line] frames, class a symbol naming the class as the JVM names it (ns$fn, munged), method a symbol ('invoke for a Clojure fn frame), file a string or nil, line an integer; [] (the default) where the host has no trace"]
    ;; host facts
    :nano-time       [[] "System/nanoTime: a monotonic clock, in nanoseconds"]
    :current-time-millis [[] "System/currentTimeMillis"]
@@ -480,6 +481,7 @@ namespace cohost_err {
     :double-str nil
     :exception-message (fn [e] (ex-message e))
     :exception-cause (fn [e] (ex-cause e))
+    :ex-trace (fn [_e] [])
     :to-array (fn [coll] (to-array coll))
     :sort-array! (unsupported :sort-array!)
     :array? nil
@@ -783,6 +785,7 @@ namespace cohost_err {
 (defn ex-info? "An ExceptionInfo as user code sees one (not one of the shim's stand-ins)." [x] (boolean ((cap :ex-info?) x)))
 (defn exception-message [e] ((cap :exception-message) e))
 (defn exception-cause [e] ((cap :exception-cause) e))
+(defn ex-trace [e] ((cap :ex-trace) e))
 
 ;; java.util.Iterator: the host's own where it has one, else the stand-in
 (defn iter "A java.util.Iterator over coll." [coll] (or ((cap :iterator) coll) (->Iter (atom (seq coll)))))

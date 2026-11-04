@@ -2278,6 +2278,30 @@ namespace cohost_assoc {
            ["Numbers-minus" 'cpp/jank.runtime.sub]
            ["Numbers-multiply" 'cpp/jank.runtime.mul]])))
 
+;; :ex-trace: jank's exception_info carries its cpptrace as data through
+;; its own to_map ({:cause :data :via :trace}); the frames there are
+;; [fn-name-string file line], demunged display names already.
+(cpp/raw "
+namespace cohost_err {
+  using namespace jank::runtime;
+  inline object_ref ex_map(object_ref e) {
+    auto *ei = dynamic_object_cast<obj::exception_info>(e);
+    if (ei == nullptr) { return make_box<obj::nil>(); }
+    return ei->to_map();
+  }
+}
+")
+
+(defn- frame-class
+  "A cpptrace display name (\"boom3/inner (arity 1)\") as the munged class
+   symbol the trace contract names (boom3$inner)."
+  [fname]
+  (let [s (str fname)
+        s (string/replace s #" \(arity \d+\)$" "")
+        cut (string/index-of s "--")
+        s (if cut (subs s 0 cut) s)]
+    (symbol (string/replace (string/replace s "-" "_") "/" "$"))))
+
 (def adapter
   {:name :jank
    ;; a thrown jank value no cohost type made: jank's checked integer ops throw
@@ -2624,6 +2648,13 @@ namespace cohost_assoc {
               ([msg m cause] (ex-info (or msg "") (if (nil? msg) (assoc m :cohost/nil-message true) m) cause)))
    :exception-message (fn [e] (let [d (ex-data e)]
                                 (if (and (map? d) (:cohost/nil-message d)) nil (ex-message e))))
+   ;; frames from the error's own :trace (see cohost_err above): each
+   ;; [name file line] becomes [class 'invoke file line]
+   :ex-trace (fn [e] (let [m (cpp/cohost_err.ex_map e)]
+                       (if (nil? m)
+                         []
+                         (mapv (fn [[fname file line]] [(frame-class fname) 'invoke file line])
+                               (:trace m)))))
    ;; StringBuilder as a cohost type (sb-desc above)
    :string-builder (fn [] (new-instance sb-desc [(atom [])]))
    :sb? (fn [x] (identical? sb-desc (instance-desc x)))

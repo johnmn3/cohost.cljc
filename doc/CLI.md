@@ -119,8 +119,12 @@ source root:
   not ranked is never taken; a `#?` with no ranked branch reads as nothing.
   `#?@` splices the chosen branch the same way. The same ranking picks the file
   when a namespace has several: `foo.clj` before `foo.cljc`.
-- **An error** prints `Execution error (Class).` and its message to stderr and
-  ends the run with exit code 1; `-X` of a missing fn prints tools.deps'
+- **An error** is reported as clojure.main reports it: the triaged message
+  (`Execution error (ExceptionInfo) at user/boom (REPL:1).` and the cause) to
+  stderr, and a full report at `<tmpdir>/cohost-<millis>-<n>.edn` holding
+  `{:clojure.main/message :clojure.main/triage :clojure.main/trace}`;
+  `COHOST_MAIN_REPORT=stderr|none` chooses the target instead. The run ends
+  with exit code 1; `-X` of a missing fn prints tools.deps'
   `Namespace x loaded but function not found: f`. Exit codes propagate.
 - `-J` options are dropped; `-Sdescribe` and `-T` (tools, JVM programs) run the
   real CLI; `-Spath` prints the source roots; `-P` resolves and extracts only.
@@ -258,8 +262,11 @@ re-run on these fixes and matched the earlier numbers.
 
 ## Where it differs from `clojure`
 
-- **The error report** names the class and message, not where it was thrown,
-  and writes no full report file. A namespace that is nowhere on the roots gives
+- **The error report** is clojure.main's (message, triage, report file);
+  two pieces are thinner: on a host with no stack trace the report's
+  `:trace` is empty, and a spec error prints its cause rather than
+  spec's explain text (the explain-data is in the report file). A
+  namespace that is nowhere on the roots gives
   the host's own message ("Could not locate nope/ns.jolt …").
 - **Names print under `cohost.*`**: `#'clojure.core/map` prints
   `#'cohost.core/map`, as everywhere in cohost (doc/REPORT.md).

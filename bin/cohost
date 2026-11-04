@@ -396,6 +396,8 @@
                 jank (case host "jank" (jank-launch cwd roots run) "lpy" (lpy-launch) nil)]
             (fs/create-dirs (fs/parent cfg-file))
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
+                                               :report-dir (System/getProperty "java.io.tmpdir")
+                                               :report (or (System/getenv "COHOST_MAIN_REPORT") "file")
                                                :verbose (boolean (System/getenv "COHOST_VERBOSE"))}
                                           (when jank (select-keys jank [:snapshot? :project-snapshot :module-paths])))))
             ;; System/exit skips finally: the config goes before it
