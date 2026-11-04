@@ -128,7 +128,16 @@
       (do (log "JANK-EXE-FRESH" exe) exe)
       (let [t0 (System/nanoTime)
             events (abs work "events.edn")
-            src (abs work "src")]
+            src (abs work "src")
+            cpp (project-cpp project)
+            ;; the record step is a JIT session: the app's cpp/raw blocks
+            ;; compile there, so their headers must be findable -- clang
+            ;; honors CPLUS_INCLUDE_PATH for the C++ translation units
+            record-env (if cpp
+                         (assoc gc "CPLUS_INCLUDE_PATH"
+                                (str/join ":" (concat (:dirs cpp)
+                                                      (when-let [e (System/getenv "CPLUS_INCLUDE_PATH")] [e]))))
+                         gc)]
         (log "JANK-EXE-BUILD" exe (if (.exists stamp) "(stale)" "(new)"))
         (.mkdirs (io/file work))
         (io/delete-file stamp true)
@@ -136,7 +145,7 @@
         (let [aot-out (sh! repo {} "bb" "-e" "(println (str \"AOT \" (load-file \"dev/perf/jank_aot_ensure.clj\")))")
               aot (abs repo (second (re-find #"(?m)^AOT (.*)$" aot-out)))]
           ;; 2. record the boot, the libraries and the app
-          (let [out (apply sh! repo gc (jank-bin) "--module-path" (str aot ":" (abs repo "src")) "run"
+          (let [out (apply sh! repo record-env (jank-bin) "--module-path" (str aot ":" (abs repo "src")) "run"
                            (abs repo "dev/perf/jank_snapshot_record.jank") "--" "--out" events "--lib" (str main)
                            (mapcat (fn [r] ["--root" r]) roots))]
             (log (last (filter #(str/starts-with? % "SNAPSHOT-EVENTS") (str/split-lines out))))
@@ -145,8 +154,7 @@
         (log (last (str/split-lines (sh! repo {} "bb" (abs repo "dev/perf/jank_snapshot_emit.clj")
                                           "--events" events "--out" src "--main" (str main)))))
         ;; 3.5 the project's :cpp sources, compiled and archived for the link
-        (let [cpp (project-cpp project)
-              cpp-flags (when cpp
+        (let [cpp-flags (when cpp
                           (let [objs (mapv (fn [i s]
                                              (let [o (abs work (str "cpp" i ".o"))
                                                    cc (if (str/ends-with? s ".c")
