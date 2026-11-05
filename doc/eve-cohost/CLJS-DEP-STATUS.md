@@ -221,3 +221,44 @@ list future -- expected: it builds from :defs only, for stock macros' vars as fo
 
 Gates running serially: probe row (bb dev/eve_probe.clj cljs), REPL/CLI boot parity re-run,
 bb boot:cljs, bb cli:check cljs. FINAL addendum follows with the row as printed.
+
+## FINAL — 2026-11-05 ~2:05 PM ET: unit 2 cljs half CLOSED (future/pvalues macro-fill gap fixed)
+
+**Mechanism (pinned firsthand, cljs 1.12.42 sources + diagnostic build).** The fill fns WERE
+interned: present as properties on the plain and $macros namespace objects, :use-macros resolving
+future -> cohost.core in the user env exactly as when -> cohost.core (the FINAL's "never intern"
+reading was :defs-blindness; ns-interns builds handles from :defs only). Neither earlier candidate
+was the cause: stock macros carry no $macros :defs entry either (check-macro-arity skips an absent
+entry), and future-macro's expansion is plain (cohost.core/future-call (fn [] body)) with
+future-call proven standalone (=> 42). The analyzer's get-expander* finds the fn via
+findInternedVar on the $macros object, then cljs.core Var.isMacro decides -- by reading the
+property (.-cljs$lang$macro fn) OFF THE FN OBJECT. cljs's own defmacro emits
+(set! (. name -cljs$lang$macro) true) to set that marker. The cohost.thread fill fns never passed
+through defmacro, so the marker was absent: get-expander returned nil, macroexpand-1 returned
+(future (+ 1 2)) unchanged, analysis compiled the call as an undeclared var ("Use of undeclared
+Var user/future"), and the runtime call hit undefined -- the probe row's
+"Cannot read properties of undefined (reading 'call')".
+
+**Fix (3e7f109, src/cohost/hosts/cljs.cljs, one site).** mark-macro! -- the cap whose contract is
+"make the host treat this as a macro," and the site the shim's Var/setMacro routes through -- now
+sets (set! (.-cljs$lang$macro f) true) when it moves the fn onto the $macros object. No boot.cljc
+or thread.cljc change; no :defs entry added.
+
+**Evidence.**
+- Diagnostic (logs/diag-future-fix.log): (deref (future (+ 1 2))) => 3; macroexpand-1 =>
+  (cohost.core/future-call (fn [] (+ 1 2))); no undeclared-var warning.
+- Probe row as printed (logs/probe-cljs-row3.log), bb dev/eve_probe.clj cljs:
+  12 library loads OK; future-basic OK 3; future-capture-local OK 42; future-capture-atom OK 1;
+  future-binding OK 3; promise OK 7; delay OK 2; agent OK 1; pmap OK (2 3 4);
+  spec-conform FAIL (pre-existing, unchanged); test-stacktrace OK 0; done OK.
+  SUMMARY|cljs|ok=22 unsupported-shim=0 fail-other=1 (was ok=18 fail-other=5). Case-for-case diff
+  against the banked row2: exactly the four future lines changed, nothing else.
+- pvalues (the second fill macro, same mark-macro! path): REPL-side eval => PVALUES|(2 4).
+- Boot parity re-verified (logs/probe-program-run-bundle-after-fix.log vs the CLI side of row3):
+  the 11 program-case PROBE lines case-for-case IDENTICAL between the REPL entry
+  (cohost.run, target/cljs-node, --eval) and the CLI entry (bin/cohost :cljs).
+- Seat gates (logs/gates-cljs-after-fix.log): bb boot:cljs rc=0, FAILs exactly the pristine-base
+  pair (numeric tower; defmacro &form &env). bb cli:check cljs: 7/7 SAME, rc=0.
+
+Unit 2's cljs half is closed; with JVM+jank already landed on muse/eve-cohost-impl @ 0fa021f,
+unit 2 is complete on all three seats. Realm topology remains unit 8's scope, untouched here.

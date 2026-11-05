@@ -146,3 +146,37 @@ REPL-side bundle (cohost.run --eval) and the CLI bundle gives a case-for-case id
 (logs/probe-program-run-bundle.log vs logs/probe-cljs-row2.log). The coordinator's independent cljs
 verification also passed today via cljs.core protocols over the same dep + hosts.edn row (shadow-cljs
 route; slab atom round trip {:n 2}) — reconciled in the STATUS addendum.
+
+---
+
+## Addendum (follow-on lane, 2026-11-05): the future/pvalues macro-fill gap — CLOSED
+
+**Mechanism.** The lane FINAL named this gap as "the fills never intern on this seat." Firsthand
+diagnosis narrowed it: the fill fns do intern — as properties on the plain and $macros namespace
+objects, with :use-macros resolving them in the user env identically to a stock macro (the
+ns-interns ABSENT reading was :defs-blindness: ns-interns builds handles from :defs entries only,
+and neither fills nor stock macros carry a $macros :defs entry on this seat). The analyzer's
+macro path (cljs 1.12.42, self-hosted) is: get-expander* -> findInternedVar on the $macros object
+-> cljs.core Var.isMacro, which reads the property (.-cljs$lang$macro fn) off the function object
+itself. cljs's own defmacro emits (set! (. name -cljs$lang$macro) true) to set that marker; the
+cohost.thread fill fns, interned as plain fns and moved by mark-macro!, never acquired it. With
+the marker absent the analyzer treated (future ...) as a function call of an undeclared var, and
+the compiled call dereferenced undefined at runtime: the row's
+"Cannot read properties of undefined (reading 'call')".
+
+**Fix.** One site, the owning layer: src/cohost/hosts/cljs.cljs mark-macro! now sets
+(set! (.-cljs$lang$macro f) true) when moving the fn to the macros side (commit 3e7f109). The
+shim's clojure.lang.Var/setMacro routes through the same cap, so stock setMacro callers get the
+marker too. No changes to boot.cljc, thread.cljc, or the analyzer state shape.
+
+**Row as printed after the fix** (bb dev/eve_probe.clj cljs; logs/probe-cljs-row3.log):
+SUMMARY|cljs|ok=22 unsupported-shim=0 fail-other=1 — future-basic OK 3, future-capture-local
+OK 42, future-capture-atom OK 1, future-binding OK 3; promise OK 7, delay OK 2, agent OK 1,
+pmap OK (2 3 4), test-stacktrace OK 0 unchanged; spec-conform remains the pre-existing unrelated
+FAIL. Diff against the previously banked row: exactly the four future lines. pvalues verified
+directly (=> (2 4)). Boot parity re-run: REPL entry vs CLI entry case-for-case identical
+(logs/probe-program-run-bundle-after-fix.log). Gates: bb boot:cljs rc=0 with exactly the
+pristine-base FAIL pair; bb cli:check cljs 7/7 SAME (logs/gates-cljs-after-fix.log).
+
+With this, unit 2 (seat leaves) is complete on all three seats: JVM+jank landed on
+muse/eve-cohost-impl @ 0fa021f; cljs closed here.
