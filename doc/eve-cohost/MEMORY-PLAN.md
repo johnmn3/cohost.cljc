@@ -494,6 +494,40 @@ host before it ever becomes a seat's default.
   This is the last unit because everything it needs is
   built by the ones before it.
 
+### Unit 9 — Java HTTP APIs hydrated over Eve's HTTP layer
+
+- **Scope.** The closure-seam pattern extends past
+  threading, collections, and atoms: since Eve has an HTTP
+  layer, the Java APIs Clojure uses in that area get real
+  implementations **behind the shim**, backed by Eve's HTTP
+  layer — never beside it as a parallel library surface.
+  The classes in scope: `java.net.http.HttpClient` /
+  `HttpRequest` / `HttpResponse` (the modern default,
+  Java 11+); `java.net.URL` / `HttpURLConnection` (the
+  legacy default — the path `clojure.java.io` rides). The
+  server side is named as a question of scope for the
+  unit's design pass (`java.net.ServerSocket` vs Eve's
+  HTTP server seam), not pre-decided here. Measured
+  current state (verified firsthand 2026-11-05): the shim
+  today carries only `java.net.URLEncoder` / `URLDecoder`
+  — the entire java.net HTTP surface is otherwise
+  **ABSENT** (the unsupported set).
+- **Seam surface.** The shim's `java.net` class surface:
+  the class-table entries and method vars for the classes
+  above, answered by a layer backed by Eve's HTTP layer —
+  the same behind-the-shim shape as units 1–5, one area
+  over.
+- **Gate.** Stock Clojure code and a library path that
+  ride these Java APIs — `clojure.java.io` over `URL`, and
+  an `HttpClient` round trip against a local server —
+  answer identically on the JVM seat and on a non-JVM
+  seat, with the program unchanged. Standing batteries
+  green.
+- **Dependencies.** Units 4 (collections) and 5
+  (atoms/vars) land first; the work runs against Eve's
+  HTTP / HTTP-server seam gates on the relevant seats.
+  **Status: NOT STARTED.**
+
 ## 5. Sequence, and what waits on the flagship
 
 ```
