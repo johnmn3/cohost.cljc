@@ -280,19 +280,25 @@
     (when @won (host/doorbell-signal (:bell fut)))
     @won))
 
+(defn submit-future
+  "ExecutorService.submit: run f (a Callable/Runnable value: a fn of no
+   args) on executor ex; the future of its outcome. No bindings are
+   conveyed -- conveyance is future-call's and the agents' business,
+   as on the JVM."
+  [ex f]
+  (let [fut (new-future*)]
+    (submit! ex (fn []
+                  (try (complete-future! fut {:status :done :value (f)})
+                       (catch #?(:cljs :default :default Throwable) e
+                         (complete-future! fut {:status :error :error e}))))
+             fut)
+    fut))
+
 (defn future-call
   "clojure.core/future-call over the layer: run f on the send executor
    with the caller's bindings conveyed; a future value."
   [f]
-  (let [fut (new-future*)
-        b (capture-bindings)
-        task (conveyed b
-               (fn []
-                 (try (complete-future! fut {:status :done :value (f)})
-                      (catch #?(:cljs :default :default Throwable) e
-                        (complete-future! fut {:status :error :error e})))))]
-    (submit! (send-executor) task fut)
-    fut))
+  (submit-future (send-executor) (conveyed (capture-bindings) f)))
 
 (defn future-done? [fut] (not= :pending (:status @(:state fut))))
 (defn future-cancelled? [fut] (= :cancelled (:status @(:state fut))))
@@ -343,6 +349,19 @@
   ([x] (deref-future x))
   ([x timeout-ms timeout-val] (deref-future x timeout-ms timeout-val)))
 
+(defn get-future
+  "java.util.concurrent.Future.get for a layer future or promise: the
+   timed form throws TimeoutException when the deadline passes (stock
+   core's deref-future catches exactly that to yield its timeout-val).
+   With arguments the first is read as a millisecond timeout; the
+   TimeUnit argument is not modeled."
+  ([fut] (deref-future fut))
+  ([fut timeout-ms & _unit]
+   (let [v (deref-future fut timeout-ms ::timed-out)]
+     (if (= ::timed-out v)
+       (throw (host/ex* 'java.util.concurrent.TimeoutException "future get timed out" nil))
+       v))))
+
 ;; ---------------------------------------------------------------------------
 ;; CountDownLatch
 
@@ -388,7 +407,7 @@
   nil)
 
 (defn new-agent [init opts]
-  (let [mode (:error-mode opts :continue)]
+  (let [mode (or (:error-mode opts) :continue)]
     (when-not (contains? #{:fail :continue} mode)
       (throw (host/ex* 'java.lang.IllegalArgumentException
                        (str "error-mode must be :fail or :continue, was " mode) nil)))
@@ -432,15 +451,33 @@
       (count held))
     0))
 
+(def ^:private agent-var
+  ;; the handle of cohost.core/*agent*, resolved on first use: an action
+  ;; runs with *agent* bound to its agent, over whatever was captured
+  (atom nil))
+
+(defn- agent-var-handle []
+  (or @agent-var
+      ;; *agent* reaches cohost.core as a refer of the host core's var
+      ;; (the prelude refers dynamic vars rather than interning copies),
+      ;; so the interns map misses it: the host core's var IS the handle
+      (let [v (or (host/interned-var 'cohost.core '*agent*)
+                  (host/resolve-core '*agent*))]
+        (when v (reset! agent-var v))
+        v)))
+
 (defn- run-action
   "Run one action against the agent's state; {:value v} or {:error e}.
    The action's held sends are released either way."
   [ag action]
   (let [pending (atom [])
+        bindings (if-let [h (agent-var-handle)]
+                   (assoc (:bindings action) h ag)
+                   (:bindings action))
         outcome (try
                   (binding [*pending-sends* pending]
                     (let [run (fn [] (apply (:f action) @(:state ag) (:args action)))]
-                      {:value ((conveyed (:bindings action) run))}))
+                      {:value ((conveyed bindings run))}))
                   (catch #?(:cljs :default :default Throwable) e {:error e}))]
     (release-held! @pending)
     outcome))
@@ -524,6 +561,11 @@
   (doseq [ex [(:send-executor @registry) (:send-off-executor @registry)] :when ex]
     (shutdown-executor! ex))
   nil)
+
+(defn agent-state
+  "An agent's current state: what deref of the agent reads."
+  [ag]
+  @(:state ag))
 
 (defn agent-error [ag] (:failed @(:ctl ag)))
 (defn agent-errors [ag] @(:errors ag))

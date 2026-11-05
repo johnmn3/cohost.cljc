@@ -15,6 +15,7 @@
             [cohost.rewrite :as rw]
             [cohost.shim :as shim]
             [cohost.policy :as policy]
+            [cohost.thread :as thread]
             [cohost.scan :as scan]))
 
 (def core-ns "The namespace the stock core.clj boots into." 'cohost.core)
@@ -606,11 +607,14 @@
    var identity matters for binding); everything else is interned as a copy,
    so a stock macro's syntax-quoted `cohost.core/pr-str` resolves. Host
    macros are interned with their macro status and never wrapped. Returns true
-   when the host had it; false means the caller boots the stock definition."
+   when the host had it; false means the caller boots the stock definition.
+   A name in the boot's :host-lacks set is treated as one the host lacks:
+   the exercise path for a fill (the thread layer's, a host bring-up's)."
   [report nm]
-  (let [r (take-from-host* report nm)]
-    (when r (snap! {:op :host :sym nm}))
-    r))
+  (when-not (contains? (:host-lacks @state) nm)
+    (let [r (take-from-host* report nm)]
+      (when r (snap! {:op :host :sym nm}))
+      r)))
 
 (defn- take-from-host*
   [report nm]
@@ -781,7 +785,8 @@
                     :native (do (intern-native! core-ns nm native def-form "clojure.core") (record! report :native {:name nm}) nil)
                     :skip (do (record! report :skipped {:name nm :reason reason}) nil)
                     :host (when-not (take-from-host! report nm)
-                            (if (contains? policy/host-only-names nm)
+                            (if (or (contains? policy/host-only-names nm)
+                                    (contains? policy/thread-names nm))
                               (do (record! report :skipped {:name nm :reason :no-host-equivalent}) nil)
                               (do (eval-form! ctx report form nm :ok) form)))
                     :replace (do (eval-form! ctx report replacement nm :replaced) replacement)
@@ -901,15 +906,38 @@
      :host-referred @(:host-referred c)
      :loader-nses @(:loader-nses c)}))
 
+(defn install-thread-layer!
+  "Fill the concurrency names (policy/thread-names) the boot left
+   uninterned -- the host's core had none of its own -- from Eve's
+   thread layer (cohost.thread), when this host gives the layer its
+   leaves. Runs after the companions and before the libraries, so
+   library code calling future/agent at load time finds them. Each
+   fill is recorded as a replacement; hosts with their own concurrency
+   names, and hosts with no thread layer, are untouched."
+  [report]
+  (when (thread/available?)
+    (doseq [[nm v] thread/core-impls]
+      (when-not (host/interned-var core-ns nm)
+        (host/intern! core-ns nm v)
+        (record! report :replaced {:name nm :reason :thread-layer})))
+    (doseq [[nm f] thread/core-macros]
+      (when-not (host/interned-var core-ns nm)
+        (host/intern! core-ns nm f)
+        (host/mark-macro! (host/interned-var core-ns nm))
+        (record! report :replaced {:name nm :reason :thread-layer}))))
+  report)
+
 (defn boot!
   "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
    (default resources/cohost/clojure-1.12.0); :files -- paths under it;
    :profile? -- record phase timers (off unless true; the off path does not
-   call :nano-time)."
+   call :nano-time); :host-lacks -- names to boot as if the host lacked
+   them (the exercise path for a fill, e.g. the thread layer's)."
   ([] (boot! {}))
-  ([{:keys [root files verbose profile? record?] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
+  ([{:keys [root files verbose profile? record? host-lacks] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
    (reset! snapshot-log (when record? []))
+   (swap! state assoc :host-lacks (set host-lacks))
    (snap! {:op :begin :opts {:root root :files files}})
    (if profile?
      (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
@@ -960,6 +988,12 @@
                (run-companions)
                (swap! (:profile @state) assoc-in [:walls :companion] (- (host/nano-time) t0))
                (swap! state assoc :profile-bucket prev))))))
+     ;; Eve's thread layer fills the concurrency names this host's core
+     ;; lacked (policy/thread-names) before libraries or user code can
+     ;; call them; the scan then wraps the fill's macros (future,
+     ;; pvalues) like any other booted macro
+     (install-thread-layer! report)
+     (scan-macros! ctx)
      (install-host-reducers!)
      (reset! (:booted? ctx) true)
      (let [r (assoc @report

@@ -20,6 +20,7 @@
   ;; the shim asks the adapter for its capabilities as it loads: a host whose
   ;; loader orders a namespace's requires itself (Phel) installs it first
   (:require [cohost.adapter :as host]
+            [cohost.thread :as thread]
             [cohost.hosts.auto]
             #?(:cljs [goog.object :as gobj]))
   #?(:cljs (:require-macros [cohost.shim-names]))
@@ -127,6 +128,16 @@
     (swap! stubs conj f)
     f))
 (defn stub? [x] (contains? @stubs x))
+
+(defn- thread-layer
+  "Run (f) when Eve's thread layer (cohost.thread) is available on this
+   host; the unsupported error the stubs around here throw otherwise.
+   The check is at call time: which adapter is installed decides."
+  [what f]
+  (if (thread/available?)
+    (f)
+    (throw (ex-info (str "cohost.shim: " what " is not available on this host")
+                    {:cohost/unsupported what}))))
 
 ;; (to-array nil) is an empty array on the JVM; some hosts reject nil
 (defn- to-array* [coll] (host/host-array (if (nil? coll) [] coll)))
@@ -489,9 +500,11 @@
    'clojure.lang.IMeta #(or (jank-impl? % :name) (and (not (cohost-inst? %)) (or (coll? %) (symbol? %) (fn? %) (h-var? %) (h-namespace? %) (h-atom? %))))
    'clojure.lang.IReference #(or (h-var? %) (h-namespace? %) (h-atom? %))
    'clojure.lang.IRef #(or (h-var? %) (h-atom? %))
-   'clojure.lang.IDeref h-deref?
-   'clojure.lang.IBlockingDeref h-deref?
-   'clojure.lang.IPending h-pending?
+   ;; the thread layer's futures and promises are blocking derefs, its
+   ;; agents plain derefs: stock deref branches on exactly these
+   'clojure.lang.IDeref #(or (h-deref? %) (thread/future-value? %) (thread/promise-value? %) (thread/agent-value? %))
+   'clojure.lang.IBlockingDeref #(or (h-deref? %) (thread/future-value? %) (thread/promise-value? %))
+   'clojure.lang.IPending #(or (h-pending? %) (thread/future-value? %) (thread/promise-value? %))
    ;; sorted collections have no transient form
    'clojure.lang.IEditableCollection #(and (or (vector? %) (map? %) (set? %)) (not (h-sorted? %)) (not (host-record? %)))
    'clojure.lang.ITransientCollection h-transient?
@@ -1181,8 +1194,8 @@
 (def Compiler_HostExpr-maybeClass (fn [& _] nil))
 (def Compiler_HostExpr-maybeSpecialTag (fn [& _] nil))
 (def Reflector-prepRet (fn [_c x] x))
-(def Agent-shutdown (fn [] nil))
-(def Agent-releasePendingSends (fn [] 0))
+(def Agent-shutdown (fn [] (when (thread/available?) (thread/shutdown-agents)) nil))
+(def Agent-releasePendingSends (fn [] (if (thread/available?) (thread/release-pending-sends) 0)))
 
 ;; ---------------------------------------------------------------------------
 ;; collections: statics and constructors
@@ -1358,7 +1371,7 @@
                                (throw e)))
                (finally (reset! tx nil)))))))
 (def LockingTransaction-isRunning (fn [] (some? @tx)))
-(def new-Agent (host-fn 'agent (unsupported "agent")))
+(def new-Agent (host-fn 'agent (fn [state] (thread-layer "agent" (fn [] (thread/new-agent state {}))))))
 ;; clojure.lang.MultiFn, stock: the state (name, dispatch fn, default,
 ;; hierarchy var, methods, prefers) rides in the fn's metadata, and dispatch
 ;; is MultiFn.findAndCacheBestMethod's: the methods whose dispatch value the
@@ -1845,10 +1858,17 @@
 (def new-ChunkedCons (or (:chunk-cons hc)
                          (fn [chunk more] (with-meta (concat (seq chunk) more) {::chunk chunk ::more more}))))
 (defn chunked-cons? [x] (and (seq? x) (map? (meta x)) (contains? (meta x) ::chunk)))
-(def new-Thread (unsupported "java.lang.Thread"))
-;; Thread.currentThread(): its stack trace is empty, like every trace here
-(def Thread-currentThread (let [t (atom ::current-thread)] (fn [] t)))
-(def new-CountDownLatch (unsupported "CountDownLatch"))
+;; Thread, CountDownLatch and the Executors factories are Eve's thread
+;; layer (cohost.thread) wherever the host gives the layer its leaves;
+;; where it does not, they throw the unsupported error the stubs threw.
+(def new-Thread (fn [& args] (thread-layer "java.lang.Thread" (fn [] (apply thread/new-thread args)))))
+(def Thread-currentThread
+  (let [sentinel (atom ::current-thread)]
+    (fn [] (if (thread/available?) (thread/current-thread) sentinel))))
+(def new-CountDownLatch (fn [n] (thread-layer "CountDownLatch" (fn [] (thread/new-latch n)))))
+(def Executors-newFixedThreadPool (fn [n] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :pooled n)))))
+(def Executors-newCachedThreadPool (fn [] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :pooled 8)))))
+(def Executors-newSingleThreadExecutor (fn [] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :solo 1)))))
 
 ;; ---------------------------------------------------------------------------
 ;; java.lang & java.util statics
@@ -2355,7 +2375,8 @@
           :else (if-let [sps (force (nth r 3 nil))]
                   (if-let [sp (nth sps i)] (nth sp (dec k)) -1)
                   ((unsupported "Matcher.start(group)"))))))
-(def -start (fn ([mt] (nth (m-match mt) 0)) ([mt i] (m-span mt i 1))))
+(def -start (fn ([x] (if (thread/thread-value? x) (thread/start-thread! x) (nth (m-match x) 0)))
+                ([x i] (m-span x i 1))))
 (def -end (fn ([mt] (nth (m-match mt) 1)) ([mt i] (m-span mt i 2))))
 (def -lookingAt (fn [mt] (let [{:keys [s]} @(:state mt) r (h-re-find-at (:re mt) s 0)
                                r (when (and r (zero? (first r))) r)]
@@ -2413,6 +2434,13 @@
 (def -get (fn [x & args] (cond (h-var? x) (host/var-root x)
                                (h-atom? x) (deref x)
                                (host/mlist? x) (nth @(:state x) (first args))
+                               ;; a layer future or promise: Future.get (this
+                               ;; is also how stock deref reaches them, through
+                               ;; core's deref-future); with arguments the
+                               ;; first is read as a millisecond timeout
+                               ;; (the TimeUnit argument is not modeled)
+                               (or (thread/future-value? x) (thread/promise-value? x))
+                               (apply thread/get-future x args)
                                (seq args) (apply get x args)
                                (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"java.util.concurrent.Future.get()\" because the target is null"))
                                (h-deref? x) (deref x)
@@ -2477,7 +2505,52 @@
                   (fn [x m] (rm x (host-meta (meta-map m))))))
 (def -setMeta -resetMeta)
 ;; ClojureScript has no blocking deref: the timed form reads the value now
-(def -deref (fn ([x] (deref x)) ([x ms timeout-val] #?(:cljs (deref x) :default (deref x ms timeout-val)))))
+(def -deref (fn ([x] (cond (or (thread/future-value? x) (thread/promise-value? x))
+                           (thread/deref-blocking x)
+                           (thread/agent-value? x) (thread/agent-state x)
+                           :else (deref x)))
+                ([x ms timeout-val] (if (or (thread/future-value? x) (thread/promise-value? x))
+                                      (thread/deref-blocking x ms timeout-val)
+                                      #?(:cljs (deref x) :default (deref x ms timeout-val))))))
+;; the thread layer's members: Thread, Future, ExecutorService,
+;; CountDownLatch over cohost.thread's values
+(def -join (fn ([x] (if (thread/thread-value? x)
+                      (thread/join-thread x)
+                      (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread")))))
+               ([x ms] (if (thread/thread-value? x)
+                         (thread/join-thread x ms)
+                         (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread")))))))
+(def -isAlive (fn [x] (if (thread/thread-value? x)
+                        (thread/thread-alive? x)
+                        (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))))
+;; the layer has no interrupt leaf: interrupt is accepted and ignored
+(def -interrupt (fn [x] (when-not (thread/thread-value? x)
+                           (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))
+                    nil))
+(def -cancel (fn [x & _args] (if (thread/future-value? x)
+                               (thread/future-cancel x)
+                               (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.Future"))))))
+(def -countDown (fn [x] (if (thread/latch-value? x)
+                          (thread/count-down x)
+                          (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch"))))))
+(def -await (fn ([x] (if (thread/latch-value? x)
+                       (thread/await-latch x)
+                       (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch")))))
+                ([x timeout & _rest] (if (thread/latch-value? x)
+                                       (thread/await-latch x timeout)
+                                       (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch")))))))
+(def -getCount (fn [x] (if (thread/latch-value? x)
+                         (thread/latch-count x)
+                         (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch"))))))
+(def -submit (fn [x f] (if (thread/executor-value? x)
+                         (thread/submit-future x f)
+                         (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.ExecutorService"))))))
+(def -execute (fn [x f] (if (thread/executor-value? x)
+                          (do (thread/submit! x (fn [] (f))) nil)
+                          (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.ExecutorService"))))))
+(def -shutdown (fn [x] (if (thread/executor-value? x)
+                         (do (thread/shutdown-executor! x) nil)
+                         (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.ExecutorService"))))))
 (def -invoke (fn [f & args] (apply f args)))
 (def -applyTo (fn [f args] (apply f args)))
 (def -reduce (if-let [chunk? (:chunk? hc)]
@@ -2669,7 +2742,11 @@
 (def -getWatches (host-fn 'get-watches (fn [_] {})))
 (def -setValidator (host-fn 'set-validator! (unsupported "set-validator!")))
 (def -getValidator (host-fn 'get-validator (fn [_] nil)))
-(def -isRealized (host-fn 'realized? (fn [x] (if (h-pending? x) false true))))
+(def -isRealized (let [host-realized (host-fn 'realized? nil)]
+                   (fn [x] (cond (or (thread/future-value? x) (thread/promise-value? x)) (thread/future-done? x)
+                                 host-realized (host-realized x)
+                                 (h-pending? x) false
+                                 :else true))))
 (def -getMessage (fn [e] (host/exception-message e)))
 (def -getCause (fn [e] (host/exception-cause e)))
 (def -getData ex-data)
@@ -2823,8 +2900,8 @@
                          (swap! (mf-state mf) update-in [:prefers x] (fnil conj #{}) y)
                          mf))))
 (def -getMethod (fn [mf dv] (if (host-mf? mf) (host/multifn-op mf :get [dv]) (mf-find-method @(mf-state mf) dv))))
-(def -isDone (fn [_] true))
-(def -isCancelled (fn [_] false))
+(def -isDone (fn [x] (if (thread/future-value? x) (thread/future-done? x) true)))
+(def -isCancelled (fn [x] (if (thread/future-value? x) (thread/future-cancelled? x) false)))
 
 (def monitor-enter (fn [_] nil))
 (def monitor-exit (fn [_] nil))
