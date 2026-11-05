@@ -1,0 +1,32 @@
+EVE-PROBE eve.atom shared-atom? true
+EVE-PROBE eve.atom initial {:n 0, :msg "hello"}
+EVE-PROBE eve.atom after-swap {:n 1, :msg "round-trip"}
+EVE-PROBE eve.atom after-reset {:n 42}
+EVE-PROBE eve.atom RESULT PASS
+
+=== [TELESCOPE] SAB Memory Overview ===
+  Descriptors: 65536 total
+  | FREE=1 ALLOC=0 RETIRED=0 ORPHAN=0 EMBED=0 ZEROED=65535
+  Capacity (bytes):
+  | free=265021416 alloc=0 retired=0
+  Utilization: 0% (alloc / total tracked)
+  Fragmentation: 1 free regions, avg=265021416B
+  Free blocks (top 5 largest):
+    #1: 265021416 bytes
+
+=== [MICROSCOPE] Physical Memory Layout (1 blocks) ===
+  offset      | capacity  | status  | desc-idx | data-len | epoch | notes
+  ------------|-----------|---------|----------|----------|-------|------
+  3414040     | 265021416| FREE   | 0       | 0       | 0    | 
+=== [/MICROSCOPE] ===
+
+
+   | desc:1 mirror:1 blk | 265021416/265021416 (100%)
+  SAB/DESC (1col=7361706B)                MIRROR (1col=7361706B)
+  |....................................|  |....................................|
+  |------------------------------------|  SAB=MIRROR OK
+  |------------------------------------| gaps/overlaps  (?=gap X=overlap)
+  F=1 A=0 R=0 E=0 O=0                     F=1 A=0 R=0 E=0 O=0
+  PASS
+EVE-PROBE eve.shared-atom ERROR atom constructor: Failed to alloc state block: :out-of-memory
+EVE WASM module initialized

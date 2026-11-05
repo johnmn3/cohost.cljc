@@ -1,5 +1,17 @@
 # CLJS-DEP lane STATUS — Eve as a dependency of cohost's cljs build + the cljs :thread-spawn cap
 
+**FINAL — both steps complete 2026-11-05. Full account: doc/eve-cohost/CLJS-DEP-REPORT.md.**
+Step 1: Eve git dep (pin d241de3) + hosts.edn :cljs row composition + node: bridges; SAB shared-atom
+round trip PASS under Node (`eve.atom` RESULT PASS, exit 0; log in doc/eve-cohost/logs/).
+Regressions: boot:cljs exit 0 with exactly the pristine-base FAIL pair; **cli:check cljs 7/7 SAME**.
+Step 2: cooperative-task thread leaves written in src/cohost/hosts/cljs.cljs (spawn/self/doorbell trio);
+probe row **ok=18, fail-other=5** (baseline ok=15/fail-other=8) — promise, agent, pmap flipped.
+Remaining fails, mechanisms named in the report: the four future cases (the `future`/`pvalues` macro
+fills never intern on this seat — boot.cljc install-thread-layer!, not the adapter) and spec-conform
+(pre-existing, unrelated). The real-worker wall is cohost.thread's closure work items vs the form-only
+conveyance of cljs-thread/eve.thread-host — named with file citations in the report, which also corrects
+unit 2's NOT-YET framing claim by claim and scopes what unit 8 still owns.
+
 Branch: `muse/eve-cohost-cljs-dep` (from remote `muse/eve-cohost-impl` tip `40c75a1`, verified by ls-remote).
 Started 2026-11-05 ~11:53 ET. Scope (corrected ~11:54 ET): TWO steps in order —
 (1) Eve loadable in cohost's cljs build + SAB shared-atom round trip under Node + cljs checks unregressed;
