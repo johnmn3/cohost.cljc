@@ -90,6 +90,19 @@ the source roots" — a loader/source-root gap for that one library,
 and `spec-conform` fails downstream of it ("No such namespace:
 clojure.spec.alpha"). 11 of 12 libraries load.
 
+### let-go (lg, Go) — complete
+
+`SUMMARY|lg|ok=19 unsupported-shim=0 fail-other=4 wall-ms=14429`
+
+The whole threading surface answers with JVM values (capture-local
+42, binding 3, agent 1, pmap (2 3 4)); test-stacktrace 0. Library
+loads 9 of 12: `clojure.template`, `clojure.stacktrace` and
+`clojure.spec.alpha` fail with "unable to load namespace" — none of
+the three names a threading form in its own code (see the static
+table), so these read as host loader/compiler gaps, and
+`spec-conform` fails downstream ("CompileError: compiling function
+position").
+
 Probe-design note (measured): the first JVM run never exited — after
 the agent/future cases, the JVM's non-daemon executor threads keep the
 process alive. The program now ends with `shutdown-agents` + a guarded
