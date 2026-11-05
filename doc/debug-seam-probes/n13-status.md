@@ -233,3 +233,20 @@ JVM runner re-check after (must stay 10/14, #13 PASS).
   non-throwing app is unchanged by the new entry.
 - JVM runner: 10/14 PASS, 0 FAIL on this box AND on J.
 - Unit 2 DONE. Next: unit 3 (cpp/ divide-by-zero disposition).
+
+## 2026-11-05 ~02:20 ET — UNIT 3 (cpp/ divide-by-zero): probing
+
+- Established from the tree: the seam's own division is guarded
+  (check #10 PASS both hosts; booted core checks before native
+  division). rewrite.cljc passes cpp/raw through verbatim (its
+  args are not rewritten) -- the passthrough puts nothing around
+  user C++ by contract. The research doc measured plain-jank
+  integer div-by-zero as SIGFPE / exit 136 (UB in C++).
+- Probes to measure firsthand on J: (a) plain jank, a fn whose
+  cpp/raw body evaluates 5 / 0; (b) a cohost session (snapshot
+  launcher) evaluating the same through user code. Then the
+  disposition: what the adapter/boot layers can and cannot do
+  (signal-level and boundary-level options examined), banked in
+  the lane report.
+- Snapshot build for this tree launched on J (detached, log
+  ~/jgate-logs/n13-u3-snapshot.log) for probe (b).
