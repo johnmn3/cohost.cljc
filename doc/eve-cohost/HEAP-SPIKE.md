@@ -18,6 +18,13 @@
 > anywhere; the counterpart-domain language in §2 and
 > §P4 is superseded by it. Q-A remains open.
 >
+> REDO (§5, 2026-11-05): the contaminated parts were
+> redone under the corrected premises — §P4 replaced by
+> a pointer to §5.1 (probed seat table), §P3's cljs half
+> measured and both P3 conclusions redrawn (§5.2),
+> §P2's clause rewritten (§5.3), §2's shape redrawn
+> (§5.4). Read §5 with §4; P1, P5, P6 stand as written.
+>
 > RULINGS UNDER TEST — (1) the heap ruling (John,
 > 2026-11-05 ~09:45 ET; MEMORY-PLAN §8): the heap Clojure
 > sees on cohost is implemented on top of an Eve atom.
@@ -261,10 +268,12 @@ objects implementing the host interfaces (unit 3's starting
 state: bare Eve values already satisfy host `=`/`hash`
 against their host twins), so a Java method wanting a `Map`
 gets one. On jank, interop waits on unit 6's
-`cohost_object` ↔ `eve_obj` convergence. On counterpart
-seats (P4), interop is whatever the counterpart implements
-behind the shim's class surface — the same contract cohost
-already lives by.
+`cohost_object` ↔ `eve_obj` convergence. On every seat,
+interop is Eve's own, because the values are Eve's: there
+are no counterpart seats (ruling, §4; redo §5.3) — a seat
+either runs Eve, and its interop is whatever Eve's types
+do behind the shim's class surface, or it waits on the
+Eve-side work §5.1 names for it.
 
 **Verdict: priced cost.** No blocker. The prices —
 crossing garbage, by-construction retention, domain-local
@@ -361,42 +370,32 @@ JVM seat; priced cost for the domain reading** (crossing
 prices above; intra-domain cost is per-seat realization
 cost). This is the spike's headline finding.
 
-### P4. Per-host reality — which seats can host the heap today?
+> **REDO ADDENDUM (2026-11-05, §5.2).** Two sentences
+> above are superseded: the bullet's "on the JVM seat,
+> the counterpart's cost" and the section's closing
+> conclusion ("The JVM seat's realization is therefore
+> counterpart, not Eve-as-is"). Under the no-counterparts
+> ruling the JVM conclusion reads: **Eve-side work on the
+> JVM seat is the path** — the work items are named from
+> these measurements in §5.2. The cljs/SAB half of this
+> axis, unmeasured here (it rested on Eve's platform
+> docs), is measured in §5.2 and its conclusion drawn
+> there. The JVM measurements in this section stand
+> untouched.
 
-Eve's own platform table (`eve/doc/platform-support.md`):
-full support on Node/cljs and JVM 21+; browser SAB-only;
-macOS degraded waits. Eve exists as a library on JVM (:clj),
-cljs/Node (its home; `shared_atom.cljs` is the heap-less
-seat's existing shape), bb (not a cohost seat), and jank
-(Eve-on-jank in flight — 2 of 8 J3 seams gated; the
-region+slab+typed-view flagship has not gated).
+### P4. Per-host reality — REPLACED by the redo (§5.1)
 
-Cohost's seats, against that:
-
-| cohost seat | Eve substrate today | heap ruling realization |
-|---|---|---|
-| JVM | Eve :clj present, persistence-priced (P3) | **counterpart domain** (measured necessity) |
-| cljs | Eve native (SAB atoms) | Eve-backed, via unit 8's path |
-| jank | arriving — flagship gate pending | Eve-backed after unit 6; counterpart until then |
-| cljw, jolt, lg | none | counterpart domain, or the seat waits |
-| basilisp, cljrs, phel | none — and cohost itself has no working CLI row there today (probe report) | not their binding constraint |
-
-On the no-Eve seats, Eve cannot be *cohosted* into the
-substrate role: a cohosted Eve would run on the very heap it
-is supposed to be — the circularity is exact. The domain
-there can only be a **counterpart**: cohost-side layer code
-implementing the domain contract (one world, per-atom
-snapshots, deref/swap crossings, kind metadata) over host
-structures, losing slab residence and cross-instance
-sharing on that seat, keeping the semantics. The plan's
-label discipline already has the vocabulary: those seats'
-heaps are COUNTERPART, not EVE AS-IS, and Q1's default-on
-ruling reads per-seat with the realization labeled.
-
-**Verdict: priced cost / sequencing fact.** The ruling is
-a contract with per-seat realizations of different depths.
-Not a blocker to the design; a blocker to ever *claiming*
-a uniform Eve-backed heap.
+> The original §P4 — its seat table and verdict — is
+> replaced in full by **§5.1** (2026-11-05 redo, under
+> John's corrected premises). The original table is the
+> misleading artifact this redo exists to remove: its
+> realization column assigned counterpart domains to four
+> seats and read the rest off Eve's docs. §5.1 re-derives
+> the table from Eve's platform code, probed seat by
+> seat, and its realization column reads only EVE AS-IS /
+> EVE-SIDE WORK NAMED / SEAT WAITS. §4's audit records
+> the original's disposition; nothing else in this
+> document cites the original table.
 
 ### P5. Failure modes — the runtime mutating its own heap-atom
 
@@ -607,6 +606,12 @@ amendments: unit 4's collections and unit 5's atoms are
 realized per-seat under (2), and unit 6's job grows by the
 snapshot-adoption obligation in (3).
 
+> **REDO ADDENDUM (2026-11-05, §5.4).** Item (2)'s
+> counterpart element is withdrawn (§4) and the shape is
+> redrawn without it in §5.4: realization per seat is Eve,
+> gated only by the named Eve-side work in §5.1's table.
+> Items (1), (3), (4), (5) stand as written.
+
 ## 3. Questions that are genuinely John's
 
 **Q-A. The scope of "runtime objects."** In cohost,
@@ -752,17 +757,222 @@ this seat" is what the ruling removes.
 
 ## 5. Redo — the contaminated parts, under the corrected premises (2026-11-05)
 
-> REDO IN PROGRESS — banked in slices; status in
-> `HEAP-REDO-STATUS.md` on this branch. Framing is John's
-> rulings of 2026-11-05 ~10:05 ET: (1) no counterparts
-> anywhere — every seat's runtime atom domain is real Eve
-> or the seat waits on named Eve-side work; (2) cljs/node
-> seats have the shared heap (workers + SharedArrayBuffer
-> + Eve's shared atoms); (3) `eve.atom` the durable kind
-> is not the runtime heap's mechanism (P3's measurement,
-> standing). What stands unredone: P1, P5, P6, P3's JVM
-> measurements. What is redone below: §5.1 P4 (full —
-> the original §P4 is replaced by a pointer here),
-> §5.2 P3's cljs/SAB half (measured) + both halves'
-> conclusions redrawn, §5.3 P2's clause, §5.4 §2's shape
-> redrawn.
+> Framing is John's rulings of 2026-11-05 ~10:05 ET:
+> (1) no counterparts anywhere — every seat's runtime
+> atom domain is real Eve or the seat waits on named
+> Eve-side work; (2) cljs/node seats have the shared heap
+> (workers + SharedArrayBuffer + Eve's shared atoms);
+> (3) `eve.atom` the durable kind is not the runtime
+> heap's mechanism (P3's measurement, standing). What
+> stands unredone: P1, P5, P6, P3's JVM measurements.
+> What is redone below: §5.1 P4 (full — the original §P4
+> is replaced by a pointer here), §5.2 P3's cljs/SAB half
+> (measured) + both halves' conclusions redrawn, §5.3
+> P2's clause, §5.4 §2's shape redrawn. Status:
+> `HEAP-REDO-STATUS.md` on this branch.
+
+### 5.1 P4 redone — per-host reality, probed from Eve's platform code
+
+**Method.** Eve's own sources, read directly
+(`~/src/eve` @ main `c7dc390` — whose HEAD commit is
+literally "JVM reunification: shared-memory domain
+parity with CLJS (reference implementation)"), not
+Eve's docs and not cohost's CLI rows.
+
+**What Eve substrate is, mechanically.** Eve's CLJC
+speaks exactly three platform features — `:cljs` (220
+reader-conditional sites), `:clj` (55), `:bb` (74), plus
+one `:default`. A seat has Eve substrate iff it can run
+one of those branches *and* supply the branch's
+`IMemRegion` backend (`eve/src/eve/mem.cljc`): the
+protocol is one — fixed-size region, i32/i64 load/store,
+CAS — and the backends are per-feature:
+
+| feature | region backends in mem.cljc | atomics / wait |
+|---|---|---|
+| `:cljs` | `JsSabRegion` (SharedArrayBuffer); `NodeMmapRegion`, `LustreMmapRegion` (mmap via the N-API native addon) | `js/Atomics` on SAB; addon futex on mmap |
+| `:clj` | `JvmByteBufferRegion`; `LustreJvmMmapRegion` (Panama FFM mmap) | `sun.misc.Unsafe`; `LockSupport` |
+| `:bb` | `BbHeapRegion`, `BbMmapRegion` | ByteBuffer/Unsafe via bb's JVM |
+
+So "Eve on a seat," in Eve's own terms, requires three
+things: **(i)** a platform branch in Eve's CLJC (or the
+seat faithfully presenting an existing feature, Java
+classes and all — cohost's seats present Clojure, not
+Java), **(ii)** an `IMemRegion` over memory that is
+addressable and atomic-capable, **(iii)** i32 CAS +
+wait/notify on that memory. Every seat below is read
+against those three requirements — that is what
+"actually missing, in Eve's terms" means in the table.
+
+**A correction to the original's framing sentence.**
+The original §P4 argued a cohosted Eve below the heap
+is "exactly circular." That described a mechanism no
+working seat uses: Eve is never *cohosted* underneath
+cohost. On the JVM and cljs seats Eve arrives as a
+library of the host itself, loaded by the host runtime
+before and beneath cohost's booted world (unit 3's JVM
+hosting already loads Eve's CLJC exactly this way). On
+a seat with no Eve branch, the work that ends the wait
+is the same kind of arrival — an Eve platform port at
+host level — not cohosting, and not a substitute domain.
+
+| cohost seat | Eve substrate today (probed) | realization |
+|---|---|---|
+| **JVM** | `:clj` branch complete: in-process `JvmByteBufferRegion` + Panama mmap cross-process; domains at CLJS parity per Eve's HEAD commit | **EVE AS-IS** as substrate; **SEAT WAITS** for the heap role on §5.2's named Eve-side perf work |
+| **cljs** (self-hosted, Node) | `:cljs` is Eve's home branch and reference implementation: SAB atom domains (`cljs-open-sab-domain!`, atom.cljc:334), `JsSabRegion`, shared atoms across workers, mmap cross-process via the addon | **EVE AS-IS** — measured in §5.2; nothing Eve-side is missing for the heap role; the open work on this seat is cohost-side (unit 2's leaves, unit 8) |
+| **jank** | No `:jank` branch in Eve's CLJC on main. Eve-on-jank is Eve-side work in flight on its own line: the J3 seams, with region+slab+typed-view as the ungated flagship | **EVE-SIDE WORK NAMED** — the flagship gate (region + slab + typed-view); the seat waits on it, then on unit 6's `cohost_object` ↔ `eve_obj` convergence |
+| **cljw** (ClojureWasm, Zig/Wasm) | No Wasm branch; no `IMemRegion` over Wasm linear memory. cljw's feature set is `{:cljw :clj :default}`, but Eve's `:clj` branch calls Java (Unsafe, Panama, ByteBuffer) and there is no JVM under cljw | **SEAT WAITS** — Eve-side work named: a Wasm platform port (branch + linear-memory region backend + an atomics story) |
+| **jolt** (Chez Scheme) | No Scheme-host branch. jolt presents a `:clj`-like Clojure surface over Chez; none of Eve's `:clj` machinery (Unsafe/Panama/ByteBuffer) exists beneath it, and no shared-memory region is exposed to the Clojure layer | **SEAT WAITS** — Eve-side work named: a Chez-host platform port (branch + region backend) |
+| **lg** (let-go, Go) | No Go-host branch; the same structural gap as jolt — a Clojure surface over a host with no Eve backend and no exposed shared-memory region | **SEAT WAITS** — Eve-side work named: a Go-host platform port (branch + region backend) |
+| **basilisp** (Python) | No Python branch. Additionally this seat's binding constraint today is cohost-side, not Eve's: cohost's own basilisp row does not boot (the load probe's CLI macroexpansion failure) | **SEAT WAITS** — Eve-side work named: a Python platform port; cohost's boot fix lands first regardless |
+| **cljrs** (clojurust, Rust) | No Rust-host branch; cohost has no CLI row on this seat yet either | **SEAT WAITS** — Eve-side work named: a Rust-host platform port (branch + region backend) |
+| **phel** (PHP) | No PHP branch; PHP is absent on this box (the probe's environment gap) | **SEAT WAITS** — Eve-side work named: a PHP platform port (branch + region backend) |
+
+The pattern under the six waiting seats is uniform,
+and it is worth stating once: each host is an
+interpreter presenting Clojure, and none exposes to
+its Clojure layer the two primitives every Eve backend
+is built from — addressable shared memory and atomic
+CAS on it. What is missing is never a cohost feature;
+it is an Eve platform port, branch + region backend,
+in host-native terms. That is a real queue of Eve-side
+work — and under the ruling it is the only queue there
+is. No seat gets anything else in the meantime.
+
+**Verdict (redo):** the ruling is uniform; seats differ
+only in which named Eve-side work gates them. Two seats
+have substrate today (cljs outright; JVM as substrate
+with its heap role gated on §5.2's perf work), one has
+it in flight (jank), six wait on a named Eve platform
+port each. The original's verdict — "a contract with
+per-seat realizations of different depths" — is
+withdrawn: realizations do not differ in depth, only in
+whether the Eve-side work has landed.
+
+### 5.2 P3 redone — the cljs/SAB half, measured; both conclusions redrawn
+
+The original P3 never measured the cljs seat; its
+"fast seat" claim rested on `platform-support.md`.
+Measured now: Eve @ main `c7dc390`, shadow-cljs
+**release** build, Node v24.22.1, this box (load ~5,
+other lanes active; stock controls in the same
+process, same loop shapes; two passes, agreeing).
+Bench source banked at `dev/heap_cljs_bench.cljs`;
+a dev-mode (`:none`) build of the same bench ran
+~1.8× slower across the board — the release numbers
+govern.
+
+| op | Eve on cljs/SAB | stock cljs, same runs | Eve on JVM (P3, standing) |
+|---|---|---|---|
+| atom deref, scalar root | **708–737 ns** | 9.0–9.3 ns | ~104 µs |
+| atom swap! inc | **4,347–4,511 ns** | 29–31 ns | ~178 µs |
+| map lookup (get) | **1,970–2,335 ns** | 48–52 ns | ~119–134 µs |
+| map assoc (per op, 1k build) | **9,340–9,607 ns** | 433–486 ns | ~0.5 ms |
+| deref, 100-entry map root (foreign root — materializes) | **96.6–105.0 µs** | — | ~1.78 ms |
+| capacity: 10k-entry map build / 1k-element vec build | **both OK** | — | **both die** (`coalesc-alloc!: out of memory`) |
+
+As printed, additionally: `eve-atom after swaps:
+100010` (the swap loop is CAS-correct, value exact);
+the maproot deref returns a plain
+`cljs.core/PersistentHashMap` — the root crossed in
+from a foreign (non-domain) context, so deref
+materialized it, exactly the crossing semantics P3
+describes; a root born inside the domain is returned
+as Eve's own lazy slab-backed types
+(`platform-support.md`, "Deref Behavior" — that row is
+docs, flagged as such; the materializing arm is the
+one this bench priced).
+
+**The cljs half, concluded from the numbers.** The
+substrate is real and capacity-sound: the two builds
+the JVM heap domain dies on complete here, and every
+Eve op is 40–146× faster than Eve's own JVM port —
+cljs is Eve's fast seat, now by measurement. Against
+stock cljs in the same runs, Eve's ops run 20–145×
+slower (deref ~79×, swap! ~145×, get ~41–45×, assoc
+~20×): the shared-atom path (epoch pin, root protocol,
+CAS loop) and slab-IO HAMT access are priced for
+cross-worker durability, not for heap-hot loops. So
+the cljs seat is **EVE AS-IS with named Eve-side
+hot-path work**, not heap-grade as-is: (a) the atom
+deref/swap path's per-op protocol cost; (b) HAMT
+get/assoc cost through slab IO. Neither needs a new
+mechanism — both are cost work on machinery that
+exists — and neither is a substitute domain.
+
+**The JVM half, conclusion redrawn.** The standing
+measurements (§P3) name the Eve-side work directly:
+(1) **deserialize-on-access collection reads** — values
+in the JVM slab are serialized bytes on `JvmHeapRegion`
+and a lookup decodes; heap-grade reads need the
+typed-view shape the cljs seat already has;
+(2) **a region growth story** — fixed 1 MB slab classes
+and a 64 KB coalescing region, no paging or LRU, where
+a program heap builds 10⁵–10⁶ values (VS's tiered L1→L2
+→L3 slab is the precedent shape); (3) the materializing
+deref of `eve.atom` is the durable kind's correct
+semantics and stays — premise (3) of this redo: it is
+not the heap's mechanism and is not on the work list.
+The JVM seat waits on (1) and (2) for the heap role.
+
+**P3's verdict, redrawn whole:** the blocker was never
+"the heap on an Eve atom" — it was one reading (the
+durable kind as mechanism) plus two seats' worth of
+unfinished Eve-side performance work, now named per
+seat from measurements on both. On cljs the work is
+hot-path cost; on the JVM it is representation and
+growth. Both are Eve's queue.
+
+### 5.3 P2's clause, redone
+
+The counterpart-seats clause in §P2 is rewritten in
+place (see §P2, "Interop"): interop on every seat is
+Eve's own, because the values are Eve's — a seat runs
+Eve and inherits Eve's interop behind the shim's class
+surface, or it waits on §5.1's named work. P2's verdict
+(priced cost: crossing garbage, by-construction
+retention, domain-local identity) is unchanged; none of
+its three prices referenced the withdrawn category.
+
+### 5.4 §2's shape, redrawn
+
+1. **The ruling as a semantic commitment, per seat** —
+   as §2 (1), unchanged.
+2. **Realization per seat: Eve, or the seat waits.**
+   Labels are exactly §5.1's: EVE AS-IS (cljs today;
+   JVM as substrate), EVE-SIDE WORK NAMED (jank's
+   flagship), SEAT WAITS (the JVM's heap role on §5.2's
+   two work items; six seats on an Eve platform port
+   each). There is no fourth label and no cohost-side
+   domain layer on any seat. Host-heap-lax internals
+   *inside* Eve's runtime domain remain what they were
+   in §2 — the precedent's cost-only laxity (§P6), a
+   property of Eve's own domain implementation, not a
+   substitute for it.
+3. **Minted or adopted, never constructed** — as §2
+   (3), unchanged.
+4. **Split by contention domain from the start** — as
+   §2 (4), unchanged (P5's mapping).
+5. **`eve.atom` is not the runtime heap's mechanism** —
+   as §2 (5), unchanged.
+
+Amendments to MEMORY-PLAN units 3–8, redrawn: units 4
+and 5 realize per seat as that seat's Eve substrate
+lands — cljs first (substrate present, §5.2's hot-path
+work named), JVM when §5.2's items (1)–(2) land, jank
+after the flagship gate; unit 6 keeps its job plus the
+snapshot-adoption obligation in (3). No unit delivers,
+and no seat receives, a substitute domain at any point.
+
+### 5.5 Declaration
+
+Redo complete, 2026-11-05. P4 is redone in full
+(§5.1, probed from Eve's platform code; the original
+§P4 is a pointer). P3's cljs/SAB half is measured
+(§5.2, release build, two passes) and both P3
+conclusions are redrawn. P2's clause is rewritten in
+place (§5.3). §2's shape is redrawn (§5.4). P1, P5,
+P6 and P3's JVM measurements stand unredone, as
+scoped. The counterpart category appears in this
+document only as history (§4 and this section's
+record of its removal).

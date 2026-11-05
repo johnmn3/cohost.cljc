@@ -43,6 +43,9 @@ including its §4 postscript + per-problem audit table).
       1k vec OK (the two builds the JVM heap domain died
       on). Stock controls same runs: deref 9 ns, swap! 30,
       get 48-52, assoc 433-486.
-- [ ] §5 redo sections written; P4 replaced with pointer;
-      P2 clause rewritten; P3/§2 addenda marked.
-- [ ] Final declaration (chat + doc).
+- [x] §5 redo sections written (§5.1 P4 probed table,
+      §5.2 P3 cljs measured + conclusions redrawn,
+      §5.3 P2, §5.4 §2 redrawn, §5.5 declaration);
+      P4 replaced with pointer; P2 clause rewritten in
+      place; P3/§2 addenda marked; header points at §5.
+- [x] Final declaration (chat + doc §5.5).
