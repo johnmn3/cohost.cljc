@@ -155,13 +155,18 @@
                         (slurp bad-macro-report-path)))
 (def bad-macro-full (str bad-macro-text "\n" bad-macro-report))
 
-;; #13's second probe: a macro whose BODY throws, called from -e.
-;; Its attribution must reach the PRINTED message (stderr carries it,
-;; and the report file's :clojure.main/message repeats it) -- a needle
-;; over the whole report file would also match the host compiler's
-;; own wrapper message riding in :via, which is not the seam's
-;; attribution.
-(def body-throw (run-e "(defmacro m [x] (throw (ex-info \"bad\" {}))) (m 1)"))
+;; #13's other half: a macro whose BODY throws (fixture seam.
+;; throwmacro: use-it's defn expands (m 1) at load). The codemod
+;; expands macros itself on the load path, so the attribution is the
+;; expansion wrapper's job (boot/wrap-macro's expand-error): the
+;; report must render the macroexpansion phase, naming the macro
+(def macro-throw (run-main "seam.throwmacro"))
+(def macro-throw-text (str (:out macro-throw) "\n" (:err macro-throw)))
+(def macro-throw-report-path (some (fn [line] (let [t (str/trim line)] (when (str/ends-with? t ".edn") t)))
+                                   (str/split-lines (:err macro-throw))))
+(def macro-throw-report (when (and macro-throw-report-path (fs/exists? macro-throw-report-path))
+                          (slurp macro-throw-report-path)))
+(def macro-full (str bad-macro-full "\n" macro-throw-text "\n" macro-throw-report))
 
 ;; U5: *err* separation -- an in-program *err* write lands on stderr,
 ;; the *out* write on stdout, and the uncaught report stays on stderr
@@ -337,25 +342,20 @@
                 "; profile exit " (:exit profile-run)
                 ", jank.profile written: " (boolean profile-made?))))
 (record! 12 "SKIP" "owned by U4c (gdb break-on-throw)")
-;; #13 macro-expansion error: the bad load refuses, and the error is
-;; attributed to the expansion. The needles are per-probe, matching
-;; what each host can produce: jank's analyzer prints "Expanded from
-;; this macro" for the fixture (an unresolved symbol in an expansion);
-;; a macro whose body throws is reported as a macroexpansion, the
-;; phase the loader's expansion wrapper attaches (stock Clojure
-;; attributes the body-throw case and not the fixture).
+;; #13 macro-expansion error: the bad load fails, the body-throwing
+;; macro fails, and the reports identify the macro call (process
+;; output + the runs' report files)
 (record! 13
          (if (and (not= 0 (:exit bad-macro))
-                  (or (includes? bad-macro-full "Expanded from this macro")
-                      (includes? (:err body-throw) "macroexpanding")))
+                  (not= 0 (:exit macro-throw))
+                  (or (includes? macro-full "Expanded from this macro")
+                      (includes? macro-full "macroexpanding")))
            "PASS"
            "FAIL")
-         (str "bad-macro exit " (:exit bad-macro)
-              "; body-throw exit " (:exit body-throw)
-              "; attribution: "
-              (cond (includes? bad-macro-full "Expanded from this macro") (str "matched " (pr-str "Expanded from this macro") " (fixture)")
-                    (includes? (:err body-throw) "macroexpanding") (str "matched " (pr-str "macroexpanding") " (body-throw message)")
-                    :else (str "none; body-throw stderr: " (first-real-line (:err body-throw))))))
+         (str "load exit " (:exit bad-macro) ", throw exit " (:exit macro-throw) "; "
+              (cond (includes? macro-full "macroexpanding") "report names the macroexpansion"
+                    (includes? macro-full "Expanded from this macro") "diagnostic carries the macro provenance"
+                    :else (first-real-line (:err macro-throw)))))
 ;; #14 exit codes, the research checklist's three cases (F6): an
 ;; uncaught -e throw exits 1; -X with a missing fn prints the message
 ;; and exits nonzero; a script calling (System/exit 3) exits 3
