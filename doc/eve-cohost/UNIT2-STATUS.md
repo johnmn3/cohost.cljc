@@ -231,3 +231,51 @@ is the check's intent by another route.
   carries the :thread-layer event; the emitted snapshot core module
   (target/jank-snapshot/src/cohost/core.jank) calls
   (cohost.boot/snap-thread-layer!).
+
+## Cljs half: NOT-YET, with the blocking work named (2026-11-05 ~12:25 PM ET)
+
+Verified against Eve's own tree (~/src/eve, main) and this branch:
+
+What is real and present: Eve's cljs substrate exists --
+eve.shared-atom (src/eve/shared_atom.cljs) is a shared atom over a
+SharedArrayBuffer, with cross-thread watch notification built in
+(Atomics.notify + Atomics.waitAsync loops, lines 2391-2458), and
+eve.util/yield-cpu already handles the Atomics.wait rules (workers
+wait; the browser main thread may not). The doorbell-grade
+primitives exist inside Eve.
+
+What does not exist, anywhere:
+1. A worker spawn facility. Nothing in Eve's cljs sources spawns a
+   worker (no worker_threads, no Worker construction); Eve's thread
+   work lives on other seats. Cohost's cljs seat likewise has no
+   spawn: the adapter (src/cohost/hosts/cljs.cljs) supplies
+   :thread-bindings and :empty-queue, no thread caps.
+2. A spawn contract that could carry the layer's work even if a
+   worker existed. Unit 1's layer hands the adapter an opaque
+   closure over main-realm state (thread.cljc spawn: (fn [] ...));
+   a worker is a separate realm -- the closure cannot cross. The
+   cljs.thread design crosses with FORMS + bindings conveyed
+   through the shared atom, workers booting the same image. The
+   layer has no such contract today; adding one (a spawn-by-form
+   cap, or a layer-level change) is design work, not a leaf.
+3. Eve in the seat at all. Cohost's cljs build (cljs-cli.edn)
+   compiles src/cohost only; Eve is not yet a dependency of the
+   cljs seat, so there is no Eve atom in the process for a leaf to
+   sit on. Wiring Eve's cljs sources into the seat build is the
+   dependency step the cohost 0.9 tag exists for.
+
+Per the no-substitutes ruling, no cljs thread leaves are landed: a
+doorbell over a privately allocated SAB would be a parallel
+substrate next to Eve, not Eve. The cljs half is therefore banked
+as a named NOT-YET. Blocking work, named: (a) Eve as a dependency
+of cohost's cljs build; (b) a spawn-by-form conveyance contract in
+the layer/adapter (unit 8's shared-heap-illusion design: workers
+boot the same image, work crosses as a form, bindings conveyed
+through the runtime atom domain -- eve.shared-atom over SAB);
+(c) the leaves themselves then sit on eve.shared-atom: doorbell
+state in the shared atom's control region, wait on workers via
+Atomics.wait, signal via Atomics.notify. Unit 8 owns (b) by the
+plan's construction (it depends on units 2, 5, 7); (a) is the
+dependency step. The probe's cljs row stands as the test that
+flips when this lands (today: every executor case fails with the
+undefined-call NPE; delay answers).
