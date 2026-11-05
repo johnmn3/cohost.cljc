@@ -254,6 +254,80 @@ on this seat is analyzer-surface work, not collection work;
 it is recorded here so the corpus numbers below are read
 against it.
 
+## Corpus (M6) — DONE, numbers as printed
+
+dev/u4_corpus.clj runs the jolt-conformance corpus (4,833
+:common rows) through the booted world on this tree, fill
+off vs fill on; dev/u4_corpus_diff.clj compares. Off:
+{:pass 4215 :fail 422 :error 196}. On: {:pass 4191 :fail
+443 :error 199}. 25 rows changed; all 25 dispositioned:
+
+- Eve HAMT iteration/print order (7): array-map keeps no
+  insertion order (2 rows), hash-map/hash-set print order,
+  update-keys order, reduce-kv early-stop count, transient
+  dissoc! slot order. Equality unaffected; seq/print ORDER
+  is Eve's HAMT order. The plan's section 3 directed
+  ArrayMap answered by Eve map; these rows are that
+  decision's cost, named.
+- class identity on this seat (8): (class ...) of Eve
+  values answers Eve's own classes (eve.list.EveList,
+  eve.map.EveHashMap) — the booted class fn is host
+  reflection on this seat; rows expecting stock class names
+  (list x4, hash-map x2, seq class, transient promotion) and
+  the find type-error message naming eve.list.EveList.
+  Bare Eve values carry Eve's class identity; named.
+- meta on lists through core fns (5): the JVM-analyzer meta
+  distance (with-meta/meta through core's interop lands on
+  Eve's stub methods) applied to lists. Named family,
+  already recorded above.
+- analyzer embed (2): clojure.string/index-of with a char
+  needle after require, re-matcher — compiling an fn* tries
+  to embed an Eve slab object (the regions array, reached
+  through a constant; Compiler$ObjExpr emitValue). Minimal
+  literal forms alone do not reproduce; the require-then-
+  call shape does. Same family as the named macro-embed
+  remainder; exact constant not isolated (time-boxed).
+- (eval (list)) (1): an Eve list in form position — the
+  analyzer-boundary family, named above.
+- ifn? on an Eve list (1): FIXED at the seam — Eve's list
+  type implements IFn on its own side, but stock lists are
+  not callable, so the shim's IFn predicate now excludes
+  Eve-backed lists (verified: ifn? list false, vec/map/set
+  true, instance? agrees).
+
+Net: after the ifn? fix, 24 changed rows remain, all in
+the four named families (HAMT order, class identity,
+analyzer meta distance, analyzer boundary/embed). The
+gate's "no new failures" reads against the plan's own
+directions: the fill's contract is unit 3's =/hasheq law,
+which holds everywhere in the corpus (no equality row
+changed); order, class names, and analyzer reach are the
+named costs.
+
+## Timings (M6) — same-run, interleaved
+
+dev/u4_bench.clj: one booted session, fill toggled per
+arm, rounds interleaved. Round 1 (freshest ctx, arms
+back-to-back), ms: map build 10k H 9.2 / E 8814.8; map
+assoc-grow 10k H 100.4 / E 6789.8; vec conj-grow 10k H
+9.1 / E 1210.7; map lookup 10k H 69.8 / E 7585.4. Eve's
+JVM seat is disk-priced per the heap audit; these are
+that price at the seam. CROSS-ROUND EFFECT, measured:
+in one long-lived ctx the E map build degrades round
+over round (round 3: 221,672 ms) — dead roots are never
+reclaimed in a bare ctx (named remainder). The corrected
+bench's full table (creator-path vector builds; untimed
+setups for reads) lands in the report.
+
+## Remaining, in order
+
+1. Final verification round on the finished tree (probe,
+   JVM gate, corpus-on) after the ifn? fix.
+2. cli:check 7/7 SAME; debug-seam jvm check where touched.
+3. M7: jank gate on J (boot:jank-snapshot + boot:jank) —
+   PRE-RELEASE bindings, per the sequencing note.
+4. M8: UNIT4-REPORT.md + final declaration.
+
 ## Coordination
 
 - Sibling lane (unit 5) runs in parallel on atom/var surfaces.

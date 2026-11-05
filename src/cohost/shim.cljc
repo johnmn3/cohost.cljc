@@ -498,7 +498,11 @@
    'clojure.lang.Sorted h-sorted?
    'clojure.lang.IChunkedSeq #(or (hc-chunked? %) (chunked-cons? %))
    'clojure.lang.IDrop (constantly false)
-   'clojure.lang.IFn host/ifn?*
+   ;; an Eve-backed list is not IFn at the seam (stock lists
+   ;; are not callable; Eve's list type implements IFn on its
+   ;; own side, and the seam's answer is Clojure's)
+   'clojure.lang.IFn #(and (host/ifn?* %)
+                           (not (and (memory/eve-backed? %) (= :list (memory/eve-kind %)))))
    'clojure.lang.Fn host/host-fn?
    'clojure.lang.IObj #(or (jank-impl? % :name) (and (not (cohost-inst? %)) (or (and (coll? %) (not (and host-has-map-entry? (host-map-entry? %)))) (symbol? %) (fn? %))))
    'clojure.lang.IMeta #(or (jank-impl? % :name) (and (not (cohost-inst? %)) (or (coll? %) (symbol? %) (fn? %) (h-var? %) (h-namespace? %) (h-atom? %))))
