@@ -1,0 +1,25 @@
+=== host: cljs ===
+PROBE|load-clojure.walk|OK :loaded
+PROBE|load-clojure.set|OK :loaded
+PROBE|load-clojure.string|OK :loaded
+PROBE|load-clojure.zip|OK :loaded
+PROBE|load-clojure.data|OK :loaded
+PROBE|load-clojure.edn|OK :loaded
+PROBE|load-clojure.template|OK :loaded
+PROBE|load-clojure.test|OK :loaded
+PROBE|load-clojure.math|OK :loaded
+PROBE|load-clojure.stacktrace|OK :loaded
+PROBE|load-clojure.repl|OK :loaded
+PROBE|load-clojure.spec.alpha|OK :loaded
+PROBE|future-basic|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+PROBE|future-capture-local|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+PROBE|future-capture-atom|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+PROBE|future-binding|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+PROBE|promise|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+PROBE|delay|OK 2
+PROBE|agent|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+PROBE|pmap|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+PROBE|spec-conform|FAIL clojure.lang.ExceptionInfo :: ERROR
+PROBE|test-stacktrace|OK 0
+PROBE|done|OK
+SUMMARY|cljs|ok=15 unsupported-shim=0 fail-other=8 wall-ms=9055

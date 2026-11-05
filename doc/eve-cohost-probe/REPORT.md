@@ -151,8 +151,111 @@ and `php` is not on this box's PATH at all. An environment-level gap,
 consistent with the standing fact that PHP has no row ready today.
 The threading surface was never reached.
 
+### jank (C++/LLVM) — run on J (this box OOM-kills the snapshot build)
+
+`SUMMARY|jank|ok=16 unsupported-shim=0 fail-other=7 wall-ms=3493`
+(runner wall on J, snapshot fresh; boot alone 3,197 ms)
+
+Threading surface: **future works in full** — basic 3, capture-local
+42, capture-atom 1, binding 3 (dynamic-var conveyance across the
+future boundary works today). promise 7, delay 2. Two explicit stubs,
+both in cohost's own policy layer, quoted as printed: `agent` fails
+"TODO: port agent" and `pmap` fails "TODO: port pmap"
+(clojure.lang.ExceptionInfo). test-stacktrace 0.
+
+Library loads through the snapshot launcher's module path: 7 of 12.
+`clojure.zip`, `clojure.edn`, `clojure.math`, `clojure.repl` and
+`clojure.spec.alpha` fail with "The module `clojure.X` could not be
+found" — those five are not in the launcher's compiled-module set.
+They are not unloadable: `spec-conform` answers 2 in the same run,
+spec reached through the eval/loader path. A launcher module-path
+gap, not a threading failure.
+
+Two jank defects the probe itself hit, both defect-corpus shaped:
+(1) the probe program's comment block (non-ASCII em-dashes) made the
+launcher's analysis of the whole -e form fail with "Unable to find
+`` within the global namespace" — every case passes individually and
+the whole program passes with comments stripped; (2) `flush` throws
+"TODO: port flesh" on jank 0.1 (the adapter's own comments document
+this: `src/cohost/adapter.cljc:464` — std::exit is used to flush
+instead). The local snapshot build for this tree was OOM-killed
+twice at the launcher compile (exit 137, 8 GB box) — the known wall
+that puts heavy jank legs on J; the probe's jank row was therefore
+run on J against the seam tree's existing snapshot.
+
 Probe-design notes (measured): the first JVM run never exited — after
 the agent/future cases, the JVM's non-daemon executor threads keep the
 process alive. The program now ends with `shutdown-agents` + a guarded
 `System/exit`, after printing its done line.
+
+## Conclusions — the measured size of the edge
+
+Summary across hosts (23 cases each: 12 library loads + 11 surface
+cases; counts from the SUMMARY lines):
+
+| Host | Loads | Threading surface | Wall |
+|---|---|---|---|
+| JVM (reference) | 12/12 | all answer | 2,178 ms |
+| cljw | 12/12 | all answer | 131,737 ms |
+| jolt | 11/12 | all answer | 4,562 ms |
+| lg | 9/12 | all answer | 14,429 ms |
+| cljs | 12/12 | **0 of 7 cross-thread cases** | 9,055 ms |
+| jank (on J) | 7/12 via launcher modules | future/promise/delay answer; agent, pmap stubbed | 3,493 ms |
+| basilisp | boot fails at the CLI namespace | never reached | 7,358 ms repro |
+| cljrs | no CLI row | — | 78 ms |
+| phel | no row (php absent) | never reached | exit 255 |
+
+The edge, in numbers:
+
+1. **Library code never hits it at load.** 0 of the 12 libraries call
+   `future`/`agent`/`pmap` in their own code (static count, above);
+   every host that boots loads at least 9 of the 12, and every load
+   failure measured is a loader/module gap naming no threading form.
+2. **Library *users* hit it at exactly one seam.** Every failing
+   surface case on every host routes through the same three shim
+   entries: the Agent executors (`future-call`, `send`/`send-off`,
+   `pmap`), `CountDownLatch` (promise), and `java.lang.Thread`
+   (test/repl stack traces — which degrade to an empty trace, 0, on
+   every off-JVM host, never a throw). Nothing else in the surface
+   fails anywhere.
+3. **The failure is total where it occurs, and absent where a host
+   supplies real threads.** On cljs — the one measured host with no
+   shared heap and no host threads — 7 of 7 cross-thread cases fail
+   identically, before any closure crosses. On jolt, lg and cljw the
+   host supplies threads/executors and every case answers with the
+   JVM's values, capture included. On jank, cohost already supplies
+   enough for future (including binding conveyance: future-binding
+   answers 3) and the remaining gap is two named policy stubs,
+   "TODO: port agent" and "TODO: port pmap".
+4. **Closure capture itself was never the failure.** Wherever a
+   future ran at all, capture-local answered 42 and capture-atom 1 —
+   on every such host the closure crossed with its captures intact,
+   because those hosts share a heap. The unmeasured remainder is
+   precisely John's case: a host where the closure must cross to a
+   *separate* heap. Among cohost's hosts only cljs/worker-style
+   targets have that shape, and there the machinery dies one layer
+   earlier, at the executor seam.
+
+What this implies for the transparent shared-atom design:
+
+- The hydration target is small and exact: **the executor surface
+  behind `future-call`/`send`/`pmap`, plus `CountDownLatch`** —
+  three shim entries. Hydrate those with Eve's thread layer and the
+  entire measured surface answers on every host that boots; no
+  library in the set needs anything else.
+- The conveyance half of the design already exists and is proven by
+  this probe on the JVM and on jank: core's binding-conveyor
+  machinery carries dynamic bindings across a future boundary
+  whenever a future can run (future-binding = 3 on both). The
+  shared-atom conveyance Eve adds has to reproduce that one behavior
+  on hosts where the boundary is a heap boundary.
+- The design risk is therefore *not* library compatibility — it is
+  the one case no current host exhibits: a future whose closure
+  captures values that live in another heap, on the cljs/worker
+  shape. That is where the probe says to spend the design effort,
+  and it can be prototyped against the cljs row: success looks like
+  this probe's cljs line flipping from 7 identical NPEs to the JVM's
+  values, with library code unchanged — the transparency test in
+  executable form.
+
 

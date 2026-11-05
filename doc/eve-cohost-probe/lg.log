@@ -1,0 +1,25 @@
+=== host: lg ===
+PROBE|load-clojure.walk|OK :loaded
+PROBE|load-clojure.set|OK :loaded
+PROBE|load-clojure.string|OK :loaded
+PROBE|load-clojure.zip|OK :loaded
+PROBE|load-clojure.data|OK :loaded
+PROBE|load-clojure.edn|OK :loaded
+PROBE|load-clojure.template|FAIL java.lang.Exception :: unable to load namespace clojure.template
+PROBE|load-clojure.test|OK :loaded
+PROBE|load-clojure.math|OK :loaded
+PROBE|load-clojure.stacktrace|FAIL java.lang.Exception :: unable to load namespace clojure.stacktrace
+PROBE|load-clojure.repl|OK :loaded
+PROBE|load-clojure.spec.alpha|FAIL java.lang.Exception :: unable to load namespace clojure.spec.alpha
+PROBE|future-basic|OK 3
+PROBE|future-capture-local|OK 42
+PROBE|future-capture-atom|OK 1
+PROBE|future-binding|OK 3
+PROBE|promise|OK 7
+PROBE|delay|OK 2
+PROBE|agent|OK 1
+PROBE|pmap|OK (2 3 4)
+PROBE|spec-conform|FAIL java.lang.Exception :: CompileError: compiling function position
+PROBE|test-stacktrace|OK 0
+PROBE|done|OK
+SUMMARY|lg|ok=19 unsupported-shim=0 fail-other=4 wall-ms=14429

@@ -1,0 +1,25 @@
+=== host: cljw ===
+PROBE|load-clojure.walk|OK :loaded
+PROBE|load-clojure.set|OK :loaded
+PROBE|load-clojure.string|OK :loaded
+PROBE|load-clojure.zip|OK :loaded
+PROBE|load-clojure.data|OK :loaded
+PROBE|load-clojure.edn|OK :loaded
+PROBE|load-clojure.template|OK :loaded
+PROBE|load-clojure.test|OK :loaded
+PROBE|load-clojure.math|OK :loaded
+PROBE|load-clojure.stacktrace|OK :loaded
+PROBE|load-clojure.repl|OK :loaded
+PROBE|load-clojure.spec.alpha|OK :loaded
+PROBE|future-basic|OK 3
+PROBE|future-capture-local|OK 42
+PROBE|future-capture-atom|OK 1
+PROBE|future-binding|OK 3
+PROBE|promise|OK 7
+PROBE|delay|OK 2
+PROBE|agent|OK 1
+PROBE|pmap|OK (2 3 4)
+PROBE|spec-conform|OK 2
+PROBE|test-stacktrace|OK 0
+PROBE|done|OK
+SUMMARY|cljw|ok=23 unsupported-shim=0 fail-other=0 wall-ms=131737

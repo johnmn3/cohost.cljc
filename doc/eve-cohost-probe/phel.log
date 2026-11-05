@@ -1,0 +1,4 @@
+=== host: phel ===
+PROBE|boot|FAIL no probe output
+stderr tail: RUNNER 
+SUMMARY|phel|ok=0 unsupported-shim=0 fail-other=0 wall-ms=270

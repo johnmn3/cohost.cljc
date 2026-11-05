@@ -1,17 +1,8 @@
-;; Eve-in-cohost load probe — the program run INSIDE each booted host.
-;; It is fed to the host as one -e form (see dev/eve_probe.clj). Every case
-;; prints exactly one line:  PROBE|<case>|<OK value | FAIL class :: message>
-;; The runner classifies FAILs: a shim "not available on this host" message
-;; names the unsupported entry (the threading-surface gap); anything else is
-;; quoted verbatim.
 (do
   (defn probe [nm f]
     (try (println (str "PROBE|" nm "|OK " (pr-str (f))))
          (catch Throwable t
            (println (str "PROBE|" nm "|FAIL " (.getName (class t)) " :: " (ex-message t))))))
-  ;; --- the threading surface, as library code and its users call it ---
-  ;; (the twelve library loads run before this form as separate
-  ;; top-level -e forms; see dev/eve_probe.clj for why)
   (probe "future-basic"        (fn [] (deref (future (+ 1 2)))))
   (probe "future-capture-local" (fn [] (let [x 41] (deref (future (inc x))))))
   (probe "future-capture-atom" (fn [] (let [a (atom 0)] (deref (future (swap! a inc))) @a)))
@@ -20,12 +11,8 @@
   (probe "delay"               (fn [] (deref (delay (+ 1 1)))))
   (probe "agent"               (fn [] (let [ag (agent 0)] (send ag inc) (await ag) (deref ag))))
   (probe "pmap"                (fn [] (doall (pmap inc [1 2 3]))))
-  ;; --- a library exercising its own internals on the surface's edge ---
   (probe "spec-conform" (fn [] (eval '(clojure.spec.alpha/conform even? 2))))
   (probe "test-stacktrace" (fn [] (eval '(count (.getStackTrace (Thread/currentThread))))))
   (println "PROBE|done|OK")
-  (flush)
-  ;; On the JVM, agent/future executor threads are non-daemon: without
-  ;; shutdown-agents the process never exits after the agent/future cases.
   (try (shutdown-agents) (catch Throwable _))
   (try (System/exit 0) (catch Throwable _)))

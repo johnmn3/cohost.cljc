@@ -1,0 +1,4 @@
+=== host: cljrs ===
+PROBE|boot|FAIL no probe output
+stderr tail: RUNNER cohost: :cljrs is not wired into the CLI yet: its boot is still in flight (doc/hosts/PLAN.md)
+SUMMARY|cljrs|ok=0 unsupported-shim=0 fail-other=0 wall-ms=78

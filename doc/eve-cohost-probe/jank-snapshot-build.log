@@ -1,0 +1,29 @@
+SNAPSHOT-STALE no stamp
+AOT-FRESH
+AOT-DIR target/jank-aot/_cache/x86_64-unknown-linux-gnu-d41ef4a07a9d4dd9963044192227fbfde2da40c9f817907bab326588f8e7ef94
+cohost.boot on jank: 791 top-level forms
+  booted as stock: 514   from host: 171   natives: 28   skipped: 78   errors: 0
+SNAPSHOT-EVENTS 1453 bytes 5957292
+MODULE cohost.core target/jank-snapshot/src/cohost/core.jank 522
+MODULE cohost.walk target/jank-snapshot/src/cohost/walk.jank 10
+MODULE cohost.set target/jank-snapshot/src/cohost/set.jank 14
+MODULE cohost.string target/jank-snapshot/src/cohost/string.jank 25
+MODULE cohost.zip target/jank-snapshot/src/cohost/zip.jank 29
+MODULE cohost.data target/jank-snapshot/src/cohost/data.jank 14
+MODULE cohost.edn target/jank-snapshot/src/cohost/edn.jank 2
+MODULE cohost.template target/jank-snapshot/src/cohost/template.jank 2
+MODULE cohost.test target/jank-snapshot/src/cohost/test.jank 59
+MODULE cohost.stacktrace target/jank-snapshot/src/cohost/stacktrace.jank 6
+MODULE cohost.math target/jank-snapshot/src/cohost/math.jank 45
+MODULE cohost.repl target/jank-snapshot/src/cohost/repl.jank 15
+MODULE cohost.spec.alpha target/jank-snapshot/src/cohost/spec/alpha.jank 140
+MODULE cohost.spec.gen.alpha target/jank-snapshot/src/cohost/spec/gen/alpha.jank 20
+PLACEMENT 858 of 873 targeted forms at their original lines, 15 unplaceable
+MODULE cohost.snapshot target/jank-snapshot/src/cohost/snapshot.jank 10
+SNAPSHOT-LAUNCHER not built (exit 137 ); compiling the modules alone
+----- Error --------------------------------------------------------------------
+Type:     clojure.lang.ExceptionInfo
+Message:  
+Data:     {:proc #object[java.lang.ProcessImpl 0x7fc5ebf7 "Process[pid=23105, exitValue=143]"], :exit 143, :in #object[java.lang.ProcessBuilder$NullOutputStream 0x48c2d825 "java.lang.ProcessBuilder$NullOutputStream@48c2d825"], :out #object[java.lang.ProcessBuilder$NullInputStream 0x4e95c36b "java.lang.ProcessBuilder$NullInputStream@4e95c36b"], :err #object[java.lang.ProcessBuilder$NullInputStream 0x4e95c36b "java.lang.ProcessBuilder$NullInputStream@4e95c36b"], :prev nil, :cmd ["jank" "--module-path" "target/jank-snapshot/src:src" "compile-module" "cohost.snapshot" "-O3" "--target-dir" "target/jank-snapshot/aot"], :type :babashka.process/error}
+Location: /home/hatch/workspace/cohost-probe/dev/perf/jank_snapshot_key.clj:125:9
+

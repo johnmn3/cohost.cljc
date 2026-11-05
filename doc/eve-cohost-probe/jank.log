@@ -1,0 +1,25 @@
+=== host: jank ===
+PROBE|load-clojure.walk|OK :loaded
+PROBE|load-clojure.set|OK :loaded
+PROBE|load-clojure.string|OK :loaded
+PROBE|load-clojure.zip|FAIL clojure.lang.Compiler$CompilerException :: The module `clojure.zip` could not be found.
+PROBE|load-clojure.data|OK :loaded
+PROBE|load-clojure.edn|FAIL clojure.lang.Compiler$CompilerException :: The module `clojure.edn` could not be found.
+PROBE|load-clojure.template|OK :loaded
+PROBE|load-clojure.test|OK :loaded
+PROBE|load-clojure.math|FAIL clojure.lang.Compiler$CompilerException :: The module `clojure.math` could not be found.
+PROBE|load-clojure.stacktrace|OK :loaded
+PROBE|load-clojure.repl|FAIL clojure.lang.Compiler$CompilerException :: The module `clojure.repl` could not be found.
+PROBE|load-clojure.spec.alpha|FAIL clojure.lang.Compiler$CompilerException :: The module `clojure.spec.alpha` could not be found.
+PROBE|future-basic|OK 3
+PROBE|future-capture-local|OK 42
+PROBE|future-capture-atom|OK 1
+PROBE|future-binding|OK 3
+PROBE|promise|OK 7
+PROBE|delay|OK 2
+PROBE|agent|FAIL clojure.lang.ExceptionInfo :: TODO: port agent
+PROBE|pmap|FAIL clojure.lang.ExceptionInfo :: TODO: port pmap
+PROBE|spec-conform|OK 2
+PROBE|test-stacktrace|OK 0
+PROBE|done|OK
+SUMMARY|jank|ok=16 unsupported-shim=0 fail-other=7 wall-ms=3493
