@@ -103,6 +103,15 @@ table), so these read as host loader/compiler gaps, and
 `spec-conform` fails downstream ("CompileError: compiling function
 position").
 
+### clojurust (cljrs) — no CLI row
+
+`SUMMARY|cljrs|ok=0 unsupported-shim=0 fail-other=0 wall-ms=78`
+
+`bin/cohost :cljrs` answers "cohost: :cljrs is not wired into the CLI
+yet: its boot is still in flight (doc/hosts/PLAN.md)". The host boots
+through its bb task only; through the CLI surface this probe measures,
+it has no row today. Recorded as the host's state, not a probe failure.
+
 Probe-design note (measured): the first JVM run never exited — after
 the agent/future cases, the JVM's non-daemon executor threads keep the
 process alive. The program now ends with `shutdown-agents` + a guarded
