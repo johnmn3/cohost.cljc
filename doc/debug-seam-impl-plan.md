@@ -144,3 +144,9 @@ This section keeps only the sha and the gate line per unit.
 - U1 @ 2dc8a9c -- jvm 2/14 (#1 report parity probed, #5); jank unmeasured.
 - U8 @ 3003aec -- jvm 2/14 (#1 with stock names in frames, #5); jank unmeasured.
 - Runner @ badcee6 -- jvm 5/14 (#1 #5 #6 #7 #14), battery 221/221, libraries 62/62, cli:check 7/7 SAME; jank unmeasured.
+- (analysis lane, branch muse/debug-seam-analysis) CLI-defect step 0 @ 5039590 -- jvm 5/14, battery 221/221, libraries 62/62 SAME; jank blocked (B1 + snapshot env).
+- U3 diagnosis @ ac781ae -- doc/debug-seam-probes/u3-diagnosis.md; no code.
+- U3(a) @ 4465e88 -- jvm 5/14, battery 221/221, libraries 62/62 SAME; probe project: bad load exit 0/silent BEFORE, exit 1 with the report AFTER; jank confirmation pending B1.
+- U3(b) @ a01bc15 -- jvm 7/14 (#3 #10 #13 PASS via the live runner), battery 221/221, libraries 62/62 SAME; jank compile of the emitted clauses pending B1.
+- U6 @ 5fde5fb -- runner #11 live (codegen + COHOST_JANK_PROFILE route in bin/cohost, doc/CLI.md); jvm #11 SKIP by design; jank gate pending B1.
+- U7 @ 4eed2e0 -- analysis only (doc/debug-seam-probes/u7-arithmetic.md): the zero guard already stands at three layers; runner #10 PASS on jvm; jank probe predicted PASS, pending B1.
