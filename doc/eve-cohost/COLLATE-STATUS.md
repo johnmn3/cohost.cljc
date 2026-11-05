@@ -12,8 +12,9 @@ verification, with the remote tip re-checked first).
 
 ## Sequence
 - [x] Merge 1: unit 3 (8ba8027) into the mainline -- merge commit 4545004, NO conflicts (7 files: memory.cljc + memory_eve.clj new, probe_memory.clj, UNIT3 docs).
-- [ ] Merge 2: unit 2 (3179ba8) into the mainline.
-- [ ] Verify on the merged tree (JVM seat): battery 221/221, libraries
+- [x] Merge 2: unit 2 (3179ba8) into the mainline -- merge commit f80eba2, NO conflicts. Conflict-marker sweep on the committed tree: 0 hits.
+- [x] Verify (JVM seat, bb boot:jvm, dev/collate-logs/boot-jvm.log): boot errors 0, battery 221/221, libraries 62/62 -- FULLY GREEN.
+- [ ] Snapshot-replay check: rebuilt snapshot carries the :thread-layer event + snap-thread-layer! call; probe row through it answers the thread family.
       62/62, boot errors 0, unit-2 snapshot-replay check through the
       rebuilt snapshot (thread fills present after replay).
 - [ ] Push (explicit refspec to muse/eve-cohost-impl) only if fully
