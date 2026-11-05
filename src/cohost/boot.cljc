@@ -105,7 +105,13 @@
   [macro-sym form e]
   (if (= :macroexpansion (:clojure.error/phase (ex-data e)))
     e
-    (ex-info nil
+    ;; host/ex-info*, not plain ex-info: in cohost's own compiled code
+    ;; the plain reference reaches the host's native constructor, and
+    ;; jank's rejects a nil message (a native std::exception out of the
+    ;; handler -- the attribution died there, check #13 on jank). The
+    ;; adapter's cap is the nil-safe construction every host routes
+    ;; through (jank's stores "" and marks it :cohost/nil-message).
+    (host/ex-info* nil
              (cond-> {:clojure.error/phase :macroexpansion
                       :clojure.error/symbol macro-sym}
                (:file (meta form)) (assoc :clojure.error/source (:file (meta form)))
