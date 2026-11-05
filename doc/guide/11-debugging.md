@@ -1,15 +1,15 @@
 # Debugging
 
-*2026-11-05. States below are measured, not aspirational: the JVM
-column is the traces lane's `bb debug-seam:check jvm` run of
-2026-11-04 (10/14 PASS, 0 FAIL — its tree differs from this
-branch only in the jank adapter, which the JVM run does not
-exercise); the jank column is the j gate run on the build server
-2026-11-04 (6 PASS, 5 FAIL, 3 SKIP) plus the separate gate probes
-of 2026-11-05. Where a fix has landed on a side branch since the
-gate but is not yet collated into `muse/debug-seam`, the text says
-which branch and what verification it has. Gaps are written as
-gaps.*
+*2026-11-05. States below are measured, not aspirational: both
+columns are the final gate run of 2026-11-05 on the collated
+`muse/debug-seam` tree (tip be95bb2) — the JVM column is
+`bb debug-seam:check jvm` locally (10/14 PASS, 0 FAIL; the 4
+SKIPs are jank-only checks by design), the jank column is
+`bb debug-seam:check jank` on the build server (12/14 PASS,
+0 FAIL, with checks #9 and #12 PASS by their dedicated probes —
+14 of 14 accounted). The one remaining boundary is written as a
+boundary: arithmetic written directly in `cpp/` interop (see
+Divide by zero).*
 
 Debugging a cohosted program is debugging Clojure: cohost boots the
 stock `core.clj` and libraries, so the facilities are the stock
@@ -45,15 +45,14 @@ Core frames are shown in reports and traces under their Clojure
 names (`clojure.core/map`), even though ordinary printing still
 shows the `cohost.*` homes.
 
-**Jank, as of the 2026-11-04 gate:** the headline on the snapshot
-launcher could name a host trampoline frame —
+**Jank:** the headline names the throwing function, as on the
+JVM. An earlier build could name a host trampoline frame —
 `object_ref::call (oref.hpp:566)` — instead of the throwing
 function, because jank's exception-construction frames led the
-trace and the headline picks the first frame it cannot drop. The
-fix (those frames are now elided in the trace data itself, below)
-landed on branch `muse/debug-seam-traces` on 2026-11-04 and is
-verified on the JVM; its jank verification run was still queued
-as of 2026-11-05.
+trace and the headline picks the first frame it cannot drop.
+Those frames are now elided in the trace data itself (below),
+and the final gate's check #1 PASSes on jank with the headline
+`Execution error (ExceptionInfo) at user/boom`.
 
 ## Traces as data
 
@@ -69,10 +68,10 @@ construction and plumbing frames at its head (jank runtime
 frames, `object_ref::call`, the shim's and adapter's own
 `ex-info` construction) are dropped once, in `:ex-trace` itself,
 so every consumer sees the clean trace whose first frame is user
-code. Verified on the JVM (check #6: the first `.getStackTrace`
-frame is `[user$inner invokeStatic "NO_SOURCE_FILE" 0]`). On jank
-the gate measured the un-elided head; the elision fix's jank run
-is the same queued run as the headline's, above.
+code. Verified on both hosts at the final gate (check #6: the
+first `.getStackTrace` frame is `[user$inner invokeStatic
+"NO_SOURCE_FILE" 0]` on the JVM, `[user$inner_11_1 invoke
+"NO_SOURCE_FILE" 1]` on jank).
 
 ## pst and print-stack-trace
 
@@ -85,13 +84,16 @@ ExceptionInfo r {:x 2}
 	user/inner (NO_SOURCE_FILE:0)
 ```
 
-Verified on the JVM (check #7). On jank at the gate, `pst` ran on
-the launcher but its frame lines rendered raw `class.method` for
-source-less frames — jank carries their file as `"nil"`, where
-the stock printer only demunges files ending `.clj`/`.cljc` or
-named `NO_SOURCE_FILE`. The traces fix maps source-less files to
-`NO_SOURCE_FILE` and elides the head; jank re-verification is
-queued with the rest of that branch (2026-11-05).
+Verified on both hosts (check #7). On jank, source-less frames
+carry their file as `"nil"`, where the stock printer only
+demunges files ending `.clj`/`.cljc` or named `NO_SOURCE_FILE`;
+the seam maps source-less files to `NO_SOURCE_FILE` and elides
+the head (above), so the lines render demunged there too. One
+host truth to know: a jank-compiled function's name carries
+jank's own suffix — the frame above prints as
+`user/inner-11-1 (NO_SOURCE_FILE:1)` on jank — and that suffix
+is jank's real naming, not a rendering defect; the seam's
+checker absorbs the host shape rather than falsify the name.
 
 ## REPL vars
 
@@ -132,36 +134,35 @@ is the JVM's own reader, whose positions are native.
 
 ## Macro-expansion errors
 
-On the JVM, an error thrown while a macro expands is reported
-with the macroexpansion phase: the report names the
+On both hosts, an error thrown while a macro expands is
+reported with the macroexpansion phase: the report names the
 macroexpansion and carries the macro's provenance, and a macro
 that expands to an unresolved symbol fails the load with that
-provenance (check #13 PASS).
+provenance (check #13 PASS on the JVM and on jank).
 
-**Jank gap (2026-11-05):** a macro function's throw during JIT
-compilation crosses as a native C++ exception rather than a
-Clojure exception object, so no Clojure-level catch ever holds it
-and the report reads only "a native C++ exception" — the macro
-attribution is lost and check #13 fails on jank. Open.
+On jank this once lost the attribution entirely: the attributed
+error was built with a nil message, jank's native exception
+constructor rejects a nil message, and the std::exception thrown
+out of the handler replaced the attribution with the native
+sentinel. The construction is now nil-safe in the adapter (a nil
+message is stored as "" with a `:cohost/nil-message` mark), and
+the final gate's check #13 PASSes on jank: load exit 1, throw
+exit 1, the report names the macroexpansion.
 
 ## Catching native errors (jank)
 
-A stock `try` catches Clojure exceptions on every host. On this
-branch, one class still escapes on jank: a native C++ exception
-thrown by jank's own core (an index error inside jank internals,
-a macro throw as above) is not an object a Clojure `catch` can
-hold. The run ends with exit 1 and a full report, but the message
-is the generic "a native C++ exception" and the catch never
-fires (check #3, native half: SKIP on jank, the hole named).
-
-Fix status, 2026-11-05: sibling catch clauses that translate
-jank's `error_ref` and `std::exception` into an ex-info — message
-read from the caught value in the clause — landed on branch
-`muse/debug-seam-native` and were verified there on the build
-server: the snapshot builds clean, `cli:check` 7/7, the
-runner's check #3 PASSes on that tree, and a thrown
-`std::runtime_error` is caught by `catch Throwable` with its
-message intact. Not yet collated into `muse/debug-seam`.
+A stock `try` catches Clojure exceptions on every host —
+including, on jank, native C++ exceptions thrown by jank's own
+core (an index error inside jank internals, a macro throw as
+above). The seam's `try` rewriting adds sibling catch clauses
+that translate jank's `error_ref` and `std::exception` into an
+ex-info — the message read from the caught value in the clause —
+so the catch fires with the native message intact. Verified at
+the final gate (check #3 on jank: the load half names the
+unresolved symbol, and the native half's catch catches the
+native throw's message). Before this fix the native class
+escaped every Clojure catch, and the run ended with the generic
+"a native C++ exception" report.
 
 ## Divide by zero
 
@@ -172,9 +173,15 @@ a zero divisor (plain jank dies with SIGFPE, exit 136), so the
 guard sits in cohost's numeric layer, which stock `/`, `quot`,
 `rem` and `mod` all route through. Verified on the JVM and on
 jank (check #10). Arithmetic written directly in `cpp/`
-interop is the caller's own C++: a zero divisor there is a
-native SIGFPE, exactly as in a plain jank program — cohost
-cannot guard code it does not rewrite.
+interop is the caller's own C++: the passthrough is verbatim by
+contract, so a zero divisor there is a native SIGFPE (exit
+136), exactly as in a plain jank program and exactly as across
+the JVM's JNI boundary — measured both ways (plain jank, and a
+cohost session evaluating cpp/raw division) against the seam
+division's ArithmeticException + exit 1 in the same run. This
+is the seam's stated boundary, not a gap: no cohost layer can
+guard code it does not rewrite without breaking the passthrough
+contract. Probe: `doc/debug-seam-probes/probe-div0-cpp.sh`.
 
 ## Exit codes
 
@@ -186,8 +193,9 @@ Verified on the JVM and on the jank launcher (check #14):
 | `-X` naming a missing function | message (`function not found: …`) + nonzero |
 | A script calling `(System/exit 3)` | 3 |
 
-A statically built AOT binary is the exception — it exits 0 on
-an uncaught throw. See the jank section below.
+A statically built AOT binary behaves the same — it routes
+through the report machinery and exits 1 on an uncaught throw.
+See the jank section below.
 
 ## Debugging on the jank pathway
 
@@ -206,15 +214,16 @@ host compiler actually received:
 JANK_PRINT_CODEGEN=1 bin/cohost :jank -e "(+ 1 2)"
 ```
 
-State, 2026-11-05: through the compiled snapshot launcher (the
-default `bin/cohost :jank` shape) nothing compiles at run time —
-the booted core loads as compiled objects — so the gate
-measured **no dump** on that shape (check #11 FAIL there). On
-the source-boot (JIT) path the same command prints the dump:
-1,571 lines naming cohost, measured locally. A fix on branch
-`muse/debug-seam-introspect` routes any run with either
-variable set to the source boot, like a profile request; its
-end-to-end gate verification is still pending.
+Through the compiled snapshot launcher (the default
+`bin/cohost :jank` shape) nothing compiles at run time — the
+booted core loads as compiled objects — so `bin/cohost` routes
+any run with either variable set to the source boot, like a
+profile request, and the dump prints there. Verified at the
+final gate (check #11 PASS on jank: codegen exit 0, the dump
+naming cohost's own `cli.cljc`; profile written). The fix's own
+gate verification measured the codegen dump at 556,660 bytes
+with 1,571 lines naming cohost, and the IR dump at 3,623,586
+bytes with 9,346 lines.
 
 ### Profiling
 
@@ -227,22 +236,18 @@ and non-empty).
 
 ### AOT binaries vs the launcher
 
-The two jank run shapes report uncaught throws differently:
+The two jank run shapes report uncaught throws the same way:
 
 - **Snapshot launcher** (`bin/cohost :jank …`): the seam report
   engages — headline, `Full report at:`, report EDN, exit 1.
 - **Static AOT binary** (`bb build:jank`, `cohost -T:build
-  build`): **gap, measured 2026-11-05.** The binary prints
-  jank's raw `#error` map to stdout — `:cause`, `:data`,
-  `:via` and `:trace` are all correct and the user frame is
-  present (`seam.throwmain/-main` at `throwmain.cljc:7`) — but
-  there is no headline, no `Full report at:`, no report file,
-  stderr is empty, and **the exit code is 0**. A CI script or
-  shell pipeline sees success. The AOT entry path never passes
-  through the CLI's report machinery, and jank's generated main
-  prints the exception as a value. The fix surface is named —
-  the AOT entry would need the CLI's report wrapper and a
-  nonzero exit — and is not yet implemented (check #9).
+  build`): the same report engages — the generated app entry
+  routes through `cohost.cli/run-app-main!`, the CLI's report
+  wrapper, so an uncaught throw prints the headline, writes the
+  report EDN and exits 1 (check #9, verified by its probe at
+  the final gate: exit 1, headline, report present). Before
+  this fix the binary printed only jank's raw `#error` map and
+  exited 0 — a CI script or shell pipeline saw success.
 
 Positions survive into AOT: the snapshot emitter keeps position
 meta and writes each form at its original line in the generated
@@ -281,21 +286,22 @@ frames are named below it. The probe scripts are committed at
 ## The seam checks, as a table
 
 `bb debug-seam:check <jvm|jank>` runs the 14 checks
-(`dev/debug_seam_check.clj`). State at this chapter's date:
+(`dev/debug_seam_check.clj`). State at the final gate,
+2026-11-05, on the collated tree:
 
 | # | Check | JVM | Jank |
 |---|---|---|---|
-| 1 | Uncaught-throw report | PASS | FAIL at gate — headline named a host frame; fix on `muse/debug-seam-traces`, jank run queued |
+| 1 | Uncaught-throw report | PASS | PASS |
 | 2 | Source meta at read | SKIP (jank-only probe) | PASS (file + line exact) |
-| 3 | Unresolved symbol; native catch | PASS | load half PASS; native half SKIP — hole open here, closed on `muse/debug-seam-native` (verified on the build server) |
+| 3 | Unresolved symbol; native catch | PASS | PASS (native catch included — the hole is closed) |
 | 4 | Reader error | PASS | PASS |
 | 5 | REPL `*1`/`*e` | PASS | PASS |
-| 6 | In-program trace access | PASS | FAIL at gate — host frames led; same queued fix as #1 |
-| 7 | `pst` | PASS | FAIL at gate — frame lines mis-shaped; same queued fix as #1 |
+| 6 | In-program trace access | PASS | PASS |
+| 7 | `pst` | PASS | PASS (frame lines carry jank's own `-N-N` suffix; see pst, above) |
 | 8 | `*err*` separation | PASS | PASS |
-| 9 | AOT uncaught throw | SKIP in the runner; probed separately | **GAP** — exit 0, raw `#error` only (probed 2026-11-05) |
-| 10 | Divide by zero | PASS | PASS |
-| 11 | Transform introspection | SKIP (jank-only) | FAIL at gate on the launcher shape; fix on `muse/debug-seam-introspect`, gate verification pending |
-| 12 | gdb break-on-throw | SKIP in the runner; probed separately | PASS (probed 2026-11-05) |
-| 13 | Macro-expansion errors | PASS | FAIL — native escape loses the attribution |
-| 14 | Exit codes | PASS | PASS (launcher; AOT is #9's gap) |
+| 9 | AOT uncaught throw | SKIP in the runner; probed separately | PASS by probe — exit 1, headline, report EDN |
+| 10 | Divide by zero | PASS | PASS (cpp/ passthrough division is the stated boundary; see Divide by zero) |
+| 11 | Transform introspection | SKIP (jank-only) | PASS |
+| 12 | gdb break-on-throw | SKIP in the runner; probed separately | PASS (probed 2026-11-05, twice) |
+| 13 | Macro-expansion errors | PASS | PASS |
+| 14 | Exit codes | PASS | PASS (launcher and AOT alike) |

@@ -321,6 +321,28 @@ through the seam. Checks 1-3 are the load-bearing ones.
 
 ## Headline gaps (for the close-out discussion)
 
+**Close-out (2026-11-05, final gate on the collated
+`muse/debug-seam` @ be95bb2): all five headline gaps are
+closed.** (1) The report carries the trace —
+`:clojure.main/trace` in the report file, root-cause-first.
+(2) The REPL maintains `*e`/`*1`/`*2`/`*3` at clojure.main
+parity (check #5 PASS on both hosts). (3) Unresolved symbols
+fail the load with the symbol named (check #3 PASS on both
+hosts), and native C++ exceptions are caught by a stock `catch`
+through the seam's sibling clauses (check #3 native half PASS
+on jank — the catch hole is closed). (4) Positions are real:
+the jank read end carries file + file-absolute line (check #2
+PASS), and the snapshot emitter writes forms at their original
+lines (858 of 873 placed). (5) The native-crash class shrank to
+its boundary: seam division throws ArithmeticException (check
+#10 PASS on both hosts); only arithmetic written directly in
+`cpp/` interop still traps SIGFPE — the passthrough is verbatim
+by contract, the same line the JVM draws at JNI. The mapping
+below is the pre-implementation measurement this close-out
+started from; the gate's per-check table lives in
+doc/guide/11-debugging.md, with the full gate account in
+REPORTS.md on muse/cohost-reports.
+
 1. **The seam's error report discards the trace by design**
    (cli.cljc `report-error!`): jank produces positioned, demunged
    traces; cohost's CLI prints class + message. Every debugging
