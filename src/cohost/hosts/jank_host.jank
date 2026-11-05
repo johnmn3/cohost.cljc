@@ -2362,6 +2362,28 @@ namespace cohost_err {
         s (if cut (subs s 0 cut) s)]
     (symbol (string/replace (string/replace s "-" "_") "/" "$"))))
 
+(def ^:private ctor-head-prefixes
+  ;; the construction machinery's class spellings, display (ns/name) and
+  ;; munged (ns$name) alike: the C++ exception constructor (jank::), the
+  ;; core's ex-info the construction was reached through (clojure_core$ /
+  ;; cohost.core$), the runtime's apply trampoline (object_ref::call --
+  ;; lane R's measured head: [jank::runtime::ex_info jank 1]
+  ;; [clojure_core$ex_info_32861_2 jank 1] [object_ref::call oref.hpp
+  ;; 566], then the user's frame; the AFn/RestFn frames of the JVM
+  ;; impl's ctor-frame?), the shim's and the adapter's plumbing
+  ["jank::" "clojure_core$" "clojure.core$" "cohost_core$" "cohost.core$"
+   "object_ref::" "cohost.shim$" "cohost_shim$" "cohost.adapter$" "cohost_adapter$"])
+
+(defn- ctor-frame?
+  "A construction-head frame: one of the prefixes above. Dropped from
+   the head of :ex-trace itself (the data layer, F2 -- triage, the
+   report file, pst and print-stack-trace all see the clean trace), as
+   the JVM impl's ctor-frame? drops its construction head for
+   fillInStackTrace parity."
+  [frame]
+  (let [c (str (first frame))]
+    (boolean (some (fn [p] (string/starts-with? c p)) ctor-head-prefixes))))
+
 (def adapter
   {:name :jank
    ;; a thrown jank value no cohost type made: jank's checked integer ops throw
@@ -2709,12 +2731,14 @@ namespace cohost_err {
    :exception-message (fn [e] (let [d (ex-data e)]
                                 (if (and (map? d) (:cohost/nil-message d)) nil (ex-message e))))
    ;; frames from the error's own :trace (see cohost_err above): each
-   ;; [name file line] becomes [class 'invoke file line]
+   ;; [name file line] becomes [class 'invoke file line]; the
+   ;; construction head is elided here, at the data layer (F2)
    :ex-trace (fn [e] (let [m (cpp/cohost_err.ex_map e)]
                        (if (nil? m)
                          []
-                         (mapv (fn [[fname file line]] [(frame-class fname) 'invoke file line])
-                               (:trace m)))))
+                         (vec (drop-while ctor-frame?
+                                          (mapv (fn [[fname file line]] [(frame-class fname) 'invoke file line])
+                                                (:trace m)))))))
    ;; StringBuilder as a cohost type (sb-desc above)
    :string-builder (fn [] (new-instance sb-desc [(atom [])]))
    :sb? (fn [x] (identical? sb-desc (instance-desc x)))

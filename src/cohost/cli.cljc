@@ -216,10 +216,25 @@
 
 (def ^:private report-count (atom 0))
 
-(defn- repl-report!
-  "The REPL prints the message only, as clojure.main's does."
+(defn- report-fallback!
+  "The report of last resort, printed when building the full report
+   itself fails: two lines, the exception's class under its display
+   name and its message -- the two facts readable off the exception
+   without building anything. Each line is fetched under its own
+   try-all, so the fallback cannot throw."
   [e]
-  (err-println (ex-str (ex-triage (throwable->map e)))))
+  (err-println (host/try-all (fn [] (str (shim/display-class-name (shim/class-of e))))
+                             (fn [_] "java.lang.Exception")))
+  (err-println (host/try-all (fn [] (str (host/exception-message e)))
+                             (fn [_] ""))))
+
+(defn- repl-report!
+  "The REPL prints the message only, as clojure.main's does; if building
+   it fails, the fallback prints instead (F8)."
+  [e]
+  (host/try-all
+   (fn [] (err-println (ex-str (ex-triage (throwable->map e)))))
+   (fn [_] (report-fallback! e))))
 
 (defn- report-error!
   "clojure.main's uncaught-error report. The config's :report names the
@@ -228,7 +243,8 @@
    <:report-dir>/cohost-<millis>-<n>.edn and prints the message and the
    path to stderr; \"stderr\" prints the report and the message; \"none\"
    prints nothing. No :report-dir, or a failed write, falls back to
-   stderr."
+   stderr. A failure inside the report building itself prints the
+   two-line fallback (class + message) instead of nothing (F8)."
   [e]
   (host/try-all
    (fn []
@@ -253,7 +269,7 @@
            (if path
              (err-println (str message "\nFull report at:\n" path))
              (err-println (str report-str "\n" message)))))))
-   (fn [_] nil)))
+   (fn [_] (report-fallback! e))))
 
 (defn- set-command-line-args!
   "The root, and the binding where the host's main runs inside one (jolt's

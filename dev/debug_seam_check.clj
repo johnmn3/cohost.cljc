@@ -2,6 +2,10 @@
 ;; (doc/debug-seam-research.md section (c), checks #1-#14) run through
 ;; the cohost seam on one target (jvm | jank). One line per check:
 ;; #N PASS|FAIL|SKIP with the evidence, or the unit that owns it.
+;; Hardened per lane R's findings F4-F7: #1 judges the streams
+;; separately, #5 probes a value only *1 can produce, #7 judges pst's
+;; own output shapes, #14 runs all three exit cases; every PASS line
+;; quotes the exact text it matched.
 ;;
 ;; For jvm the seam is cohost.cli on the JVM host itself
 ;; (clojure -M -m cohost.cli <config>), not the real CLI; for jank it
@@ -77,9 +81,11 @@
 
 ;; ---- the sessions ----------------------------------------------------
 
-(def boom-program "(defn boom [] (throw (ex-info \"kaboom\" {:x 5}))) (boom)")
+;; one top-level form, so the -e value printing (run-cli! prints each
+;; form's value) prints nothing for it: #1 can then hold stdout to the
+;; research contract (the report on stderr, nothing on stdout)
+(def boom-program "(do (defn boom [] (throw (ex-info \"kaboom\" {:x 5}))) (boom))")
 (def uncaught (run-e boom-program))
-(def uncaught-text (str (:out uncaught) "\n" (:err uncaught)))
 (def report-path (some (fn [line] (let [t (str/trim line)] (when (str/ends-with? t ".edn") t)))
                        (str/split-lines (:err uncaught))))
 (def report-text (when (and report-path (fs/exists? report-path)) (slurp report-path)))
@@ -87,6 +93,7 @@
 (def repl-input
   (str "(+ 1 2)\n"
        "*1\n"
+       "(prn :star1 *1)\n"
        "(defn inner [x] (throw (ex-info \"r\" {:x x})))\n"
        "(try (inner 1) (catch Throwable e (prn :t1 (first (.getStackTrace e)))))\n"
        "(require 'clojure.repl)\n"
@@ -96,7 +103,21 @@
 (def repl-run (run-repl repl-input))
 (def repl-text (str (:out repl-run) "\n" (:err repl-run)))
 
-(def clean (run-e "(+ 1 2)"))
+;; #14's other two cases: -X with a missing fn in a loadable namespace
+;; (seam.ok: no deps -- demo.main's own deps are not the seam's roots),
+;; and a script that exits 3
+(def exec-missing
+  (case target
+    "jvm" (jvm-cli {:roots [(str demo "/src")]
+                    :main {:type :exec :ns "seam.ok" :fn "nope" :args-edn "[]"}} "")
+    "jank" (jank-cli ["-X" "seam.ok/nope"] "")))
+(def exec-missing-text (str (:out exec-missing) "\n" (:err exec-missing)))
+(def exit3-path (str tmp "/exit3.clj"))
+(spit exit3-path "(System/exit 3)\n")
+(def exit3-run
+  (case target
+    "jvm" (jvm-cli {:main {:type :script :path exit3-path :args []}} "")
+    "jank" (jank-cli [exit3-path] "")))
 (def reader-run (run-e "(defn broken [x"))
 (def reader-text (str (:out reader-run) "\n" (:err reader-run)))
 
@@ -134,6 +155,18 @@
                         (slurp bad-macro-report-path)))
 (def bad-macro-full (str bad-macro-text "\n" bad-macro-report))
 
+;; #13's second probe: a macro whose BODY throws, called from -e.
+;; Its attribution must reach the PRINTED message (stderr carries it,
+;; and the report file's :clojure.main/message repeats it) -- a needle
+;; over the whole report file would also match the host compiler's
+;; own wrapper message riding in :via, which is not the seam's
+;; attribution.
+(def body-throw (run-e "(defmacro m [x] (throw (ex-info \"bad\" {}))) (m 1)"))
+
+;; U5: *err* separation -- an in-program *err* write lands on stderr,
+;; the *out* write on stdout, and the uncaught report stays on stderr
+(def err-sep (run-e "(println \"to-out\") (binding [*out* *err*] (println \"to-err\")) (throw (ex-info \"kaboom\" {}))"))
+
 ;; U7: integer divide by zero, both spellings
 (def div-run (run-e "(/ 5 0)"))
 (def quot-run (run-e "(quot 5 0)"))
@@ -162,17 +195,25 @@
   (some (fn [line] (when-not (str/starts-with? line "WARNING") (str/trim line)))
         (str/split-lines (str/trim (or s "")))))
 
-;; #1 uncaught throw: the clojure.main report contract
+;; #1 uncaught throw: the clojure.main report contract -- the report
+;; on stderr, nothing on stdout (F7: the streams are judged separately,
+;; never joined)
 (record! 1
          (if (and (= 1 (:exit uncaught))
-                  (includes? uncaught-text "Execution error (ExceptionInfo) at user/boom" "kaboom" "Full report at:")
+                  (str/blank? (:out uncaught))
+                  (includes? (:err uncaught) "Execution error (ExceptionInfo) at user/boom" "kaboom" "Full report at:")
                   report-text
                   (includes? report-text ":trace [["))
            "PASS"
            "FAIL")
          (str "exit " (:exit uncaught)
-              "; report " (if report-text "written, :trace non-empty" "missing/empty")
-              "; stderr: " (first-real-line (:err uncaught))))
+              "; stdout " (if (str/blank? (:out uncaught)) "empty" (pr-str (:out uncaught)))
+              "; stderr "
+              (if (includes? (:err uncaught) "Execution error (ExceptionInfo) at user/boom" "Full report at:")
+                (str "matched " (pr-str "Execution error (ExceptionInfo) at user/boom")
+                     " and " (pr-str "Full report at:"))
+                (str "first line: " (first-real-line (:err uncaught))))
+              "; report " (if report-text "written, matched \":trace [[\"" "missing/empty")))
 
 (record! 2
          (if (= target "jank")
@@ -196,21 +237,31 @@
            "FAIL")
          (str "load: exit " (:exit bad-load)
               (if (includes? bad-load-text "this-var-does-not-exist")
-                ", names the symbol" ", no diagnostic")
-              "; native catch: " (first-real-line (:out native-catch))))
+                (str ", matched " (pr-str "this-var-does-not-exist")) ", no diagnostic")
+              "; native catch matched " (pr-str ":caught")
+              " in " (pr-str (first-real-line (:out native-catch)))))
 ;; #4 reader error: the probe runs; the :read-source phase is U4a's
 ;; read-end work, so until then this reports the measured state as SKIP
 (record! 4
          (if (includes? reader-text "Syntax error reading source at (")
            "PASS" "SKIP")
-         (str "owned by U4a (read-end phase); current: " (first-real-line (:err reader-run))))
+         (if (includes? reader-text "Syntax error reading source at (")
+           (str "matched " (pr-str "Syntax error reading source at (")
+                "; first stderr line: " (first-real-line (:err reader-run)))
+           (str "owned by U4a (read-end phase); current: " (first-real-line (:err reader-run)))))
 
-;; #5 REPL *e / *1
+;; #5 REPL *e / *1 -- *1 is probed by a value only *1 can produce
+;; ((prn :star1 *1) after (+ 1 2)): with *1 nil this prints
+;; ":star1 nil" and the check FAILs (F4)
 (record! 5
-         (if (and (includes? repl-text "=> 3\n")
+         (if (and (includes? repl-text ":star1 3")
                   (includes? repl-text ":cause \"r\""))
            "PASS" "FAIL")
-         (str "*1 readback and *e #error print in the REPL session (exit " (:exit repl-run) ")"))
+         (str "*1 readback "
+              (if (includes? repl-text ":star1 3") (str "matched " (pr-str ":star1 3")) "not matched (:star1 3 absent)")
+              "; *e #error print "
+              (if (includes? repl-text ":cause \"r\"") (str "matched " (pr-str ":cause \"r\"")) "not matched")
+              " in the REPL session (exit " (:exit repl-run) ")"))
 
 ;; #6 in-program trace access
 (record! 6
@@ -222,12 +273,38 @@
                   "none printed")))
 
 ;; #7 pst through the seam
+;; #7 judged on pst's OWN output (F5): its header ("ExceptionInfo r
+;; {:x 2}" -- class, message, data) and its tab-indented demunged
+;; frame lines ("\tuser/inner (NO_SOURCE_FILE:0)"). U1's REPL report
+;; line ("Execution error (ExceptionInfo) at user/inner (REPL:0).")
+;; matches neither shape, so the check can no longer pass on it.
 (record! 7
-         (if (includes? repl-text "user/inner")
+         (if (and (includes? repl-text "ExceptionInfo r {:x 2}")
+                  (includes? repl-text "\tuser/inner ("))
            "PASS" "FAIL")
-         "clojure.repl/pst output names user/inner")
+         (str "pst output matched " (pr-str "ExceptionInfo r {:x 2}")
+              " and a frame line "
+              (pr-str (or (some (fn [line] (when (str/includes? line "\tuser/inner (") (str/trim line)))
+                                (str/split-lines repl-text))
+                          "\tuser/inner ( -- none printed"))))
 
-(record! 8 "SKIP" "owned by U5 (*err* separation)")
+;; #8 *err* separation (U5's probe): exit 1; stdout carries the *out*
+;; write and neither the *err* write nor the report; stderr carries
+;; both the *err* write and the report
+(record! 8
+         (if (and (= 1 (:exit err-sep))
+                  (includes? (:out err-sep) "to-out")
+                  (not (includes? (:out err-sep) "to-err"))
+                  (not (includes? (:out err-sep) "Execution error"))
+                  (includes? (:err err-sep) "to-err" "Execution error"))
+           "PASS" "FAIL")
+         (str "exit " (:exit err-sep)
+              "; stdout " (if (includes? (:out err-sep) "to-out") (str "matched " (pr-str "to-out")) "missing \"to-out\"")
+              (if (includes? (:out err-sep) "to-err") ", LEAKED \"to-err\"" ", no \"to-err\"")
+              (if (includes? (:out err-sep) "Execution error") ", LEAKED the report" ", no report")
+              "; stderr " (if (includes? (:err err-sep) "to-err" "Execution error")
+                            (str "matched " (pr-str "to-err") " and " (pr-str "Execution error"))
+                            (str "first line: " (first-real-line (:err err-sep))))))
 (record! 9 "SKIP" "owned by U4c (AOT report)")
 ;; #10 integer divide by zero: a catchable ArithmeticException (exit 1),
 ;; never a signal (136)
@@ -237,7 +314,8 @@
            "PASS"
            "FAIL")
          (str "/ exit " (:exit div-run) ", quot exit " (:exit quot-run)
-              "; " (first-real-line (:err div-run))))
+              "; matched " (pr-str "Divide by zero")
+              " in " (pr-str (first-real-line (:err div-run)))))
 ;; #11 transform introspection: the launcher passes JANK_PRINT_CODEGEN
 ;; through and the rewritten forms' codegen prints, and a profile is
 ;; produced on request (jank only)
@@ -252,27 +330,47 @@
              "FAIL"))
          (if (= target "jvm")
            "jank-only (no transform to introspect on the JVM host)"
-           (str "codegen exit " (:exit codegen) ", names cohost: "
-                (boolean (includes? codegen-text "cohost"))
+           (str "codegen exit " (:exit codegen) ", matched line: "
+                (pr-str (or (some (fn [line] (when (str/includes? line "cohost") (str/trim line)))
+                                  (str/split-lines codegen-text))
+                            "none"))
                 "; profile exit " (:exit profile-run)
                 ", jank.profile written: " (boolean profile-made?))))
 (record! 12 "SKIP" "owned by U4c (gdb break-on-throw)")
-;; #13 macro-expansion error: the load fails and the report identifies
-;; the macro call site (process output + the run's report file)
+;; #13 macro-expansion error: the bad load refuses, and the error is
+;; attributed to the expansion. The needles are per-probe, matching
+;; what each host can produce: jank's analyzer prints "Expanded from
+;; this macro" for the fixture (an unresolved symbol in an expansion);
+;; a macro whose body throws is reported as a macroexpansion, the
+;; phase the loader's expansion wrapper attaches (stock Clojure
+;; attributes the body-throw case and not the fixture).
 (record! 13
          (if (and (not= 0 (:exit bad-macro))
                   (or (includes? bad-macro-full "Expanded from this macro")
-                      (includes? bad-macro-full "macroexpanding")))
+                      (includes? (:err body-throw) "macroexpanding")))
            "PASS"
            "FAIL")
-         (str "exit " (:exit bad-macro) "; "
-              (cond (includes? bad-macro-full "macroexpanding") "report names the macroexpansion"
-                    (includes? bad-macro-full "Expanded from this macro") "diagnostic carries the macro provenance"
-                    :else (first-real-line (:err bad-macro)))))
+         (str "bad-macro exit " (:exit bad-macro)
+              "; body-throw exit " (:exit body-throw)
+              "; attribution: "
+              (cond (includes? bad-macro-full "Expanded from this macro") (str "matched " (pr-str "Expanded from this macro") " (fixture)")
+                    (includes? (:err body-throw) "macroexpanding") (str "matched " (pr-str "macroexpanding") " (body-throw message)")
+                    :else (str "none; body-throw stderr: " (first-real-line (:err body-throw))))))
+;; #14 exit codes, the research checklist's three cases (F6): an
+;; uncaught -e throw exits 1; -X with a missing fn prints the message
+;; and exits nonzero; a script calling (System/exit 3) exits 3
 (record! 14
-         (if (and (= 1 (:exit uncaught)) (= 0 (:exit clean)) (includes? (:out clean) "3"))
+         (if (and (= 1 (:exit uncaught))
+                  (not= 0 (:exit exec-missing))
+                  (includes? exec-missing-text "function not found: nope")
+                  (= 3 (:exit exit3-run)))
            "PASS" "FAIL")
-         (str "uncaught exit " (:exit uncaught) ", clean -e exit " (:exit clean)))
+         (str "-e throw exit " (:exit uncaught)
+              "; -X missing fn exit " (:exit exec-missing)
+              (if (includes? exec-missing-text "function not found: nope")
+                (str ", matched " (pr-str "function not found: nope"))
+                (str ", no missing-fn message: " (first-real-line (:err exec-missing))))
+              "; script (System/exit 3) exit " (:exit exit3-run)))
 
 (let [fails (count (filter (fn [[_ s _]] (= s "FAIL")) @results))
       passes (count (filter (fn [[_ s _]] (= s "PASS")) @results))]
