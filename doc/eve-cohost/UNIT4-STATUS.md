@@ -354,16 +354,33 @@ unchanged, dev/u4_probe46.clj). J gate attempt 1 is
 recorded as failed on this defect (pre-fix tree);
 attempt 2 runs on f0b12cb.
 
-## Remaining, in order
+## cli:check + jank gate (M7) — DONE
 
-1. cli:check cljs re-run on the fixed tree (the full
-   run's jvm/jolt rows: 14 SAME, 0 DIFF; lpy rows DIFF
-   on a basilisp cached-boot build failure in this
-   worktree -- under investigation, not a behavior
-   diff; cljs rows were the defect above).
-2. M7: jank gate on J (boot:jank-snapshot + boot:jank)
-   — PRE-RELEASE bindings, per the sequencing note.
-3. M8: UNIT4-REPORT.md + final declaration.
+cli:check on the fixed tree: jvm 7/7 SAME, jolt 7/7
+SAME, cljs 7/7 SAME. lpy rows DIFF on the basilisp
+cached-boot build failing in this worktree (importer
+FileNotFoundError on its own __pycache__ .lpyc files,
+run/boot/shim) — reproduced IDENTICALLY on the base
+branch (89ad378) in a clean worktree on this box:
+pre-existing worktree environment artifact, not a unit
+change; lpy is unverifiable from this worktree.
+
+Jank gate on J, tree f0b12cb, PRE-RELEASE Eve bindings:
+bb boot:jank-snapshot RC 0 (AOT compiles the new shim
++ layer; boot on jank 791 forms, errors 0); bb
+boot:jank RC 0 — battery 219/221 with ONLY the
+standing named pair (subs count nth first last
+butlast; Character outside ASCII), libraries pass.
+Logs: ~/u4-gate-logs/{snapshot2,boot-jank2}.log on J.
+The gate re-runs against the released bindings when
+they land (sequencing note).
+
+## Close-out
+
+UNIT4-REPORT.md is written. Remaining: none for this
+unit. Scratch bisect worktrees under ~/workspace/wt/
+(u4-base, u4-u3tip, u4-merge, u4-m2, u4-m3, u4-m4) are
+this lane's and removable.
 
 ## Coordination
 
