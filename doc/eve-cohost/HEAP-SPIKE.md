@@ -858,6 +858,14 @@ whether the Eve-side work has landed.
 
 ### 5.2 P3 redone — the cljs/SAB half, measured; both conclusions redrawn
 
+> SUPERSESSION NOTE (2026-11-05, re-bench lane): the Node
+> numbers in this section are spike-day numbers and are
+> superseded as the current figures by
+> `doc/eve-cohost/NODE-HEAP-REBENCH.md` (same harness, Eve at
+> the impl branch's pin d241de3, with a same-day re-run of
+> this section's own commit as control). The text below is
+> unrewritten.
+
 The original P3 never measured the cljs seat; its
 "fast seat" claim rested on `platform-support.md`.
 Measured now: Eve @ main `c7dc390`, shadow-cljs

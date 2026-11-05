@@ -1,0 +1,19 @@
+node v24.22.1
+BENCH|stock-atom-deref|n=200000|ms=2.57|ns-per-op=12.9
+BENCH|stock-atom-swap-inc|n=100000|ms=5.26|ns-per-op=52.6
+BENCH|stock-atom-reset|n=200000|ms=7.24|ns-per-op=36.2
+BENCH|stock-map-get|n=200000|ms=92.40|ns-per-op=462.0
+BENCH|stock-map-assoc-build-1000|n=200|ms=182.86|ns-per-op=914314.0
+eve-atom initial: 0
+BENCH|eve-sab-atom-deref|n=200000|ms=876.88|ns-per-op=4384.4
+BENCH|eve-sab-atom-swap-inc|n=100000|ms=2194.95|ns-per-op=21949.5
+eve-atom after swaps: 100010
+BENCH|eve-sab-atom-reset|n=100000|ms=1801.20|ns-per-op=18012.0
+eve-map count: 1000 get500: 500
+BENCH|eve-map-get|n=100000|ms=488.63|ns-per-op=4886.3
+BENCH|eve-map-assoc-build-1000|n=200|ms=3692.99|ns-per-op=18464961.7
+CAPACITY|eve-map-10000|OK count= 10000
+CAPACITY|eve-vec-1000|OK count= 1000
+BENCH|eve-sab-atom-deref-maproot100|n=100000|ms=19717.15|ns-per-op=197171.5
+deref-maproot type: #object[Wg] get42: 42
+DONE
