@@ -319,6 +319,29 @@
                              :watches {} :validator validator :meta meta
                              :readers 0})})))))))
 
+;; Unit 8: an atom crossing realms. On the cljs Node seat the program's
+;; atoms live in Eve domains over SharedArrayBuffers that every realm of
+;; the process maps; an atom crosses as its Eve handle (domain + slot)
+;; and the receiving realm wraps the same Eve atom. Watches, validator
+;; and meta are the wrapper's -- realm-local, as they are process-local
+;; for unit 7's tiered atoms. A root held in the host seat (:gate :host)
+;; lives in one realm's heap and cannot cross.
+(defn crossing-handle
+  "The Eve handle a realm crossing carries for layer atom a, or nil when
+   a cannot cross (host-seated root, or a tiered kind)."
+  [a]
+  (let [s @(:state a)]
+    (when (and (= :open (:gate s)) (= :mem (:kind s :mem)))
+      (:eve s))))
+
+(defn atom-over-handle
+  "A layer atom over Eve handle h (an atom that crossed from another
+   realm)."
+  [h]
+  {:cohost/kind ::atom
+   :state (atom {:eve h :gate :open :root nil :kind :mem :watches {}
+                 :validator nil :meta nil :readers 0})})
+
 (defn kind
   "The atom's current kind (:mem, :disk or :net)."
   [a]

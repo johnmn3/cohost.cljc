@@ -29,3 +29,11 @@ Branch `agent1/eve-unit8-cljs-shared-heap` (cohost.cljc). All times US Eastern.
   values); cohost.thread future/pmap carry forms on a seat with :realm-submit; worker realm boots the
   same cohost image and evaluates (self-hosted cljs can eval — the refusal in eve.thread-host's
   eval-form is for compiled cljs without a compiler).
+- 14:12 ET — implementation written, first compile running: src/cohost/hosts/cljs_eve.cljs (Node seat
+  Eve hosting + realm mesh + crossing codec + mailboxes), src/cohost/hosts/cljs_realm.cljs (entry
+  points' half: core install before boot, worker realm life), cohost.thread future-form-call + form-
+  carrying future fill / pmap items, adapter cap :realm-submit (default nil; every other seat
+  unchanged), cohost.atom crossing-handle/atom-over-handle, hosts/cljs realm poll hook + fn<->var
+  name lookup, boot interns cohost.realm/future-form-call on a realm seat only; build: Eve's :cljs row
+  + node: bridges in cljs-cli/cljs-node builds (bin/cohost, bb boot:cljs/bench:cljs, bench_programs).
+  Gate runner dev/u8/gate.clj + crossing program dev/u8/realm_crossing_program.cljc.

@@ -940,7 +940,13 @@
       (when-not (host/interned-var core-ns nm)
         (host/intern! core-ns nm f)
         (host/mark-macro! (host/interned-var core-ns nm))
-        (record! report :replaced {:name nm :reason :thread-layer}))))
+        (record! report :replaced {:name nm :reason :thread-layer})))
+    ;; unit 8: a seat with realms (cljs on Node with Eve hosting) gets
+    ;; the form-carrying future's entry, outside core (core's publics
+    ;; stay stock's); the future fill expands to it on that seat only
+    (when (host/capability :realm-submit)
+      (host/ensure-bare-ns! 'cohost.realm)
+      (host/intern! 'cohost.realm 'future-form-call thread/future-form-call)))
   report)
 
 (def ^:private atom-surface-names

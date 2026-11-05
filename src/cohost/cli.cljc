@@ -31,7 +31,9 @@
   (:require [cohost.hosts.auto]
             [cohost.adapter :as host]
             [cohost.boot :as boot]
-            [cohost.shim :as shim]))
+            [cohost.shim :as shim]
+            #?@(:cljs [[cohost.hosts.cljs-eve :as cljs-eve]
+                       [cohost.hosts.cljs-realm :as cljs-realm]])))
 
 (defn- err-println [s]
   #?(:cljs (binding [*print-fn* *print-err-fn*] (println s))
@@ -467,6 +469,8 @@ namespace cohost_io {
 (defn -main
   "args: [config-edn-path]. See the file header for the config shape."
   [& args]
+  ;; unit 8: a worker realm runs this same image; its life is its entry
+  (when-not #?(:cljs (cljs-eve/run-thread!) :default false)
   (let [cfg (host/read-string* (host/slurp-file (first args)))]
     (reset! cli-config cfg)
     ;; ClojureScript's and Phel's launches start in the repo (the cljs build
@@ -479,7 +483,10 @@ namespace cohost_io {
     ;; the module path (jank: bin/cohost through dev/perf/jank_snapshot_cli.clj)
     (let [report (if (:snapshot? cfg)
                    (boot/boot-from-snapshot! {:root (:stock-root cfg)})
-                   (boot/boot! {:root (:stock-root cfg) :verbose (boolean (:verbose cfg))}))]
+                   (boot/boot! (merge {:root (:stock-root cfg) :verbose (boolean (:verbose cfg))}
+                                      ;; unit 8: the Node seat's heap is Eve's
+                                      #?(:cljs (cljs-realm/core-boot-opts {:root (:stock-root cfg)
+                                                                           :roots (vec (:roots cfg))})))))]
       (when (:verbose cfg) (boot/print-report report)))
     (doseq [r (:roots cfg)] (boot/add-source-root! r))
     ;; :project-snapshot -- the module of a fresh per-project snapshot (the
@@ -494,6 +501,6 @@ namespace cohost_io {
     (boot/make-user-ns!)
     (boot/make-user-ns! 'user)
     (boot/eval-str "(in-ns 'user)")
-    (exit! (run-cli! cfg))))
+    (exit! (run-cli! cfg)))))
 
 #?(:cljs (set! *main-cli-fn* -main))
