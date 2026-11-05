@@ -177,8 +177,13 @@
   (reset! snapshot-log []))
 
 (def ^:private snap-drop-meta
-  "Reader metadata the host adds again when it reads the snapshot's source."
-  #{:line :column :end-line :end-column :file :source-span :jank/source})
+  "Reader metadata the host adds again when it reads the snapshot's source.
+   Position meta is NOT dropped (U4c): the snapshot's reader adds the
+   GENERATED module's positions, so dropping the recorded ones left AOT
+   frames and source maps citing generated files and lines. Kept, the
+   recorded form's own positions reach the emitter, which also writes
+   each form at its original line (dev/perf/jank_snapshot_emit.clj)."
+  #{})
 
 (defn- snap-encode
   "form with every metadata map made data: {:cohost.snap/meta m

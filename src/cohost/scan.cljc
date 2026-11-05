@@ -212,16 +212,48 @@
     (loop [i 0 out [0]]
       (if (>= i n) out (recur (inc i) (if (= \newline (nth text i)) (conj out (inc i)) out))))))
 
+(defn- line-of
+  "The 1-based line of offset i, given line-starts: the line whose start
+   is the greatest start <= i."
+  [starts i]
+  (loop [lo 1 hi (count starts)]
+    (if (>= lo hi)
+      lo
+      (let [mid (quot (+ lo hi) 2)]
+        (if (<= (nth starts mid) i)
+          (recur (inc mid) hi)
+          (recur lo mid))))))
+
+(defn form-start
+  "text, n (0-based) -> the [line column] (both 1-based) at which text's
+   nth top-level form starts, or nil when text has fewer forms: the
+   position a reader failing at that form reports."
+  [text n]
+  (when (and (some? n) (<= 0 n))
+    (let [ext (top-extents text)]
+      (when (< n (count ext))
+        (let [a (nth (nth ext n) 0)
+              starts (line-starts text)
+              line (line-of starts a)]
+          [line (inc (- a (nth starts (dec line))))])))))
+
 (defn with-source
   "Run thunk as the read of text (resolved) with its spans; path (or nil) is
    where it came from. thunk gets a fn of no args that read-forms calls as
    each top-level form is read (before its cb), so provenance-key knows which
    one is being read. Nests: a load inside a form is read inside it."
   [text spans path thunk]
-  (let [info (atom {:text text :spans spans :file-key (when path (ext-key path)) :count 0})]
+  (let [info (atom {:text text :spans spans :path path :file-key (when path (ext-key path)) :count 0})]
     (swap! reading conj info)
     (try (thunk (fn [] (swap! info update :count inc) nil))
          (finally (swap! reading rest)))))
+
+(defn source-path
+  "The path the innermost active read is reading (what with-source was
+   given), or nil outside a read and for text with no file. A host that
+   reads a file's forms one by one names their source with it."
+  []
+  (when-let [info (first @reading)] (:path @info)))
 
 (defn- index-in [info line col]
   (let [starts (or (:starts @info) (let [s (line-starts (:text @info))] (swap! info assoc :starts s) s))]

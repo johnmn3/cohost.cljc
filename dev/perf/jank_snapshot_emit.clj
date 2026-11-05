@@ -221,38 +221,71 @@
                  (when (def-heads head) nm))))
            (get-in le [:entry :entries])))))
 
+(defn- form-line
+  "The original line of a recorded form event's form, from the position
+   meta the record keeps (U4c: :jank/source's :start :line on jank,
+   :line on the stream-reader hosts), or nil when it carries none."
+  [e]
+  (when (#{:form :inline} (:op e))
+    (let [m (meta (decode (:form e)))]
+      (or (get-in m [:jank/source :start :line]) (:line m)))))
+
+(defn- join-at-lines
+  "Join chunk strings with newlines, padding blank lines before a chunk
+   whose target line (the parallel targets, nil for none) is ahead of
+   the line it would land on, so the chunk starts on its target line.
+   start-line is the line the first chunk lands on. A chunk multi-line
+   as printed moves the lines after it by its own height, as today."
+  [chunks targets start-line]
+  (loop [cs (seq chunks) ts (seq targets) cur start-line out []]
+    (if-not cs
+      (str/join "\n" out)
+      (let [pad (if (and (first ts) (> (first ts) cur)) (- (first ts) cur) 0)
+            chunk (str (apply str (repeat pad "\n")) (first cs))]
+        (recur (next cs) (next ts)
+               (+ cur (count (filter #(= % \newline) chunk)) 1)
+               (conj out chunk))))))
+
 (defn module-src [module]
   (let [nm (module-ns module)
         evs (events-of module)
         core? (= 'clojure.core module)
         begin (first (filter #(= :begin (:op %)) events))
-        lb (lib-begins module)]
-    ;; cohost.run (the adapter, the boot) is required before the bare ns:
-    ;; jank analyzes a required file's ns form in the requiring namespace
-    ;; cohost.cli too, so the snapshot's compile makes its object (D-8)
-    ;; Phel: its ns form comes first in the file, so they are the ns's requires
-    (str (when (and core? (not (:plain-ns? lang)))
-           (str "(" C "/require (quote cohost.run))\n(" C "/require (quote cohost.cli))\n"))
-         "(" NS " " nm
-         (if (:bare? lang) "\n  (:refer-clojure :only [])" "")
-         (cond (and core? (:plain-ns? lang)) "\n  (:require [cohost.run] [cohost.cli]))\n"
-               core? ")\n"
-               ;; Phel: the libraries this one loaded (its replayed requires) load
-               ;; first, by its ns form, since nothing is required at run time
-               ;; (every library loaded before it, and every one it loaded)
-               (:plain-ns? lang)
-               (str "\n  (:require [cohost.boot] [cohost.core]"
-                    (apply str (map #(str " [" (module-ns %) "]") (libs-before module)))
-                    "))\n")
-               :else "\n  (:require [cohost.boot] [cohost.core]))\n")
-         (when (and (:plain-ns? lang) (not core?))
-           (apply str (map #(str "(declare " % ")\n") (failed-def-names module))))
-         (if core?
-           (str "(cohost.boot/snap-begin! " (quoted (:opts begin)) " " (quoted libs-map) ")\n")
-           (str "(cohost.boot/snap-lib-begin! " (quoted (:lib lb)) " " (quoted (:target lb)) " "
-                (pr-src (:path lb)) " " (quoted (:parent lb)) ")\n"))
-         (str/join "\n" (hoisted evs)) "\n"
-         (str/join "\n" (keep event-src (collapse-scans evs))) "\n")))
+        lb (lib-begins module)
+        ;; cohost.run (the adapter, the boot) is required before the bare ns:
+        ;; jank analyzes a required file's ns form in the requiring namespace
+        ;; cohost.cli too, so the snapshot's compile makes its object (D-8)
+        ;; Phel: its ns form comes first in the file, so they are the ns's requires
+        header (str (when (and core? (not (:plain-ns? lang)))
+                      (str "(" C "/require (quote cohost.run))\n(" C "/require (quote cohost.cli))\n"))
+                    "(" NS " " nm
+                    (if (:bare? lang) "\n  (:refer-clojure :only [])" "")
+                    (cond (and core? (:plain-ns? lang)) "\n  (:require [cohost.run] [cohost.cli]))\n"
+                          core? ")\n"
+                          ;; Phel: the libraries this one loaded (its replayed requires) load
+                          ;; first, by its ns form, since nothing is required at run time
+                          ;; (every library loaded before it, and every one it loaded)
+                          (:plain-ns? lang)
+                          (str "\n  (:require [cohost.boot] [cohost.core]"
+                               (apply str (map #(str " [" (module-ns %) "]") (libs-before module)))
+                               "))\n")
+                          :else "\n  (:require [cohost.boot] [cohost.core]))\n")
+                    (when (and (:plain-ns? lang) (not core?))
+                      (apply str (map #(str "(declare " % ")\n") (failed-def-names module))))
+                    (if core?
+                      (str "(cohost.boot/snap-begin! " (quoted (:opts begin)) " " (quoted libs-map) ")\n")
+                      (str "(cohost.boot/snap-lib-begin! " (quoted (:lib lb)) " " (quoted (:target lb)) " "
+                           (pr-src (:path lb)) " " (quoted (:parent lb)) ")\n"))
+                    (str/join "\n" (hoisted evs)) "\n")
+        chunks (keep (fn [e] (when-let [s (event-src e)] [s (form-line e)]))
+                     (collapse-scans evs))]
+    ;; each recorded form at its original line (U4c): a form from deeper
+    ;; in its file than the header's end pads down to its line; one from
+    ;; above it lands where it lands (padding cannot go back)
+    (str header
+         (join-at-lines (map first chunks) (map second chunks)
+                        (inc (count (filter #(= % \newline) header))))
+         "\n")))
 
 (defn module-file [nm]
   (str src-root "/" (-> (str nm) (str/replace "-" "_") (str/replace "." "/")) (:ext lang)))

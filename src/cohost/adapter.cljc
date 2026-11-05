@@ -708,20 +708,60 @@ namespace cohost_err {
 
 (defn slurp-file [path] ((cap :slurp) path))
 (defn spit-file [path s] ((cap :spit) path s))
+(declare ex-info* error-message)
+
+(defn- read-error
+  "The exception a failed read of text's nth form surfaces as: an ex-info
+   carrying clojure.main's read-source data (its CompilerException's),
+   the reader's own error as the cause. cli's report prints it as
+   \"Syntax error reading source at (file:line:col)\"; unwrapped, a
+   reader error through the seam reports as a plain execution error and
+   its position is lost (the host's reader error names no file here)."
+  [e text n path]
+  (let [[line col] (scan/form-start text n)]
+    (ex-info* (error-message e)
+              (cond-> {:clojure.error/phase :read-source}
+                path (assoc :clojure.error/source path)
+                line (assoc :clojure.error/line line)
+                col (assoc :clojure.error/column col))
+              e)))
+
 (defn read-forms
   "cb of each top-level form of src. cohost.scan resolves its reader
    conditionals before the host's reader sees the text, by this target's
    ranking of the platform keys (cohost.scan/rankings; :clj, then :default,
    on every target today), so every host takes the same branch whatever its
    own reader would. path (when src is a file's) is where it came from: while
-   a form is read, cohost.scan/provenance says which key's code it is."
-  ([src cb] (read-forms src cb nil))
-  ([src cb path]
+   a form is read, cohost.scan/provenance says which key's code it is. A
+   failure of the host's reader itself (not of cb) surfaces as read-error's
+   ex-info; cb's own failures pass through as they were."
+  ([ src cb] (read-forms src cb nil))
+  ([ src cb path]
    (let [[text spans] (if (neg? ((cap :index-of) src "#?" 0))
                         [src []]
                         (scan/resolve-conditionals+spans src (scan/ranking (:name (current)))))]
+     ;; while the host's reader runs, scan/source-path is path: a host that
+     ;; reads a file's forms one by one names their source with it (the
+     ;; resolved text is as long as src, so its offsets are src's)
      (scan/with-source text spans path
-       (fn [tick] ((cap :read-forms) text (fn [form] (tick) (cb form))))))))
+       (fn [tick]
+         ;; stage says whether the host's reader or cb is running: cb sets
+         ;; it :eval before it runs and only a clean return sets it back,
+         ;; so a throw out of cb is never mistaken for a read failure
+         (let [stage (atom :read)
+               delivered (atom 0)]
+           (try-all
+            (fn [] ((cap :read-forms) text
+                    (fn [form]
+                      (tick)
+                      (swap! delivered inc)
+                      (reset! stage :eval)
+                      (cb form)
+                      (reset! stage :read))))
+            (fn [e]
+              (if (= :read @stage)
+                (throw (read-error e text @delivered path))
+                (throw e))))))))))
 (defn read-string* ([s] ((cap :read-string) s)) ([s opts] ((cap :read-string) s opts)))
 (defn plain-symbol "x, a name taken from a form: the bare symbol (adapter :plain-symbol)." [x] ((cap :plain-symbol) x))
 (defn host-read-string [s] (if-let [f (get @installed :host-read-string)] (f s) (read-string* s)))

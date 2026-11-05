@@ -36,14 +36,75 @@
                      m))
       x)))
 
+(defn- line-starts
+  "The offset at which each line of src begins: [0, one past each newline]."
+  [src]
+  (let [n (count src)]
+    (loop [i 0 out [0]]
+      (if (>= i n)
+        out
+        (recur (inc i) (if (= \newline (nth src i)) (conj out (inc i)) out))))))
+
+(defn- line-of
+  "The 1-based line of offset i, given line-starts: the line whose start
+   is the greatest start <= i."
+  [starts i]
+  (loop [lo 1 hi (count starts)]
+    (if (>= lo hi)
+      lo
+      (let [mid (quot (+ lo hi) 2)]
+        (if (<= (nth starts mid) i)
+          (recur (inc mid) hi)
+          (recur lo mid))))))
+
+(defn- fix-source
+  "read-forms reads one form's text alone, so the :jank/source jank's
+   reader attached is that text's own: :file nil, offsets from the text's
+   start. Name the file the text came from (file, when the read has one)
+   and shift :start/:end offsets by delta, the form's place in the whole
+   text minus the padding read before it; the padding has already made
+   every :line/:col the whole text's. A node with no :jank/source keeps
+   its meta as it was."
+  [x file delta]
+  (let [m (meta x)
+        x (cond (seq? x) (apply list (map (fn [y] (fix-source y file delta)) x))
+                (vector? x) (mapv (fn [y] (fix-source y file delta)) x)
+                (map? x) (into {} (map (fn [e] [(fix-source (key e) file delta)
+                                                (fix-source (val e) file delta)])) x)
+                (set? x) (into #{} (map (fn [y] (fix-source y file delta))) x)
+                :else x)
+        s (:jank/source m)]
+    (if (and m s)
+      (with-meta x (assoc m :jank/source
+                          (cond-> (assoc s :file (or file (:file s)))
+                            (not (zero? delta))
+                            (assoc :start (update (:start s) :offset + delta)
+                                   :end (update (:end s) :offset + delta)))))
+      (if m (with-meta x m) x))))
+
 (defn- read-forms [src cb]
-  (let [cs (vec src) n (count cs)]
+  (let [cs (vec src) n (count cs)
+        starts (line-starts src)
+        file (scan/source-path)
+        ;; padding banks: a form's text is read after as many newlines and
+        ;; spaces as its place in the whole text, so the reader's own
+        ;; counting gives every node the whole text's :line/:col (jank's
+        ;; reader attaches :jank/source per node; read-string of the bare
+        ;; slice made them the slice's, and its :file nil)
+        nls (apply str (repeat (count starts) \newline))
+        sps (apply str (repeat n \space))
+        read-all (fn []
+                   (loop [i (scan/skip-ws cs 0)]
+                     (when (< i n)
+                       (let [j (scan/form-end cs i)
+                             line (line-of starts i)
+                             col (inc (- i (nth starts (dec line))))
+                             pad (str (subs nls 0 (dec line)) (subs sps 0 (dec col)))]
+                         (cb (fix-source (fix-tags (read-string (str pad (subs src i j))))
+                                         file (- i (count pad))))
+                         (recur (scan/skip-ws cs j))))))]
     (binding [*read-eval* true]
-      (loop [i (scan/skip-ws cs 0)]
-        (when (< i n)
-          (let [j (scan/form-end cs i)]
-            (cb (fix-tags (read-string (subs src i j))))
-            (recur (scan/skip-ws cs j))))))))
+      (if file (binding [*file* file] (read-all)) (read-all)))))
 
 (defn- var-ns-of [h]
   (let [s (str h)]
