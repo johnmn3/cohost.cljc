@@ -1,0 +1,38 @@
+{;; the runtime `cohost` runs this project on; `cohost :<target> ...` overrides it
+ :cohost/target :jank
+ :paths ["src"]
+ ;; the language version: cohost boots Clojure 1.12.0's own sources on every target
+ :deps {org.clojure/clojure {:mvn/version "1.12.0"}
+        org.clojure/tools.cli {:mvn/version "1.1.230"}}
+ ;; the C++ half's build needs (cohost.build-jank reads this key): the
+ ;; vendored uSockets C sources and simdjson are compiled and archived for
+ ;; the link; the include dirs reach both them and the app's cpp/raw blocks.
+ :cpp {:include-dirs ["cpp/vendor/uWebSockets/src"
+                      "cpp/vendor/uSockets/src"
+                      "cpp/vendor/simdjson"]
+       :sources ["cpp/vendor/uSockets/src/bsd.c"
+                 "cpp/vendor/uSockets/src/socket.c"
+                 "cpp/vendor/uSockets/src/loop.c"
+                 "cpp/vendor/uSockets/src/context.c"
+                 "cpp/vendor/uSockets/src/udp.c"
+                 "cpp/vendor/uSockets/src/eventing/epoll_kqueue.c"
+                 "cpp/vendor/simdjson/simdjson.cpp"]
+       ;; the vendored uSockets is the no-SSL configuration (see
+       ;; cpp/vendor/VERSIONS.md): the core sources' us_internal_ssl_*
+       ;; call sites are all inside #ifndef LIBUS_NO_SSL, so the define
+       ;; removes the references and no SSL backend is compiled or linked
+       :defines ["LIBUS_NO_SSL"]
+       ;; z for uWebSockets' PerMessageDeflate (inflate/deflate)
+       :libs ["z"]}
+ :aliases
+ {;; cohost -M:main [args]
+  :main {:main-opts ["-m" "httpbench.core"]}
+  ;; cohost -X:run :who '"you"'
+  :run {:exec-fn httpbench.core/run :exec-args {:who "world"}}
+  ;; cohost -X:test
+  :test {:extra-paths ["test"] :exec-fn httpbench.core-test/run}
+  ;; cohost -T:build build
+  :build {:deps {io.github.clojure/tools.build {:git/tag "v0.10.14" :git/sha "1176afd"}
+                 ;; cohost.build, from the public repo at the commit this app was written against
+                 io.github.johnmn3/cohost.cljc {:local/root "../../.."}}
+          :ns-default build}}}
