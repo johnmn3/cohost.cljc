@@ -1,0 +1,31 @@
+(ns cohost.http-eve
+  "jank-seat hosting for cohost.http (MEMORY-PLAN.md, unit 9), the
+   counterpart of cohost/http_eve.clj (JVM) and cohost/http_eve.cljs
+   (Node): Eve's own HTTP layer on jank -- eve.http over the host's C
+   sockets (one synchronous round trip, as every host's eve.http is) and
+   eve.http-server's C++ server -- installed as cohost.http's leaves.
+
+   jank reads this file for cohost.http-eve: it loads a .jank before a
+   .cljc and never a .clj, so the JVM and Node seats keep their own files.
+   It is loaded only by a run that puts Eve's jank http adapters on the
+   module path (eve/adapters/http/jank/src, eve/adapters/http-server/jank/src)
+   beside Eve's :jank roots, after eve.host-completion (Eve's namespaces
+   load on jank only after it); nothing in cohost.run's AOT graph requires
+   it -- the same shape as the other seats' files.
+
+   What the adapter contract's defaults give this seat, unchanged here:
+   bodies stay text (the jank adapter has no :byte-streams), and a URL /
+   URI stays the layer's tagged map (no :http-value; the shim's toString
+   answers its text)."
+  (:require [cohost.adapter :as adapter]
+            [cohost.http :as http]
+            [eve.http :as eve-http]
+            [eve.http-server :as eve-http-server]))
+
+(defn install!
+  "Install Eve's http leaves over the current host adapter."
+  []
+  (adapter/install! (assoc (adapter/current)
+                           :http-request eve-http/request
+                           :http-serve eve-http-server/serve!))
+  (http/available?))

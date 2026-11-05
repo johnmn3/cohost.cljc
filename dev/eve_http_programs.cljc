@@ -1,6 +1,7 @@
 ;; The unit 9 gate's programs (eve_http_check.clj, the JVM seat; dev/eve_http_node.cljs,
-;; the ClojureScript seat): one source per program, evaluated unchanged on every
-;; seat. Each client program sees `base`, the server's root URL.
+;; the ClojureScript seat; dev/eve_http_jank.jank, the jank seat): one source per
+;; program, evaluated unchanged on every seat. Each client program sees `base`, the
+;; server's root URL.
 (ns eve-http-programs)
 
 (def handler-src
@@ -172,6 +173,14 @@
   "Client programs that need what only the JVM seat has today (none)."
   #{})
 
+;; media-type is the drivers' (eve_http_check.clj, dev/eve_http_seats.clj --
+;; JVM processes) comparison of the JDK client's answers; no seat process
+;; calls it. jank's analyzer rejects its String member calls
+;; (analyze/invalid-cpp-member-call at (.trim ^String s)), so the jank seat
+;; (dev/eve_http_jank.jank) reads the namespace without it; the JVM and
+;; ClojureScript read the definition as before.
+#?(:jank nil
+   :default
 (defn media-type
   "A Content-Type value parsed as RFC 9110 reads it, for the server-side
    comparison: [type/subtype {parameter value}], the type and parameter
@@ -197,4 +206,4 @@
                                    (subs raw 1 (dec (count raw)))
                                    raw)]
                            [k (if (= "charset" k) (.toLowerCase ^String v) v)])))))
-             params)])))
+             params)]))))

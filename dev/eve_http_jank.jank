@@ -1,0 +1,108 @@
+;; Unit 9, the jank seat: cohost booted on jank with Eve's jank HTTP
+;; adapters (eve.http over the host's C sockets, eve.http-server's C++
+;; server) as cohost.http's leaves -- dev/eve_http_node.cljs's counterpart.
+;; Driven by dev/eve_http_seats.clj (seat `jank`), which builds the module
+;; path: cohost's AOT objects (dev/perf/jank_aot_ensure.clj) : src : dev :
+;; Eve's :jank roots (`bb classpath jank` in the Eve checkout) :
+;; <eve>/adapters/http/jank/src : <eve>/adapters/http-server/jank/src.
+;; Two modes, as the Node seat's:
+;;   LC_ALL=en_US.UTF-8 jank -O3 --module-path <path> run-main eve-http-jank -- client <base> <out.edn>
+;;     every client program of eve-http-programs not JVM-only, evaluated
+;;     unchanged in the booted user namespace with `base` bound; the
+;;     answers written to out.edn as [[label [:ok value] | [:error msg]] ...]
+;;   ... run-main eve-http-jank -- serve <port>
+;;     the Ring handler source evaluated in the booted namespace and served
+;;     by Eve's jank http-server through cohost.ring; prints LISTENING <port>
+;;     and serves until standard input ends.
+;; Eve's namespaces load on jank only after eve.host-completion, so they are
+;; required here at run time, each between a LOADING and a LOADED line: a
+;; load that ends the process (a fault -- no exception reaches this code) is
+;; named by the driver from the last LOADING line without its LOADED, with
+;; the exit code. Those lines, LISTENING and the client count are written
+;; with standard output flushed before and after: piped, jank's standard
+;; output is buffered, and a segfault drops what the buffer holds (measured
+;; 2026-11-05 on jank 0.1-noble: an unflushed println before a fault never
+;; reached the pipe; a flushed one did).
+(ns eve-http-jank
+  (:require [cohost.hosts.jank-host]
+            [cohost.adapter :as host]
+            [cohost.boot :as boot]
+            [cohost.http]
+            [cohost.ring]
+            [eve-http-programs]))
+
+(cpp/raw "#include <cstdio>
+#include <iostream>
+#include <string>
+namespace eve_http_jank {
+  using namespace jank::runtime;
+  inline object_ref say(std::string const &s) {
+    std::cout.flush(); std::fflush(stdout);
+    std::fputs(s.c_str(), stdout); std::fputc(10, stdout);
+    std::fflush(stdout);
+    return jank_nil;
+  }
+  inline object_ref read_line() {
+    std::string s;
+    if(!std::getline(std::cin, s)) { return jank_nil; }
+    return make_box<obj::persistent_string>(jtl::immutable_string(s));
+  }
+}")
+
+(defn- say
+  "one line on standard output, flushed (eve_http_jank::say)"
+  [s]
+  (cpp/eve_http_jank.say (str s)))
+
+(defn- load-ns!
+  "require ns-sym between a LOADING and a LOADED line"
+  [ns-sym]
+  (say (str "LOADING " ns-sym))
+  (require ns-sym)
+  (say (str "LOADED " ns-sym)))
+
+(defn- install-eve-http!
+  "Eve's http layer on this seat: the completion, eve.http, eve.http-server,
+   then cohost.http-eve (src/cohost/http_eve.jank), whose install! puts them
+   in as cohost.http's leaves. A seat where they do not load ends here."
+  []
+  (doseq [n '[eve.host-completion eve.http eve.http-server cohost.http-eve]]
+    (load-ns! n))
+  (let [installed ((resolve 'cohost.http-eve/install!))]
+    (say (str "Eve http leaves installed: " installed))
+    (when-not installed
+      (throw (ex-info "cohost.http-eve/install!: cohost.http is not available after the install" {})))))
+
+(defn- cohost-eval [src]
+  (host/try-all (fn [] [:ok (boot/eval-str src {:session? false})])
+                (fn [e] [:error (str (host/error-message e))])))
+
+(defn- boot! []
+  (let [report (boot/boot! {})]
+    (boot/make-user-ns!)
+    (boot/print-report report)))
+
+(defn -main [mode & args]
+  (install-eve-http!)
+  (boot!)
+  (case mode
+    "client"
+    (let [[base out] args
+          _ (println "setup:" (pr-str (cohost-eval eve-http-programs/setup)))
+          answers (vec (for [[label src] eve-http-programs/client
+                             :when (not (contains? eve-http-programs/jvm-only label))]
+                         [label (cohost-eval (str "(let [base \"" base "\"] " src ")"))]))]
+      (host/spit-file out (pr-str answers))
+      (say (str "client programs run: " (count answers)))
+      (host/exit 0))
+    "serve"
+    (let [port (host/parse-long* (first args))
+          [k h] (cohost-eval eve-http-programs/handler-src)]
+      (when-not (= :ok k) (throw (ex-info (str "handler: " h) {})))
+      (let [srv (cohost.ring/run-server h {:port port})]
+        (say (str "LISTENING " (:port srv)))
+        ;; Eve's server threads answer; this thread waits for the driver to
+        ;; close standard input
+        (loop [] (when (cpp/eve_http_jank.read_line) (recur)))
+        ((:stop srv))
+        (host/exit 0)))))
