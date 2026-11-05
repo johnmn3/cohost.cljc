@@ -48,3 +48,44 @@
   collation legs). No heavy build launched yet; the AOT-ensure objects
   are stale (AOT-RECOMPILE) after the box cycle and will be refreshed
   when a slot frees.
+
+## 2026-11-05 03:02 ET — DIAGNOSIS CLOSED: named cause + proven cure (repro scale)
+- sh! (build_jank.clj:34) merges the full parent env with record-env —
+  the CPLUS_INCLUDE_PATH delivery is CORRECT; suspect (i) dead.
+- The cohost JIT-boot probe (record_probe.jank) died silently under box
+  contention (load 13, ~2.4 GB free; consistent with the box's known
+  OOM pattern) — no output; not retried in that form.
+- Discriminating repros (plain jank, no cohost boot), all with
+  CPLUS_INCLUDE_PATH set to the three :cpp dirs:
+  * t1 (trivial raw): passes. Also passes with two of the three
+    ~/.cache/jank AOT dirs on --module-path — AOT-baked paths are NOT
+    the wall.
+  * t2 (the FULL 6,905-byte raw from native.cljc + a call): compiles,
+    then fails at materialization: "JIT session error: Symbols not
+    found: [us_socket_context, us_create_loop, ..., simdjson...]".
+  * t3 (the full raw, NO calls): fails identically AT THE cpp/raw
+    EVAL. ==> jank's JIT materializes a raw block's translation unit
+    when the form evaluates; external symbols the block references
+    must be resolvable inside the JIT process itself.
+- NAMED CAUSE: build_jank compiles the project's :cpp :sources only
+  at step 3.5 — after the record step — into an archive used solely
+  by the final AOT link. The record (JIT) session therefore cannot
+  eval httpbench.native's cpp/raw: the uSockets/simdjson externs are
+  unresolvable there. The record harness records the failed eval
+  under its generic ":error \"Unable to compile C++ source.\"", emit
+  silently drops the form, and the AOT compile dies two steps later
+  with analyze/unresolved-cpp-symbol "Unable to find hb_serve".
+  c9ad1d6's CPLUS_INCLUDE_PATH fix was necessary but not sufficient:
+  headers were the first wall; symbol resolution is the second.
+- CURE PROVEN at repro scale (both routes): build a shared lib from
+  the :sources (cc/c++ -fPIC, c++ -shared -> libcpp.so, 195 T syms),
+  then either `jank -L <dir> -l cpp run t3.jank` or LD_PRELOAD=<so>
+  makes the full raw eval cleanly ("raw-eval-ok", exit 0). jank's own
+  -L/-l flags are the clean route.
+- FIX PLAN (only src/cohost/build_jank.clj, the :cpp key's file):
+  hoist the :cpp source compilation before the record step, compile
+  once with -fPIC, produce libcpp.so in work/record-lib/ (record step
+  gets -L work/record-lib -l cpp) and libcpp.a in work/ as today for
+  the final static link (the .so must NOT sit where step 4's -l cpp
+  can find it first — a dynamic dependency would break the
+  run-from-another-directory gate).
