@@ -137,6 +137,51 @@ door + wrap-macro).
   cli:check jvm 7/7 SAME (identical to the door tree's run; later
   commits touch only jank-gated branches).
 
+## J-gate verdicts on eef1ab4 (j.slaa.us, ~/cohost-gate/native1/, read firsthand)
+
+- Snapshot: SNAPSHOT_EXIT=0, SNAPSHOT-BOOT-MS 471.6 (clean build on
+  j; no hand-completion). cli:check jank 7/7 SAME.
+- debug-seam:check jank 7/14 PASS. **#3 PASS -- "native catch:
+  :caught \"boom\""**: the doors work on jank, on the launcher path,
+  on a clean venue. The catch hole is closed.
+- #13 FAIL on this tree: "load exit 1, throw exit 1; cohost: jank:
+  compiling the project's namespaces ahead (once per change)".
+  Diagnosis, against the three candidate shapes: the banner is only
+  the check's evidence line (the first stderr line) -- the runner
+  searched the full output and report and found no attribution
+  needle. The mechanism on THIS tree is (b) at the top level: the
+  macro fn's throw during the launcher's ahead-compile of the user
+  file reaches adapter/try-all's :default arm and is reported as
+  "a native C++ exception" ({:cohost/native true}) -- measured
+  locally on the identical fixture and tree family (report :via
+  head via adapter$try_all). The rw-try doors are never in play
+  here by construction: no user try wraps a -main invocation. The
+  fix is 6169ed7 (already on this branch's tip): try-all's
+  cpp/std.exception arm. After the arm, the same fixture's report
+  headlines Compiler$CompilerException with the true message, and
+  the residual is (c): the attributed error's nil message throws
+  inside wrap-macro's attribution on jank (the macro lane's
+  nil-safety fix; not in this lane's base). Expectation for the
+  confirmation run at the tip: #13's report content changes to the
+  CompilerException shape; the runner's #13 verdict may still read
+  FAIL on the (c) residual.
+- Battery 217/221 on j. The four FAIL rows, named from the log:
+  (1) `(cpp) a cpp catch stands as a sibling clause` -- got
+  "ERR Each `catch` form must specify a unique exception type.";
+  (2) `(cpp) a stock catch still folds beside a cpp catch` -- same
+  got. **Both are doors-caused**: the eef1ab4 door shape appended a
+  cpp/std.exception door beside the user's own cpp catch. This is
+  the regression the doors-once dedup (4f40abe + 005e159, already
+  on this branch's tip) removes; locally the dedup tree's battery
+  is 219/221 with both rows passing.
+  (3) `Character outside ASCII` -- one of the two standing jank
+  Character rows. (4) `subs count nth first last butlast` -- got
+  "ERR Unterminated vector. (outer: Unterminated vector.)": a
+  reader-shaped error, not a catch-fold error; the same tree
+  passes this row locally, and `Character/isWhitespace is Java's`
+  flipped to PASS in this same j run after failing locally --
+  row-level instability on j, not doors-caused.
+
 ## The launcher binary on this box (environment, not code)
 
 This box (7 GB RAM, no swap) plus a mid-lane VM replacement made the
