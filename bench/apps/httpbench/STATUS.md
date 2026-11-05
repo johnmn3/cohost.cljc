@@ -158,3 +158,23 @@
   this compile or a neighbor of it.
 - Nothing else to report: no step boundary crossed since 03:11,
   build neither finished nor failed. Steps 2-4 still ahead.
+
+## 2026-11-05 03:33 ET — BUILD 7 DEAD (box cycle); build 8 goes to J
+- At ~03:29 ET this box cycled again (uptime 2 min on first check
+  after; /root/.ssh wiped and restored per the recovery notes).
+  Build 7 died with it at step 1, ~37 min in: 7 AOT objects
+  banked, cohost/shim still in flight. The 7 objects survive on
+  disk but are unusable — the ensure is all-or-nothing (no stamp
+  until the graph completes; a relaunch's recompile! wipes the
+  tree). No verdict on the fix yet: the build never reached step 2.
+- Pattern, stated plainly: this box has now cycle-killed builds 3,
+  4 and 7. A ~40-60 min compile leg does not survive here tonight.
+- BUILD 8 PLAN (re-plan under the two-attempt rule — same leg,
+  new venue): run the identical build on J, where the same class
+  of AOT app build measured 407 s (n13 unit 2) and snapshot
+  compiles ~9 min. J's heavy slot belongs to the debug-seam final
+  gate until it banks (its 08:11 UTC report: boot:jank exit 0,
+  snapshot task running; no clang active on J at last check). I am
+  pre-syncing this branch to a separate J tree now (the gate's
+  ~/cohost-cpp is not touched) and will launch build 8 on J the
+  moment the gate banks.
