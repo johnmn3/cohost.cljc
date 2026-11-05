@@ -8,6 +8,16 @@ landing STATUS at doc/eve-cohost/LANDING-u8-STATUS.md). Started
 README.md's guide list (the repo's doc entry point), in the guide's
 numbered-chapter structure and voice.
 
+**Done 2026-11-05 ET:** all four chapters written and committed
+(12 threading, 13 memory/atoms, 14 tiered atoms, 15 coverage matrix),
+README index entries 12–15 added. `bb docs:check` extracts only
+```` ```bash ```` blocks (dev/cli-demo/readme_check.clj); the new
+chapters contain none, so no new check obligations arise — their
+Clojure examples are excerpts of the probe and gate programs that ran
+(`dev/eve_probe_program.cljc`, unit 7's report examples,
+`dev/u8/realm_crossing_program.cljc`), with answers as printed.
+Declaration: DOCS-DECLARATION.md beside this file.
+
 ## Sources used, per guide
 
 - **12-threading-with-eve.md** — MEMORY-PLAN.md §4 (unit scopes) and
