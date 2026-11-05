@@ -106,13 +106,15 @@
 (check "re-entrant watch" [[0 1] [1 2]] @w2-seen)
 (check "re-entrant watch value" 2 (al/deref-atom w2))
 
-;; -- meta ----------------------------------------------------------------
+;; -- meta (the wrapper state's, read through the layer) ------------------
 (def m (al/make-atom 1 {:meta {:doc "x"}}))
-(check "meta at creation" {:doc "x"} (meta m))
-(def m2 (with-meta m {:doc "y"}))
+(check "meta at creation" {:doc "x"} (al/meta-of m))
+(def m2 (al/with-meta-atom m {:doc "y"}))
 (al/swap-atom! m2 inc)
 (check "with-meta shares state" 2 (al/deref-atom m))
-(check "meta replaced" {:doc "y"} (meta m2))
+(check "meta replaced" {:doc "y"} (al/meta-of m2))
+(check "set-meta returns the atom" m (al/set-meta-atom! m {:doc "z"}))
+(check "meta after set" {:doc "z"} (al/meta-of m))
 
 ;; -- the host seat: roots Eve cannot represent -------------------------
 (def f0 (fn [x] x))

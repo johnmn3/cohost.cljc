@@ -167,9 +167,9 @@
 
 (defn make-atom
   "A layer atom holding init. opts: {:meta m :validator f} --
-   meta rides the stand-in map itself (host meta on the map,
-   shared :state underneath); the validator runs against the
-   initial root, as stock's does."
+   meta rides the wrapper state (an atom's meta is the
+   wrapper's, like its watches: Eve's atoms carry none); the
+   validator runs against the initial root, as stock's does."
   ([init] (make-atom init nil))
   ([init {:keys [meta validator]}]
    (let [rep (root-representable? init)
@@ -179,10 +179,11 @@
                    :root (when-not rep init)
                    :watches {}
                    :validator validator
+                   :meta meta
                    :readers 0})
          a {:cohost/kind ::atom :state st}]
      (validate! validator init)
-     (if meta (with-meta a meta) a))))
+     a)))
 
 (defn state-of
   "The atom's wrapper state (probe/support)."
@@ -447,6 +448,23 @@
 
 (defn get-validator-atom [a] (:validator @(:state a)))
 
+;; Meta: the wrapper state's, like the watches. with-meta-atom
+;; returns a fresh stand-in over the same state, as stock's
+;; withMeta returns a fresh Atom over the same state cell.
+(defn meta-of [a] (:meta @(:state a)))
+
+(defn with-meta-atom [a m]
+  (swap! (:state a) assoc :meta m)
+  (with-meta a m))
+
+(defn set-meta-atom! [a m]
+  (swap! (:state a) assoc :meta m)
+  a)
+
+(defn alter-meta-atom [a f args]
+  (swap! (:state a) (fn [s] (assoc s :meta (apply f (:meta s) args))))
+  a)
+
 ;; ----------------------------------------------------------------
 ;; The registry: namespace/var containers as residents of the
 ;; startup domain (plan SS10). The registry atom's root is the
@@ -491,4 +509,24 @@
              (if (representable? root)
                {:root root}
                {:resident true}))))
+  nil)
+
+(defn publish-namespace!
+  "Sweep one namespace's interns into the registry: every
+   interned var is recorded, with its root where it is bound.
+   On the JVM seat a program's defs intern through the host
+   compiler, which no shim path sees; the registry therefore
+   tracks namespaces by sweeps at load boundaries (the boot
+   sweeps what it booted when the fill turns on, and each
+   library as its load completes), on top of the live publishes
+   the shim's Var paths make (Var/intern, bindRoot, alterRoot).
+   No-op when the fill is off."
+  [ns-sym]
+  (when (fill-active?)
+    (when-let [m (host/try-all (fn [] (host/ns-interns-map ns-sym))
+                               (fn [_] nil))]
+      (doseq [[sym v] m]
+        (publish-intern! ns-sym sym)
+        (when (host/var-bound? v)
+          (publish-var-root! ns-sym sym (host/var-root v))))))
   nil)

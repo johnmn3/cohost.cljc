@@ -20,6 +20,7 @@
   ;; the shim asks the adapter for its capabilities as it loads: a host whose
   ;; loader orders a namespace's requires itself (Phel) installs it first
   (:require [cohost.adapter :as host]
+            [cohost.atom :as atom-layer]
             [cohost.memory :as memory]
             [cohost.thread :as thread]
             [cohost.hosts.auto]
@@ -38,7 +39,11 @@
 (def ^:private h-char? (host/capability :char?))
 (def ^:private h-transient? (host/capability :transient?))
 (def ^:private h-namespace? (host/capability :namespace?))
-(def ^:private h-atom? (host/capability :atom?))
+(def ^:private host-atom? (host/capability :atom?))
+(def ^:private h-atom?
+  ;; the host's atoms, and Eve's (unit 5): a layer atom answers
+  ;; clojure.lang.Atom / IAtom / IAtom2 wherever the host's does
+  (fn [x] (or (atom-layer/atom-value? x) (host-atom? x))))
 (def ^:private h-sb? (host/capability :sb?))
 (def ^:private h-var? (host/capability :var?))
 (def ^:private h-sorted? (host/capability :sorted?))
@@ -139,6 +144,14 @@
     (f)
     (throw (ex-info (str "cohost.shim: " what " is not available on this host")
                     {:cohost/unsupported what}))))
+
+(defn- atom-fill?
+  "Eve's atom layer (unit 5) is in force for new atoms: the boot
+   turned its fill on and this seat has Eve hosting installed."
+  []
+  (and (atom-layer/fill-active?) (atom-layer/available?)))
+
+(defn- var-ns-sym [v] (symbol (str (host/var-ns v))))
 
 ;; (to-array nil) is an empty array on the JVM; some hosts reject nil
 (defn- to-array* [coll] (host/host-array (if (nil? coll) [] coll)))
@@ -393,6 +406,9 @@
     (and host-has-map-entry? (host-map-entry? x)) 'clojure.lang.MapEntry
     (vector? x) 'clojure.lang.PersistentVector
     (host-record? x) (type-of x)
+    ;; a layer atom (unit 5) IS a clojure.lang.Atom through the
+    ;; facade; before the map branch, which would name it a map
+    (atom-layer/atom-value? x) 'clojure.lang.Atom
     (map? x) (cond (h-sorted? x) 'clojure.lang.PersistentTreeMap
                    (hash-map-kind? x) 'clojure.lang.PersistentHashMap
                    :else 'clojure.lang.PersistentArrayMap)
@@ -503,7 +519,7 @@
    'clojure.lang.IRef #(or (h-var? %) (h-atom? %))
    ;; the thread layer's futures and promises are blocking derefs, its
    ;; agents plain derefs: stock deref branches on exactly these
-   'clojure.lang.IDeref #(or (h-deref? %) (thread/future-value? %) (thread/promise-value? %) (thread/agent-value? %))
+   'clojure.lang.IDeref #(or (h-deref? %) (atom-layer/atom-value? %) (thread/future-value? %) (thread/promise-value? %) (thread/agent-value? %))
    'clojure.lang.IBlockingDeref #(or (h-deref? %) (thread/future-value? %) (thread/promise-value? %))
    'clojure.lang.IPending #(or (h-pending? %) (thread/future-value? %) (thread/promise-value? %))
    ;; sorted collections have no transient form
@@ -1094,10 +1110,19 @@
                       nn (host-fn 'ns-name identity)
                       ns-sym (fn [ns] (if (h-namespace? ns) (nn ns) ns))]
                   (fn ([ns sym] (cn (ns-sym ns))
-                                (if in (in (ns-sym ns) sym) (host/intern! (ns-sym ns) sym nil)))
+                                (let [r (if in (in (ns-sym ns) sym) (host/intern! (ns-sym ns) sym nil))]
+                                  ;; unit 5: record the intern in the
+                                  ;; registry (the startup domain)
+                                  (atom-layer/publish-intern! (ns-sym ns) sym)
+                                  r))
                     ([ns sym val] (when (symbol? ns)
                                     (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Namespace ns))))
-                                  (cn (ns-sym ns)) (host/intern! (ns-sym ns) sym val)))))
+                                  (cn (ns-sym ns))
+                                  (let [r (host/intern! (ns-sym ns) sym val)]
+                                    ;; unit 5: record intern + root
+                                    (atom-layer/publish-intern! (ns-sym ns) sym)
+                                    (atom-layer/publish-var-root! (ns-sym ns) sym val)
+                                    r)))))
 (declare Namespace-find)
 (def Var-find (fn [sym]
                 (when-not (namespace sym)
@@ -1328,7 +1353,12 @@
 
 (def new-LazySeq (host/capability :lazy-seq))   ; per lazy cell: no accessor lookup
 (def new-Delay (host/capability :delay))
-(def new-Atom host/atom*)
+(def new-Atom
+  ;; unit 5: with the atom fill in force, an Eve-backed atom
+  ;; (cohost.atom); the host's own atom otherwise
+  (fn
+    ([x] (if (atom-fill?) (atom-layer/make-atom x) (host/atom* x)))
+    ([x m] (if (atom-fill?) (atom-layer/make-atom x {:meta m}) (host/atom* x m)))))
 (def new-Volatile (host-fn 'volatile! (unsupported "volatile!")))
 (def new-Reduced (host-fn 'reduced (unsupported "reduced")))
 
@@ -2440,7 +2470,7 @@
                              :else (str (nn a) b))))
 (def -nth nth)
 (def -get (fn [x & args] (cond (h-var? x) (host/var-root x)
-                               (h-atom? x) (deref x)
+                               (h-atom? x) (if (atom-layer/atom-value? x) (atom-layer/deref-atom x) (deref x))
                                (host/mlist? x) (nth @(:state x) (first args))
                                ;; a layer future or promise: Future.get (this
                                ;; is also how stock deref reaches them, through
@@ -2497,29 +2527,36 @@
                                (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
                                (pop x))
                        :default (pop x)))))
-(def -meta (fn [x] (host/meta* x)))
+(def -meta (fn [x] (if (atom-layer/atom-value? x) (atom-layer/meta-of x) (host/meta* x))))
 ;; let-go: a symbol given no metadata is the bare symbol (with-meta makes a
 ;; wrapper no symbol equals, even of none)
-(def -withMeta #?(:lg (fn [x m] (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m)))
+(def -withMeta #?(:lg (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m))))
                   ;; a cohost type instance's meta is its own slot, which
                   ;; jank's with-meta cannot reach (it panics on the type)
-                  :jank (fn [x m] (host/with-meta* x m))
-                  :default with-meta))
+                  :jank (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (host/with-meta* x m)))
+                  :default (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (with-meta x m)))))
 (defn- host-meta [m] (if (host/strip-inline?) (dissoc m :inline :inline-arities) m))
 (defn- meta-map [m]
   (if (or (nil? m) (map? m)) m (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentMap m)))))
-(def -alterMeta (fn [x f args] (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args)))
+(def -alterMeta (fn [x f args] (if (atom-layer/atom-value? x)
+                                 (atom-layer/alter-meta-atom x f args)
+                                 (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args))))
 (def -resetMeta (let [rm (host-fn 'reset-meta! (fn [x m] (host-alter-meta! x (constantly m))))]
-                  (fn [x m] (rm x (host-meta (meta-map m))))))
+                  (fn [x m] (let [m (host-meta (meta-map m))]
+                              (if (atom-layer/atom-value? x)
+                                (atom-layer/set-meta-atom! x m)
+                                (rm x m))))))
 (def -setMeta -resetMeta)
 ;; ClojureScript has no blocking deref: the timed form reads the value now
 (def -deref (fn ([x] (cond (or (thread/future-value? x) (thread/promise-value? x))
                            (thread/deref-blocking x)
                            (thread/agent-value? x) (thread/agent-state x)
+                           (atom-layer/atom-value? x) (atom-layer/deref-atom x)
                            :else (deref x)))
-                ([x ms timeout-val] (if (or (thread/future-value? x) (thread/promise-value? x))
-                                      (thread/deref-blocking x ms timeout-val)
-                                      #?(:cljs (deref x) :default (deref x ms timeout-val))))))
+                ([x ms timeout-val] (cond (or (thread/future-value? x) (thread/promise-value? x))
+                                          (thread/deref-blocking x ms timeout-val)
+                                          (atom-layer/atom-value? x) (atom-layer/deref-atom x)
+                                          :else #?(:cljs (deref x) :default (deref x ms timeout-val))))))
 ;; the thread layer's members: Thread, Future, ExecutorService,
 ;; CountDownLatch over cohost.thread's values
 (def -join (fn ([x] (if (thread/thread-value? x)
@@ -2721,18 +2758,28 @@
 (def -getRawRoot (fn [v] (host/var-raw-root v)))
 ;; Var.getThreadBinding: a box (non-nil even when the binding is nil), or nil
 (def -getThreadBinding (fn [v] (when (host/var-thread-bound? v) [(host/var-root v)])))
-(def -bindRoot (fn [v x] (host/set-var-root! v (constantly x)) v))
+(def -bindRoot (fn [v x] (host/set-var-root! v (constantly x))
+                 ;; unit 5: publish the root to the registry
+                 (atom-layer/publish-var-root! (var-ns-sym v) (host/var-sym v) x)
+                 v))
 ;; Var.alterRoot returns the new root, bindings or not
-(def -alterRoot (fn [v f args] (host/set-var-root! v (fn [old] (apply f old args))) (host/var-raw-root v)))
+(def -alterRoot (fn [v f args] (host/set-var-root! v (fn [old] (apply f old args)))
+                  (let [new (host/var-raw-root v)]
+                    ;; unit 5: publish the new root to the registry
+                    (atom-layer/publish-var-root! (var-ns-sym v) (host/var-sym v) new)
+                    new)))
 (def -toSymbol (fn [v] (let [n (host/var-ns v) n (if (h-namespace? n) (host/ns-name* n) n)]
                          (if n (symbol (str n) (str (host/var-sym v))) (host/var-sym v)))))
 ;; IAtom.swap overloads: (f) (f x) (f x y) (f x y args) -- the last takes the
 ;; remaining arguments as one seq, which core.clj's swap! passes through as-is.
-(def -swap (fn ([a f] (swap! a f)) ([a f x] (swap! a f x)) ([a f x y] (swap! a f x y))
-             ([a f x y args] (apply swap! a f x y args))))
+(def -swap (fn ([a f] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f) (swap! a f)))
+             ([a f x] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f x) (swap! a f x)))
+             ([a f x y] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f x y) (swap! a f x y)))
+             ([a f x y args] (if (atom-layer/atom-value? a) (apply atom-layer/swap-atom! a f x y args) (apply swap! a f x y args)))))
 (def ^:private h-vreset! (host-fn 'vreset! nil))
 (def -reset (fn ([mf] (if (matcher? mf) (m-reset mf) (do (swap! (mf-state mf) assoc :methods {} :prefers {}) mf)))
-              ([a x] (cond (matcher? a) (m-reset a x)
+              ([a x] (cond (atom-layer/atom-value? a) (atom-layer/reset-atom! a x)
+                           (matcher? a) (m-reset a x)
                            (h-volatile? a) (h-vreset! a x)
                            :else (reset! a x)))))
 ;; IAtom2.swapVals / resetVals as the JVM does them, a compare-and-set loop
@@ -2741,15 +2788,37 @@
   (loop []
     (let [old @a new (apply f old args)]
       (if (compare-and-set! a old new) [old new] (recur)))))
-(def -swapVals (fn ([a f] (swap-vals* a f nil)) ([a f x] (swap-vals* a f [x])) ([a f x y] (swap-vals* a f [x y]))
-                 ([a f x y args] (swap-vals* a f (cons x (cons y args))))))
-(def -resetVals (fn [a x] (loop [] (let [old @a] (if (compare-and-set! a old x) [old x] (recur))))))
-(def -compareAndSet (host-fn 'compare-and-set! (unsupported "compare-and-set!")))
-(def -addWatch (host-fn 'add-watch (unsupported "add-watch")))
-(def -removeWatch (host-fn 'remove-watch (unsupported "remove-watch")))
-(def -getWatches (host-fn 'get-watches (fn [_] {})))
-(def -setValidator (host-fn 'set-validator! (unsupported "set-validator!")))
-(def -getValidator (host-fn 'get-validator (fn [_] nil)))
+(def -swapVals (fn ([a f] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f) (swap-vals* a f nil)))
+                 ([a f x] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f x) (swap-vals* a f [x])))
+                 ([a f x y] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f x y) (swap-vals* a f [x y])))
+                 ([a f x y args] (if (atom-layer/atom-value? a) (apply atom-layer/swap-vals-atom! a f x y args) (swap-vals* a f (cons x (cons y args)))))))
+(def -resetVals (fn [a x] (if (atom-layer/atom-value? a)
+                            (atom-layer/reset-vals-atom! a x)
+                            (loop [] (let [old @a] (if (compare-and-set! a old x) [old x] (recur)))))))
+(def ^:private host-compare-and-set (host-fn 'compare-and-set! (unsupported "compare-and-set!")))
+(def -compareAndSet (fn [a old new] (if (atom-layer/atom-value? a)
+                                      (atom-layer/compare-and-set-atom! a old new)
+                                      (host-compare-and-set a old new))))
+(def ^:private host-add-watch (host-fn 'add-watch (unsupported "add-watch")))
+(def -addWatch (fn [a k f] (if (atom-layer/atom-value? a)
+                             (atom-layer/add-watch-atom! a k f)
+                             (host-add-watch a k f))))
+(def ^:private host-remove-watch (host-fn 'remove-watch (unsupported "remove-watch")))
+(def -removeWatch (fn [a k] (if (atom-layer/atom-value? a)
+                              (atom-layer/remove-watch-atom! a k)
+                              (host-remove-watch a k))))
+(def ^:private host-get-watches (host-fn 'get-watches (fn [_] {})))
+(def -getWatches (fn [a] (if (atom-layer/atom-value? a)
+                           (atom-layer/get-watches-atom a)
+                           (host-get-watches a))))
+(def ^:private host-set-validator (host-fn 'set-validator! (unsupported "set-validator!")))
+(def -setValidator (fn [a f] (if (atom-layer/atom-value? a)
+                               (atom-layer/set-validator-atom! a f)
+                               (host-set-validator a f))))
+(def ^:private host-get-validator (host-fn 'get-validator (fn [_] nil)))
+(def -getValidator (fn [a] (if (atom-layer/atom-value? a)
+                             (atom-layer/get-validator-atom a)
+                             (host-get-validator a))))
 (def -isRealized (let [host-realized (host-fn 'realized? nil)]
                    (fn [x] (cond (or (thread/future-value? x) (thread/promise-value? x)) (thread/future-done? x)
                                  host-realized (host-realized x)
