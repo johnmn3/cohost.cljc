@@ -8,7 +8,8 @@
 ;;   dev/u7/clj-eve.sh dev/u7/two_proc.clj mark <path> <tag>   (one swap, then halt: no close)
 (require 'cohost.hosts.auto)
 (require '[cohost.atom :as al]
-         '[cohost.atom-eve :as hosting])
+         '[cohost.atom-eve :as hosting]
+         'eve.deftype-proto.serialize 'eve.codec 'eve.crypto)
 
 (hosting/install!)
 (al/set-fill! true)
@@ -31,8 +32,17 @@
 
 (defn plain [v] (into {} (map (fn [[k x]] [k (if (coll? x) (vec x) x)])) v))
 
+(defn content-sha
+  "Eve's content digest (eve.digest's compute-digest, spelled with its public
+   parts): SHA-256 over the root's canonical codec bytes under a shared write."
+  [v]
+  (let [bs (binding [eve.deftype-proto.serialize/*shared-write* true] (eve.codec/value->eve-bytes v))
+        raw (eve.crypto/sha256 (mapv (fn [b] (bit-and b 0xFF)) bs))]
+    (str "sha256:" (apply str (map (fn [b] (format "%02x" (bit-and b 0xFF))) raw)) " over " (alength ^bytes bs) " bytes")))
+
 (defn report! [tag a]
-  (let [{:keys [seal sha256]} (hosting/root-digests a)]
+  (let [{:keys [seal]} (hosting/root-digests a)
+        sha256 (content-sha @(al/eve-handle a))]
     (println (str "RESULT " (pr-str {:side side :tag tag :kind (al/kind a)
                                      :value (plain (al/deref-atom a))
                                      :seal seal :sha256 sha256})))))

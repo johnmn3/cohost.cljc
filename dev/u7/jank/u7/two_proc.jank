@@ -17,7 +17,10 @@
             [eve.host :refer [swap!]]
             [eve.core :as ec]
             [eve.atom :as atom]
-            [eve.process :as proc]))
+            [eve.process :as proc]
+            [eve.deftype-proto.serialize :as ser]
+            [eve.codec :as codec]
+            [eve.crypto :as crypto]))
 
 (cpp/raw "
 #include <cstdio>
@@ -57,14 +60,26 @@ namespace u7k {
 (defn- plain [v]
   (ec/reduce-kv (fn [m k x] (assoc m k (if (= k :marks) (plain-vec x) x))) {} v))
 
+;; Eve's content digest (eve.digest's compute-digest, spelled with its public
+;; parts): SHA-256 over the root's canonical codec bytes under a shared write.
+(def ^:private hexd "0123456789abcdef")
+(defn- hex [bs] (apply str (mapcat (fn [b] [(nth hexd (quot b 16)) (nth hexd (mod b 16))]) bs)))
+(defn- content-sha [v]
+  (try
+    (let [bs (binding [ser/*shared-write* true] (codec/value->eve-bytes v))
+          n (count bs)
+          raw (crypto/sha256 (mapv (fn [i] (bit-and (nth bs i) 0xFF)) (range n)))]
+      (str "sha256:" (hex (mapv (fn [b] (bit-and b 0xFF)) raw)) " over " n " bytes"))
+    (catch jank.runtime.object_ref e (str "ERROR " (pr-str e)))
+    (catch std.exception e (str "ERROR std " (pr-str e)))))
+
 (defn- report! [tag a]
   (stage "report deref")
   (let [v @a
         _ (stage "report value " (pr-str (plain v)))
         sl (atom/seal a)
         _ (stage "report seal " (pr-str sl))
-        compute (resolve 'eve.digest/compute-digest)
-        sha (when compute (compute v))
+        sha (content-sha v)
         _ (stage "report sha " (pr-str sha))]
     (println (str "RESULT " (pr-str {:side side :tag tag
                                      :value (plain v)

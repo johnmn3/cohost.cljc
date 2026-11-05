@@ -69,3 +69,13 @@
   returns"). Not a domain/region problem: the join and the deref completed. Fix in the probe (no jank
   patch): read the Eve map through eve.core's protocols (`reduce-kv`, `count`, `nth`). Re-running.
   JVM battery (`bb boot:jvm`) started in parallel.
+- 1:21 PM ET — results (as printed):
+  - jank side `read` on a jank-created fresh domain: exit 0, `RESULT {:side :jank, :tag "read", :value
+    {:jvm 0, :ready 0, :done 0, :jank 0, :marks [], :count 0}, :seal {:ptr 1, :name-hash -1780362285,
+    :blocks 4, :digest 2037527603}, ...}` — the seal is byte-for-byte the JVM side's seal of its own
+    fresh domain (`{:ptr 1, :name-hash -1780362285, :blocks 4, :digest 2037527603}`): one encoding on
+    both seats. Content digest now computed explicitly on both seats (codec bytes under
+    `*shared-write*` → `eve.crypto/sha256`); JVM fresh root: `sha256:46e9f79f…eadb32 over 147 bytes`.
+  - **JVM battery (`bb boot:jvm`, default config, this lane's tree): booted as stock 465 / from host
+    202 / natives 66 / skipped 58 / errors 0; battery: 221/221; libraries: 62/62.**
+  - GATE launched: `dev/u7/gate.sh target/u7-gate 200` (race N=200/side, then kill/rejoin legs).
