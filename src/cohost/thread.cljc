@@ -192,7 +192,7 @@
     (loop []
       (let [item (claim! (:queue ex))]
         (cond (some? item)
-              (do (try (item) (catch #?(:cljs :default :default Throwable) _ nil))
+              (do (host/try-all item)
                   (recur))
               (:shutdown @(:ctl ex)) nil
               :else (let [bell (:bell @(:ctl ex))]
@@ -288,9 +288,9 @@
   [ex f]
   (let [fut (new-future*)]
     (submit! ex (fn []
-                  (try (complete-future! fut {:status :done :value (f)})
-                       (catch #?(:cljs :default :default Throwable) e
-                         (complete-future! fut {:status :error :error e}))))
+                  (host/try-all
+                   (fn [] (complete-future! fut {:status :done :value (f)}))
+                   (fn [e] (complete-future! fut {:status :error :error e}))))
              fut)
     fut))
 
@@ -474,11 +474,10 @@
         bindings (if-let [h (agent-var-handle)]
                    (assoc (:bindings action) h ag)
                    (:bindings action))
-        outcome (try
-                  (binding [*pending-sends* pending]
-                    (let [run (fn [] (apply (:f action) @(:state ag) (:args action)))]
-                      {:value ((conveyed bindings run))}))
-                  (catch #?(:cljs :default :default Throwable) e {:error e}))]
+        outcome (binding [*pending-sends* pending]
+                  (let [run (fn [] (apply (:f action) @(:state ag) (:args action)))]
+                    (host/try-all (fn [] {:value ((conveyed bindings run))})
+                                  (fn [e] {:error e}))))]
     (release-held! @pending)
     outcome))
 
@@ -489,7 +488,7 @@
   (swap! (:errors ag) conj error)
   (let [ctl @(:ctl ag)]
     (when-let [h (:handler ctl)]
-      (try (h ag error) (catch #?(:cljs :default :default Throwable) _ nil)))
+      (host/try-all (fn [] (h ag error))))
     (if (= :fail (:mode ctl))
       (do (swap! (:ctl ag) assoc :failed error :queued false) false)
       true)))
@@ -510,10 +509,8 @@
                             {:error error}
                             (let [v (:validator @(:ctl ag))
                                   check (when v
-                                          (try (if (v value)
-                                                 :ok
-                                                 :invalid)
-                                               (catch #?(:cljs :default :default Throwable) e e)))]
+                                          (host/try-all (fn [] (if (v value) :ok :invalid))
+                                                        (fn [e] e)))]
                               (cond (nil? check) {:value value}
                                     (= :ok check) {:value value}
                                     (= :invalid check)

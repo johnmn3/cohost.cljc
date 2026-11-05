@@ -59,18 +59,27 @@ Seat for this unit: JVM. The shape is portable: one implementation in
   held and released, :continue, :fail + send-throws + restart, pmap,
   pcalls.
 
+## Done since
+
+- Shim wiring banked @ 8fb40d3: new-Thread / Thread-currentThread /
+  new-CountDownLatch / Executors statics dispatch to the layer;
+  -countDown / -await / -getCount / -submit / -execute / -shutdown /
+  -join / -isAlive / -interrupt / -cancel added; layer branches in
+  -start / -get / -deref / -isDone / -isCancelled / -isRealized; the
+  IDeref / IBlockingDeref / IPending predicates recognize layer
+  futures, promises and agents; `realized?` gained a policy
+  replacement (stock's bare IPending cast survives no stand-in).
+- Boot fill banked @ 8fb40d3: `install-thread-layer!` after the
+  companions step + `:host-lacks` boot opt (the exercise path).
+- Booted-context check (`eve_cohost_check.clj`): **21 / 21 PASS**.
+- Standing battery, normal JVM boot (`bb boot:jvm`): **221/221,
+  libraries 62/62, boot errors 0** — no regression.
+- Full account: doc/eve-cohost/UNIT1-REPORT.md.
+
 ## In progress
 
-- Shim wiring: new-Thread / Thread-currentThread / new-CountDownLatch /
-  Executors statics fall back to the layer when the host leaves them
-  unsupported; method vars -countDown / -await / -getCount / -submit /
-  -execute / -shutdown and layer branches in -start / -join / -get /
-  -deref / -isDone / -cancel / -isCancelled.
-- Boot fill: `install-thread-layer!` after the companions step, plus a
-  `:host-lacks` boot opt so a host WITH a core threading surface can be
-  booted as if without (the exercise path on the JVM seat).
-- Verification harness in the booted context + `bb boot:jvm` battery
-  regression check (standing: 221/221).
+- Jank AOT gate (`bb boot:jank`): the snapshot is recompiling with
+  the new shim + cohost.thread in it (the M-6 gate for new shim code).
 
 ## Named distances (unit 1)
 
