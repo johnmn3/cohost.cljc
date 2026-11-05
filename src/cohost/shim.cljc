@@ -22,6 +22,7 @@
   (:require [cohost.adapter :as host]
             [cohost.memory :as memory]
             [cohost.thread :as thread]
+            [cohost.http :as http]
             [cohost.hosts.auto]
             #?(:cljs [goog.object :as gobj]))
   #?(:cljs (:require-macros [cohost.shim-names]))
@@ -246,6 +247,23 @@
     clojure.lang.Compiler$CompilerException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
     java.lang.InterruptedException [java.lang.Exception java.lang.Throwable java.lang.Object]
     java.io.IOException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.io.FileNotFoundException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.net.MalformedURLException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.net.ProtocolException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.net.URI [java.lang.Comparable java.io.Serializable java.lang.Object]
+    java.net.URL [java.io.Serializable java.lang.Object]
+    java.net.URLConnection [java.lang.Object]
+    java.net.HttpURLConnection [java.net.URLConnection java.lang.Object]
+    java.net.http.HttpClient [java.lang.AutoCloseable java.lang.Object]
+    java.net.http.HttpClient$Builder [java.lang.Object]
+    java.net.http.HttpRequest [java.lang.Object]
+    java.net.http.HttpRequest$Builder [java.lang.Object]
+    java.net.http.HttpRequest$BodyPublisher [java.lang.Object]
+    java.net.http.HttpResponse [java.lang.Object]
+    java.net.http.HttpResponse$BodyHandler [java.lang.Object]
+    java.net.http.HttpHeaders [java.lang.Object]
+    java.util.Optional [java.lang.Object]
+    java.io.InputStream [java.io.Closeable java.lang.AutoCloseable java.lang.Object]
     java.lang.Error [java.lang.Throwable java.lang.Object]
     java.lang.AssertionError [java.lang.Error java.lang.Throwable java.lang.Object]
     java.lang.StackOverflowError [java.lang.VirtualMachineError java.lang.Error java.lang.Throwable java.lang.Object]
@@ -392,6 +410,8 @@
     (h-lazy-seq? x) 'clojure.lang.LazySeq
     (and host-has-map-entry? (host-map-entry? x)) 'clojure.lang.MapEntry
     (vector? x) 'clojure.lang.PersistentVector
+    ;; a value of Eve's HTTP layer (cohost.http): the java.net class it stands for
+    (and (map? x) (http/value? x)) (http/class-token x)
     (host-record? x) (type-of x)
     (map? x) (cond (h-sorted? x) 'clojure.lang.PersistentTreeMap
                    (hash-map-kind? x) 'clojure.lang.PersistentHashMap
@@ -1850,6 +1870,139 @@
                      (conj! out (if (== u 43) " " (char-str u)))
                      (recur (inc i) []))))))))))
 
+;; ---------------------------------------------------------------------------
+;; java.net's HTTP surface (Eve-in-cohost unit 9): HttpClient, HttpRequest,
+;; HttpResponse, their builders, publishers, handlers and HttpHeaders; URI;
+;; URL and HttpURLConnection -- answered by Eve's HTTP layer (cohost.http)
+;; wherever the seat gives the layer its leaves. Where it does not, a host
+;; with java.* of its own keeps its own classes (the adapter's :native-ctor
+;; / :native-static), and any other host gets the unsupported error the
+;; stubs throw. A member whose target is no value of the layer is the
+;; target's own (missing-method: the host's member where it has one).
+
+(defn- http-unsupported [what]
+  (throw (ex-info (str "cohost.shim: " what " is not available on this host") {:cohost/unsupported what})))
+(defn- http-ctor
+  "A constructor or static entry: the layer's f when Eve's leaves are in,
+   else the host's own class-sym member (nil: the constructor)."
+  [class-sym member f]
+  (fn [& args]
+    (if (http/available?)
+      (apply f args)
+      (if-let [h (if member (host/native-static class-sym member) (host/native-ctor class-sym))]
+        (apply h args)
+        (http-unsupported (str class-sym (when member (str "/" member))))))))
+(defn- http-member
+  "An instance member m: table maps a layer kind to the fn of [target & args]
+   answering it; anything else is the target's own member m (the host's
+   :invoke-member), else the shim's miss for it."
+  [m table]
+  (let [miss (missing-method (symbol m))]
+    (fn [x & args]
+      (if-let [f (and (map? x) (get table (get x :cohost/kind)))]
+        (apply f x args)
+        (let [r (if (nil? x) absent (host/invoke-member x m (vec args) absent))]
+          (if (identical? r absent) (apply miss x args) r))))))
+
+(def new-URI (http-ctor 'java.net.URI nil http/new-uri))
+(def URI-create (http-ctor 'java.net.URI "create" http/new-uri))
+(def new-URL (http-ctor 'java.net.URL nil http/new-url))
+(def HttpClient-newHttpClient (http-ctor 'java.net.http.HttpClient "newHttpClient" http/new-client))
+(def HttpClient-newBuilder (http-ctor 'java.net.http.HttpClient "newBuilder" http/new-client-builder))
+(def HttpRequest-newBuilder (http-ctor 'java.net.http.HttpRequest "newBuilder" http/new-request-builder))
+(def HttpRequest_BodyPublishers-ofString (http-ctor 'java.net.http.HttpRequest$BodyPublishers "ofString" (fn [s & _cs] (http/publisher-of-string s))))
+(def HttpRequest_BodyPublishers-ofByteArray (http-ctor 'java.net.http.HttpRequest$BodyPublishers "ofByteArray" http/publisher-of-bytes))
+(def HttpRequest_BodyPublishers-noBody (http-ctor 'java.net.http.HttpRequest$BodyPublishers "noBody" http/publisher-none))
+(def HttpResponse_BodyHandlers-ofString (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofString" (fn [& _cs] (http/handler-of :string))))
+(def HttpResponse_BodyHandlers-ofByteArray (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofByteArray" (fn [] (http/handler-of :bytes))))
+(def HttpResponse_BodyHandlers-ofInputStream (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofInputStream" (fn [] (http/handler-of :input-stream))))
+(def HttpResponse_BodyHandlers-discarding (http-ctor 'java.net.http.HttpResponse$BodyHandlers "discarding" (fn [] (http/handler-of :discard))))
+
+(def ^:private http-locator
+  ;; URI and URL share their accessors
+  (fn [f] {::http/uri f ::http/url f}))
+
+;; URI / URL
+(def -getScheme (http-member "getScheme" {::http/uri (fn [u] (:scheme u))}))
+(def -getProtocol (http-member "getProtocol" {::http/url (fn [u] (:scheme u))}))
+(def -getHost (http-member "getHost" (http-locator (fn [u] (if (= ::http/url (:cohost/kind u)) (or (:host u) "") (:host u))))))
+(def -getPort (http-member "getPort" (http-locator (fn [u] (:port u)))))
+(def -getDefaultPort (http-member "getDefaultPort" {::http/url (fn [u] (case (:scheme u) "http" 80 "https" 443 "ftp" 21 -1))}))
+(def -getPath (http-member "getPath" (http-locator (fn [u] (:path u)))))
+(def -getRawPath (http-member "getRawPath" {::http/uri (fn [u] (:path u))}))
+(def -getQuery (http-member "getQuery" (http-locator (fn [u] (if (= ::http/uri (:cohost/kind u)) (some-> (:query u) (URLDecoder-decode "UTF-8")) (:query u))))))
+(def -getRawQuery (http-member "getRawQuery" {::http/uri (fn [u] (:query u))}))
+(def -getFragment (http-member "getFragment" {::http/uri (fn [u] (:fragment u))}))
+(def -getRef (http-member "getRef" {::http/url (fn [u] (:fragment u))}))
+(def -getFile (http-member "getFile" {::http/url http/url-file}))
+(def -getAuthority (http-member "getAuthority" (http-locator http/authority)))
+(def -getUserInfo (http-member "getUserInfo" (http-locator (fn [u] (:user-info u)))))
+(def -isAbsolute (http-member "isAbsolute" {::http/uri (fn [u] (some? (:scheme u)))}))
+(def -toURL (http-member "toURL" {::http/uri http/uri->url}))
+(def -toURI (http-member "toURI" {::http/url http/url->uri}))
+(def -toExternalForm (http-member "toExternalForm" {::http/url http/url-string}))
+(def -resolve (http-member "resolve" {::http/uri (fn [u r] (http/uri-resolve u (if (map? r) (:raw r) r)))}))
+(def -openConnection (http-member "openConnection" {::http/url (fn [u & _proxy] (http/open-connection u))}))
+(def -openStream (http-member "openStream" {::http/url http/open-stream}))
+
+;; HttpClient and its builder
+(def -send (http-member "send" {::http/client http/send-request}))
+(def -build (http-member "build" {::http/client-builder http/build-client ::http/request-builder http/build-request}))
+(def -followRedirects (http-member "followRedirects" {::http/client-builder (fn [b v] (http/client-builder-set b :follow-redirects v))
+                                                      ::http/client (fn [c] (get-in c [:opts :follow-redirects]))}))
+(def -connectTimeout (http-member "connectTimeout" {::http/client-builder (fn [b v] (http/client-builder-set b :connect-timeout v))}))
+
+;; HttpRequest and its builder
+(def -uri (http-member "uri" {::http/request-builder http/rb-uri
+                              ::http/request (fn [r] (:uri r))
+                              ::http/response (fn [r] (:uri r))}))
+(def -GET (http-member "GET" {::http/request-builder (fn [b] (http/rb-method b "GET" nil))}))
+(def -DELETE (http-member "DELETE" {::http/request-builder (fn [b] (http/rb-method b "DELETE" nil))}))
+(def -POST (http-member "POST" {::http/request-builder (fn [b p] (http/rb-method b "POST" p))}))
+(def -PUT (http-member "PUT" {::http/request-builder (fn [b p] (http/rb-method b "PUT" p))}))
+(def -method (http-member "method" {::http/request-builder (fn [b m p] (http/rb-method b m p))
+                                    ::http/request (fn [r] (:method r))}))
+(def -header (http-member "header" {::http/request-builder http/rb-header}))
+(def -setHeader (http-member "setHeader" {::http/request-builder http/rb-set-header}))
+(def -timeout (http-member "timeout" {::http/request-builder (fn [b d] (http/rb-opt b :timeout d))}))
+
+;; HttpResponse, HttpHeaders, Optional
+(def -statusCode (http-member "statusCode" {::http/response (fn [r] (:status r))}))
+(def -body (http-member "body" {::http/response (fn [r] (:body r))}))
+(def -request (http-member "request" {::http/response (fn [r] (:request r))}))
+(def -headers (http-member "headers" {::http/response (fn [r] (:headers r))
+                                      ::http/request (fn [r] (:headers r))
+                                      ::http/request-builder (fn [b & kvs] (http/rb-headers b kvs))}))
+(def -firstValue (http-member "firstValue" {::http/headers http/first-value}))
+(def -allValues (http-member "allValues" {::http/headers http/all-values}))
+(def -map (http-member "map" {::http/headers http/headers-map}))
+(def -isPresent (http-member "isPresent" {::http/optional (fn [o] (some? (:value o)))}))
+(def -orElse (http-member "orElse" {::http/optional (fn [o d] (if (some? (:value o)) (:value o) d))}))
+
+;; HttpURLConnection
+(def -setRequestMethod (http-member "setRequestMethod" {::http/connection http/conn-set-method!}))
+(def -getRequestMethod (http-member "getRequestMethod" {::http/connection (fn [c] (:method (http/conn-state c)))}))
+(def -setRequestProperty (http-member "setRequestProperty" {::http/connection http/conn-set-prop!}))
+(def -addRequestProperty (http-member "addRequestProperty" {::http/connection http/conn-add-prop!}))
+(def -getRequestProperty (http-member "getRequestProperty" {::http/connection http/conn-get-prop}))
+(def -setDoOutput (http-member "setDoOutput" {::http/connection (fn [c v] (http/conn-set! c :do-output (boolean v)))}))
+(def -setConnectTimeout (http-member "setConnectTimeout" {::http/connection (fn [c v] (http/conn-set! c :connect-timeout v))}))
+(def -setReadTimeout (http-member "setReadTimeout" {::http/connection (fn [c v] (http/conn-set! c :read-timeout v))}))
+(def -setInstanceFollowRedirects (http-member "setInstanceFollowRedirects" {::http/connection (fn [c v] (http/conn-set! c :follow-redirects (boolean v)))}))
+(def -setUseCaches (http-member "setUseCaches" {::http/connection (fn [c v] (http/conn-set! c :use-caches (boolean v)))}))
+(def -connect (http-member "connect" {::http/connection (fn [c] (http/conn-response c) nil)}))
+(def -disconnect (http-member "disconnect" {::http/connection (fn [_c] nil)}))
+(def -getOutputStream (http-member "getOutputStream" {::http/connection http/conn-output-stream}))
+(def -getResponseCode (http-member "getResponseCode" {::http/connection (fn [c] (:status (http/conn-response c)))}))
+(def -getResponseMessage (http-member "getResponseMessage" {::http/connection (fn [c] (get http/reason-phrases (:status (http/conn-response c))))}))
+(def -getInputStream (http-member "getInputStream" {::http/connection http/conn-input-stream}))
+(def -getErrorStream (http-member "getErrorStream" {::http/connection http/conn-error-stream}))
+(def -getHeaderField (http-member "getHeaderField" {::http/connection http/conn-header-field}))
+(def -getHeaderFields (http-member "getHeaderFields" {::http/connection (fn [c] (:headers (http/conn-response c)))}))
+(def -getContentType (http-member "getContentType" {::http/connection (fn [c] (http/conn-header-field c "content-type"))}))
+(def -getContentLength (http-member "getContentLength" {::http/connection (fn [c] (if-let [v (http/conn-header-field c "content-length")] (host/parse-long* v) -1))}))
+(def -getURL (http-member "getURL" {::http/connection (fn [c] (:url c))}))
+
 ;; StringBuilder() / (int capacity) / (CharSequence s); StringBuffer is the same here
 (def new-StringBuilder (fn ([] (h-string-builder))
                          ([s] (cond (number? s) (h-string-builder)
@@ -2449,6 +2602,8 @@
                                ;; (the TimeUnit argument is not modeled)
                                (or (thread/future-value? x) (thread/promise-value? x))
                                (apply thread/get-future x args)
+                               ;; cohost.http's Optional (HttpHeaders.firstValue)
+                               (http/is? ::http/optional x) (http/optional-get x)
                                (seq args) (apply get x args)
                                (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"java.util.concurrent.Future.get()\" because the target is null"))
                                (h-deref? x) (deref x)
@@ -2592,6 +2747,8 @@
 ;; a host exception as the JVM prints it, where the host's str does not
 (def ^:private h-exception-string (host/capability :exception-string))
 (def -toString (fn [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x)
+                             ;; a URI / URL of Eve's HTTP layer is its text
+                             (or (http/is? ::http/uri x) (http/is? ::http/url x)) (:raw x)
                              (and h-exception-string (h-exception? x)) (h-exception-string x)
                              ;; a namespace is its name (let-go's str says <ns name>)
                              (h-namespace? x) (str (host/ns-name* x))
@@ -2934,7 +3091,9 @@
        (let [t #?(:cljs (type x) :cljrs (type x) :jank (type x) :default (class x))
              hit (get @host-object-types t absent)]
          (if (identical? hit absent)
-           (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type-of x)))))]
+           ;; (a URL / URI of Eve's HTTP layer may be a host record, cohost.http's
+           ;; own type: the shim's members answer for it)
+           (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type-of x))) (not (http/value? x))))]
              (swap! host-object-types assoc t r)
              r)
            hit))))
