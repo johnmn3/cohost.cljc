@@ -1,0 +1,59 @@
+# Eve-in-cohost load probe — report
+
+Branch `muse/eve-cohost-probe` off `muse/debug-seam` @ 2563eee (the
+collated final-gate tree). Probe ordered by John 2026-11-05 (the gate on
+it was the coordinator-side hold, not John's; see MEMORY.md).
+
+## What the probe measures
+
+The Eve-in-cohost research's named risk: library code that assumes a
+`future`/thread form can capture any closure freely, on cohost hosts
+without a shared heap. John's design answer: the shared-heap illusion —
+a shared atom between all workers, bindings conveyed through the atoms,
+transparent under library code. This probe measures, per host, how much
+existing library code actually hits that edge, before any implementation
+is designed against guesses.
+
+Method: one boot per host (`bin/cohost :<host> -e <program>`, hosts run
+serially), the program in `dev/eve_probe_program.cljc`, the runner in
+`dev/eve_probe.clj`. Per host it records:
+
+- each of the twelve stock libraries required on its own: loads clean,
+  or fails with what;
+- the threading surface as library code and its users call it:
+  `future` (plain, capturing a local, capturing an atom, under a
+  `binding`), `promise`, `delay`, `agent`/`send`/`await`, `pmap`;
+- two library-internal edge cases (spec conform; `Thread/currentThread`
+  stack trace, which `clojure.test` calls).
+
+Failures are classified: **unsupported-shim** (the shim's "not available
+on this host" — the entry Eve's thread layer would hydrate),
+**fail-other** (quoted verbatim), or boot failure.
+
+## Static findings (measured by reading the vendored sources)
+
+The twelve libraries (`resources/cohost/clojure-1.12.0/clojure/*.clj`):
+
+| Library | Threading-surface references in its own code |
+|---|---|
+| walk, set, string, zip, data, edn, math, stacktrace | 0 |
+| template | 0 (the one grep hit is `postwalk-replace`) |
+| test | 1 — `(.getStackTrace (Thread/currentThread))`, clojure/test.clj:365 |
+| repl | 1 — `(Thread/currentThread)` in `thread-stopper`, clojure/repl.clj |
+| spec.alpha | `delay` only (in-process; no thread crosses) |
+
+So **no library in the set calls `future`, `agent`, or `pmap` in its own
+code** — library *loads* cannot hit the closure-capture edge. The edge
+sits in `clojure.core` itself: `future-call` (core.clj:7110) submits to
+`clojure.lang.Agent/soloExecutor`, and `send`/`send-off` route through
+`Agent/pooledExecutor`/`soloExecutor`. In the shim today
+(`src/cohost/shim.cljc`): `java.lang.Thread` unsupported (line 1735),
+`CountDownLatch` unsupported (1738), `new-Agent` a host-fn falling back
+to unsupported "agent" (1293). The dynamic-var thread-binding machinery
+works — which is the conveyance half of John's design, already present.
+
+## Per-host results
+
+(filled in as each host completes; numbers quoted as printed by the
+runner's SUMMARY lines)
+
