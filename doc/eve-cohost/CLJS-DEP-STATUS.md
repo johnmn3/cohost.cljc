@@ -159,3 +159,36 @@ still unlocated (not in Eve, not in atom.broker clones); GitHub check next.
 2. Decide the durable call-site wiring (bb.edn boot:cljs/bench:cljs + bin/cohost ensure-cljs-build!) once
    step 2 shows whether the seat's own host build must carry Eve (the cljs adapter lives in that build).
 3. Step 2: locate cljs-thread sources; read spawn API; write caps; run probe cljs row.
+
+## Follow-on 2026-11-05 ~1:25 PM ET — closing the future/pvalues macro-fill gap (unit 2's last red)
+
+IN-PROGRESS (Lane M follow-on, fresh worktree ~/workspace/wt/cljs-dep-fix, detached at 88cab8f;
+pushes go to muse/eve-cohost-cljs-dep). Target: the four future cases flip to OK in the cljs probe
+row, everything else in the row unchanged, boot parity re-verified, the lane's gates re-run.
+
+Mechanism as named in the REPORT: the `future`/`pvalues` macro fills never intern on this seat;
+failure is `java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')`
+at cljs analysis time.
+
+Firsthand code state, read this session:
+- boot.cljc install-thread-layer! (909-927): interns core-impls plainly; for core-macros it does
+  intern! then mark-macro! on the re-looked-up handle; boot then runs scan-macros! (line 996),
+  which promotes/wraps the macros of the core ns.
+- cljs host (hosts/cljs.cljs): intern! puts the value as a property on the ns object, adds a :defs
+  entry {:meta {}}, and alias-into-macros! adds a forwarding property + an ::alias :defs entry on
+  the $macros side. mark-macro! MOVES the fn onto the $macros object and deliberately leaves NO
+  :defs entry on either side (its docstring: a :defs entry lacking :method-params makes
+  check-macro-arity reject every call); it registers :use-macros on both sides instead.
+- scan-macros! enumerates host/ns-interns-map; the cljs ns-interns builds handles ONLY from :defs
+  entries (plain ns + $macros). After mark-macro! the fill macros have no :defs entry anywhere, so
+  the scan never sees them -- on var hosts the interned var persists and the scan wraps them there.
+  This also explains the report's post-boot (ns-interns 'cohost.core) reading: future/pvalues ABSENT.
+- cljs macro wrap style is :source: stock macros get boot's rewrite-output compiled into their
+  bodies at defmacro time (wrap-defmacro-source). The fill macros are plain fns in cohost.thread,
+  never through that path either -- their expansions never pass through the codemod.
+
+Open question for the diagnosis: which missing piece makes the analyzer NPE -- the absent $macros
+:defs entry (the analyzer's macro var-info), the missing codemod wrap of the expansion, or both.
+Experiment (next): a diagnostic build that boots this seat and dumps future vs a stock macro
+(when) across {plain-ns object property, $macros object property, :defs entries on both sides,
+:use-macros registrations} plus a macroexpand-1 of (future (+ 1 2)) in the user env.
