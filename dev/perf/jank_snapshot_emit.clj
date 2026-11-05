@@ -235,16 +235,57 @@
    whose target line (the parallel targets, nil for none) is ahead of
    the line it would land on, so the chunk starts on its target line.
    start-line is the line the first chunk lands on. A chunk multi-line
-   as printed moves the lines after it by its own height, as today."
+   as printed moves the lines after it by its own height, as today.
+   Returns [text landings]: landings is the line each chunk starts on,
+   parallel to chunks."
   [chunks targets start-line]
-  (loop [cs (seq chunks) ts (seq targets) cur start-line out []]
+  (loop [cs (seq chunks) ts (seq targets) cur start-line out [] landings []]
     (if-not cs
-      (str/join "\n" out)
+      [(str/join "\n" out) landings]
       (let [pad (if (and (first ts) (> (first ts) cur)) (- (first ts) cur) 0)
             chunk (str (apply str (repeat pad "\n")) (first cs))]
         (recur (next cs) (next ts)
                (+ cur (count (filter #(= % \newline) chunk)) 1)
-               (conj out chunk))))))
+               (conj out chunk)
+               (conj landings (+ cur pad)))))))
+
+(def placement-totals (atom {:placed 0 :unplaceable 0 :targeted 0}))
+
+(defn- verify-placement!
+  "U4c assertion (coordinator addendum 645d12a section 3a): every
+   recorded form that carries a target line must land on that line in
+   the emitted module text, verified by scanning the final text (not
+   the emitter's own accounting). A form whose target is above the
+   line it lands on cannot be placed (padding cannot go back: the
+   generated header occupies the first lines); those are counted and
+   reported, not silently misplaced. A placeable form landing off its
+   line is an emitter bug: fail loud."
+  [module text chunks targets landings]
+  (loop [idx 0 line 1 cs (seq chunks) ts (seq targets) ls (seq landings)]
+    (when cs
+      (let [found (if (first ts) (.indexOf ^String text ^String (first cs) idx) -1)
+            actual (when (pos? found) (+ line (count (filter #(= % \newline) (subs text idx found)))))]
+        (when (first ts)
+          (swap! placement-totals update :targeted inc)
+          (cond
+            (neg? found)
+            (throw (ex-info (str "emitter placement: a form of " module " was not found in the emitted text")
+                            {:module module :target (first ts)}))
+            (not= actual (first ls))
+            (throw (ex-info (str "emitter placement: accounting mismatch in " module)
+                            {:module module :target (first ts) :accounted (first ls) :scanned actual}))
+            (= actual (first ts))
+            (swap! placement-totals update :placed inc)
+            (> actual (first ts))
+            (swap! placement-totals update :unplaceable inc)
+            :else
+            (throw (ex-info (str "emitter placement: form of " module " landed above its target line")
+                            {:module module :target (first ts) :actual actual}))))
+        (recur (if (pos? found) (+ found (count (first cs))) idx)
+               (if (pos? found)
+                 (+ actual (count (filter #(= % \newline) (first cs))))
+                 line)
+               (next cs) (next ts) (next ls))))))
 
 (defn module-src [module]
   (let [nm (module-ns module)
@@ -278,14 +319,17 @@
                            (pr-src (:path lb)) " " (quoted (:parent lb)) ")\n"))
                     (str/join "\n" (hoisted evs)) "\n")
         chunks (keep (fn [e] (when-let [s (event-src e)] [s (form-line e)]))
-                     (collapse-scans evs))]
-    ;; each recorded form at its original line (U4c): a form from deeper
-    ;; in its file than the header's end pads down to its line; one from
-    ;; above it lands where it lands (padding cannot go back)
-    (str header
-         (join-at-lines (map first chunks) (map second chunks)
-                        (inc (count (filter #(= % \newline) header))))
-         "\n")))
+                     (collapse-scans evs))
+        chunk-strs (map first chunks)
+        targets (map second chunks)
+        [body landings] (join-at-lines chunk-strs targets
+                                       (inc (count (filter #(= % \newline) header))))
+        text (str header body "\n")]
+    ;; each recorded form at its original line (U4c), asserted against
+    ;; the emitted text; unplaceable forms (target above the header's
+    ;; end) are counted in the PLACEMENT summary, never silently off
+    (verify-placement! nm text chunk-strs targets landings)
+    text))
 
 (defn module-file [nm]
   (str src-root "/" (-> (str nm) (str/replace "-" "_") (str/replace "." "/")) (:ext lang)))
@@ -298,6 +342,9 @@
     (spit file (module-src m))
     (println "MODULE" nm file (count (filter #(= :form (:op %)) (events-of m))))))
 (when (seq failed) (println "FAILED-LIBS" (pr-str (sort failed))))
+(let [{:keys [placed unplaceable targeted]} @placement-totals]
+  (println "PLACEMENT" placed "of" targeted "targeted forms at their original lines,"
+           unplaceable "unplaceable"))
 
 ;; The build's entry: one compile-module of cohost.snapshot compiles the core
 ;; and every library module (a library a library requires is loaded, and
