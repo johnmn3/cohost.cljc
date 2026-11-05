@@ -23,7 +23,7 @@ The states mean exactly this:
 |---|---|---|---|---|
 | Thread layer: futures, promises, `pmap`/`pcalls`/`pvalues` | LANDED — fires where the host lacks the names; exercised via the boot's `:host-lacks` opt | LANDED — the seat's threading; its core has the family only as stubs | LANDED — cooperative tasks on the core realm (unit 2's leaf) | UNIT1-REPORT (probe 29/29, booted check 21/21); UNIT2-REPORT (AOT battery 219/221); CLJS-DEP-REPORT (probe row ok=22 after the macro-fill fix) |
 | Agents | LANDED | LANDED | LANDED — actions run in the core realm; they do not cross to a worker realm | UNIT1-REPORT; UNIT2-REPORT (probe agent case answers 1); unit8/REPORT remainders |
-| Worker realms: futures crossing realms, shared heap | — (real host threads) | — (real host threads) | GATE-GREEN — futures whose work can travel run in worker realms; captures and frames cross through the shared atom | unit8/REPORT gate: probe rows JVM ok=23 / cljs ok=23; crossing program same 5/5, handed-over 5, closures 0 |
+| Worker realms: futures crossing realms, shared heap | — (real host threads) | — (real host threads) | LANDED — futures whose work can travel run in worker realms; captures and frames cross through the shared atom | unit8/REPORT gate: probe rows JVM ok=23 / cljs ok=23; crossing program same 5/5, handed-over 5, closures 0; LANDING-u8-DECLARATION (merged tree: eve_probe ok=23 both rows) |
 | `seque` | NOT-YET | NOT-YET | NOT-YET | UNIT1-REPORT named distances: `seque` remains host-only and unfilled on every seat |
 
 The probe row behind the ClojureScript cells matches the JVM's values on 22
@@ -35,7 +35,7 @@ operator's ruling (unit8/REPORT, *The gate* §1).
 
 | Facility | JVM | jank | ClojureScript (Node) | Sources |
 |---|---|---|---|---|
-| Eve-backed `Atom` (unit 5's layer) | LANDED — opt-in per boot (`:eve-atoms true`) | NOT-YET — the layer compiles in the seat's AOT graph; the fill stays off (unit 6's ground) | GATE-GREEN — on by default at the Node entry points; `COHOST_CLJS_EVE=0` opts out | UNIT5-REPORT (probe 66/0, booted check 31/0, jank AOT gate 219/221); unit8/REPORT (entry points) |
+| Eve-backed `Atom` (unit 5's layer) | LANDED — opt-in per boot (`:eve-atoms true`) | NOT-YET — the layer compiles in the seat's AOT graph; the fill stays off (unit 6's ground) | LANDED — on by default at the Node entry points; `COHOST_CLJS_EVE=0` opts out | UNIT5-REPORT (probe 66/0, booted check 31/0, jank AOT gate 219/221); unit8/REPORT (entry points); LANDING-u8-DECLARATION |
 | Var roots in a registry Eve atom | LANDED | NOT-YET | NOT-YET — var roots cross *realms* by name under unit 8; the unit-5 registry itself is JVM hosting | UNIT5-REPORT (registry: `cohost.registry/table`) |
 
 One Eve-side defect is live on the ClojureScript seat and named in
@@ -51,14 +51,25 @@ incremented. It is Eve-side work; cohost does not hide it.
 | Network atoms (`:eve/kind :net`) | LANDED — exercised between separate processes through a gateway; the atom's value must be a map; the disk level is the gateway member's disk domain | NOT-YET — Eve's jank row has no HTTP root; a jank process can be a disk member of a gateway's domain | NOT-YET — `:net` throws loudly on this seat | unit7/REPORT (net two-process run; named remainders) |
 | Binding conveyance across processes | LANDED — disk atoms only | NOT-YET | NOT-YET — conveyance across *realms* is the worker-realms row above | unit7/REPORT (two-process conveyance run) |
 
+## Collections and HTTP
+
+| Facility | JVM | jank | ClojureScript (Node) | Sources |
+|---|---|---|---|---|
+| Eve-backed collections: vector, hash-map, hash-set, list behind the shim's creators (unit 4) | LANDED — on by default (`:eve-collections` boot opt; `false` turns it off) | NOT-YET — forcing `:eve-collections true` throws loudly; the seat's AOT battery runs with the layer compiled in | NOT-YET — forcing it throws loudly | UNIT4-REPORT; LANDING-u4-DECLARATION (merged tree: probe_collections "PROBE 76 checks, 0 FAIL"; cljs 7/7 SAME) |
+| `java.net.http` / `HttpURLConnection` / URL / URI over Eve's HTTP layer, and the Ring adapter `cohost.ring` (unit 9) | LANDED | NOT-YET — Eve's jank HTTP adapters do not load on jank yet, and the gate has no jank leg | LANDED | LANDING-u7-u9-DECLARATION; unit 9 gate `36/36 PASS` on the JVM seat and the Node seat (tree 2a551e9) |
+
 ## Not yet, anywhere
 
-- **Eve-backed collections (unit 4)** — NOT-YET on every seat: built behind
-  the seam on its own lane; not landed, and not a seat default.
-- **Slab residence on the jank seat (unit 6)** — NOT-YET: design and probe
-  scaffolding banked, and a JVM reference leg passing; the implementation
-  waits on the Eve-on-jank flagship gate. This is the work that turns the
-  jank seat's Eve-backed atoms and tiered kinds on.
+- **Slab residence on the jank seat (unit 6)** — NOT-YET, in implementation
+  (not landed). Step 1 is done on its branch: the region leaves
+  `:region-open` / `:region-heap` / `:region-sync` are in cohost's adapter
+  contract and filled on jank with Eve's own functions (`REGION-CHECK PASS`,
+  a jank writer process then a separate reader process), and a JVM process
+  has read back a root a jank process wrote. Step 2 (Eve's host-completion
+  building cohost's object, an Eve-side change) is in work; step 3
+  (re-pointing units 3–5) waits on it and on a jank fault when printing a
+  deref'd value. This is the work that turns the jank seat's Eve-backed
+  atoms and tiered kinds on.
 - **The browser seat** — no Eve in the browser build; unchanged.
 - **Sorted collections** — Eve has them (`eve.deftype.rb-tree`); bringing
   them behind cohost's seam rides Eve's line and the seam-identity
