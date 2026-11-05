@@ -355,13 +355,39 @@
   [url]
   (conn-input-stream (open-connection url)))
 
+(defn- stream->text [s]
+  (if (is? ::input-stream s)
+    (stream-drain! s)
+    (throw (host/ex* 'java.lang.IllegalArgumentException "cohost.http: a host InputStream on a host without slurp"))))
+
 (defn slurp-value
-  "The text of a layer value slurp is asked for: a URL's or URI's body
-   (fetched through Eve's leaf), an HttpURLConnection's, or a layer
-   InputStream's rest."
+  "The text of a layer value slurp is asked for, as clojure.java.io opens
+   it: a URL's or URI's input stream (fetched through Eve's leaf; an error
+   status throws as getInputStream does), an HttpURLConnection's, or a
+   layer InputStream's rest."
   [x]
   (case (kind-of x)
-    ::url (let [r (conn-response (open-connection x))] (if (string? (:body r)) (:body r) nil))
+    ::url (stream->text (open-stream x))
     ::uri (slurp-value (uri->url x))
+    ::connection (stream->text (conn-input-stream x))
     ::input-stream (stream-drain! x)
     nil))
+
+;; ---------------------------------------------------------------------------
+;; the core fill: names a host's core lacks, filled from this layer at boot
+;; (cohost.boot/install-http-layer!), as cohost.thread fills future/agent
+
+(defn slurp*
+  "clojure.core/slurp where the host's core has none: a layer value's text
+   (a URL's body through Eve's leaf), a path's file contents (the adapter's
+   :slurp), else io.clj's refusal. Options (:encoding) are accepted; bodies
+   are UTF-8 text."
+  [f & _opts]
+  (cond (value? f) (slurp-value f)
+        (string? f) (host/slurp-file f)
+        :else (throw (host/ex* 'java.lang.IllegalArgumentException
+                               (str "Cannot open <" (pr-str f) "> as an InputStream.")))))
+
+(def core-impls
+  "{name fn}: the fills boot interns where the host core lacks the name."
+  {'slurp slurp*})

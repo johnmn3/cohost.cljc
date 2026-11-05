@@ -16,6 +16,7 @@
             [cohost.shim :as shim]
             [cohost.policy :as policy]
             [cohost.thread :as thread]
+            [cohost.http :as http]
             [cohost.scan :as scan]))
 
 (def core-ns "The namespace the stock core.clj boots into." 'cohost.core)
@@ -933,6 +934,21 @@
         (record! report :replaced {:name nm :reason :thread-layer}))))
   report)
 
+(defn install-http-layer!
+  "Fill the names the boot left uninterned that Eve's HTTP layer
+   (cohost.http/core-impls: slurp) answers, when this seat gives the
+   layer its leaves: a host whose core has no slurp reads a URL's body
+   through Eve. Hosts with their own slurp (the JVM, where clojure.java.io
+   reaches the layer instead) and seats without the leaves are untouched."
+  [report]
+  (when (http/available?)
+    (snap! {:op :http-layer})
+    (doseq [[nm v] http/core-impls]
+      (when-not (host/interned-var core-ns nm)
+        (host/intern! core-ns nm v)
+        (record! report :replaced {:name nm :reason :http-layer}))))
+  report)
+
 (defn boot!
   "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
    (default resources/cohost/clojure-1.12.0); :files -- paths under it;
@@ -999,6 +1015,7 @@
      ;; call them; the scan then wraps the fill's macros (future,
      ;; pvalues) like any other booted macro
      (install-thread-layer! report)
+     (install-http-layer! report)
      (scan-macros! ctx)
      (install-host-reducers!)
      (reset! (:booted? ctx) true)
@@ -1553,6 +1570,12 @@
    own record! calls into the snapshot report are not what prints."
   []
   (install-thread-layer! @snap-report)
+  nil)
+
+(defn snap-http-layer!
+  "install-http-layer! of the recorded boot (as snap-thread-layer!)."
+  []
+  (install-http-layer! @snap-report)
   nil)
 
 (defn snap-is! "The shim's instance test for class token c." [c]
