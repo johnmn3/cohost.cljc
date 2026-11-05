@@ -1,0 +1,5 @@
+STAGE report deref
+STAGE report value {:jvm 200, :ready 2, :done 2, :jank 200, :marks [], :count 400}
+STAGE report seal {:ptr 808, :name-hash -1780362285, :blocks 4, :digest -2079092502}
+STAGE report sha "sha256:24c28ddd3f6ea34da8b1b8616400fd29f89e3dea1f42e54532041052716743d2 over 147 bytes"
+RESULT {:side :jank, :tag "race", :value {:jvm 200, :ready 2, :done 2, :jank 200, :marks [], :count 400}, :seal {:ptr 808, :name-hash -1780362285, :blocks 4, :digest -2079092502}, :sha256 "sha256:24c28ddd3f6ea34da8b1b8616400fd29f89e3dea1f42e54532041052716743d2 over 147 bytes"}

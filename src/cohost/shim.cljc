@@ -20,8 +20,10 @@
   ;; the shim asks the adapter for its capabilities as it loads: a host whose
   ;; loader orders a namespace's requires itself (Phel) installs it first
   (:require [cohost.adapter :as host]
+            [cohost.atom :as atom-layer]
             [cohost.memory :as memory]
             [cohost.thread :as thread]
+            [cohost.http :as http]
             [cohost.hosts.auto]
             #?(:cljs [goog.object :as gobj]))
   #?(:cljs (:require-macros [cohost.shim-names]))
@@ -38,7 +40,11 @@
 (def ^:private h-char? (host/capability :char?))
 (def ^:private h-transient? (host/capability :transient?))
 (def ^:private h-namespace? (host/capability :namespace?))
-(def ^:private h-atom? (host/capability :atom?))
+(def ^:private host-atom? (host/capability :atom?))
+(def ^:private h-atom?
+  ;; the host's atoms, and Eve's (unit 5): a layer atom answers
+  ;; clojure.lang.Atom / IAtom / IAtom2 wherever the host's does
+  (fn [x] (or (atom-layer/atom-value? x) (host-atom? x))))
 (def ^:private h-sb? (host/capability :sb?))
 (def ^:private h-var? (host/capability :var?))
 (def ^:private h-sorted? (host/capability :sorted?))
@@ -139,6 +145,14 @@
     (f)
     (throw (ex-info (str "cohost.shim: " what " is not available on this host")
                     {:cohost/unsupported what}))))
+
+(defn- atom-fill?
+  "Eve's atom layer (unit 5) is in force for new atoms: the boot
+   turned its fill on and this seat has Eve hosting installed."
+  []
+  (and (atom-layer/fill-active?) (atom-layer/available?)))
+
+(defn- var-ns-sym [v] (symbol (str (host/var-ns v))))
 
 ;; (to-array nil) is an empty array on the JVM; some hosts reject nil
 (defn- to-array* [coll] (host/host-array (if (nil? coll) [] coll)))
@@ -246,6 +260,31 @@
     clojure.lang.Compiler$CompilerException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
     java.lang.InterruptedException [java.lang.Exception java.lang.Throwable java.lang.Object]
     java.io.IOException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.concurrent.ExecutionException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.concurrent.CompletionException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.concurrent.TimeoutException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.concurrent.CancellationException [java.lang.IllegalStateException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.io.FileNotFoundException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.net.MalformedURLException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.net.ProtocolException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.net.URI [java.lang.Comparable java.io.Serializable java.lang.Object]
+    java.net.URL [java.io.Serializable java.lang.Object]
+    java.net.URLConnection [java.lang.Object]
+    java.net.HttpURLConnection [java.net.URLConnection java.lang.Object]
+    java.net.http.HttpClient [java.lang.AutoCloseable java.lang.Object]
+    java.net.http.HttpClient$Builder [java.lang.Object]
+    java.net.http.HttpRequest [java.lang.Object]
+    java.net.http.HttpRequest$Builder [java.lang.Object]
+    java.net.http.HttpRequest$BodyPublisher [java.lang.Object]
+    java.net.http.HttpResponse [java.lang.Object]
+    java.net.http.HttpResponse$BodyHandler [java.lang.Object]
+    java.net.http.HttpHeaders [java.lang.Object]
+    java.util.Optional [java.lang.Object]
+    java.io.InputStream [java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.Reader [java.io.Closeable java.lang.AutoCloseable java.lang.Readable java.lang.Object]
+    java.io.BufferedReader [java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Readable java.lang.Object]
+    java.io.OutputStream [java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.BufferedWriter [java.io.Writer java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Appendable java.lang.Object]
     java.lang.Error [java.lang.Throwable java.lang.Object]
     java.lang.AssertionError [java.lang.Error java.lang.Throwable java.lang.Object]
     java.lang.StackOverflowError [java.lang.VirtualMachineError java.lang.Error java.lang.Throwable java.lang.Object]
@@ -392,7 +431,12 @@
     (h-lazy-seq? x) 'clojure.lang.LazySeq
     (and host-has-map-entry? (host-map-entry? x)) 'clojure.lang.MapEntry
     (vector? x) 'clojure.lang.PersistentVector
+    ;; a value of Eve's HTTP layer (cohost.http): the java.net class it stands for
+    (and (map? x) (http/value? x)) (http/class-token x)
     (host-record? x) (type-of x)
+    ;; a layer atom (unit 5) IS a clojure.lang.Atom through the
+    ;; facade; before the map branch, which would name it a map
+    (atom-layer/atom-value? x) 'clojure.lang.Atom
     (map? x) (cond (h-sorted? x) 'clojure.lang.PersistentTreeMap
                    (hash-map-kind? x) 'clojure.lang.PersistentHashMap
                    :else 'clojure.lang.PersistentArrayMap)
@@ -503,7 +547,7 @@
    'clojure.lang.IRef #(or (h-var? %) (h-atom? %))
    ;; the thread layer's futures and promises are blocking derefs, its
    ;; agents plain derefs: stock deref branches on exactly these
-   'clojure.lang.IDeref #(or (h-deref? %) (thread/future-value? %) (thread/promise-value? %) (thread/agent-value? %))
+   'clojure.lang.IDeref #(or (h-deref? %) (atom-layer/atom-value? %) (thread/future-value? %) (thread/promise-value? %) (thread/agent-value? %))
    'clojure.lang.IBlockingDeref #(or (h-deref? %) (thread/future-value? %) (thread/promise-value? %))
    'clojure.lang.IPending #(or (h-pending? %) (thread/future-value? %) (thread/promise-value? %))
    ;; sorted collections have no transient form
@@ -1085,7 +1129,10 @@
 
 (def Var-pushThreadBindings (fn [m] (host/push-thread-bindings! m)))
 (declare Var-popThreadBindings)
-(def Var-getThreadBindings (host-fn 'get-thread-bindings (fn [] (host/thread-bindings))))
+;; unit 7: core's binding-conveyor-fn captures through here; the thread
+;; layer's capture hook (cross-process frames through a shared atom) applies
+(def Var-getThreadBindings (let [base (host-fn 'get-thread-bindings (fn [] (host/thread-bindings)))]
+                             (fn [] (thread/apply-capture-hook (base)))))
 (def Var-cloneThreadBindingFrame (fn [] nil))
 (def Var-resetThreadBindingFrame (fn [_] nil))
 ;; Var.intern(ns, sym) creates the namespace and leaves the var unbound (the
@@ -1094,10 +1141,19 @@
                       nn (host-fn 'ns-name identity)
                       ns-sym (fn [ns] (if (h-namespace? ns) (nn ns) ns))]
                   (fn ([ns sym] (cn (ns-sym ns))
-                                (if in (in (ns-sym ns) sym) (host/intern! (ns-sym ns) sym nil)))
+                                (let [r (if in (in (ns-sym ns) sym) (host/intern! (ns-sym ns) sym nil))]
+                                  ;; unit 5: record the intern in the
+                                  ;; registry (the startup domain)
+                                  (atom-layer/publish-intern! (ns-sym ns) sym)
+                                  r))
                     ([ns sym val] (when (symbol? ns)
                                     (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Namespace ns))))
-                                  (cn (ns-sym ns)) (host/intern! (ns-sym ns) sym val)))))
+                                  (cn (ns-sym ns))
+                                  (let [r (host/intern! (ns-sym ns) sym val)]
+                                    ;; unit 5: record intern + root
+                                    (atom-layer/publish-intern! (ns-sym ns) sym)
+                                    (atom-layer/publish-var-root! (ns-sym ns) sym val)
+                                    r)))))
 (declare Namespace-find)
 (def Var-find (fn [sym]
                 (when-not (namespace sym)
@@ -1328,7 +1384,12 @@
 
 (def new-LazySeq (host/capability :lazy-seq))   ; per lazy cell: no accessor lookup
 (def new-Delay (host/capability :delay))
-(def new-Atom host/atom*)
+(def new-Atom
+  ;; unit 5: with the atom fill in force, an Eve-backed atom
+  ;; (cohost.atom); the host's own atom otherwise
+  (fn
+    ([x] (if (atom-fill?) (atom-layer/make-atom x) (host/atom* x)))
+    ([x m] (if (atom-fill?) (atom-layer/make-atom x {:meta m}) (host/atom* x m)))))
 (def new-Volatile (host-fn 'volatile! (unsupported "volatile!")))
 (def new-Reduced (host-fn 'reduced (unsupported "reduced")))
 
@@ -1849,6 +1910,170 @@
                        (loop [] nil))
                      (conj! out (if (== u 43) " " (char-str u)))
                      (recur (inc i) []))))))))))
+
+;; ---------------------------------------------------------------------------
+;; java.net's HTTP surface (Eve-in-cohost unit 9): HttpClient, HttpRequest,
+;; HttpResponse, their builders, publishers, handlers and HttpHeaders; URI;
+;; URL and HttpURLConnection -- answered by Eve's HTTP layer (cohost.http)
+;; wherever the seat gives the layer its leaves. Where it does not, a host
+;; with java.* of its own keeps its own classes (the adapter's :native-ctor
+;; / :native-static), and any other host gets the unsupported error the
+;; stubs throw. A member whose target is no value of the layer is the
+;; target's own (missing-method: the host's member where it has one).
+
+(defn- http-unsupported [what]
+  (throw (ex-info (str "cohost.shim: " what " is not available on this host") {:cohost/unsupported what})))
+(defn- http-ctor
+  "A constructor or static entry: the layer's f when Eve's leaves are in,
+   else the host's own class-sym member (nil: the constructor)."
+  [class-sym member f]
+  (fn [& args]
+    (if (http/available?)
+      (apply f args)
+      (if-let [h (if member (host/native-static class-sym member) (host/native-ctor class-sym))]
+        (apply h args)
+        (http-unsupported (str class-sym (when member (str "/" member))))))))
+(defn- http-member
+  "An instance member m: table maps a layer kind to the fn of [target & args]
+   answering it; anything else is the target's own member m (the host's
+   :invoke-member), else the shim's miss for it."
+  [m table]
+  (let [miss (missing-method (symbol m))]
+    (fn [x & args]
+      (if-let [f (and (map? x) (get table (get x :cohost/kind)))]
+        (apply f x args)
+        (let [r (if (nil? x) absent (host/invoke-member x m (vec args) absent))]
+          (if (identical? r absent) (apply miss x args) r))))))
+
+(def new-URI (http-ctor 'java.net.URI nil http/new-uri))
+(def URI-create (http-ctor 'java.net.URI "create" http/new-uri))
+(def new-URL (http-ctor 'java.net.URL nil http/new-url))
+(def HttpClient-newHttpClient (http-ctor 'java.net.http.HttpClient "newHttpClient" http/new-client))
+(def HttpClient-newBuilder (http-ctor 'java.net.http.HttpClient "newBuilder" http/new-client-builder))
+(def HttpRequest-newBuilder (http-ctor 'java.net.http.HttpRequest "newBuilder" http/new-request-builder))
+(def HttpRequest_BodyPublishers-ofString (http-ctor 'java.net.http.HttpRequest$BodyPublishers "ofString" (fn [s & _cs] (http/publisher-of-string s))))
+(def HttpRequest_BodyPublishers-ofByteArray (http-ctor 'java.net.http.HttpRequest$BodyPublishers "ofByteArray" http/publisher-of-bytes))
+(def HttpRequest_BodyPublishers-noBody (http-ctor 'java.net.http.HttpRequest$BodyPublishers "noBody" http/publisher-none))
+(def HttpResponse_BodyHandlers-ofString (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofString" (fn [& _cs] (http/handler-of :string))))
+(def HttpResponse_BodyHandlers-ofByteArray (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofByteArray" (fn [] (http/handler-of :bytes))))
+(def HttpResponse_BodyHandlers-ofInputStream (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofInputStream" (fn [] (http/handler-of :input-stream))))
+(def HttpResponse_BodyHandlers-discarding (http-ctor 'java.net.http.HttpResponse$BodyHandlers "discarding" (fn [] (http/handler-of :discard))))
+
+(def ^:private http-locator
+  ;; URI and URL share their accessors
+  (fn [f] {:cohost.http/uri f :cohost.http/url f}))
+
+;; URI / URL
+(def -getScheme (http-member "getScheme" {:cohost.http/uri (fn [u] (:scheme u))}))
+(def -getProtocol (http-member "getProtocol" {:cohost.http/url (fn [u] (:scheme u))}))
+(def -getHost (http-member "getHost" (http-locator (fn [u] (if (= :cohost.http/url (:cohost/kind u)) (or (:host u) "") (:host u))))))
+(def -getPort (http-member "getPort" (http-locator (fn [u] (:port u)))))
+(def -getDefaultPort (http-member "getDefaultPort" {:cohost.http/url (fn [u] (case (:scheme u) "http" 80 "https" 443 "ftp" 21 -1))}))
+(def -getPath (http-member "getPath" (http-locator (fn [u] (:path u)))))
+(def -getRawPath (http-member "getRawPath" {:cohost.http/uri (fn [u] (:path u))}))
+(def -getQuery (http-member "getQuery" (http-locator (fn [u] (if (= :cohost.http/uri (:cohost/kind u)) (some-> (:query u) (URLDecoder-decode "UTF-8")) (:query u))))))
+(def -getRawQuery (http-member "getRawQuery" {:cohost.http/uri (fn [u] (:query u))}))
+(def -getFragment (http-member "getFragment" {:cohost.http/uri (fn [u] (:fragment u))}))
+(def -getRef (http-member "getRef" {:cohost.http/url (fn [u] (:fragment u))}))
+(def -getFile (http-member "getFile" {:cohost.http/url http/url-file}))
+(def -getAuthority (http-member "getAuthority" (http-locator http/authority)))
+(def -getUserInfo (http-member "getUserInfo" (http-locator (fn [u] (:user-info u)))))
+(def -isAbsolute (http-member "isAbsolute" {:cohost.http/uri (fn [u] (some? (:scheme u)))}))
+(def -toURL (http-member "toURL" {:cohost.http/uri http/uri->url}))
+(def -toURI (http-member "toURI" {:cohost.http/url http/url->uri}))
+(def -toExternalForm (http-member "toExternalForm" {:cohost.http/url http/url-string}))
+(def -resolve (http-member "resolve" {:cohost.http/uri (fn [u r] (http/uri-resolve u (if (map? r) (:raw r) r)))}))
+(def -openConnection (http-member "openConnection" {:cohost.http/url (fn [u & _proxy] (http/open-connection u))}))
+(def -openStream (http-member "openStream" {:cohost.http/url http/open-stream}))
+
+;; HttpClient and its builder
+(def -send (http-member "send" {:cohost.http/client http/send-request}))
+(def -sendAsync (http-member "sendAsync" {:cohost.http/client http/send-async}))
+;; CompletableFuture's stages over a sendAsync future (cohost.thread's future value)
+(defn- async-member [m f]
+  (let [miss (missing-method (symbol m))]
+    (fn [x & args]
+      (if (http/async? x)
+        (apply f x args)
+        (let [r (if (nil? x) absent (host/invoke-member x m (vec args) absent))]
+          (if (identical? r absent) (apply miss x args) r))))))
+(def -thenApply (async-member "thenApply" http/then-apply))
+(def -thenAccept (async-member "thenAccept" http/then-accept))
+(def -build (http-member "build" {:cohost.http/client-builder http/build-client :cohost.http/request-builder http/build-request}))
+(def -followRedirects (http-member "followRedirects" {:cohost.http/client-builder (fn [b v] (http/client-builder-set b :follow-redirects v))
+                                                      :cohost.http/client (fn [c] (get-in c [:opts :follow-redirects]))}))
+(def -connectTimeout (http-member "connectTimeout" {:cohost.http/client-builder (fn [b v] (http/client-builder-set b :connect-timeout v))}))
+
+;; HttpRequest and its builder
+(def -uri (http-member "uri" {:cohost.http/request-builder http/rb-uri
+                              :cohost.http/request (fn [r] (:uri r))
+                              :cohost.http/response (fn [r] (:uri r))}))
+(def -GET (http-member "GET" {:cohost.http/request-builder (fn [b] (http/rb-method b "GET" nil))}))
+(def -DELETE (http-member "DELETE" {:cohost.http/request-builder (fn [b] (http/rb-method b "DELETE" nil))}))
+(def -POST (http-member "POST" {:cohost.http/request-builder (fn [b p] (http/rb-method b "POST" p))}))
+(def -PUT (http-member "PUT" {:cohost.http/request-builder (fn [b p] (http/rb-method b "PUT" p))}))
+(def -method (http-member "method" {:cohost.http/request-builder (fn [b m p] (http/rb-method b m p))
+                                    :cohost.http/request (fn [r] (:method r))}))
+(def -header (http-member "header" {:cohost.http/request-builder http/rb-header}))
+(def -setHeader (http-member "setHeader" {:cohost.http/request-builder http/rb-set-header}))
+(def -timeout (http-member "timeout" {:cohost.http/request-builder (fn [b d] (http/rb-opt b :timeout d))}))
+
+;; HttpResponse, HttpHeaders, Optional
+(def -statusCode (http-member "statusCode" {:cohost.http/response (fn [r] (:status r))}))
+(def -body (http-member "body" {:cohost.http/response (fn [r] (:body r))}))
+(def -request (http-member "request" {:cohost.http/response (fn [r] (:request r))}))
+(def -headers (http-member "headers" {:cohost.http/response (fn [r] (:headers r))
+                                      :cohost.http/request (fn [r] (:headers r))
+                                      :cohost.http/request-builder (fn [b & kvs] (http/rb-headers b kvs))}))
+(def -firstValue (http-member "firstValue" {:cohost.http/headers http/first-value}))
+(def -allValues (http-member "allValues" {:cohost.http/headers http/all-values}))
+(def -map (http-member "map" {:cohost.http/headers http/headers-map}))
+(def -isPresent (http-member "isPresent" {:cohost.http/optional (fn [o] (some? (:value o)))}))
+(def -orElse (http-member "orElse" {:cohost.http/optional (fn [o d] (if (some? (:value o)) (:value o) d))}))
+
+;; the layer's text streams (a host without byte streams of its own):
+;; BufferedReader.readLine / read, OutputStream / Writer.write
+(def -readLine (http-member "readLine" {:cohost.http/reader http/read-line!}))
+(def -read (http-member "read" {:cohost.http/reader (fn [r] (let [c (http/read-char! r)] (if (= -1 c) -1 (code-of c))))}))
+(defn- written-as-text
+  "What OutputStream.write / Writer.write appends: a String (or a slice of
+   one), a char array's chars, a byte array's bytes decoded as UTF-8, or one
+   int as its char."
+  [x args]
+  (let [[off len] args]
+    (cond (string? x) (if off (subs x off (+ off len)) x)
+          (arr? x) (let [xs (if off (take len (drop off (seq x))) (seq x))]
+                     (if (= :chars (array-kind x))
+                       (apply str (map char-str xs))
+                       (let [v (vec xs)] (decode-bytes (Numbers-byte_array v) 0 (count v) "UTF-8"))))
+          (number? x) (char-str (bit-and x 0xFFFF))
+          :else (str x))))
+(def -write (http-member "write" (let [f (fn [o x & args] (http/append-text! o (written-as-text x args)))]
+                                   {:cohost.http/output-stream f :cohost.http/writer f})))
+
+;; HttpURLConnection
+(def -setRequestMethod (http-member "setRequestMethod" {:cohost.http/connection http/conn-set-method!}))
+(def -getRequestMethod (http-member "getRequestMethod" {:cohost.http/connection (fn [c] (:method (http/conn-state c)))}))
+(def -setRequestProperty (http-member "setRequestProperty" {:cohost.http/connection http/conn-set-prop!}))
+(def -addRequestProperty (http-member "addRequestProperty" {:cohost.http/connection http/conn-add-prop!}))
+(def -getRequestProperty (http-member "getRequestProperty" {:cohost.http/connection http/conn-get-prop}))
+(def -setDoOutput (http-member "setDoOutput" {:cohost.http/connection (fn [c v] (http/conn-set! c :do-output (boolean v)))}))
+(def -setConnectTimeout (http-member "setConnectTimeout" {:cohost.http/connection (fn [c v] (http/conn-set! c :connect-timeout v))}))
+(def -setReadTimeout (http-member "setReadTimeout" {:cohost.http/connection (fn [c v] (http/conn-set! c :read-timeout v))}))
+(def -setInstanceFollowRedirects (http-member "setInstanceFollowRedirects" {:cohost.http/connection (fn [c v] (http/conn-set! c :follow-redirects (boolean v)))}))
+(def -setUseCaches (http-member "setUseCaches" {:cohost.http/connection (fn [c v] (http/conn-set! c :use-caches (boolean v)))}))
+(def -connect (http-member "connect" {:cohost.http/connection (fn [c] (http/conn-response c) nil)}))
+(def -disconnect (http-member "disconnect" {:cohost.http/connection (fn [_c] nil)}))
+(def -getOutputStream (http-member "getOutputStream" {:cohost.http/connection http/conn-output-stream}))
+(def -getResponseCode (http-member "getResponseCode" {:cohost.http/connection (fn [c] (:status (http/conn-response c)))}))
+(def -getResponseMessage (http-member "getResponseMessage" {:cohost.http/connection (fn [c] (get http/reason-phrases (:status (http/conn-response c))))}))
+(def -getInputStream (http-member "getInputStream" {:cohost.http/connection http/conn-input-stream}))
+(def -getErrorStream (http-member "getErrorStream" {:cohost.http/connection http/conn-error-stream}))
+(def -getHeaderField (http-member "getHeaderField" {:cohost.http/connection http/conn-header-field}))
+(def -getHeaderFields (http-member "getHeaderFields" {:cohost.http/connection (fn [c] (:headers (http/conn-response c)))}))
+(def -getContentType (http-member "getContentType" {:cohost.http/connection (fn [c] (http/conn-header-field c "content-type"))}))
+(def -getContentLength (http-member "getContentLength" {:cohost.http/connection (fn [c] (if-let [v (http/conn-header-field c "content-length")] (host/parse-long* v) -1))}))
+(def -getURL (http-member "getURL" {:cohost.http/connection (fn [c] (:url c))}))
 
 ;; StringBuilder() / (int capacity) / (CharSequence s); StringBuffer is the same here
 (def new-StringBuilder (fn ([] (h-string-builder))
@@ -2440,7 +2665,7 @@
                              :else (str (nn a) b))))
 (def -nth nth)
 (def -get (fn [x & args] (cond (h-var? x) (host/var-root x)
-                               (h-atom? x) (deref x)
+                               (h-atom? x) (if (atom-layer/atom-value? x) (atom-layer/deref-atom x) (deref x))
                                (host/mlist? x) (nth @(:state x) (first args))
                                ;; a layer future or promise: Future.get (this
                                ;; is also how stock deref reaches them, through
@@ -2449,6 +2674,8 @@
                                ;; (the TimeUnit argument is not modeled)
                                (or (thread/future-value? x) (thread/promise-value? x))
                                (apply thread/get-future x args)
+                               ;; cohost.http's Optional (HttpHeaders.firstValue)
+                               (http/is? :cohost.http/optional x) (http/optional-get x)
                                (seq args) (apply get x args)
                                (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"java.util.concurrent.Future.get()\" because the target is null"))
                                (h-deref? x) (deref x)
@@ -2497,33 +2724,49 @@
                                (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
                                (pop x))
                        :default (pop x)))))
-(def -meta (fn [x] (host/meta* x)))
+(def -meta (fn [x] (if (atom-layer/atom-value? x) (atom-layer/meta-of x) (host/meta* x))))
 ;; let-go: a symbol given no metadata is the bare symbol (with-meta makes a
 ;; wrapper no symbol equals, even of none)
-(def -withMeta #?(:lg (fn [x m] (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m)))
+(def -withMeta #?(:lg (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m))))
                   ;; a cohost type instance's meta is its own slot, which
                   ;; jank's with-meta cannot reach (it panics on the type)
-                  :jank (fn [x m] (host/with-meta* x m))
-                  :default with-meta))
+                  :jank (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (host/with-meta* x m)))
+                  :default (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (with-meta x m)))))
 (defn- host-meta [m] (if (host/strip-inline?) (dissoc m :inline :inline-arities) m))
 (defn- meta-map [m]
   (if (or (nil? m) (map? m)) m (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentMap m)))))
-(def -alterMeta (fn [x f args] (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args)))
+(def -alterMeta (fn [x f args] (if (atom-layer/atom-value? x)
+                                 (atom-layer/alter-meta-atom x f args)
+                                 (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args))))
 (def -resetMeta (let [rm (host-fn 'reset-meta! (fn [x m] (host-alter-meta! x (constantly m))))]
-                  (fn [x m] (rm x (host-meta (meta-map m))))))
+                  (fn [x m] (let [m (host-meta (meta-map m))]
+                              (if (atom-layer/atom-value? x)
+                                (atom-layer/set-meta-atom! x m)
+                                (rm x m))))))
 (def -setMeta -resetMeta)
 ;; ClojureScript has no blocking deref: the timed form reads the value now
 (def -deref (fn ([x] (cond (or (thread/future-value? x) (thread/promise-value? x))
                            (thread/deref-blocking x)
                            (thread/agent-value? x) (thread/agent-state x)
+                           (atom-layer/atom-value? x) (atom-layer/deref-atom x)
                            :else (deref x)))
-                ([x ms timeout-val] (if (or (thread/future-value? x) (thread/promise-value? x))
-                                      (thread/deref-blocking x ms timeout-val)
-                                      #?(:cljs (deref x) :default (deref x ms timeout-val))))))
+                ([x ms timeout-val] (cond (or (thread/future-value? x) (thread/promise-value? x))
+                                          (thread/deref-blocking x ms timeout-val)
+                                          (atom-layer/atom-value? x) (atom-layer/deref-atom x)
+                                          :else #?(:cljs (deref x) :default (deref x ms timeout-val))))))
 ;; the thread layer's members: Thread, Future, ExecutorService,
 ;; CountDownLatch over cohost.thread's values
-(def -join (fn ([x] (if (thread/thread-value? x)
-                      (thread/join-thread x)
+(def -join (fn ([x] (cond
+                      (thread/thread-value? x) (thread/join-thread x)
+                      ;; CompletableFuture.join (a sendAsync future): the value, or
+                      ;; the cause rethrown in a CompletionException
+                      (http/async? x)
+                      (host/try-all (fn [] (thread/deref-future x))
+                                    (fn [e] (throw (if (instance-of? 'java.util.concurrent.ExecutionException e)
+                                                     (host/ex* 'java.util.concurrent.CompletionException
+                                                               (host/error-message e) (host/exception-cause e))
+                                                     e))))
+                      :else
                       (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread")))))
                ([x ms] (if (thread/thread-value? x)
                          (thread/join-thread x ms)
@@ -2592,6 +2835,8 @@
 ;; a host exception as the JVM prints it, where the host's str does not
 (def ^:private h-exception-string (host/capability :exception-string))
 (def -toString (fn [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x)
+                             ;; a URI / URL of Eve's HTTP layer is its text
+                             (or (http/is? :cohost.http/uri x) (http/is? :cohost.http/url x)) (:raw x)
                              (and h-exception-string (h-exception? x)) (h-exception-string x)
                              ;; a namespace is its name (let-go's str says <ns name>)
                              (h-namespace? x) (str (host/ns-name* x))
@@ -2721,18 +2966,28 @@
 (def -getRawRoot (fn [v] (host/var-raw-root v)))
 ;; Var.getThreadBinding: a box (non-nil even when the binding is nil), or nil
 (def -getThreadBinding (fn [v] (when (host/var-thread-bound? v) [(host/var-root v)])))
-(def -bindRoot (fn [v x] (host/set-var-root! v (constantly x)) v))
+(def -bindRoot (fn [v x] (host/set-var-root! v (constantly x))
+                 ;; unit 5: publish the root to the registry
+                 (atom-layer/publish-var-root! (var-ns-sym v) (host/var-sym v) x)
+                 v))
 ;; Var.alterRoot returns the new root, bindings or not
-(def -alterRoot (fn [v f args] (host/set-var-root! v (fn [old] (apply f old args))) (host/var-raw-root v)))
+(def -alterRoot (fn [v f args] (host/set-var-root! v (fn [old] (apply f old args)))
+                  (let [new (host/var-raw-root v)]
+                    ;; unit 5: publish the new root to the registry
+                    (atom-layer/publish-var-root! (var-ns-sym v) (host/var-sym v) new)
+                    new)))
 (def -toSymbol (fn [v] (let [n (host/var-ns v) n (if (h-namespace? n) (host/ns-name* n) n)]
                          (if n (symbol (str n) (str (host/var-sym v))) (host/var-sym v)))))
 ;; IAtom.swap overloads: (f) (f x) (f x y) (f x y args) -- the last takes the
 ;; remaining arguments as one seq, which core.clj's swap! passes through as-is.
-(def -swap (fn ([a f] (swap! a f)) ([a f x] (swap! a f x)) ([a f x y] (swap! a f x y))
-             ([a f x y args] (apply swap! a f x y args))))
+(def -swap (fn ([a f] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f) (swap! a f)))
+             ([a f x] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f x) (swap! a f x)))
+             ([a f x y] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f x y) (swap! a f x y)))
+             ([a f x y args] (if (atom-layer/atom-value? a) (apply atom-layer/swap-atom! a f x y args) (apply swap! a f x y args)))))
 (def ^:private h-vreset! (host-fn 'vreset! nil))
 (def -reset (fn ([mf] (if (matcher? mf) (m-reset mf) (do (swap! (mf-state mf) assoc :methods {} :prefers {}) mf)))
-              ([a x] (cond (matcher? a) (m-reset a x)
+              ([a x] (cond (atom-layer/atom-value? a) (atom-layer/reset-atom! a x)
+                           (matcher? a) (m-reset a x)
                            (h-volatile? a) (h-vreset! a x)
                            :else (reset! a x)))))
 ;; IAtom2.swapVals / resetVals as the JVM does them, a compare-and-set loop
@@ -2741,15 +2996,37 @@
   (loop []
     (let [old @a new (apply f old args)]
       (if (compare-and-set! a old new) [old new] (recur)))))
-(def -swapVals (fn ([a f] (swap-vals* a f nil)) ([a f x] (swap-vals* a f [x])) ([a f x y] (swap-vals* a f [x y]))
-                 ([a f x y args] (swap-vals* a f (cons x (cons y args))))))
-(def -resetVals (fn [a x] (loop [] (let [old @a] (if (compare-and-set! a old x) [old x] (recur))))))
-(def -compareAndSet (host-fn 'compare-and-set! (unsupported "compare-and-set!")))
-(def -addWatch (host-fn 'add-watch (unsupported "add-watch")))
-(def -removeWatch (host-fn 'remove-watch (unsupported "remove-watch")))
-(def -getWatches (host-fn 'get-watches (fn [_] {})))
-(def -setValidator (host-fn 'set-validator! (unsupported "set-validator!")))
-(def -getValidator (host-fn 'get-validator (fn [_] nil)))
+(def -swapVals (fn ([a f] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f) (swap-vals* a f nil)))
+                 ([a f x] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f x) (swap-vals* a f [x])))
+                 ([a f x y] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f x y) (swap-vals* a f [x y])))
+                 ([a f x y args] (if (atom-layer/atom-value? a) (apply atom-layer/swap-vals-atom! a f x y args) (swap-vals* a f (cons x (cons y args)))))))
+(def -resetVals (fn [a x] (if (atom-layer/atom-value? a)
+                            (atom-layer/reset-vals-atom! a x)
+                            (loop [] (let [old @a] (if (compare-and-set! a old x) [old x] (recur)))))))
+(def ^:private host-compare-and-set (host-fn 'compare-and-set! (unsupported "compare-and-set!")))
+(def -compareAndSet (fn [a old new] (if (atom-layer/atom-value? a)
+                                      (atom-layer/compare-and-set-atom! a old new)
+                                      (host-compare-and-set a old new))))
+(def ^:private host-add-watch (host-fn 'add-watch (unsupported "add-watch")))
+(def -addWatch (fn [a k f] (if (atom-layer/atom-value? a)
+                             (atom-layer/add-watch-atom! a k f)
+                             (host-add-watch a k f))))
+(def ^:private host-remove-watch (host-fn 'remove-watch (unsupported "remove-watch")))
+(def -removeWatch (fn [a k] (if (atom-layer/atom-value? a)
+                              (atom-layer/remove-watch-atom! a k)
+                              (host-remove-watch a k))))
+(def ^:private host-get-watches (host-fn 'get-watches (fn [_] {})))
+(def -getWatches (fn [a] (if (atom-layer/atom-value? a)
+                           (atom-layer/get-watches-atom a)
+                           (host-get-watches a))))
+(def ^:private host-set-validator (host-fn 'set-validator! (unsupported "set-validator!")))
+(def -setValidator (fn [a f] (if (atom-layer/atom-value? a)
+                               (atom-layer/set-validator-atom! a f)
+                               (host-set-validator a f))))
+(def ^:private host-get-validator (host-fn 'get-validator (fn [_] nil)))
+(def -getValidator (fn [a] (if (atom-layer/atom-value? a)
+                             (atom-layer/get-validator-atom a)
+                             (host-get-validator a))))
 (def -isRealized (let [host-realized (host-fn 'realized? nil)]
                    (fn [x] (cond (or (thread/future-value? x) (thread/promise-value? x)) (thread/future-done? x)
                                  host-realized (host-realized x)
@@ -2874,7 +3151,8 @@
                                   hi)))))
 (def -toCharArray (fn [s] (to-array* (vec (nn s)))))
 (def -append (fn [sb x] (h-sb-append! sb (if (nil? x) "null" x))))
-(def -close host/close!)
+;; a value of Eve's HTTP layer has nothing to release
+(def -close (fn [x] (if (http/value? x) nil (host/close! x))))
 (def -flush (fn [_] nil))
 (def -numerator (let [h (host-fn 'numerator identity)]
                   ;; (jank, A5-2: Ratio's numerator and denominator are BigIntegers, which
@@ -2934,7 +3212,9 @@
        (let [t #?(:cljs (type x) :cljrs (type x) :jank (type x) :default (class x))
              hit (get @host-object-types t absent)]
          (if (identical? hit absent)
-           (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type-of x)))))]
+           ;; (a URL / URI of Eve's HTTP layer may be a host record, cohost.http's
+           ;; own type: the shim's members answer for it)
+           (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type-of x))) (not (http/value? x))))]
              (swap! host-object-types assoc t r)
              r)
            hit))))

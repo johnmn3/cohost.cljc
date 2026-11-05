@@ -1,0 +1,7 @@
+cljs   -M -m    SAME
+cljs   -M:main  SAME
+cljs   -M flag  SAME
+cljs   -X:run   SAME
+cljs   -e       SAME
+cljs   script   SAME
+cljs   -Spath   SAME

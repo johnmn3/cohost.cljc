@@ -1,0 +1,70 @@
+cohost.boot on cljs: 821 top-level forms
+  booted as stock: 548   from host: 87   natives: 46   skipped: 140   errors: 0
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-kinds?
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-kinds?
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/static-types!
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/static-types!
+WARNING: No such namespace: cohost.boot, could not locate cohost/boot.cljs, cohost/boot.cljc, or JavaScript source providing "cohost.boot"
+WARNING: Use of undeclared Var cohost.boot/eval-str
+WARNING: No such namespace: cohost.scan, could not locate cohost/scan.cljs, cohost/scan.cljc, or JavaScript source providing "cohost.scan"
+WARNING: Use of undeclared Var cohost.scan/provenance
+battery: 219/221 stock behaviors pass
+   FAIL numeric tower
+        got      [3 -5 6 2 3 1 1 2 0 2 1 true true true true true true true true true true]
+        expected [3 -5 6 2 3 1 1 2 0 2 1 true true true true true true true true false true]
+   FAIL defmacro &form &env
+        got      [8 m2]
+        expected [2 m2]
+WARNING: Use of undeclared Var cohost.repl/proxy
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: Use of undeclared Var cohost.repl/proxy-super
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: No such namespace: sun.misc.Signal, could not locate sun/misc/Signal.cljs, sun/misc/Signal.cljc, or JavaScript source providing "sun.misc.Signal"
+WARNING: Use of undeclared Var sun.misc.Signal/handle
+WARNING: Use of undeclared Var cohost.repl/proxy
+WARNING: Use of undeclared Var cohost.repl/handle
+WARNING: Use of undeclared Var cohost.repl/signal
+WARNING: Use of undeclared Var cohost.repl/signal
+libraries: 62/62 cases pass across 12 clojure.* libraries
+  clojure.walk  7/7
+  clojure.set  5/5
+  clojure.string  10/10
+  clojure.zip  7/7
+  clojure.data  5/5
+  clojure.edn  4/4
+  clojure.template  2/2
+  clojure.test  4/4
+  clojure.math  7/7
+  clojure.stacktrace  2/2
+  clojure.repl  3/3
+  clojure.spec.alpha  6/6
+BOOTCLJS rc=0
+cljs   -M -m    SAME
+cljs   -M:main  SAME
+cljs   -M flag  SAME
+cljs   -X:run   SAME
+cljs   -e       SAME
+cljs   script   SAME
+cljs   -Spath   SAME
+CLICHECK rc=0

@@ -293,7 +293,21 @@
 ;; worker through the adapter's binding-frame caps; on a host whose core
 ;; has no binding frames the capture is empty and nothing is conveyed.
 
-(defn capture-bindings [] (host/thread-bindings))
+;; Unit 7: a capture hook -- {var value} -> {var value} -- the atom
+;; layer installs to carry binding frames ACROSS PROCESSES through a
+;; shared (disk) atom: the frame a capture sees is published into the
+;; atom, and frames other processes published there are conveyed for
+;; vars this thread has not bound itself. nil = no hook (default).
+(defonce ^:private capture-hook (atom nil))
+
+(defn set-capture-hook! [f] (reset! capture-hook f) nil)
+
+(defn apply-capture-hook
+  "The bindings map b as the hook (if any) answers it."
+  [b]
+  (if-let [h @capture-hook] (h b) b))
+
+(defn capture-bindings [] (apply-capture-hook (host/thread-bindings)))
 
 (defn conveyed
   "Wrap f so it runs with the captured bindings map b restored."
@@ -314,6 +328,13 @@
 
 (defn- new-future* []
   {:cohost/kind ::future :state (atom {:status :pending}) :bell (host/doorbell)})
+
+(defn completed-future
+  "A layer future already holding outcome ({:status :done :value v} or
+   {:status :error :error e}): what an asynchronous call answers on a host
+   with no thread layer, where the work ran on the caller's thread."
+  [outcome]
+  {:cohost/kind ::future :state (atom outcome) :bell nil})
 
 (defn- complete-future! [fut outcome]
   (let [won (atom false)]
@@ -343,6 +364,31 @@
    with the caller's bindings conveyed; a future value."
   [f]
   (submit-future (send-executor) (conveyed (capture-bindings) f)))
+
+;; Unit 8: the form-carrying future. On a seat with more than one realm
+;; (the cljs Node seat with Eve hosting: worker heaps meeting this one at
+;; shared Eve atoms over SharedArrayBuffers), a future's work can run in
+;; another realm only as data -- its form, the values of the locals the
+;; form names, and the binding frame (eve.thread's tfn shape: a plain
+;; closure is refused). The future macro gives the layer both: the form
+;; with its locals, and the closure. The seat's :realm-submit takes the
+;; task when every value crosses (an Eve value, an Eve-backed atom by
+;; reference, a var-root fn by name) and completes the future from the
+;; realm that ran it; when it cannot cross, the closure runs here, on
+;; this realm's threads, exactly as future-call runs it.
+(defn future-form-call
+  "future-call for a form-carrying future: ns-sym the namespace the
+   form was written in, form (fn [locals] body), args the locals'
+   values, f the same body as a closure."
+  [ns-sym form args f]
+  (if-let [submit (host/capability :realm-submit)]
+    (let [fut (new-future*)]
+      (if (submit {:ns ns-sym :form form :args args :frame (capture-bindings)
+                   :future fut
+                   :complete (fn [outcome] (complete-future! fut outcome))})
+        fut
+        (future-call f)))
+    (future-call f)))
 
 (defn future-done? [fut] (not= :pending (:status @(:state fut))))
 (defn future-cancelled? [fut] (= :cancelled (:status @(:state fut))))
@@ -651,7 +697,12 @@
    pool size + 2 as stock bounds it by the processor count + 2."
   [f & colls]
   (let [n (+ 2 (:size (send-executor)))
-        rets (apply map (fn [& xs] (future-call (fn [] (apply f xs)))) colls)
+        rets (apply map (fn [& xs]
+                          ;; form-carrying (unit 8): f crosses by its var's
+                          ;; name, xs as values, where the seat has realms
+                          (future-form-call 'user '(fn [f xs] (apply f xs)) [f xs]
+                                            (fn [] (apply f xs))))
+                    colls)
         step (fn step [vs fs]
                (lazy-seq
                 (if-let [s (seq fs)]
@@ -666,8 +717,26 @@
 ;; name the host's core did not supply (the host-only names are skipped
 ;; during the stock boot, then filled from here)
 
-(defn- future-macro [_form _env & body]
-  (list 'cohost.core/future-call (list* 'fn [] body)))
+(defn- free-locals
+  "The locals of a macro env that body names (eve.thread's free-locals,
+   cljs-thread's leaf-symbol analysis), for a ClojureScript compiler's
+   env (:locals) and an env whose keys are the locals."
+  [env body]
+  (let [syms (set (filter symbol? (tree-seq coll? seq body)))
+        ks (if (map? (:locals env)) (keys (:locals env)) (when (map? env) (keys env)))]
+    (vec (distinct (filter (fn [k] (and (symbol? k) (nil? (namespace k)) (contains? syms k))) ks)))))
+
+(defn- future-macro [_form env & body]
+  (if (host/capability :realm-submit)
+    ;; unit 8: the form travels with the closure (future-form-call)
+    (let [ls (free-locals env body)
+          ns-sym (or (when (map? (:ns env)) (:name (:ns env))) 'user)]
+      (list 'cohost.realm/future-form-call
+            (list 'quote ns-sym)
+            (list 'quote (list 'fn ls (cons 'do body)))
+            ls
+            (list* 'fn [] body)))
+    (list 'cohost.core/future-call (list* 'fn [] body))))
 
 (defn- pvalues-macro [_form _env & exprs]
   (cons 'cohost.core/pcalls (map (fn [e] (list 'fn [] e)) exprs)))

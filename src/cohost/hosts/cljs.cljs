@@ -238,6 +238,17 @@
     h))
 (defn- slot [h] (let [h (as-handle h)] [(:ns h) (:name h)]))
 
+;; unit 8: a var as a realm crossing names it, and back
+(defn var-qsym
+  "The qualified symbol of a var handle or a cljs.core/Var."
+  [h]
+  (let [[ns nm] (slot h)] (symbol (str ns) (str nm))))
+
+(defn var-handle
+  "This realm's var handle for qualified symbol q."
+  [q]
+  (handle (symbol (namespace q)) (symbol (name q)) false))
+
 ;; thread bindings: ClojureScript has one thread and no binding stack of its
 ;; own for arbitrary vars, so a frame saves each var's current value and the
 ;; binding overwrites the var's slot; popping restores the frame.
@@ -260,6 +271,182 @@
 
 (defn- thread-bound? [h]
   (let [k (slot h)] (boolean (some #(contains? % k) @binding-frames))))
+
+;; thread leaves for cohost.thread (Eve's thread layer). ClojureScript has
+;; one realm per isolate, and its real workers -- cljs-thread's, and
+;; eve.thread-host's on Node -- take FORMS across the boundary: a form, a
+;; registered task's name, values; a JavaScript closure cannot cross (eve
+;; .thread states the rule for its own layer: where heaps are not shared,
+;; "a plain closure is refused"). The layer's work items are closures over
+;; this realm's atoms, so no worker leaf can run them. What this realm can
+;; honestly offer the layer is cooperative threads: a spawned thunk is
+;; queued as a task, and the layer's blocking waits (doorbell-wait, under
+;; future deref, thread join and agent await) pump the queue until their
+;; own bell rings, so work always completes in wait order. Tasks interleave
+;; at waits; they do not run in parallel -- the named distance of this leaf.
+;; A task that waits on an unrung bell with the queue drained unwinds with
+;; a private yield exception and is re-queued at the back, so its thunk
+;; re-enters from the top: exactly the layer's worker loop (claim, wait,
+;; recur) and any thunk that only waits before it acts. A thunk that acts
+;; and then waits on a bell not yet rung may see its early actions run
+;; again on re-entry. The form-carrying path over real workers
+;; (eve.thread's tfn / deftask) is the layer's to adopt, not the leaf's.
+(defonce ^:private task-queue (atom []))
+(defonce ^:private task-self (atom 0))
+(defonce ^:private task-seq (atom 0))
+(defonce ^:private task-progress (atom 0))
+(defonce ^:private kick-pending (atom false))
+(def ^:private yield-marker (js-obj))
+
+;; Unit 8: the realm hook. On the Node seat with Eve hosting
+;; (cohost.hosts.cljs-eve) this realm is one of several -- the core realm
+;; and worker realms meeting at shared Eve atoms over SharedArrayBuffers.
+;; Completions of work that ran in another realm arrive as messages on
+;; eve.thread-host's mesh; the hook drains them. (poll ms): ms 0 never
+;; blocks; ms > 0 may block up to ms on this realm's mesh doorbell (an
+;; Atomics.wait that a message rings). nil = a single-realm seat.
+(defonce ^:private realm-poll (atom nil))
+
+(defn set-realm-poll!
+  "Install (or clear, with nil) the realm hook (cohost.hosts.cljs-eve)."
+  [f]
+  (reset! realm-poll f)
+  nil)
+
+(defn- poll-realms! [ms]
+  (when-let [f @realm-poll] (f ms)))
+
+;; fn <-> var name, for values crossing a realm: a fn that is a var's
+;; root crosses as the var's qualified name (eve.thread's rule: a
+;; registered name travels, a plain closure is refused), and the
+;; receiving realm -- the same image, booted the same way -- resolves
+;; the name to its own root.
+(defonce ^:private fn-names (js/WeakMap.))
+
+(defn fn-var-name
+  "The qualified symbol of a var whose root is f, or nil."
+  [f]
+  (when (fn? f)
+    (if (.has fn-names f)
+      (.get fn-names f)
+      (let [nss (keys (::ana/namespaces @st))
+            ;; the booted core first: nearly every crossing fn is one of its
+            nss (sort-by (fn [n] (if (string/includes? (str n) "core") 0 1)) nss)
+            q (some (fn [ns-sym]
+                      (when-not (string/ends-with? (str ns-sym) "$macros")
+                        (some (fn [sym]
+                                (when (identical? f (try (js-path ns-sym sym) (catch :default _ nil)))
+                                  (symbol (str ns-sym) (str sym))))
+                              (keys (defs ns-sym)))))
+                    nss)]
+        (.set fn-names f q)
+        q))))
+
+(defn var-name-root
+  "The root of the var named by qualified symbol q in this realm, or nil."
+  [q]
+  (try (js-path (symbol (namespace q)) (symbol (name q))) (catch :default _ nil)))
+
+(defn- note-progress! [] (swap! task-progress inc) nil)
+
+(defn- run-task!
+  "Run one queued task; :done, :yielded (it blocked and was re-queued at
+   the back) or :died (it threw; reported as an uncaught thread exception)."
+  [{:keys [handle thunk] :as task}]
+  (let [prev @task-self]
+    (reset! task-self handle)
+    (try (thunk) :done
+         (catch :default e
+           (if (identical? e yield-marker)
+             (do (swap! task-queue conj task) :yielded)
+             (do (js/console.error "cohost cljs: uncaught in thread task" e)
+                 :died)))
+         (finally (reset! task-self prev)))))
+
+(defn- pump-tasks!
+  "Run queued tasks until (goal) holds or no task can make progress: a
+   full pass over the queue with no completion, signal or submission ends
+   the pump (the remaining tasks are blocked on bells nothing queued can
+   ring)."
+  [goal]
+  (loop [idle 0]
+    (poll-realms! 0)
+    (when-not (goal)
+      (let [q @task-queue]
+        (when (and (seq q) (<= idle (count q)))
+          (let [task (first q)
+                before @task-progress]
+            (swap! task-queue subvec 1)
+            (let [progressed? (or (= :done (run-task! task))
+                                  (> @task-progress before))]
+              (when progressed? (note-progress!))
+              (recur (if progressed? 0 (inc idle)))))))))
+  nil)
+
+(defn- kick!
+  "Schedule a pump on the next macrotask, so spawned work also progresses
+   while the main flow is parked in real asynchronous I/O."
+  []
+  (when (compare-and-set! kick-pending false true)
+    (let [schedule (if (exists? js/setImmediate)
+                     js/setImmediate
+                     (fn [f] (js/setTimeout f 0)))]
+      (schedule (fn [] (reset! kick-pending false)
+                  (pump-tasks! (fn [] false)))))))
+
+(defn- thread-spawn [thunk]
+  (when (fn? thunk)
+    (let [handle (swap! task-seq inc)]
+      (swap! task-queue conj {:handle handle :thunk thunk})
+      (note-progress!)
+      (kick!)
+      handle)))
+
+(defn- thread-self [] @task-self)
+
+
+
+(defn- doorbell [] {:cohost/doorbell true :flag (atom false)})
+
+(defn- doorbell-signal [db]
+  (when (compare-and-set! (:flag db) false true)
+    (note-progress!))
+  true)
+
+(defn- block-ms!
+  "A genuine block of about ms, for a wait nothing queued can satisfy
+   (a deadlock on any host; sliced so an asynchronous signal can land).
+   Atomics.wait is legal on Node's main thread; where it is not (a
+   browser's), the slice is a no-op and the caller's loop re-checks."
+  [ms]
+  (try (js/Atomics.wait (js/Int32Array. (js/SharedArrayBuffer. 4)) 0 ms)
+       (catch :default _ nil)))
+
+(defn- doorbell-wait [db timeout-ms]
+  (let [flag (:flag db)]
+    (cond @flag true
+          ;; inside a task: unwind and be re-queued at once, timed or not.
+          ;; Only the outermost wait pumps (iteratively), so the stack
+          ;; stays flat no matter how many tasks are waiting; the layer's
+          ;; waiters all re-check and re-wait on entry (the worker loop
+          ;; above all), and a task that pumped or spun here would starve
+          ;; -- or, nested deep enough, overflow -- the very machinery
+          ;; that can ring its bell.
+          (not= 0 @task-self) (throw yield-marker)
+          :else (do (pump-tasks! (fn [] (boolean @flag)))
+                    (cond @flag true
+                          (some? timeout-ms) false
+                          ;; main flow, untimed, queue drained: block in
+                          ;; slices -- only an asynchronous (host) event
+                          ;; can ring this bell now
+                          :else (loop [] (if @flag true (do (pump-tasks! (fn [] (boolean @flag)))
+                                                            (when-not @flag
+                                                              (if @realm-poll
+                                                                ;; another realm's completion rings
+                                                                ;; this realm's mesh doorbell
+                                                                (poll-realms! 5)
+                                                                (block-ms! 5)))
+                                                            (recur)))))))))
 
 (defn- raw-root
   "The value underneath every binding frame: the oldest frame that saved it."
@@ -301,9 +488,14 @@
 (defn- mark-macro!
   "Move an interned fn to the namespace's macros side and register its use.
    The analyzer finds a macro by its property on the $macros namespace object
-   (find-macros-ns / findInternedVar); a :defs entry is deliberately NOT
-   added: check-macro-arity consults one when present and, lacking
-   :method-params, rejects every call."
+   (find-macros-ns / findInternedVar), and Var.isMacro reads the marker off
+   the fn object itself: (.-cljs$lang$macro f) -- the property cljs's own
+   defmacro emits `(set! (. name -cljs$lang$macro) true)` to set. A fill fn
+   interned from cohost.thread never passed through defmacro, so without
+   setting it here the analyzer never treats the name as a macro and compiles
+   (future ...) as a call of an undeclared var (runtime: reading 'call' of
+   undefined). A :defs entry is deliberately NOT added: check-macro-arity
+   consults one when present and, lacking :method-params, rejects every call."
   [h]
   (if (:macro? h)
     h
@@ -311,6 +503,7 @@
           ns-sym (:ns h) mns (macros-ns ns-sym) sym (:name h)
           f (js-path ns-sym sym)]
       (js-set-path! mns sym f)                 ; replaces the forwarding alias
+      (set! (.-cljs$lang$macro f) true)        ; the marker Var.isMacro reads
       (swap! st update-in [::ana/namespaces ns-sym :defs] dissoc sym)
       (swap! st update-in [::ana/namespaces mns :defs] dissoc sym)
       (swap! st update-in [::ana/namespaces mns :uses] dissoc sym)
@@ -763,6 +956,13 @@
    :push-thread-bindings! push-thread-bindings!
    :pop-thread-bindings! pop-thread-bindings!
    :thread-bindings thread-bindings
+   ;; the thread layer's leaves: cooperative tasks on this realm (see the
+   ;; thread leaves section above for the shape and its named distance)
+   :thread-spawn thread-spawn
+   :thread-self thread-self
+   :doorbell doorbell
+   :doorbell-wait doorbell-wait
+   :doorbell-signal doorbell-signal
    ;; var-set: the binding's value is the var's slot (the frame keeps the root)
    :var-set! (fn [h v] (let [[ns nm] (slot h)] (js-set-path! ns nm v) v))
    :current-ns (fn [] *ns-sym*)

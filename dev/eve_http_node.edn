@@ -1,0 +1,6 @@
+{:main eve-http-node
+ :target :nodejs
+ :output-to "target/eve-http-node/main.js"
+ :output-dir "target/eve-http-node"
+ :optimizations :none
+ :dump-core true}
