@@ -720,6 +720,9 @@ namespace cohost_err {
    (let [[text spans] (if (neg? ((cap :index-of) src "#?" 0))
                         [src []]
                         (scan/resolve-conditionals+spans src (scan/ranking (:name (current)))))]
+     ;; while the host's reader runs, scan/source-path is path: a host that
+     ;; reads a file's forms one by one names their source with it (the
+     ;; resolved text is as long as src, so its offsets are src's)
      (scan/with-source text spans path
        (fn [tick] ((cap :read-forms) text (fn [form] (tick) (cb form))))))))
 (defn read-string* ([s] ((cap :read-string) s)) ([s opts] ((cap :read-string) s opts)))

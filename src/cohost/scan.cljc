@@ -218,10 +218,17 @@
    each top-level form is read (before its cb), so provenance-key knows which
    one is being read. Nests: a load inside a form is read inside it."
   [text spans path thunk]
-  (let [info (atom {:text text :spans spans :file-key (when path (ext-key path)) :count 0})]
+  (let [info (atom {:text text :spans spans :path path :file-key (when path (ext-key path)) :count 0})]
     (swap! reading conj info)
     (try (thunk (fn [] (swap! info update :count inc) nil))
          (finally (swap! reading rest)))))
+
+(defn source-path
+  "The path the innermost active read is reading (what with-source was
+   given), or nil outside a read and for text with no file. A host that
+   reads a file's forms one by one names their source with it."
+  []
+  (when-let [info (first @reading)] (:path @info)))
 
 (defn- index-in [info line col]
   (let [starts (or (:starts @info) (let [s (line-starts (:text @info))] (swap! info assoc :starts s) s))]
