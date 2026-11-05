@@ -405,25 +405,6 @@ LC_ALL=en_US.UTF-8 bash dev/u6/residence.sh jvm jank jvm-jank jank-jvm`,
   back by a second process started after the first exited. GATED where Eve
   is not on the module path. Results: §8.4.
 
-### 8.4 Step 1's check and gates, as printed
-
-- `EVE_JANK_PATH=<bb classpath jank @ 14add0b15> bash dev/u6/region.sh`
-  (2026-11-05, ET): 4:47 PM `REGION-CHECK PASS  writer-pid=6762
-  reader-pid=6910 n=1847408095` (61 s); after `region-open` became
-  single-arity, 4:49 PM `REGION-CHECK PASS  writer-pid=7045 reader-pid=7063
-  n=1849649271` (62 s). The first run (4:46 PM) printed both REGION lines
-  with the right numbers and FAILed on the check's own exit (it resolved
-  `eve.process/exit!`, which the region path does not load); fixed in the
-  check. Without `EVE_JANK_PATH`: `REGION-CHECK GATED  (GATED (require
-  'cohost.region-eve) failed on this seat)` (18 s).
-- JVM gate (`clojure -M -m cohost.run`'s classpath, run as `java -cp
-  src:resources:<clojure 1.12.0, spec.alpha 0.5.238, core.specs.alpha
-  0.4.74> clojure.main -m cohost.run`, 4:50 PM, 8 s): `booted as stock: 465
-  from host: 202   natives: 66   skipped: 58   errors: 0`, `battery: 221/221
-  stock behaviors pass`, `libraries: 62/62 cases pass across 12 clojure.*
-  libraries` — unit 5's numbers.
-- jank gate (`bb boot:jank`): see the commit that adds its numbers.
-
 ### 8.2 Step 2 — struct convergence: STOPPED on a decision the design and rulings §7–§10 do not settle
 
 Step 0 settled the shape (§7.5 point 1: cohost's struct, no field added).
@@ -454,9 +435,15 @@ programs) and Eve's completion, which interns `deftype` / `defprotocol` into
 `clojure.core` and re-roots `=`, `hash`, `type`, `class`, `instance?`,
 `defn`, `fn`, `let`, `loop`, `case`, `meta`, `sort`, `deref`, `reset!`, ...
 for every namespace compiled after it (§7.1). §3a converges the object; it
-says nothing of the two protocol systems. Whether cohost's booted program
-(battery 219/221, libraries 62/62) holds with the completion loaded is not
-measured [unverified].
+says nothing of the two protocol systems. Measured so far: in the step-1
+check (§8.4) one jank process loads cohost's jank host, then the completion
+and Eve's region namespaces, and `cohost.adapter`'s install and accessors
+still answer — the adapter level only. And cohost's booted program with
+the completion loaded into the same process before it
+(`dev/u6/boot_with_completion.jank`, §8.4): battery 219/221 and libraries
+62/62, as without it; the boot report moves two names from booted-as-stock
+to from-host (544/141 → 542/143), which two not identified [unverified].
+Neither option is built until the operator answers.
 
 **The question (operator):** (a) or (b); and whose gate re-measures
 Eve-on-jank on the converged object.
@@ -472,8 +459,10 @@ Eve-on-jank on the converged object.
   (`d/eve->clj`, `src/eve/atom.cljc:813–826`), so the atom's values need no
   converged object. Its handle does: `cohost.atom` calls `deref` / `swap!` on
   the handle with jank's own core fns (cohost is AOT-compiled before the
-  completion loads, so the completion's re-roots do not reach it), and an
-  `eve_obj` `MmapAtom` has no jank `deref` behavior. The converged object —
+  completion loads, and the completion's re-roots hold only for namespaces
+  compiled after it — the completion's own measured statement,
+  host_completion.jank:29; not measured on cohost here), and an `eve_obj`
+  `MmapAtom` has no jank `deref` behavior (`object_behavior::none`, :80). The converged object —
   whose `deref` slot is a jank behavior — is what lets the layer hold Eve's
   atom unchanged; the alternative, adding handle-operation fns to the
   portable layer's factory, is a unit-5 design change this unit does not own.
@@ -481,3 +470,39 @@ Eve-on-jank on the converged object.
   (§7.6), and the gate run (§5: `bb boot:jank` with the fill forced) prints
   values. No step-3 code is written: its representation waits on §8.2 and
   its one verification path ends at that fault.
+
+### 8.4 Step 1's check and gates, as printed
+
+- `EVE_JANK_PATH=<bb classpath jank @ 14add0b15> bash dev/u6/region.sh`
+  (2026-11-05, ET): 4:47 PM `REGION-CHECK PASS  writer-pid=6762
+  reader-pid=6910 n=1847408095` (61 s); after `region-open` became
+  single-arity, 4:49 PM `REGION-CHECK PASS  writer-pid=7045 reader-pid=7063
+  n=1849649271` (62 s). The first run (4:46 PM) printed both REGION lines
+  with the right numbers and FAILed on the check's own exit (it resolved
+  `eve.process/exit!`, which the region path does not load); fixed in the
+  check. Without `EVE_JANK_PATH`: `REGION-CHECK GATED  (GATED (require
+  'cohost.region-eve) failed on this seat)` (18 s).
+- JVM gate (`clojure -M -m cohost.run`'s classpath, run as `java -cp
+  src:resources:<clojure 1.12.0, spec.alpha 0.5.238, core.specs.alpha
+  0.4.74> clojure.main -m cohost.run`, 4:50 PM, 8 s): `booted as stock: 465
+  from host: 202   natives: 66   skipped: 58   errors: 0`, `battery: 221/221
+  stock behaviors pass`, `libraries: 62/62 cases pass across 12 clojure.*
+  libraries` — unit 5's numbers.
+- jank gate (`bb boot:jank`, 2026-11-05): RED on the base before any unit-6
+  change — base 507ca52's AOT compile (`jank --module-path src
+  compile-module cohost.run -O3 --target-dir target/jank-aot`, 216 s) prints
+  4 clang errors "no viable overloaded '='" at jank's `core.jank:4527` and
+  ends with no `cohost/shim.o`, so `bb boot:jank` fails ("compile finished
+  without cohost/shim.o"; the same on d4064a8, 223 s). Cause: unit 9's
+  `-getDefaultPort` `case` (upstream defect 19). Fixed in its own commit
+  (799c8eb, shim.cljc only). With step 1 + that fix (5:00–5:07 PM ET, rc=0,
+  466 s): `booted as stock: 544   from host: 141   natives: 28   skipped:
+  108   errors: 0`, `battery: 219/221` (`FAIL subs count nth first last
+  butlast`, `FAIL Character outside ASCII` — the standing jank pair),
+  `libraries: 62/62`.
+- The same AOT objects with `eve.host-completion` loaded first
+  (`LC_ALL=en_US.UTF-8 jank --module-path <aot-dir>:src:<bb classpath jank>
+  run dev/u6/boot_with_completion.jank`, 5:07–5:10 PM ET, rc=0, 175 s):
+  `EVE-COMPLETION-LOADED`, `booted as stock: 542   from host: 143
+  natives: 28   skipped: 108   errors: 0`, `battery: 219/221` (the same
+  two FAILs), `libraries: 62/62`.
