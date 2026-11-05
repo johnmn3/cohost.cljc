@@ -34,9 +34,16 @@
 
 (defn cp-entries [s] (remove str/blank? (str/split (str/trim s) #":")))
 
+(defn- abs-entry
+  "A classpath entry as an absolute path string. Entries arrive relative
+   (to the demo dir) or absolute, depending on the CLI that printed them;
+   fs/path refuses an absolute child, so absolute entries pass through
+   and relative ones resolve against the demo dir."
+  [e] (if (fs/absolute? e) e (str (fs/absolutize (fs/path demo e)))))
+
 (defn spath-same? [ref got]
   (let [want (keep (fn [e]
-                     (let [abs (str (fs/absolutize (fs/path demo e)))]
+                     (let [abs (abs-entry e)]
                        (cond
                          (re-find #"/org/clojure/clojure/[^/]+/clojure-[^/]+\.jar$" abs) nil
                          (str/ends-with? abs ".jar")
@@ -45,7 +52,7 @@
                          (fs/exists? abs) abs
                          :else nil)))
                    (cp-entries ref))
-        have (cp-entries got)]
+        have (map abs-entry (cp-entries got))]
     (and (= (count want) (count have))
          (every? true? (map (fn [w h] (if (string? w) (= w h) (boolean (re-matches w h)))) want have)))))
 
