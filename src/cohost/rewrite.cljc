@@ -1243,9 +1243,9 @@
                    [(list 'catch (:catch-all ctx) e chain) e chain])))
         ;; the native doors: on a cpp host a native C++ exception is no
         ;; object_ref, so the folded clause never sees it. Two sibling
-        ;; clauses after a folded clause catch the native types and run
-        ;; the same dispatch chain with the exception translated to an
-        ;; ex-info first -- the message read by MEMBER ACCESS on the
+        ;; clauses after the folded clauses catch the native types and
+        ;; run the same dispatch chain with the exception translated to
+        ;; an ex-info first -- the message read by MEMBER ACCESS on the
         ;; caught value, in the clause: (cpp/.-message (cpp/.get e)) on
         ;; a jank error (its message field, through the ref's get()),
         ;; (cpp/.what e) on a std::exception. Member access compiles
@@ -1268,18 +1268,21 @@
         ;; that matches no clause rethrows the translated exception,
         ;; now an ordinary one. Probes: doc/debug-seam-probes/
         ;; native-report.md.
-        door-clauses (fn [e chain]
+        door-clauses (fn [e chain skip]
                        (when (host/cpp?)
                          (let [n (gensym "e__native")
                                ctor (ctor-sym 'clojure.lang.ExceptionInfo)]
-                           [(list 'catch 'cpp/jank.error_ref n
-                                  (list 'let* [e (list ctor (list 'cpp/.-message (list 'cpp/.get n))
-                                                       {:cohost/class (list 'quote 'clojure.lang.Compiler$CompilerException)})]
-                                        chain))
-                            (list 'catch 'cpp/std.exception n
-                                  (list 'let* [e (list ctor (list 'cpp/.what n)
-                                                       {:cohost/class (list 'quote 'java.lang.Exception)})]
-                                        chain))])))
+                           (cond-> []
+                             (not (contains? skip 'cpp/jank.error_ref))
+                             (conj (list 'catch 'cpp/jank.error_ref n
+                                         (list 'let* [e (list ctor (list 'cpp/.-message (list 'cpp/.get n))
+                                                              {:cohost/class (list 'quote 'clojure.lang.Compiler$CompilerException)})]
+                                               chain)))
+                             (not (contains? skip 'cpp/std.exception))
+                             (conj (list 'catch 'cpp/std.exception n
+                                         (list 'let* [e (list ctor (list 'cpp/.what n)
+                                                              {:cohost/class (list 'quote 'java.lang.Exception)})]
+                                               chain)))))))
         catch-clauses
         (if own?
           (map (fn [[_ c b & cb]]
@@ -1288,11 +1291,24 @@
           (if-not (some cpp-catch? catches)
             (let [f (fold catches)]
               (when f
-                (into [(first f)] (door-clauses (second f) (nth f 2)))))
+                (into [(first f)] (door-clauses (second f) (nth f 2) #{}))))
             ;; source order kept: runs of JVM catches fold together,
-            ;; cpp catches stand as siblings between them
-            (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (let [f (fold g)] (if f (into [(first f)] (door-clauses (second f) (nth f 2))) []))))
-                    (partition-by cpp-catch? catches))))]
+            ;; cpp catches stand as siblings between them; the doors go
+            ;; ONCE, after every user clause, skipping any type the user
+            ;; already catches natively -- a second catch of one type is
+            ;; an analyze error in jank ("Each catch form must specify a
+            ;; unique exception type": the two (cpp) battery rows,
+            ;; measured), and doors after each folded run would
+            ;; duplicate the same way on a try with two folded runs.
+            ;; The doors' chain folds ALL the JVM clauses together, so a
+            ;; clause in a later run still matches a translated native.
+            (let [parts (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (let [f (fold g)] (if f [(first f)] []))))
+                                (partition-by cpp-catch? catches))
+                  skip (into #{} (comp (filter cpp-catch?) (map second)) catches)
+                  f-all (fold (remove cpp-catch? catches))
+                  e (if f-all (second f-all) (gensym "e__stock"))
+                  chain (if f-all (nth f-all 2) (list 'throw e))]
+              (into (vec parts) (door-clauses e chain skip)))))
     (apply list 'try (concat exprs catch-clauses finallys))))
 
 (defn- rw-params [params]
