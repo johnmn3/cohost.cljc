@@ -13,6 +13,42 @@ conveyance of cljs-thread/eve.thread-host — named with file citations in the r
 unit 2's NOT-YET framing claim by claim and scopes what unit 8 still owns.
 
 Branch: `muse/eve-cohost-cljs-dep` (from remote `muse/eve-cohost-impl` tip `40c75a1`, verified by ls-remote).
+
+## Addendum 2026-11-05 ~13:18 ET — the mesh stand-up pattern (operator directive ~13:06 ET) vs this lane's leaves
+
+The directive: a CORE THREAD stands up first and the other threads are controlled FROM it (no flat
+peer spawn); once it is up, the core has SYNCHRONOUS access over the rest of the mesh; REPL-boot and
+CLI-boot of the same program must come up identically (boot parity is gate evidence).
+
+Against the leaves as banked (cooperative tasks in src/cohost/hosts/cljs.cljs):
+- **Core ownership — conforms in control topology.** There is exactly one controlling flow: the
+  program's main flow. `:thread-spawn` never starts anything autonomous — it enqueues a task, and
+  tasks execute only when the controlling flow pumps (inside its blocking waits, or the scheduled
+  macrotask pump). No spawned unit fends for itself; every unit's progress is dispatched from the
+  one flow, as the pattern's "controlled FROM the core thread" requires.
+- **Synchronous access — conforms.** Once running, every unit is synchronously reachable from the
+  controlling flow: join, future deref and agent await complete synchronously (the wait pumps the
+  queue until the bell rings). There is no async-only access path anywhere in the leaf.
+- **Realm topology — diverges, named.** In cljs-thread's mesh the core is a distinct worker and the
+  controlled threads are real workers. Here the "core" is the main flow itself and the units are
+  cooperative tasks on the same realm — no real workers — for the reason banked in the REPORT:
+  cohost.thread's work items are closures over realm-local atoms, and worker machinery
+  (cljs-thread.spawn, eve.thread-host) conveys forms/tasks only ("a plain closure is refused",
+  eve.thread). The correction path is the layer learning to speak forms (tfn/deftask), after which
+  the leaf is re-pointed at a true core worker + worker mesh; that is unit 8's scope as banked.
+  The leaf's control shape was deliberately built to the pattern above so that re-pointing changes
+  the substrate, not the topology.
+- **Boot parity — now measured, identical.** The same probe program run through the REPL-side entry
+  (`cohost.run`, target/cljs-node, `--eval`) and the CLI entry (`bin/cohost :cljs`, target/cljs-cli)
+  gives a case-for-case identical result vector (banked: logs/probe-program-run-bundle.log vs
+  logs/probe-cljs-row2.log): future ×4 FAIL (the macro-fill gap), promise OK 7, delay OK 2,
+  agent OK 1, pmap OK (2 3 4), spec-conform FAIL (pre-existing), test-stacktrace OK 0, done OK.
+
+**Coordinator verification reconciled**: the coordinator's independent cljs verification PASSED
+today through cljs.core protocols (git dep + hosts.edn :cljs row + shadow-cljs; slab atom
+swap!/deref round trip {:n 2}). This lane's banked protocol claim was right; the coordinator's
+earlier failure was a wrong call shape on his side, now reconciled. (This lane's own proof used
+cljs.main rather than shadow-cljs and the eve.atom recipe; both routes land on the same dep + row.)
 Started 2026-11-05 ~11:53 ET. Scope (corrected ~11:54 ET): TWO steps in order —
 (1) Eve loadable in cohost's cljs build + SAB shared-atom round trip under Node + cljs checks unregressed;
 (2) the cljs adapter `:thread-spawn` cap over the existing cljs.thread / Eve cljs machinery + the probe's cljs row.

@@ -132,3 +132,17 @@ Unit 2 banked the cljs half as NOT-YET on three claims. All three are wrong:
   worker machinery compiles in this build today (it is in shared-atom's transitive set).
 - The `future`/`pvalues` macro interning (boot.cljc) is a boot-lane item, listed here because the probe
   row shows it; it is independent of unit 8's design work.
+
+## Addendum 2026-11-05 ~13:18 ET — mesh stand-up pattern conformance
+
+Per the operator's directive (~13:06 ET: core thread first, controlled from the core, synchronous
+access, REPL/CLI boot parity as gate evidence), CLJS-DEP-STATUS.md's addendum records the assessment
+in full. Summary: the leaf conforms in control topology (one controlling flow owns all units; spawn
+only enqueues; no peer autonomy) and in synchronous access (join/deref/await complete synchronously
+from the controlling flow); it diverges in realm topology (cooperative same-realm tasks, not a core
+worker + worker mesh) for the closure reason named above, with the form-carrying layer as the
+correction path. Boot parity is now measured, not inferred: the identical probe program through the
+REPL-side bundle (cohost.run --eval) and the CLI bundle gives a case-for-case identical result vector
+(logs/probe-program-run-bundle.log vs logs/probe-cljs-row2.log). The coordinator's independent cljs
+verification also passed today via cljs.core protocols over the same dep + hosts.edn row (shadow-cljs
+route; slab atom round trip {:n 2}) — reconciled in the STATUS addendum.
