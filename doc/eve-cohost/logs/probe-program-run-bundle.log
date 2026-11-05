@@ -1,0 +1,19 @@
+cohost.boot on cljs: 821 top-level forms
+  booted as stock: 548   from host: 87   natives: 46   skipped: 140   errors: 0
+WARNING: Use of undeclared Var user/future
+PROBE|future-basic|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+WARNING: Use of undeclared Var user/future
+PROBE|future-capture-local|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+WARNING: Use of undeclared Var user/future
+PROBE|future-capture-atom|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+WARNING: Use of undeclared Var user/future
+PROBE|future-binding|FAIL java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')
+PROBE|promise|OK 7
+PROBE|delay|OK 2
+PROBE|agent|OK 1
+PROBE|pmap|OK (2 3 4)
+WARNING: No such namespace: clojure.spec.alpha, could not locate clojure/spec/alpha.cljs, clojure/spec/alpha.cljc, or JavaScript source providing "clojure.spec.alpha"
+WARNING: Use of undeclared Var clojure.spec.alpha/conform
+PROBE|spec-conform|FAIL clojure.lang.ExceptionInfo :: ERROR
+PROBE|test-stacktrace|OK 0
+PROBE|done|OK

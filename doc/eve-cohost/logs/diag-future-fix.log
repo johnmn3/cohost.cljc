@@ -1,0 +1,32 @@
+DIAG boot :replaced: 56
+DIAG future 
+  plain-defs: nil 
+  macros-defs: nil 
+  core-prop: function  macros-prop: function 
+  use-macros@core: cohost.core  use-macros@user: cohost.core  uses@user: nil 
+  interned-var: nil
+DIAG pvalues 
+  plain-defs: nil 
+  macros-defs: nil 
+  core-prop: function  macros-prop: function 
+  use-macros@core: cohost.core  use-macros@user: cohost.core  uses@user: nil 
+  interned-var: nil
+DIAG when 
+  plain-defs: nil 
+  macros-defs: {:macro true, :name cohost.core$macros/when, :meta-keys (:added :arglists :doc :file :macro :top-fn), :fn? nil, :method-params ((test body))} 
+  core-prop: undefined  macros-prop: function 
+  use-macros@core: cohost.core  use-macros@user: cohost.core  uses@user: nil 
+  interned-var: {:ns cohost.core$macros, :name when, :macro? true, :cohost.hosts.cljs/handle true}
+DIAG future-call 
+  plain-defs: {:macro nil, :name cohost.core/future-call, :meta-keys (), :fn? nil, :method-params nil} 
+  macros-defs: {:macro nil, :name cohost.core$macros/future-call, :meta-keys (), :fn? nil, :method-params nil} 
+  core-prop: undefined  macros-prop: undefined 
+  use-macros@core: nil  use-macros@user: nil  uses@user: cohost.core 
+  interned-var: {:ns cohost.core, :name future-call, :macro? false, :cohost.hosts.cljs/handle true}
+DIAG ns-interns future: false  pvalues: false  when: true
+DIAG-EVAL future-call => 42
+DIAG-EVAL when => 7
+DIAG-EVAL future => 3
+DIAG-EVAL macroexpand-future => "(cohost.core/future-call (fn [] (+ 1 2)))"
+DIAG-EVAL ns-interns-check => false
+DIAG-RUN rc=0
