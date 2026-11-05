@@ -100,3 +100,8 @@
   -1780362285, :blocks 6, :digest -264389891}` and `sha256:fad590ea…a2715d over 184 bytes` identical.
   The verdict's first tally said "1 failures" with all 9 rows OK (a truthy map counted as a failure;
   counter fixed, verdict re-run over the same logs). Next: jank AOT battery (`bb boot:jank`).
+- 1:34 PM ET — regressions on this tree, as printed: unit 1 `CHECKS: 21 / 21 passed`; unit 3
+  `111/111 PASS`; unit 5 `CHECK-U5: 31 checks, 0 failures`; unit 5 `PROBE-ATOM: 66 checks, 3
+  failures` (the same three Eve-line rows as the pre-change baseline). Net run's gateway:
+  `{:requests 273, :commits 50, :conflicts 1, :by-atom {"app/shared" 108}}`. REPORT drafted.
+  Jank AOT battery compiling (`AOT-RECOMPILE`; snapshot stale → AOT modules path).
