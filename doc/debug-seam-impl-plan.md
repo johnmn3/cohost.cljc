@@ -151,3 +151,5 @@ This section keeps only the sha and the gate line per unit.
 - U6 @ 5fde5fb -- runner #11 live (codegen + COHOST_JANK_PROFILE route in bin/cohost, doc/CLI.md); jvm #11 SKIP by design; jank gate pending B1.
 - U7 @ 4eed2e0 -- analysis only (doc/debug-seam-probes/u7-arithmetic.md): the zero guard already stands at three layers; runner #10 PASS on jvm; jank probe predicted PASS, pending B1.
 - B1 @ a0f168d -- jank gate 1 fix (:ex-trace cast); lane R gate 2 with R-0001: battery 219/221, libraries 62/62, debug-seam:check jank 3/14; local snapshot verification pending (env).
+- F3 @ a127a19 -- report headlines the root cause (:trace/:data from the root); jvm probe-verified (report :cause/:data/:trace all root).
+- F8 @ a197c02 -- two-line class+message fallback guards both report paths (report-error! + repl-report!): report-build failure (circular ex-data under pr-str; a throwing :ex-trace) printed nothing/escaped BEFORE, prints the fallback AFTER (unit + CLI probes); jvm 8/14 (1 FAIL = #13, standing), cli:check jvm 7/7 SAME; jank confirmation pending the j gate.
