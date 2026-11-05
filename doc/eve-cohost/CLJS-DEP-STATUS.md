@@ -192,3 +192,32 @@ Open question for the diagnosis: which missing piece makes the analyzer NPE -- t
 Experiment (next): a diagnostic build that boots this seat and dumps future vs a stock macro
 (when) across {plain-ns object property, $macros object property, :defs entries on both sides,
 :use-macros registrations} plus a macroexpand-1 of (future (+ 1 2)) in the user env.
+
+## Follow-on update — 2026-11-05 ~1:45 PM ET: mechanism PINNED, fix committed, gates running
+
+Diagnostic build (scratch ns diag.main, same boot): the REPORT's "never intern" reading is
+:defs-blindness (the coordinator's note is right on that point): the fill fn IS present as a
+property on both the plain and $macros namespace objects, and :use-macros maps future -> cohost.core
+in the user env exactly as it maps when -> cohost.core. Both candidate causes from the earlier
+status are refuted: no $macros :defs entry exists for stock macros either (check-macro-arity skips
+when the entry is absent), and future-macro's expansion is plain
+(cohost.core/future-call (fn [] body)) -- future-call evaluates fine standalone (=> 42).
+
+The one remaining difference, read in the cljs sources (1.12.42): the analyzer's get-expander*
+finds the fn via findInternedVar on the $macros object, then Var.isMacro decides -- and isMacro
+reads the property (.-cljs$lang$macro fn) OFF THE FN OBJECT (cljs/core.cljs). cljs's own defmacro
+emits (set! (. name -cljs$lang$macro) true) (cljs/core.cljc) to set it. Stock macros carry the
+marker because they pass through defmacro; the cohost.thread fill fns never do, so the marker is
+absent, get-expander returns nil, macroexpand-1 returns (future (+ 1 2)) unchanged, the analyzer
+compiles the call as an undeclared var ("Use of undeclared Var user/future"), and the runtime call
+hits undefined -- the (reading 'call') NPE, exactly as printed in the probe row.
+
+FIX (commit 3e7f109, src/cohost/hosts/cljs.cljs): mark-macro! now sets
+(set! (.-cljs$lang$macro f) true) when it moves the fn to the macros side -- the one site whose
+contract is "make the host treat this as a macro"; the shim's Var/setMacro routes through the same
+cap. Diag after the fix: (deref (future (+ 1 2))) => 3; macroexpand-1 =>
+(cohost.core/future-call (fn [] (+ 1 2))); no undeclared-var warning. (ns-interns still does not
+list future -- expected: it builds from :defs only, for stock macros' vars as for fills.)
+
+Gates running serially: probe row (bb dev/eve_probe.clj cljs), REPL/CLI boot parity re-run,
+bb boot:cljs, bb cli:check cljs. FINAL addendum follows with the row as printed.
