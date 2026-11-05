@@ -144,3 +144,4 @@ This section keeps only the sha and the gate line per unit.
 - U1 @ 2dc8a9c -- jvm 2/14 (#1 report parity probed, #5); jank unmeasured.
 - U8 @ 3003aec -- jvm 2/14 (#1 with stock names in frames, #5); jank unmeasured.
 - Runner @ badcee6 -- jvm 5/14 (#1 #5 #6 #7 #14), battery 221/221, libraries 62/62, cli:check 7/7 SAME; jank unmeasured.
+- B1 @ a0f168d -- jank gate 1 fix (:ex-trace cast); lane R gate 2 with R-0001: battery 219/221, libraries 62/62, debug-seam:check jank 3/14; local snapshot verification pending (env).

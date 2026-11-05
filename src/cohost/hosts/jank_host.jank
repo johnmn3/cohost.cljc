@@ -2346,9 +2346,8 @@ namespace cohost_assoc {
 namespace cohost_err {
   using namespace jank::runtime;
   inline object_ref ex_map(object_ref e) {
-    auto *ei = dynamic_object_cast<obj::exception_info>(e);
-    if (ei == nullptr) { return make_box<obj::nil>(); }
-    return ei->to_map();
+    if (e.get_type() != object_type::exception_info) { return make_box<obj::nil>(); }
+    return expect_object<obj::exception_info>(e)->to_map();
   }
 }
 ")
