@@ -533,7 +533,7 @@ no banned mechanisms (§0). What remains are preference
 forks — each stated with the facts that make it one.
 
 **Q1. Do Eve-backed collections become a seat's DEFAULT, or
-stay opt-in?**
+stay opt-in? — RULED: default-on (see §7).**
 Facts: unit 4 ships the fill behind a boot opt either way,
 so both futures are buildable from the same gate. Default-on
 makes Zone E the value world every program gets (one world,
@@ -548,7 +548,7 @@ Fork: default-on (per seat, as each seat's gate passes) vs
 opt-in until a major version vs opt-in permanently.
 
 **Q2. Ref/STM: build it, disposition it, or keep the quiet
-fallback?**
+fallback? — RULED: no STM for now (see §7).**
 Facts: Eve has no STM and its snapshot law argues against
 one; the shim *already* falls back `Ref` → atom on hosts
 without refs, quietly — a `dosync` program there gets atom
@@ -584,7 +584,8 @@ plan's "no silent anything" discipline argues against,
 listed because it is what a naive implementation drifts
 into).
 
-**Q4. Sorted collections: wait, build, or leave the hole?**
+**Q4. Sorted collections: wait, build, or leave the hole? —
+CORRECTED by John: Eve has sorted collections (see §7).**
 Facts: `PersistentTreeMap`/`PersistentTreeSet` have no
 landed Eve counterpart (ABSENT, §3); the battery exercises
 sorted behavior, so Zone E can never be a seat's whole
@@ -597,7 +598,8 @@ counterpart behind the seam (Eve's design rules, cohost's
 code — the COUNTERPART label); (c) wait for Eve's own
 sorted collections to land in Eve's line first.
 
-**Q5. How is an atom's kind expressed in program code?**
+**Q5. How is an atom's kind expressed in program code? —
+RULED: metadata (see §7).**
 Facts: kinds must be developer-chosen (settled), and the
 seam rule forbids a new cohost-facing API (settled) — but
 `(atom x)` has no kind argument in stock Clojure, so the
@@ -614,6 +616,47 @@ constructor opt vs boot/policy default vs metadata —
 noting the broker/disk join semantics (§0) treat kind as
 a property of the *atom*, which pulls toward the first
 and third.
+
+## 7. Rulings (John, 2026-11-05 ~09:40 ET)
+
+**Q1 RULED: default-on.** Eve-backed collections become a
+seat's default as that seat's gate passes.
+
+**Q2 RULED: no STM for now** — STM is deferred to a later
+release. Ref's interim disposition is NOT further ruled
+here; unit 5's dosync census still runs and reports.
+
+**Q3 OPEN.** John asked what the silently host-backed
+option would look like (whether it means weak-reference
+handles). The answer being put to him: no — silently
+host-backed means the collection itself quietly
+remains/becomes an ordinary host collection (no handles at
+all; works in-process; silently loses Zone E properties —
+sharing, durability, representation stability). Opaque
+handles are option (b), strong and scope-local in the
+plan's form (a weak handle could lose its referent to GC
+while the collection lives — a distinct failure mode).
+Awaiting his pick.
+
+**Q4 CORRECTED by John:** Eve DOES have sorted collections
+— `eve.deftype.rb-tree` (Okasaki persistent red-black tree
+over the slab/SAB, sorted-set API) exists in `~/src/eve`;
+VS has sorted collections and VS vendors Eve; the
+standing direction is adding them to Eve. The plan's
+ABSENT label for sorted collections (§§3, 6) is superseded:
+sorted collections are an Eve-side counterpart in
+progress, and per John they depend on the stronger
+equality/hashing work (unit 3's seam identity contract).
+Unit 4's gate and Q1's cap are re-read accordingly —
+default-on is no longer capped by a permanent hole; sorted
+rides the Eve line + unit 3.
+
+**Q5 RULED: metadata.** An atom's kind is expressed as
+metadata on the atom value. Default kind is in-mem.
+Default atoms run within the existing default runtime atom
+domain (as in VS); locals, analyzer state, compiler state
+and the like live in the runtime atom domain, visible
+across threads in that domain.
 
 ---
 
