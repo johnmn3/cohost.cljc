@@ -143,6 +143,9 @@
   []
   (atom-layer/install-factory! {:make-atom make-eve-atom
                                 :make-tier-atom make-tier-atom
+                                ;; unit 7 conveyance: the disk atom's Eve
+                                ;; meta-atom (coordination state beside it)
+                                :frame-atom (fn [h] (eve-atom/meta-atom h {}))
                                 :registry-atom registry-eve-atom
                                 :eve-value? (fn [v]
                                               (satisfies? eve-data/IEveRoot v))})

@@ -82,8 +82,14 @@
 (check "unrepresentable at creation"
        :unrepresentable (:error (err-of #(al/make-atom {:f f0} {:meta (assoc dmeta :eve/name "u7/bad")}))))
 (check-true "the error names the value"
-            (str/includes? (:msg (err-of #(al/make-atom {:f f0} {:meta (assoc dmeta :eve/name "u7/bad2")}))) "fn"))
-(check "unrepresentable at publish" :unrepresentable (:error (err-of #(al/swap-atom! d assoc :f f0))))
+            (str/includes? (:msg (err-of #(al/make-atom {:f f0} {:meta (assoc dmeta :eve/name "u7/bad2")}))) "user$f0"))
+;; a swap that puts a fn into the atom's own Eve map: Eve's assoc under the
+;; shared write may refuse first (its own loud error), else the layer does
+(let [e (err-of #(al/swap-atom! d assoc :f f0))]
+  (println "publish refusal:" (pr-str e))
+  (check-true "unrepresentable at publish: throws" (map? e)))
+(check "unrepresentable at publish (host value, layer check)" :unrepresentable
+       (:error (err-of #(al/swap-atom! d (fn [_] {:f f0})))))
 (check "value unchanged after refused publish" {:n 2} (al/deref-atom d))
 (check "unrepresentable reset" :unrepresentable (:error (err-of #(al/reset-atom! d (Object.)))))
 (check "missing :eve/path" :missing-place (:error (err-of #(al/make-atom 1 {:meta {:eve/kind :disk :eve/name "x/y"}}))))
@@ -152,7 +158,7 @@
 (check "the net atom sees a disk writer's swap" {:n 11} (al/deref-atom n))
 (check "net cas hit" true (al/compare-and-set-atom! n {:n 11} {:n 12}))
 (check "net cas miss" false (al/compare-and-set-atom! n {:n 11} {:n 13}))
-(check "net unrepresentable publish" :unrepresentable (:error (err-of #(al/swap-atom! n assoc :f f0))))
+(check "net unrepresentable publish" :unrepresentable (:error (err-of #(al/swap-atom! n (fn [_] {:f f0})))))
 (check "net downgrade -> disk" :downgrade
        (:error (err-of #(al/set-meta-atom! n {:eve/kind :disk :eve/path dpath :eve/name "u7/x"}))))
 ;; disk -> net promotion: a disk atom of the gateway's domain moves up

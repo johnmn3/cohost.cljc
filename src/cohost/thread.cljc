@@ -293,7 +293,21 @@
 ;; worker through the adapter's binding-frame caps; on a host whose core
 ;; has no binding frames the capture is empty and nothing is conveyed.
 
-(defn capture-bindings [] (host/thread-bindings))
+;; Unit 7: a capture hook -- {var value} -> {var value} -- the atom
+;; layer installs to carry binding frames ACROSS PROCESSES through a
+;; shared (disk) atom: the frame a capture sees is published into the
+;; atom, and frames other processes published there are conveyed for
+;; vars this thread has not bound itself. nil = no hook (default).
+(defonce ^:private capture-hook (atom nil))
+
+(defn set-capture-hook! [f] (reset! capture-hook f) nil)
+
+(defn apply-capture-hook
+  "The bindings map b as the hook (if any) answers it."
+  [b]
+  (if-let [h @capture-hook] (h b) b))
+
+(defn capture-bindings [] (apply-capture-hook (host/thread-bindings)))
 
 (defn conveyed
   "Wrap f so it runs with the captured bindings map b restored."

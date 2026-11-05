@@ -1101,7 +1101,10 @@
 
 (def Var-pushThreadBindings (fn [m] (host/push-thread-bindings! m)))
 (declare Var-popThreadBindings)
-(def Var-getThreadBindings (host-fn 'get-thread-bindings (fn [] (host/thread-bindings))))
+;; unit 7: core's binding-conveyor-fn captures through here; the thread
+;; layer's capture hook (cross-process frames through a shared atom) applies
+(def Var-getThreadBindings (let [base (host-fn 'get-thread-bindings (fn [] (host/thread-bindings)))]
+                             (fn [] (thread/apply-capture-hook (base)))))
 (def Var-cloneThreadBindingFrame (fn [] nil))
 (def Var-resetThreadBindingFrame (fn [_] nil))
 ;; Var.intern(ns, sym) creates the namespace and leaves the var unbound (the
