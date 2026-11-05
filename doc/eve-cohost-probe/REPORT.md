@@ -78,6 +78,18 @@ is empty. ClojureWasm's own runtime supplies the agent/executor
 surface, and it is a single-heap host, so closure capture crosses no
 boundary there.
 
+### jolt (Chez Scheme) — complete
+
+`SUMMARY|jolt|ok=21 unsupported-shim=0 fail-other=2 wall-ms=4562`
+
+The whole threading surface answers with JVM values (capture-local
+42, binding 3, agent 1, pmap (2 3 4)); test-stacktrace 0. The two
+failures are one gap, not the threading edge: `load-clojure.spec.alpha`
+fails — "Could not locate clojure/spec/alpha.jolt (or .clj/.cljc) on
+the source roots" — a loader/source-root gap for that one library,
+and `spec-conform` fails downstream of it ("No such namespace:
+clojure.spec.alpha"). 11 of 12 libraries load.
+
 Probe-design note (measured): the first JVM run never exited — after
 the agent/future cases, the JVM's non-daemon executor threads keep the
 process alive. The program now ends with `shutdown-agents` + a guarded
