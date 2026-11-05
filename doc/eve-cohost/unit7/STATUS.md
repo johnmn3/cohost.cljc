@@ -50,3 +50,15 @@
     plain ex-info now. Re-running.
   - jank side: first run created the domain files then sat in a futex wait with nothing printed
     (stdout buffered); killed; re-running with flushed stage markers.
+- 1:18 PM ET — results (as printed):
+  - booted `eve_cohost_check_u7.clj` re-run: **CHECK-U7: 17 checks, 0 failures** (boot: 501 stock /
+    172 host / 61 natives / 88 skipped / errors 0).
+  - `probe_tier.clj` re-run (+ fresh-join row): **PROBE-TIER: 56 checks, 0 failures**.
+  - net kind across processes (`dev/u7/net_proc.clj`, Eve's "over sockets" shape: store + gateway on
+    eve.http-server, gateway a member of disk domain gwdb): a cohost `:net` atom in one JVM process
+    (50 swaps) and a cohost `:disk` atom on the gateway's domain in another (50 swaps) →
+    `{:disk 50, :net 50, :count 100}` read back by a fresh net client. The disk member's swaps
+    landed before the client's started (its own view `{:disk 50, :net 0, :count 50}`): exact, not
+    interleaved in this run.
+  - jank gate side: joins the domain written by Eve-on-jank (`STAGE joined` after ~3 min of JIT),
+    now in the first deref.

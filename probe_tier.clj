@@ -121,9 +121,15 @@
             (nil? (get (ea/read-pinned (ea/persistent-atom-domain (str base "/d2")) identity) "u7/never")))
 ;; promotion into an occupied target
 (def occ (al/make-atom {:other true}))
+(al/swap-atom! occ assoc :used true)   ; published: no longer fresh
 (check "promotion into an occupied target"
        :promotion-target-occupied (:error (err-of #(al/set-meta-atom! occ pmeta))))
 (check "occupied refusal leaves it :mem" :mem (al/kind occ))
+;; a FRESH atom (never published) taking a kind joins: stock core's
+;; (atom x :meta m) is (new Atom x) + reset-meta!, i.e. create-or-join
+(def fresh (al/make-atom {:other true}))
+(al/set-meta-atom! fresh pmeta)
+(check "fresh atom + kind = join (init ignored)" {:k [1 2 3 4 5]} (al/deref-atom fresh))
 
 ;; -- :net over Eve's gateway (in-process, presigned in-memory store) -------
 (defn mem-store [secret]

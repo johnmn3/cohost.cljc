@@ -22,7 +22,11 @@
 (cpp/raw "
 #include <cstdio>
 #include <unistd.h>
-namespace u7k { inline void hard_exit() { std::fflush(nullptr); _exit(0); } }
+#include <iostream>
+namespace u7k {
+  inline void fl() { std::cout.flush(); std::fflush(nullptr); }
+  inline void hard_exit() { fl(); _exit(0); }
+}
 ")
 
 (def side :jank)
@@ -33,7 +37,7 @@ namespace u7k { inline void hard_exit() { std::fflush(nullptr); _exit(0); } }
   (let [d (atom/persistent-atom-domain path)]
     [d (atom/lookup-or-create-mmap-atom! d nm init)]))
 
-(defn- stage [& xs] (println (apply str "STAGE " xs)) (flush))
+(defn- stage [& xs] (println (apply str "STAGE " xs)) (cpp/u7k.fl))
 
 (defn- bump [m k] (ec/assoc m k (inc (ec/get m k 0))))
 
@@ -86,5 +90,6 @@ namespace u7k { inline void hard_exit() { std::fflush(nullptr); _exit(0); } }
     (let [[_ a] (join! path)]
       (swap! a (fn [m] (ec/assoc m :marks (ec/conj (ec/get m :marks []) x))))
       (println (str "MARKED " x))
+      (cpp/u7k.fl)
       ;; killed, not closed: no slot release, no checkpoint
       (cpp/u7k.hard_exit))))
