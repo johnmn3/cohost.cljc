@@ -20,6 +20,7 @@
   ;; the shim asks the adapter for its capabilities as it loads: a host whose
   ;; loader orders a namespace's requires itself (Phel) installs it first
   (:require [cohost.adapter :as host]
+            [cohost.memory :as memory]
             [cohost.thread :as thread]
             [cohost.hosts.auto]
             #?(:cljs [goog.object :as gobj]))
@@ -1050,9 +1051,14 @@
                   (not (host-record? x)) (host-object? x))
            (host/invoke-member x m args absent)
            absent)))
+;; seam identity (unit 3): when either side is an Eve-backed stand-in,
+;; equiv is the value layer's contract (canonical forms equal); every
+;; other value keeps the host's own answer
 (def Util-equiv #?(:lg (fn [a b] (let [a (host/plain-symbol a) b (host/plain-symbol b) r (lg-own a "equals" [b])]
                                    (if (identical? r absent) (= a b) (boolean r))))
-                   :default =))
+                   :default (fn [a b] (if (or (memory/eve-value? a) (memory/eve-value? b))
+                                         (memory/equiv a b)
+                                         (= a b)))))
 (def Util-equals Util-equiv)
 (def Util-compare compare)
 ;; Util.hash is Object.hashCode (nil is 0), not hasheq; hashCombine is boost's,
@@ -1064,7 +1070,9 @@
                           (bit-xor seed (wrap32 (+ (wrap32 h) -1640531527 (wrap32 (bit-shift-left seed 6)) (bit-shift-right seed 2)))))))
 (def Util-hasheq #?(:lg (fn [x] (let [x (host/plain-symbol x) r (lg-own x "hashCode" [])]
                                   (if (identical? r absent) (hash x) r)))
-                    :default hash))
+                    :default (fn [x] (if (memory/eve-value? x)
+                                        (memory/hasheq x)
+                                        (hash x)))))
 ;; JVM keywords are interned, so equal keywords are identical; a host that
 ;; does not intern them (ClojureScript) answers by equality for keywords
 (def Util-identical (let [h (host-fn 'identical? (fn [a b] (identical? a b)))]
@@ -2572,7 +2580,7 @@
         acc))))
 
 (def -kvreduce (let [rk (host-fn 'reduce-kv (fn [f init coll] (reduce (fn [acc [k v]] (f acc k v)) init coll)))] (fn [coll f init] (rk f init coll))))
-(def -equiv =)
+(def -equiv Util-equiv)
 (def -equals Util-equals)
 (declare java-hash)
 (def -hashCode (jstatic 'Object/hashCode
