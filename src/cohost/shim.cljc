@@ -1968,7 +1968,13 @@
 (def -getProtocol (http-member "getProtocol" {:cohost.http/url (fn [u] (:scheme u))}))
 (def -getHost (http-member "getHost" (http-locator (fn [u] (if (= :cohost.http/url (:cohost/kind u)) (or (:host u) "") (:host u))))))
 (def -getPort (http-member "getPort" (http-locator (fn [u] (:port u)))))
-(def -getDefaultPort (http-member "getDefaultPort" {:cohost.http/url (fn [u] (case (:scheme u) "http" 80 "https" 443 "ftp" 21 -1))}))
+;; a lookup, not a case: jank 0.1 cannot compile a case on string constants
+;; with a default whose branches are integer literals -- each branch assigns a
+;; C++ int to the case's oref result ("no viable overloaded '='",
+;; jank's core.jank:4527; Eve's eve/doc/hosts/jank.md upstream defect 19), so
+;; the jank AOT build ended without cohost/shim.o (measured 2026-11-05)
+(def ^:private default-ports {"http" 80 "https" 443 "ftp" 21})
+(def -getDefaultPort (http-member "getDefaultPort" {:cohost.http/url (fn [u] (get default-ports (:scheme u) -1))}))
 (def -getPath (http-member "getPath" (http-locator (fn [u] (:path u)))))
 (def -getRawPath (http-member "getRawPath" {:cohost.http/uri (fn [u] (:path u))}))
 (def -getQuery (http-member "getQuery" (http-locator (fn [u] (if (= :cohost.http/uri (:cohost/kind u)) (some-> (:query u) (URLDecoder-decode "UTF-8")) (:query u))))))
