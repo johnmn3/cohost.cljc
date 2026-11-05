@@ -160,6 +160,7 @@ static struct us_socket_t *hb_on_connect_error(struct us_socket_t *s, int code) 
   hb_errs++; HB->live--;
   return s;
 }
+static void hb_loop_noop(struct us_loop_t *loop) { (void)loop; }
 long hb_bench(const char *host, int port, const char *path, long total, long conc) {
   for (int i = 0; i < HB_NB; i++) hb_hist[i] = 0;
   hb_done = hb_errs = hb_bytes_total = hb_max_ns = hb_wall_ns = 0;
@@ -168,7 +169,9 @@ long hb_bench(const char *host, int port, const char *path, long total, long con
   st.host = host; st.port = port; st.total = total; st.issued = 0; st.live = 0; st.conc = conc;
   st.req = std::string(\"GET \") + path + \" HTTP/1.1\\r\\nHost: \" + host + \":\" + std::to_string(port)
          + \"\\r\\nConnection: keep-alive\\r\\n\\r\\n\";
-  struct us_loop_t *loop = us_create_loop(nullptr, nullptr, nullptr, nullptr, 0);
+  // uSockets calls the loop's pre/post callbacks unconditionally
+  // (loop.c) -- they must be no-ops, never nullptr
+  struct us_loop_t *loop = us_create_loop(nullptr, hb_loop_noop, hb_loop_noop, hb_loop_noop, 0);
   struct us_socket_context_options_t options = {};
   st.ctx = us_create_socket_context(0, loop, (int)sizeof(void *), options);
   us_socket_context_on_open(0, st.ctx, hb_on_open);
