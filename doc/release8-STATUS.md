@@ -76,3 +76,15 @@ locally).
     match the banked gate's JVM read exactly).
   Release notes drafted: doc/release8-notes.md (0.9.3).
   J legs next, on the tip that carries the notes.
+- 2026-11-05 ~09:0x ET: J verification COMPLETE on the
+  release tree @ 52606d1 (bundle clone ~/cohost-release8 on
+  J; logs ~/release8-gate/ on J), serial, ALL matching the
+  gate: snapshot cf70ff19… (identical hash to the gate's)
+  built in 528,169 ms, PLACEMENT 858 of 873, BOOT-MS 437.86;
+  battery 219/221 in both reads (FAIL rows = the standing
+  named pair), libraries 62/62; cli:check jank 7/7 SAME;
+  debug-seam:check jank 12/14 PASS, 0 FAIL; docs:check 22
+  PASS, 0 failing. Deviations: none.
+- READY. Readiness report: doc/release8-READINESS.md.
+  Stops here, awaiting John's word (merge to main / publish
+  0.9.3 are his step; no tag exists or was made).
