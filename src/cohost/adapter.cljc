@@ -289,6 +289,12 @@ namespace cohost_err {
                    (catch cpp/jank.runtime.object_ref e (handler e))
                    (catch cpp/jank.error_ref e
                      (handler (ex-info (cpp/cohost_err.message e) {:cohost/class 'clojure.lang.Compiler$CompilerException})))
+                   ;; a jank compile error that is no error_ref (a macro
+                   ;; fn's throw during the ahead compile of a project's
+                   ;; namespaces crosses as a std::exception-family value,
+                   ;; measured) still carries its message in what()
+                   (catch cpp/std.exception e
+                     (handler (ex-info (cpp/.what e) {:cohost/class 'clojure.lang.Compiler$CompilerException})))
                    (catch :default _ native-exception))]
         (if (identical? r native-exception)
           (handler (ex-info "a native C++ exception" {:cohost/native true}))
