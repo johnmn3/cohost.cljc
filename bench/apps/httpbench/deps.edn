@@ -16,8 +16,16 @@
                  "cpp/vendor/uSockets/src/context.c"
                  "cpp/vendor/uSockets/src/udp.c"
                  "cpp/vendor/uSockets/src/eventing/epoll_kqueue.c"
+                 ;; the core sources call the us_internal_ssl_* functions
+                 ;; unconditionally; crypto/openssl.c defines them (empty
+                 ;; without LIBUS_USE_OPENSSL, see :defines) and needs
+                 ;; sni_tree.cpp beside it
+                 "cpp/vendor/uSockets/src/crypto/openssl.c"
+                 "cpp/vendor/uSockets/src/crypto/sni_tree.cpp"
                  "cpp/vendor/simdjson/simdjson.cpp"]
-       :libs []}
+       :defines ["LIBUS_USE_OPENSSL"]
+       ;; ssl/crypto for openssl.c; z for uWebSockets' PerMessageDeflate
+       :libs ["ssl" "crypto" "z"]}
  :aliases
  {;; cohost -M:main [args]
   :main {:main-opts ["-m" "httpbench.core"]}

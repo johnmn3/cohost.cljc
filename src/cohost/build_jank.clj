@@ -84,15 +84,18 @@
    C++ half needs more than the cpp/raw blocks in its sources:
      :cpp {:include-dirs [\"cpp/vendor/uWebSockets/src\" ...]
            :sources      [\"cpp/vendor/uSockets/src/bsd.c\" ...]
+           :defines      [\"LIBUS_USE_OPENSSL\" ...]
            :libs         [\"z\" ...]}
    Paths are relative to the project. -> {:dirs [abs ...] :sources [abs ...]
-   :libs [name ...]}, or nil when the project has no :cpp key."
+   :defines [name ...] :libs [name ...]}, or nil when the project has no
+   :cpp key."
   [project]
   (let [f (io/file project "deps.edn")]
     (when (.exists f)
       (when-let [cpp (:cpp (edn/read-string {:default tagged-literal} (slurp f)))]
         {:dirs (mapv #(abs project %) (:include-dirs cpp))
          :sources (mapv #(abs project %) (:sources cpp))
+         :defines (vec (:defines cpp))
          :libs (vec (:libs cpp))}))))
 
 (defn input-key
@@ -157,6 +160,7 @@
                                         (or (System/getenv "CXX") "c++"))]
                                (apply sh! work {} cc "-O3" "-fPIC"
                                       (concat (mapcat (fn [d] ["-I" d]) (:dirs cpp))
+                                              (mapcat (fn [d] [(str "-D" d)]) (:defines cpp))
                                               (when-not (str/ends-with? s ".c") ["-std=c++17"])
                                               ["-c" s "-o" o]))
                                o))
@@ -184,7 +188,14 @@
         ;; step 0.5, before the record step that needs their symbols)
         (let [cpp-flags (when cpp
                           (concat (mapcat (fn [d] ["-I" d]) (:dirs cpp))
-                                  ["-L" work "-l" "cpp"]
+                                  ;; the archive (work) first for the static
+                                  ;; link; record-lib's shared twin also on
+                                  ;; the search path because step 4's compile
+                                  ;; JIT-evaluates the app module and must
+                                  ;; materialize the cpp/raw symbols in its
+                                  ;; own process, where only a shared lib
+                                  ;; can be loaded
+                                  ["-L" work "-L" (abs work "record-lib") "-l" "cpp"]
                                   (mapcat (fn [l] ["-l" l]) (:libs cpp))))]
           ;; 4. one executable
           (apply sh! repo gc (jank-bin) "-O3" "--module-path" (str src ":" (abs repo "src")) "compile" "cohost.app-main"
