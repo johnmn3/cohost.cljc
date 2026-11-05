@@ -15,6 +15,7 @@
             [cohost.rewrite :as rw]
             [cohost.shim :as shim]
             [cohost.policy :as policy]
+            [cohost.memory :as memory]
             [cohost.thread :as thread]
             [cohost.scan :as scan]))
 
@@ -927,17 +928,48 @@
         (record! report :replaced {:name nm :reason :thread-layer}))))
   report)
 
+(defn install-collection-fill!
+  "Decide and install the Eve collection fill (unit 4) for this
+   boot, before the prelude: with the fill in force, the shim's
+   collection creators answer Eve-backed values and the two
+   EMPTY statics the core reads directly are Eve's empties.
+   :eve-collections true forces the fill -- a seat whose Eve
+   hosting does not load is a named NOT-YET, thrown. Absent the
+   opt, the fill is the default where Eve hosting loads (the
+   :clj seat today) and off everywhere else; a seat with no Eve
+   hosting cannot take the fill (no counterparts). Records
+   :eve-collections :on/:off in the boot state for the report."
+  [eve-collections]
+  (memory/set-fill! false)
+  (let [forced (some? eve-collections)
+        want (if forced (boolean eve-collections) (= :clj (host/host-name)))]
+    (when want
+      (when-not (memory/hosting-registered?)
+        (host/try-all (fn [] (host/eval-form '(require (quote cohost.memory-eve))))))
+      (if (memory/hosting-registered?)
+        (do (memory/install-fill!)
+            (memory/set-fill! true))
+        (when forced
+          (throw (ex-info "cohost.boot: :eve-collections is NOT-YET on this seat -- no Eve hosting loads here"
+                          {:type :cohost.boot/eve-collections-not-yet
+                           :host (host/host-name)})))))
+    (swap! state assoc :eve-collections (if (memory/fill-on?) :on :off)))
+  nil)
+
 (defn boot!
   "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
    (default resources/cohost/clojure-1.12.0); :files -- paths under it;
    :profile? -- record phase timers (off unless true; the off path does not
    call :nano-time); :host-lacks -- names to boot as if the host lacked
-   them (the exercise path for a fill, e.g. the thread layer's)."
+   them (the exercise path for a fill, e.g. the thread layer's);
+   :eve-collections -- force the Eve collection fill on (true) or
+   off (false); absent, it is the seat's default (unit 4)."
   ([] (boot! {}))
-  ([{:keys [root files verbose profile? record? host-lacks] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
+  ([{:keys [root files verbose profile? record? host-lacks eve-collections] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
    (reset! snapshot-log (when record? []))
    (swap! state assoc :host-lacks (set host-lacks))
+   (install-collection-fill! eve-collections)
    (snap! {:op :begin :opts {:root root :files files}})
    (if profile?
      (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
@@ -998,7 +1030,8 @@
      (reset! (:booted? ctx) true)
      (let [r (assoc @report
                     :rewrite-misses (rw/misses ctx)
-                    :host-name (host/host-name))]
+                    :host-name (host/host-name)
+                    :eve-collections (:eve-collections @state))]
        (when t-boot
          (swap! (:profile @state) assoc :boot-wall (- (host/nano-time) t-boot)))
        (swap! state assoc :report r)

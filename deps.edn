@@ -1,4 +1,8 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.12.0"}}
  :aliases
- {:cljs {:extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}}}}
+ {;; Eve as a source dependency (unit 4's hosting loads
+  ;; cohost.memory-eve, which requires Eve's namespaces): the
+  ;; sibling checkout, per MEMORY-PLAN.md SS1
+  :eve {:extra-paths ["../eve/src"]}
+  :cljs {:extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}}}}
