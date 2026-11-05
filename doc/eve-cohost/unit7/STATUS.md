@@ -91,3 +91,12 @@
   materialized value's canonical bytes (JVM also prints the Eve map's own as a cross-check). Run 1
   stopped before its restart legs; run 2 launched clean. (Earlier attempt 0 died at jank compile on
   my `catch std.exception` arm — my error, fixed.)
+- 1:32 PM ET — **GATE run 2 GREEN: `GATE-U7: 9 rows, 0 failures`** (logs banked in
+  doc/eve-cohost/unit7/gate-logs/; 13:25:01–13:32:01 ET). Race N=200/side: final `{:count 400, :jvm 200,
+  :jank 200}` equal from both; seal identical `{:ptr 808, :name-hash -1780362285, :blocks 4, :digest
+  -2079092502}`; content digest identical `sha256:24c28ddd…6743d2 over 147 bytes` (= the JVM Eve map's
+  own). Restart: JVM mark+halt (no close) → fresh jank rejoin sees `["jvm-killed"]`; jank mark+_exit →
+  fresh JVM rejoin sees `["jvm-killed" "jank-killed"]`; final JVM vs jank: seal `{:ptr 819, :name-hash
+  -1780362285, :blocks 6, :digest -264389891}` and `sha256:fad590ea…a2715d over 184 bytes` identical.
+  The verdict's first tally said "1 failures" with all 9 rows OK (a truthy map counted as a failure;
+  counter fixed, verdict re-run over the same logs). Next: jank AOT battery (`bb boot:jank`).

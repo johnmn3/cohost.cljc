@@ -1,0 +1,10 @@
+OK   race: both sides printed 
+OK   race: final value exact (jvm side) {:jvm 200, :ready 2, :done 2, :jank 200, :marks [], :count 400}
+OK   race: value equal from both sides 
+OK   race: seal identical from both processes [{:ptr 808, :name-hash -1780362285, :blocks 4, :digest -2079092502} {:ptr 808, :name-hash -1780362285, :blocks 4, :digest -2079092502}]
+OK   race: sha256 content digest identical ["sha256:24c28ddd3f6ea34da8b1b8616400fd29f89e3dea1f42e54532041052716743d2 over 147 bytes" "sha256:24c28ddd3f6ea34da8b1b8616400fd29f89e3dea1f42e54532041052716743d2 over 147 bytes"]
+OK   restart: jank rejoin sees the killed jvm's mark ["jvm-killed"]
+OK   restart: jvm rejoin sees both killed processes' marks ["jvm-killed" "jank-killed"]
+OK   restart: final root digests identical jvm vs jank [{:seal {:ptr 819, :name-hash -1780362285, :blocks 6, :digest -264389891}, :sha256 "sha256:fad590ea554b7b9f4ca131c3b118b58808e66a7253d2127a9b5b36b101a2715d over 184 bytes"} {:seal {:ptr 819, :name-hash -1780362285, :blocks 6, :digest -264389891}, :sha256 "sha256:fad590ea554b7b9f4ca131c3b118b58808e66a7253d2127a9b5b36b101a2715d over 184 bytes"}]
+OK   restart: final value equal jvm vs jank 
+GATE-U7: 9 rows, 0 failures

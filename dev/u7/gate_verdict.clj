@@ -9,7 +9,7 @@
       rj (res "race-jvm.log") rk (res "race-jank.log")
       r1 (res "read-jank-1.log") r2 (res "read-jvm-2.log") r3 (res "read-jank-2.log")
       digest (fn [r] (select-keys r [:seal :sha256]))
-      row (fn [label ok detail] (println (if ok "OK  " "FAIL") label detail) ok)
+      row (fn [label ok detail] (println (if ok "OK  " "FAIL") label detail) (boolean ok))
       oks [(row "race: both sides printed" (and rj rk) "")
            (row "race: final value exact (jvm side)"
                 (= [(* 2 n) n n] ((juxt :count :jvm :jank) (:value rj))) (pr-str (:value rj)))

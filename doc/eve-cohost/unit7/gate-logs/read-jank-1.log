@@ -1,0 +1,7 @@
+STAGE joining
+STAGE joined
+STAGE report deref
+STAGE report value {:jvm 200, :ready 2, :done 2, :jank 200, :marks ["jvm-killed"], :count 400}
+STAGE report seal {:ptr 811, :name-hash -1780362285, :blocks 5, :digest -816195676}
+STAGE report sha "sha256:a46858480c4fc5f34a02e40707d223d11d5117bdef7895f9dff771b6757bb293 over 165 bytes"
+RESULT {:side :jank, :tag "read", :value {:jvm 200, :ready 2, :done 2, :jank 200, :marks ["jvm-killed"], :count 400}, :seal {:ptr 811, :name-hash -1780362285, :blocks 5, :digest -816195676}, :sha256 "sha256:a46858480c4fc5f34a02e40707d223d11d5117bdef7895f9dff771b6757bb293 over 165 bytes"}
