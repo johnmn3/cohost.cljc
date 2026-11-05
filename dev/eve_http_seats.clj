@@ -24,12 +24,18 @@
 ;; server side -- the Ring handler source served by Jetty from plain JVM
 ;;   Clojure and by Eve's http-server from the seat's booted namespace
 ;;   (cohost.ring), asked the same requests by the JDK's HttpClient.
-;; A jank process that ends before its work is done is reported in one line,
-;; never as a pass: when it ended loading a namespace (dev/eve_http_jank.jank
-;; prints LOADING / LOADED around each), the line names that namespace and
-;; the exit code -- BLOCKED when it is Eve's (an eve.* namespace: Eve's http
-;; layer does not load on this seat), FAIL otherwise. The checks are then not
-;; run, the summary counts them as not run, and the gate exits 2.
+;; The seat's client runs against Jetty first, then its server starts, then
+;; its client runs against that server. A jank process that ends before its
+;; work is done is reported in one line, never as a pass: when it ended
+;; loading a namespace (dev/eve_http_jank.jank prints LOADING / LOADED around
+;; each), the line names that namespace and the exit code -- BLOCKED when it
+;; is Eve's (an eve.* namespace: Eve's http layer does not load on this
+;; seat), FAIL otherwise; after the loads, the process's last STAGE line names
+;; where it ended. Its whole output is kept in target/eve-http-jank-<n>-<mode>.log.
+;; What can still run, runs: with the seat's answers against Jetty in hand
+;; and its server missing, each client check FAILs showing REF, the seat
+;; against Jetty and why the third answer is missing. Checks that cannot run
+;; count as not run in the summary, and the gate exits 2.
 (ns eve-http-seats
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -153,17 +159,32 @@
         loaded (set (keep #(when (str/starts-with? % "LOADED ") (subs % 7)) lines))]
     (last (remove loaded (keep #(when (str/starts-with? % "LOADING ") (subs % 8)) lines)))))
 
+(defn- last-stage
+  "the last STAGE a jank process named, or nil"
+  [out]
+  (last (keep #(when (str/starts-with? % "STAGE ") (subs % 6)) (str/split-lines (or out "")))))
+
 (defn- exit-text [exit]
   (if (and (integer? exit) (> exit 128))
     (str exit " (" (get {4 "SIGILL" 6 "SIGABRT" 7 "SIGBUS" 9 "SIGKILL" 11 "SIGSEGV" 15 "SIGTERM"} (- exit 128)
                          (str "signal " (- exit 128))) ")")
     (str exit)))
 
+(def ^:private jank-runs (atom 0))
+(defn- jank-log!
+  "the whole output of a jank process, kept in target/: its path"
+  [mode out]
+  (let [f (io/file "target" (str "eve-http-jank-" (swap! jank-runs inc) "-" mode ".log"))]
+    (io/make-parents f)
+    (spit f (or out ""))
+    (str f)))
+
 (defn- jank-ended!
   "a jank process ended (or timed out) before its work was done"
   [mode exit out]
   (throw (ex-info (str "jank " mode " process ended")
-                  {:jank-ended {:mode mode :exit exit :out out :ns (ended-loading out)}})))
+                  {:jank-ended {:mode mode :exit exit :out out :log (jank-log! mode out)
+                                :ns (ended-loading out) :stage (last-stage out)}})))
 
 (defn- jank-client [base]
   (let [out (str (java.io.File/createTempFile "eve-http-jank" ".edn"))
@@ -174,6 +195,7 @@
     (let [exit (if done (.exitValue p) :timeout)]
       (when-not (and (= 0 exit) (str/includes? @text "client programs run: "))
         (jank-ended! "client" exit @text))
+      (println (str "jank seat: client process against " base ": exit 0, output in " (jank-log! "client" @text)))
       (into {} (edn/read-string (slurp out))))))
 
 (defn- jank-serve! [port]
@@ -189,16 +211,19 @@
               (nil? line) (do (.waitFor p) (jank-ended! "serve" (.exitValue p) (str seen)))
               (.startsWith ^String line "LISTENING")
               ;; the rest of its output is read as it comes, so the pipe never fills
-              (do (future (loop [] (when-let [l (.readLine ^java.io.BufferedReader rdr)]
-                                     (.append seen l) (.append seen "\n") (recur))))
-                  p)
+              (let [rest-read (future (loop [] (when-let [l (.readLine ^java.io.BufferedReader rdr)]
+                                                 (.append seen l) (.append seen "\n") (recur))))]
+                (.append seen line) (.append seen "\n")
+                {:process p :done (fn [] (deref rest-read 30000 nil) (str seen))})
               :else (do (.append seen line) (.append seen "\n") (recur)))))))
 
-(defn- jank-stop! [^Process p]
+(defn- jank-stop! [{:keys [^Process process done]}]
   ;; its standard input ends: the server stops and the process exits
-  (.close (.getOutputStream p))
-  (when-not (.waitFor p 30 java.util.concurrent.TimeUnit/SECONDS)
-    (.destroyForcibly p)))
+  (.close (.getOutputStream process))
+  (when-not (.waitFor process 30 java.util.concurrent.TimeUnit/SECONDS)
+    (.destroyForcibly process))
+  (println (str "jank seat: serve process stopped, exit " (exit-text (.exitValue process))
+                ", output in " (jank-log! "serve" (done)))))
 
 ;; --- the gate ------------------------------------------------------------
 
@@ -213,72 +238,97 @@
               (do (println (str "unknown seat " (pr-str seat-name) "; the seats: " (str/join ", " (keys seats))))
                   (System/exit 64))))
 
+(def client-programs (remove (fn [[label _]] (contains? programs/jvm-only label)) programs/client))
 (def run-checks
   "the checks of a seat run: the client programs not JVM-only, the server requests"
-  (+ (count (remove (fn [[label _]] (contains? programs/jvm-only label)) programs/client))
-     (count programs/server)))
+  (+ (count client-programs) (count programs/server)))
 
-(defn- summary [total extra]
-  (println (str "unit 9 gate (" (:title seat) "): " (count (filter true? @checks)) "/" total " PASS" extra
-                "; JVM-only client programs not run on this seat: " (count programs/jvm-only))))
+(defn- attempt
+  "{:ok (f)}, or {:ended what} when a seat process ended before its work was done"
+  [f]
+  (try {:ok (f)}
+       (catch clojure.lang.ExceptionInfo e
+         (if-let [x (:jank-ended (ex-data e))] {:ended x} (throw e)))))
+
+(defn- ended-what [{:keys [mode exit ns stage]}]
+  (cond ns (str "the " mode " process ended loading " ns ", exit " (exit-text exit))
+        stage (str "the " mode " process ended at its stage \"" stage "\" (its namespaces loaded), exit " (exit-text exit))
+        :else (str "the " mode " process ended before its work was done, exit " (exit-text exit))))
+
+(defn- blocked? [{:keys [ns]}] (and ns (str/starts-with? (str ns) "eve.")))
 
 (defn- ended-report!
-  "the one line for a seat process that ended before its work was done, the
-   tail of its output, and the summary with the checks not run"
-  [{:keys [mode exit out ns]}]
-  (let [eve-ns? (and ns (str/starts-with? (str ns) "eve."))
-        what (if ns (str "loading " ns) (str "the " mode " run"))]
-    (println (cond eve-ns?
-                   (str "BLOCKED unit 9 gate (" (:title seat) "): Eve's http layer does not load on this seat -- the "
-                        mode " process ended loading " ns ", exit " (exit-text exit))
-                   ns
-                   (str "FAIL unit 9 gate (" (:title seat) "): the " mode " process ended loading " ns
-                        ", exit " (exit-text exit))
-                   :else
-                   (str "FAIL unit 9 gate (" (:title seat) "): the " mode " process ended before its work was done, exit "
-                        (exit-text exit))))
-    (println (str "  last lines of the " mode " process:"))
-    (doseq [l (take-last 15 (str/split-lines (or out "")))] (println (str "    " l)))
-    (summary run-checks (str ", " (- run-checks (count @checks)) " not run (" (if eve-ns? "BLOCKED" "FAIL") ": " what
-                  ", exit " (exit-text exit) ")"))))
+  "the one line for a seat process that ended before its work was done, its
+   protocol lines, the tail of its output and where the whole of it is"
+  [{:keys [mode out log] :as x}]
+  (println (if (blocked? x)
+             (str "BLOCKED unit 9 gate (" (:title seat) "): Eve's http layer does not load on this seat -- " (ended-what x))
+             (str "FAIL unit 9 gate (" (:title seat) "): " (ended-what x))))
+  (let [lines (str/split-lines (or out ""))]
+    (println (str "  its protocol lines: "
+                  (str/join " | " (filter #(re-find #"^(LOADING|LOADED|STAGE|EXIT|LISTENING|Eve http leaves installed)" %) lines))))
+    (println (str "  last lines of the " mode " process (whole output: " log "):"))
+    (doseq [l (take-last 15 lines)] (println (str "    " l)))))
 
 ((:build! seat))
 (def jetty (ring.adapter.jetty/run-jetty (second (ref-eval programs/handler-src)) {:port 0 :join? false :host "127.0.0.1"}))
 (def jetty-base (str "http://127.0.0.1:" (.getLocalPort ^org.eclipse.jetty.server.ServerConnector (first (.getConnectors ^org.eclipse.jetty.server.Server jetty)))))
+(def seat-port (free-port))
+(def seat-base (str "http://127.0.0.1:" seat-port))
 
-(def ended
-  "nil, or what a seat process that ended before its work was done left"
+;; the seat's answers against Jetty, the seat's server, the seat's answers
+;; against that server; a seat process that ends is kept as {:ended what}
+(def x-jetty (attempt #((:client seat) jetty-base)))
+(def server (if (or (:ok x-jetty) (not (:ns (:ended x-jetty))))
+              (attempt #((:serve! seat) seat-port))
+              ;; the client process ended loading a namespace: the server's would too
+              x-jetty))
+(def x-eve (if (:ok server)
+             (try (attempt #((:client seat) seat-base))
+                  (catch Throwable t ((:stop! seat) (:ok server)) (throw t)))
+             server))
+
+;; client side
+(def refs "label -> REF's answer, as the client checks computed it" (atom {}))
+(when (:ok x-jetty)
+  (doseq [[label src] client-programs]
+    (let [r (ref-eval (str "(let [base \"" jetty-base "\"] " src ")"))
+          _ (swap! refs assoc label r)
+          c (get (:ok x-jetty) label)
+          ce (if (:ok x-eve) (get (:ok x-eve) label) ::not-run)
+          pass (and (= :ok (first r)) (= r c ce))]
+      (verdict! (str "client: " label) pass
+                (if pass (second r)
+                    (str "\n      REF " (pr-str r) "\n      " (:client-label seat) " " (pr-str c)
+                         "\n      " (:eve-client-label seat) " "
+                         (if (= ::not-run ce) (str "not run: " (ended-what (:ended x-eve))) (pr-str ce))))))))
+
+;; server side
+(when (:ok server)
   (try
-    (let [seat-port (free-port)
-          seat-proc ((:serve! seat) seat-port)
-          seat-base (str "http://127.0.0.1:" seat-port)]
-      (try
-        ;; client side
-        (let [x-jetty ((:client seat) jetty-base)
-              x-eve ((:client seat) seat-base)]
-          (doseq [[label src] programs/client
-                  :when (not (contains? programs/jvm-only label))]
-            (let [r (ref-eval (str "(let [base \"" jetty-base "\"] " src ")"))
-                  c (get x-jetty label)
-                  ce (get x-eve label)]
-              (verdict! (str "client: " label) (and (= :ok (first r)) (= r c ce))
-                        (if (and (= :ok (first r)) (= r c ce)) (second r)
-                            (str "\n      REF " (pr-str r) "\n      " (:client-label seat) " " (pr-str c)
-                                 "\n      " (:eve-client-label seat) " " (pr-str ce)))))))
-        ;; server side
-        (doseq [[label req] programs/server]
-          (let [j (ask jetty-base req)
-                e (ask seat-base req)]
-            (verdict! (str "server: " label) (= j e)
-                      (if (= j e) j (str "\n      JETTY " (pr-str j) "\n      " (:server-label seat) " " (pr-str e))))))
-        nil
-        (finally ((:stop! seat) seat-proc))))
-    (catch clojure.lang.ExceptionInfo e
-      (or (:jank-ended (ex-data e)) (throw e)))))
+    (doseq [[label req] programs/server]
+      (let [j (ask jetty-base req)
+            e (ask seat-base req)]
+        (verdict! (str "server: " label) (= j e)
+                  (if (= j e) j (str "\n      JETTY " (pr-str j) "\n      " (:server-label seat) " " (pr-str e))))))
+    (finally ((:stop! seat) (:ok server)))))
 
 (.stop ^org.eclipse.jetty.server.Server jetty)
-(if ended
-  (ended-report! ended)
-  (summary (count @checks) ""))
+(def ended (distinct (keep :ended [x-jetty server x-eve])))
+(doseq [x ended] (ended-report! x))
+(when (and (:ok x-jetty) (not (:ok x-eve)))
+  ;; not a check: each client check also needs the answer against the seat's own server
+  (println (str "  " (:client-label seat) " against Jetty alone answers as REF on "
+                (count (filter (fn [[label _]]
+                                 (let [r (get @refs label)]
+                                   (and (= :ok (first r)) (= r (get (:ok x-jetty) label)))))
+                               client-programs))
+                "/" (count client-programs) " client programs (not counted)")))
+(let [cs @checks
+      not-run (- run-checks (count cs))]
+  (println (str "unit 9 gate (" (:title seat) "): " (count (filter true? cs)) "/" run-checks " PASS"
+                (when (pos? not-run)
+                  (str ", " not-run " not run (" (str/join "; " (map (fn [x] (str (if (blocked? x) "BLOCKED" "FAIL") ": " (ended-what x))) ended)) ")"))
+                "; JVM-only client programs not run on this seat: " (count programs/jvm-only))))
 (shutdown-agents)
-(System/exit (cond ended 2 (every? true? @checks) 0 :else 1))
+(System/exit (cond (seq ended) 2 (every? true? @checks) 0 :else 1))

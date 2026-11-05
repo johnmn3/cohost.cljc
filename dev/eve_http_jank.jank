@@ -14,11 +14,16 @@
 ;;     the Ring handler source evaluated in the booted namespace and served
 ;;     by Eve's jank http-server through cohost.ring; prints LISTENING <port>
 ;;     and serves until standard input ends.
+;; Each process ends through eve.process/exit! (Eve's own: a flush, then
+;; _exit): measured 2026-11-05 on jank 0.1-noble, a process that ran Eve's
+;; jank server ends at jank's normal end with a segfault (rc=139, after its
+;; last line), and with rc=0 through eve.process/exit!.
 ;; Eve's namespaces load on jank only after eve.host-completion, so they are
 ;; required here at run time, each between a LOADING and a LOADED line: a
 ;; load that ends the process (a fault -- no exception reaches this code) is
 ;; named by the driver from the last LOADING line without its LOADED, with
-;; the exit code. Those lines, LISTENING and the client count are written
+;; the exit code; after the loads, a STAGE line names each step, so a later
+;; end is named by its stage. Those lines, LISTENING and the client count are written
 ;; with standard output flushed before and after: piped, jank's standard
 ;; output is buffered, and a segfault drops what the buffer holds (measured
 ;; 2026-11-05 on jank 0.1-noble: an unflushed println before a fault never
@@ -63,15 +68,24 @@ namespace eve_http_jank {
 
 (defn- install-eve-http!
   "Eve's http layer on this seat: the completion, eve.http, eve.http-server,
-   then cohost.http-eve (src/cohost/http_eve.jank), whose install! puts them
-   in as cohost.http's leaves. A seat where they do not load ends here."
+   eve.process (the process's end), then cohost.http-eve
+   (src/cohost/http_eve.jank), whose install! puts them in as cohost.http's
+   leaves. A seat where they do not load ends here."
   []
-  (doseq [n '[eve.host-completion eve.http eve.http-server cohost.http-eve]]
+  (doseq [n '[eve.host-completion eve.http eve.http-server eve.process cohost.http-eve]]
     (load-ns! n))
   (let [installed ((resolve 'cohost.http-eve/install!))]
     (say (str "Eve http leaves installed: " installed))
     (when-not installed
       (throw (ex-info "cohost.http-eve/install!: cohost.http is not available after the install" {})))))
+
+(defn- stage! [s] (say (str "STAGE " s)))
+
+(defn- exit!
+  "the process's end: Eve's eve.process/exit! (output flushed first)"
+  [code]
+  (say (str "EXIT " code))
+  ((resolve 'eve.process/exit!) code))
 
 (defn- cohost-eval [src]
   (host/try-all (fn [] [:ok (boot/eval-str src {:session? false})])
@@ -84,25 +98,29 @@ namespace eve_http_jank {
 
 (defn -main [mode & args]
   (install-eve-http!)
+  (stage! "boot")
   (boot!)
   (case mode
     "client"
     (let [[base out] args
+          _ (stage! "client programs")
           _ (println "setup:" (pr-str (cohost-eval eve-http-programs/setup)))
           answers (vec (for [[label src] eve-http-programs/client
                              :when (not (contains? eve-http-programs/jvm-only label))]
                          [label (cohost-eval (str "(let [base \"" base "\"] " src ")"))]))]
       (host/spit-file out (pr-str answers))
       (say (str "client programs run: " (count answers)))
-      (host/exit 0))
+      (exit! 0))
     "serve"
     (let [port (host/parse-long* (first args))
+          _ (stage! "handler")
           [k h] (cohost-eval eve-http-programs/handler-src)]
       (when-not (= :ok k) (throw (ex-info (str "handler: " h) {})))
+      (stage! "run-server")
       (let [srv (cohost.ring/run-server h {:port port})]
         (say (str "LISTENING " (:port srv)))
         ;; Eve's server threads answer; this thread waits for the driver to
         ;; close standard input
         (loop [] (when (cpp/eve_http_jank.read_line) (recur)))
         ((:stop srv))
-        (host/exit 0)))))
+        (exit! 0)))))
