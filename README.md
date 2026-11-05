@@ -185,6 +185,7 @@ The guide covers each part of using cohost; every command in it runs, as written
 8. [How cohost works](doc/guide/08-how-it-works.md): the codemod, the shim, the adapter, the boot, snapshots
 9. [Adding a host](doc/guide/09-adding-a-host.md)
 10. [Limitations and FAQ](doc/guide/10-limitations-and-faq.md)
+11. [Debugging](doc/guide/11-debugging.md): the error report, traces as data, `pst`, REPL vars, exit codes — and the jank pathway's own facilities (codegen/IR printing, profiling, gdb break-on-throw)
 
 Also: [the `cohost` command's reference](doc/CLI.md), [embedding cohost in a host
 program](doc/EMBEDDING.md), [performance](doc/PERF.md), [the measurements and host
