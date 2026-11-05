@@ -239,3 +239,16 @@
   under the spec's cap clause; hard fd limit is ~1.07e9 (no fd cap).
 - Remaining: wrk build, measure.sh run, docs:check jank, README,
   CAPSTONE report.
+
+## 2026-11-05 04:24 ET — measurement prep on J: wrk building
+- wrk was absent on J; its source (kept at
+  ~/workspace/cohost-install/wrk-src on the hatch box) was
+  transferred and is building on J (Makefile's unzip step done
+  via python3 zipfile — no unzip on J; one stale-symlink hiccup
+  from the transferred obj/ tree, removed). Bundled OpenSSL
+  compile is the long part.
+- This box's /tmp is 100% full (512 MB tmpfs; 496 MB is another
+  lane's cargo-install scratch — left alone; nothing of this
+  lane's needs /tmp here).
+- Next: measure.sh on J (CAP=25000 per the ephemeral range),
+  then docs:check jank, README, CAPSTONE report.
