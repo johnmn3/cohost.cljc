@@ -141,37 +141,51 @@
         (log "JANK-EXE-BUILD" exe (if (.exists stamp) "(stale)" "(new)"))
         (.mkdirs (io/file work))
         (io/delete-file stamp true)
+        ;; 0.5 the project's :cpp sources, compiled once (-fPIC) BEFORE the
+        ;; record step: the static archive serves the final link (step 4);
+        ;; a shared twin in record-lib/ serves the record session (step 2),
+        ;; whose JIT materializes a cpp/raw block's translation unit when
+        ;; the form evaluates -- the block's external symbols must resolve
+        ;; inside that process (jank -L/-l), or the raw records as an error
+        ;; and is dropped. record-lib/ is a subdirectory so step 4's
+        ;; -L work -l cpp still picks the archive, never the shared lib.
+        (when cpp
+          (let [objs (mapv (fn [i s]
+                             (let [o (abs work (str "cpp" i ".o"))
+                                   cc (if (str/ends-with? s ".c")
+                                        (or (System/getenv "CC") "cc")
+                                        (or (System/getenv "CXX") "c++"))]
+                               (apply sh! work {} cc "-O3" "-fPIC"
+                                      (concat (mapcat (fn [d] ["-I" d]) (:dirs cpp))
+                                              (when-not (str/ends-with? s ".c") ["-std=c++17"])
+                                              ["-c" s "-o" o]))
+                               o))
+                           (range) (:sources cpp))
+                libdir (abs work "record-lib")]
+            (.mkdirs (io/file libdir))
+            (apply sh! work {} "ar" "rcs" (abs work "libcpp.a") objs)
+            (apply sh! work {} (or (System/getenv "CXX") "c++") "-shared" "-o" (abs libdir "libcpp.so") objs)
+            (log "JANK-EXE-CPP" (count objs) "objects (archive + record shared lib)")))
         ;; 1. cohost's namespaces, -O3 AOT objects (recompiled when stale)
         (let [aot-out (sh! repo {} "bb" "-e" "(println (str \"AOT \" (load-file \"dev/perf/jank_aot_ensure.clj\")))")
               aot (abs repo (second (re-find #"(?m)^AOT (.*)$" aot-out)))]
           ;; 2. record the boot, the libraries and the app
-          (let [out (apply sh! repo record-env (jank-bin) "--module-path" (str aot ":" (abs repo "src")) "run"
-                           (abs repo "dev/perf/jank_snapshot_record.jank") "--" "--out" events "--lib" (str main)
-                           (mapcat (fn [r] ["--root" r]) roots))]
+          (let [out (apply sh! repo record-env (jank-bin)
+                           (concat (when cpp ["-L" (abs work "record-lib") "-l" "cpp"])
+                                   ["--module-path" (str aot ":" (abs repo "src")) "run"
+                                    (abs repo "dev/perf/jank_snapshot_record.jank") "--" "--out" events "--lib" (str main)]
+                                   (mapcat (fn [r] ["--root" r]) roots)))]
             (log (last (filter #(str/starts-with? % "SNAPSHOT-EVENTS") (str/split-lines out))))
             (doseq [l (filter #(str/starts-with? % "RECORD-LIB-ERROR") (str/split-lines out))] (log l))))
         ;; 3. the modules and the entry
         (log (last (str/split-lines (sh! repo {} "bb" (abs repo "dev/perf/jank_snapshot_emit.clj")
                                           "--events" events "--out" src "--main" (str main)))))
-        ;; 3.5 the project's :cpp sources, compiled and archived for the link
+        ;; 3.5 the project's :cpp link flags (the sources were compiled at
+        ;; step 0.5, before the record step that needs their symbols)
         (let [cpp-flags (when cpp
-                          (let [objs (mapv (fn [i s]
-                                             (let [o (abs work (str "cpp" i ".o"))
-                                                   cc (if (str/ends-with? s ".c")
-                                                        (or (System/getenv "CC") "cc")
-                                                        (or (System/getenv "CXX") "c++"))]
-                                               (apply sh! work {} cc "-O3"
-                                                      (concat (mapcat (fn [d] ["-I" d]) (:dirs cpp))
-                                                              (when-not (str/ends-with? s ".c") ["-std=c++17"])
-                                                              ["-c" s "-o" o]))
-                                               o))
-                                           (range) (:sources cpp))
-                                lib (abs work "libcpp.a")]
-                            (apply sh! work {} "ar" "rcs" lib objs)
-                            (log "JANK-EXE-CPP" lib (count objs) "objects")
-                            (concat (mapcat (fn [d] ["-I" d]) (:dirs cpp))
-                                    ["-L" work "-l" "cpp"]
-                                    (mapcat (fn [l] ["-l" l]) (:libs cpp)))))]
+                          (concat (mapcat (fn [d] ["-I" d]) (:dirs cpp))
+                                  ["-L" work "-l" "cpp"]
+                                  (mapcat (fn [l] ["-l" l]) (:libs cpp))))]
           ;; 4. one executable
           (apply sh! repo gc (jank-bin) "-O3" "--module-path" (str src ":" (abs repo "src")) "compile" "cohost.app-main"
                  "--runtime" "static" "--name" name "--target-dir" target
