@@ -128,6 +128,22 @@
      ;; clojure.instant's and clojure.uuid's readers
      default-data-readers]))
 
+(def thread-names
+  "Of host-only-names, the concurrency names Eve's thread layer
+   (cohost.thread) fills after the boot for a host whose core lacks
+   them: future/agent/pmap and their machinery, backed by the layer
+   behind the Java shim. `seque` is host-only but not filled -- it
+   stays skipped on such a host. Boot interns cohost.thread/core-impls
+   and core-macros under exactly these names (see
+   cohost.boot/install-thread-layer!)."
+  (set '[future future-call future-done? future-cancel future-cancelled? future?
+         pmap pcalls pvalues promise deliver
+         agent send send-off send-via set-agent-send-executor!
+         set-agent-send-off-executor! release-pending-sends agent-error
+         restart-agent set-error-handler! error-handler set-error-mode!
+         error-mode agent-errors clear-agent-errors shutdown-agents
+         await await-for await1]))
+
 (def companion-names
   "clojure.core names that the booted forms do not define: they come from the
    companion files (core_deftype, core_proxy, genclass, gvec, core_print)
@@ -195,7 +211,17 @@
       "Returns the immediate and indirect superclasses and interfaces of c, if any"
       {:added "1.0"}
       [class]
-      (when class (not-empty (set (cohost.shim/class-supers class)))))})
+      (when class (not-empty (set (cohost.shim/class-supers class)))))
+   ;; stock realized? casts its argument to IPending ahead of the call,
+   ;; a cast no stand-in value survives; the shim's -isRealized answers
+   ;; by predicate instead, for host pendings and the thread layer's
+   ;; futures and promises alike
+   'realized?
+   '(defn realized?
+      "Tests if a delay, future, or promise has been realized"
+      {:added "1.4"}
+      [x]
+      (cohost.shim/-isRealized x))})
 
 ;; Top-level forms that are not defs and are the JVM's: the one `let` (reads
 ;; clojure/version.properties), the one `try` (data readers), the imports, the

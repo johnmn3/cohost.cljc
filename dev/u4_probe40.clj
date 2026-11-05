@@ -1,0 +1,16 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(def report (boot/boot! {}))
+(boot/make-user-ns!)
+(try (boot/eval-str "(require (quote [clojure.string :as s]))")
+     (catch Throwable e (println "require ERR" (.getMessage e))))
+(try (boot/eval-str "(nil? (s/index-of \"abc\" \\z))")
+     (catch Throwable e
+       (println "index-of ERR" (.getMessage e))
+       (doseq [el (take 8 (.getStackTrace e))] (println "  " el))
+       (when (.getCause e) (println "cause:" (.getMessage (.getCause e))))))
+(try (boot/eval-str "(nil? (re-matcher #\"a\" \"abc\"))")
+     (catch Throwable e
+       (println "re-matcher ERR" (.getMessage e))
+       (when (.getCause e) (println "cause:" (.getMessage (.getCause e))))))
+(println :done)

@@ -1,0 +1,10 @@
+(ns u2-probe1)
+
+(def ^:dynamic *x* 0)
+(println "bindings:" (type (get-thread-bindings)) (count (get-thread-bindings)))
+(binding [*x* 7]
+  (println "bound:" (get (get-thread-bindings) #'*x*)))
+(println "future:" (try @(future (+ 1 2)) (catch :default e (str "ERR " (ex-message e)))))
+(println "future-binding:" (try (binding [*x* 42] @(future *x*)) (catch :default e (str "ERR " (ex-message e)))))
+(println "promise:" (try (let [p (promise)] (deliver p 9) @p) (catch :default e (str "ERR " (ex-message e)))))
+(println "done")

@@ -1,0 +1,19 @@
+;; unit 2: staged jank boot probe -- where does the SIGFPE land?
+(ns u2-jank-stages
+  (:require [cohost.hosts.jank-host]
+            [cohost.boot :as boot]
+            [cohost.adapter :as host]
+            [cohost.thread :as thread]))
+(defn stage [s] (spit "/home/john/u2-gate-logs/stage.txt" (str s "\n") :append true))
+(stage "caps-loaded")
+(stage (str "available? " (thread/available?)))
+(def report (boot/boot! {}))
+(stage "boot-done")
+(stage (str "pmap var: " (some? (host/interned-var 'cohost.core 'pmap))))
+(stage (str "future var: " (some? (host/interned-var 'cohost.core 'future))))
+(boot/make-user-ns!)
+(stage "user-ns")
+(stage (str "eval future: " (boot/eval-str "@(future 3)" {:session? false})))
+(stage (str "eval agent: " (boot/eval-str "(do (def a (agent 0)) (send a inc) (await a) @a)" {:session? false})))
+(stage (str "eval pmap: " (boot/eval-str "(vec (pmap inc [1 2 3]))" {:session? false})))
+(stage "all-done")

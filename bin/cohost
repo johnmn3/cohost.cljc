@@ -221,8 +221,14 @@
       ;; bootstrap joins the output-dir onto the process's directory, so the
       ;; build — and the node launch — both run from the repo, and cohost.cli
       ;; moves to the project directory (:cwd).
-      (let [sdeps (System/getenv "COHOST_CLI_SDEPS")
-            cmd (vec (concat ["clojure"] (when sdeps ["-Sdeps" sdeps])
+      ;; unit 8: Eve is in the build (cohost.hosts.cljs-eve): its hosts.edn
+      ;; :cljs row joins the classpath (dev/eve-cljs/eve_paths.clj), merged
+      ;; with COHOST_CLI_SDEPS; the git dep is fetched first when absent
+      (let [_ (load-file (str repo "/dev/eve-cljs/eve_paths.clj"))
+            _ (when-not (fs/exists? ((resolve 'eve-paths/eve-checkout-dir) repo))
+                (run-inherit repo ["clojure" "-P" "-M:cljs"]))
+            sdeps ((resolve 'eve-paths/eve-cljs-build-sdeps) repo (System/getenv "COHOST_CLI_SDEPS"))
+            cmd (vec (concat ["clojure" "-Sdeps" sdeps]
                              ["-M:cljs" "-m" "cljs.main" "-co" "cljs-cli.edn" "-c"]))]
         (when-not (zero? (run-inherit repo cmd))
           (die 1 "cohost: cljs build failed"))))))

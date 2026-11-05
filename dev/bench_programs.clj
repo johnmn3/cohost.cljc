@@ -371,7 +371,9 @@
 
 (defn ensure-cljs-node! []
   (when-not (fs/exists? "target/cljs-node/main.js")
-    (let [c (run! ["clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c"])]
+    (let [_ (load-file "dev/eve-cljs/eve_paths.clj")
+          c (run! ["clojure" "-Sdeps" ((resolve 'eve-paths/eve-cljs-build-sdeps) "." nil)
+                   "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c"])]
       (when-not (zero? (:exit c))
         (throw (ex-info "cljs-node" {:err (str (:err c) "\n" (:out c))}))))))
 

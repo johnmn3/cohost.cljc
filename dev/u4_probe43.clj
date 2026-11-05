@@ -1,0 +1,13 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(def report (boot/boot! {}))
+(boot/make-user-ns!)
+(defn ev [label src]
+  (println label (try (pr-str (boot/eval-str src))
+                      (catch Throwable e (str "ERR " (.getMessage e))))))
+(ev "regex alone:" "#\"a\"")
+(ev "char alone:" "\\z")
+(ev "char eq:" "(= \\z \\z)")
+(ev "re-matcher only:" "(re-matcher #\"a\" \"abc\")")
+(ev "string index-of:" "(clojure.string/index-of \"abc\" \"b\")")
+(println :done)

@@ -1,0 +1,15 @@
+;; gate runner: boot with :eve-collections per argv[0] ("on"/"off"),
+;; then battery + library battery, like cohost.run's default path.
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.battery 'cohost.lib-battery)
+(alias 'boot 'cohost.boot)
+(alias 'host 'cohost.adapter)
+(def on? (= "on" (first *command-line-args*)))
+(def t0 (host/nano-time))
+(def report (boot/boot! {:eve-collections on?}))
+(println "BOOT errors:" (clojure.core/count (:errors report)) "fill:" (:eve-collections report))
+(boot/print-report report)
+(boot/make-user-ns!)
+(cohost.battery/run-battery! boot/eval-str)
+(cohost.lib-battery/run-lib-battery! boot/eval-str)
+(println "WALL-MS" (/ (double (- (host/nano-time) t0)) 1000000.0))
+(shutdown-agents)

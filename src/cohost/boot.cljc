@@ -15,6 +15,10 @@
             [cohost.rewrite :as rw]
             [cohost.shim :as shim]
             [cohost.policy :as policy]
+            [cohost.memory :as memory]
+            [cohost.thread :as thread]
+            [cohost.atom :as atom-layer]
+            [cohost.http :as http]
             [cohost.scan :as scan]))
 
 (def core-ns "The namespace the stock core.clj boots into." 'cohost.core)
@@ -606,11 +610,14 @@
    var identity matters for binding); everything else is interned as a copy,
    so a stock macro's syntax-quoted `cohost.core/pr-str` resolves. Host
    macros are interned with their macro status and never wrapped. Returns true
-   when the host had it; false means the caller boots the stock definition."
+   when the host had it; false means the caller boots the stock definition.
+   A name in the boot's :host-lacks set is treated as one the host lacks:
+   the exercise path for a fill (the thread layer's, a host bring-up's)."
   [report nm]
-  (let [r (take-from-host* report nm)]
-    (when r (snap! {:op :host :sym nm}))
-    r))
+  (when-not (contains? (:host-lacks @state) nm)
+    (let [r (take-from-host* report nm)]
+      (when r (snap! {:op :host :sym nm}))
+      r)))
 
 (defn- take-from-host*
   [report nm]
@@ -717,13 +724,22 @@
   "The def forms a native can stand in for: fns (a macro has no native)."
   (set '[def defn defn- defonce definline]))
 
+;; defined with install-atom-layer! below; native-of consults it
+(declare atom-surface-names)
+
 (defn- native-of
   "The adapter's native (adapter :natives) for the def form `form` of library
    lib (a string: \"clojure.core\", \"clojure.string\"): [value host-var-or-nil],
    or nil when there is none."
   [lib form]
   (let [nm (policy/form-name form)]
-    (when (and (symbol? nm) (contains? native-heads (policy/form-head form)))
+    (when (and (symbol? nm) (contains? native-heads (policy/form-head form))
+               ;; unit 5: with the atom fill in force, a native must
+               ;; not stand in for an atom-surface name -- the host's
+               ;; swap! casts its receiver, and a layer atom is a
+               ;; value behind the facade. The stock definition,
+               ;; which dispatches through the shim, boots instead.
+               (not (and (:eve-atoms @state) (contains? atom-surface-names nm))))
       (when-let [impl (get (host/natives) (symbol lib (name nm)))]
         (if (= :host impl)
           (when-let [hv (and (= lib "clojure.core") (host/resolve-core nm))]
@@ -781,7 +797,8 @@
                     :native (do (intern-native! core-ns nm native def-form "clojure.core") (record! report :native {:name nm}) nil)
                     :skip (do (record! report :skipped {:name nm :reason reason}) nil)
                     :host (when-not (take-from-host! report nm)
-                            (if (contains? policy/host-only-names nm)
+                            (if (or (contains? policy/host-only-names nm)
+                                    (contains? policy/thread-names nm))
                               (do (record! report :skipped {:name nm :reason :no-host-equivalent}) nil)
                               (do (eval-form! ctx report form nm :ok) form)))
                     :replace (do (eval-form! ctx report replacement nm :replaced) replacement)
@@ -901,15 +918,139 @@
      :host-referred @(:host-referred c)
      :loader-nses @(:loader-nses c)}))
 
+(defn install-thread-layer!
+  "Fill the concurrency names (policy/thread-names) the boot left
+   uninterned -- the host's core had none of its own -- from Eve's
+   thread layer (cohost.thread), when this host gives the layer its
+   leaves. Runs after the companions and before the libraries, so
+   library code calling future/agent at load time finds them. Each
+   fill is recorded as a replacement; hosts with their own concurrency
+   names, and hosts with no thread layer, are untouched."
+  [report]
+  (when (thread/available?)
+    ;; The fills intern fn values directly -- no form is evaluated, so
+    ;; the snapshot recorder sees nothing of them. Record the fill
+    ;; itself, or a snapshot replay restores a core without the thread
+    ;; family (measured, unit 2: bin/cohost :jank from the snapshot
+    ;; could not resolve `future`).
+    (snap! {:op :thread-layer})
+    (doseq [[nm v] thread/core-impls]
+      (when-not (host/interned-var core-ns nm)
+        (host/intern! core-ns nm v)
+        (record! report :replaced {:name nm :reason :thread-layer})))
+    (doseq [[nm f] thread/core-macros]
+      (when-not (host/interned-var core-ns nm)
+        (host/intern! core-ns nm f)
+        (host/mark-macro! (host/interned-var core-ns nm))
+        (record! report :replaced {:name nm :reason :thread-layer})))
+    ;; unit 8: a seat with realms (cljs on Node with Eve hosting) gets
+    ;; the form-carrying future's entry, outside core (core's publics
+    ;; stay stock's); the future fill expands to it on that seat only
+    (when (host/capability :realm-submit)
+      (host/ensure-bare-ns! 'cohost.realm)
+      (host/intern! 'cohost.realm 'future-form-call thread/future-form-call)))
+  report)
+
+(def ^:private atom-surface-names
+  "The clojure.core names whose host versions would bypass the
+   shim for a layer atom -- the host's swap!/reset!/add-watch
+   cast the receiver to IAtom/IRef, and a layer atom is a value
+   behind the facade, not a host Atom. With the atom fill in
+   force these boot as if host-lacked (the thread layer's
+   exercise mechanism), so the booted definitions -- which call
+   through the shim's method dispatch -- serve layer atoms and
+   host atoms alike."
+  '#{swap! reset! compare-and-set! swap-vals! reset-vals!
+     add-watch remove-watch set-validator! get-validator})
+
+(defn install-atom-layer!
+  "Turn on Eve's atom layer (cohost.atom, unit 5) for the booted
+   program, when the boot opts ask for it (:eve-atoms) and this
+   seat's Eve hosting is installed (cohost.atom-eve/install!).
+   Mints the registry atom in its startup domain, publishes the
+   namespaces booted so far into it -- their interns and roots
+   become residents of the startup domain (plan SS10) -- and
+   sets the layer's fill, so the booted program's atoms are
+   Eve-backed and its later interns and root writes publish as
+   they happen. Default boots never pass the opt; the standing
+   batteries are untouched."
+  [ctx report eve-atoms]
+  (when eve-atoms
+    (when-not (atom-layer/available?)
+      (throw (host/ex* 'java.lang.IllegalStateException
+                       "boot :eve-atoms needs the seat's Eve hosting installed first (cohost.atom-eve/install!)")))
+    (atom-layer/registry-atom)
+    (atom-layer/set-fill! true)
+    (let [nses (into #{core-ns user-ns}
+                     (map (fn [n] (symbol n)))
+                     @(:loader-nses ctx))]
+      (doseq [ns-sym nses]
+        (atom-layer/publish-namespace! ns-sym)))
+    (record! report :replaced {:name 'eve-atoms :reason :atom-layer}))
+  report)
+
+(defn install-http-layer!
+  "Fill the names the boot left uninterned that Eve's HTTP layer
+   (cohost.http/core-impls: slurp) answers, when this seat gives the
+   layer its leaves: a host whose core has no slurp reads a URL's body
+   through Eve. Hosts with their own slurp (the JVM, where clojure.java.io
+   reaches the layer instead) and seats without the leaves are untouched."
+  [report]
+  (when (http/available?)
+    (snap! {:op :http-layer})
+    (doseq [[nm v] http/core-impls]
+      (when-not (host/interned-var core-ns nm)
+        (host/intern! core-ns nm v)
+        (record! report :replaced {:name nm :reason :http-layer}))))
+  report)
+
+(defn install-collection-fill!
+  "Decide and install the Eve collection fill (unit 4) for this
+   boot, before the prelude: with the fill in force, the shim's
+   collection creators answer Eve-backed values and the two
+   EMPTY statics the core reads directly are Eve's empties.
+   :eve-collections true forces the fill -- a seat whose Eve
+   hosting does not load is a named NOT-YET, thrown. Absent the
+   opt, the fill is the default where Eve hosting loads (the
+   :clj seat today) and off everywhere else; a seat with no Eve
+   hosting cannot take the fill (no counterparts). Records
+   :eve-collections :on/:off in the boot state for the report."
+  [eve-collections]
+  (memory/set-fill! false)
+  (let [forced (some? eve-collections)
+        want (if forced (boolean eve-collections) (= :clj (host/host-name)))]
+    (when want
+      (when-not (memory/hosting-registered?)
+        (host/try-all (fn [] (host/eval-form '(require (quote cohost.memory-eve))))))
+      (if (memory/hosting-registered?)
+        (do (memory/install-fill!)
+            (memory/set-fill! true))
+        (when forced
+          (throw (ex-info "cohost.boot: :eve-collections is NOT-YET on this seat -- no Eve hosting loads here"
+                          {:type :cohost.boot/eve-collections-not-yet
+                           :host (host/host-name)})))))
+    (swap! state assoc :eve-collections (if (memory/fill-on?) :on :off)))
+  nil)
+
 (defn boot!
   "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
    (default resources/cohost/clojure-1.12.0); :files -- paths under it;
    :profile? -- record phase timers (off unless true; the off path does not
-   call :nano-time)."
+   call :nano-time); :host-lacks -- names to boot as if the host lacked
+   them (the exercise path for a fill, e.g. the thread layer's);
+   :eve-atoms -- turn on Eve's atom layer for the booted program
+   (unit 5; needs the seat's Eve hosting installed);
+   :eve-collections -- force the Eve collection fill on (true) or
+   off (false); absent, it is the seat's default (unit 4)."
   ([] (boot! {}))
-  ([{:keys [root files verbose profile? record?] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
+  ([{:keys [root files verbose profile? record? host-lacks eve-atoms eve-collections] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
    (reset! snapshot-log (when record? []))
+   (swap! state assoc :eve-atoms (boolean eve-atoms)
+                      :host-lacks (into (set host-lacks)
+                                        (concat (host/core-lacks)
+                                                (when eve-atoms atom-surface-names))))
+   (install-collection-fill! eve-collections)
    (snap! {:op :begin :opts {:root root :files files}})
    (if profile?
      (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
@@ -960,11 +1101,23 @@
                (run-companions)
                (swap! (:profile @state) assoc-in [:walls :companion] (- (host/nano-time) t0))
                (swap! state assoc :profile-bucket prev))))))
+     ;; Eve's thread layer fills the concurrency names this host's core
+     ;; lacked (policy/thread-names) before libraries or user code can
+     ;; call them; the scan then wraps the fill's macros (future,
+     ;; pvalues) like any other booted macro
+     (install-thread-layer! report)
+     ;; Eve's atom layer (unit 5), when the boot opts ask for it:
+     ;; the registry is minted and the booted namespaces published
+     ;; before libraries or user code can intern or create atoms
+     (install-atom-layer! ctx report eve-atoms)
+     (install-http-layer! report)
+     (scan-macros! ctx)
      (install-host-reducers!)
      (reset! (:booted? ctx) true)
      (let [r (assoc @report
                     :rewrite-misses (rw/misses ctx)
-                    :host-name (host/host-name))]
+                    :host-name (host/host-name)
+                    :eve-collections (:eve-collections @state))]
        (when t-boot
          (swap! (:profile @state) assoc :boot-wall (- (host/nano-time) t-boot)))
        (swap! state assoc :report r)
@@ -1279,6 +1432,21 @@
               (host/alias! cur a t)
               [nil cur]))))
 
+(defn install-runtime-loader!
+  "Unit 8 (cljs seat): require and use called as functions -- anywhere a
+   top-level directive is not, inside a try or a fn -- load through this
+   loader, as the directive does. ClojureScript's own require, which the
+   seat took from its host, compiles to goog.require, which finds no
+   library the loader did not compile into the image: the namespace never
+   loaded and the call returned as though it had (measured: the probe's
+   (try (require 'clojure.spec.alpha) ...) printed OK and the later eval
+   failed reading clojure.spec.alpha off undefined). Called by the cljs
+   entry points after boot; other seats keep their host's require."
+  []
+  (host/intern! core-ns 'require (fn [& args] (require! (host/current-ns) args false) nil))
+  (host/intern! core-ns 'use (fn [& args] (require! (host/current-ns) args true) nil))
+  nil)
+
 (defn- core-var [sym]
   (or (host/interned-var core-ns sym) (host/resolve-core sym)))
 
@@ -1338,6 +1506,35 @@
              (scan-macros! c (host/current-ns))
              @first-error)))))))
 
+(defn- lib-fill
+  "{name fn} a layer gives library lib in place of its source, where this
+   seat has no source for it and no java.* surface of its own (the JVM and
+   jolt keep their own clojure.java.io), or nil. cohost.http fills
+   clojure.java.io when Eve's HTTP leaves are in."
+  [lib]
+  (when (and (not (host/interop-passthrough?)) (http/available?))
+    (get http/lib-fills lib)))
+
+(defn install-lib-fill!
+  "Intern lib's fill into the namespace lib boots into, as a loaded library
+   (its references renamed to that namespace). -> the namespace."
+  ([lib] (install-lib-fill! lib (get http/lib-fills lib)))
+  ([lib fill]
+   (let [target (stock-ns-name lib)]
+     (snap! {:op :lib-fill :lib lib})
+     (host/ensure-bare-ns! target)
+     (doseq [[nm f] fill] (host/intern! target nm f))
+     (swap! (:renames (ctx)) assoc (str lib) (str target))
+     (swap! (:loader-nses (ctx)) conj (str target))
+     (swap! state assoc-in [:libs lib] {:ns target :status :layer :ok (count fill) :error 0 :skipped 0})
+     target)))
+
+(defn snap-lib-fill!
+  "install-lib-fill! of the recorded boot."
+  [lib]
+  (install-lib-fill! lib)
+  nil)
+
 (defn load-lib!
   "Load lib (a symbol) once: its source from a source root, booted into its own
    namespace, or else the host's own require. -> the namespace to alias."
@@ -1378,10 +1575,15 @@
            (swap! state assoc :loading lib)
            (snap! {:op :lib-end :lib lib :entry (get-in @state [:libs lib]) :data (snap-state nil)})
            (swap! state assoc :loading outer)
+           ;; unit 5: the loaded namespace's interns join the
+           ;; registry (a no-op unless the atom fill is in force)
+           (atom-layer/publish-namespace! target)
            target)
-         (do (host/require-host! lib)
-             (swap! state assoc-in [:libs lib] {:ns lib :status :host})
-             lib)))))))
+         (if-let [fill (lib-fill lib)]
+           (install-lib-fill! lib fill)
+           (do (host/require-host! lib)
+               (swap! state assoc-in [:libs lib] {:ns lib :status :host})
+               lib))))))))
 
 (defn lib-report
   "{lib {:ns :status :ok :error :skipped :entries}} of every library loaded."
@@ -1504,6 +1706,21 @@
 
 (defn snap-scan! "scan-macros! of ns-sym." [ns-sym]
   (scan-macros! (ctx) ns-sym)
+  nil)
+
+(defn snap-thread-layer!
+  "install-thread-layer! of the recorded boot: the fills interned fn
+   values (no forms), so the replay redoes the fill itself. The
+   report snap-end! restores is the recorded one, so the replay's
+   own record! calls into the snapshot report are not what prints."
+  []
+  (install-thread-layer! @snap-report)
+  nil)
+
+(defn snap-http-layer!
+  "install-http-layer! of the recorded boot (as snap-thread-layer!)."
+  []
+  (install-http-layer! @snap-report)
   nil)
 
 (defn snap-is! "The shim's instance test for class token c." [c]

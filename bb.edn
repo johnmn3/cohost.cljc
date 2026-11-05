@@ -36,6 +36,13 @@
             (apply babashka.process/shell {:extra-env (jank-gc-env)} args))
           (defn jank! [& args]
             (apply jank-shell (concat [jank-bin] (jank-o) args)))
+          ;; unit 8: the -Sdeps of cohost's Node cljs builds -- Eve's hosts.edn
+          ;; :cljs row on the classpath (cohost.hosts.cljs-eve is in them)
+          (defn eve-cljs-sdeps []
+            (load-file "dev/eve-cljs/eve_paths.clj")
+            (when-not (babashka.fs/exists? ((resolve 'eve-paths/eve-checkout-dir) "."))
+              (babashka.process/shell "clojure" "-P" "-M:cljs"))
+            ((resolve 'eve-paths/eve-cljs-build-sdeps) "." nil))
           (defn jank-snapshot-path []
             (load-file "dev/perf/jank_snapshot_key.clj")
             ((resolve 'fresh-path))))
@@ -59,9 +66,9 @@
                      :task (let [snap (do (load-file "dev/perf/lpy_snapshot_ensure.clj") ((resolve 'lpy-ensure!)))]
                              (shell "basilisp" "run" "-p" snap "-p" "src" "dev/perf/lpy_snapshot_run.lpy" "--snapshot"))}
   boot:jvm  {:doc "JVM Clojure as the host (the reference adapter)"
-             :task (shell "clojure" "-M" "-m" "cohost.run")}
+             :task (shell "clojure" "-M:eve" "-m" "cohost.run")}
   boot:cljs {:doc "ClojureScript, self-hosted on Node: compile the bootstrap build, then run it"
-             :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c")
+             :task (do (shell "clojure" "-Sdeps" (eve-cljs-sdeps) "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c")
                        (shell "node" "target/cljs-node/main.js"))}
   boot:browser {:doc "ClojureScript, self-hosted in Chromium: compile the browser build, serve it, run it under Playwright"
                 :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-browser.edn" "-c")
@@ -109,7 +116,7 @@
                        (shell "basilisp" "run" "-p" "src" "-c"
                               (str "(require 'cohost.run) (apply cohost.run/-main \"--bench\" " (pr-str (vec (cons (git-rev) *command-line-args*))) ")")))}
   bench:cljs {:doc "cohost.bench on self-hosted ClojureScript in Node (target/bench-cljs.edn)"
-              :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c")
+              :task (do (shell "clojure" "-Sdeps" (eve-cljs-sdeps) "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c")
                         (apply shell "node" "target/cljs-node/main.js" "--bench" (git-rev) *command-line-args*))}
   bench:browser {:doc "cohost.bench on self-hosted ClojureScript in Chromium (target/bench-chromium.edn)"
                  :task (do (shell "clojure" "-M:cljs" "-m" "cljs.main" "-co" "cljs-browser.edn" "-c")

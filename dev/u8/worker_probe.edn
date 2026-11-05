@@ -1,0 +1,9 @@
+{:main u8-worker-probe
+ :target :nodejs
+ :output-to "target/u8-probe/main.js"
+ :output-dir "target/u8-probe"
+ :optimizations :none
+ :foreign-libs [{:file "dev/eve-cljs/bridges/node_fs.js" :provides ["node:fs"] :global-exports {"node:fs" __eve_node_fs}}
+                {:file "dev/eve-cljs/bridges/node_os.js" :provides ["node:os"] :global-exports {"node:os" __eve_node_os}}
+                {:file "dev/eve-cljs/bridges/node_path.js" :provides ["node:path"] :global-exports {"node:path" __eve_node_path}}
+                {:file "dev/eve-cljs/bridges/node_worker_threads.js" :provides ["node:worker_threads"] :global-exports {"node:worker_threads" __eve_node_worker_threads}}]}

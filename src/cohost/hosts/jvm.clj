@@ -88,6 +88,34 @@
                          [(symbol (.getClassName el)) (symbol (.getMethodName el))
                           (.getFileName el) (.getLineNumber el)])
                        (drop-while ctor-frame? (.getStackTrace ^Throwable e))))))
+   ;; the thread leaves under cohost.thread (Eve's thread layer): a real
+   ;; java.lang.Thread runs the thunk; workers are daemons so a process
+   ;; whose work is done can exit (stock Clojure holds the process open
+   ;; with non-daemon agent threads until shutdown-agents; the layer's
+   ;; contract is the conveyed-binding shape, not the exit policy)
+   :thread-spawn (fn [thunk]
+                   (let [t (Thread. ^Runnable (fn [] (thunk)))]
+                     (.setDaemon t true)
+                     (.start t)
+                     t))
+   :thread-self (fn [] (Thread/currentThread))
+   ;; a doorbell is an atom holding its signal, used as its own monitor
+   :doorbell (fn [] (atom false))
+   :doorbell-wait (fn [db timeout-ms]
+                    (locking db
+                      (if @db
+                        true
+                        (do (.wait ^Object db (long (or timeout-ms 0)))
+                            (boolean @db)))))
+   :doorbell-signal (fn [db]
+                      (locking db
+                        (reset! db true)
+                        (.notifyAll ^Object db)
+                        true))
+   ;; the running thread's binding frame as a plain {var value} map: the
+   ;; layer's conveyance captures with this and restores through the
+   ;; adapter's :with-thread-bindings!
+   :thread-bindings (fn [] (into {} (clojure.lang.Var/getThreadBindings)))
    :nano-time (fn [] (System/nanoTime))
    :current-time-millis (fn [] (System/currentTimeMillis))
    :math-ceil (fn [x] (Math/ceil x))
@@ -100,6 +128,31 @@
    :format (fn [fmt & args] (apply format fmt args))
    :sort-array! (fn [arr cmp] (java.util.Arrays/sort arr cmp) arr)
    :close! (fn [x] (.close x))
+   ;; a JVM array (byte[] from .getBytes or a java.net.http body, Object[]
+   ;; from to-array): Clojure 1.12 has no array? of its own, and without
+   ;; this the shim read none as an array -- (String. bytes "UTF-8") threw
+   ;; its ClassCastException on a byte[] (measured, unit 9)
+   :array? (fn [x] (and (some? x) (.isArray (class x))))
+   ;; cohost.http's bodies as java.io's own byte streams (unit 9): a body a
+   ;; program reads through slurp, clojure.java.io or .read is the host's
+   ;; InputStream, as the JDK's HttpURLConnection hands it out
+   :byte-streams (fn [] {:input (fn [^bytes bs] (java.io.ByteArrayInputStream. bs))
+                         :output (fn [] (java.io.ByteArrayOutputStream.))
+                         :output-bytes (fn [^java.io.ByteArrayOutputStream o] (.toByteArray o))
+                         :bytes? bytes?
+                         ;; Ring's bodies (cohost.ring): text and base64 to bytes and back,
+                         ;; and the whole of an InputStream or a File
+                         :text-bytes (fn [^String s] (.getBytes s "UTF-8"))
+                         :b64-bytes (fn [^String s] (.decode (java.util.Base64/getDecoder) s))
+                         :bytes-b64 (fn [^bytes bs] (.encodeToString (java.util.Base64/getEncoder) bs))
+                         :read-all (fn [x] (cond (instance? java.io.File x) (java.nio.file.Files/readAllBytes (.toPath ^java.io.File x))
+                                                 (instance? java.io.InputStream x) (with-open [^java.io.InputStream in x] (.readAllBytes in))
+                                                 :else nil))})
+   ;; the host's own java.net classes, where cohost.http has no leaves
+   :native-ctor (fn [c] (when-let [k (try (Class/forName (str c)) (catch Exception _ nil))]
+                          (fn [& args] (clojure.lang.Reflector/invokeConstructor k (to-array args)))))
+   :native-static (fn [c m] (when-let [k (try (Class/forName (str c)) (catch Exception _ nil))]
+                              (fn [& args] (clojure.lang.Reflector/invokeStaticMethod k (str m) (to-array args)))))
    :index-of (fn [s sub from] (.indexOf ^String s ^String sub (int from)))
    :transient? (fn [x] (instance? clojure.lang.ITransientCollection x))
    :lazy-seq? (fn [x] (instance? clojure.lang.LazySeq x))
