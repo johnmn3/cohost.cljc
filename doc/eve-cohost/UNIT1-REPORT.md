@@ -99,7 +99,16 @@ answers by predicate).
   pass across 12 clojure.* libraries; boot errors 0** — no
   regression; on this boot the concurrency names come from the host
   and the fill does not fire.
-- Jank AOT gate (`bb boot:jank`): see STATUS.md for the result line.
+- Jank AOT gate (`bb boot:jank` on J, j.slaa.us; the local box
+  killed the -O3 compile under contention twice): the snapshot
+  AOT-compiles with `cohost.thread` and the new shim code in it —
+  **boot errors 0; battery: 219/221; libraries: 62/62**. The 2 FAIL
+  rows are the standing jank-only pair, verbatim: `subs count nth
+  first last butlast` ("ERR Unterminated vector.") and `Character
+  outside ASCII` ("ERR Unexpected end of file."). One analyzer
+  lesson banked on the way: jank cannot resolve a reader-conditional
+  catch class inside a macro-expanded form, so the layer's
+  catch-everything sites go through `cohost.adapter/try-all`.
 
 ## Named distances (unit 1 remainders)
 

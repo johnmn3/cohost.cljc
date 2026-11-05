@@ -76,10 +76,20 @@ Seat for this unit: JVM. The shape is portable: one implementation in
   libraries 62/62, boot errors 0** — no regression.
 - Full account: doc/eve-cohost/UNIT1-REPORT.md.
 
-## In progress
+## Done (final)
 
-- Jank AOT gate (`bb boot:jank`): the snapshot is recompiling with
-  the new shim + cohost.thread in it (the M-6 gate for new shim code).
+- Jank AOT gate (`bb boot:jank` on J, j.slaa.us — the local box
+  killed the -O3 compile under contention): **boot errors 0,
+  battery 219/221, libraries 62/62**; the 2 FAIL rows are the
+  standing jank-only pair, verbatim. The layer's catch sites use
+  `host/try-all` (jank's analyzer rejects a reader-conditional catch
+  class inside a macro-expanded form).
+
+Unit 1 is complete: shim Thread/executor/CountDownLatch entries are
+backed by Eve's thread layer, and future/agent/pmap run through them
+on the JVM seat. Remainders are named in UNIT1-REPORT.md (bounded
+pool, no interrupt leaf, map equality, `seque` unfilled, other seats'
+leaves are unit 2).
 
 ## Named distances (unit 1)
 
