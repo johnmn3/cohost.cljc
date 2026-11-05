@@ -155,6 +155,14 @@
                         (slurp bad-macro-report-path)))
 (def bad-macro-full (str bad-macro-text "\n" bad-macro-report))
 
+;; #13's second probe: a macro whose BODY throws, called from -e.
+;; Its attribution must reach the PRINTED message (stderr carries it,
+;; and the report file's :clojure.main/message repeats it) -- a needle
+;; over the whole report file would also match the host compiler's
+;; own wrapper message riding in :via, which is not the seam's
+;; attribution.
+(def body-throw (run-e "(defmacro m [x] (throw (ex-info \"bad\" {}))) (m 1)"))
+
 ;; U7: integer divide by zero, both spellings
 (def div-run (run-e "(/ 5 0)"))
 (def quot-run (run-e "(quot 5 0)"))
@@ -309,18 +317,25 @@
                 "; profile exit " (:exit profile-run)
                 ", jank.profile written: " (boolean profile-made?))))
 (record! 12 "SKIP" "owned by U4c (gdb break-on-throw)")
-;; #13 macro-expansion error: the load fails and the report identifies
-;; the macro call site (process output + the run's report file)
+;; #13 macro-expansion error: the bad load refuses, and the error is
+;; attributed to the expansion. The needles are per-probe, matching
+;; what each host can produce: jank's analyzer prints "Expanded from
+;; this macro" for the fixture (an unresolved symbol in an expansion);
+;; a macro whose body throws is reported as a macroexpansion, the
+;; phase the loader's expansion wrapper attaches (stock Clojure
+;; attributes the body-throw case and not the fixture).
 (record! 13
          (if (and (not= 0 (:exit bad-macro))
                   (or (includes? bad-macro-full "Expanded from this macro")
-                      (includes? bad-macro-full "macroexpanding")))
+                      (includes? (:err body-throw) "macroexpanding")))
            "PASS"
            "FAIL")
-         (str "exit " (:exit bad-macro) "; "
-              (cond (includes? bad-macro-full "macroexpanding") (str "matched " (pr-str "macroexpanding"))
-                    (includes? bad-macro-full "Expanded from this macro") (str "matched " (pr-str "Expanded from this macro"))
-                    :else (first-real-line (:err bad-macro)))))
+         (str "bad-macro exit " (:exit bad-macro)
+              "; body-throw exit " (:exit body-throw)
+              "; attribution: "
+              (cond (includes? bad-macro-full "Expanded from this macro") (str "matched " (pr-str "Expanded from this macro") " (fixture)")
+                    (includes? (:err body-throw) "macroexpanding") (str "matched " (pr-str "macroexpanding") " (body-throw message)")
+                    :else (str "none; body-throw stderr: " (first-real-line (:err body-throw))))))
 ;; #14 exit codes, the research checklist's three cases (F6): an
 ;; uncaught -e throw exits 1; -X with a missing fn prints the message
 ;; and exits nonzero; a script calling (System/exit 3) exits 3

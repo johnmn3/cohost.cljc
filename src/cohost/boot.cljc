@@ -93,15 +93,34 @@
 ;; ---------------------------------------------------------------------------
 ;; macros: rewrite what they emit
 
+(defn- macro-expansion-error
+  "The wrapper a throw from a macro fn is rethrown as: an ex-info
+   carrying clojure.main's macroexpansion data -- the phase, the
+   macro's symbol (the call form's head), the call form's source,
+   line and column -- with the macro's own error as its cause, so
+   the report names the expansion (its triage prints the phase)
+   instead of a bare execution error at the caller."
+  [form cause]
+  (let [m (meta form)]
+    (host/ex-info* nil
+                   (cond-> {:clojure.error/phase :macroexpansion
+                            :clojure.error/symbol (first form)}
+                     (:file m) (assoc :clojure.error/source (:file m))
+                     (:line m) (assoc :clojure.error/line (:line m))
+                     (:column m) (assoc :clojure.error/column (:column m)))
+                   cause)))
+
 (defn wrap-macro [ctx f]
   ;; args: &form and &env, then the macro's own. basilisp passes &env first:
   ;; a wrapped macro (core.clj's, or one its defmacro made) takes [&form &env
   ;; ...], so it gets them in that order (&form is a list, &env a map or nil).
   ;; The expansion is rewritten knowing the locals of &env: a call of a local
-  ;; named like a core fn is no call of the core fn.
+  ;; named like a core fn is no call of the core fn. A throw from the macro
+  ;; fn itself is rethrown as macro-expansion-error's attributed ex-info.
   (fn [& args] (let [[a b & more] args
                      [form env] (if (and (map? a) (not (map? b))) [b a] [a b])
-                     out (apply f form env more)]
+                     out (host/try-all (fn [] (apply f form env more))
+                                       (fn [e] (throw (macro-expansion-error form e))))]
                  (if host/*raw-macro-output* out (host/code-form (rw/rewrite ctx out {:locals (host/env-locals env)}))))))
 
 (defn ^:export rewrite-output
