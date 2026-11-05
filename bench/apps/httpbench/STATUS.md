@@ -123,3 +123,28 @@
   .../target/httpbench/run (new) is in the log — the exe is named
   "run" (that also identifies Nov 4's 18:20 binary as a build product
   of this same path).
+
+## 2026-11-05 03:11 ET — BUILD 7: RUNNING, step 1 of 4 (AOT ensure), ~19 min in
+- State: RUNNING on this box (launched 02:52 ET, detached, log
+  bench/apps/httpbench/build7.log). Not finished, not failed.
+- Done: step 0.5 (the fix's new step) — JANK-EXE-CPP 7 objects
+  (archive + record shared lib); record-lib/libcpp.so exists.
+- NOW: step 1, the AOT ensure. That is ONE jank invocation —
+  `jank --module-path src compile-module cohost.run -O3` — which
+  recompiles the whole clojure+cohost module graph into
+  target/jank-aot/_cache/<key>/ (all-or-nothing: recompile! deletes
+  the tree and the stamp is written only at the end). 6 objects
+  banked + 1 in flight (cohost/policy.o the newest finished). The
+  build log prints nothing during this step by design (build_jank
+  logs only at step boundaries; the ensure prints AOT-DIR when
+  done) — the log's quiet since 02:56 is this step, not a hang: the
+  clang children are accumulating CPU and objects are landing.
+- Why slow: box contention (load ~13 at this writing: the 1BRC
+  lane, eve-jank tests, and two long wasmtime processes are all
+  live). Memory is currently OK (~2.7 GB available).
+- Still ahead: step 2 record (the step the fix changes — first real
+  test of -L/-l in situ), step 3 emit, step 4 the -O3 static
+  compile + link. On a green JANK-EXE-BUILT: loopback smoke, then
+  jank -X:test, per the spec order.
+- J remains the final gate's (its snapshot still in flight at
+  08:07 UTC; gate's JVM check reported 10/14 PASS 0 FAIL).
