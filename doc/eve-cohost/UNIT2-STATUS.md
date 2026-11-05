@@ -146,3 +146,14 @@ banks the gate state from J's ~/u2-gate-logs directly:
   Character outside ASCII); libraries 62/62. AOT cache holds 15 files.
 - Remaining: the probe row, then the cljs half (real Eve SAB slab
   atom). The hang-hunt diag scripts in dev/ are untracked scratch.
+
+## Continuation lane pickup, 2026-11-05 ~11:15 AM ET
+
+The previous lane went silent (~24 min, two coordinator steers
+unactioned) and was closed. A fresh continuation lane picks up here
+at tip 768aa52 in a new worktree (~/workspace/wt/eve-cohost-u2-cont).
+Verified at pickup: remote tip 768aa52 (ls-remote); AOT gate state as
+banked above stands (the code at this tip is unchanged since the
+10:48 AM gate run on J). Remaining, in order: (1) the probe row on
+the jank seat, (2) the cljs half on real Eve (SAB slab atom), (3)
+final gates + UNIT2-REPORT.md.
