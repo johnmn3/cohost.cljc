@@ -146,3 +146,33 @@ JVM runner re-check after (must stay 10/14, #13 PASS).
   needed by #13 on either host; the general (ex-info nil ...) hazard
   in cohost's own compiled code, this being its only site).
 - Status gate line appended to doc/debug-seam-impl-plan.md.
+
+## 2026-11-05 01:30 ET — UNIT 2 (#9 AOT exit 0): design read, implementing
+
+- Gate probes' measurement (their report, read firsthand): AOT route
+  bb build:jank -> cohost.build-jank/build!; generated app-main
+  (jank_snapshot_emit.clj) is (boot-from-snapshot! {}) (make-user-ns!)
+  (apply <app>/-main args) -- no report wrapper; jank's generated
+  main prints the escape as a #error value and exits 0.
+- The launcher's app-main instead applies cohost.cli/-main, whose
+  run-cli! wraps the run in host/try-all -> report-error! -> exit 1.
+- Fix shape (cohost layers only):
+  1. cli.cljc gains a public AOT entry run-app-main!: resets
+     cli-config to {:report "file" :report-dir <host temp dir>} (the
+     launcher's config values; bin/cohost sets report-dir to
+     java.io.tmpdir) and (exit! (run-cli! {:inits [] :main {:type
+     :main :ns ... :args ...}})) -- run-main! resolves the app
+     through load-lib!'s snapshot registry, so the whole report
+     contract is reused, not duplicated. Temp dir on jank via a
+     cohost_io cpp/raw helper (TMPDIR, else /tmp), beside cli's
+     existing cpp/raw block.
+  2. jank_snapshot_emit.clj: generated app-main requires [cohost.cli]
+     (jank compiles it from repo src at build step 4, as the launcher
+     build already does) and ends with (cohost.cli/run-app-main!
+     (quote <m>) args).
+  3. build_jank.clj unchanged; its input key already covers
+     cli.cljc (src/cohost) and the emit script, so stale exes rebuild.
+- Verify: bb build:jank dev/cli-demo seam.throwmain throwmain in this
+  worktree (detached; gateprobes measured ~37 min under contention),
+  run the binary from a scratch dir, quote exit + lines; JVM runner
+  re-check (cli.cljc is loaded by every JVM session).
