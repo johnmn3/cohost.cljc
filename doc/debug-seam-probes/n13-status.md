@@ -87,3 +87,41 @@
 - Next when the snapshot lands: probe seam.throwmacro + seam.badmacro
   via bin/cohost :jank -m in dev/cli-demo (exact gate shape), read
   stderr + report EDN -- answers candidate (a)/(b)/(c) above.
+
+## 2026-11-05 01:05 ET — mechanism FOUND by probe bisection; fix applied
+
+Snapshot built on J in 531,474 ms. Gate shape reproduced on this base:
+throwmacro exit 1, headline "a native C++ exception" (report via =
+  the {:cohost/native true} sentinel only; the macro's "bad" ex-info
+  nowhere in the chain). badmacro fine (CompilerException headline).
+
+Bisection (all REPL-scale, through the built launcher):
+- P2: host/try-all catches a directly thrown ex-info on jank. OK.
+- P4: fixture-style macro var IS :cohost/wrapped on jank. OK.
+- P13: wrapped call of a non-throwing macro works. P16: the macro
+  body's own catch sees a clean ExceptionInfo "bad" {:k 2}.
+- P17: the REAL wrap-macro with a hand throwing fn reproduces the
+  escape exactly (std::exception "An object of type
+  `persistent_string` was expected here, but a `nil` was provided").
+- P19: hand fn throws an ex-info ALREADY carrying the phase ->
+  expand-error pass-through -> caught cleanly. So try-all, the
+  handler, and (ex-data e) are all fine; the broken step is
+  expand-error's CONSTRUCTION.
+- Root cause: expand-error builds (ex-info nil {...} e). In cohost's
+  own compiled code the plain ex-info reference reaches the host's
+  NATIVE constructor; jank's native ex-info rejects a nil message
+  (jank_host.jank:2726 says so in its own comment) and throws a
+  std::exception out of the handler -- the next try-all upstream
+  converts it to the :cohost/native sentinel and the attribution is
+  lost. User code never hits this: the booted ex-info routes through
+  the adapter :ex-info cap, which stores "" and marks
+  :cohost/nil-message. expand-error is the ONLY (ex-info nil ...) in
+  src/ (grep-verified).
+- NOT the doors (they were never in this path) and NOT candidate
+  (a)/(b)/(c) as framed: the wrapper ran; its construction died.
+
+Fix (boot.cljc, expand-error): construct via host/ex-info* (the
+adapter cap) instead of plain ex-info. On the JVM the cap IS plain
+ex-info (nil message preserved); on jank it is the nil-safe wrapper.
+Paren check OK (133 forms). Rebuild + probe + full runner on J next;
+JVM runner re-check after (must stay 10/14, #13 PASS).
