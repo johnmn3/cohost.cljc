@@ -1255,21 +1255,30 @@
         ;; earlier doors (a caught C++ value's type does not survive a
         ;; fn boundary, analyze/invalid-cpp-call; and the cohost_shim_err
         ;; namespace the in-clause read named is visible in no other
-        ;; module). A jank error keeps the class try-all gives it
-        ;; (Compiler$CompilerException); a std::exception becomes a
-        ;; plain java.lang.Exception. A chain that matches no clause
-        ;; rethrows the translated exception, now an ordinary one.
-        ;; Probes: doc/debug-seam-probes/native-report.md.
+        ;; module). Two name disciplines, both measured at the snapshot
+        ;; record (3 boot errors): the constructor is the shim's
+        ;; qualified new-ExceptionInfo -- plain ex-info does not resolve
+        ;; in every emitted context (stock core's boot analyzes
+        ;; deref-future before ex-info is interned; the shim module is
+        ;; below core) -- and the class rides in the data map as a
+        ;; QUOTE FORM: a bare symbol there is analyzed as a class
+        ;; reference and resolves nowhere. A jank error keeps the class
+        ;; try-all gives it (Compiler$CompilerException); a
+        ;; std::exception becomes a plain java.lang.Exception. A chain
+        ;; that matches no clause rethrows the translated exception,
+        ;; now an ordinary one. Probes: doc/debug-seam-probes/
+        ;; native-report.md.
         door-clauses (fn [e chain]
                        (when (host/cpp?)
-                         (let [n (gensym "e__native")]
+                         (let [n (gensym "e__native")
+                               ctor (ctor-sym 'clojure.lang.ExceptionInfo)]
                            [(list 'catch 'cpp/jank.error_ref n
-                                  (list 'let* [e (list 'ex-info (list 'cpp/.-message (list 'cpp/.get n))
-                                                       {:cohost/class 'clojure.lang.Compiler$CompilerException})]
+                                  (list 'let* [e (list ctor (list 'cpp/.-message (list 'cpp/.get n))
+                                                       {:cohost/class (list 'quote 'clojure.lang.Compiler$CompilerException)})]
                                         chain))
                             (list 'catch 'cpp/std.exception n
-                                  (list 'let* [e (list 'ex-info (list 'cpp/.what n)
-                                                       {:cohost/class 'java.lang.Exception})]
+                                  (list 'let* [e (list ctor (list 'cpp/.what n)
+                                                       {:cohost/class (list 'quote 'java.lang.Exception)})]
                                         chain))])))
         catch-clauses
         (if own?
