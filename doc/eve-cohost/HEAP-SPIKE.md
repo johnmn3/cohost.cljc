@@ -13,6 +13,11 @@
 > argued (§P3). The shape the exploration supports is in §2;
 > three questions are genuinely John's (§3).**
 >
+> POSTSCRIPT (§4): Q-B and Q-C were resolved by John's
+> ruling of 2026-11-05 ~10:05 ET — no counterparts
+> anywhere; the counterpart-domain language in §2 and
+> §P4 is superseded by it. Q-A remains open.
+>
 > RULINGS UNDER TEST — (1) the heap ruling (John,
 > 2026-11-05 ~09:45 ET; MEMORY-PLAN §8): the heap Clojure
 > sees on cohost is implemented on top of an Eve atom.
@@ -683,3 +688,28 @@ UNIT3-STATUS.md (`muse/eve-cohost-impl-u3` @ e93971d);
 `vs/docs/contention-domains.md`, `vs/docs/memory-model.md`,
 `vs/src/vs/kernel/wasm/program_runtime.vs`,
 `AGENTS.md` (~/src/atom.broker).*
+
+## 4. Postscript — Q-B and Q-C resolved (John, 2026-11-05 ~10:05 ET)
+
+John: "We drop the counterpart idea for everything."
+
+- **Q-B is answered: NO.** Counterpart domains on the
+  no-Eve seats are not an acceptable fulfillment of the
+  heap ruling. No substitute domain is built for those
+  seats; they wait for Eve.
+- **Q-C is answered: NO counterpart on the JVM seat.**
+  The path is Eve-side work to bring Eve's JVM
+  collections to heap-grade performance. §2's realization
+  of the JVM heap as a counterpart domain is superseded;
+  the JVM seat is NOT-YET until the Eve-side work lands.
+- **Superseded by this ruling:** the "counterpart domain"
+  language in §2 (shape item 2) and §P4 (the per-seat
+  table and its verdict discussion), and the "realized
+  per-seat" amendment this spike proposed for MEMORY-PLAN
+  units 4/5. Realization is Eve or blocked, never
+  substitute. The spike's measurements and findings stand
+  unchanged — this postscript records the decision they
+  fed; it does not revise the exploration.
+- **Q-A is untouched** and remains genuinely open.
+- Banked in MEMORY-PLAN §9, which also strikes the
+  COUNTERPART category from the plan's mapping table.
