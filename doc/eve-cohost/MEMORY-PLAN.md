@@ -505,9 +505,17 @@ host before it ever becomes a seat's default.
   `HttpRequest` / `HttpResponse` (the modern default,
   Java 11+); `java.net.URL` / `HttpURLConnection` (the
   legacy default — the path `clojure.java.io` rides). The
-  server side is named as a question of scope for the
-  unit's design pass (`java.net.ServerSocket` vs Eve's
-  HTTP server seam), not pre-decided here. Measured
+  server side is decided (operator, 2026-11-05 ~11:32
+  ET): a **Ring implementation that runs on all Eve
+  target hosts** — Ring-spec handlers (request/response
+  maps) served by Eve's HTTP server layer, portable per
+  seat, so a Ring application runs unchanged on every
+  Eve target host. The server substrate is measured, not
+  hypothetical: the httpbench capstone (branch
+  `muse/httpbench`, report on `muse/cohost-reports`)
+  already ran a uWebSockets HTTP/1.1 server under cohost
+  on the jank seat at 84,879 req/s (J, 100k
+  requests/run, c=100, median of 3). Measured
   current state (verified firsthand 2026-11-05): the shim
   today carries only `java.net.URLEncoder` / `URLDecoder`
   — the entire java.net HTTP surface is otherwise
@@ -521,7 +529,10 @@ host before it ever becomes a seat's default.
   ride these Java APIs — `clojure.java.io` over `URL`, and
   an `HttpClient` round trip against a local server —
   answer identically on the JVM seat and on a non-JVM
-  seat, with the program unchanged. Standing batteries
+  seat, with the program unchanged. Server side: a
+  Ring-spec handler served by Eve's HTTP server layer
+  answers identically on every Eve target host, the
+  application unchanged. Standing batteries
   green.
 - **Dependencies.** Units 4 (collections) and 5
   (atoms/vars) land first; the work runs against Eve's
