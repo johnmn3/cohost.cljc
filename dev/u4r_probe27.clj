@@ -1,0 +1,10 @@
+;; u4r_probe27: copy of unit 4 dev/u4_probe27.clj (the eduction launch-shape probe), kept with the UNIT4 remainder report.
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter)
+(alias 'boot 'cohost.boot)
+(def mode (first *command-line-args*))
+(def report (boot/boot! (if (= mode "off") {:eve-collections false} {})))
+(boot/make-user-ns!)
+(println "mode:" mode "fill:" (:eve-collections report))
+(println "eduction:" (try (pr-str (boot/eval-str "(reduce + (eduction (filter odd?) [1 2 3 4 5]))"))
+                       (catch Throwable e (str "ERR " (.getMessage e)))))
+(println :done)

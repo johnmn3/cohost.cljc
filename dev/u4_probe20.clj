@@ -1,0 +1,21 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(alias 'memory 'cohost.memory)
+
+(def report (boot/boot! {}))
+(boot/make-user-ns!)
+(println "fill:" (:eve-collections report) "errors:" (clojure.core/count (:errors report)))
+(defn ev [label src]
+  (println label
+           (try (let [v (boot/eval-str src)] (str (pr-str v) " | " (type v) " | eve? " (memory/eve-backed? v)))
+                (catch Throwable e (str "ERR " (.getMessage e))))))
+(ev "vector 3:" "(vector 1 2 3)")
+(ev "vector 8:" "(vector 1 2 3 4 5 6 7 8)")
+(ev "vec of list:" "(vec (list 1 2))")
+(ev "hash-map:" "(hash-map :a 1)")
+(ev "into vector:" "(into (vector) (range 5))")
+(ev "assoc eve map:" "(assoc (hash-map) :a 1)")
+(ev "conj eve vec:" "(conj (vector 1 2 3 4 5 6 7) 8)")
+(ev "RT-vector:" "(cohost.shim/RT-vector 1 2)")
+(ev "list:" "(list 1 2)")
+(println :done)

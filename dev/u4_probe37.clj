@@ -1,0 +1,13 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(def report (boot/boot! {}))
+(boot/make-user-ns!)
+(boot/eval-str "(def u4-probe-x 1)")
+(defn ev [label src]
+  (println label (try (pr-str (boot/eval-str src))
+                      (catch Throwable e (str "ERR " (type e) " " (.getMessage e))))))
+(ev "var alone:" "(var u4-probe-x)")
+(ev "hash-map var key:" "(hash-map (var u4-probe-x) 5)")
+(ev "hash-map kw:" "(hash-map :a 5)")
+(ev "get var key:" "(get (hash-map (var u4-probe-x) 5) (var u4-probe-x))")
+(println :done)

@@ -1,0 +1,12 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(def report (boot/boot! {}))
+(boot/make-user-ns!)
+(defn ev [label src]
+  (println label (try (pr-str (boot/eval-str src))
+                      (catch Throwable e (str "ERR " (type e) " " (.getMessage e))))))
+(ev "var key form:" "(do (def u4-probe-x 1) (get (hash-map (var u4-probe-x) 5) (var u4-probe-x)))")
+(ev "ratio vec:" "(vector 1/2 2 3 4 5 6 7)")
+(ev "char vec:" "(vector \\a \\b \\c \\d \\e \\f \\g)")
+(ev "fn map:" "(hash-map :f (fn [x] (+ x 1)))")
+(println :done)
