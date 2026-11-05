@@ -52,3 +52,11 @@ Branch `agent1/eve-unit8-cljs-shared-heap` (cohost.cljc). All times US Eastern.
   into realm 1, completed there, JVM values; crossing program values all JVM-equal (Eve map print order
   differs; runner now compares as data).
 - Running: official probe row (bb dev/eve_probe.clj jvm cljs) + gate run 3.
+- Official probe row (logs/probe-row-jvm-cljs.log, bb dev/eve_probe.clj jvm cljs, program byte-
+  identical): jvm ok=23; **cljs ok=23 unsupported-shim=0 fail-other=0**; 22/23 lines equal the JVM's;
+  test-stacktrace prints each host's frame count (jvm 26, cljs 0) — named, not faked.
+- Battery regression found + fixed: boot:cljs went 218/221 (memoize case: core fns compiled before
+  the fill deref layer atoms with cljs.core/deref). cljs layer atom is now a record with IDeref.
+- Batteries: boot:cljs **219/221** (pristine pair: numeric tower; defmacro &form &env) + libraries
+  **62/62**; boot:jvm **221/221 + 62/62**; cli:check cljs **7/7 SAME**. jank installed (apt, jank's
+  PPA, 0.1-noble); `bb boot:jank` (AOT) running.
