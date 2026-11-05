@@ -263,3 +263,34 @@
   before printing anything. Never exercised before (no build had
   ever completed). Diagnosing now: minimal repro + backtrace;
   the fix lands in the app, rebuild on J, re-measure.
+
+## 2026-11-05 04:47 ET — bench fixed; config corrected to no-SSL; final gates running on J
+- BENCH SEGFAULT ROOT-CAUSED AND FIXED: gdb backtrace (core from
+  J, analyzed on this box) = hb_bench -> us_loop_run -> call to
+  address 0. The vendored loop.c calls the loop's pre/post
+  callbacks unconditionally; hb_bench passed nullptr for all three
+  (the server half uses uWebSockets' own Loop, which installs real
+  ones). Fix @ (native.cljc): no-op callbacks. Verified: 1,000
+  requests at c=10 -> 106,632 req/s, 0 errors, --json correct.
+- MEASUREMENTS, FIRST PASS (build-10 binary, J, load ~0.14):
+  c=100 median 83,107 req/s; c=1000 median 96,900 req/s; c=10000
+  median 56,460 req/s — all 0 errors over 100,000 requests each.
+  c=25000 (the cap row: 28,232 ephemeral ports): ~82k completed,
+  ~18k connect errors — past the single-IP practical cap; the last
+  clean row is 10,000. wrk reference vs the server: 74,519 req/s.
+- CONFIG CORRECTION (supersedes the build-8/9 note): the vendored
+  uSockets is the NO-SSL configuration (cpp/vendor/VERSIONS.md;
+  the spec says OpenSSL off). Every core-source ssl call site is
+  inside #ifndef LIBUS_NO_SSL, so the app now builds with
+  :defines [LIBUS_NO_SSL] and :libs [z] only — no openssl.c, no
+  OpenSSL link. The build-9/10 binary (OpenSSL-linked) is retired;
+  build 11 (no-SSL) is the deliverable and ALL final numbers are
+  re-measured on it.
+- measure.sh fixture fixed: its nginx reference body was a
+  hand-typed literal with 45 items; the bench validates 48 and
+  rejected all 100,000 nginx responses. The script now embeds the
+  byte-exact canonical 1024-byte body served by the app.
+- Gates on J: jank -X:test re-run on the fixed tree PASS (4/17/0,
+  exit 0); docs:check in flight, all PASS so far. This box cycled
+  twice during this stretch (builds 7's killer); all lane work is
+  on J / in git, nothing lost.
