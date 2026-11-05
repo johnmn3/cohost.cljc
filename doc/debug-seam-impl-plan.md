@@ -150,3 +150,4 @@ This section keeps only the sha and the gate line per unit.
 - U3(b) @ a01bc15 + runner correction @ 9a61e7f -- jvm 7/14 PASS, 1 FAIL (#3 #10 PASS via the live runner; #13 FAIL on the JVM host: the report carries no macro attribution -- probed by hand, see 9a61e7f; jank half pending B1), battery 221/221, libraries 62/62 SAME; jank compile of the emitted clauses pending B1.
 - U6 @ 5fde5fb -- runner #11 live (codegen + COHOST_JANK_PROFILE route in bin/cohost, doc/CLI.md); jvm #11 SKIP by design; jank gate pending B1.
 - U7 @ 4eed2e0 -- analysis only (doc/debug-seam-probes/u7-arithmetic.md): the zero guard already stands at three layers; runner #10 PASS on jvm; jank probe predicted PASS, pending B1.
+- B1 @ a0f168d -- jank gate 1 fix (:ex-trace cast); lane R gate 2 with R-0001: battery 219/221, libraries 62/62, debug-seam:check jank 3/14; local snapshot verification pending (env).
