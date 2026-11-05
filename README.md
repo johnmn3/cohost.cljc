@@ -189,7 +189,8 @@ The guide covers each part of using cohost; every command in it runs, as written
 
 Also: [the `cohost` command's reference](doc/CLI.md), [embedding cohost in a host
 program](doc/EMBEDDING.md), [performance](doc/PERF.md), [the measurements and host
-facts](doc/REPORT.md), [an out-of-the-box run on macOS and its paper cuts](doc/OOTB-MACOS.md).
+facts](doc/REPORT.md), [an out-of-the-box run on macOS and its paper cuts](doc/OOTB-MACOS.md),
+[httpbench, the C++ interop capstone on jank](doc/httpbench.md).
 
 ## Developing cohost
 
