@@ -128,3 +128,48 @@ in and run: depth 2 = `bin/cohost :jank -e` with the defn (predict:
 refuses at eval); depth 3 = the sp2 shape as a project (predict:
 silent 0 today, load failure after the fix), plus the call-in-try
 half (predict: catch fires after part (b), with the message).
+
+## Addendum (2026-11-04, post-B1): U3(b) outcome -- doors measured, removed; hole OPEN
+
+U3(a) is verified on jank: `-m seam.bad` exits 1 at load with "The
+symbol `this-var-does-not-exist` could not be resolved." (the report
+path, not a deferred call-time throw).
+
+U3(b)'s catch doors shipped in two shapes; both were measured
+against real jank compilation and removed:
+
+1. **Translation behind a fn boundary** (a01bc15: the clauses called
+   shim fns taking the caught C++ value). The AOT build dies in the
+   shim itself: `analyze/invalid-cpp-call` -- a caught value passed
+   as a fn argument arrives boxed as an `object_ref` and matches no
+   typed overload (`error_message(jank::error_ref)`). try-all never
+   crosses that boundary; it calls its helper inside the clause.
+2. **Message read in the clause** (7cb29ec + recording gate
+   f03e517). Compiles in a source-boot (JIT) session, and the
+   snapshot record compiles clean with the doors gated out of
+   recordings (record errors: 3 -> 0). But in the snapshot
+   LAUNCHER's process, a runtime-compiled stock try fails: "Unable
+   to find `cohost_shim_err` within the global namespace" -- the
+   shim arrives AOT-compiled, its cpp/raw was never evaluated in
+   that JIT session, and the namespace is visible only where a
+   cpp/raw declaration has been evaluated in-session. The doors
+   thus broke the default path's runtime compilation: worse than
+   the hole. Removed (the removal commit); rw-try is the plain
+   fold everywhere again.
+
+The lead for whoever closes it: read the message by MEMBER ACCESS
+on the caught value -- `(cpp/.-message e)` for an error_ref,
+`(cpp/.what e)` for a std::exception -- which compiles against
+jank/std types that are always visible, not against a
+seam-declared namespace. Unprobed in this codebase's idiom.
+
+Lane R's sharpening, attributed: the "a native C++ exception"
+message is adapter/try-all's `:default` arm (adapter.cljc), code
+this lane never touched and present on release7. Reproduced live
+on this branch's tree, 2026-11-04: `-m seam.throwmacro` on jank
+exits 1 reporting exactly "a native C++ exception" -- an ex-info
+thrown by a macro fn during JIT compilation crosses as a native
+C++ exception, not an object_ref, so no Clojure-level catch
+(try-all's, wrap-macro's, or a user's) ever holds it. The cause
+between R's two candidates stays undiagnosed; the phenomenon is
+release7's, not U1's and not this branch's.

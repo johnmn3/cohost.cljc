@@ -360,43 +360,6 @@
       (symbol (str "clojure." (subs head 7) (if (neg? dollar) "" (subs s dollar))))
       class)))
 
-;; a native C++ exception caught on jank, as the shim's exception value.
-;; On jank, rewrite's try translation (rw-try) appends catch clauses for
-;; cpp/jank.error_ref and cpp/std.exception to a folded stock try; each
-;; clause reads the caught C++ value's message through one of these
-;; helpers, in the clause, hands the message to a pure constructor
-;; below, and runs the user's dispatch chain on the result -- so a stock
-;; (catch Throwable ..) holds what a native throw threw, message intact,
-;; where before it escaped every catch the stock libraries can write.
-#?(:jank (cpp/raw "#include <exception>
-#include <string>
-#include <jank/error.hpp>
-#include <jank/runtime/obj/persistent_string.hpp>
-namespace cohost_shim_err {
-  using namespace jank::runtime;
-  inline object_ref error_message(jank::error_ref const e)
-  { return make_box(e->message); }
-  inline object_ref std_what(std::exception const &e)
-  { return make_box<obj::persistent_string>(jtl::immutable_string(std::string(e.what()))); }
-}"))
-
-(defn jank-error-info
-  "The exception value a caught jank compile error (cpp/jank.error_ref)
-   becomes: an ex-info carrying its message, classed as a compiler
-   exception, as cohost.adapter/try-all classes it for cohost's own
-   code. Only jank's emitted catch clauses call this, with the message
-   already read in the clause (see the note at rw-try: the caught
-   value's native type does not survive a fn boundary)."
-  [msg]
-  (ex-info msg {:cohost/class 'clojure.lang.Compiler$CompilerException}))
-
-(defn std-exception-info
-  "The exception value a caught std::exception becomes: an ex-info
-   carrying its what() message, marked native. Only jank's emitted
-   catch clauses call this (see jank-error-info)."
-  [msg]
-  (ex-info msg {:cohost/class 'java.lang.Exception :cohost/native true}))
-
 (defn class-of
   "The JVM class token (a symbol) of a host value."
   [x]
