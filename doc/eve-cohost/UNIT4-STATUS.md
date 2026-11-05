@@ -51,11 +51,15 @@ identity contract is unit 4's dependency).
   is the fill's surface; the analyzer-boundary rule below;
   `memory/install-fill!` portable wrapper) banked with the
   probe-series update — see the dated section below.
-- [ ] M5 — layer probe (probe_collections.clj): creators, ops,
-  transients (post-seal + cross-scope throws), meta, seam
-  contract through the booted core, fill forced. (Probe file
-  needs its unrepresentable-error checks updated to resident
-  round-trips before the full run; see below.)
+- [x] M5 — layer probe (probe_collections.clj): **76 checks,
+  0 FAIL** with the fill forced on; 4/4 in off mode
+  (2026-11-05 ~2:55 PM ET). Creators, seam contract, ops,
+  meta through the seam vars, guarded transients (seal +
+  CCE shapes), residents round-trips. Fixes banked with it:
+  the ITransient* cast predicates answer layer transients by
+  kind; RT-nth / -nth route Eve-backed values through the
+  layer's nth-of (resident elements resolve). Unit 3 probe
+  re-run after the equiv/hasheq change: **111/111**.
 - [~] M6 — JVM gate, fill forced: **battery 221/221,
   libraries 62/62, boot errors 0** (dev/u4_gate.clj on,
   2026-11-05 ~2:10 PM ET; launch shape: -Sdeps paths, no
@@ -220,14 +224,35 @@ call — no atom semantics, no var surfaces touched.
   standing checks + UNIT4-REPORT.md (M8).
 
 **Named remainders so far.** Queue NOT-YET (plan's tail);
-sorted collections OUT (Eve-side NOT-YET); meta/withMeta via
-core's interop path on the JVM seat (above); macros that
+sorted collections OUT (Eve-side NOT-YET); macros that
 embed a run-time Eve map/set VALUE into an expansion as a
 literal still hit the analyzer's embed error (author's
 crossing); dead roots are never reclaimed in a bare ctx
 (units 5/6 + heap-grade territory); deftype cannot express
 IFn's variadic invoke, so direct 21+-arg calls to a wrapped
-collection-as-fn throw (`apply` is covered via applyTo).
+collection-as-fn throw (`apply` is covered via applyTo);
+subvec answers the host-strata vector on the JVM seat (the
+adapter's RT funnel, not a creator; value correct).
+**The JVM-analyzer distance (one family, measured across
+the probe series):** on this seat the host analyzer compiles
+program code directly, so core fns that are thin interop
+wrappers or carry `:inline`s meet Eve values through Eve's
+own methods, not the shim's vars: with-meta/meta (Eve stubs
+meta), rseq (Eve's Reversible method unimplemented —
+Eve-side), compare (the `:inline` lands on a real
+Util.compare checkcast; Eve's bare types implement no
+Comparable), and the inlined RT funnels (count/nth/get)
+applied to values holding resident references (Eve returns
+the raw reference, or serializes a resident probe key and
+throws). Wherever the seam's own vars/funnels are the
+surface — everything the codemod emits, and the shim vars
+themselves — all of these answer correctly (the wrappers
+implement meta/Comparable; the funnels probe-convert and
+resolve). Codemod seats (jank/cljs) route every one of these
+through the shim and do not have the distance. Closing it
+on this seat is analyzer-surface work, not collection work;
+it is recorded here so the corpus numbers below are read
+against it.
 
 ## Coordination
 

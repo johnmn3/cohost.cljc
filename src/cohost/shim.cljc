@@ -511,11 +511,18 @@
    'clojure.lang.IPending #(or (h-pending? %) (thread/future-value? %) (thread/promise-value? %))
    ;; sorted collections have no transient form
    'clojure.lang.IEditableCollection #(and (or (vector? %) (map? %) (set? %)) (not (h-sorted? %)) (not (host-record? %)))
-   'clojure.lang.ITransientCollection h-transient?
-   'clojure.lang.ITransientAssociative h-transient?
-   'clojure.lang.ITransientMap h-transient?
-   'clojure.lang.ITransientVector h-transient?
-   'clojure.lang.ITransientSet h-transient?
+   ;; layer guarded transients (unit 4) answer the transient
+   ;; predicates by kind, as stock's transient classes do
+   'clojure.lang.ITransientCollection #(or (h-transient? %) (memory/transient-value? %))
+   'clojure.lang.ITransientAssociative #(or (h-transient? %)
+                                             (and (memory/transient-value? %)
+                                                  (contains? #{:vector :map} (memory/transient-kind %))))
+   'clojure.lang.ITransientMap #(or (h-transient? %)
+                                    (and (memory/transient-value? %) (= :map (memory/transient-kind %))))
+   'clojure.lang.ITransientVector #(or (h-transient? %)
+                                       (and (memory/transient-value? %) (= :vector (memory/transient-kind %))))
+   'clojure.lang.ITransientSet #(or (h-transient? %)
+                                    (and (memory/transient-value? %) (= :set (memory/transient-kind %))))
    ;; vectors and lists here; ranges, an Eduction, a user type: the host's answer
    'clojure.lang.IReduceInit #(or (vector? %) (list? %) (jank-impl? % :reduce) (host/host-instance? 'clojure.lang.IReduceInit %))
    'clojure.lang.IReduce #(or (vector? %) (list? %) (jank-impl? % :reduce) (host/host-instance? 'clojure.lang.IReduce %))
@@ -755,8 +762,12 @@
                                    (if-let [f (:nth d)] (f x i nf)
                                      (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
                                    (nth x i nf))))
-               :default (fn ([x i] (if (memory/transient-value? x) (memory/t-nth x i) (nth x i)))
-                          ([x i nf] (if (memory/transient-value? x) (memory/t-nth x i nf) (nth x i nf))))))
+               :default (fn ([x i] (cond (memory/transient-value? x) (memory/t-nth x i)
+                                         (memory/eve-backed? x) (memory/nth-of x i)
+                                         :else (nth x i)))
+                          ([x i nf] (cond (memory/transient-value? x) (memory/t-nth x i nf)
+                                          (memory/eve-backed? x) (memory/nth-of x i nf)
+                                          :else (nth x i nf))))))
 ;; Phel's get reads any other object as a PHP array, which throws: the JVM's
 ;; get answers not-found for what is no lookup
 (def RT-get
@@ -2535,7 +2546,8 @@
                              (not (string? b)) (throw (host/ex* 'java.lang.ClassCastException
                                                                 (str "class " (class-of b) " cannot be cast to class java.lang.String")))
                              :else (str (nn a) b))))
-(def -nth nth)
+(def -nth (fn ([x i] (if (memory/eve-backed? x) (memory/nth-of x i) (nth x i)))
+            ([x i nf] (if (memory/eve-backed? x) (memory/nth-of x i nf) (nth x i nf)))))
 (def -get (fn [x & args] (cond (h-var? x) (host/var-root x)
                                (h-atom? x) (deref x)
                                (host/mlist? x) (nth @(:state x) (first args))

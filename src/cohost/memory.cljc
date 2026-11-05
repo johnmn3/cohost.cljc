@@ -366,6 +366,24 @@
   (when-not (lookup-absent? coll k)
     ((get (host-fn* :ops) :find) coll k)))
 
+(def ^:private nth-absent (Object.))
+
+(defn nth-of
+  "nth at the seam for an Eve-backed value (the shim's RT-nth /
+   -nth branch): the hosting's nth op, which resolves a
+   resident element. The 2-arity throws
+   IndexOutOfBoundsException when the index is out of range,
+   as stock's does."
+  ([coll i]
+   (let [v ((get (host-fn* :ops) :nth) coll i nth-absent)]
+     (if (identical? nth-absent v)
+       (throw (IndexOutOfBoundsException.
+               (str "Index " i " out of bounds for length "
+                    ((get (host-fn* :ops) :count) coll))))
+       v)))
+  ([coll i not-found]
+   ((get (host-fn* :ops) :nth) coll i not-found)))
+
 ;; ---------------------------------------------------------------------------
 ;; Guarded transients (MEMORY-PLAN.md SS3): local mutation is
 ;; guarded transients -- mutation confined to the scope's local
@@ -399,6 +417,12 @@
   "True when x is a layer guarded transient."
   [x]
   (and (map? x) (= ::transient (:cohost/kind x))))
+
+(defn transient-kind
+  "The collection kind of a layer guarded transient
+   (:vector/:map/:set/:list)."
+  [t]
+  (:memory/kind t))
 
 (defn as-transient
   "The guarded transient of an Eve-backed value: born in the
