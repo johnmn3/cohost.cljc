@@ -42,10 +42,13 @@
 
 (defn report! [tag a]
   (let [{:keys [seal]} (hosting/root-digests a)
-        sha256 (content-sha @(al/eve-handle a))]
+        v (plain (al/deref-atom a))
+        ;; the materialized value's canonical bytes (what the jank side can hash),
+        ;; and, as a cross-check, the Eve map's own (JVM only)
+        sha256 (content-sha v)
+        sha256-eve (content-sha @(al/eve-handle a))]
     (println (str "RESULT " (pr-str {:side side :tag tag :kind (al/kind a)
-                                     :value (plain (al/deref-atom a))
-                                     :seal seal :sha256 sha256})))))
+                                     :value v :seal seal :sha256 sha256 :sha256-eve-map sha256-eve})))))
 
 (let [[mode path x] *command-line-args*]
   (case mode

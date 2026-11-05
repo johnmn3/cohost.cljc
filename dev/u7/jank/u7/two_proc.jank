@@ -71,7 +71,7 @@ namespace u7k {
           raw (crypto/sha256 (mapv (fn [i] (bit-and (nth bs i) 0xFF)) (range n)))]
       (str "sha256:" (hex (mapv (fn [b] (bit-and b 0xFF)) raw)) " over " n " bytes"))
     (catch jank.runtime.object_ref e (str "ERROR " (pr-str e)))
-    (catch std.exception e (str "ERROR std " (pr-str e)))))
+    (catch std.exception _ "ERROR std::exception")))
 
 (defn- report! [tag a]
   (stage "report deref")
@@ -79,7 +79,9 @@ namespace u7k {
         _ (stage "report value " (pr-str (plain v)))
         sl (atom/seal a)
         _ (stage "report seal " (pr-str sl))
-        sha (content-sha v)
+        ;; over the materialized value: Eve-on-jank's codec does not take its own
+        ;; EveHashMap (it reads as a reference; unit 7 STATUS)
+        sha (content-sha (plain v))
         _ (stage "report sha " (pr-str sha))]
     (println (str "RESULT " (pr-str {:side side :tag tag
                                      :value (plain v)

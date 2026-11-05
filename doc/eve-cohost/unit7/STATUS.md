@@ -79,3 +79,15 @@
   - **JVM battery (`bb boot:jvm`, default config, this lane's tree): booted as stock 465 / from host
     202 / natives 66 / skipped 58 / errors 0; battery: 221/221; libraries: 62/62.**
   - GATE launched: `dev/u7/gate.sh target/u7-gate 200` (race N=200/side, then kill/rejoin legs).
+- 1:25 PM ET — **GATE run 1 (race leg), as printed** (logs kept: target/u7-gate-run1, not
+  committed): JVM `RESULT {:side :jvm, :tag "race", :kind :disk, :value {:jvm 200, :ready 2, :done 2,
+  :jank 200, :marks [], :count 400}, :seal {:ptr 808, :name-hash -1780362285, :blocks 4, :digest
+  -276256802}, :sha256 "sha256:24c28ddd…6743d2 over 147 bytes"}`; jank `RESULT {:side :jank, :tag
+  "race", :value {:jvm 200, :ready 2, :done 2, :jank 200, :marks [], :count 400}, :seal {:ptr 808,
+  :name-hash -1780362285, :blocks 4, :digest -276256802}, :sha256 "ERROR … eve: a value with no eve
+  bytes … is held by reference … {:value-type \"eve.map/EveHashMap\"}"}`. Final value exact and equal;
+  **seal identical from both processes**. The jank content-digest row errored: Eve-on-jank's codec
+  takes its own EveHashMap as a reference (Eve-on-jank gap, named). Both sides now hash the
+  materialized value's canonical bytes (JVM also prints the Eve map's own as a cross-check). Run 1
+  stopped before its restart legs; run 2 launched clean. (Earlier attempt 0 died at jank compile on
+  my `catch std.exception` arm — my error, fixed.)
