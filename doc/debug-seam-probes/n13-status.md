@@ -125,3 +125,24 @@ adapter cap) instead of plain ex-info. On the JVM the cap IS plain
 ex-info (nil message preserved); on jank it is the nil-safe wrapper.
 Paren check OK (133 forms). Rebuild + probe + full runner on J next;
 JVM runner re-check after (must stay 10/14, #13 PASS).
+
+## 2026-11-05 01:20 ET — LANE COMPLETE
+
+- Fixed snapshot on J built 523,068 ms (stamp 00dd8851), boot
+  report errors: 0. Fixture stderr now: "Unexpected error
+  (ExceptionInfo) macroexpanding seam.throwmacro/m at (REPL:1)." /
+  "bad" -- attribution lands (the "Unexpected error" wording is the
+  port's standing phase wording, cli.cljc:210, all hosts).
+- JANK RUNNER (full): "#13 PASS load exit 1, throw exit 1; report
+  names the macroexpansion"; tally 8/14 PASS, 4 FAIL. Vs the
+  358048e gate baseline (6/5/3): #13 FAIL->PASS (this fix), #3
+  SKIP->PASS (doors, this base); #1/#6/#7/#11 FAILs are the
+  traces/introspect fixes, not on this branch -- collation composes.
+- JVM RUNNER (post-fix): "debug-seam:check jvm: 10/14 PASS, 0 FAIL",
+  #13 PASS -- identical to pre-fix. No regression.
+- Lane report: doc/debug-seam-probes/n13-lane-report.md (mechanism,
+  probe trail, quoted verdicts, named remainders: the JVM headline
+  host-type-table residual stays a coordinator routing item -- not
+  needed by #13 on either host; the general (ex-info nil ...) hazard
+  in cohost's own compiled code, this being its only site).
+- Status gate line appended to doc/debug-seam-impl-plan.md.
