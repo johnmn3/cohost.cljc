@@ -257,6 +257,13 @@
   [kind]
   (get (host-fn* :constructors) (keyword (str "empty-" (name kind)))))
 
+(defn install-fill!
+  "Run the registered hosting's fill installation (the EMPTY
+   statics swap on the JVM seat). A no-op when the hosting
+   registered none."
+  []
+  (when-let [f (host-fn* :install-fill)] (f)))
+
 (defn canonical-form-of
   "x's canonical Clojure-level form, for any value: an Eve-backed
    value's form is computed from its root by the hosting; any
@@ -307,27 +314,34 @@
   (check-representable! v)
   ((get (host-fn* :ops) :assoc) coll k v))
 
+(defn- lookup-absent?
+  "A key that cannot be in an Eve collection: outside the codec
+   universe (it could never have been written), or not an
+   integer for a vector (stock's shape for both)."
+  [coll k]
+  (or (not (representable? k))
+      (and (= :vector (eve-kind coll)) (not (integer? k)))))
+
 (defn lookup
-  "get at the seam for an Eve-backed coll: a key Eve's codec
-   cannot write cannot be present, so the answer is the
-   not-found value (stock's shape) instead of a codec error
-   from serializing the probe key."
+  "get at the seam for an Eve-backed coll: an absent-shaped key
+   answers the not-found value (stock's shape) instead of a
+   codec error from serializing the probe key."
   ([coll k] (lookup coll k nil))
   ([coll k not-found]
-   (if (representable? k)
-     ((get (host-fn* :ops) :get) coll k not-found)
-     not-found)))
+   (if (lookup-absent? coll k)
+     not-found
+     ((get (host-fn* :ops) :get) coll k not-found))))
 
 (defn lookup-contains?
-  "contains? at the seam: unrepresentable keys are absent."
+  "contains? at the seam: absent-shaped keys are absent."
   [coll k]
-  (and (representable? k)
+  (and (not (lookup-absent? coll k))
        (boolean ((get (host-fn* :ops) :contains) coll k))))
 
 (defn lookup-find
-  "find at the seam: unrepresentable keys find nothing."
+  "find at the seam: absent-shaped keys find nothing."
   [coll k]
-  (when (representable? k)
+  (when-not (lookup-absent? coll k)
     ((get (host-fn* :ops) :find) coll k)))
 
 ;; ---------------------------------------------------------------------------

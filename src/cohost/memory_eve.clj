@@ -134,7 +134,7 @@
 ;; implemented), vector transients (no IEditableCollection), and
 ;; the codec's value universe (below).
 
-(declare wrapped? wrap unwrap root-of)
+(declare wrapped? wrap unwrap root-of value?*)
 
 (defn representable?
   "True when v can be written by Eve's JVM codec (eve.mem's
@@ -182,24 +182,84 @@
 (defn- check-all! [coll]
   (run! memory/check-representable! coll))
 
+(defn- analyzer-active?
+  "True when the host analyzer is macroexpanding on this
+   thread: a clojure.lang.Compiler macroexpand frame is on the
+   stack. (Compiler.eval/load frames alone do not count --
+   they stay on the stack while evaluated code RUNS, and code
+   that runs is program code.) Values built for the analyzer
+   are FORMS, and forms are the analyzer's territory -- its
+   literal table is the host's own classes, exactly as the
+   reader's output is: an Eve map or set sitting in a form as
+   a literal is an embed error to it (\"Can't embed object in
+   code\"), where an Eve vector or list is analyzed fine. So
+   while macroexpansion is in progress the constructors
+   answer host values (the form's pieces pass through
+   unchanged, as stock's do); at program run time they answer
+   Eve-backed values. The check is a bounded scan of the top
+   frames: a macro's expansion assembly sits within a few
+   frames of the macroexpand frame that invoked the macro."
+  []
+  (let [frames (.getStackTrace (Thread/currentThread))
+        n (min 64 (alength frames))]
+    (loop [i 0]
+      (cond (>= i n) false
+            (and (= "clojure.lang.Compiler" (.getClassName (aget frames i)))
+                 (.startsWith (.getMethodName (aget frames i)) "macroexpand")) true
+            :else (recur (inc i))))))
+
+(defn- write-list-raw
+  "The Eve list of already-converted items."
+  [items]
+  (let [sio (ctx)
+        ser (partial eve-mem/value+sio->eve-bytes sio)]
+    (eve-list/jvm-sab-list-from-offset sio (eve-list/jvm-write-list! sio ser (apply list items)))))
+
+(defn- ->eve
+  "Deep-convert a value for Eve's writer. Eve-backed values give
+   their root; host collections are rebuilt in Eve form with
+   converted elements. The conversion a bare seq needs is the
+   point: Eve's writer encodes a generic seq (a Cons, a lazy
+   seq) as a VECTOR, which would change the value's kind at the
+   seam -- a macro expansion is a seq, not a vector, and the
+   analyzer knows the difference. A seq therefore becomes an
+   Eve list here, at any depth."
+  [x]
+  (cond (value?* x) (unwrap x)
+        (vector? x) (eve-vec/eve-vec (ctx) (map ->eve x))
+        (map? x) (let [sio (ctx)]
+                   (eve-map/jvm-eve-hash-map-from-offset
+                    sio (eve-map/jvm-write-map! sio (into {} (map (fn [e] [(->eve (key e)) (->eve (val e))]) x)))))
+        (set? x) (let [sio (ctx)
+                       ser (partial eve-mem/value+sio->eve-bytes sio)]
+                   (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser (map ->eve x))))
+        (seq? x) (write-list-raw (map ->eve x))
+        :else x))
+
 (defn build-vector
-  "A bare Eve vector holding coll's elements."
+  "A bare Eve vector holding coll's elements (a host vector
+   while the analyzer is active -- see analyzer-active?)."
   [coll]
-  (check-all! coll)
-  (eve-vec/eve-vec (ctx) (map unwrap coll)))
+  (if (analyzer-active?)
+    (vec coll)
+    (do (check-all! coll)
+        (eve-vec/eve-vec (ctx) (map ->eve coll)))))
 
 (defn build-map
   "A bare Eve hash map from a flat alternating key/value seq.
    Duplicate keys: last wins (the pairs are assoc'd in order
-   before the write, as stock's create)."
+   before the write, as stock's create). A host map while the
+   analyzer is active."
   [flat-kvs]
   (when (odd? (count flat-kvs))
     (throw (IllegalArgumentException. (str "No value supplied for key: " (last flat-kvs)))))
-  (let [pairs (partition 2 flat-kvs)
-        _ (run! (fn [[k v]] (memory/check-representable! k) (memory/check-representable! v)) pairs)
-        m (reduce (fn [m [k v]] (assoc m (unwrap k) (unwrap v))) {} pairs)
-        sio (ctx)]
-    (eve-map/jvm-eve-hash-map-from-offset sio (eve-map/jvm-write-map! sio m))))
+  (if (analyzer-active?)
+    (apply hash-map flat-kvs)
+    (let [pairs (partition 2 flat-kvs)
+          _ (run! (fn [[k v]] (memory/check-representable! k) (memory/check-representable! v)) pairs)
+          m (reduce (fn [m [k v]] (assoc m (->eve k) (->eve v))) {} pairs)
+          sio (ctx)]
+      (eve-map/jvm-eve-hash-map-from-offset sio (eve-map/jvm-write-map! sio m)))))
 
 (defn build-map-from
   "A bare Eve hash map holding m's entries."
@@ -207,20 +267,24 @@
   (build-map (mapcat (fn [e] [(key e) (val e)]) (seq m))))
 
 (defn build-set
-  "A bare Eve hash set holding coll's elements."
+  "A bare Eve hash set holding coll's elements (a host set
+   while the analyzer is active)."
   [coll]
-  (check-all! coll)
-  (let [sio (ctx)
-        ser (partial eve-mem/value+sio->eve-bytes sio)]
-    (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser (map unwrap coll)))))
+  (if (analyzer-active?)
+    (set coll)
+    (do (check-all! coll)
+        (let [sio (ctx)
+              ser (partial eve-mem/value+sio->eve-bytes sio)]
+          (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser (map ->eve coll)))))))
 
 (defn build-list
-  "A bare Eve list holding coll's elements, in order."
+  "A bare Eve list holding coll's elements, in order (a host
+   list while the analyzer is active)."
   [coll]
-  (check-all! coll)
-  (let [sio (ctx)
-        ser (partial eve-mem/value+sio->eve-bytes sio)]
-    (eve-list/jvm-sab-list-from-offset sio (eve-list/jvm-write-list! sio ser (apply list (map unwrap coll))))))
+  (if (analyzer-active?)
+    (apply list coll)
+    (do (check-all! coll)
+        (write-list-raw (map ->eve coll)))))
 
 (def empty-vector (eve-vec/eve-vec (ctx) []))
 (def empty-map (build-map []))
@@ -515,15 +579,19 @@
   :representable? representable?
   :canonical-form canonical-form-of
   :with-meta with-meta*
-  :ops {:conj (fn [c x] (conj c x))
-        :assoc (fn [c k v] (assoc c k v))
-        :dissoc (fn [c k] (dissoc c k))
-        :disj (fn [c k] (disj c k))
+  ;; the ops convert what they store and what they probe with,
+  ;; like the constructors: a stored seq must land as an Eve
+  ;; list (see ->eve), and a seq probe key must be encoded as
+  ;; the list it was stored as, or the lookup misses
+  :ops {:conj (fn [c x] (conj c (->eve x)))
+        :assoc (fn [c k v] (assoc c (->eve k) (->eve v)))
+        :dissoc (fn [c k] (dissoc c (->eve k)))
+        :disj (fn [c k] (disj c (->eve k)))
         :pop (fn [c] (pop c))
         :peek (fn [c] (peek c))
         :nth (fn [c i nf] (nth c i nf))
         :count (fn [c] (count c))
-        :get (fn [c k nf] (get c k nf))
-        :contains (fn [c k] (contains? c k))
-        :find (fn [c k] (find c k))}
+        :get (fn [c k nf] (get c (->eve k) nf))
+        :contains (fn [c k] (contains? c (->eve k)))
+        :find (fn [c k] (find c (->eve k)))}
   :install-fill install-fill!})

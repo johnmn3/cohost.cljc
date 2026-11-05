@@ -822,7 +822,12 @@
                                       (pop coll))))) ; (Phel's pop is a macro)
 (def RT-subvec (host-fn 'subvec (unsupported "subvec")))
 (def ^:private arr? (or (host/array-fn) (host-fn 'array? (constantly false))))
-(def RT-vector (fn [& xs] (if (and (= 1 (count xs)) (arr? (first xs))) (vec (first xs)) (vec xs))))
+;; RT/vector is the analyzer's vector-literal construction (a
+;; vector form in code position): the fill's surface too (unit 4)
+(def RT-vector (fn [& xs] (let [arr (and (= 1 (count xs)) (arr? (first xs)))]
+                           (if (memory/fill-on?)
+                             (memory/make-vector (if arr (first xs) xs))
+                             (if arr (vec (first xs)) (vec xs))))))
 (def RT-toArray to-array*)
 (def RT-seqToTypedArray (fn ([s] (to-array* s)) ([_t s] (to-array* s))))
 (def RT-object_array (fn [n-or-seq] (if (number? n-or-seq) (to-array* (repeat n-or-seq nil)) (to-array* n-or-seq))))
