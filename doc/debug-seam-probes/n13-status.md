@@ -197,3 +197,11 @@ JVM runner re-check after (must stay 10/14, #13 PASS).
   ~/jgate-logs/n13-u2-aot-build.log), then the binary from a
   scratch dir: owed verdict = exit 1 + "Execution error" headline
   + "Full report at:" + report EDN present.
+- JVM re-check on J: 10/14 PASS, 0 FAIL (banked, ~/jgate-logs/
+  n13-u2-jvmcheck.log) -- second green confirmation of the cli.cljc
+  change on the synced tree d9deefd.
+- AOT build leg LAUNCHED on J: bb build:jank dev/cli-demo
+  seam.throwmain throwmain, bb PID 582450, started 2026-11-05
+  07:00:13 UTC = 02:00:13 ET; log ~/jgate-logs/n13-u2-aot-build.log
+  (first line: JANK-EXE-BUILD ... (new)). Verdict run follows when
+  it completes.
