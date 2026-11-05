@@ -66,7 +66,7 @@
                      :task (let [snap (do (load-file "dev/perf/lpy_snapshot_ensure.clj") ((resolve 'lpy-ensure!)))]
                              (shell "basilisp" "run" "-p" snap "-p" "src" "dev/perf/lpy_snapshot_run.lpy" "--snapshot"))}
   boot:jvm  {:doc "JVM Clojure as the host (the reference adapter)"
-             :task (shell "clojure" "-M" "-m" "cohost.run")}
+             :task (shell "clojure" "-M:eve" "-m" "cohost.run")}
   boot:cljs {:doc "ClojureScript, self-hosted on Node: compile the bootstrap build, then run it"
              :task (do (shell "clojure" "-Sdeps" (eve-cljs-sdeps) "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c")
                        (shell "node" "target/cljs-node/main.js"))}

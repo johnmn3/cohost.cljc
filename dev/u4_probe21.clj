@@ -1,0 +1,21 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(alias 'memory 'cohost.memory)
+
+(def report (boot/boot! {}))
+(boot/make-user-ns!)
+(println "vec host-taken?" (identical? @(resolve 'cohost.core/vec) @(resolve 'clojure.core/vec)))
+(println "vector host-taken?" (identical? @(resolve 'cohost.core/vector) @(resolve 'clojure.core/vector)))
+(println "list host-taken?" (identical? @(resolve 'cohost.core/list) @(resolve 'clojure.core/list)))
+(defn ev [label src]
+  (println label
+           (try (let [v (boot/eval-str src)] (str (pr-str v) " | " (type v)))
+                (catch Throwable e (str "ERR " (.getMessage e))))))
+(ev "meta eve map:" "(meta (with-meta (hash-map :a 1) {:m 2}))")
+(ev "meta eve set:" "(meta (with-meta (hash-set 1) {:m 3}))")
+(ev "meta eve list:" "(meta (with-meta (list 1) {:m 4}))")
+(ev "meta survives assoc eve map:" "(meta (assoc (with-meta (hash-map :a 1) {:m 2}) :b 3))")
+(ev "with-meta nil on eve map:" "(type (with-meta (with-meta (hash-map :a 1) {:m 2}) nil))")
+(ev "into eve map:" "(into (hash-map :x 0) [[:a 1]])")
+(println "into result eve?" (memory/eve-backed? (boot/eval-str "(into (hash-map :x 0) [[:a 1]])")))
+(println :done)

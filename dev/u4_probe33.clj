@@ -1,0 +1,12 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(def report (boot/boot! {}))
+(boot/make-user-ns!)
+(defn ev [label src]
+  (println label (try (pr-str (boot/eval-str src))
+                      (catch Throwable e (str "ERR " (type e) " " (.getMessage e))))))
+(ev "count transient vec:" "(count (transient (vector 1 2 3 4 5 6 7)))")
+(ev "get transient map:" "(get (transient (hash-map :a 1)) :a)")
+(ev "count transient map:" "(count (transient (hash-map :a 1)))")
+(ev "transient class:" "(type (transient (vector 1 2 3 4 5 6 7)))")
+(println :done)

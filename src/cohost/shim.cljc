@@ -437,7 +437,10 @@
     ;; a layer atom (unit 5) IS a clojure.lang.Atom through the
     ;; facade; before the map branch, which would name it a map
     (atom-layer/atom-value? x) 'clojure.lang.Atom
-    (map? x) (cond (h-sorted? x) 'clojure.lang.PersistentTreeMap
+    (map? x) (cond ;; an Eve-backed map is a hash map at the seam
+                   ;; (unit 4): Eve has the one map type
+                   (memory/eve-backed? x) 'clojure.lang.PersistentHashMap
+                   (h-sorted? x) 'clojure.lang.PersistentTreeMap
                    (hash-map-kind? x) 'clojure.lang.PersistentHashMap
                    :else 'clojure.lang.PersistentArrayMap)
     (host-queue? x) 'clojure.lang.PersistentQueue
@@ -539,7 +542,11 @@
    'clojure.lang.Sorted h-sorted?
    'clojure.lang.IChunkedSeq #(or (hc-chunked? %) (chunked-cons? %))
    'clojure.lang.IDrop (constantly false)
-   'clojure.lang.IFn host/ifn?*
+   ;; an Eve-backed list is not IFn at the seam (stock lists
+   ;; are not callable; Eve's list type implements IFn on its
+   ;; own side, and the seam's answer is Clojure's)
+   'clojure.lang.IFn #(and (host/ifn?* %)
+                           (not (and (memory/eve-backed? %) (= :list (memory/eve-kind %)))))
    'clojure.lang.Fn host/host-fn?
    'clojure.lang.IObj #(or (jank-impl? % :name) (and (not (cohost-inst? %)) (or (and (coll? %) (not (and host-has-map-entry? (host-map-entry? %)))) (symbol? %) (fn? %))))
    'clojure.lang.IMeta #(or (jank-impl? % :name) (and (not (cohost-inst? %)) (or (coll? %) (symbol? %) (fn? %) (h-var? %) (h-namespace? %) (h-atom? %))))
@@ -552,11 +559,18 @@
    'clojure.lang.IPending #(or (h-pending? %) (thread/future-value? %) (thread/promise-value? %))
    ;; sorted collections have no transient form
    'clojure.lang.IEditableCollection #(and (or (vector? %) (map? %) (set? %)) (not (h-sorted? %)) (not (host-record? %)))
-   'clojure.lang.ITransientCollection h-transient?
-   'clojure.lang.ITransientAssociative h-transient?
-   'clojure.lang.ITransientMap h-transient?
-   'clojure.lang.ITransientVector h-transient?
-   'clojure.lang.ITransientSet h-transient?
+   ;; layer guarded transients (unit 4) answer the transient
+   ;; predicates by kind, as stock's transient classes do
+   'clojure.lang.ITransientCollection #(or (h-transient? %) (memory/transient-value? %))
+   'clojure.lang.ITransientAssociative #(or (h-transient? %)
+                                             (and (memory/transient-value? %)
+                                                  (contains? #{:vector :map} (memory/transient-kind %))))
+   'clojure.lang.ITransientMap #(or (h-transient? %)
+                                    (and (memory/transient-value? %) (= :map (memory/transient-kind %))))
+   'clojure.lang.ITransientVector #(or (h-transient? %)
+                                       (and (memory/transient-value? %) (= :vector (memory/transient-kind %))))
+   'clojure.lang.ITransientSet #(or (h-transient? %)
+                                    (and (memory/transient-value? %) (= :set (memory/transient-kind %))))
    ;; vectors and lists here; ranges, an Eduction, a user type: the host's answer
    'clojure.lang.IReduceInit #(or (vector? %) (list? %) (jank-impl? % :reduce) (host/host-instance? 'clojure.lang.IReduceInit %))
    'clojure.lang.IReduce #(or (vector? %) (list? %) (jank-impl? % :reduce) (host/host-instance? 'clojure.lang.IReduce %))
@@ -741,13 +755,33 @@
 ;; ---------------------------------------------------------------------------
 ;; RT
 
+;; the collection seam (unit 4): conj behind the seam. A layer
+;; transient as conj's target is stock's ClassCastException (conj
+;; is the persistent op -- the transient's own op is conj!); an
+;; Eve-backed target goes through the layer, which checks the
+;; element against Eve's codec universe before Eve sees it;
+;; every other value is the host's conj. The layer checks are
+;; false for ordinary values on every host, fill or no fill.
+(defn- layer-conj
+  [coll x]
+  (cond (memory/transient-value? coll)
+        (throw (host/ex* 'java.lang.ClassCastException
+                         (str "class " (memory/transient-class-token coll)
+                              " cannot be cast to class clojure.lang.IPersistentCollection")))
+        (memory/eve-backed? coll) (memory/conj-checked coll x)
+        :else (conj coll x)))
+
 ;; Phel's cons onto anything but a seq (a vector, a map, nil) is a vector
 (def RT-cons #?(:phel (fn [x coll] (if (seq? coll) (cons x coll) (let [s (seq coll)] (if s (cons x s) (list x)))))
                 :default cons))
 (def RT-first first)
 (def RT-next next)
 (def RT-more rest)
-(def RT-seq seq)
+(def RT-seq (fn [x] (if (memory/transient-value? x)
+                      (throw (host/ex* 'java.lang.ClassCastException
+                                       (str "class " (memory/transient-class-token x)
+                                            " cannot be cast to class clojure.lang.Seqable")))
+                      (seq x))))
 ;; (let-go's conj takes no map onto a map, nor nil, as the JVM's does)
 (def RT-conj #?(:lg (fn [coll x] (if (and (map? coll) (or (nil? x) (map? x))) (into coll x) (conj coll x)))
                 ;; a cohost type instance: jank's conj panics on its type
@@ -755,14 +789,14 @@
                                      (if-let [f (:conj d)] (f coll x)
                                        (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.IPersistentCollection"))))
                                      (conj coll x)))
-                :default conj))
+                :default layer-conj))
 ;; on a :cohost-types host, count and nth of an instance are the
 ;; descriptor's (jank's own panic on an unknown type); the JVM's messages
 (def RT-count #?(:jank (fn [x] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                  (if-let [f (:count d)] (f x)
                                    (throw (host/ex* 'java.lang.UnsupportedOperationException (str "count not supported on this type: " (:name d)))))
                                  (count x)))
-                 :default count))
+                 :default (fn [x] (if (memory/transient-value? x) (memory/t-count x) (count x)))))
 (def RT-nth #?(:jank (fn ([x i] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                   (if-let [f (:nth d)] (f x i)
                                     (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
@@ -776,7 +810,12 @@
                                    (if-let [f (:nth d)] (f x i nf)
                                      (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
                                    (nth x i nf))))
-               :default nth))
+               :default (fn ([x i] (cond (memory/transient-value? x) (memory/t-nth x i)
+                                         (memory/eve-backed? x) (memory/nth-of x i)
+                                         :else (nth x i)))
+                          ([x i nf] (cond (memory/transient-value? x) (memory/t-nth x i nf)
+                                          (memory/eve-backed? x) (memory/nth-of x i nf)
+                                          :else (nth x i nf))))))
 ;; Phel's get reads any other object as a PHP array, which throws: the JVM's
 ;; get answers not-found for what is no lookup
 (def RT-get
@@ -784,7 +823,12 @@
                                      (php/is_a m "Phel\\Lang\\Collections\\HashSet\\TransientHashSetInterface")))]
              (fn ([m k] (if (lookup? m) (get m k) nil))
                ([m k nf] (if (lookup? m) (get m k nf) nf))))
-     :default get))
+     :default (fn ([m k] (cond (memory/transient-value? m) (memory/t-get m k)
+                               (memory/eve-backed? m) (memory/lookup m k nil)
+                               :else (get m k)))
+                ([m k nf] (cond (memory/transient-value? m) (memory/t-get m k nf)
+                                (memory/eve-backed? m) (memory/lookup m k nf)
+                                :else (get m k nf))))))
 ;; a record on Phel is a struct, which holds its fields alone: a key outside
 ;; them makes a map of its fields and that key (on the JVM, a record still)
 (def ^:private assoc*
@@ -794,29 +838,55 @@
                          (if-let [f (:assoc d)] (f m k v)
                            (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.Associative"))))
                          (assoc m k v)))
-     :default assoc))
+     ;; the collection seam (unit 4): a layer transient target is
+     ;; stock's ClassCastException; an Eve-backed target goes
+     ;; through the layer's checked assoc
+     :default (fn [m k v] (cond (memory/transient-value? m)
+                                (throw (host/ex* 'java.lang.ClassCastException
+                                                 (str "class " (memory/transient-class-token m)
+                                                      " cannot be cast to class clojure.lang.Associative")))
+                                (memory/eve-backed? m) (memory/assoc-checked m k v)
+                                :else (assoc m k v)))))
 (def RT-assoc assoc*)
 (def RT-dissoc #?(:jank (fn [m & ks] (if-let [d (and (h-cohost-inst? m) (h-instance-desc m))]
                                        (if-let [f (:dissoc d)] (reduce f m ks)
                                          (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.IPersistentMap"))))
                                        (apply dissoc m ks)))
-                  :default dissoc))
+                  :default (fn [m & ks] (if (memory/transient-value? m)
+                                          (throw (host/ex* 'java.lang.ClassCastException
+                                                           (str "class " (memory/transient-class-token m)
+                                                                " cannot be cast to class clojure.lang.IPersistentMap")))
+                                          (apply dissoc m ks)))))
 (def RT-contains #?(:jank (fn [coll k] (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                                          (some? (if-let [f (:find d)] (f coll k) (when-let [g (:get d)] (g coll k))))
                                          (contains? coll k)))
-                    :default contains?))
+                    :default (fn [coll k] (cond (memory/transient-value? coll) (memory/t-contains? coll k)
+                                                 (memory/eve-backed? coll) (memory/lookup-contains? coll k)
+                                                 :else (contains? coll k)))))
 (def RT-find #?(:jank (fn [coll k] (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                                      (if-let [f (:find d)] (f coll k)
                                        (when-let [g (:get d)] (let [v (g coll k ::absent)] (when (not= ::absent v) [k v]))))
                                      (find coll k)))
-                :default find))
+                :default (fn [coll k] (cond (memory/transient-value? coll) (memory/t-find coll k)
+                                             (memory/eve-backed? coll) (memory/lookup-find coll k)
+                                             :else (find coll k)))))
 (def RT-keys keys)
 (def RT-vals vals)
-(def RT-peek peek)
-(def RT-pop #?(:phel (fn [coll] (pop coll)) :default pop)) ; (Phel's pop is a macro)
+(def RT-peek (fn [x] (if (memory/transient-value? x) (memory/t-peek x) (peek x))))
+(def RT-pop #?(:phel (fn [coll] (pop coll))
+               :default (fn [coll] (if (memory/transient-value? coll)
+                                      (throw (host/ex* 'java.lang.ClassCastException
+                                                       (str "class " (memory/transient-class-token coll)
+                                                            " cannot be cast to class clojure.lang.IPersistentCollection")))
+                                      (pop coll))))) ; (Phel's pop is a macro)
 (def RT-subvec (host-fn 'subvec (unsupported "subvec")))
 (def ^:private arr? (or (host/array-fn) (host-fn 'array? (constantly false))))
-(def RT-vector (fn [& xs] (if (and (= 1 (count xs)) (arr? (first xs))) (vec (first xs)) (vec xs))))
+;; RT/vector is the analyzer's vector-literal construction (a
+;; vector form in code position): the fill's surface too (unit 4)
+(def RT-vector (fn [& xs] (let [arr (and (= 1 (count xs)) (arr? (first xs)))]
+                           (if (memory/fill-on?)
+                             (memory/make-vector (if arr (first xs) xs))
+                             (if arr (vec (first xs)) (vec xs))))))
 (def RT-toArray to-array*)
 (def RT-seqToTypedArray (fn ([s] (to-array* s)) ([_t s] (to-array* s))))
 (def RT-object_array (fn [n-or-seq] (if (number? n-or-seq) (to-array* (repeat n-or-seq nil)) (to-array* n-or-seq))))
@@ -1100,11 +1170,16 @@
 ;; other value keeps the host's own answer
 (def Util-equiv #?(:lg (fn [a b] (let [a (host/plain-symbol a) b (host/plain-symbol b) r (lg-own a "equals" [b])]
                                    (if (identical? r absent) (= a b) (boolean r))))
-                   :default (fn [a b] (if (or (memory/eve-value? a) (memory/eve-value? b))
+                   :default (fn [a b] (if (or (memory/eve-value? a) (memory/eve-value? b)
+                                              (memory/eve-backed? a) (memory/eve-backed? b))
                                          (memory/equiv a b)
                                          (= a b)))))
 (def Util-equals Util-equiv)
-(def Util-compare compare)
+;; seam compare (unit 4): an Eve-backed side compares by the
+;; layer's canonical forms; Eve's types implement no Comparable
+(def Util-compare (fn [a b] (if (or (memory/eve-backed? a) (memory/eve-backed? b))
+                             (memory/compare-values a b)
+                             (compare a b))))
 ;; Util.hash is Object.hashCode (nil is 0), not hasheq; hashCombine is boost's,
 ;; in 32-bit int arithmetic (0x9e3779b9 as an int)
 (declare -hashCode)
@@ -1114,7 +1189,7 @@
                           (bit-xor seed (wrap32 (+ (wrap32 h) -1640531527 (wrap32 (bit-shift-left seed 6)) (bit-shift-right seed 2)))))))
 (def Util-hasheq #?(:lg (fn [x] (let [x (host/plain-symbol x) r (lg-own x "hashCode" [])]
                                   (if (identical? r absent) (hash x) r)))
-                    :default (fn [x] (if (memory/eve-value? x)
+                    :default (fn [x] (if (or (memory/eve-value? x) (memory/eve-backed? x))
                                         (memory/hasheq x)
                                         (hash x)))))
 ;; JVM keywords are interned, so equal keywords are identical; a host that
@@ -1127,7 +1202,20 @@
 ;; ---------------------------------------------------------------------------
 ;; Var, Keyword, Symbol, Namespace, Compiler
 
-(def Var-pushThreadBindings (fn [m] (host/push-thread-bindings! m)))
+;; the thread-binding push is a facade crossing into the host's
+;; Var machinery, which iterates the bindings map itself and
+;; casts each key to Var: an Eve-backed bindings map materializes
+;; at the crossing -- keys and values with resident references
+;; resolved one level (the values themselves keep their Eve form;
+;; only the references the host machinery would meet raw are
+;; resolved), in a host map the host's push accepts
+(defn- bindings-map [m]
+  (if (memory/eve-backed? m)
+    (into {} (map (fn [e] [(memory/resolve-resident (key e))
+                           (memory/resolve-resident (val e))]))
+          (seq m))
+    m))
+(def Var-pushThreadBindings (fn [m] (host/push-thread-bindings! (bindings-map m))))
 (declare Var-popThreadBindings)
 ;; unit 7: core's binding-conveyor-fn captures through here; the thread
 ;; layer's capture hook (cross-process frames through a shared atom) applies
@@ -1207,7 +1295,7 @@
 ;; call: what the codemod writes where the host's bindings are scoped only
 ;; (:binding-style :with-bindings)
 (defn with-thread-bindings [m f]
-  (try (host/with-thread-bindings! m f)
+  (try (host/with-thread-bindings! (bindings-map m) f)
        (finally (unmap-dead-locals!))))
 
 (def Keyword-intern (fn ([x] (if (symbol? x)
@@ -1264,23 +1352,31 @@
 ;; ---------------------------------------------------------------------------
 ;; collections: statics and constructors
 
-(def PersistentList-creator list)
-(def PersistentHashMap-create (fn [kvs] (apply hash-map (seq kvs))))
+;; the collection fill (unit 4): with the fill in force the
+;; creators answer Eve-backed values through the layer; a seat
+;; with no Eve hosting registered never has the fill in force
+(def PersistentList-creator (fn [& xs] (if (memory/fill-on?) (memory/make-list xs) (apply list xs))))
+(def PersistentHashMap-create (fn [kvs] (if (memory/fill-on?) (memory/make-map (seq kvs)) (apply hash-map (seq kvs)))))
 (def PersistentHashMap-createWithCheck
   (fn [kvs]
     (let [ks (take-nth 2 (seq kvs))]
       (when (not= (count ks) (count (set ks)))
         (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies ks)))))))
-      (apply hash-map (seq kvs)))))
+      (if (memory/fill-on?) (memory/make-map (seq kvs)) (apply hash-map (seq kvs))))))
 (def PersistentArrayMap-EMPTY {})
-(def PersistentArrayMap-create (fn [m] (into {} m)))
+(def PersistentArrayMap-create (fn [m] (if (memory/fill-on?) (memory/make-map-from m) (into {} m))))
 (def ^:private h-array-map (host-fn 'array-map nil))
 (def PersistentArrayMap-createAsIfByAssoc
   (fn [arr]
     ;; an odd count ends in a trailing element (1.11's trailing map for
     ;; & {:keys ...}) taken as the JVM takes it, EMPTY.cons(x): nil adds
     ;; nothing, a [k v] pair or a map its entries, anything else is an error
-    (let [s (seq arr)
+    (if (memory/fill-on?)
+      (let [s (seq arr)
+            odd (odd? (count s))
+            tail (when odd (RT-conj {} (last s)))]
+        (memory/make-map (concat (if odd (butlast s) s) (mapcat seq (seq tail)))))
+      (let [s (seq arr)
           odd (odd? (count s))
           tail (when odd (RT-conj {} (last s)))]
       ;; the tail's entries follow the pairs; each key keeps its first
@@ -1290,15 +1386,15 @@
         (if h-array-map
           (let [last-v (reduce (fn [m [k v]] (assoc m k v)) {} kvs)]
             (apply h-array-map (mapcat (fn [k] [k (get last-v k)]) (distinct (map first kvs)))))
-          (reduce (fn [m [k v]] (assoc m k v)) {} kvs))))))
+          (reduce (fn [m [k v]] (assoc m k v)) {} kvs)))))))
 (def PersistentArrayMap-createWithCheck PersistentHashMap-createWithCheck)
-(def PersistentHashSet-create (fn [coll] (set coll)))
+(def PersistentHashSet-create (fn [coll] (if (memory/fill-on?) (memory/make-set coll) (set coll))))
 (def PersistentHashSet-createWithCheck
   (fn [coll]
     (let [s (seq coll)]
       (when (not= (count s) (count (set s)))
         (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies s)))))))
-      (set s))))
+      (if (memory/fill-on?) (memory/make-set s) (set s)))))
 (def PersistentTreeMap-create
   (let [sm (host-fn 'sorted-map nil) smb (host-fn 'sorted-map-by nil)]
     (fn ([kvs] (if sm (apply sm (seq kvs)) ((unsupported "sorted-map"))))
@@ -1307,9 +1403,9 @@
   (let [ss (host-fn 'sorted-set nil) ssb (host-fn 'sorted-set-by nil)]
     (fn ([coll] (if ss (apply ss (seq coll)) ((unsupported "sorted-set"))))
       ([cmp coll] (if ssb (apply ssb cmp (seq coll)) ((unsupported "sorted-set-by")))))))
-(def LazilyPersistentVector-create (fn [coll] (vec coll)))
+(def LazilyPersistentVector-create (fn [coll] (if (memory/fill-on?) (memory/make-vector coll) (vec coll))))
 ;; createOwning(Object... items): called from Clojure with one array, the items
-(def LazilyPersistentVector-createOwning (fn [arr] (vec arr)))
+(def LazilyPersistentVector-createOwning (fn [arr] (if (memory/fill-on?) (memory/make-vector arr) (vec arr))))
 (def MapEntry-create (fn [k v] (first (hash-map k v))))
 (def new-MapEntry MapEntry-create)
 
@@ -1318,7 +1414,7 @@
 (defn static-get [nm] (get @statics nm))
 (defn static-set! [nm v] (swap! statics assoc nm v) v)
 (def EdnReader-readString (fn [s opts] (host/edn-read-string opts s)))
-(def PersistentVector-create (fn [coll] (vec coll)))
+(def PersistentVector-create (fn [coll] (if (memory/fill-on?) (memory/make-vector coll) (vec coll))))
 (def PersistentVector-EMPTY [])
 ;; the seq classes' creates delegate to the host's own fns, bound at
 ;; shim load before the stock core overlays them (the pattern
@@ -2574,9 +2670,25 @@
 (def -hasNext host/iter-has-next?)
 (def -more rest)
 ;; (.seq coll) and Sorted.seq(ascending): subseq/rsubseq walk either way
-(def -seq (fn ([x] (seq x)) ([x ascending?] (if ascending? (seq x) (rseq x)))))
-(def -cons conj)
-(def -count (fn [x] (if (host/mlist? x) (count @(:state x)) (count x))))
+(def -seq (fn ([x] (if (memory/transient-value? x)
+                      (throw (host/ex* 'java.lang.ClassCastException
+                                       (str "class " (memory/transient-class-token x)
+                                            " cannot be cast to class clojure.lang.Seqable")))
+                      (seq x)))
+            ([x ascending?] (cond (memory/transient-value? x)
+                                  (throw (host/ex* 'java.lang.ClassCastException
+                                                   (str "class " (memory/transient-class-token x)
+                                                        " cannot be cast to class clojure.lang.Seqable")))
+                                  ascending? (seq x)
+                                  ;; a bare Eve vector has no rseq of
+                                  ;; its own (Eve-side NOT-YET the seam
+                                  ;; answers): the reversed seq
+                                  (memory/eve-backed? x) (reverse (seq x))
+                                  :else (rseq x)))))
+(def -cons layer-conj)
+(def -count (fn [x] (cond (memory/transient-value? x) (memory/t-count x)
+                          (host/mlist? x) (count @(:state x))
+                          :else (count x))))
 ;; a String method on nil is the JVM's NullPointerException
 (defn- nn [x] (if (nil? x) (throw (host/ex* 'java.lang.NullPointerException "")) x))
 (def -length (fn [x] (if (h-sb? x) (count (h-sb-str x)) (count (nn x)))))
@@ -2663,7 +2775,8 @@
                              (not (string? b)) (throw (host/ex* 'java.lang.ClassCastException
                                                                 (str "class " (class-of b) " cannot be cast to class java.lang.String")))
                              :else (str (nn a) b))))
-(def -nth nth)
+(def -nth (fn ([x i] (if (memory/eve-backed? x) (memory/nth-of x i) (nth x i)))
+            ([x i nf] (if (memory/eve-backed? x) (memory/nth-of x i nf) (nth x i nf)))))
 (def -get (fn [x & args] (cond (h-var? x) (host/var-root x)
                                (h-atom? x) (if (atom-layer/atom-value? x) (atom-layer/deref-atom x) (deref x))
                                (host/mlist? x) (nth @(:state x) (first args))
@@ -2676,6 +2789,10 @@
                                (apply thread/get-future x args)
                                ;; cohost.http's Optional (HttpHeaders.firstValue)
                                (http/is? :cohost.http/optional x) (http/optional-get x)
+                               (memory/transient-value? x) (apply memory/t-get x args)
+                               (memory/eve-backed? x) (if (= 1 (count args))
+                                                        (memory/lookup x (first args) nil)
+                                                        (apply memory/lookup x args))
                                (seq args) (apply get x args)
                                (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"java.util.concurrent.Future.get()\" because the target is null"))
                                (h-deref? x) (deref x)
@@ -2708,30 +2825,55 @@
 (def ^:private h-dissoc! (host-fn 'dissoc! nil))
 (def ^:private h-disj! (host-fn 'disj! nil))
 (def ^:private h-pop! (host-fn 'pop! nil))
-(def -assoc (fn [x k v] (if (h-transient? x) (h-assoc! x k v) (assoc* x k v))))
+(def -assoc (fn [x k v] (cond (memory/transient-value? x) (memory/t-assoc x k v)
+                              (h-transient? x) (h-assoc! x k v)
+                              :else (assoc* x k v))))
 (def -assocN -assoc)
-(def -without (fn [x k] (if (h-transient? x) (h-dissoc! x k) (dissoc x k))))
-(def -disjoin (fn [x k] (if (h-transient? x) (h-disj! x k) (disj x k))))
-(def -valAt (fn ([x k] (get x k)) ([x k d] (get x k d))))
-(def -entryAt find)
-(def -containsKey contains?)
+(def -without (fn [x k] (cond (memory/transient-value? x) (memory/t-dissoc x k)
+                              (h-transient? x) (h-dissoc! x k)
+                              :else (dissoc x k))))
+(def -disjoin (fn [x k] (cond (memory/transient-value? x) (memory/t-disj x k)
+                              (h-transient? x) (h-disj! x k)
+                              :else (disj x k))))
+(def -valAt (fn ([x k] (cond (memory/transient-value? x) (memory/t-get x k)
+                             (memory/eve-backed? x) (memory/lookup x k nil)
+                             :else (get x k)))
+              ([x k d] (cond (memory/transient-value? x) (memory/t-get x k d)
+                             (memory/eve-backed? x) (memory/lookup x k d)
+                             :else (get x k d)))))
+(def -entryAt (fn [x k] (cond (memory/transient-value? x) (memory/t-find x k)
+                              (memory/eve-backed? x) (memory/lookup-find x k)
+                              :else (find x k))))
+(def -containsKey (fn [x k] (cond (memory/transient-value? x) (memory/t-contains? x k)
+                                  (memory/eve-backed? x) (memory/lookup-contains? x k)
+                                  :else (contains? x k))))
 (def -peek #?(:jank (fn [x] (if (cohost-inst? x)
                               (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
                               (peek x)))
-              :default peek))
-(def -pop (fn [x] (if (h-transient? x) (h-pop! x)
-                    #?(:jank (if (cohost-inst? x)
-                               (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
-                               (pop x))
-                       :default (pop x)))))
-(def -meta (fn [x] (if (atom-layer/atom-value? x) (atom-layer/meta-of x) (host/meta* x))))
+              :default (fn [x] (if (memory/transient-value? x) (memory/t-peek x) (peek x)))))
+(def -pop (fn [x] (cond (memory/transient-value? x) (memory/t-pop x)
+                        (h-transient? x) (h-pop! x)
+                        :else #?(:jank (if (cohost-inst? x)
+                                         (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
+                                         (pop x))
+                                 :default (pop x)))))
+(def -meta (fn [x] (cond (atom-layer/atom-value? x) (atom-layer/meta-of x)
+                         (memory/transient-value? x) (memory/t-meta x)
+                         :else (host/meta* x))))
 ;; let-go: a symbol given no metadata is the bare symbol (with-meta makes a
 ;; wrapper no symbol equals, even of none)
 (def -withMeta #?(:lg (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m))))
                   ;; a cohost type instance's meta is its own slot, which
                   ;; jank's with-meta cannot reach (it panics on the type)
                   :jank (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (host/with-meta* x m)))
-                  :default (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (with-meta x m)))))
+                  ;; the collection seam (unit 4): a layer transient
+                  ;; keeps its meta in its state atom; an Eve-backed
+                  ;; value's meta rides the layer's wrapper (Eve
+                  ;; collections carry no meta of their own)
+                  :default (fn [x m] (cond (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m)
+                                           (memory/transient-value? x) (memory/t-with-meta x m)
+                                           (memory/eve-backed? x) (memory/with-meta* x m)
+                                           :else (with-meta x m)))))
 (defn- host-meta [m] (if (host/strip-inline?) (dissoc m :inline :inline-arities) m))
 (defn- meta-map [m]
   (if (or (nil? m) (map? m)) m (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentMap m)))))
@@ -2858,17 +3000,37 @@
                            (if-let [f (:empty d)] (f coll)
                              (throw (host/ex* 'java.lang.UnsupportedOperationException (str "Can't create empty: " (:name d)))))
                            (h coll))
-                   :default (if (host-record? coll)
-                              (throw (host/ex* 'java.lang.UnsupportedOperationException (str "Can't create empty: " (type-name (type coll)))))
-                              (h coll))))))
+                   :default (cond (memory/transient-value? coll)
+                                  (throw (host/ex* 'java.lang.UnsupportedOperationException
+                                                   (str "Can't create empty: " (memory/transient-class-token coll))))
+                                  (memory/eve-backed? coll) (memory/empty-of coll)
+                                  (host-record? coll)
+                                  (throw (host/ex* 'java.lang.UnsupportedOperationException (str "Can't create empty: " (type-name (type coll)))))
+                                  :else (h coll))))))
 ;; jank's rseq is a TODO stub; reversing is its whole content there
 (def -rseq #?(:jank (fn [coll] (seq (reverse coll)))
-              :default (host-fn 'rseq (fn [coll] (seq (reverse coll))))))
+              :default (let [h (host-fn 'rseq nil)]
+                         (fn [coll] (cond (memory/transient-value? coll)
+                                          (throw (host/ex* 'java.lang.ClassCastException
+                                                           (str "class " (memory/transient-class-token coll)
+                                                                " cannot be cast to class clojure.lang.Reversible")))
+                                          ;; a bare Eve vector's own rseq
+                                          ;; is an Eve-side hole; the seam
+                                          ;; answers with the reversed seq
+                                          (memory/eve-backed? coll) (reverse (seq coll))
+                                          h (h coll)
+                                          :else (seq (reverse coll)))))))
 (def -iterator (fn [x] (RT-iter (if (host/mlist? x) @(:state x) x))))
 (def -drop (fn [coll n] (drop n coll)))
-(def -persistent (host-fn 'persistent! (unsupported "persistent!")))
-(def -asTransient (host-fn 'transient (unsupported "transient")))
-(def -conj (host-fn 'conj! (unsupported "conj!")))
+;; the transient seam (unit 4): persistent!/transient/conj! of a
+;; layer value are the layer's guarded transients; every other
+;; value keeps the host's own
+(def -persistent (let [h (host-fn 'persistent! (unsupported "persistent!"))]
+                   (fn [x] (if (memory/transient-value? x) (memory/t-persistent! x) (h x)))))
+(def -asTransient (let [h (host-fn 'transient (unsupported "transient"))]
+                    (fn [x] (if (memory/eve-backed? x) (memory/as-transient x) (h x)))))
+(def -conj (let [h (host-fn 'conj! (unsupported "conj!"))]
+             (fn [t x] (if (memory/transient-value? t) (memory/t-conj t x) (h t x)))))
 (def -add (if-let [append (:chunk-append hc)]
            ;; an ArrayList stand-in, or a host ChunkBuffer (new-ChunkBuffer)
            (fn [l x] (if (host/mlist? l) (do (swap! (:state l) conj x) true) (do (append l x) nil)))
@@ -3008,9 +3170,14 @@
                                       (atom-layer/compare-and-set-atom! a old new)
                                       (host-compare-and-set a old new))))
 (def ^:private host-add-watch (host-fn 'add-watch (unsupported "add-watch")))
+;; a watch fn and a validator are invoked BY the host's atom
+;; machinery: a resident reference stored in an Eve-backed opts
+;; map (as (atom 0 :validator f) builds under the fill) resolves
+;; to the registered fn at this crossing, or the host would
+;; invoke the reference itself (unit 4)
 (def -addWatch (fn [a k f] (if (atom-layer/atom-value? a)
                              (atom-layer/add-watch-atom! a k f)
-                             (host-add-watch a k f))))
+                             (host-add-watch a k (memory/resolve-resident f)))))
 (def ^:private host-remove-watch (host-fn 'remove-watch (unsupported "remove-watch")))
 (def -removeWatch (fn [a k] (if (atom-layer/atom-value? a)
                               (atom-layer/remove-watch-atom! a k)
@@ -3022,7 +3189,7 @@
 (def ^:private host-set-validator (host-fn 'set-validator! (unsupported "set-validator!")))
 (def -setValidator (fn [a f] (if (atom-layer/atom-value? a)
                                (atom-layer/set-validator-atom! a f)
-                               (host-set-validator a f))))
+                               (host-set-validator a (memory/resolve-resident f)))))
 (def ^:private host-get-validator (host-fn 'get-validator (fn [_] nil)))
 (def -getValidator (fn [a] (if (atom-layer/atom-value? a)
                              (atom-layer/get-validator-atom a)

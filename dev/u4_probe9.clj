@@ -1,0 +1,20 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(alias 'memory 'cohost.memory)
+
+(def report (boot/boot! {:eve-collections false}))
+(boot/make-user-ns!)
+(defn ev [label src]
+  (println label
+           (try (let [v (boot/eval-str src)] (str (pr-str v) " | " (type v)))
+                (catch Throwable e (str "ERR " (.getMessage e))))))
+(memory/set-fill! true)
+(ev "cons:" "(cons (quote fn) (quote ([x] x)))")
+(ev "list:" "(list (quote a) (quote b))")
+(ev "conj list:" "(conj (list 1 2) 3)")
+(ev "seq of quoted:" "(seq (quote (a b)))")
+(ev "first fdecl:" "(first (quote ([x] x)))")
+(ev "vector:" "(vector 1 2)")
+(ev "assoc meta:" "(assoc {} :a 1)")
+(ev "with-meta sym:" "(meta (with-meta (quote f1) {:a 1}))")
+(println :done)
