@@ -1308,7 +1308,7 @@
                   f-all (fold (remove cpp-catch? catches))
                   e (if f-all (second f-all) (gensym "e__stock"))
                   chain (if f-all (nth f-all 2) (list 'throw e))]
-              (into (vec parts) (door-clauses e chain skip)))))
+              (into (vec parts) (door-clauses e chain skip)))))]
     (apply list 'try (concat exprs catch-clauses finallys))))
 
 (defn- rw-params [params]
