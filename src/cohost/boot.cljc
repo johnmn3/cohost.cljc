@@ -93,15 +93,37 @@
 ;; ---------------------------------------------------------------------------
 ;; macros: rewrite what they emit
 
-(defn wrap-macro [ctx f]
+(defn- expand-error
+  "A throw out of a macro fn, rethrown as clojure.main's macroexpansion
+   error. The codemod expands macros itself (this wrapper, and the
+   rewrite's :expand-macro), so no host compiler ever wraps the throw
+   with the call's attribution; the phase data rides the new ex-info
+   (nil message -- the macro's own error is the cause, and its message
+   is what prints), and the CLI's triage renders the phase. A throw
+   already carrying the phase (a nested expansion, wrapped on its way
+   out of the inner macro) passes through untouched."
+  [macro-sym form e]
+  (if (= :macroexpansion (:clojure.error/phase (ex-data e)))
+    e
+    (ex-info nil
+             (cond-> {:clojure.error/phase :macroexpansion
+                      :clojure.error/symbol macro-sym}
+               (:file (meta form)) (assoc :clojure.error/source (:file (meta form)))
+               (:line (meta form)) (assoc :clojure.error/line (:line (meta form))))
+             e)))
+
+(defn wrap-macro [ctx f macro-sym]
   ;; args: &form and &env, then the macro's own. basilisp passes &env first:
   ;; a wrapped macro (core.clj's, or one its defmacro made) takes [&form &env
   ;; ...], so it gets them in that order (&form is a list, &env a map or nil).
   ;; The expansion is rewritten knowing the locals of &env: a call of a local
-  ;; named like a core fn is no call of the core fn.
+  ;; named like a core fn is no call of the core fn. A throw from the macro
+  ;; fn itself is a failed expansion: it leaves here as the macroexpansion
+  ;; error (expand-error), attributed to this call.
   (fn [& args] (let [[a b & more] args
                      [form env] (if (and (map? a) (not (map? b))) [b a] [a b])
-                     out (apply f form env more)]
+                     out (host/try-all (fn [] (apply f form env more))
+                                       (fn [e] (throw (expand-error macro-sym form e))))]
                  (if host/*raw-macro-output* out (host/code-form (rw/rewrite ctx out {:locals (host/env-locals env)}))))))
 
 (defn ^:export rewrite-output
@@ -248,7 +270,7 @@
                wrap? (and (host/macro-var? v) (not (:cohost/wrapped m)))]
            (when wrap?
              (when (= :root (host/macro-wrap-style))
-               (host/set-var-root! v (fn [f] (wrap-macro ctx f))))
+               (host/set-var-root! v (fn [f] (wrap-macro ctx f (symbol (str ns-sym) (str sym))))))
              (host/alter-var-meta! v assoc :cohost/wrapped true))
            (when (and @snapshot-log (or mark? wrap?))
              (snap! {:op :scan :ns ns-sym :sym sym}))))))))
