@@ -1,4 +1,4 @@
-# cohost 0.9.3 — READY (release readiness report)
+# cohost 0.9 — READY (release readiness report)
 
 2026-11-05, prep lane. This release is assembled and verified
 and stops here: **no merge to main, no tag, no publish has been
@@ -6,9 +6,10 @@ done.** The remaining step is John's (below).
 
 ## The release
 
-- Product version: **0.9.3** (previous shipped: 0.9.2;
-  `coord/releaseN` is the internal coordination round, not a
-  version — John, 2026-11-05 ~08:27 ET).
+- Product version: **0.9** (corrected 2026-11-05 ~09:52 ET:
+  the 0.9.2/0.9.3 numbers are Eve's release line, not cohost's;
+  this release is cohost **0.9**, per John's ruling.
+  `coord/releaseN` is the internal coordination round.)
 - Branch: `coord/release8`, content = the collated debug-seam
   line `muse/debug-seam` @ 2563eee (100 commits ahead of
   origin/main @ 2ddebc8, 0 behind; release7 @ 82c9b77 in its
@@ -80,4 +81,11 @@ them untouched and this release does not fold them in.
 On John's word: merge `coord/release8` to main (the lineage
 is a clean fast-forward shape over main: content branch is
 100 ahead / 0 behind, release commits on top), and publish
-0.9.3 by his usual route. Nothing else is owed from prep.
+0.9 by his usual route. Nothing else is owed from prep.
+
+## Published (2026-11-05, on John's word)
+
+- main fast-forwarded to the release tip; tag **v0.9** on the
+  corrected tip (this commit's child state). An earlier tag
+  `v0.9.3` was created in error (Eve's number) and removed the
+  same morning.

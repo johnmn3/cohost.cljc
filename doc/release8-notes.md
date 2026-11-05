@@ -1,10 +1,10 @@
-# cohost 0.9.3 — release notes
+# cohost 0.9 — release notes
 
 Internal round: `coord/release8`, assembled from the collated
 debug-seam line @ 2563eee (README template pin f025976).
-Previous shipped release: 0.9.2.
+Previous shipped release: the release7 round (the C++ passthrough for jank). Cohost releases carried no version number before this one; 0.9.2/0.9.3 are Eve's release line, not cohost's (corrected 2026-11-05).
 
-0.9.3 is the debug seam: the debugging facilities of stock
+0.9 is the debug seam: the debugging facilities of stock
 Clojure — the clojure.main error report, traces as data,
 `clojure.repl/pst`, the REPL vars — working through the seam on
 every host, with jank's own debugging facilities (codegen/IR
@@ -85,7 +85,7 @@ probe: `doc/debug-seam-probes/probe-div0-cpp.sh`.
   vector.") and `Character outside ASCII` ("ERR Unexpected
   end of file.") — present at every prior gate on this line.
 
-Release-tree re-verification for 0.9.3 is recorded in
+Release-tree re-verification for 0.9 is recorded in
 `doc/release8-STATUS.md` and the readiness report on this
 branch.
 

@@ -50,10 +50,13 @@ locally).
 
 ## Version
 
-- Product version of this release: **0.9.3** (John, 2026-11-05
-  ~08:27 ET: the last shipped cohost release was 0.9.2;
+- Product version of this release: **0.9** (corrected
+  2026-11-05 ~09:52 ET: 0.9.2/0.9.3 are Eve's release line;
+  this release is cohost 0.9, per John's ruling;
   `coord/releaseN` branches are internal coordination rounds,
-  not product versions). No git tags exist in this repo, and no
+  not product versions). Tag: `v0.9` (the repo's first tag),
+  created at publish on John's word; an erroneous `v0.9.3`
+  tag was removed the same morning. No
   version string lives in the tree (grep for 0.9.x: none) —
   the version is carried by the release notes and this report.
 
@@ -74,7 +77,7 @@ locally).
     ~/workspace/release8-logs/debug-seam-jvm.log (runner exit
     code 1 as printed; the PASS/FAIL rows are the verdict and
     match the banked gate's JVM read exactly).
-  Release notes drafted: doc/release8-notes.md (0.9.3).
+  Release notes drafted: doc/release8-notes.md (0.9).
   J legs next, on the tip that carries the notes.
 - 2026-11-05 ~09:0x ET: J verification COMPLETE on the
   release tree @ 52606d1 (bundle clone ~/cohost-release8 on
@@ -87,4 +90,4 @@ locally).
   PASS, 0 failing. Deviations: none.
 - READY. Readiness report: doc/release8-READINESS.md.
   Stops here, awaiting John's word (merge to main / publish
-  0.9.3 are his step; no tag exists or was made).
+  0.9 are his step; no tag exists or was made).
