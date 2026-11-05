@@ -16,6 +16,10 @@ Nothing in this lane writes to cohost main.
   `src/cohost/shim.cljc` is byte-identical to the impl line's (carries
   the unit-9 jank AOT fix), and main's httpbench + version state are
   present whole. Merge committed and pushed; gates next.
+- 2026-11-05 ~6:45 PM ET — gates on the merged tree: JVM 221/221 +
+  62/62, errors 0; cljs cli:check 7/7 SAME; boot:cljs 219/221 + 62/62
+  (the impl line's named pristine pair only); marker sweep 0/0/0.
+  Jank leg running.
 
 ## Rows
 
@@ -89,8 +93,21 @@ Nothing in this lane writes to cohost main.
 Filled as the runs land; numbers exactly as printed. Host legs run
 serially on this box (8 GB).
 
-- JVM battery + libraries (`bb boot:jvm`): PENDING
-- cljs (`bb cli:check cljs`, `bb boot:cljs`): PENDING
-- Conflict-marker sweep on the committed tree: PENDING
-- Jank (`bb boot:jank`): PENDING — any row the pre-release `:eve`
+- JVM battery + libraries (`bb boot:jvm`): **battery: 221/221 stock
+  behaviors pass; libraries: 62/62 cases pass across 12 clojure.*
+  libraries; booted as stock 465, errors: 0** — the impl mainline's own
+  rows, reproduced on the merged tree (log:
+  `eve-cohost-release-logs/boot-jvm.log` in the coordinator's
+  workspace).
+- cljs (`bb cli:check cljs`): **7/7 SAME, rc=0.** (`bb boot:cljs`):
+  **rc=0, errors: 0; libraries: 62/62; battery: 219/221** — the two
+  red rows are exactly the impl line's named pristine pair ("FAIL
+  numeric tower", "FAIL defmacro &form &env"), reproduced, not merge
+  damage (logs: `cli-check-cljs.log`, `boot-cljs.log`).
+- Conflict-marker sweep on the committed tree: line-anchored
+  `<<<<<<<` / `>>>>>>>` / `=======` over the whole tree, no extension
+  filter: **0 / 0 / 0**. Raw-substring grep names 8 files, all
+  `doc/eve-cohost/` landing records whose prose quotes the markers —
+  the identical set exists on the impl parent; the merge added none.
+- Jank (`bb boot:jank`): RUNNING — any row the pre-release `:eve`
   bindings make meaningless is recorded PENDING-REBIND, not forced.
