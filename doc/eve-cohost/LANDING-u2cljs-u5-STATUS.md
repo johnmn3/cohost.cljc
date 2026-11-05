@@ -22,3 +22,10 @@ Logs: ~/workspace/wt/collate-u2cljs-u5-logs/.
   landing's COLLATE-STATUS.md, present on base 0fa021f.)
 - GATES RUNNING on the merged tree (detached, logs in the logs dir):
   bb boot:jvm; then bb cli:check cljs and bb boot:cljs.
+- GATES GREEN on the merged tree, as printed: bb boot:jvm — boot
+  errors 0, battery 221/221, libraries 62/62; bb cli:check cljs —
+  7/7 SAME; bb boot:cljs — rc=0, errors 0, FAIL pair exactly the
+  pristine-base pair (numeric tower; defmacro &form &env).
+- LANDED: collation tip fast-forwarded into muse/eve-cohost-impl
+  (0fa021f -> b86e774, verified on the fetched remote ref).
+  Declaration: doc/eve-cohost/LANDING-u2cljs-u5-DECLARATION.md.
