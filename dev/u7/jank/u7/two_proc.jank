@@ -49,7 +49,13 @@ namespace u7k {
               (> (- (proc/now-ms) t0) 600000) (throw (ex-info "u7: barrier timeout" {:k k :at v}))
               :else (do (proc/sleep-ms! 2) (recur)))))))
 
-(defn- plain [v] (ec/into {} v))
+;; Eve values read through eve.core's own protocols: (ec/into {} v) falls to
+;; clojure.core/into for a host target, whose seq of an Eve object reaches
+;; jank's lazy_meta::get and self-deadlocks (Eve jank.md defect 4: meta of
+;; an opaque_box never returns; gdb trace in unit 7 STATUS).
+(defn- plain-vec [x] (mapv (fn [i] (ec/nth x i)) (range (ec/count x))))
+(defn- plain [v]
+  (ec/reduce-kv (fn [m k x] (assoc m k (if (= k :marks) (plain-vec x) x))) {} v))
 
 (defn- report! [tag a]
   (stage "report deref")

@@ -62,3 +62,10 @@
     interleaved in this run.
   - jank gate side: joins the domain written by Eve-on-jank (`STAGE joined` after ~3 min of JIT),
     now in the first deref.
+- 1:22 PM ET — jank stall DIAGNOSED (gdb, main thread): `u7.two-proc/plain` → `eve.core/into` →
+  `clojure.core/into` (host target `{}`) → `jank::runtime::reduce` → `object::seq` →
+  `object_source` → `jank::runtime::meta` → `lazy_meta::get` → folly SharedMutex
+  `lockExclusiveImpl` → futex wait forever. Eve's jank.md defect 4 ("`(meta <opaque_box>)` never
+  returns"). Not a domain/region problem: the join and the deref completed. Fix in the probe (no jank
+  patch): read the Eve map through eve.core's protocols (`reduce-kv`, `count`, `nth`). Re-running.
+  JVM battery (`bb boot:jvm`) started in parallel.
