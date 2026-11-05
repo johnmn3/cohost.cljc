@@ -111,6 +111,13 @@
 ;; U3: a macro that expands to an unresolved symbol, loaded as a namespace
 (def bad-macro (run-main "seam.badmacro"))
 (def bad-macro-text (str (:out bad-macro) "\n" (:err bad-macro)))
+;; the macro diagnostic lives in the run's report file on the JVM host
+;; (stderr carries only the one-line message), in stderr on jank
+(def bad-macro-report-path (some (fn [line] (let [t (str/trim line)] (when (str/ends-with? t ".edn") t)))
+                                 (str/split-lines (:err bad-macro))))
+(def bad-macro-report (when (and bad-macro-report-path (fs/exists? bad-macro-report-path))
+                        (slurp bad-macro-report-path)))
+(def bad-macro-full (str bad-macro-text "\n" bad-macro-report))
 
 ;; U7: integer divide by zero, both spellings
 (def div-run (run-e "(/ 5 0)"))
@@ -225,14 +232,17 @@
                 ", jank.profile written: " (boolean profile-made?))))
 (record! 12 "SKIP" "owned by U4c (gdb break-on-throw)")
 ;; #13 macro-expansion error: the load fails and the report identifies
-;; the macro call site
+;; the macro call site (process output + the run's report file)
 (record! 13
          (if (and (not= 0 (:exit bad-macro))
-                  (or (includes? bad-macro-text "Expanded from this macro")
-                      (includes? bad-macro-text "macroexpanding")))
+                  (or (includes? bad-macro-full "Expanded from this macro")
+                      (includes? bad-macro-full "macroexpanding")))
            "PASS"
            "FAIL")
-         (str "exit " (:exit bad-macro) "; " (first-real-line (:err bad-macro))))
+         (str "exit " (:exit bad-macro) "; "
+              (cond (includes? bad-macro-full "macroexpanding") "report names the macroexpansion"
+                    (includes? bad-macro-full "Expanded from this macro") "diagnostic carries the macro provenance"
+                    :else (first-real-line (:err bad-macro)))))
 (record! 14
          (if (and (= 1 (:exit uncaught)) (= 0 (:exit clean)) (includes? (:out clean) "3"))
            "PASS" "FAIL")
