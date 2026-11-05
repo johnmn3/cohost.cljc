@@ -627,6 +627,10 @@ the layer's registry atom). The literal reading — the
 containers themselves are domain residents — re-platforms
 cohost's central mechanism. Which is meant?
 
+> **CLOSED (2026-11-05 ~10:23 ET):** John ruled the
+> containers ARE inside the heap ruling — see MEMORY-PLAN
+> §10. No spike question remains open.
+
 **Q-B. Counterpart domains on the no-Eve seats.** On
 cljw/jolt/lg (and, when they boot, basilisp/cljrs/phel)
 there is no Eve substrate and cannot be one below the heap
@@ -716,6 +720,9 @@ John: "We drop the counterpart idea for everything."
   unchanged — this postscript records the decision they
   fed; it does not revise the exploration.
 - **Q-A is untouched** and remains genuinely open.
+  — **CLOSED since (2026-11-05 ~10:23 ET):** John's Q-A
+  ruling puts namespace/var containers inside the heap
+  ruling; see MEMORY-PLAN §10.
 - Banked in MEMORY-PLAN §9, which also strikes the
   COUNTERPART category from the plan's mapping table.
 

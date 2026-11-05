@@ -770,3 +770,20 @@ memory-model docs (`vs/docs/memory-model.md`), and John's
 rulings as cited inline. Claims about Eve-side state are
 labeled with their seat and date; the flagship gate's
 numbers do not exist yet and are nowhere estimated here.*
+
+## 10. Further ruling (John, 2026-11-05 ~10:23 ET) — Q-A: containers are inside the heap ruling
+
+Q-A RULED (John, 2026-11-05 ~10:23 ET): namespace and var
+CONTAINERS are inside the heap ruling — the namespace
+table, interning, and var roots are residents of the
+runtime atom domain (startup domain, per the heap spike's
+P5 write-profile mapping), not host structures outside it.
+Asked whether they should be included, John answered
+"Why not?" — there is no carve-out; the single value world
+has no host-shaped hole at its center. Consequences: units
+4/5 scope includes the shim's Namespace/Var containers
+becoming Eve-backed residents; the heap spike's §3 Q-A is
+closed by this ruling (a one-line closure pointer is added
+in HEAP-SPIKE.md's postscript/Q section too). Q-B and Q-C
+were already closed by the no-counterparts ruling (§9).
+No spike question remains open.
