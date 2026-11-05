@@ -11,7 +11,7 @@ verification, with the remote tip re-checked first).
 - muse/eve-cohost-impl-u2: 3179ba8c426e8dbb03ebb2662a1954408bd20629 (unit 2, COMPLETE)
 
 ## Sequence
-- [ ] Merge 1: unit 3 (8ba8027) into the mainline.
+- [x] Merge 1: unit 3 (8ba8027) into the mainline -- merge commit 4545004, NO conflicts (7 files: memory.cljc + memory_eve.clj new, probe_memory.clj, UNIT3 docs).
 - [ ] Merge 2: unit 2 (3179ba8) into the mainline.
 - [ ] Verify on the merged tree (JVM seat): battery 221/221, libraries
       62/62, boot errors 0, unit-2 snapshot-replay check through the
