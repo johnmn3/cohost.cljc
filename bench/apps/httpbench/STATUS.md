@@ -252,3 +252,14 @@
   lane's needs /tmp here).
 - Next: measure.sh on J (CAP=25000 per the ephemeral range),
   then docs:check jank, README, CAPSTONE report.
+
+## 2026-11-05 04:38 ET — measurements: server proven by wrk; bench client segfaults 15/15
+- measure.sh ran on J (quiet box, load 0.57). The SERVER half is
+  proven by the external reference: wrk -t4 -c1000 -d10s against
+  httpbench serve: 700,665 requests in 10.05 s = 69,715 req/s,
+  76.52 MB/s, avg latency 14.38 ms.
+- The BENCH half segfaulted on every one of its 15 runs (c=100,
+  1000, 10000, 25000 vs its own server; c=1000 vs nginx) — dies
+  before printing anything. Never exercised before (no build had
+  ever completed). Diagnosing now: minimal repro + backtrace;
+  the fix lands in the app, rebuild on J, re-measure.
