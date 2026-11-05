@@ -131,14 +131,37 @@ first.
 - [x] Plan + unit 1 report + unit 2 status read; branch +
   worktree up @ 89ad378; unit 3 layer cherry-picked (790146f).
 - [x] Feasibility measured (probe0, above).
-- [ ] Layer probe 2: domain sharding mechanics, warm timings,
-  Eve-value roots via atom-sio, root-identity read.
-- [ ] `cohost.atom` + `cohost.atom-eve` built.
-- [ ] Shim + boot wiring.
-- [ ] Layer probe (probe_atom.clj): semantics + contention.
-- [ ] Booted-context check over the new atoms
-  (eve_cohost_check_u5.clj: thread checks 21 + atom checks).
-- [ ] Dosync census counted.
+- [x] Layer probe 2: domain sharding mechanics, warm timings,
+  Eve-value roots via atom-sio, root-identity read (ptr stable
+  across a no-op swap, moves on change).
+- [x] `cohost.atom` + `cohost.atom-eve` built. Design as built:
+  the wrapper holds watches/validators/meta in its state;
+  swap! delegates to Eve's CAS loop (validator inside f);
+  watched swaps and CAS take an exclusive claim for the exact
+  watch pair; roots Eve cannot hold seat in the wrapper (one
+  way), including stand-ins and foreign-domain Eve values,
+  which Eve would otherwise read as garbage when nested.
+- [x] Shim + boot wiring. Two seat facts shaped it: on the JVM
+  seat the atom-surface core names must boot stock (the host's
+  swap! casts its receiver -- the natives table and the
+  take-from-host path both bypass the shim), via the :eve-atoms
+  boot opt's host-lacks union + natives gate; and a program's
+  defs intern through the host compiler, so the registry
+  tracks namespaces by load-boundary sweeps on top of the
+  facade paths' live publishes (Var-intern, bindRoot,
+  alterRoot).
+- [x] Layer probe (probe_atom.clj): 66 checks, 0 failures --
+  semantics, host seat, registry, identity, thread-layer
+  composition, contention (no lost updates, watched exact).
+- [x] Booted-context check over the new atoms
+  (eve_cohost_check_u5.clj): 31 checks, 0 failures -- the
+  units 1-2 thread checks unregressed, atom semantics through
+  the booted core, registry entries verified from the host.
+- [x] Dosync census counted (dev/u5/census.clj, output
+  dev/u5/census-out.txt): 13 transactional call sites in the
+  vendored libraries (core.clj 9, test.clj 4), 6 in the
+  battery, all in its one refs row; the only dosyncs wrap
+  single commutes; no ensure, no ref-set in libraries.
 - [ ] Gates: JVM battery 221/221 + libraries 62/62, boot
   errors 0 (default config); jank AOT gate on J 219/221
   (standing pair only); thread checks unregressed.
