@@ -77,40 +77,33 @@ Gates: first hardened run 7/14, 2 FAIL (#13 + #14's wrong first
 fixture); final 8/14, 1 FAIL (#13) -- #14 flipped, no PASS
 regressed; cli:check 7/7 SAME.
 
-## #13 -- macro attribution -- wrapper LANDED @ 170a1ef
-## (Status 720e6bf); the named gate is NOT reached
+## #13 -- STOPPED by the coordinator; variant reverted, diagnosis
+## retained as an exhibit
 
-boot.cljc wrap-macro catches a throw from the macro fn and
-rethrows an ex-info with :clojure.error/phase :macroexpansion,
-:clojure.error/symbol (the call form's head symbol), and the call
-form's :source/:line/:column when its meta carries them, the
-original error as cause. Measured in the report's :via: the
-attributed entry sits exactly between the host compiler's wrapper
-and the macro's own ex-info (probe: (defmacro m [x] (throw
-(ex-info "bad" {}))) then (m 1)). The runner's #13 gained the
-body-throw probe with per-probe needles; the needle searches the
-printed message, not the report file (a file-wide needle passes
-unattributed, via the compiler wrapper's own message riding in
-:via[0] -- measured, and the loose-predicate run's #13 PASS was
-discarded on that account).
+This lane built an expansion-wrapper variant (landed @ 170a1ef:
+boot.cljc wrap-macro rethrowing an ex-info with
+:clojure.error/phase :macroexpansion, the macro symbol, and the
+call form's source/line/column, cause chained -- measured in the
+report's :via on the body-throw probe -- plus a runner probe with
+the needle on the printed message). The coordinator then stopped
+the line: the analysis lane banked its own #13 (7b3e7e3, its
+runner reads #13 PASS, 8/14, 0 FAIL), and two implementations of
+the unit must not reach collation. The stop arrived after the
+variant was pushed; the banking commit that carries this report
+reverts its code exactly -- boot.cljc is byte-identical to the
+base a127a19, and the runner differs from the F4-F7 commit only
+by U5's #8 hunks. The analysis lane's #13 is the implementation
+of record.
 
-The JVM gate FAILS honestly (8/14 at the unit, evidence:
-"attribution: none"): throwable->map takes the phase from the
-first :via entry, the host CompilerException, whose ex-data the
-seam cannot read -- hosts/java.clj's exception-class table has
-no CompilerException arm (it flattens to RuntimeException, so
-ex-info? fails) and shim.cljc's token-ancestors for
-clojure.lang.Compiler$CompilerException omits
-clojure.lang.IExceptionInfo, which that class has implemented
-since Clojure 1.10 (so token instance? fails too). Stock Clojure
-attributes this exact case from that data (measured with the real
-CLI). Both fixes are one line each, in the host type tables --
-outside the unit's named layer (the expansion wrapper) and the
-report layer, and NOT made here. Full evidence:
-doc/debug-seam-probes/n13-diagnosis.md. Coordinator to route.
-Gates: 8/14, 1 FAIL (#13); cli:check 7/7 SAME; no other check
-moved with wrap-macro in (the tightened run is the regression
-evidence).
+Retained verbatim as an exhibit:
+doc/debug-seam-probes/n13-diagnosis.md -- the variant's residual:
+on the JVM host the printed headline takes its phase from the
+host CompilerException's ex-data, which the seam cannot read
+(hosts/java.clj's exception-class table has no CompilerException
+arm; shim.cljc's token-ancestors for it omits
+clojure.lang.IExceptionInfo, implemented since Clojure 1.10).
+A possible follow-up refinement; the coordinator notes it does
+not block the banked #13, which meets the probe definition.
 
 ## U5 -- check #8 done; pst diagnosed, no code -- @ 8c4a3a9
 ## (Status 4d5e0d6)
