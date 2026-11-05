@@ -30,6 +30,7 @@
                                   #?(:cljs (cljs-realm/core-boot-opts {:root root :roots []}))))
         boot-ms (/ (double (- (host/nano-time) t0)) 1000000.0)]
     (boot/print-report report)
+    #?(:cljs (boot/install-runtime-loader!))
     (boot/make-user-ns!)
     (cond
       (seq evals)

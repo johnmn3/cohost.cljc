@@ -488,6 +488,7 @@ namespace cohost_io {
                                       #?(:cljs (cljs-realm/core-boot-opts {:root (:stock-root cfg)
                                                                            :roots (vec (:roots cfg))})))))]
       (when (:verbose cfg) (boot/print-report report)))
+    #?(:cljs (boot/install-runtime-loader!))
     (doseq [r (:roots cfg)] (boot/add-source-root! r))
     ;; :project-snapshot -- the module of a fresh per-project snapshot (the
     ;; project's namespaces compiled ahead, bin/cohost's jank launch): its

@@ -41,6 +41,7 @@
   (try
     (let [{:keys [root roots]} (cljs-eve/install-realm! b)]
       (boot/boot! {:root root :eve-atoms true})
+      (boot/install-runtime-loader!)
       (doseq [r roots] (boot/add-source-root! r))
       (boot/make-user-ns!)
       (boot/make-user-ns! 'user)

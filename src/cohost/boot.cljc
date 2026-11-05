@@ -1381,6 +1381,21 @@
               (host/alias! cur a t)
               [nil cur]))))
 
+(defn install-runtime-loader!
+  "Unit 8 (cljs seat): require and use called as functions -- anywhere a
+   top-level directive is not, inside a try or a fn -- load through this
+   loader, as the directive does. ClojureScript's own require, which the
+   seat took from its host, compiles to goog.require, which finds no
+   library the loader did not compile into the image: the namespace never
+   loaded and the call returned as though it had (measured: the probe's
+   (try (require 'clojure.spec.alpha) ...) printed OK and the later eval
+   failed reading clojure.spec.alpha off undefined). Called by the cljs
+   entry points after boot; other seats keep their host's require."
+  []
+  (host/intern! core-ns 'require (fn [& args] (require! (host/current-ns) args false) nil))
+  (host/intern! core-ns 'use (fn [& args] (require! (host/current-ns) args true) nil))
+  nil)
+
 (defn- core-var [sym]
   (or (host/interned-var core-ns sym) (host/resolve-core sym)))
 
