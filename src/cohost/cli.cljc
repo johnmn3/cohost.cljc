@@ -282,11 +282,17 @@
 
 #?(:jank (cpp/raw "#include <iostream>
 #include <string>
+#include <cstdlib>
 namespace cohost_io {
   using namespace jank::runtime;
   inline object_ref read_line() {
     std::string s;
     if(!std::getline(std::cin, s)) { return jank_nil; }
+    return make_box<obj::persistent_string>(jtl::immutable_string(s));
+  }
+  inline object_ref temp_dir() {
+    const char *t = std::getenv(\"TMPDIR\");
+    std::string s = t ? t : \"/tmp\";
     return make_box<obj::persistent_string>(jtl::immutable_string(s));
   }
 }"))
@@ -435,6 +441,28 @@ namespace cohost_io {
          :i (boot/eval-str (host/slurp-file x))))
      (if main (run-main! main) 0))
    (fn [e] (report-error! e) 1)))
+
+(defn- temp-dir
+  "The host's temp directory: the report file's home when no launcher
+   config names one (bin/cohost passes java.io.tmpdir as the
+   launcher's :report-dir; clojure.main's reports live there too)."
+  []
+  #?(:jank (cpp/cohost_io.temp_dir)
+     :default (System/getProperty "java.io.tmpdir")))
+
+(defn run-app-main!
+  "The AOT entry: build:jank's generated cohost.app-main calls this
+   with the app's namespace and the process arguments, after
+   boot-from-snapshot!. An executable carries no launcher config, so
+   the report config is the default -- \"file\", at the host's temp
+   directory, as bin/cohost sets for the launcher -- and the run is
+   run-cli!'s own, so an uncaught error from the app's -main gets the
+   launcher's contract exactly: the report (headline + report file)
+   and exit 1, where jank's generated main alone printed the error
+   as a value and exited 0 (debug-seam check #9). Ends the process."
+  [main-ns args]
+  (reset! cli-config {:report "file" :report-dir (temp-dir)})
+  (exit! (run-cli! {:inits [] :main {:type :main :ns (str main-ns) :args (vec args)}})))
 
 (defn -main
   "args: [config-edn-path]. See the file header for the config shape."

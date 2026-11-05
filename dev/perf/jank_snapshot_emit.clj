@@ -375,9 +375,9 @@
     (when-not (lib-begins lib)
       (throw (ex-info (str "the app's namespace " app " was not recorded (or failed to load)") {:failed failed})))
     (spit (module-file 'cohost.app-main)
-          (str "(" NS " cohost.app-main\n  (:require [cohost.core] [" m "]))\n"
+          (str "(" NS " cohost.app-main\n  (:require [cohost.core] [cohost.cli] [" m "]))\n"
                "(" C "/defn -main [& args]\n"
                "  (cohost.boot/boot-from-snapshot! {})\n"
                "  (cohost.boot/make-user-ns!)\n"
-               "  (" C "/apply " m "/-main args))\n"))
+               "  (cohost.cli/run-app-main! (quote " m ") args))\n"))
     (println "MODULE cohost.app-main" (module-file 'cohost.app-main) "main" (str m "/-main"))))
