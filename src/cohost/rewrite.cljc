@@ -1241,6 +1241,36 @@
                    ;; chain]: the native-translation clauses below reuse
                    ;; the chain with a translated exception bound to e
                    [(list 'catch (:catch-all ctx) e chain) e chain])))
+        ;; the native doors: on a cpp host a native C++ exception is no
+        ;; object_ref, so the folded clause never sees it. Two sibling
+        ;; clauses after a folded clause catch the native types and run
+        ;; the same dispatch chain with the exception translated to an
+        ;; ex-info first -- the message read by MEMBER ACCESS on the
+        ;; caught value, in the clause: (cpp/.-message (cpp/.get e)) on
+        ;; a jank error (its message field, through the ref's get()),
+        ;; (cpp/.what e) on a std::exception. Member access compiles
+        ;; against jank/std types alone: no seam cpp namespace is named,
+        ;; so the clauses compile in any recorded module and in the
+        ;; snapshot launcher's JIT -- the two failures that removed the
+        ;; earlier doors (a caught C++ value's type does not survive a
+        ;; fn boundary, analyze/invalid-cpp-call; and the cohost_shim_err
+        ;; namespace the in-clause read named is visible in no other
+        ;; module). A jank error keeps the class try-all gives it
+        ;; (Compiler$CompilerException); a std::exception becomes a
+        ;; plain java.lang.Exception. A chain that matches no clause
+        ;; rethrows the translated exception, now an ordinary one.
+        ;; Probes: doc/debug-seam-probes/native-report.md.
+        door-clauses (fn [e chain]
+                       (when (host/cpp?)
+                         (let [n (gensym "e__native")]
+                           [(list 'catch 'cpp/jank.error_ref n
+                                  (list 'let* [e (list 'ex-info (list 'cpp/.-message (list 'cpp/.get n))
+                                                       {:cohost/class 'clojure.lang.Compiler$CompilerException})]
+                                        chain))
+                            (list 'catch 'cpp/std.exception n
+                                  (list 'let* [e (list 'ex-info (list 'cpp/.what n)
+                                                       {:cohost/class 'java.lang.Exception})]
+                                        chain))])))
         catch-clauses
         (if own?
           (map (fn [[_ c b & cb]]
@@ -1249,27 +1279,10 @@
           (if-not (some cpp-catch? catches)
             (let [f (fold catches)]
               (when f
-                (into [(first f)]
-                      ;; a native C++ exception is no object_ref, so the
-                      ;; folded clause never sees it: the catch hole is
-                      ;; OPEN. U3b's two door shapes were measured and
-                      ;; removed (7cb29ec, f03e517, and the removal
-                      ;; commit): a caught C++ value's native type does
-                      ;; not survive a fn boundary (analyze/invalid-
-                      ;; cpp-call), and a cpp/raw namespace declared in
-                      ;; the shim is visible in no other module -- not
-                      ;; in a recorded module's per-module compile, and
-                      ;; not in the snapshot launcher's JIT, where the
-                      ;; shim arrives AOT-compiled and its cpp/raw was
-                      ;; never evaluated in-session (a runtime-compiled
-                      ;; stock try there failed with 'Unable to find
-                      ;; cohost_shim_err'). The banked design and the
-                      ;; member-access lead are in
-                      ;; doc/debug-seam-probes/u3-diagnosis.md.
-                      [])))
+                (into [(first f)] (door-clauses (second f) (nth f 2)))))
             ;; source order kept: runs of JVM catches fold together,
             ;; cpp catches stand as siblings between them
-            (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (let [f (fold g)] (if f [(first f)] []))))
+            (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (let [f (fold g)] (if f (into [(first f)] (door-clauses (second f) (nth f 2))) []))))
                     (partition-by cpp-catch? catches))))]
     (apply list 'try (concat exprs catch-clauses finallys))))
 
