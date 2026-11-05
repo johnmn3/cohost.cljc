@@ -157,3 +157,32 @@ banked above stands (the code at this tip is unchanged since the
 10:48 AM gate run on J). Remaining, in order: (1) the probe row on
 the jank seat, (2) the cljs half on real Eve (SAB slab atom), (3)
 final gates + UNIT2-REPORT.md.
+
+## Probe row, attempt: snapshot replay drops the thread-layer fill (2026-11-05 ~11:35 AM ET)
+
+The probe row (bb dev/eve_probe.clj jank on J, via bin/cohost :jank)
+failed at the program form: "The symbol `future` could not be
+resolved" (cohost.scan/with-source, reading the -e program);
+SUMMARY|jank|ok=0, wall 395,143 ms (that wall is the snapshot build).
+Minimal repro on J, seconds each, snapshot path: `(println :hi)`
+answers; `(println @(future 3))` fails the same way; ns-map of
+clojure.core shows future/agent/pmap ABSENT, inc present.
+
+Diagnosis (verified against the code): bin/cohost :jank boots from
+the AOT snapshot, which REPLAYS a recorded boot instead of running
+boot!. install-thread-layer! interns the layer's fn values directly
+(host/intern!) -- no form is evaluated, so the snapshot recorder
+(events of evaluated forms + snap-* ops) never sees the fills, and
+the replayed core has no thread family. Fresh boots are unaffected
+(the AOT gate's boot runs boot! itself).
+
+Fix (cohost's own layers): install-thread-layer! now records
+{:op :thread-layer} when it fills; the emitter
+(dev/perf/jank_snapshot_emit.clj) maps it to
+(cohost.boot/snap-thread-layer!); the new snap-thread-layer! redoes
+the fill at replay against the snapshot report (snap-end! restores
+the recorded report as data, so nothing double-prints -- the same
+pattern as snap-take!/snap-scan!). Next: JIT booted check (fresh
+boot) to confirm the other half, then rebuild the snapshot on J
+(content key covers src/cohost, so the fix self-invalidates) and
+re-run the probe row.
