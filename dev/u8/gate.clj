@@ -1,6 +1,7 @@
 ;; Unit 8 gate runner (bb): bb dev/u8/gate.clj
-;;   1. the probe row: dev/eve_probe.clj's program (byte-identical, read from
-;;      dev/eve_probe_program.cljc) on :jvm and :cljs -- every PROBE line equal;
+;;   1. the probe row: dev/eve_probe.clj's load forms + program (byte-identical,
+;;      read from dev/eve_probe_program.cljc) on :jvm and :cljs -- PROBE lines
+;;      compared as values (test-stacktrace prints each host's own frame count);
 ;;   2. the worker-crossing program (dev/u8/realm_crossing_program.cljc) on
 ;;      :jvm and :cljs -- every PROBE line equal -- with the cljs run's realm
 ;;      trace (COHOST_REALM_TRACE=1) showing the futures ran in a worker realm.
@@ -8,11 +9,25 @@
          '[clojure.edn]
          '[clojure.string :as str])
 
+;; the probe runner's own load forms (dev/eve_probe.clj), so the program
+;; runs exactly as that runner feeds it: libraries required first
+(def libs '[clojure.walk clojure.set clojure.string clojure.zip
+            clojure.data clojure.edn clojure.template clojure.test
+            clojure.math clojure.stacktrace clojure.repl
+            clojure.spec.alpha])
+
+(defn load-form [lib]
+  (str "(try (require '" lib ") (println \"PROBE|load-" lib "|OK :loaded\")"
+       " (catch Throwable t (println (str \"PROBE|load-" lib "|FAIL \""
+       " (.getName (class t)) \" :: \" (ex-message t)))))"))
+
 (defn run-host [host program env]
   (let [t0 (System/currentTimeMillis)
         r (apply p/shell {:out :string :err :string :continue true :timeout 900000
                           :extra-env env}
-                 ["bin/cohost" (str ":" host) "-e" program])]
+                 (concat ["bin/cohost" (str ":" host)]
+                         (mapcat (fn [f] ["-e" f]) (map load-form libs))
+                         ["-e" program]))]
     {:lines (filterv #(str/starts-with? % "PROBE|") (str/split-lines (str (:out r))))
      :err (:err r) :exit (:exit r) :ms (- (System/currentTimeMillis) t0)}))
 

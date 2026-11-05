@@ -12,6 +12,12 @@
   []
   (not= "0" (.. js/process -env -COHOST_CLJS_EVE)))
 
+(def ^:private fill-opts
+  "The boot opts of a realm whose heap is Eve's (a layer atom's deref
+   by the host's own deref, in core fns the boot compiled before the
+   fill, is cohost.atom's LayerAtom record's IDeref)."
+  {:eve-atoms true})
+
 (defn core-boot-opts
   "In the core realm: install Eve hosting (when enabled) and answer the
    boot opts that put the program's atoms in it. boot-data is what a
@@ -19,7 +25,7 @@
   [boot-data]
   (if (enabled?)
     (do (cljs-eve/install-core! {:entry 'cohost.hosts.cljs-realm/realm-main :boot boot-data})
-        {:eve-atoms true})
+        fill-opts)
     {}))
 
 (defn- known-ns? [ns-sym]
@@ -40,7 +46,7 @@
   [b]
   (try
     (let [{:keys [root roots]} (cljs-eve/install-realm! b)]
-      (boot/boot! {:root root :eve-atoms true})
+      (boot/boot! (assoc fill-opts :root root))
       (boot/install-runtime-loader!)
       (doseq [r roots] (boot/add-source-root! r))
       (boot/make-user-ns!)

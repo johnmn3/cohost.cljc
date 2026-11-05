@@ -278,6 +278,23 @@
 ;; Construction
 
 (declare register-conveying!)
+(declare deref-atom)
+
+;; Unit 8 (cljs seat, where the fill is on by default): core fns the
+;; boot compiled before the fill deref with the host's own deref --
+;; @x is host plumbing until the boot ends (cohost.rewrite
+;; reader-plumbing) -- and cljs.core/deref answers only IDeref, which a
+;; plain tagged map is not (measured: the battery's memoize case). So on
+;; ClojureScript the layer's value is a record: still a map tagged
+;; :cohost/kind ::atom (everything here reads it as one), and IDeref
+;; through deref-atom. Other seats keep the plain map.
+#?(:cljs (defrecord LayerAtom [state]
+           IDeref
+           (-deref [this] (deref-atom this))))
+
+(defn- layer-atom [st]
+  #?(:cljs (assoc (->LayerAtom st) :cohost/kind ::atom)
+     :default {:cohost/kind ::atom :state st}))
 
 (defn make-atom
   "A layer atom holding init. opts: {:meta m :validator f} --
@@ -303,7 +320,7 @@
                        :validator validator
                        :meta meta
                        :readers 0})
-             a {:cohost/kind ::atom :state st}]
+             a (layer-atom st)]
          (validate! validator init)
          a)
        (do (check-kind-spec! kind meta)
@@ -314,10 +331,9 @@
              ;; validator holds over what this process will see
              (validate! validator @h)
              (register-conveying!
-              {:cohost/kind ::atom
-               :state (atom {:eve h :gate :open :root nil :kind kind
-                             :watches {} :validator validator :meta meta
-                             :readers 0})})))))))
+              (layer-atom (atom {:eve h :gate :open :root nil :kind kind
+                                 :watches {} :validator validator :meta meta
+                                 :readers 0})))))))))
 
 ;; Unit 8: an atom crossing realms. On the cljs Node seat the program's
 ;; atoms live in Eve domains over SharedArrayBuffers that every realm of
@@ -338,9 +354,8 @@
   "A layer atom over Eve handle h (an atom that crossed from another
    realm)."
   [h]
-  {:cohost/kind ::atom
-   :state (atom {:eve h :gate :open :root nil :kind :mem :watches {}
-                 :validator nil :meta nil :readers 0})})
+  (layer-atom (atom {:eve h :gate :open :root nil :kind :mem :watches {}
+                     :validator nil :meta nil :readers 0})))
 
 (defn kind
   "The atom's current kind (:mem, :disk or :net)."

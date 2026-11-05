@@ -1,0 +1,67 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=35351 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+cohost.boot on cljs: 822 top-level forms
+  booted as stock: 554   from host: 87   natives: 41   skipped: 140   errors: 0
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-kinds?
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-kinds?
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/static-types!
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/static-types!
+WARNING: No such namespace: cohost.boot, could not locate cohost/boot.cljs, cohost/boot.cljc, or JavaScript source providing "cohost.boot"
+WARNING: Use of undeclared Var cohost.boot/eval-str
+WARNING: No such namespace: cohost.scan, could not locate cohost/scan.cljs, cohost/scan.cljc, or JavaScript source providing "cohost.scan"
+WARNING: Use of undeclared Var cohost.scan/provenance
+battery: 219/221 stock behaviors pass
+   FAIL numeric tower
+        got      [3 -5 6 2 3 1 1 2 0 2 1 true true true true true true true true true true]
+        expected [3 -5 6 2 3 1 1 2 0 2 1 true true true true true true true true false true]
+   FAIL defmacro &form &env
+        got      [8 m2]
+        expected [2 m2]
+WARNING: Use of undeclared Var cohost.repl/proxy
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: Use of undeclared Var cohost.repl/proxy-super
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: No such namespace: sun.misc.Signal, could not locate sun/misc/Signal.cljs, sun/misc/Signal.cljc, or JavaScript source providing "sun.misc.Signal"
+WARNING: Use of undeclared Var sun.misc.Signal/handle
+WARNING: Use of undeclared Var cohost.repl/proxy
+WARNING: Use of undeclared Var cohost.repl/handle
+WARNING: Use of undeclared Var cohost.repl/signal
+WARNING: Use of undeclared Var cohost.repl/signal
+libraries: 62/62 cases pass across 12 clojure.* libraries
+  clojure.walk  7/7
+  clojure.set  5/5
+  clojure.string  10/10
+  clojure.zip  7/7
+  clojure.data  5/5
+  clojure.edn  4/4
+  clojure.template  2/2
+  clojure.test  4/4
+  clojure.math  7/7
+  clojure.stacktrace  2/2
+  clojure.repl  3/3
+  clojure.spec.alpha  6/6
+
+real	0m30.511s
+user	0m56.548s
+sys	0m2.058s
+rc=0
