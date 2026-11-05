@@ -3,7 +3,8 @@
    java.util.regex and clojure.edn natively, so these are one-line calls into
    the host. Merged into hosts/jvm.clj's and hosts/jolt.clj's adapter maps."
   (:require [clojure.edn :as edn]
-            [clojure.string :as string]))
+            [clojure.string :as string]
+            [cohost.memory :as memory]))
 
 (defn- groups [^java.util.regex.Matcher m]
   (mapv (fn [i] (.group m (int i))) (range (inc (.groupCount m)))))
@@ -166,7 +167,13 @@
                   'Character/toUpperCase #(if (number? %) (Character/toUpperCase (int %)) (Character/toUpperCase (char %)))
                   'Character/toLowerCase #(if (number? %) (Character/toLowerCase (int %)) (Character/toLowerCase (char %)))
                   'Character/digit (fn [c r] (Character/digit (int (ch c)) (int r)))
-                  'Object/hashCode (fn [x] (.hashCode ^Object x))
+                  ;; seam identity (unit 3): an Eve-backed stand-in's
+                  ;; hashCode is its canonical form's -- the stand-in
+                  ;; map's own hashCode is the wrong value's answer
+                  'Object/hashCode (fn [x] (if (memory/eve-value? x)
+                                             (let [f (memory/canonical-form x)]
+                                               (if (nil? f) 0 (.hashCode ^Object f)))
+                                             (.hashCode ^Object x)))
                   'Collections/reverseOrder (fn ([] (java.util.Collections/reverseOrder))
                                               ([c] (java.util.Collections/reverseOrder c)))
                   ;; (getNumericValue and forDigit: jolt has neither; the shim's serve)
