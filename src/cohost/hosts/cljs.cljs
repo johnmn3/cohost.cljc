@@ -365,11 +365,14 @@
       true
       (do (pump-tasks! (fn [] (boolean @flag)))
           (cond @flag true
-                (some? timeout-ms) false
-                ;; untimed and the queue is drained: inside a task, unwind
-                ;; and be re-queued; on the main flow, block in slices --
-                ;; only an asynchronous (host) event can ring this bell now
+                ;; inside a task: unwind and be re-queued, timed or not --
+                ;; the layer's waiters all re-check and re-wait on entry
+                ;; (the worker loop above all), and a task that spun here
+                ;; would starve the very pump that can ring its bell
                 (not= 0 @task-self) (throw yield-marker)
+                (some? timeout-ms) false
+                ;; main flow, untimed, queue drained: block in slices --
+                ;; only an asynchronous (host) event can ring this bell now
                 :else (loop [] (if @flag true (do (pump-tasks! (fn [] (boolean @flag)))
                                                   (when-not @flag (block-ms! 5))
                                                   (recur)))))))))
