@@ -48,7 +48,20 @@ Release perf spot-check: boot/startup numbers in the style of
 doc/PERF.md, from the same runs (snapshot boot ms on J; JVM boot
 locally).
 
+## Version
+
+- Product version of this release: **0.9.3** (John, 2026-11-05
+  ~08:27 ET: the last shipped cohost release was 0.9.2;
+  `coord/releaseN` branches are internal coordination rounds,
+  not product versions). No git tags exist in this repo, and no
+  version string lives in the tree (grep for 0.9.x: none) —
+  the version is carried by the release notes and this report.
+
 ## State
 
-- 2026-11-05 ~08:2x ET: branch created, pin committed. Local
-  verification next.
+- 2026-11-05 ~08:2x ET: branch created, pin committed.
+- 2026-11-05 ~08:3x ET: local JVM battery on the release tree:
+  "battery: 221/221 stock behaviors pass", "libraries: 62/62
+  cases pass across 12 clojure.* libraries" (log:
+  ~/workspace/release8-logs/boot-jvm.log) — matches the gate.
+  cli:check jvm + debug-seam:check jvm next.
