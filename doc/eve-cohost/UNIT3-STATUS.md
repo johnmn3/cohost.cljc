@@ -55,8 +55,30 @@ Gate: the mixed-representation probe + standing batteries unregressed
 ## State
 
 - [x] Plan read; branch + worktree up; feasibility measured (above).
-- [ ] Layer (`cohost.memory`) built.
-- [ ] JVM Eve hosting (`cohost.memory-eve`) built.
-- [ ] Shim dispatch branches wired.
-- [ ] Probe green; batteries unregressed; jank AOT gate on J.
-- [ ] Report filed (UNIT3-REPORT.md) + declaration.
+- [x] Layer (`cohost.memory`) built — @ e93971d.
+- [x] JVM Eve hosting (`cohost.memory-eve`) built — @ e93971d.
+- [x] Shim dispatch branches wired (`Util-equiv` / `Util-hasheq` /
+  `-equiv`; `Object/hashCode` answers from the canonical form in
+  `cohost.hosts.java`) — @ e93971d.
+- [x] Gate probe `probe_memory.clj`: **111/111 PASS** (vector, map,
+  set, list, atom-root snapshots incl. scalar; H vs E, E vs H, E vs E;
+  nested; empties; dispatch-layer lookup keyed either way).
+- [x] JVM battery unregressed: **221/221, libraries 62/62, boot
+  errors 0** (`bb boot:jvm`); thread probe 29/29; booted-context
+  check 21/21.
+- [x] Jank AOT gate on J (`bb boot:jank-snapshot` + `bb boot:jank`,
+  ~/cohost-eve-u3 on J): snapshot built; battery **219/221**
+  (standing pair only), libraries 62/62, boot errors 0.
+- [x] Report filed (UNIT3-REPORT.md) + declaration.
+
+## Final
+
+Unit 3 complete. Probe 111/111; JVM battery 221/221 + libraries
+62/62, boot errors 0; jank battery 219/221 + libraries 62/62, boot
+errors 0. Full account: UNIT3-REPORT.md.
+
+Note (2026-11-05 ~09:45 ET, John's ruling, relayed via the parent):
+the heap Clojure sees is to BE an Eve atom — the two-zone model is
+superseded; this unit's contract stands as the foundation of that
+single world (the = / hasheq answers any representation must meet),
+not a bridge between worlds. The deliverable is unchanged.
