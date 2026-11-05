@@ -1,0 +1,39 @@
+files scanned: 18
+total transactional call sites: 13
+
+== by name ==
+  ref: 5
+  commute: 4
+  dosync: 3
+  alter: 1
+
+== by file ==
+  resources/cohost/clojure-1.12.0/clojure/core.clj: 9
+  resources/cohost/clojure-1.12.0/clojure/test.clj: 4
+
+== dosync / sync blocks, and what is inside them ==
+  resources/cohost/clojure-1.12.0/clojure/core.clj:5967 dosync contains {commute 1}
+  resources/cohost/clojure-1.12.0/clojure/core.clj:5979 dosync contains {ref 1, commute 1}
+  resources/cohost/clojure-1.12.0/clojure/test.clj:320 dosync contains {commute 1}
+
+== ref call sites ==
+  resources/cohost/clojure-1.12.0/clojure/core.clj:2313
+  resources/cohost/clojure-1.12.0/clojure/core.clj:5895
+  resources/cohost/clojure-1.12.0/clojure/core.clj:5979
+  resources/cohost/clojure-1.12.0/clojure/test.clj:762
+  resources/cohost/clojure-1.12.0/clojure/test.clj:811
+
+== the battery: its programs are string literals; each is
+   read and walked as code ==
+battery strings walked: 512
+battery transactional call sites: 6
+  alter: 2
+  dosync: 2
+  ref: 1
+  ref-set: 1
+  site: ref in "(let [r (ref 1)] [(try (alter r inc) (catch IllegalStateException e :ise"
+  site: alter in "(let [r (ref 1)] [(try (alter r inc) (catch IllegalStateException e :ise"
+  site: ref-set in "(let [r (ref 1)] [(try (alter r inc) (catch IllegalStateException e :ise"
+  site: dosync in "(let [r (ref 1)] [(try (alter r inc) (catch IllegalStateException e :ise"
+  site: alter in "(let [r (ref 1)] [(try (alter r inc) (catch IllegalStateException e :ise"
+  site: dosync in "(let [r (ref 1)] [(try (alter r inc) (catch IllegalStateException e :ise"
