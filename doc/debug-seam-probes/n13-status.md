@@ -250,3 +250,22 @@ JVM runner re-check after (must stay 10/14, #13 PASS).
   the lane report.
 - Snapshot build for this tree launched on J (detached, log
   ~/jgate-logs/n13-u3-snapshot.log) for probe (b).
+
+## 2026-11-05 ~02:35 ET — UNIT 3 VERDICT: MEASURED DISPOSITION (no code change)
+
+- Snapshot on J built 533,347 ms (stamp ed8d6bf4), boot 466 ms.
+- Plain jank (namespace-scope cpp/raw helper, cpp/ call): divisor
+  1 -> prints 5, exit 0; divisor 0 -> exit 136 (SIGFPE), silence.
+- Cohost session (-m seam.div0, same helper in the fixture's
+  cpp/raw block): exit 136, stdout empty, no headline/report.
+- Control, same shape (-e "(/ 5 0)"): exit 1, "Execution error
+  (ArithmeticException) ... Divide by zero" + report.
+- Disposition banked in the lane report (Unit 3): the guard lives
+  in booted core's arithmetic; cpp/raw is verbatim by contract;
+  every guard candidate examined (textual rewrite, SIGFPE-handler
+  throw/longjmp, feenableexcept, sanitizer codegen) and rejected
+  with its reason -- the JVM's JNI line is the same line. Boundary
+  stated for the docs. Probe script committed:
+  doc/debug-seam-probes/probe-div0-cpp.sh.
+- ALL THREE UNITS DONE. Lane complete pending collation into
+  muse/debug-seam.

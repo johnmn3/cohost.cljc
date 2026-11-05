@@ -182,3 +182,93 @@ Full report at:
   re-run for this unit: the launcher's behavior on this exact app
   is already measured (J gate #1: exit 1, headline, report EDN),
   and the AOT output now matches that shape line for line.
+
+---
+
+# Unit 3 — divide by zero in direct cpp/ arithmetic: MEASURED DISPOSITION
+
+**Disposition: not guardable at cohost's layers. No code change.**
+The boundary below is stated precisely, with the measurements that
+establish it; a user who writes the division in Clojure gets the
+guard, a user who writes it in C++ gets C++'s rules. This matches
+jank's own documented stance (book, differences-from-clojure.md:
+"Division by integer 0 is undefined behavior") — cohost neither
+widens nor narrows it for user C++.
+
+## What the layers emit around user C++
+
+Nothing. The codemod's one deliberate non-rewrite is cpp/raw:
+rewrite.cljc passes its text through untouched, and the adapter
+compiles it into the module body as written. That is the
+passthrough contract — cohost's own host caps and user native code
+(httpbench's hot path) are written in it. The seam's division guard
+lives in booted core's arithmetic: `/`, `quot`, `rem` check the
+divisor before any native division executes (check #10 passes on
+both hosts for exactly those paths).
+
+## Measurements (J box, this branch's tree, 2026-11-05)
+
+Probe script: doc/debug-seam-probes/probe-div0-cpp.sh (volatile
+operands, so the division is a real runtime idiv, not a folded
+constant).
+
+- Plain jank, namespace-scope cpp/raw helper called via cpp/:
+  divisor 1 → prints `5`, exit 0. Divisor 0 → **exit 136**
+  (bash: "Floating point exception"), no stdout, no diagnostic.
+- Cohost session (`bin/cohost :jank -m seam.div0`, the fixture's
+  -main calling the same helper from its cpp/raw block): **exit
+  136**, stdout empty, stderr only the launcher's project-compile
+  notice. No headline, no report EDN, no trace — the process died
+  inside the user's C++ before any seam machinery could run.
+- Control, same session shape (`bin/cohost :jank -e "(/ 5 0)"`):
+  **exit 1**, stderr "Execution error (ArithmeticException) at
+  object-ref::call/ (oref.hpp:582)." / "Divide by zero" + report.
+
+## Why no layer can guard it (options examined)
+
+1. **Rewrite the user's divisions** — excluded by the passthrough
+   contract, and unsound: raw text holds comments, string
+   literals, float division, overloaded operators and macros; a
+   textual scan would change correct C++ while missing divisions
+   spelled through templates and headers. It would be a second
+   C++ compiler, not a guard.
+2. **A SIGFPE handler that throws** — a C++ exception cannot be
+   thrown from a signal handler (async-signal context; unwinding
+   arbitrary user frames is undefined). The faulting frame may
+   hold runtime/GC locks; even a siglongjmp to an armed eval
+   boundary abandons that state (skipped destructors, held locks)
+   and trades a loud, debuggable crash — core dump, and gdb stops
+   at the trap (check #12's machinery) — for silent continuation
+   of a possibly poisoned process. The JVM draws the same line:
+   its own JIT-compiled division traps into ArithmeticException
+   because it owns that codegen and its frame maps; a div-by-zero
+   in JNI/native code is process-fatal. Cohost owns its
+   arithmetic's codegen the same way — hence the #10 guard — and
+   does not own user C++.
+3. **feenableexcept / FP environment** — governs floating-point
+   traps only; integer idiv ignores it. Not applicable.
+4. **Sanitizer codegen** (-fsanitize=integer-divide-by-zero) — a
+   global build policy, not a layer guard: still process-fatal in
+   halt mode (a sanitizer diagnostic, exit ~1), and in recover
+   mode it continues past the division with an undefined quotient.
+   Noted for completeness; adopting it is a build-policy decision
+   for the coordinator, not this seam's.
+
+## The boundary, for the docs
+
+Divisions written in Clojure — `/`, `quot`, `rem`, on any host —
+throw ArithmeticException ("Divide by zero"), exit 1, with the
+seam's report. Divisions written as C++ (a cpp/raw block, called
+through cpp/) execute as the host's native division under C++
+rules: integer division by zero is undefined behavior and in
+practice the CPU's #DE trap — SIGFPE, exit 136, no report. The
+user's remedies are the C++ ones: test the divisor inside the raw
+block, or do the division in Clojure.
+
+Probe methodology note: in plain jank the supported raw shape is
+namespace-scope (a top-level cpp/raw defining C++ functions,
+called via cpp/ns.fn — the shape cli.cljc's cohost_io uses). A
+cpp/raw as a defn *body* segfaulted jank's JIT in probing (exit
+139, divisor-independent); that wart is jank's, is not the shape
+cohost emits for user code, and is recorded here only so the next
+prober does not repeat it.
