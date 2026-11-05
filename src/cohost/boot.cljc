@@ -1270,11 +1270,19 @@
 (defn- load-source!
   "Every top-level form of a library, read and evaluated one at a time in the
    namespace its (ns ...) form makes current; a form that fails is recorded
-   and the load goes on, as the core boot does."
+   and the load goes on, as the core boot does. -> the first failure's
+   exception when the library is not a stock one (its source is not under
+   the boot's stock root), else nil: load-lib! rethrows it, so user code
+   fails at load with the host's original diagnostic, as the JVM's loader
+   fails. Stock libraries keep the record-and-continue tolerance."
   ([lib src] (load-source! lib src nil nil))
   ([lib src from-ns] (load-source! lib src from-ns nil))
   ([lib src from-ns path]
-   (let [c (ctx)]
+   (let [c (ctx)
+         root (:root @state)
+         stock? (boolean (and path root (>= (count path) (count root))
+                              (= (subs path 0 (count root)) root)))
+         first-error (atom nil)]
      (with-load-bindings
        (fn []
          (host/with-ns (or from-ns core-ns)
@@ -1295,10 +1303,12 @@
                          (note! :ok {:name nm}))))
                    (fn [e]
                      (snap-declare! cur nm)
+                     (when (and (not stock?) (nil? @first-error)) (reset! first-error e))
                      (note! :error {:name nm :error (error-message e) :form (short-form form)})))))
               path)
              ;; a macro some form made by a side effect is wrapped now
-             (scan-macros! c (host/current-ns)))))))))
+             (scan-macros! c (host/current-ns))
+             @first-error)))))))
 
 (defn load-lib!
   "Load lib (a symbol) once: its source from a source root, booted into its own
@@ -1322,9 +1332,16 @@
            (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
            (swap! (:renames (ctx)) assoc (str lib) (str target))
            (swap! state assoc :loading lib)
-           (try (host/try-all (fn [] (load-source! lib src from-ns path))
-                              (fn [e] (forget!) (snap! {:op :lib-fail :lib lib}) (throw e)))
-                (finally (swap! state assoc :loading outer)))
+           (let [first-err (try (host/try-all (fn [] (load-source! lib src from-ns path))
+                                              (fn [e] (forget!) (snap! {:op :lib-fail :lib lib}) (throw e)))
+                                (finally (swap! state assoc :loading outer)))]
+             ;; a non-stock library whose load recorded a failure (see
+             ;; load-source!) fails the load with that failure, as the
+             ;; JVM's loader would; the lib is forgotten, as on a throw
+             (when first-err
+               (forget!)
+               (snap! {:op :lib-fail :lib lib})
+               (throw first-err)))
            (when-not (contains? @(:loader-nses (ctx)) (str target))
              (forget!)
              (snap! {:op :lib-fail :lib lib})

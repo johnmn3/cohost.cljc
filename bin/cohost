@@ -325,11 +325,17 @@
       ;; jank program (dev/perf/jank_snapshot_key.clj), the program JIT-compiled at
       ;; -O3; without it, the booted core from a fresh snapshot (else cohost's -O3
       ;; AOT objects and a boot of core.clj) and cohost.cli through jank run-main
-      "jank" (-> (p/process (if-let [l (:launcher jank)]
-                              [l cfg]
-                              ["jank" "-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg])
-                            {:dir cwd :inherit true :extra-env (:env jank)})
-                 deref :exit))))
+      ;; COHOST_JANK_PROFILE=1: the run goes through jank's own --profile
+      ;; (the compiled launcher cannot take the flag, so the JIT run-main
+      ;; path serves it); jank writes its trace to <cwd>/jank.profile
+      "jank" (let [profile? (= "1" (System/getenv "COHOST_JANK_PROFILE"))]
+               (-> (p/process (if-let [l (and (not profile?) (:launcher jank))]
+                                [l cfg]
+                                (vec (concat ["jank"]
+                                             (when profile? ["--profile"])
+                                             ["-O3" "--module-path" (:module-path jank) "run-main" "cohost.cli" "--" cfg])))
+                              {:dir cwd :inherit true :extra-env (:env jank)})
+                   deref :exit)))))
 
 ;; --------------------------------------------------------------------------
 

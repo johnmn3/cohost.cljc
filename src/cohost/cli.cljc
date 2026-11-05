@@ -237,7 +237,8 @@
                report {:clojure.main/message message
                        :clojure.main/triage triage
                        :clojure.main/trace datafied}
-               report-str (binding [*print-namespace-maps* false] (pr-str report))
+               report-str #?(:jank (pr-str report) :phel (pr-str report) :lg (pr-str report)
+                                 :default (binding [*print-namespace-maps* false] (pr-str report)))
                path (when (= target "file")
                       (when-let [dir (:report-dir @cli-config)]
                         (host/try-all

@@ -19,14 +19,16 @@
 
 (defn run-proc
   "-> {:out :err :exit} (:exit :timeout past the limit)."
-  [cmd dir stdin]
-  (let [proc (p/process {:cmd cmd :dir dir :in stdin
-                         :out :string :err :string
-                         :extra-env {"CLJ_CONFIG" (or (System/getenv "CLJ_CONFIG") "")}})
-        done (deref proc 900000 :timeout)]
-    (if (= done :timeout)
-      (do (p/destroy proc) {:out "" :err "" :exit :timeout})
-      {:out (:out done) :err (:err done) :exit (:exit done)})))
+  ([cmd dir stdin] (run-proc cmd dir stdin {}))
+  ([cmd dir stdin extra-env]
+   (let [proc (p/process {:cmd cmd :dir dir :in stdin
+                          :out :string :err :string
+                          :extra-env (merge {"CLJ_CONFIG" (or (System/getenv "CLJ_CONFIG") "")}
+                                            extra-env)})
+         done (deref proc 900000 :timeout)]
+     (if (= done :timeout)
+       (do (p/destroy proc) {:out "" :err "" :exit :timeout})
+       {:out (:out done) :err (:err done) :exit (:exit done)}))))
 
 (defn jvm-cli
   "cohost.cli on the JVM host with the given config map; stdin a string."
@@ -40,8 +42,18 @@
 
 (defn jank-cli
   "bin/cohost :jank with clojure-style args in the demo project."
-  [args stdin]
-  (run-proc (into [(str repo "/bin/cohost") ":jank"] args) demo stdin))
+  ([args stdin] (jank-cli args stdin {}))
+  ([args stdin extra-env]
+   (run-proc (into [(str repo "/bin/cohost") ":jank"] args) demo stdin extra-env)))
+
+(defn run-main
+  "A fixture namespace's -main through the seam (the load path:
+   the namespace loads through the loader, then -main runs)."
+  [ns-sym]
+  (case target
+    "jvm" (jvm-cli {:roots [(str demo "/src")]
+                    :main {:type :main :ns ns-sym :args []}} "")
+    "jank" (jank-cli ["-m" ns-sym] "")))
 
 (defn run-e
   "One -e program (a single string of forms), uncaught errors and all."
@@ -103,6 +115,46 @@
                 "   (prn :pos2 (meta (second @fs)))"
                 "   (prn :pos2sym (meta (second (second @fs)))))"))))
 (def pos-text (str (:out pos-run) "\n" (:err pos-run)))
+;; U3: a bad defn in a loaded namespace (the load path), and a native
+;; C++ exception against a stock catch (the catch hole)
+(def bad-load (run-main "seam.bad"))
+(def bad-load-text (str (:out bad-load) "\n" (:err bad-load)))
+(def native-catch
+  (run-e "#?(:jank (try (throw (cpp/std.runtime_error \"boom\")) (catch Throwable e (prn :caught (ex-message e)))) :default (try (throw (ex-info \"boom\" {})) (catch Throwable e (prn :caught (ex-message e))))"))
+(def native-catch-text (str (:out native-catch) "\n" (:err native-catch)))
+
+;; U3: a macro that expands to an unresolved symbol, loaded as a namespace
+(def bad-macro (run-main "seam.badmacro"))
+(def bad-macro-text (str (:out bad-macro) "\n" (:err bad-macro)))
+;; the macro diagnostic lives in the run's report file on the JVM host
+;; (stderr carries only the one-line message), in stderr on jank
+(def bad-macro-report-path (some (fn [line] (let [t (str/trim line)] (when (str/ends-with? t ".edn") t)))
+                                 (str/split-lines (:err bad-macro))))
+(def bad-macro-report (when (and bad-macro-report-path (fs/exists? bad-macro-report-path))
+                        (slurp bad-macro-report-path)))
+(def bad-macro-full (str bad-macro-text "\n" bad-macro-report))
+
+;; U7: integer divide by zero, both spellings
+(def div-run (run-e "(/ 5 0)"))
+(def quot-run (run-e "(quot 5 0)"))
+(def div-text (str (:out div-run) "\n" (:err div-run) "\n" (:out quot-run) "\n" (:err quot-run)))
+
+;; U6: transform introspection through the launcher (jank only)
+(def codegen (when (= target "jank")
+               (jank-cli ["-e" "(+ 1 2)"] "" {"JANK_PRINT_CODEGEN" "1"})))
+(def codegen-text (when codegen (str (:out codegen) "\n" (:err codegen))))
+
+;; U6: a profile on request -- COHOST_JANK_PROFILE=1 must produce
+;; jank's trace file in the project directory
+(def profile-file-path (str demo "/jank.profile"))
+(def profile-existed? (fs/exists? profile-file-path))
+(def profile-run (when (= target "jank")
+                   (jank-cli ["-e" "(+ 1 2)"] "" {"COHOST_JANK_PROFILE" "1"})))
+(def profile-made? (when (= target "jank")
+                     (and (fs/exists? profile-file-path)
+                          (pos? (fs/size profile-file-path)))))
+(when (and (= target "jank") profile-made? (not profile-existed?))
+  (fs/delete profile-file-path))
 
 ;; ---- the checks ------------------------------------------------------
 
@@ -134,7 +186,18 @@
                           (str/split-lines pos-text))
                     "nothing printed"))
            "jank read-end probe; the JVM read end is a stream reader (positions native)"))
-(record! 3 "SKIP" "owned by U3 (load-time analysis parity)")
+;; #3 unresolved symbol: load refuses with the diagnostic, and a native
+;; exception is caught by a stock catch Throwable with its message
+(record! 3
+         (if (and (not= 0 (:exit bad-load))
+                  (includes? bad-load-text "this-var-does-not-exist")
+                  (includes? native-catch-text ":caught" "boom"))
+           "PASS"
+           "FAIL")
+         (str "load: exit " (:exit bad-load)
+              (if (includes? bad-load-text "this-var-does-not-exist")
+                ", names the symbol" ", no diagnostic")
+              "; native catch: " (first-real-line (:out native-catch))))
 ;; #4 reader error: the probe runs; the :read-source phase is U4a's
 ;; read-end work, so until then this reports the measured state as SKIP
 (record! 4
@@ -166,10 +229,46 @@
 
 (record! 8 "SKIP" "owned by U5 (*err* separation)")
 (record! 9 "SKIP" "owned by U4c (AOT report)")
-(record! 10 "SKIP" "owned by U7 (ArithmeticException)")
-(record! 11 "SKIP" "owned by U6 (transform introspection)")
+;; #10 integer divide by zero: a catchable ArithmeticException (exit 1),
+;; never a signal (136)
+(record! 10
+         (if (and (= 1 (:exit div-run)) (= 1 (:exit quot-run))
+                  (includes? div-text "Divide by zero"))
+           "PASS"
+           "FAIL")
+         (str "/ exit " (:exit div-run) ", quot exit " (:exit quot-run)
+              "; " (first-real-line (:err div-run))))
+;; #11 transform introspection: the launcher passes JANK_PRINT_CODEGEN
+;; through and the rewritten forms' codegen prints, and a profile is
+;; produced on request (jank only)
+(record! 11
+         (if (= target "jvm")
+           "SKIP"
+           (if (and (= 0 (:exit codegen))
+                    (includes? codegen-text "cohost")
+                    (= 0 (:exit profile-run))
+                    profile-made?)
+             "PASS"
+             "FAIL"))
+         (if (= target "jvm")
+           "jank-only (no transform to introspect on the JVM host)"
+           (str "codegen exit " (:exit codegen) ", names cohost: "
+                (boolean (includes? codegen-text "cohost"))
+                "; profile exit " (:exit profile-run)
+                ", jank.profile written: " (boolean profile-made?))))
 (record! 12 "SKIP" "owned by U4c (gdb break-on-throw)")
-(record! 13 "SKIP" "owned by U3 (macro-expansion error)")
+;; #13 macro-expansion error: the load fails and the report identifies
+;; the macro call site (process output + the run's report file)
+(record! 13
+         (if (and (not= 0 (:exit bad-macro))
+                  (or (includes? bad-macro-full "Expanded from this macro")
+                      (includes? bad-macro-full "macroexpanding")))
+           "PASS"
+           "FAIL")
+         (str "exit " (:exit bad-macro) "; "
+              (cond (includes? bad-macro-full "macroexpanding") "report names the macroexpansion"
+                    (includes? bad-macro-full "Expanded from this macro") "diagnostic carries the macro provenance"
+                    :else (first-real-line (:err bad-macro)))))
 (record! 14
          (if (and (= 1 (:exit uncaught)) (= 0 (:exit clean)) (includes? (:out clean) "3"))
            "PASS" "FAIL")
