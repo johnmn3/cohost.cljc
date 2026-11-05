@@ -1255,12 +1255,20 @@
                         ;; folded clause never sees it: two more doors, in
                         ;; try-all's order, each translating the caught C++
                         ;; value into the shim's exception value and then
-                        ;; running the same dispatch chain (U3b)
+                        ;; running the same dispatch chain (U3b). The
+                        ;; message read (a cpp call on the caught value)
+                        ;; sits in the clause itself: the value's native
+                        ;; type does not survive a fn boundary -- boxed
+                        ;; as an object_ref it matches no typed overload
+                        ;; (analyze/invalid-cpp-call, measured on the AOT
+                        ;; build, 2026-11-04)
                         (let [e (second f) chain (nth f 2) raw (gensym "e__raw")]
                           [(list 'catch 'cpp/jank.error_ref raw
-                                 (list 'let* [e (list (shim-fn "wrap-jank-error") raw)] chain))
+                                 (list 'let* [e (list (shim-fn "jank-error-info")
+                                                      (list 'cpp/cohost_shim_err.error_message raw))] chain))
                            (list 'catch 'cpp/std.exception raw
-                                 (list 'let* [e (list (shim-fn "wrap-std-exception") raw)] chain))])
+                                 (list 'let* [e (list (shim-fn "std-exception-info")
+                                                      (list 'cpp/cohost_shim_err.std_what raw))] chain))])
                         []))))
             ;; source order kept: runs of JVM catches fold together,
             ;; cpp catches stand as siblings between them
