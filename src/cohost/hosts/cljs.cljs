@@ -261,6 +261,119 @@
 (defn- thread-bound? [h]
   (let [k (slot h)] (boolean (some #(contains? % k) @binding-frames))))
 
+;; thread leaves for cohost.thread (Eve's thread layer). ClojureScript has
+;; one realm per isolate, and its real workers -- cljs-thread's, and
+;; eve.thread-host's on Node -- take FORMS across the boundary: a form, a
+;; registered task's name, values; a JavaScript closure cannot cross (eve
+;; .thread states the rule for its own layer: where heaps are not shared,
+;; "a plain closure is refused"). The layer's work items are closures over
+;; this realm's atoms, so no worker leaf can run them. What this realm can
+;; honestly offer the layer is cooperative threads: a spawned thunk is
+;; queued as a task, and the layer's blocking waits (doorbell-wait, under
+;; future deref, thread join and agent await) pump the queue until their
+;; own bell rings, so work always completes in wait order. Tasks interleave
+;; at waits; they do not run in parallel -- the named distance of this leaf.
+;; A task that waits on an unrung bell with the queue drained unwinds with
+;; a private yield exception and is re-queued at the back, so its thunk
+;; re-enters from the top: exactly the layer's worker loop (claim, wait,
+;; recur) and any thunk that only waits before it acts. A thunk that acts
+;; and then waits on a bell not yet rung may see its early actions run
+;; again on re-entry. The form-carrying path over real workers
+;; (eve.thread's tfn / deftask) is the layer's to adopt, not the leaf's.
+(defonce ^:private task-queue (atom []))
+(defonce ^:private task-self (atom 0))
+(defonce ^:private task-seq (atom 0))
+(defonce ^:private task-progress (atom 0))
+(defonce ^:private kick-pending (atom false))
+(def ^:private yield-marker (js-obj))
+
+(defn- note-progress! [] (swap! task-progress inc) nil)
+
+(defn- run-task!
+  "Run one queued task; :done, :yielded (it blocked and was re-queued at
+   the back) or :died (it threw; reported as an uncaught thread exception)."
+  [{:keys [handle thunk] :as task}]
+  (let [prev @task-self]
+    (reset! task-self handle)
+    (try (thunk) :done
+         (catch :default e
+           (if (identical? e yield-marker)
+             (do (swap! task-queue conj task) :yielded)
+             (do (js/console.error "cohost cljs: uncaught in thread task" e)
+                 :died)))
+         (finally (reset! task-self prev)))))
+
+(defn- pump-tasks!
+  "Run queued tasks until (goal) holds or no task can make progress: a
+   full pass over the queue with no completion, signal or submission ends
+   the pump (the remaining tasks are blocked on bells nothing queued can
+   ring)."
+  [goal]
+  (loop [idle 0]
+    (when-not (goal)
+      (let [q @task-queue]
+        (when (and (seq q) (<= idle (count q)))
+          (let [task (first q)
+                before @task-progress]
+            (swap! task-queue subvec 1)
+            (let [progressed? (or (= :done (run-task! task))
+                                  (> @task-progress before))]
+              (when progressed? (note-progress!))
+              (recur (if progressed? 0 (inc idle)))))))))
+  nil)
+
+(defn- kick!
+  "Schedule a pump on the next macrotask, so spawned work also progresses
+   while the main flow is parked in real asynchronous I/O."
+  []
+  (when (compare-and-set! kick-pending false true)
+    (let [schedule (if (exists? js/setImmediate)
+                     js/setImmediate
+                     (fn [f] (js/setTimeout f 0)))]
+      (schedule (fn [] (reset! kick-pending false)
+                  (pump-tasks! (fn [] false)))))))
+
+(defn- thread-spawn [thunk]
+  (when (fn? thunk)
+    (let [handle (swap! task-seq inc)]
+      (swap! task-queue conj {:handle handle :thunk thunk})
+      (note-progress!)
+      (kick!)
+      handle)))
+
+(defn- thread-self [] @task-self)
+
+(defn- doorbell [] {:cohost/doorbell true :flag (atom false)})
+
+(defn- doorbell-signal [db]
+  (when (compare-and-set! (:flag db) false true)
+    (note-progress!))
+  true)
+
+(defn- block-ms!
+  "A genuine block of about ms, for a wait nothing queued can satisfy
+   (a deadlock on any host; sliced so an asynchronous signal can land).
+   Atomics.wait is legal on Node's main thread; where it is not (a
+   browser's), the slice is a no-op and the caller's loop re-checks."
+  [ms]
+  (try (js/Atomics.wait (js/Int32Array. (js/SharedArrayBuffer. 4)) 0 ms)
+       (catch :default _ nil)))
+
+(defn- doorbell-wait [db timeout-ms]
+  (let [flag (:flag db)]
+    (if @flag
+      true
+      (do (pump-tasks! (fn [] (boolean @flag)))
+          (cond @flag true
+                (some? timeout-ms) false
+                ;; untimed and the queue is drained: inside a task, unwind
+                ;; and be re-queued; on the main flow, block in slices --
+                ;; only an asynchronous (host) event can ring this bell now
+                (not= 0 @task-self) (throw yield-marker)
+                :else (loop [] (if @flag true (do (pump-tasks! (fn [] (boolean @flag)))
+                                                  (when-not @flag (block-ms! 5))
+                                                  (recur)))))))))
+
 (defn- raw-root
   "The value underneath every binding frame: the oldest frame that saved it."
   [h]
@@ -763,6 +876,13 @@
    :push-thread-bindings! push-thread-bindings!
    :pop-thread-bindings! pop-thread-bindings!
    :thread-bindings thread-bindings
+   ;; the thread layer's leaves: cooperative tasks on this realm (see the
+   ;; thread leaves section above for the shape and its named distance)
+   :thread-spawn thread-spawn
+   :thread-self thread-self
+   :doorbell doorbell
+   :doorbell-wait doorbell-wait
+   :doorbell-signal doorbell-signal
    ;; var-set: the binding's value is the var's slot (the frame keeps the root)
    :var-set! (fn [h v] (let [[ns nm] (slot h)] (js-set-path! ns nm v) v))
    :current-ns (fn [] *ns-sym*)
