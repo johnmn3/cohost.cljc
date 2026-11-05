@@ -163,6 +163,10 @@
 ;; attribution.
 (def body-throw (run-e "(defmacro m [x] (throw (ex-info \"bad\" {}))) (m 1)"))
 
+;; U5: *err* separation -- an in-program *err* write lands on stderr,
+;; the *out* write on stdout, and the uncaught report stays on stderr
+(def err-sep (run-e "(println \"to-out\") (binding [*out* *err*] (println \"to-err\")) (throw (ex-info \"kaboom\" {}))"))
+
 ;; U7: integer divide by zero, both spellings
 (def div-run (run-e "(/ 5 0)"))
 (def quot-run (run-e "(quot 5 0)"))
@@ -284,7 +288,23 @@
                                 (str/split-lines repl-text))
                           "\tuser/inner ( -- none printed"))))
 
-(record! 8 "SKIP" "owned by U5 (*err* separation)")
+;; #8 *err* separation (U5's probe): exit 1; stdout carries the *out*
+;; write and neither the *err* write nor the report; stderr carries
+;; both the *err* write and the report
+(record! 8
+         (if (and (= 1 (:exit err-sep))
+                  (includes? (:out err-sep) "to-out")
+                  (not (includes? (:out err-sep) "to-err"))
+                  (not (includes? (:out err-sep) "Execution error"))
+                  (includes? (:err err-sep) "to-err" "Execution error"))
+           "PASS" "FAIL")
+         (str "exit " (:exit err-sep)
+              "; stdout " (if (includes? (:out err-sep) "to-out") (str "matched " (pr-str "to-out")) "missing \"to-out\"")
+              (if (includes? (:out err-sep) "to-err") ", LEAKED \"to-err\"" ", no \"to-err\"")
+              (if (includes? (:out err-sep) "Execution error") ", LEAKED the report" ", no report")
+              "; stderr " (if (includes? (:err err-sep) "to-err" "Execution error")
+                            (str "matched " (pr-str "to-err") " and " (pr-str "Execution error"))
+                            (str "first line: " (first-real-line (:err err-sep))))))
 (record! 9 "SKIP" "owned by U4c (AOT report)")
 ;; #10 integer divide by zero: a catchable ArithmeticException (exit 1),
 ;; never a signal (136)
