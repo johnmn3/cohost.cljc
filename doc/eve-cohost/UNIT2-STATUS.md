@@ -291,3 +291,37 @@ NOT-YET with its blocking work (Eve-in-the-cljs-build; a
 spawn-by-form conveyance contract = unit 8's design) and its
 baseline row re-measured identical on this branch (ok=15,
 fail-other=8). Full write-up: doc/eve-cohost/UNIT2-REPORT.md.
+
+## Sequencing note (operator, 2026-11-05 ~11:48 AM ET) + cljs correction (~11:54 AM ET)
+
+Release-first dependency: the Eve-on-jank verification (end leg +
+flagship) is being driven to completion so a new Eve release goes
+out (Eve's next is 0.9.3); Eve-in-cohost then depends on the NEW
+higher-performance jank bindings from that release. Consequence
+for unit 2: the JVM-seat work and numbers are unaffected and
+stand. The JANK-seat numbers below were all measured against
+PRE-RELEASE bindings (jank 0.1 as installed on J today, Eve not
+yet re-released) and are marked as such; the jank-seat gate is to
+be RE-RUN against the released bindings once they land:
+
+- AOT gate at 768aa52 (boot errors 0; battery 219/221 standing
+  pair; libraries 62/62) -- PRE-RELEASE bindings.
+- Snapshot rebuild at 9a8c0e2 + probe row (ok=18, fail-other=5;
+  agent 1, pmap (2 3 4)) -- PRE-RELEASE bindings.
+- Final jank gate at the fixed code (bb boot:jank: errors 0;
+  battery 219/221 standing pair only; libraries 62/62) --
+  PRE-RELEASE bindings.
+- JIT booted-check finding (54 stock-form errors, rc=139) --
+  measured against the same pre-release jank; a jank-analyzer
+  property, to be re-checked if the release changes the analyzer.
+
+Cljs correction (operator, ~11:54 AM ET): the cljs NOT-YET in the
+REPORT is superseded on its blocker (b). Worker spawn on cljs is
+NOT blocked -- cljs.thread already spawns workers and Eve runs on
+cljs today with the shared atom. The actual gaps are only (a) Eve
+as a dependency of cohost's cljs build and (b) the cljs adapter's
+:thread-spawn cap not yet written over the existing cljs.thread
+machinery. A cljs-dep lane owns both, plus the probe's cljs row.
+The REPORT's wider "spawn-by-form contract / unit 8" framing
+stands corrected by this note; the measured cljs baseline
+(ok=15, fail-other=8) is unaffected.
