@@ -17,6 +17,7 @@
             [cohost.policy :as policy]
             [cohost.thread :as thread]
             [cohost.atom :as atom-layer]
+            [cohost.http :as http]
             [cohost.scan :as scan]))
 
 (def core-ns "The namespace the stock core.clj boots into." 'cohost.core)
@@ -981,6 +982,21 @@
     (record! report :replaced {:name 'eve-atoms :reason :atom-layer}))
   report)
 
+(defn install-http-layer!
+  "Fill the names the boot left uninterned that Eve's HTTP layer
+   (cohost.http/core-impls: slurp) answers, when this seat gives the
+   layer its leaves: a host whose core has no slurp reads a URL's body
+   through Eve. Hosts with their own slurp (the JVM, where clojure.java.io
+   reaches the layer instead) and seats without the leaves are untouched."
+  [report]
+  (when (http/available?)
+    (snap! {:op :http-layer})
+    (doseq [[nm v] http/core-impls]
+      (when-not (host/interned-var core-ns nm)
+        (host/intern! core-ns nm v)
+        (record! report :replaced {:name nm :reason :http-layer}))))
+  report)
+
 (defn boot!
   "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
    (default resources/cohost/clojure-1.12.0); :files -- paths under it;
@@ -1056,6 +1072,7 @@
      ;; the registry is minted and the booted namespaces published
      ;; before libraries or user code can intern or create atoms
      (install-atom-layer! ctx report eve-atoms)
+     (install-http-layer! report)
      (scan-macros! ctx)
      (install-host-reducers!)
      (reset! (:booted? ctx) true)
@@ -1435,6 +1452,35 @@
              (scan-macros! c (host/current-ns))
              @first-error)))))))
 
+(defn- lib-fill
+  "{name fn} a layer gives library lib in place of its source, where this
+   seat has no source for it and no java.* surface of its own (the JVM and
+   jolt keep their own clojure.java.io), or nil. cohost.http fills
+   clojure.java.io when Eve's HTTP leaves are in."
+  [lib]
+  (when (and (not (host/interop-passthrough?)) (http/available?))
+    (get http/lib-fills lib)))
+
+(defn install-lib-fill!
+  "Intern lib's fill into the namespace lib boots into, as a loaded library
+   (its references renamed to that namespace). -> the namespace."
+  ([lib] (install-lib-fill! lib (get http/lib-fills lib)))
+  ([lib fill]
+   (let [target (stock-ns-name lib)]
+     (snap! {:op :lib-fill :lib lib})
+     (host/ensure-bare-ns! target)
+     (doseq [[nm f] fill] (host/intern! target nm f))
+     (swap! (:renames (ctx)) assoc (str lib) (str target))
+     (swap! (:loader-nses (ctx)) conj (str target))
+     (swap! state assoc-in [:libs lib] {:ns target :status :layer :ok (count fill) :error 0 :skipped 0})
+     target)))
+
+(defn snap-lib-fill!
+  "install-lib-fill! of the recorded boot."
+  [lib]
+  (install-lib-fill! lib)
+  nil)
+
 (defn load-lib!
   "Load lib (a symbol) once: its source from a source root, booted into its own
    namespace, or else the host's own require. -> the namespace to alias."
@@ -1479,9 +1525,11 @@
            ;; registry (a no-op unless the atom fill is in force)
            (atom-layer/publish-namespace! target)
            target)
-         (do (host/require-host! lib)
-             (swap! state assoc-in [:libs lib] {:ns lib :status :host})
-             lib)))))))
+         (if-let [fill (lib-fill lib)]
+           (install-lib-fill! lib fill)
+           (do (host/require-host! lib)
+               (swap! state assoc-in [:libs lib] {:ns lib :status :host})
+               lib))))))))
 
 (defn lib-report
   "{lib {:ns :status :ok :error :skipped :entries}} of every library loaded."
@@ -1613,6 +1661,12 @@
    own record! calls into the snapshot report are not what prints."
   []
   (install-thread-layer! @snap-report)
+  nil)
+
+(defn snap-http-layer!
+  "install-http-layer! of the recorded boot (as snap-thread-layer!)."
+  []
+  (install-http-layer! @snap-report)
   nil)
 
 (defn snap-is! "The shim's instance test for class token c." [c]

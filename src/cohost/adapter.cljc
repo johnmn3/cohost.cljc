@@ -86,6 +86,17 @@
    :doorbell        [[] "a fresh doorbell: an opaque wait handle with sticky signal semantics, or nil (the default) when the host has none"]
    :doorbell-wait   [['db 'timeout-ms] "wait on doorbell db until it is signalled or timeout-ms (nil: no timeout) passes; true when signalled"]
    :doorbell-signal [['db] "signal doorbell db: every current and future wait on it returns true"]
+   ;; http: the leaf primitives under cohost.http (Eve-in-cohost unit 9).
+   ;; Their values are Eve's own http adapters (eve.http/request,
+   ;; eve.http-server/serve!), installed over the host adapter by the seat's
+   ;; fill (cohost.http-eve on the JVM seat); nil (the default) leaves the
+   ;; layer unavailable and the shim's java.net entries to the host.
+   :http-request    [['req] "nil (the default), or Eve's http request leaf: {:method :url :headers :body :as :body-as} -> {:status :headers :body} or {:error message}, synchronously (eve.http/request)"]
+   :http-serve      [['opts 'handler] "nil (the default), or Eve's http-server leaf: (serve! {:port :host :threads} handler) -> {:port :stop}, handler {:method :url :headers :body :body-b64} -> {:status :headers :body :body-as} (eve.http-server/serve!)"]
+   :native-ctor     [['class-sym] "nil (the default), or on a host with a java.* surface of its own: a fn of the args constructing the host's own class-sym (the JVM: by reflection), or nil when it has none. The shim's java.net entries fall back to it where cohost.http's leaves are absent"]
+   :native-static   [['class-sym 'member] "nil (the default), or as :native-ctor for the static method member of class-sym"]
+   :http-value      [['m] "nil (the default), or a fn of a cohost.http URI / URL value (a tagged map) -> the same map as the host's own map type whose str is the URL's text (the JVM: a record overriding toString); nil: the tagged map itself"]
+   :byte-streams    [[] "nil (the default), or the host's own byte streams for cohost.http's bodies: {:input (fn [bytes] an InputStream over them) :output (fn [] a fresh ByteArrayOutputStream) :output-bytes (fn [out] its bytes) :bytes? (fn [x] host byte array?) :text-bytes (fn [s] UTF-8 bytes) :b64-bytes :bytes-b64 :read-all (fn [InputStream or File] its bytes, or nil)} (the JVM: java.io's); nil: bodies stay text"]
    :core-lacks      [[] "the set of core names this host's core has only as stubs (or not at all in usable form): the boot treats them as lacked, so a fill (the thread layer's) supplies them instead of the stub (default #{})"]
    :current-ns      [[] "the symbol of the namespace evaluated code currently runs in (*ns*)"]
    :macroexpand-1   [['form] "the host's one-step macroexpansion of form in the current namespace"]
@@ -367,6 +378,12 @@ namespace cohost_err {
     :doorbell-wait nil
     :doorbell-signal nil
     :core-lacks #{}
+    :http-request nil
+    :http-serve nil
+    :byte-streams nil
+    :http-value nil
+    :native-ctor nil
+    :native-static nil
     :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
     :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
     :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
@@ -670,6 +687,13 @@ namespace cohost_err {
 (defn syntax-quote-source? [] (boolean (cap :syntax-quote-source?)))
 (defn loop-rebind-shadow? [] (boolean (cap :loop-rebind-shadow?)))
 (defn chunks [] ((cap :chunks)))
+;; the http leaves under cohost.http (unit 9): nil where the seat has none
+(defn http-request-leaf [] (cap :http-request))
+(defn http-serve-leaf [] (cap :http-serve))
+(defn byte-streams [] (when-let [f (cap :byte-streams)] (f)))
+(defn http-value [m] (if-let [f (cap :http-value)] (f m) m))
+(defn native-ctor [c] (when-let [f (cap :native-ctor)] (f c)))
+(defn native-static [c m] (when-let [f (cap :native-static)] (f c m)))
 (defn natives [] (or (get @installed :natives) {}))
 (defn native-hints
   "nil, or {hint-symbol host-type-symbol} of the primitive fn* parameter hints
