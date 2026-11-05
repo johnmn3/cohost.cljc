@@ -100,6 +100,12 @@ claimed built.
 
 ## 1. The central tension, and how the seam absorbs it
 
+> **Superseded by the §8 ruling (John, 2026-11-05 ~09:45
+> ET):** the heap Clojure sees on cohost is implemented on
+> top of an Eve atom — there are not two value worlds. The
+> Zone H / Zone E / Zone X framing below is retained as the
+> record of the earlier model, not the organizing model.
+
 Cohost's standing fact: **cohosted values ARE host values — no
 marshalling.** Eve's values are slab blocks: write-once,
 Merkle-identified, resident in mapped regions. A plan that waved
@@ -210,6 +216,12 @@ heap-less seat. The Eve-on-jank J3 seams gated so far: int32
 yet; §5 states exactly which units wait for it.
 
 ## 3. Mapping table — shim data-structure surface → Eve
+
+> **Read through §8:** the zone references in this table
+> belong to the superseded zone model (§1); the heap the
+> shim's structures live in is an Eve atom (the runtime
+> atom domain), so the structures are Eve structures by
+> construction.
 
 Labels: **EVE AS-IS** = Eve's own implementation sits behind the
 seam unchanged · **COUNTERPART** = a cohost-side implementation
@@ -563,7 +575,8 @@ actually exercised; (c) keep the quiet fallback as the
 documented answer.
 
 **Q3. A Zone-H value that Eve cannot represent, stored into
-a Zone-E collection: reject, or handle?**
+a Zone-E collection: reject, or handle? — DISSOLVED by the
+§8 ruling (see §8).**
 Facts: closures and live host objects cannot be slab
 residents — no serialization of them exists or is plotted.
 Today (Zone H everywhere) any value can be stored in any
@@ -657,6 +670,36 @@ Default atoms run within the existing default runtime atom
 domain (as in VS); locals, analyzer state, compiler state
 and the like live in the runtime atom domain, visible
 across threads in that domain.
+
+## 8. Additional ruling (John, 2026-11-05 ~09:45 ET) — the heap Clojure sees IS an Eve atom
+
+John: "The host heap that Clojure sees on cohost should be
+implemented on top of an Eve atom, so that this discrepancy
+between types isn't there."
+
+**There are not two value worlds.** The heap Clojure
+programs see on cohost IS implemented on top of an Eve
+atom — the default runtime atom domain of the Q5 ruling
+(§7). The shim's data structures are Eve data structures
+because their heap is Eve's, by construction.
+
+Consequences:
+
+- The Zone H / Zone E / Zone X framing (§§1, 3) is
+  superseded as this plan's organizing model. The crossing
+  bench's measured hop cost stands, re-read as the
+  shim-dispatch cost.
+- **Q1 (default-on) is absorbed:** no per-collection choice
+  remains — the heap is the atom.
+- **Q3 dissolves** into domain-crossing rules: closures and
+  host objects live in the runtime atom domain like
+  everything else; questions arise only at explicit
+  crossings between domains (`deref`/`swap`), per the model
+  law, and are unit 5/7 material — not a per-collection
+  representation choice. (Q3's open state in §7 is
+  superseded by this section.)
+- **Unit 3's identity contract** becomes the foundation of
+  the single world rather than a bridge between two.
 
 ---
 
