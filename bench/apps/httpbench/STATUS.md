@@ -294,3 +294,29 @@
   exit 0); docs:check in flight, all PASS so far. This box cycled
   twice during this stretch (builds 7's killer); all lane work is
   on J / in git, nothing lost.
+
+## 2026-11-05 05:02 ET — CAPSTONE COMPLETE: build 11 (no-SSL) green, all gates pass, numbers in README
+- BUILD 11 on J @ b3da4ac (no-SSL config): JANK-EXE-BUILT in
+  114,898 ms; binary 48,158,120 bytes; ldd shows libz only (no
+  ssl/crypto, no libcpp). Smoke: HTTP 200, exactly 1024 bytes.
+- GATES (all on J, this branch): cohost -X:test JVM 4/17/0 exit 0;
+  jank 4/17/0 exit 0; binary from another directory (copied alone,
+  run from /) 200/1024; docs:check exit 0, 22 PASS 0 FAIL — its
+  examples include a full -T:build build, so the build path itself
+  was exercised there. Blast radius since c9ad1d6: src/cohost
+  changed ONLY in build_jank.clj; everything else is inside
+  bench/apps/httpbench/.
+- FINAL NUMBERS (build-11 binary, measure.sh, medians of 3 x
+  100,000 requests, J load 1.58): c=100 -> 84,879 req/s; c=1000 ->
+  84,482 req/s; c=10000 -> 61,239 req/s; all 0 errors. wrk
+  reference vs the server: 80,502 req/s. Same bench vs nginx
+  1.26.3 (identical body): 71,441 req/s, 0 errors. Cap row
+  c=25000 (28,232 ephemeral ports): 82,004 completed, 17,996
+  connect errors — reported as measured; 10,000 is the highest
+  error-free concurrency here. Full tables in README.md.
+- The 14 debug-seam checks are NOT run on this branch: they live
+  on the debug-seam branch (dev/debug_seam_check.clj) and are
+  gated by that lane's final gate; this branch's tree predates
+  them. Stated here so the gap is explicit, not silent.
+- Lane done: README.md written (build, run, numbers, C++ half,
+  Clojure half), CAPSTONE entry filed in the coordinator channel.
