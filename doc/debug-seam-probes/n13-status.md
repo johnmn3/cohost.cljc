@@ -205,3 +205,31 @@ JVM runner re-check after (must stay 10/14, #13 PASS).
   07:00:13 UTC = 02:00:13 ET; log ~/jgate-logs/n13-u2-aot-build.log
   (first line: JANK-EXE-BUILD ... (new)). Verdict run follows when
   it completes.
+
+## 2026-11-05 ~02:07-02:15 ET — UNIT 2 (#9) VERDICT: PASS
+
+- Build on J: JANK-EXE-BUILT in 407,275 ms; binary 44,331,608
+  bytes (gate probes' pre-fix: 44,572,208). Record events 1,457
+  (the fixture's 4 over the local run's 1,453).
+- The throwing binary, run from a scratch dir (verbatim):
+    AOT_EXIT=1
+    -- stdout: (empty)
+    -- stderr:
+    Execution error (ExceptionInfo) at object-ref::call/ (oref.hpp:566).
+    kaboom from seam.throwmain
+
+    Full report at:
+    /tmp/cohost-1793862429787-1.edn
+  The report EDN (1,953 bytes) opens {:clojure.main/message
+  "Execution error ... kaboom from seam.throwmain ..." ...} and its
+  :message \"kaboom from seam.throwmain\" + :trace are present.
+  Pre-fix (gate probes, twice): exit 0, stdout only the raw #error
+  map, no headline, no report. The headline's first frame
+  (object-ref::call/ oref.hpp:566) matches the launcher's own #1
+  headline shape at the J gate -- parity, not a new format.
+- Clean control: demo.main built AOT through the same route
+  (81,127 ms, warm cache) and run from a scratch dir:
+  CLEAN_EXIT=0, stdout "hello, JVM-USER!", stderr empty -- a
+  non-throwing app is unchanged by the new entry.
+- JVM runner: 10/14 PASS, 0 FAIL on this box AND on J.
+- Unit 2 DONE. Next: unit 3 (cpp/ divide-by-zero disposition).

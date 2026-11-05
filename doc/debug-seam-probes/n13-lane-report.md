@@ -108,3 +108,77 @@ the site names the hazard. No other file changed; no jank patch
   snapshot build's own boot report (791 forms, errors: 0) and both
   debug-seam runners are the verification. The change touches one
   construction, reached only when a macro fn throws.
+
+---
+
+# Unit 2 — check #9: AOT uncaught throw exits 0 (FIXED, verified on J)
+
+## The gap (gate probes lane, measured twice on the pre-fix tree)
+
+`bb build:jank dev/cli-demo seam.throwmain throwmain` produced a
+44,572,208-byte static binary that exited **0** on an uncaught throw:
+stdout was only jank's raw `#error` print of the exception; no
+headline, no "Full report at:", no report EDN. The AOT entry —
+build-jank's generated `cohost.app-main`, whose -main was
+`(boot-from-snapshot! {}) (make-user-ns!) (apply <app>/-main args)`
+— never passed through cohost.cli's report path; jank's generated
+C++ main printed the escape as a value and returned 0. The launcher
+path (app-main applies `cohost.cli/-main`, whose run-cli! wraps the
+run in try-all → report-error! → exit 1) was already correct.
+
+## The fix (8932728; cohost layers only)
+
+1. **src/cohost/cli.cljc** gains a public AOT entry,
+   `run-app-main! [main-ns args]`: resets the report config to the
+   default the launcher gets from bin/cohost — `:report "file"`,
+   `:report-dir` the host's temp directory — and runs
+   `(exit! (run-cli! {:inits [] :main {:type :main :ns ... :args ...}}))`.
+   The whole contract is run-cli!/run-main!'s own (the app resolves
+   through load-lib!'s snapshot registry); nothing is duplicated.
+   The temp dir on jank comes from a `cohost_io.temp_dir` cpp/raw
+   helper beside the file's existing cpp block (TMPDIR, else /tmp);
+   elsewhere it is `java.io.tmpdir`.
+2. **dev/perf/jank_snapshot_emit.clj**: the generated app-main now
+   requires `[cohost.cli]` (jank compiles it from repo src at build
+   step 4, exactly as the launcher build already does) and ends
+   `(cohost.cli/run-app-main! (quote <app>) args)`.
+3. build_jank.clj is unchanged; its input key already covers both
+   files, so stale executables rebuild. The probe-9 fixture
+   (dev/cli-demo/src/seam/throwmain.cljc, the gate probes lane's
+   commit) was taken onto this branch @ 841cb76 — without it the
+   record step cannot find the app (the local build leg died at
+   exactly that, before the move to J).
+
+## Verification (J box, tree d9deefd; JVM re-check there too)
+
+- JVM runner: **10/14 PASS, 0 FAIL** (also on this box) — cli.cljc
+  loads in every session; no regression.
+- Build: `JANK-EXE-BUILT .../throwmain in 407275 ms`; binary
+  44,331,608 bytes.
+- Throwing binary from a scratch dir, verbatim:
+
+```
+AOT_EXIT=1
+-- stdout: (empty)
+-- stderr:
+Execution error (ExceptionInfo) at object-ref::call/ (oref.hpp:566).
+kaboom from seam.throwmain
+
+Full report at:
+/tmp/cohost-1793862429787-1.edn
+```
+
+  The EDN (1,953 bytes) carries :clojure.main/message with the
+  headline, :message "kaboom from seam.throwmain" and the :trace.
+  The headline's first frame matches the launcher's own #1 headline
+  at the J gate — parity, not a new format.
+- Clean control (demo.main AOT, same route, 81,127 ms warm):
+  `CLEAN_EXIT=0`, stdout `hello, JVM-USER!`, stderr empty — a
+  non-throwing app is unchanged by the new entry.
+
+## Named remainder (unit 2)
+
+- The launcher-comparison leg of probe9-aot-throw.sh was not
+  re-run for this unit: the launcher's behavior on this exact app
+  is already measured (J gate #1: exit 1, headline, report EDN),
+  and the AOT output now matches that shape line for line.
