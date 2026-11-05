@@ -1,0 +1,118 @@
+(ns u7.two-proc
+  "Eve-in-cohost unit 7, the two-process gate: the jank process.
+   Eve on jank as-is (atom.broker/eve @ claude/eve-jank, the :jank
+   roots: completion, region/jank MAP_SHARED + __atomic, native
+   slab-io), joining the SAME disk atom the JVM process joins: the
+   domain at <path>, the atom registered as \"u7/shared\".
+
+     run-main u7.two-proc -- race <path> <n>   join, barrier, n swaps, barrier, print
+     run-main u7.two-proc -- read <path>       join, print the root + digests
+     run-main u7.two-proc -- mark <path> <tag> join, one swap, then _exit (no close)
+
+   Swap fns are Eve-level (eve.core/assoc, eve.core/get): a deref'd
+   disk value on jank is an Eve map, and jank's own assoc does not
+   reach it (the flagship lane's idiom note)."
+  (:refer-clojure :exclude [swap!])
+  (:require [eve.host-completion]
+            [eve.host :refer [swap!]]
+            [eve.core :as ec]
+            [eve.atom :as atom]
+            [eve.process :as proc]
+            [eve.deftype-proto.serialize :as ser]
+            [eve.codec :as codec]
+            [eve.crypto :as crypto]))
+
+(cpp/raw "
+#include <cstdio>
+#include <unistd.h>
+#include <iostream>
+namespace u7k {
+  inline void fl() { std::cout.flush(); std::fflush(nullptr); }
+  inline void hard_exit() { fl(); _exit(0); }
+}
+")
+
+(def side :jank)
+(def nm "u7/shared")
+(def init {:count 0 :jvm 0 :jank 0 :ready 0 :done 0 :marks []})
+
+(defn- join! [path]
+  (let [d (atom/persistent-atom-domain path)]
+    [d (atom/lookup-or-create-mmap-atom! d nm init)]))
+
+(defn- stage [& xs] (println (apply str "STAGE " xs)) (cpp/u7k.fl))
+
+(defn- bump [m k] (ec/assoc m k (inc (ec/get m k 0))))
+
+(defn- wait-for! [a k target]
+  (let [t0 (proc/now-ms)]
+    (loop []
+      (let [v (ec/get @a k 0)]
+        (cond (>= v target) true
+              (> (- (proc/now-ms) t0) 600000) (throw (ex-info "u7: barrier timeout" {:k k :at v}))
+              :else (do (proc/sleep-ms! 2) (recur)))))))
+
+;; Eve values read through eve.core's own protocols: (ec/into {} v) falls to
+;; clojure.core/into for a host target, whose seq of an Eve object reaches
+;; jank's lazy_meta::get and self-deadlocks (Eve jank.md defect 4: meta of
+;; an opaque_box never returns; gdb trace in unit 7 STATUS).
+(defn- plain-vec [x] (mapv (fn [i] (ec/nth x i)) (range (ec/count x))))
+(defn- plain [v]
+  (ec/reduce-kv (fn [m k x] (assoc m k (if (= k :marks) (plain-vec x) x))) {} v))
+
+;; Eve's content digest (eve.digest's compute-digest, spelled with its public
+;; parts): SHA-256 over the root's canonical codec bytes under a shared write.
+(def ^:private hexd "0123456789abcdef")
+(defn- hex [bs] (apply str (mapcat (fn [b] [(nth hexd (quot b 16)) (nth hexd (mod b 16))]) bs)))
+(defn- content-sha [v]
+  (try
+    (let [bs (binding [ser/*shared-write* true] (codec/value->eve-bytes v))
+          n (count bs)
+          raw (crypto/sha256 (mapv (fn [i] (bit-and (nth bs i) 0xFF)) (range n)))]
+      (str "sha256:" (hex (mapv (fn [b] (bit-and b 0xFF)) raw)) " over " n " bytes"))
+    (catch jank.runtime.object_ref e (str "ERROR " (pr-str e)))
+    (catch std.exception _ "ERROR std::exception")))
+
+(defn- report! [tag a]
+  (stage "report deref")
+  (let [v @a
+        _ (stage "report value " (pr-str (plain v)))
+        sl (atom/seal a)
+        _ (stage "report seal " (pr-str sl))
+        ;; over the materialized value: Eve-on-jank's codec does not take its own
+        ;; EveHashMap (it reads as a reference; unit 7 STATUS)
+        sha (content-sha (plain v))
+        _ (stage "report sha " (pr-str sha))]
+    (println (str "RESULT " (pr-str {:side side :tag tag
+                                     :value (plain v)
+                                     :seal sl
+                                     :sha256 sha})))))
+
+(defn -main [& [mode path x]]
+  (case mode
+    "race"
+    (let [n (long (read-string x))
+          [d a] (join! path)]
+      (swap! a bump :ready)
+      (wait-for! a :ready 2)
+      (dotimes [_ n]
+        (swap! a (fn [m] (bump (bump m :count) side))))
+      (swap! a bump :done)
+      (wait-for! a :done 2)
+      (report! "race" a)
+      (atom/close-atom-domain! d)
+      (proc/exit! 0))
+    "read"
+    (let [_ (stage "joining")
+          [d a] (join! path)
+          _ (stage "joined")]
+      (report! "read" a)
+      (atom/close-atom-domain! d)
+      (proc/exit! 0))
+    "mark"
+    (let [[_ a] (join! path)]
+      (swap! a (fn [m] (ec/assoc m :marks (ec/conj (ec/get m :marks []) x))))
+      (println (str "MARKED " x))
+      (cpp/u7k.fl)
+      ;; killed, not closed: no slot release, no checkpoint
+      (cpp/u7k.hard_exit))))

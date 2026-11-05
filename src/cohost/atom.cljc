@@ -51,7 +51,8 @@
    With no factory the layer is unavailable and the shim keeps
    the host's atom, the unit 1 availability shape."
   (:require [cohost.adapter :as host]
-            [cohost.memory :as memory]))
+            [cohost.memory :as memory]
+            [cohost.thread :as thread]))
 
 ;; ----------------------------------------------------------------
 ;; Seat hosting + the fill switch
@@ -163,27 +164,165 @@
   nil)
 
 ;; ----------------------------------------------------------------
+;; Unit 7: tiered atoms (mem -> disk -> net). The kind is chosen by
+;; the developer and carried as metadata on the atom value (John,
+;; Q5 RULED: metadata):
+;;
+;;   (atom x :meta {:eve/kind :disk :eve/path "/var/app/db" :eve/name "app/counter"})
+;;   (atom x :meta {:eve/kind :net  :eve/endpoint "http://..." :eve/domain-id "d1"
+;;                  :eve/name "app/counter" :eve/api-key "k"})
+;;
+;; No kind key = :mem, the default, in the runtime atom domain
+;; (unit 5's atoms, unchanged). A disk atom's root lives in a
+;; file-backed Eve domain at :eve/path, under the registered name
+;; :eve/name; a second process naming the same path and name joins
+;; it OS-resolved (Eve's exclusive create of the .root file picks
+;; the creator, every other process joins) and sees its swaps. A
+;; net atom is broker/gateway-resolved through Eve's network atom.
+;;
+;; Rules, enforced here (MEMORY-PLAN unit 7):
+;; - no automatic upgrade or fallback: a kind whose seat hosting is
+;;   missing throws; nothing silently becomes a mem atom;
+;; - a disk/net root must be Eve-representable: an unrepresentable
+;;   root fails loudly at creation, at promotion, and at every
+;;   publish, naming the value -- never a silent marshal and never
+;;   the host seat (a host-seated root would stop being shared);
+;; - kinds move only upward (mem -> disk -> net) by changing the
+;;   atom's meta; a downgrade (net -> disk included) throws; so
+;;   does re-pointing a tiered atom at a different place.
+
+(def kind-key :eve/kind)
+(def ^:private kind-rank {:mem 0 :disk 1 :net 2})
+(def ^:private place-keys
+  {:disk [:eve/path :eve/name]
+   :net [:eve/endpoint :eve/domain-id :eve/name]})
+
+(defn kind-of
+  "The kind an atom meta map names (:mem when none)."
+  [m]
+  (get m kind-key :mem))
+
+(defn- kind-error
+  "A layer error user code catches as an ex-info carrying its data
+   ({:cohost.atom/error <reason> ...})."
+  [msg data]
+  (host/ex-info* msg data))
+
+(defn- check-kind-spec! [kind m]
+  (when-not (contains? kind-rank kind)
+    (throw (kind-error (str "cohost.atom: unknown atom kind " (pr-str kind)
+                            " (the kinds are :mem :disk :net)")
+                       {:cohost.atom/error :unknown-kind :kind kind})))
+  (doseq [k (get place-keys kind)]
+    (when (nil? (get m k))
+      (throw (kind-error (str "cohost.atom: a " (name kind) " atom needs " (pr-str k) " in its meta")
+                         {:cohost.atom/error :missing-place :kind kind :key k}))))
+  nil)
+
+(defn tier-representable?
+  "What a shared (disk/net) tier can hold: Eve's codec data, and
+   Eve values themselves at any depth (a swap fn receives the
+   atom's own Eve root and returns Eve structure sharing it; an
+   Eve value of a foreign domain Eve refuses loudly on its own).
+   Not a unit-3 stand-in (a cohost wrapper over a heap-domain
+   root), never a fn or a host object."
+  [v]
+  (cond (memory/eve-value? v) false
+        (eve-typed? v) true
+        (or (nil? v) (boolean? v) (string? v) (keyword? v) (symbol? v) (number? v)) true
+        (map? v) (and (every? tier-representable? (keys v))
+                      (every? tier-representable? (vals v)))
+        (or (set? v) (vector? v) (sequential? v)) (every? tier-representable? v)
+        :else false))
+
+(defn- first-unrepresentable
+  "The first value inside v Eve cannot hold in a shared (disk/net)
+   tier, or ::none."
+  [v]
+  (cond (tier-representable? v) ::none
+        (map? v) (or (some (fn [[k x]]
+                             (let [a (first-unrepresentable k)]
+                               (if (= ::none a)
+                                 (let [b (first-unrepresentable x)] (when-not (= ::none b) b))
+                                 a)))
+                           v)
+                     v)
+        (or (set? v) (sequential? v))
+        (or (some (fn [x] (let [a (first-unrepresentable x)] (when-not (= ::none a) a))) v) v)
+        :else v))
+
+(defn check-tier-value!
+  "Throw, naming the value, when v cannot live in a kind-tier
+   atom. Mem atoms accept anything (unit 5's host seat)."
+  [kind v]
+  (when (and (not= :mem kind) (not (tier-representable? v)))
+    (let [bad (first-unrepresentable v)]
+      (throw (kind-error (str "cohost.atom: a " (name kind) " atom cannot hold "
+                              (host/try-all (fn [] (pr-str bad)) (fn [_] "an unprintable value"))
+                              " -- Eve cannot represent it in a shared tier"
+                              " (no silent marshal; keep it in a :mem atom)")
+                         {:cohost.atom/error :unrepresentable :kind kind}))))
+  v)
+
+(defn- tiered? [s] (not= :mem (:kind s :mem)))
+
+(defn- make-tier-handle [kind m init]
+  (let [mk (:make-tier-atom @factory)]
+    (when-not mk
+      (throw (kind-error (str "cohost.atom: this seat has no hosting for " (name kind)
+                              " atoms (NOT-YET on this seat; no fallback to :mem)")
+                         {:cohost.atom/error :kind-unavailable :kind kind})))
+    (mk kind m init)))
+
+;; ----------------------------------------------------------------
 ;; Construction
+
+(declare register-conveying!)
 
 (defn make-atom
   "A layer atom holding init. opts: {:meta m :validator f} --
    meta rides the wrapper state (an atom's meta is the
    wrapper's, like its watches: Eve's atoms carry none); the
-   validator runs against the initial root, as stock's does."
+   validator runs against the initial root, as stock's does.
+   The meta's :eve/kind picks the tier (unit 7)."
   ([init] (make-atom init nil))
   ([init {:keys [meta validator]}]
-   (let [rep (root-representable? init)
-         h ((:make-atom @factory) (if rep init host-held))
-         st (atom {:eve h
-                   :gate (if rep :open :host)
-                   :root (when-not rep init)
-                   :watches {}
-                   :validator validator
-                   :meta meta
-                   :readers 0})
-         a {:cohost/kind ::atom :state st}]
-     (validate! validator init)
-     a)))
+   (let [kind (kind-of meta)]
+     (if (= :mem kind)
+       (let [rep (root-representable? init)
+             h ((:make-atom @factory) (if rep init host-held))
+             st (atom {:eve h
+                       :gate (if rep :open :host)
+                       :root (when-not rep init)
+                       :kind :mem
+                       ;; never published: stock core's (atom x :meta m)
+                       ;; is (new Atom x) then reset-meta!, so a kind
+                       ;; arriving on a fresh atom is create-or-join
+                       :fresh true
+                       :watches {}
+                       :validator validator
+                       :meta meta
+                       :readers 0})
+             a {:cohost/kind ::atom :state st}]
+         (validate! validator init)
+         a)
+       (do (check-kind-spec! kind meta)
+           (check-tier-value! kind init)
+           (validate! validator init)
+           (let [h (make-tier-handle kind meta init)]
+             ;; a joined atom answers its existing root: the
+             ;; validator holds over what this process will see
+             (validate! validator @h)
+             (register-conveying!
+              {:cohost/kind ::atom
+               :state (atom {:eve h :gate :open :root nil :kind kind
+                             :watches {} :validator validator :meta meta
+                             :readers 0})})))))))
+
+(defn kind
+  "The atom's current kind (:mem, :disk or :net)."
+  [a]
+  (:kind @(:state a) :mem))
 
 (defn state-of
   "The atom's wrapper state (probe/support)."
@@ -247,8 +386,14 @@
 
 (defn- host-outcome
   "Publish new into the host seat: the Eve atom is marked
-   host-held so its slab root names the state honestly."
+   host-held so its slab root names the state honestly. Never
+   for a tiered atom: its root must stay shared (unit 7)."
   [s new]
+  (check-tier-value! (:kind s :mem) new)
+  (when (tiered? s)
+    ;; representable yet refused by Eve: still no host seat
+    (throw (kind-error "cohost.atom: Eve refused the publish into a shared-tier atom"
+                       {:cohost.atom/error :publish-refused :kind (:kind s)})))
   (reset! (:eve s) host-held)
   {:gate :host :root new})
 
@@ -336,8 +481,10 @@
   [a f args]
   (let [s @(:state a)
         vf (:validator s)
-        f' (if vf
+        k (:kind s :mem)
+        f' (if (or vf (not= :mem k))
              (fn [old] (let [new (apply f old args)]
+                         (check-tier-value! k new)
                          (validate! vf new)
                          new))
              (fn [old] (apply f old args)))]
@@ -347,11 +494,55 @@
                             (throw e))))))
 
 ;; ----------------------------------------------------------------
+;; The tiered path (unit 7). A disk/net atom is shared with other
+;; processes, so a process-local claim cannot make a publish
+;; exclusive: every publish rides the Eve handle's own CAS loop (a
+;; disk atom's CAS word in the mapped root file; a net atom's
+;; broker CAS). f runs per attempt, as stock's does; only the
+;; committing attempt's (old, new) pair survives in the volatile,
+;; because every attempt overwrites it -- so watches fire with the
+;; exact pair of the winning publish. Watches fire for this
+;; process's publishes; another process's swaps are seen on deref
+;; (Eve has no cross-process notification; named in the report).
+
+(defn- swap-tiered! [a f args]
+  (let [s @(:state a)
+        k (:kind s)
+        vf (:validator s)
+        pair (volatile! nil)]
+    (swap! (:eve s) (fn [old]
+                      (let [new (apply f old args)]
+                        (check-tier-value! k new)
+                        (validate! vf new)
+                        (vreset! pair [old new])
+                        new)))
+    (let [[old new] @pair]
+      (fire-watches! a s old new)
+      new)))
+
+(defn- cas-tiered! [a oldv newv]
+  (let [s @(:state a)
+        k (:kind s)
+        hit (volatile! nil)]
+    (check-tier-value! k newv)
+    (swap! (:eve s) (fn [cur]
+                      (if (memory/equiv cur oldv)
+                        (do (validate! (:validator s) newv)
+                            (vreset! hit [cur newv])
+                            newv)
+                        (do (vreset! hit nil) cur))))
+    (if-let [[cur new] @hit]
+      (do (fire-watches! a s cur new) true)
+      false)))
+
+;; ----------------------------------------------------------------
 ;; The Atom surface (called by the shim's branches)
 
 (defn swap-atom! [a f & args]
   (let [s @(:state a)]
-    (cond (= :host (:gate s)) (swap-host! a f args)
+    (when (:fresh s) (swap! (:state a) dissoc :fresh))
+    (cond (tiered? s) (swap-tiered! a f args)
+          (= :host (:gate s)) (swap-host! a f args)
           (seq (:watches s)) (swap-claimed! a f args)
           :else (if (claim-reader! a)
                   (let [r (try (eve-swap! a f args)
@@ -364,7 +555,9 @@
 
 (defn reset-atom! [a v]
   (let [s @(:state a)]
-    (cond (= :host (:gate s)) (swap-host! a (fn [_] v) [])
+    (when (:fresh s) (swap! (:state a) dissoc :fresh))
+    (cond (tiered? s) (swap-tiered! a (fn [_] v) [])
+          (= :host (:gate s)) (swap-host! a (fn [_] v) [])
           (seq (:watches s)) (swap-claimed! a (fn [_] v) [])
           :else (if (claim-reader! a)
                   (let [r (try
@@ -383,7 +576,10 @@
 
 (defn compare-and-set-atom! [a oldv newv]
   (let [s0 @(:state a)]
-    (if (= :host (:gate s0))
+    (when (:fresh s0) (swap! (:state a) dissoc :fresh))
+    (cond
+      (tiered? s0) (cas-tiered! a oldv newv)
+      (= :host (:gate s0))
       ;; host seat: the same comparison, on the wrapper state
       (let [st (:state a)]
         (loop []
@@ -395,6 +591,7 @@
                               (do (fire-watches! a s (:root s) newv)
                                   true)
                               (recur)))))))
+      :else
       (let [s (claim! a)]
         (if (= ::host s)
           (compare-and-set-atom! a oldv newv)
@@ -453,17 +650,71 @@
 ;; withMeta returns a fresh Atom over the same state cell.
 (defn meta-of [a] (:meta @(:state a)))
 
+;; Unit 7: a meta change that names a different :eve/kind is a
+;; promotion. Upward only (mem -> disk -> net); the current root is
+;; published into the new tier, and must be representable there.
+;; The atom stays the same value (same wrapper state); only its
+;; Eve handle changes, under the claim for a mem atom so no publish
+;; races the move.
+
+(defn- same-place? [kind m0 m1]
+  (every? (fn [k] (= (get m0 k) (get m1 k))) (get place-keys kind)))
+
+(defn- promote! [a k0 k1 m1]
+  (check-kind-spec! k1 m1)
+  (let [st (:state a)
+        s (if (and (= :mem k0) (= :open (:gate @st))) (claim! a) @st)
+        s (if (= ::host s) @st s)
+        claimed? (= :busy (:gate @st))
+        root (if (= :host (:gate s)) (:root s) @(:eve s))
+        done (volatile! false)]
+    (try
+      (check-tier-value! k1 root)
+      (let [h (make-tier-handle k1 m1 root)
+            there @h]
+        (when (:fresh s) (validate! (:validator s) there))
+        (when-not (or (:fresh s) (memory/equiv there root))
+          (throw (kind-error (str "cohost.atom: cannot promote to " (name k1)
+                                  " -- the target atom already holds a different value")
+                             {:cohost.atom/error :promotion-target-occupied :kind k1})))
+        (swap! st (fn [x] (-> (assoc x :eve h :gate :open :root nil :kind k1 :meta m1 :readers 0)
+                              (dissoc :fresh))))
+        (vreset! done true)
+        (register-conveying! a))
+      (finally
+        (when (and claimed? (not @done))
+          (release! a {:gate :open :root (:root s)}))))
+    a))
+
+(defn- apply-meta! [a m1]
+  (let [s @(:state a)
+        k0 (:kind s :mem)
+        k1 (kind-of m1)]
+    (cond
+      (= k0 k1)
+      (do (when (and (not= :mem k0) (not (same-place? k0 (:meta s) m1)))
+            (throw (kind-error (str "cohost.atom: a " (name k0) " atom cannot be re-pointed"
+                                    " at a different place (make a new atom)")
+                               {:cohost.atom/error :re-point :kind k0})))
+          (swap! (:state a) assoc :meta m1)
+          a)
+      (not (contains? kind-rank k1))
+      (do (check-kind-spec! k1 m1) a)
+      (< (kind-rank k1) (kind-rank k0))
+      (throw (kind-error (str "cohost.atom: downgrading a " (name k0) " atom to " (name k1)
+                              " is not supported")
+                         {:cohost.atom/error :downgrade :from k0 :to k1}))
+      :else (promote! a k0 k1 m1))))
+
 (defn with-meta-atom [a m]
-  (swap! (:state a) assoc :meta m)
+  (apply-meta! a m)
   (with-meta a m))
 
 (defn set-meta-atom! [a m]
-  (swap! (:state a) assoc :meta m)
-  a)
+  (apply-meta! a m))
 
 (defn alter-meta-atom [a f args]
-  (swap! (:state a) (fn [s] (assoc s :meta (apply f (:meta s) args))))
-  a)
+  (apply-meta! a (apply f (:meta @(:state a)) args)))
 
 ;; ----------------------------------------------------------------
 ;; The registry: namespace/var containers as residents of the
@@ -530,3 +781,101 @@
         (when (host/var-bound? v)
           (publish-var-root! ns-sym sym (host/var-root v))))))
   nil)
+
+;; ----------------------------------------------------------------
+;; Unit 7: bindings conveyance across processes, riding the shared
+;; atom itself.
+;;
+;; Expressed in metadata, like the kinds (no new function surface):
+;;   (def shared (atom {} :meta {:eve/kind :disk :eve/path p :eve/name "app/s"
+;;                               :eve/conveys true}))
+;;   (def ^{:dynamic true :eve/convey shared} *tenant* nil)
+;; A thread-boundary capture (core's binding-conveyor-fn through the
+;; shim's Var/getThreadBindings, and the thread layer's futures and
+;; agent sends) PUBLISHES the frame it captured for vars conveyed
+;; through a shared atom, and CONVEYS the frame other processes
+;; published there for vars this thread has not bound itself. So
+;;   instance A:  (binding [*tenant* "acme"] @(future ...))
+;;   instance B:  @(future *tenant*)            ; => "acme"
+;; The frame lives in the shared atom's Eve meta-atom (eve.atom/
+;; meta-atom: coordination state kept beside the atom, same domain,
+;; a reserved registry name): the atom's own value, version and
+;; equality are untouched. A frame entry is {var-symbol value}; its
+;; values obey the tier's rule -- unrepresentable fails loudly. Disk
+;; kind only: Eve's network atom has no meta-atom (named gap).
+
+(defonce ^:private conveying
+  ;; the conveying shared atoms this process made: [layer-atom ...]
+  (atom []))
+
+(defn- conveying? [a] (true? (:eve/conveys (meta-of a))))
+
+(defn- frame-handle [a]
+  (let [s @(:state a)
+        fa (:frame-atom @factory)]
+    (when-not (= :disk (:kind s))
+      (throw (kind-error (str "cohost.atom: binding conveyance rides a :disk atom (this one is "
+                              (name (:kind s :mem)) ")")
+                         {:cohost.atom/error :convey-unsupported :kind (:kind s :mem)})))
+    (or (:frame s)
+        (let [h (fa (:eve s))]
+          (swap! (:state a) assoc :frame h)
+          h))))
+
+(defn- var-qsym [v]
+  (let [n (host/var-ns v)]
+    (symbol (str (if (symbol? n) n (host/try-all (fn [] (ns-name n)) (fn [_] n))))
+            (str (host/var-sym v)))))
+
+(defn- convey-target [v]
+  (let [t (get (host/try-all (fn [] (meta v)) (fn [_] nil)) :eve/convey)]
+    (when (atom-value? t) t)))
+
+(defn- publish-frames! [b]
+  (let [groups (volatile! {})]
+    (doseq [[v x] b]
+      (when-let [t (convey-target v)]
+        (when-not (conveying? t)
+          (throw (kind-error "cohost.atom: :eve/convey names an atom without :eve/conveys true"
+                             {:cohost.atom/error :convey-not-shared})))
+        (check-tier-value! :disk x)
+        (vswap! groups update (:state t) (fn [[_ m]] [t (assoc (or m {}) (var-qsym v) x)]))))
+    (doseq [[_ [t entries]] @groups]
+      (swap! (frame-handle t) (fn [f] (merge (if (map? f) (into {} f) {}) entries)))))
+  nil)
+
+(defn- resolve-qsym [q]
+  (get (host/try-all (fn [] (host/ns-interns-map (symbol (namespace q))))
+                     (fn [_] nil))
+       (symbol (name q))))
+
+(defn convey-frame
+  "The capture hook: publish b's conveyed vars, then add the frames
+   other processes published for vars b does not bind."
+  [b]
+  (if (or (not (fill-active?)) (empty? @conveying))
+    b
+    (do (publish-frames! b)
+        (let [bound (into #{} (map var-qsym) (keys b))]
+          (reduce (fn [acc t]
+                    (let [f @(frame-handle t)]
+                      (reduce (fn [acc [q x]]
+                                (if (contains? bound q)
+                                  acc
+                                  (if-let [v (resolve-qsym q)]
+                                    (assoc acc v x)
+                                    acc)))
+                              acc
+                              (when (map? f) f))))
+                  b
+                  @conveying)))))
+
+(defn register-conveying!
+  "Track a :disk atom whose meta says :eve/conveys true (make-atom
+   and promotion call this); installs the capture hook."
+  [a]
+  (when (conveying? a)
+    (frame-handle a)
+    (swap! conveying (fn [v] (if (some #(identical? (:state %) (:state a)) v) v (conj v a))))
+    (thread/set-capture-hook! convey-frame))
+  a)
