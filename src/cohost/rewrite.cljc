@@ -1200,13 +1200,6 @@
       :else (rw-method ctx m (cons target args)
                        (fn [[t & as]] (if call? (list '. t (apply list m as)) (apply list '. t m as)))))))
 
-(defn- recording?
-  "True while boot records a snapshot ({:record? true}). Mirrors the
-   jank adapter's gate of the same name: emissions the JIT accepts but
-   a per-module jank compile rejects stay out of a recording."
-  []
-  (when-let [v (resolve 'cohost.boot/snapshot-log)] (some? @@v)))
-
 (defn- rw-try [ctx [_ & body]]
   (let [catch? #(and (seq? %) (= 'catch (canon-head (first %))))
         finally? #(and (seq? %) (= 'finally (canon-head (first %))))
@@ -1257,35 +1250,23 @@
             (let [f (fold catches)]
               (when f
                 (into [(first f)]
-                      (if (and (host/cpp?) (not (recording?)))
-                        ;; a native C++ exception is no object_ref, so the
-                        ;; folded clause never sees it: two more doors, in
-                        ;; try-all's order, each translating the caught C++
-                        ;; value into the shim's exception value and then
-                        ;; running the same dispatch chain (U3b). The
-                        ;; message read (a cpp call on the caught value)
-                        ;; sits in the clause itself: the value's native
-                        ;; type does not survive a fn boundary -- boxed
-                        ;; as an object_ref it matches no typed overload
-                        ;; (analyze/invalid-cpp-call, measured on the AOT
-                        ;; build, 2026-11-04). And the doors stay out of
-                        ;; a snapshot recording: the shim's cpp/raw
-                        ;; namespace is visible in no other module, so a
-                        ;; recorded module naming it fails its per-module
-                        ;; compile ('Unable to find cohost_shim_err',
-                        ;; the snapshot record's errors for deref-future
-                        ;; / parse-long / parse-double, 2026-11-04) --
-                        ;; the adapter's recording? gate, same reason.
-                        ;; Recorded code keeps the plain fold, as it did
-                        ;; before U3b; JIT-compiled code gets the doors.
-                        (let [e (second f) chain (nth f 2) raw (gensym "e__raw")]
-                          [(list 'catch 'cpp/jank.error_ref raw
-                                 (list 'let* [e (list (shim-fn "jank-error-info")
-                                                      (list 'cpp/cohost_shim_err.error_message raw))] chain))
-                           (list 'catch 'cpp/std.exception raw
-                                 (list 'let* [e (list (shim-fn "std-exception-info")
-                                                      (list 'cpp/cohost_shim_err.std_what raw))] chain))])
-                        []))))
+                      ;; a native C++ exception is no object_ref, so the
+                      ;; folded clause never sees it: the catch hole is
+                      ;; OPEN. U3b's two door shapes were measured and
+                      ;; removed (7cb29ec, f03e517, and the removal
+                      ;; commit): a caught C++ value's native type does
+                      ;; not survive a fn boundary (analyze/invalid-
+                      ;; cpp-call), and a cpp/raw namespace declared in
+                      ;; the shim is visible in no other module -- not
+                      ;; in a recorded module's per-module compile, and
+                      ;; not in the snapshot launcher's JIT, where the
+                      ;; shim arrives AOT-compiled and its cpp/raw was
+                      ;; never evaluated in-session (a runtime-compiled
+                      ;; stock try there failed with 'Unable to find
+                      ;; cohost_shim_err'). The banked design and the
+                      ;; member-access lead are in
+                      ;; doc/debug-seam-probes/u3-diagnosis.md.
+                      [])))
             ;; source order kept: runs of JVM catches fold together,
             ;; cpp catches stand as siblings between them
             (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (let [f (fold g)] (if f [(first f)] []))))
