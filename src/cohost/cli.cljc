@@ -80,8 +80,10 @@
   "clojure.main's datafied throwable, built over adapter data: :via walks
    the cause chain outermost first (at most 8), each entry's :type from
    shim/class-of, :message and :at from the adapter (:at is the first of
-   the entry's own :ex-trace frames); :trace is the outermost exception's
-   frames; :phase from the top ex-data's :clojure.error/phase."
+   the entry's own :ex-trace frames); :trace and :data are the ROOT
+   cause's (clojure.main's Throwable->map headlines the root; the
+   outermost entry contributes only the :phase, from its ex-data's
+   :clojure.error/phase)."
   [e]
   (let [chain (loop [acc [] cur e]
                 (if (and cur (< (count acc) 8))
@@ -96,12 +98,13 @@
                                :at (when-let [f (first (host/ex-trace x))] (display-frame f))}
                         (some? d) (assoc :data d))))
                   chain)
-        data (:data (first via))]
+        root (peek chain)
+        data (:data (peek via))]
     {:via via
-     :trace (mapv display-frame (host/ex-trace e))
+     :trace (mapv display-frame (host/ex-trace root))
      :cause (peek via)
      :data data
-     :phase (get data :clojure.error/phase :execution)}))
+     :phase (get (:data (first via)) :clojure.error/phase :execution)}))
 
 (defn- split-on-$
   [s]
