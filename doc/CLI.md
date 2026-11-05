@@ -154,7 +154,10 @@ any other value, e.g. `-O0`, replaces it).
 Jank's own introspection reaches the run the same way: the launcher passes its environment to
 the jank process unchanged, so `JANK_PRINT_IR=1` and `JANK_PRINT_CODEGEN=1` print jank's
 intermediate representation and the generated C++ for the forms as cohost rewrote them (shim
-and `cohost.core` names included -- what the host compiler actually receives). For a profile,
+and `cohost.core` names included -- what the host compiler actually receives). A compiled
+snapshot compiles nothing at run time, so an introspection request takes the source boot for
+that run (cohost's AOT objects, core from source -- the slower path): the only shape in which
+the rewritten forms compile in the run and print. For a profile,
 `COHOST_JANK_PROFILE=1 bin/cohost :jank ...` runs the program under jank's `--profile` and
 jank writes its trace to `jank.profile` in the project directory (a full enter/exit trace --
 expect tens of megabytes for a booting run). A compiled snapshot launcher cannot take the

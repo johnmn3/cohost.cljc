@@ -240,22 +240,43 @@
       (die 1 "cohost: jank AOT modules failed (bb -e (load-file \"dev/perf/jank_aot_ensure.clj\") in the repo)"))
     (str (fs/absolutize (under repo dir)))))
 
+(defn jank-introspect?
+  "JANK_PRINT_CODEGEN / JANK_PRINT_IR ask jank to print each compiled
+   function's generated code / IR. Under the snapshot — the compiled
+   launcher, or run-main over the snapshot's objects — nothing compiles
+   at run time, so the dump never happens (measured at the j gate:
+   exit 0, no line naming cohost). An introspection run therefore
+   takes the source boot, as a profile run takes the JIT path: the
+   rewritten forms compile in the run and print as they go."
+  []
+  (let [on (fn [k] (let [v (System/getenv k)]
+                     (and v (not= "0" v) (not= "" v))))]
+    (boolean (or (on "JANK_PRINT_CODEGEN") (on "JANK_PRINT_IR")))))
+
 (defn jank-launch
   "jank: the module path (a fresh snapshot of the booted core, else cohost's
    AOT objects), whether cohost.cli boots from the snapshot, and the jank
    process's extra environment (the GC setting): lane D's
    dev/perf/jank_snapshot_cli.clj, decided in the repo. With a fresh core
    snapshot and a main namespace (-m, -X), the project's namespaces come
-   from a per-project snapshot, built when stale (D-8)."
+   from a per-project snapshot, built when stale (D-8). An introspection
+   run (JANK_PRINT_CODEGEN / JANK_PRINT_IR) overrides all of that to the
+   source boot: cohost's AOT objects and core from src."
   [cwd roots run]
   (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
   (let [l ((resolve 'jank-cli-launch) repo)
         main-ns (when (#{:main :exec} (get-in run [:main :type])) (get-in run [:main :ns]))
         ;; the launcher binary has no module path: it adds the per-project
-        ;; snapshot's directories at run time (the config's :module-paths)
-        proj (when (:snapshot? l)
-               ((resolve 'jank-project-launch) repo cwd roots main-ns (:module-path l) (:env l)))]
-    (merge l proj (when (and (:launcher l) proj) {:module-paths (:project-paths proj)}))))
+        ;; snapshot's directories at run time (the config's :module-paths);
+        ;; an introspection run skips the project snapshot too — its
+        ;; namespaces also compile in the run, from source
+        proj (when (and (:snapshot? l) (not (jank-introspect?)))
+               ((resolve 'jank-project-launch) repo cwd roots main-ns (:module-path l) (:env l)))
+        merged (merge l proj (when (and (:launcher l) proj) {:module-paths (:project-paths proj)}))]
+    (if (jank-introspect?)
+      (assoc merged :module-path (str (jank-aot-dir!) ":" repo "/src")
+                    :snapshot? false)
+      merged)))
 
 (defn- lpy-fresh-src
   "basilisp's cached boot (dev/perf/lpy_snapshot_ensure.clj, decided in the repo):
@@ -328,8 +349,11 @@
       ;; COHOST_JANK_PROFILE=1: the run goes through jank's own --profile
       ;; (the compiled launcher cannot take the flag, so the JIT run-main
       ;; path serves it); jank writes its trace to <cwd>/jank.profile
+      ;; JANK_PRINT_CODEGEN / JANK_PRINT_IR: the launcher compiles nothing
+      ;; at run time and would print no dump, so the run goes through
+      ;; run-main on the source boot jank-launch decided (see there)
       "jank" (let [profile? (= "1" (System/getenv "COHOST_JANK_PROFILE"))]
-               (-> (p/process (if-let [l (and (not profile?) (:launcher jank))]
+               (-> (p/process (if-let [l (and (not profile?) (not (jank-introspect?)) (:launcher jank))]
                                 [l cfg]
                                 (vec (concat ["jank"]
                                              (when profile? ["--profile"])
