@@ -105,3 +105,9 @@
   failures` (the same three Eve-line rows as the pre-change baseline). Net run's gateway:
   `{:requests 273, :commits 50, :conflicts 1, :by-atom {"app/shared" 108}}`. REPORT drafted.
   Jank AOT battery compiling (`AOT-RECOMPILE`; snapshot stale → AOT modules path).
+- 1:45 PM ET — jank AOT battery (`bb boot:jank`, AOT recompiled with unit-7 code, exit 0): booted as
+  stock 544 / from host 141 / natives 28 / skipped 108 / errors 0; battery 219/221 (FAIL
+  `Character/isWhitespace is Java's`, FAIL `Character outside ASCII`); libraries 62/62. Same command on
+  the pre-unit-7 tree bb68557 on this box: **identical** (counts and FAIL pair) → no unit-7 change; the
+  pair differs from J's standing pair at the box level (non-ASCII character rows).
+- 1:46 PM ET — **COMPLETE.** REPORT at doc/eve-cohost/unit7/REPORT.md. Landing is the operator's call.

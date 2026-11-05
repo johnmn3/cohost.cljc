@@ -1,5 +1,11 @@
 # Eve-in-cohost, unit 7 — REPORT: tiered atoms (mem → disk → net)
 
+> **DECLARATION — COMPLETE, 2026-11-05 1:46 PM ET.** Gate green: `GATE-U7: 9 rows, 0
+> failures` (a JVM process and a jank process over ONE disk atom; final value, seal and
+> content digest identical from both sides; kill/rejoin both ways). Layer probe 56/0,
+> booted check 17/0, JVM battery 221/221 + 62/62, jank AOT battery 219/221 + 62/62
+> (identical to the pre-unit-7 tree on this box). Not landed — landing is the operator's call.
+
 Lane branch `agent1/eve-unit7-tiered-atoms`, off `muse/eve-cohost-impl` @ 0fa021f, with
 unit 5 (`muse/eve-cohost-impl-u5` @ b142ffe) merged into the lane (unit 5 is complete but
 was not in the mainline; see "Base" below). Spec: MEMORY-PLAN.md §4 unit 7 + §7 Q5 ruling
@@ -128,7 +134,7 @@ own value, version and equality are untouched.
 | Unit 3 `probe_memory.clj` (this Eve line) | **111/111 PASS** | |
 | Unit 5 `eve_cohost_check_u5.clj` (this Eve line) | **CHECK-U5: 31 checks, 0 failures** | |
 | Unit 5 `probe_atom.clj` (this Eve line) | PROBE-ATOM: 66 checks, 3 failures — identical to the pre-change baseline on this line | the three Eve-line rows ("Base", below) |
-| Jank AOT battery (`bb boot:jank`) | __JANK__ | |
+| Jank AOT battery (`bb boot:jank`, AOT modules recompiled with the unit-7 shim/thread/atom code — exit 0) | booted as stock 544 / from host 141 / natives 28 / skipped 108 / errors 0; **battery: 219/221**; **libraries: 62/62**. FAIL `Character/isWhitespace is Java's`, FAIL `Character outside ASCII` | the **same command on the lane's pre-unit-7 tree (bb68557) on this box prints the identical result**, counts and FAIL pair included: no unit-7 change. The pair differs from J's standing pair (`subs count nth first last butlast` in place of `isWhitespace`) at the box level — all three are non-ASCII character rows; this box is a fresh cloud container, not J |
 
 ## Base, and the Eve line
 
