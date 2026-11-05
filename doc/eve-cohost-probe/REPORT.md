@@ -66,6 +66,18 @@ All twelve libraries load; every threading case answers: future-basic
 promise 7, delay 2, agent 1, pmap (2 3 4), spec-conform 2,
 test-stacktrace 26.
 
+### ClojureWasm (cljw) — complete
+
+`SUMMARY|cljw|ok=23 unsupported-shim=0 fail-other=0 wall-ms=131737`
+
+All twelve libraries load; the whole threading surface answers with
+the same values as the JVM (future-capture-local 42, future-binding 3,
+agent 1, pmap (2 3 4)). One divergence: test-stacktrace answers 0 —
+`Thread/currentThread` resolves (does not throw) but its stack trace
+is empty. ClojureWasm's own runtime supplies the agent/executor
+surface, and it is a single-heap host, so closure capture crosses no
+boundary there.
+
 Probe-design note (measured): the first JVM run never exited — after
 the agent/future cases, the JVM's non-daemon executor threads keep the
 process alive. The program now ends with `shutdown-agents` + a guarded
