@@ -24,6 +24,18 @@
             [eve.list :as eve-list]
             [eve.atom :as eve-atom]))
 
+;; requiring-resolve, nil when the namespace or var is absent
+(defn- requiring-resolve-quiet [sym]
+  (try (requiring-resolve sym) (catch Exception _ nil)))
+
+;; Eve's value serializer moved from eve.mem (the standalone line
+;; units 3-5 were first run on) to eve.codec (the adapter-architecture
+;; line, eve 0.9.x and the vendored eve-jank line unit 7 runs both
+;; seats on). Resolved once, from whichever line is on the classpath.
+(def ^:private value+sio->eve-bytes
+  (or (requiring-resolve-quiet 'eve.codec/value+sio->eve-bytes)
+      (requiring-resolve-quiet 'eve.mem/value+sio->eve-bytes)))
+
 (defonce ^:private slab-ctx
   ;; the seat's one in-memory heap slab context, held in an atom
   (atom nil))
@@ -74,7 +86,7 @@
    holding s's elements."
   [s]
   (let [sio (ctx)
-        ser (partial eve-mem/value+sio->eve-bytes sio)
+        ser (partial @value+sio->eve-bytes sio)
         root (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser s))]
     (memory/wrap :set root (canonicalize root))))
 
@@ -83,7 +95,7 @@
    holding l's elements."
   [l]
   (let [sio (ctx)
-        ser (partial eve-mem/value+sio->eve-bytes sio)
+        ser (partial @value+sio->eve-bytes sio)
         root (eve-list/jvm-sab-list-from-offset sio (eve-list/jvm-write-list! sio ser l))]
     (memory/wrap :list root (canonicalize root))))
 

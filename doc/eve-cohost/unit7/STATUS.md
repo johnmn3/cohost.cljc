@@ -16,3 +16,22 @@
   (perf rows moved to VS Agent 2 at 13:02 ET; realm-signedness defect open on jank — affects TAG-REF
   references, not plain data). Decision: the two-process gate uses ONE Eve tree for both seats
   (atom.broker/eve @ 7ae05d49, its `:jvm` and `:jank` roots), so the file format is one format.
+- 1:25 PM ET — **baseline on the one Eve tree** (atom.broker/eve @ 7ae05d49, `:jvm` roots; runner
+  `dev/u7/clj-eve.sh`): unit 3/5's `memory_eve.clj` referenced `eve.mem/value+sio->eve-bytes`, which
+  the adapter-architecture line moved to `eve.codec`; resolved from whichever line is present (one
+  def, no behavior change). Unit 5's `probe_atom.clj` on this line: **PROBE-ATOM: 66 checks, 3
+  failures** — all three in the "transition to host seat" rows: this Eve line no longer refuses a fn
+  root (it holds it in-process by reference, realm-scoped), so the layer's host-seat transition never
+  fires; deref identity still exact (PASS "transitioned root identical"). Eve-line delta, recorded;
+  unit 7 does not rely on Eve's refusal (the tier checks representability itself).
+- 1:35 PM ET — IMPLEMENTATION in progress (committed as built):
+  - `cohost.atom`: kind from meta `:eve/kind` (:mem default | :disk {:eve/path :eve/name} | :net
+    {:eve/endpoint :eve/domain-id :eve/name :eve/api-key}); disk/net roots must be representable —
+    loud `:unrepresentable` error naming the value at creation, publish and promotion, never the host
+    seat; tiered publishes ride the Eve handle's own CAS loop (cross-process), watches fire with the
+    committing attempt's pair; promotion by meta change, upward only (`:downgrade`, `:re-point`,
+    `:promotion-target-occupied`, `:missing-place`, `:unknown-kind`, `:kind-unavailable` all throw).
+  - `cohost.atom-eve`: `:make-tier-atom` — disk = `eve.atom/persistent-atom-domain` +
+    `lookup-or-create-mmap-atom!` (OS-resolved join); net = `eve.net.atom/remote-atom` adapted to
+    IDeref/IAtom (Eve's ops verbatim); `root-digests` = `eve.atom/seal` + Eve's SHA-256 content digest.
+  - `probe_tier.clj`: the layer probe (running).
