@@ -15,3 +15,17 @@ Branch `agent1/eve-unit8-cljs-shared-heap` (cohost.cljc). All times US Eastern.
   cljs cli:check rows SAME; JVM/jank batteries untouched.
 - Starting point (cljs-dep FINAL): cljs row ok=22 fail-other=1 (spec-conform), cooperative
   same-realm leaf; unit 8 owns real workers + Eve SAB atom as the realm bridge.
+- De-risk probe PASS (dev/u8/u8_worker_probe.cljs, log unit8/logs/u8-worker-probe.log): a worker realm
+  started by eve.thread-host/start-threads! (fat-kernel mesh) joins the main realm's in-process Eve
+  domain from handed-over SABs (process-slab/init-worker-slabs! + domain root/reader-map regions);
+  both realms swap one atom; final {:n 4000, :worker-wrote {...}} exact. SAB handover channel:
+  Node's worker_threads.setEnvironmentData (public; no Eve source touched). Named Eve-side gap: Eve
+  has no public "join an in-process domain from a worker" — the domain is rebuilt from Eve's own
+  (private) mmap-claim-slot!/make-domain-state; class-6 overflow (>1 KB blocks) allocation from a
+  worker is not wired by init-worker-slabs! (registers the SAB views only).
+- Design (implementing now): cohost.hosts.cljs-eve (Node seat Eve hosting: atom factory over SAB
+  domains + domain directory; realm mesh over eve.thread-host; inbox/outbox Eve atoms = mailboxes;
+  crossing codec: atoms by [domain slot] reference, var-root fns by qualified name, data as Eve
+  values); cohost.thread future/pmap carry forms on a seat with :realm-submit; worker realm boots the
+  same cohost image and evaluates (self-hosted cljs can eval — the refusal in eve.thread-host's
+  eval-form is for compiled cljs without a compiler).
