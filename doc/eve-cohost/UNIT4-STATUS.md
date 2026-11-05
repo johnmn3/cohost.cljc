@@ -388,3 +388,15 @@ this lane's and removable.
   This lane owns the COLLECTION creators in the shim; atom/var
   files are not touched. Any unavoidable touch gets flagged
   here first.
+
+**Addendum — 2026-11-05 (unit 4 remainder lane): the
+eduction launch-shape diagnostic above is CLOSED.** Verdict
+and mechanism: doc/eve-cohost/UNIT4-REMAINDER-REPORT.md.
+The failing arm is stock Clojure's CollReduce IReduceInit
+2-arity impl (it casts the reducible to IReduce; Eduction
+is IReduceInit only); dispatch's tie-break among the
+Object/Iterable/IReduceInit impls is JVM-state dependent,
+which is what made it track the launch shape here. Not a
+fill defect, not a seam defect. On today's box state the
+row passes under every launch shape: bb boot:jvm battery
+221/221, libraries 62/62, probe_collections 76/76.
