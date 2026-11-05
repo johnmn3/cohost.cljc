@@ -1,9 +1,10 @@
 # Eve-in-cohost — MEMORY-MODEL PLAN
 
-> DECLARATION (updated in the banking commit that follows the
-> content commit): banked on branch `muse/eve-cohost-impl`;
-> content tip recorded in the header-fix commit. One-line unit
-> summaries:
+> DECLARATION — BANKED 2026-11-05 on branch
+> `muse/eve-cohost-impl`, content tip `1ae3a96` (this header-fix
+> commit sits directly on top of it; verify with
+> `git log origin/muse/eve-cohost-impl`). Planning only — no
+> implementation code. One-line unit summaries:
 > - Unit 3 — Seam identity: equality + hasheq for Eve-backed values.
 > - Unit 4 — Eve-backed persistent collections behind the shim.
 > - Unit 5 — Atom behind the seam onto Eve atoms; Ref/Var distances.
