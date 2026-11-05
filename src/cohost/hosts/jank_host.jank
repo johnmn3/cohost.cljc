@@ -411,14 +411,16 @@ namespace cohost_bell {
   inline long long make() {
     auto const id = next_id.fetch_add(1);
     auto b = std::make_shared<bell>();
+    auto &r = reg();
     std::lock_guard<std::mutex> g(reg_m);
-    reg()[id] = b;
+    r[id] = b;
     return id;
   }
   inline std::shared_ptr<bell> get(long long id) {
+    auto &r = reg();
     std::lock_guard<std::mutex> g(reg_m);
-    auto const it = reg().find(id);
-    return it == reg().end() ? nullptr : it->second;
+    auto const it = r.find(id);
+    return it == r.end() ? nullptr : it->second;
   }
   inline void signal(long long id) {
     auto const b = get(id);
