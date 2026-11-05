@@ -186,3 +186,35 @@ pattern as snap-take!/snap-scan!). Next: JIT booted check (fresh
 boot) to confirm the other half, then rebuild the snapshot on J
 (content key covers src/cohost, so the fix self-invalidates) and
 re-run the probe row.
+
+## Probe row RESULT (2026-11-05 ~12:05 PM ET, J, snapshot rebuilt at 9a8c0e2)
+
+Minimal repro first: bin/cohost :jank -e with future/agent/pmap
+answers ":future 3 :agent 1 :pmap [2 3 4]" -- the replay fix works.
+Full row (bb dev/eve_probe.clj jank):
+
+SUMMARY|jank|ok=18 unsupported-shim=0 fail-other=5 wall-ms=4720
+(Original probe row, for contrast: ok=16, fail-other=7.)
+
+Threading surface -- all 8 answer with the JVM's values, through the
+layer: future-basic 3, future-capture-local 42, future-capture-atom
+1, future-binding 3, promise 7, delay 2, agent 1 (was "TODO: port
+agent"), pmap (2 3 4) (was "TODO: port pmap"). spec-conform 2,
+test-stacktrace 0 (both as before).
+
+Loads 7/12 (walk, set, string, data, template, test, stacktrace).
+The same 5 fail as in the original probe row, verbatim: "The module
+`clojure.zip` could not be found." -- likewise clojure.edn,
+clojure.math, clojure.repl, clojure.spec.alpha. The snapshot
+launcher's compiled-module set gap, not a threading failure:
+spec-conform answers 2 in the same run, spec reached through the
+eval/loader path.
+
+Also banked from this leg: the booted check's documented JIT
+invocation (jank --module-path src run dev/u2-jank-check.jank) is
+not a usable vehicle on this tree -- the JIT boot reports 54 errors
+in stock core forms (defmulti, fn, loop: jank JIT analyzer
+overload/var_unbound_root failures) and the run died rc=139. The
+seat's vehicles are the AOT modules and the snapshot; the probe row
+above exercises the booted layer end-to-end through the CLI, which
+is the check's intent by another route.
