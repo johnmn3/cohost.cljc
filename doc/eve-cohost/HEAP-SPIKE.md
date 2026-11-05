@@ -713,3 +713,39 @@ John: "We drop the counterpart idea for everything."
 - **Q-A is untouched** and remains genuinely open.
 - Banked in MEMORY-PLAN §9, which also strikes the
   COUNTERPART category from the plan's mapping table.
+
+### Audit — which verdicts depended on the counterpart category
+
+Added 2026-11-05, at John's audit question. The audit
+distinguishes two dependencies that traveled together:
+the counterpart category itself, and the probe-era
+presumption that some seats lack a shared heap. Factual
+record; findings below are the spike's own, re-read.
+
+| Item | Dependence | Disposition under the ruling |
+|---|---|---|
+| P1 Bootstrap | None. Bootstrap order, phase-order minting, and the snapshot scoped to the startup domain rest on cohost's boot shape and the contention-domain split. | **Stands.** |
+| P2 Identity & GC | One clause: "On counterpart seats (P4), interop is whatever the counterpart implements behind the shim's class surface — the same contract cohost already lives by." | **Stands, except that clause — withdrawn.** There are no counterpart seats; interop on a seat is Eve's own or unit 6's convergence. |
+| P3 Hot paths | The measurements: none — deref ~104 µs, lookup ~119–134 µs, assoc ~0.5 ms, and the 64 KB coalescing-region wall were measured on the JVM seat against Eve's JVM implementations, independent of any cljs presumption. The conclusion: yes — "The JVM seat's realization is therefore counterpart, not Eve-as-is" follows only if a substitute realization is permitted. | **Measurements stand; the conclusion is withdrawn.** Under the ruling it reads: Eve-side work on the JVM seat is the path — bring Eve's JVM collections to heap-grade performance; the seat is NOT-YET until then. |
+| P4 Per-host reality | The seat table's cljs row was correct as written (Eve native, SAB atoms) but unmeasured by this spike, and sequenced last via unit 8; the no-shared-heap presumption lived in the framing around the row, not in the row. The JVM row ("counterpart domain"), the jank row ("counterpart until then"), and the cljw/jolt/lg row ("counterpart domain, or the seat waits") each depended on the category. | **cljs row stands, flagged unmeasured; the counterpart rows are withdrawn** — those seats are Eve or wait. |
+| P5 Failure modes | None. Contention is priced by write profile; the resident-to-domain mapping and the domain split make no reference to the category. | **Stands.** |
+| P6 VS precedent | None. The comparison (warm-start adoption vs construction boot; the §1/§6/§7 shapes) is independent of the category. | **Stands.** |
+| §2 supported shape | Item 2's "counterpart domain layer" element — a cohost-side layer on the JVM seat and the no-Eve seats — is the category applied to the heap itself. | **That element is withdrawn** (recorded in §4 above). The remaining items stand. |
+
+**Source of the presumption.** It entered this work from
+the load probe's report (`muse/eve-cohost-probe`,
+REPORT.md, conclusions item 3): "On cljs — the one
+measured host with no shared heap and no host threads —
+7 of 7 cross-thread cases fail identically, before any
+closure crosses." The sentence is accurate about the
+probe's measurement — cohost's cljs seat has no executor
+behind the seam today — and false as a statement about
+the seat: Eve's `shared_atom.cljs` over SharedArrayBuffer
+is a shared heap on that seat, machinery this spike
+itself cited in §P4 as the cljs seat's existing shape,
+while the probe's framing continued to organize §P4's
+table and P3's conclusion. The probe's measured facts
+(7 of 7 failures at the executor seam; closure capture
+never reached, never the failure) are unaffected. The
+inference from "no executor today" to "no shared heap on
+this seat" is what the ruling removes.
