@@ -139,12 +139,25 @@
   (swap! dirs assoc k {:sabs (sabs-of k d) :domain d})
   d)
 
+(defn- fresh-domain
+  "A fresh in-process Eve domain over the process slabs. The core realm
+   uses eve.atom/atom-domain. A worker realm cannot: atom-domain's
+   init-domain-views! asks each slab instance for its wasm memory, and a
+   worker's instances, registered from the handed-over buffers by
+   init-worker-slabs!, have none (Eve-side gap, named) -- their views
+   exist already, so the worker opens the domain with Eve's own opener
+   step (open-heap-domain!) alone."
+  []
+  (if (:core? @R)
+    (ea/atom-domain {})
+    (ea/MmapAtomDomain. (#'ea/open-heap-domain! {}) (atom {}))))
+
 (defn- mint-domain!
   "A fresh Eve in-process domain, announced to every realm."
   []
   (let [n (get-in (swap! R update-in [:hosting :dseq] inc) [:hosting :dseq])
         k (str "r" (:realm @R) "-d" n)
-        d (ea/atom-domain {})]
+        d (fresh-domain)]
     (register-domain! k d)
     (.postMessage (chan) (:sabs (get @dirs k)))
     d))
@@ -210,7 +223,7 @@
 
 (defn- registry-eve-atom []
   (or @registry-handle
-      (let [d (ea/atom-domain {})]
+      (let [d (fresh-domain)]
         (reset! registry-handle (ea/lookup-or-create-mmap-atom! d "cohost.registry/table" {})))))
 
 (defn- unhosted-kind [what]

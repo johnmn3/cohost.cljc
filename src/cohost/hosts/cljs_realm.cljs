@@ -38,9 +38,16 @@
 (defn realm-main
   "A worker realm's entry (eve.thread-host runs it with the boot map)."
   [b]
-  (let [{:keys [root roots]} (cljs-eve/install-realm! b)]
-    (boot/boot! {:root root :eve-atoms true})
-    (doseq [r roots] (boot/add-source-root! r))
-    (boot/make-user-ns!)
-    (boot/make-user-ns! 'user)
-    (cljs-eve/serve! {:eval-in boot/eval-in :ensure-ns! ensure-ns!})))
+  (try
+    (let [{:keys [root roots]} (cljs-eve/install-realm! b)]
+      (boot/boot! {:root root :eve-atoms true})
+      (doseq [r roots] (boot/add-source-root! r))
+      (boot/make-user-ns!)
+      (boot/make-user-ns! 'user)
+      (cljs-eve/serve! {:eval-in boot/eval-in :ensure-ns! ensure-ns!}))
+    (catch :default e
+      ;; a realm's end is never silent: the stack to stderr, then the
+      ;; exit notice (eve.thread-host) carries the message to the core
+      ;; (the worker's stderr may not drain before the core exits: the
+      ;; stack rides the exit notice's message)
+      (throw (js/Error. (str "realm " (:self b) " died: " (.-stack e)))))))
