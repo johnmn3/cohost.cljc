@@ -1,0 +1,3 @@
+(ns t1 (:include "App.h" "simdjson.h"))
+(cpp/raw "int hb_probe_fn() { return 42; }")
+(println "probe:" (cpp/hb_probe_fn))

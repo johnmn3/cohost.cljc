@@ -1,0 +1,10 @@
+(require 'cohost.run)
+(require 'cohost.boot)
+(require 'cohost.adapter)
+(cohost.boot/boot! {})
+(cohost.boot/add-source-root! "/home/hatch/workspace/cohost-httpbench/bench/apps/httpbench/src")
+(println "PROBE-LOAD-BEGIN")
+(cohost.adapter/try-all
+  (fn [] (cohost.boot/load-lib! 'httpbench.native) (println "PROBE-LOAD-OK"))
+  (fn [e] (println "PROBE-LOAD-THREW:" (cohost.adapter/error-message e))))
+(println "PROBE-DONE")
