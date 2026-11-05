@@ -218,3 +218,16 @@ overload/var_unbound_root failures) and the run died rc=139. The
 seat's vehicles are the AOT modules and the snapshot; the probe row
 above exercises the booted layer end-to-end through the CLI, which
 is the check's intent by another route.
+
+## Final gates at the fixed code (2026-11-05 ~12:15 PM ET)
+
+- JVM (bb boot:jvm, this box): booted errors 0; battery 221/221;
+  libraries 62/62.
+- Jank (bb boot:jank, J, through the rebuilt snapshot): booted
+  errors 0; battery 219/221 -- only the standing named pair (subs
+  count nth first last butlast / Character outside ASCII);
+  libraries 62/62.
+- The snapshot chain is verified in the artifacts: events.edn
+  carries the :thread-layer event; the emitted snapshot core module
+  (target/jank-snapshot/src/cohost/core.jank) calls
+  (cohost.boot/snap-thread-layer!).
