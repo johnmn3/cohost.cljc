@@ -701,6 +701,60 @@ Consequences:
 - **Unit 3's identity contract** becomes the foundation of
   the single world rather than a bridge between two.
 
+## 9. Further ruling (John, 2026-11-05 ~10:05 ET) — no counterparts anywhere
+
+John: "We drop the counterpart idea for everything."
+
+**There are no counterpart domains or substitute
+realizations, on any seat.** Every seat's runtime atom
+domain and heap are real Eve, or the seat waits on the
+named Eve-side work that makes them so. A same-shape
+stand-in — however honestly labeled — is not a fulfillment
+of the §8 ruling anywhere.
+
+This resolves two of the heap spike's open questions
+(HEAP-SPIKE.md §3):
+
+- **Q-B (counterpart domains on the no-Eve seats): NO.**
+  No substitute domain is built for those seats; they wait
+  for Eve.
+- **Q-C (the JVM fork): NO counterpart.** The path is
+  Eve-side work to bring Eve's JVM collections to
+  heap-grade performance; until that work lands the JVM
+  seat is NOT-YET, not counterpart in the meantime.
+
+**Q-A (whether namespace/var containers are in scope) is
+NOT touched by this ruling** — it remains genuinely open,
+exactly as the spike left it.
+
+Consequences for this plan (being applied in the commits
+that carry this section):
+
+- The **COUNTERPART category is struck** from §3's label
+  vocabulary: rows formerly labeled COUNTERPART become
+  **EVE AS-IS** (where the realization is Eve's own
+  facilities) or **NOT-YET** (the blocking Eve-side work
+  named; the seat waits). "Counterpart" survives nowhere
+  as a live category — its earlier appearances (the §6
+  fork statements, §7's Q4 summary, unit text) stand as
+  the record of what was asked and are superseded as
+  categories by this section.
+- The heap spike's **per-seat realization amendments are
+  superseded**: §2/P4's "counterpart domain layer" shape
+  and the "realized per-seat" amendment to units 4/5 are
+  dead. Realization is Eve or blocked, never substitute.
+  The spike's findings stand as the exploration record;
+  its postscript records this resolution.
+- The sorted-collections row (§3) is re-read under this
+  vocabulary as **NOT-YET** — the blocking work is
+  Eve-side (rb-tree sorted collections landing in Eve's
+  line, per §7's Q4 correction; depends on unit 3) — which
+  is what §7 already established; the table now says so.
+- **Unit gates are unchanged.** Units 4/5 proceed where
+  Eve exists, per their existing dependencies; a seat
+  whose Eve realization is NOT-YET does not take the fill
+  until the named Eve-side work lands.
+
 ---
 
 *Plan banked 2026-11-05. Sources: UNIT1-REPORT.md +
