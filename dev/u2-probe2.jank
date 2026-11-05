@@ -1,0 +1,64 @@
+;; unit 2 probe 2: the jank thread-leaf primitives, standalone (JIT).
+(cpp/raw "
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
+#include <unordered_map>
+#include <memory>
+namespace cohost_thread {
+  inline std::atomic<long long> next_id{1};
+  inline long long self_id() {
+    thread_local long long id = next_id.fetch_add(1);
+    return id;
+  }
+}
+namespace cohost_bell {
+  struct bell { std::mutex m; std::condition_variable cv; bool signalled = false; };
+  inline std::mutex reg_m;
+  inline std::unordered_map<long long, std::shared_ptr<bell>> reg;
+  inline std::atomic<long long> next_id{1};
+  inline long long make() {
+    auto const id = next_id.fetch_add(1);
+    auto b = std::make_shared<bell>();
+    std::lock_guard<std::mutex> g(reg_m);
+    reg[id] = b;
+    return id;
+  }
+  inline std::shared_ptr<bell> get(long long id) {
+    std::lock_guard<std::mutex> g(reg_m);
+    auto const it = reg.find(id);
+    return it == reg.end() ? nullptr : it->second;
+  }
+  inline void signal(long long id) {
+    auto const b = get(id);
+    if (!b) { return; }
+    { std::lock_guard<std::mutex> g(b->m); b->signalled = true; }
+    b->cv.notify_all();
+  }
+  inline bool wait(long long id, long long timeout_ms) {
+    auto const b = get(id);
+    if (!b) { return false; }
+    std::unique_lock<std::mutex> lk(b->m);
+    if (timeout_ms < 0) {
+      b->cv.wait(lk, [&] { return b->signalled; });
+      return true;
+    }
+    return b->cv.wait_for(lk, std::chrono::milliseconds(timeout_ms),
+                          [&] { return b->signalled; });
+  }
+}
+")
+(println "self-id main:" (cpp/cohost_thread.self_id) "again:" (cpp/cohost_thread.self_id))
+(def f (cpp/jank.runtime.future (fn [] (cpp/cohost_thread.self_id))))
+(println "future type:" (type f) "deref (worker self-id):" @f)
+(println "future self-id differs from main:" (not= @f (cpp/cohost_thread.self_id)))
+(def b (cpp/cohost_bell.make))
+(println "bell id:" b "wait timeout 50 ->" (cpp/cohost_bell.wait b 50))
+(cpp/cohost_bell.signal b)
+(println "after signal, wait 50 ->" (cpp/cohost_bell.wait b 50) "wait nil-ish (-1) ->" (cpp/cohost_bell.wait b -1))
+(def b2 (cpp/cohost_bell.make))
+(def f2 (cpp/jank.runtime.future (fn [] (cpp/cohost_bell.wait b2 -1))))
+(cpp/cohost_bell.signal b2)
+(println "cross-thread wait released:" @f2)
+(println "thread-bindings count:" (count (get-thread-bindings)))
+(println "PROBE2-DONE")

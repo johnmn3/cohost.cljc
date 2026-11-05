@@ -86,6 +86,7 @@
    :doorbell        [[] "a fresh doorbell: an opaque wait handle with sticky signal semantics, or nil (the default) when the host has none"]
    :doorbell-wait   [['db 'timeout-ms] "wait on doorbell db until it is signalled or timeout-ms (nil: no timeout) passes; true when signalled"]
    :doorbell-signal [['db] "signal doorbell db: every current and future wait on it returns true"]
+   :core-lacks      [[] "the set of core names this host's core has only as stubs (or not at all in usable form): the boot treats them as lacked, so a fill (the thread layer's) supplies them instead of the stub (default #{})"]
    :current-ns      [[] "the symbol of the namespace evaluated code currently runs in (*ns*)"]
    :macroexpand-1   [['form] "the host's one-step macroexpansion of form in the current namespace"]
    :macro-def-style [[] ":meta when `(def ^:macro x (fn [&form &env ...]))` + mark-macro! makes a macro; :defmacro when only a defmacro form does"]
@@ -365,6 +366,7 @@ namespace cohost_err {
     :doorbell nil
     :doorbell-wait nil
     :doorbell-signal nil
+    :core-lacks #{}
     :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
     :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
     :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
@@ -840,6 +842,10 @@ namespace cohost_err {
   "Signal doorbell db: every current and future wait on it returns true."
   [db]
   (when-let [f (cap :doorbell-signal)] (f db)))
+(defn core-lacks
+  "Core names this host has only as stubs; the boot treats them as lacked."
+  []
+  (or (cap :core-lacks) #{}))
 (defn var-set! [h v] ((cap :var-set!) h v))
 (defn current-ns [] ((cap :current-ns)))
 (defn macroexpand-1* [form] ((cap :macroexpand-1) form))

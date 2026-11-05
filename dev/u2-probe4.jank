@@ -1,0 +1,17 @@
+;; unit 2 probe 4: which jank cap SIGFPEs under AOT? (file markers)
+(ns u2-probe4
+  (:require [cohost.hosts.jank-host]
+            [cohost.adapter :as host]))
+(defn stage [s] (spit "/home/john/u2-gate-logs/stage4.txt" (str s "\n") :append true))
+(stage "loaded")
+(stage (str "spawn-cap " (some? (host/capability :thread-spawn))))
+(def h (host/thread-spawn (fn [] 1)))
+(stage (str "spawned " (some? h)))
+(stage (str "self " (host/thread-self)))
+(def db (host/doorbell))
+(stage (str "bell " db))
+(stage (str "wait-timeout " (host/doorbell-wait db 20)))
+(host/doorbell-signal db)
+(stage (str "wait-signalled " (host/doorbell-wait db 20)))
+(stage (str "bindings " (count (host/thread-bindings))))
+(stage "all-done")

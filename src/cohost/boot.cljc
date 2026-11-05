@@ -916,6 +916,12 @@
    names, and hosts with no thread layer, are untouched."
   [report]
   (when (thread/available?)
+    ;; The fills intern fn values directly -- no form is evaluated, so
+    ;; the snapshot recorder sees nothing of them. Record the fill
+    ;; itself, or a snapshot replay restores a core without the thread
+    ;; family (measured, unit 2: bin/cohost :jank from the snapshot
+    ;; could not resolve `future`).
+    (snap! {:op :thread-layer})
     (doseq [[nm v] thread/core-impls]
       (when-not (host/interned-var core-ns nm)
         (host/intern! core-ns nm v)
@@ -937,7 +943,7 @@
   ([{:keys [root files verbose profile? record? host-lacks] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
    (reset! snapshot-log (when record? []))
-   (swap! state assoc :host-lacks (set host-lacks))
+   (swap! state assoc :host-lacks (into (set host-lacks) (host/core-lacks)))
    (snap! {:op :begin :opts {:root root :files files}})
    (if profile?
      (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
@@ -1538,6 +1544,15 @@
 
 (defn snap-scan! "scan-macros! of ns-sym." [ns-sym]
   (scan-macros! (ctx) ns-sym)
+  nil)
+
+(defn snap-thread-layer!
+  "install-thread-layer! of the recorded boot: the fills interned fn
+   values (no forms), so the replay redoes the fill itself. The
+   report snap-end! restores is the recorded one, so the replay's
+   own record! calls into the snapshot report are not what prints."
+  []
+  (install-thread-layer! @snap-report)
   nil)
 
 (defn snap-is! "The shim's instance test for class token c." [c]

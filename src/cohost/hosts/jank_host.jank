@@ -10,6 +10,7 @@
 ;; - push-thread-bindings takes a hash map only.
 (ns cohost.hosts.jank-host
   (:require [cohost.adapter :as adapter]
+            [cohost.policy :as policy]
             [cohost.scan :as scan]
             [cohost.hosts.jank-runtime :as jank-rt]
             [clojure.string :as string]))
@@ -364,6 +365,79 @@ namespace cohost_sort {
                        return jank::runtime::compare(x, y) < 0;
                      });
     return arr;
+  }
+}
+// Eve-in-cohost unit 2: the thread layer's leaves. self_id is a C++
+// thread-local counter id: stable per thread, never reused; the layer
+// only needs hash/eq-stable handles. The doorbell registry holds no
+// jank objects (ids and C++ sync state only, like a monitor), so
+// nothing here interacts with the GC: a doorbell is a sticky flag with
+// a condition variable, keyed by an integer the layer holds.
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
+#include <unordered_map>
+#include <memory>
+namespace cohost_thread {
+  inline std::atomic<long long> next_id{1};
+  inline long long self_id() {
+    thread_local long long id = next_id.fetch_add(1);
+    return id;
+  }
+}
+namespace cohost_bell {
+  struct bell { std::mutex m; std::condition_variable cv; bool signalled = false; };
+  inline std::mutex reg_m;
+  // The registry map is constructed lazily behind call_once: under
+  // jank's AOT linking a namespace-scope container can sit in
+  // zero-initialized storage whose constructor never ran, and an
+  // unordered_map there has bucket count 0 -- the first insert's
+  // hash-modulo is a SIGFPE (measured, unit 2). POD state only at
+  // namespace scope; the map itself is heap-constructed on first use.
+  inline std::unordered_map<long long, std::shared_ptr<bell>> *reg_ptr{nullptr};
+  inline std::atomic<bool> reg_ready{false};
+  inline std::unordered_map<long long, std::shared_ptr<bell>> &reg() {
+    // (std::call_once is not usable here: its __once_call symbols are
+    // emulated-TLS references jank's module loader cannot resolve --
+    // measured, unit 2. An atomic flag + the registry mutex does it.)
+    if (!reg_ready.load(std::memory_order_acquire)) {
+      std::lock_guard<std::mutex> g(reg_m);
+      if (!reg_ptr) { reg_ptr = new std::unordered_map<long long, std::shared_ptr<bell>>(); }
+      reg_ready.store(true, std::memory_order_release);
+    }
+    return *reg_ptr;
+  }
+  inline std::atomic<long long> next_id{1};
+  inline long long make() {
+    auto const id = next_id.fetch_add(1);
+    auto b = std::make_shared<bell>();
+    auto &r = reg();
+    std::lock_guard<std::mutex> g(reg_m);
+    r[id] = b;
+    return id;
+  }
+  inline std::shared_ptr<bell> get(long long id) {
+    auto &r = reg();
+    std::lock_guard<std::mutex> g(reg_m);
+    auto const it = r.find(id);
+    return it == r.end() ? nullptr : it->second;
+  }
+  inline void signal(long long id) {
+    auto const b = get(id);
+    if (!b) { return; }
+    { std::lock_guard<std::mutex> g(b->m); b->signalled = true; }
+    b->cv.notify_all();
+  }
+  inline bool wait(long long id, long long timeout_ms) {
+    auto const b = get(id);
+    if (!b) { return false; }
+    std::unique_lock<std::mutex> lk(b->m);
+    if (timeout_ms < 0) {
+      b->cv.wait(lk, [&] { return b->signalled; });
+      return true;
+    }
+    return b->cv.wait_for(lk, std::chrono::milliseconds(timeout_ms),
+                          [&] { return b->signalled; });
   }
 }
 // X4-1: reduce with an init over a range or a vector without jank's
@@ -2745,6 +2819,23 @@ namespace cohost_err {
    :set-dynamic! (fn [v] (cpp/cohost_var.set_dynamic v) (alter-meta! v assoc :dynamic true) v)
    ;; Var.set (jank's own var-set is a TODO stub the shim would call)
    :var-set! (fn [v val] (cpp/cohost_var.set_var v val))
+   ;; the thread layer's leaves (Eve-in-cohost unit 2; cohost_thread /
+   ;; cohost_bell above). Spawn is jank's own future object: its runtime
+   ;; keeps the fn and the binding frame on the GC-managed object because
+   ;; std::thread's own heap is unscanned -- a raw std::thread spawn would
+   ;; strand the thunk. The future conveys the creator's binding frame as
+   ;; the worker's base frame; the layer's conveyance pushes its captured
+   ;; frame over it.
+   :thread-spawn (fn [thunk] (cpp/jank.runtime.future thunk))
+   :thread-self (fn [] (cpp/cohost_thread.self_id))
+   :doorbell (fn [] (cpp/cohost_bell.make))
+   :doorbell-wait (fn [db timeout-ms] (cpp/cohost_bell.wait db (if (nil? timeout-ms) -1 (long timeout-ms))))
+   :doorbell-signal (fn [db] (cpp/cohost_bell.signal db) nil)
+   :thread-bindings (fn [] (get-thread-bindings))
+   ;; jank's core has the whole concurrency family only as TODO stubs
+   ;; (agent, pmap, await, send, ... throw "TODO: port X"): the boot
+   ;; treats them as lacked and Eve's thread layer fills them (unit 2)
+   :core-lacks policy/thread-names
    ;; standin exceptions print as their class (the shim asks this first);
    ;; jank's own str of an exception is its #error dump
    ;; A5-5: jank's str of a double is C's (3e+10, 1e-04); the JVM's is Double.toString

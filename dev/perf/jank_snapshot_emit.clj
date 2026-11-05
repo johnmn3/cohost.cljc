@@ -175,6 +175,7 @@
     :host (str "(cohost.boot/snap-take! " (quoted (:sym e)) ")")
     :extra (str "(cohost.boot/snap-extra! " (quoted (:sym e)) ")")
     :scan (str "(cohost.boot/snap-scan! " (quoted (:ns e)) ")")
+    :thread-layer (str "(cohost.boot/snap-thread-layer!)")
     :inline (str "(cohost.boot/snap-inline! " (quoted (:sym e)) " " (pr-src (decode (:form e))) ")")
     :directive (str "(cohost.boot/snap-directive! " (quoted (decode (:d e))) ")")
     :end (str "(cohost.boot/snap-end! " (quoted (:data e)) ")")
