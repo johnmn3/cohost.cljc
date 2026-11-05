@@ -1,0 +1,93 @@
+;; Eve-in-cohost unit 6, step 1's check (doc/eve-cohost/UNIT6-DESIGN.md
+;; sections 3b, 6 step 1, 7.5): the jank seat's region leaves, filled with
+;; Eve's region adapter by cohost.region-eve, answer through cohost's adapter
+;; contract (cohost.adapter/region-open, region-heap, region-sync!) and
+;; nothing else -- every region here is Eve's.
+;;
+;; One program, two roles; dev/u6/region.sh runs each as its OWN process, the
+;; reader only after the writer has exited:
+;;
+;;   write <path> <n>  install the leaves; a heap region round-trips n; open
+;;                     the file region at path, store n at byte 0 and
+;;                     (bit-not n) at byte 4092, sync it; print the REGION line
+;;   read  <path>      a fresh process: install the leaves, open the same file
+;;                     region, print the REGION line
+;;
+;; REGION line: "REGION role=<r> pid=<pid> regions=<bool> heap0=<i32> heap=<i32> a=<i32> b=<i32>"
+;; (heap0: a fresh heap region's byte 0, zeroed by Eve; heap: n read back).
+;; Where Eve does not load (its jank realization off the module path) the
+;; program prints "GATED <reason>" and exits 3, as dev/u6/residence_probe.cljc.
+(ns u6.region-check
+  (:require [cohost.hosts.jank-host]
+            [cohost.adapter :as adapter]))
+
+(def gated-exit 3)
+
+(def ^:private eve-loaded? (atom false))
+
+(def ^:private file-bytes 8192)
+
+(defn- v
+  "A var's value resolved at run time: Eve loads after this namespace is
+   compiled (and may not load at all), so no Eve var is named statically."
+  [sym]
+  @(resolve sym))
+
+(defn- stage [s] (binding [*out* *err*] (println "STAGE" s)))
+
+(defn- exit! [code]
+  ;; a process holding Eve ends through eve.process/exit! (hooks, flush, _exit):
+  ;; Eve's documented end for a jank program (eve/doc/hosts/jank.md) -- where
+  ;; eve.process is loaded: the region path (eve.region, eve.mem) does not load
+  ;; it, and starts no timer thread
+  (if-let [e (when @eve-loaded? (resolve 'eve.process/exit!))]
+    (@e code)
+    (cpp/exit code)))
+
+(defn- load-eve!
+  "nil when cohost.region-eve (and with it Eve's completion, eve.mem and
+   eve.region) loads, else the reason it did not."
+  []
+  (try
+    (stage "require cohost.region-eve")
+    (require 'cohost.region-eve)
+    nil
+    (catch :default e
+      ;; jank 0.1 binds a caught value as nil (upstream defect 3)
+      (str "(require 'cohost.region-eve) failed on this seat"
+           (when (some? e) (str ": " (pr-str e)))))))
+
+(defn- load-i32 [r off] ((v 'eve.mem/load-i32) r off))
+(defn- store-i32! [r off x] ((v 'eve.mem/store-i32!) r off x))
+
+(defn -main [& [role path n]]
+  (when-not (contains? #{"write" "read"} role)
+    (println "usage: write <path> <n> | read <path>")
+    (exit! 2))
+  (when-let [why (load-eve!)]
+    (println "GATED" why)
+    (exit! gated-exit))
+  (reset! eve-loaded? true)
+  (stage "install!")
+  (let [regions ((v 'cohost.region-eve/install!))
+        _ (stage "region-heap")
+        h (adapter/region-heap 64)
+        heap0 (load-i32 h 0)
+        n (when (= role "write") (read-string n))
+        heap (if n (do (store-i32! h 8 n) (load-i32 h 8)) "-")
+        _ (stage "region-open")
+        r (adapter/region-open path file-bytes nil)]
+    (when n
+      (stage "store + region-sync!")
+      (store-i32! r 0 n)
+      (store-i32! r 4092 (bit-not n))
+      (adapter/region-sync! r))
+    (println (str "REGION role=" role
+                  " pid=" (cpp/getpid)
+                  " regions=" regions
+                  " heap0=" heap0
+                  " heap=" heap
+                  " a=" (load-i32 r 0)
+                  " b=" (load-i32 r 4092))))
+  (stage "exit")
+  (exit! 0))

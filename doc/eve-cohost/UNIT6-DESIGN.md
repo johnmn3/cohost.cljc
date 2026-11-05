@@ -120,7 +120,7 @@ defaults, a portable layer, a boot fill, a policy opt):
 | `:region-open` | open/create a file region, never truncating | Eve `eve.region` open-mmap-region (jank impl: `open_fd` + `grow_never_truncate` + `map_shared`) |
 | `:region-heap` | a process-local zeroed region | Eve `heap_region` |
 | `:region-sync` | force a region to disk | Eve `msync_all` (via `ISyncableRegion`) |
-| `:region-close` | unmap + close | Eve `unmap` + `close_fd` |
+| ~~`:region-close`~~ | struck at step 0 (§7.5 point 4): Eve's jank adapter exports no close | — (the C++ `unmap` / `close_fd` have no Clojure caller in Eve) |
 
 The leaf names are working names; the plan leaves `:region-open` /
 `:region-map` shapes "to the lane to settle against Eve's region adapter
@@ -166,6 +166,15 @@ both seats (`#?(:jank ... :clj ...)`):
 - Every Eve var is resolved at run time, so the file reads and compiles on
   a seat where Eve does not load; such a seat prints `GATED <reason>` and
   exits 3.
+- On jank (step 0, §7.1's load-order rule): `eve.host-completion` is
+  required before `eve.atom` / `eve.digest` / `eve.deftype-proto.data`, as
+  Eve's own launcher does; `deref` / `reset!` of the Eve atom resolve
+  `clojure.core`'s var root at run time (the completion re-roots them only
+  for namespaces compiled after it, and the probe's namespace is compiled
+  before it loads); a process holding Eve ends through `eve.process/exit!`
+  (Eve's documented end for a jank program); `STAGE` lines on stderr (C
+  stderr, unbuffered) record where a jank process stops. The JVM seat loads
+  and runs as before.
 
 `dev/u6/residence.sh` — runs the writer, waits for it to exit, then runs
 the reader as a separate process; four legs (writer → reader):
@@ -198,16 +207,20 @@ differs, those two legs FAIL and that is a finding, not a probe bug.
 | disk-resident deref after restart | `dev/u6/residence.sh jank` PASS (plus the cross-seat legs) |
 | batteries never regress | JVM gate re-run on the merged tree, numbers as printed |
 
-## 6. Steps after the gate (none started)
+## 6. Steps after the gate (status 2026-11-05: §8)
 
 0. Read the flagship gate report: API names, `eve_obj` layout, module
    path, numbers. Set `EVE_JANK_PATH` for the probe; run
    `dev/u6/residence.sh` — the jank legs must leave GATED.
+   **Done** (§7): the jank legs left GATED and now end at exit 139 (§7.6).
 1. Region leaves in the jank adapter contract (§3b), defaults = Eve's.
+   **Built** (§8.1, check and gates §8.4).
 2. Struct convergence (§3a) behind the existing `cohost_object` API
    (`is_cohost`, `descriptor_of`, `fields_of`), no caller changes.
+   **Stopped** on a decision (§8.2).
 3. Re-point units 3–5 on jank (§3c); runtime domain on Eve's slab.
-4. Gate run (§5), numbers as printed.
+   **Blocked** on step 2 and the jank fault (§8.3).
+4. Gate run (§5), numbers as printed. **Not run** (needs step 3).
 
 
 ## 7. Step 0 — the flagship read, and the open points settled against it
@@ -339,3 +352,132 @@ runner processes faulting (139/135) at moving points on both arms.
    `:region-sync` = `eve.mem/sync-region!`. **`:region-close` is struck**:
    Eve's jank adapter exports no close (§7.2), and the rule admits no
    operation Eve's contract lacks.
+
+### 7.6 The probe on jank, measured (step 0's run)
+
+`EVE_SRC=<eve d241de3> CLOJURE_JARS=<clojure 1.12.0, spec.alpha 0.5.238,
+core.specs.alpha 0.4.74> EVE_JANK_PATH=<bb classpath jank @ 14add0b15>
+LC_ALL=en_US.UTF-8 bash dev/u6/residence.sh jvm jank jvm-jank jank-jvm`,
+2026-11-05 4:35–4:42 PM ET, wall 463 s, as printed:
+
+    LEG jvm PASS  writer-pid=14758 reader-pid=14794 digest=-2096274480,-623163342,-463366720,1732804911,-1023654562,-1977017875,1516150709,-1554473893
+    LEG jank FAIL  writer-pid= reader-pid= ( writer exit 139; reader exit 139; no writer ROOT line; no reader ROOT line; ...)
+    LEG jvm-jank FAIL  writer-pid=15284 reader-pid= ( reader exit 139; no reader ROOT line; ...)
+    LEG jank-jvm FAIL  writer-pid= reader-pid=25303 ( writer exit 139; no writer ROOT line; ...)
+
+- Every jank role loads Eve (the completion, then `eve.atom`, `eve.digest`,
+  `eve.deftype-proto.data`), opens or joins the persistent domain, and — as
+  a writer — completes `reset!` and `sync!`. Each then exits 139 while
+  making its ROOT line. A writer-only jank run with finer stages (4:43 PM ET,
+  120 s, exit 139) places it: `root-digest` under `read-pinned` returns,
+  `deref` returns, the process faults in `pr-str` of the deref'd value.
+  jank segfaults on this seat are VS Agent 3's segfault-localization item;
+  the probe is not changed to avoid printing (that would work around it).
+- `jank-jvm`: the JVM reader — a separate process started after the jank
+  writer had died — joined the jank-written domain and printed the value
+  with that run's tag (`:tag "u6-jank-jvm-14738-1793914834"`, digest
+  `-215551517,-1571435707,-1096249244,-194124995,-235594122,802937462,1082986659,-1739641476`).
+  So a root written and synced on jank is resident on disk, in the one
+  on-disk format both seats read. The leg is still FAIL by its definition:
+  the jank writer printed no ROOT line, so there is no writer digest to
+  compare.
+- The JVM leg re-run on the final probe (4:45 PM ET, 9 s) prints
+  `LEG jvm PASS  writer-pid=6549 reader-pid=6582 digest=-578695409,...`.
+
+## 8. Steps 1–3 (2026-11-05, implementer on the coordinator's box)
+
+### 8.1 Step 1 — region leaves: BUILT
+
+- `src/cohost/adapter.cljc`: `:region-open`, `:region-heap`, `:region-sync`
+  in `contract-order` (each documented as Eve's export it carries), `nil` in
+  `defaults`, and the accessors `regions?`, `region-open`, `region-heap`,
+  `region-sync!` — each `nil` on a seat that does not supply the leaf. No
+  `:region-close` (§7.5 point 4). `install!` refuses a capability the
+  contract does not name, so a seat cannot fill a leaf outside this list.
+- `src/cohost/region_eve.jank`: the jank seat's fill, the `cohost.http-eve`
+  shape — `install!` puts `eve.region/open-mmap-region`,
+  `eve.region/make-heap-region` and `eve.mem/sync-region!` over the current
+  adapter. It requires `eve.host-completion` first (§7.1); nothing in
+  cohost's shim or boot requires it, so no seat's boot changes.
+- The check, `dev/u6/region.sh` + `dev/u6/region_check.jank`: through
+  `cohost.adapter` only, a heap region round-trips a number (and reads back
+  zeroed first); a file region is written and synced by one process and read
+  back by a second process started after the first exited. GATED where Eve
+  is not on the module path. Results: §8.4.
+
+### 8.4 Step 1's check and gates, as printed
+
+- `EVE_JANK_PATH=<bb classpath jank @ 14add0b15> bash dev/u6/region.sh`
+  (2026-11-05, ET): 4:47 PM `REGION-CHECK PASS  writer-pid=6762
+  reader-pid=6910 n=1847408095` (61 s); after `region-open` became
+  single-arity, 4:49 PM `REGION-CHECK PASS  writer-pid=7045 reader-pid=7063
+  n=1849649271` (62 s). The first run (4:46 PM) printed both REGION lines
+  with the right numbers and FAILed on the check's own exit (it resolved
+  `eve.process/exit!`, which the region path does not load); fixed in the
+  check. Without `EVE_JANK_PATH`: `REGION-CHECK GATED  (GATED (require
+  'cohost.region-eve) failed on this seat)` (18 s).
+- JVM gate (`clojure -M -m cohost.run`'s classpath, run as `java -cp
+  src:resources:<clojure 1.12.0, spec.alpha 0.5.238, core.specs.alpha
+  0.4.74> clojure.main -m cohost.run`, 4:50 PM, 8 s): `booted as stock: 465
+  from host: 202   natives: 66   skipped: 58   errors: 0`, `battery: 221/221
+  stock behaviors pass`, `libraries: 62/62 cases pass across 12 clojure.*
+  libraries` — unit 5's numbers.
+- jank gate (`bb boot:jank`): see the commit that adds its numbers.
+
+### 8.2 Step 2 — struct convergence: STOPPED on a decision the design and rulings §7–§10 do not settle
+
+Step 0 settled the shape (§7.5 point 1: cohost's struct, no field added).
+What it leaves open is where Eve's side changes. For an Eve value on jank
+to BE the converged object, Eve's completion itself has to change:
+`make-object` (host_completion.jank:118) builds cohost's object; `object?`
+(:123 — today `opaque_box` and a `dynamic_cast<eve_obj *>`), `object-tag`
+(:128) and `object-fields` (:129) read it; Eve's `=` / `hash` / printer hooks
+(:72–77, set by `set-type-equality!` :554 and `set-printer!` :601) are
+reached through the converged object's method slots instead of `eve_obj`'s
+virtuals. That changes Eve-on-jank's object — the surface the flagship's J3
+gate measured (its F-3 finding is about that object's `opaque_box` type).
+Two ways to make the change, neither settled:
+
+- **(a) Eve-side.** `eve.host-completion` builds the converged object; the
+  flagship lane makes the change in Eve and re-gates its sweep on it. cohost
+  supplies its existing struct and nothing else.
+- **(b) cohost-side.** cohost's jank boot re-roots the four completion vars
+  (`alter-var-root`, before Eve's namespaces compile — re-roots hold only
+  for namespaces compiled after them, §7.1) to cohost's constructor and
+  accessors. That replaces an Eve primitive's implementation from cohost,
+  which is the line ruling §9 draws, and changes Eve's gated surface without
+  Eve's gate re-running.
+
+Also unsettled, and needed by either: one jank process holding two type
+layers — cohost's own (`cohost_object` + descriptor protocols, for cohosted
+programs) and Eve's completion, which interns `deftype` / `defprotocol` into
+`clojure.core` and re-roots `=`, `hash`, `type`, `class`, `instance?`,
+`defn`, `fn`, `let`, `loop`, `case`, `meta`, `sort`, `deref`, `reset!`, ...
+for every namespace compiled after it (§7.1). §3a converges the object; it
+says nothing of the two protocol systems. Whether cohost's booted program
+(battery 219/221, libraries 62/62) holds with the completion loaded is not
+measured [unverified].
+
+**The question (operator):** (a) or (b); and whose gate re-measures
+Eve-on-jank on the converged object.
+
+### 8.3 Step 3 — re-pointing units 3–5: BLOCKED, on step 2 and on the jank fault
+
+- Units 3 and 4: §3c's jank stratum is the converged object itself
+  (`eve-value?` a descriptor-family test, unit 4's creators answering
+  converged objects). Without step 2 an Eve value reaching cohost's booted
+  program on jank is an `eve_obj` (`opaque_box`, no behaviors) that cohost's
+  shim does not dispatch.
+- Unit 5: an Eve atom's `deref` outside a `$` region answers plain data
+  (`d/eve->clj`, `src/eve/atom.cljc:813–826`), so the atom's values need no
+  converged object. Its handle does: `cohost.atom` calls `deref` / `swap!` on
+  the handle with jank's own core fns (cohost is AOT-compiled before the
+  completion loads, so the completion's re-roots do not reach it), and an
+  `eve_obj` `MmapAtom` has no jank `deref` behavior. The converged object —
+  whose `deref` slot is a jank behavior — is what lets the layer hold Eve's
+  atom unchanged; the alternative, adding handle-operation fns to the
+  portable layer's factory, is a unit-5 design change this unit does not own.
+- The fault: printing a value deref'd from an Eve atom on jank exits 139
+  (§7.6), and the gate run (§5: `bb boot:jank` with the fill forced) prints
+  values. No step-3 code is written: its representation waits on §8.2 and
+  its one verification path ends at that fault.

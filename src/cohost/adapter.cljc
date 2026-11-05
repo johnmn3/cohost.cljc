@@ -94,6 +94,16 @@
    ;; layer unavailable and the shim's java.net entries to the host.
    :http-request    [['req] "nil (the default), or Eve's http request leaf: {:method :url :headers :body :as :body-as} -> {:status :headers :body} or {:error message}, synchronously (eve.http/request)"]
    :http-serve      [['opts 'handler] "nil (the default), or Eve's http-server leaf: (serve! {:port :host :threads} handler) -> {:port :stop}, handler {:method :url :headers :body :body-b64} -> {:status :headers :body :body-as} (eve.http-server/serve!)"]
+   ;; regions: the leaf constructors under Eve's slab on a seat whose heap
+   ;; is Eve's (Eve-in-cohost unit 6). Their values are Eve's own region
+   ;; adapter's exports, exactly (eve.region on the seat), installed over the
+   ;; host adapter by the seat's fill (cohost.region-eve on the jank seat);
+   ;; nil (the default) on a seat whose Eve region layer is not installed --
+   ;; cohost builds no region of its own (MEMORY-PLAN.md section 9), and adds
+   ;; no operation Eve's contract lacks (Eve exports no region close).
+   :region-open     [['path 'size 'opts] "nil (the default), or Eve's file region: create or open the file at path, grow it to size bytes (never truncating), map it MAP_SHARED; opts nil or {:lustre? bool} -> an eve.mem IMemRegion (eve.region/open-mmap-region)"]
+   :region-heap     [['size] "nil (the default), or Eve's process-local region: size zeroed bytes -> an eve.mem IMemRegion (eve.region/make-heap-region)"]
+   :region-sync     [['r] "nil (the default), or Eve's sync: force region r's written bytes to durable storage; nil for a region that cannot (eve.mem/sync-region!)"]
    :native-ctor     [['class-sym] "nil (the default), or on a host with a java.* surface of its own: a fn of the args constructing the host's own class-sym (the JVM: by reflection), or nil when it has none. The shim's java.net entries fall back to it where cohost.http's leaves are absent"]
    :native-static   [['class-sym 'member] "nil (the default), or as :native-ctor for the static method member of class-sym"]
    :http-value      [['m] "nil (the default), or a fn of a cohost.http URI / URL value (a tagged map) -> the same map as the host's own map type whose str is the URL's text (the JVM: a record overriding toString); nil: the tagged map itself"]
@@ -384,6 +394,9 @@ namespace cohost_err {
     :http-serve nil
     :byte-streams nil
     :http-value nil
+    :region-open nil
+    :region-heap nil
+    :region-sync nil
     :native-ctor nil
     :native-static nil
     :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
@@ -868,6 +881,27 @@ namespace cohost_err {
   "Signal doorbell db: every current and future wait on it returns true."
   [db]
   (when-let [f (cap :doorbell-signal)] (f db)))
+;; the region leaves (unit 6): each answers nil on a seat that does not
+;; supply it -- a seat without Eve's region layer has no region, never a
+;; cohost-made one
+(defn regions?
+  "True when the seat gives Eve's region constructors as its leaves."
+  []
+  (boolean (cap :region-open)))
+(defn region-open
+  "Eve's file region at path: size bytes, MAP_SHARED, grown but never
+   truncated (opts nil or {:lustre? bool}); nil on a seat without regions."
+  [path size opts]
+  (when-let [f (cap :region-open)] (f path size opts)))
+(defn region-heap
+  "Eve's process-local region of size zeroed bytes, or nil."
+  [size]
+  (when-let [f (cap :region-heap)] (f size)))
+(defn region-sync!
+  "Force region r's written bytes to durable storage (Eve's sync); nil on a
+   seat without regions, and for a region that cannot."
+  [r]
+  (when-let [f (cap :region-sync)] (f r)))
 (defn core-lacks
   "Core names this host has only as stubs; the boot treats them as lacked."
   []

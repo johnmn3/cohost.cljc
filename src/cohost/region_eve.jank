@@ -1,0 +1,38 @@
+(ns cohost.region-eve
+  "jank-seat hosting for the region leaves (Eve-in-cohost unit 6,
+   doc/eve-cohost/UNIT6-DESIGN.md sections 3b and 7.5): Eve's own region
+   adapter, installed as the host adapter's :region-open / :region-heap /
+   :region-sync leaves.
+
+   jank-only (.jank) and loaded only where Eve's jank realization is on the
+   module path (`bb classpath jank` in an Eve checkout whose :jank row is
+   native); nothing in cohost's shim or boot requires it -- the shape of
+   cohost.http-eve and cohost.memory-eve on the JVM seat. The leaves are
+   Eve's exports exactly: eve.region/open-mmap-region,
+   eve.region/make-heap-region, eve.mem/sync-region!. cohost adds no region
+   and no operation of its own (MEMORY-PLAN.md section 9); Eve's jank region
+   adapter exports no close, so there is no close leaf.
+
+   eve.host-completion is required first: on jank, Eve's namespaces load
+   only after Eve's core completion, which interns deftype, defprotocol, ...
+   into clojure.core, seen only by namespaces created after it (Eve's own
+   launcher, test/eve/runner/jank_main.jank, requires it first). The
+   completion also re-roots clojure.core names (defn, fn, let, =, hash,
+   deref, ...) for every namespace compiled after it, so this namespace is
+   required after cohost's own jank host has loaded (dev/u6/region_check.jank
+   does); whether cohost's jank host also compiles correctly after the
+   completion is not measured."
+  (:require [eve.host-completion]
+            [cohost.adapter :as adapter]
+            [eve.mem :as eve-mem]
+            [eve.region :as eve-region]))
+
+(defn install!
+  "Install Eve's region leaves over the current host adapter. Returns
+   whether the seat now has regions."
+  []
+  (adapter/install! (assoc (adapter/current)
+                           :region-open eve-region/open-mmap-region
+                           :region-heap eve-region/make-heap-region
+                           :region-sync eve-mem/sync-region!))
+  (adapter/regions?))

@@ -124,11 +124,17 @@
      (fn [root] (digest (eve-sio root) (hdr-off root) root)))))
 
 (defn- root-line [role a]
-  (str "ROOT role=" role
-       " pid=" (pid)
-       ;; comma-joined, no spaces: the runner reads fields up to a space
-       " digest=" (if-let [d (root-digest a)] (apply str (interpose "," d)) "nil")
-       " value=" (pr-str (eve-deref a))))
+  (stage "root-line: root-digest")
+  (let [d (root-digest a)
+        _ (stage "root-line: deref")
+        x (eve-deref a)
+        _ (stage "root-line: pr-str")
+        printed (pr-str x)]
+    (str "ROOT role=" role
+         " pid=" (pid)
+         ;; comma-joined, no spaces: the runner reads fields up to a space
+         " digest=" (if d (apply str (interpose "," d)) "nil")
+         " value=" printed)))
 
 (defn -main [& [role base tag]]
   (when-not (contains? #{"write" "read"} role)
@@ -145,7 +151,6 @@
       (eve-reset! a (probe-value tag))
       (stage "sync!")
       ((v 'eve.atom/sync!) a))
-    (stage "root-line")
     (println (root-line role a))
     (stage "close!")
     ((v 'eve.atom/close!) a))
