@@ -319,14 +319,51 @@ reclaimed in a bare ctx (named remainder). The corrected
 bench's full table (creator-path vector builds; untimed
 setups for reads) lands in the report.
 
+## Final JVM verification (finished tree, post-ifn?-fix)
+
+Boot errors 0; battery 221/221; libraries 62/62
+(u4-gate-on-final.log); probe_collections 76/76;
+corpus-on re-run {:pass 4192 :fail 442 :error 199},
+24 changed rows (the ifn? row flipped to pass).
+
+## Bench, final table (dev/u4_bench.clj, medians of 3, ms)
+
+vec build 10k H 19.0 / E 1884.1; map build 10k H 60.8 /
+E 14139.2; map assoc-grow 10k H 24.4 / E 8506.9; vec
+conj-grow 10k H 63.1 / E 1019.2; map lookup 10k H 15.0 /
+E 1596.7; vec lookup 10k H 76.7 / E 490.9; vec reduce
+10k H 13.5 / E 117.2. Rounds 1-2 warm (E map lookup
+2805 -> 1597); round 3 map WRITES cliff in the shared
+ctx (map build 282,231.7; assoc-grow 180,902.8) while
+vec writes and all reads hold -- the bare-ctx
+reclamation gap bites map writes first. Same-session
+interleaved arms; the box was shared with other legs
+during the run, so read ratios as orders of magnitude.
+
+## Portability fixes (banked f0b12cb)
+
+cli:check's cljs target caught the layer constructing
+(Object.) -- compiled by cljs to a nonexistent
+cohost.memory.Object; the first J snapshot run failed
+on the same form in jank's analyzer (unresolved
+symbol). The layer now stays seat-clean CLJC:
+nth-absent is (atom nil); nth-of's out-of-range throw
+is :jank ex-info / :cljs js/Error / :clj the stock
+IndexOutOfBoundsException (JVM type + message verified
+unchanged, dev/u4_probe46.clj). J gate attempt 1 is
+recorded as failed on this defect (pre-fix tree);
+attempt 2 runs on f0b12cb.
+
 ## Remaining, in order
 
-1. Final verification round on the finished tree (probe,
-   JVM gate, corpus-on) after the ifn? fix.
-2. cli:check 7/7 SAME; debug-seam jvm check where touched.
-3. M7: jank gate on J (boot:jank-snapshot + boot:jank) —
-   PRE-RELEASE bindings, per the sequencing note.
-4. M8: UNIT4-REPORT.md + final declaration.
+1. cli:check cljs re-run on the fixed tree (the full
+   run's jvm/jolt rows: 14 SAME, 0 DIFF; lpy rows DIFF
+   on a basilisp cached-boot build failure in this
+   worktree -- under investigation, not a behavior
+   diff; cljs rows were the defect above).
+2. M7: jank gate on J (boot:jank-snapshot + boot:jank)
+   — PRE-RELEASE bindings, per the sequencing note.
+3. M8: UNIT4-REPORT.md + final declaration.
 
 ## Coordination
 
