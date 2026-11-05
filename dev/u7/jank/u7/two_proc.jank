@@ -33,6 +33,8 @@ namespace u7k { inline void hard_exit() { std::fflush(nullptr); _exit(0); } }
   (let [d (atom/persistent-atom-domain path)]
     [d (atom/lookup-or-create-mmap-atom! d nm init)]))
 
+(defn- stage [& xs] (println (apply str "STAGE " xs)) (flush))
+
 (defn- bump [m k] (ec/assoc m k (inc (ec/get m k 0))))
 
 (defn- wait-for! [a k target]
@@ -46,12 +48,17 @@ namespace u7k { inline void hard_exit() { std::fflush(nullptr); _exit(0); } }
 (defn- plain [v] (ec/into {} v))
 
 (defn- report! [tag a]
+  (stage "report deref")
   (let [v @a
+        _ (stage "report value " (pr-str (plain v)))
+        sl (atom/seal a)
+        _ (stage "report seal " (pr-str sl))
         compute (resolve 'eve.digest/compute-digest)
-        sha (when compute (compute v))]
+        sha (when compute (compute v))
+        _ (stage "report sha " (pr-str sha))]
     (println (str "RESULT " (pr-str {:side side :tag tag
                                      :value (plain v)
-                                     :seal (atom/seal a)
+                                     :seal sl
                                      :sha256 sha})))))
 
 (defn -main [& [mode path x]]
@@ -69,7 +76,9 @@ namespace u7k { inline void hard_exit() { std::fflush(nullptr); _exit(0); } }
       (atom/close-atom-domain! d)
       (proc/exit! 0))
     "read"
-    (let [[d a] (join! path)]
+    (let [_ (stage "joining")
+          [d a] (join! path)
+          _ (stage "joined")]
       (report! "read" a)
       (atom/close-atom-domain! d)
       (proc/exit! 0))

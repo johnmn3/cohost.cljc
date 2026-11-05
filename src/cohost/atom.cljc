@@ -202,8 +202,11 @@
   [m]
   (get m kind-key :mem))
 
-(defn- kind-error [msg data]
-  (host/ex-info* msg (assoc data :cohost/class 'java.lang.IllegalArgumentException)))
+(defn- kind-error
+  "A layer error user code catches as an ex-info carrying its data
+   ({:cohost.atom/error <reason> ...})."
+  [msg data]
+  (host/ex-info* msg data))
 
 (defn- check-kind-spec! [kind m]
   (when-not (contains? kind-rank kind)
@@ -292,6 +295,10 @@
                        :gate (if rep :open :host)
                        :root (when-not rep init)
                        :kind :mem
+                       ;; never published: stock core's (atom x :meta m)
+                       ;; is (new Atom x) then reset-meta!, so a kind
+                       ;; arriving on a fresh atom is create-or-join
+                       :fresh true
                        :watches {}
                        :validator validator
                        :meta meta
@@ -533,6 +540,7 @@
 
 (defn swap-atom! [a f & args]
   (let [s @(:state a)]
+    (when (:fresh s) (swap! (:state a) dissoc :fresh))
     (cond (tiered? s) (swap-tiered! a f args)
           (= :host (:gate s)) (swap-host! a f args)
           (seq (:watches s)) (swap-claimed! a f args)
@@ -547,6 +555,7 @@
 
 (defn reset-atom! [a v]
   (let [s @(:state a)]
+    (when (:fresh s) (swap! (:state a) dissoc :fresh))
     (cond (tiered? s) (swap-tiered! a (fn [_] v) [])
           (= :host (:gate s)) (swap-host! a (fn [_] v) [])
           (seq (:watches s)) (swap-claimed! a (fn [_] v) [])
@@ -567,6 +576,7 @@
 
 (defn compare-and-set-atom! [a oldv newv]
   (let [s0 @(:state a)]
+    (when (:fresh s0) (swap! (:state a) dissoc :fresh))
     (cond
       (tiered? s0) (cas-tiered! a oldv newv)
       (= :host (:gate s0))
@@ -662,11 +672,13 @@
       (check-tier-value! k1 root)
       (let [h (make-tier-handle k1 m1 root)
             there @h]
-        (when-not (memory/equiv there root)
+        (when (:fresh s) (validate! (:validator s) there))
+        (when-not (or (:fresh s) (memory/equiv there root))
           (throw (kind-error (str "cohost.atom: cannot promote to " (name k1)
                                   " -- the target atom already holds a different value")
                              {:cohost.atom/error :promotion-target-occupied :kind k1})))
-        (swap! st assoc :eve h :gate :open :root nil :kind k1 :meta m1 :readers 0)
+        (swap! st (fn [x] (-> (assoc x :eve h :gate :open :root nil :kind k1 :meta m1 :readers 0)
+                              (dissoc :fresh))))
         (vreset! done true)
         (register-conveying! a))
       (finally

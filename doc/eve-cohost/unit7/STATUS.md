@@ -35,3 +35,18 @@
     `lookup-or-create-mmap-atom!` (OS-resolved join); net = `eve.net.atom/remote-atom` adapted to
     IDeref/IAtom (Eve's ops verbatim); `root-digests` = `eve.atom/seal` + Eve's SHA-256 content digest.
   - `probe_tier.clj`: the layer probe (running).
+- 1:15 PM ET — results so far (as printed):
+  - `probe_tier.clj` (layer, JVM, one process): **PROBE-TIER: 55 checks, 0 failures** (before the
+    `:fresh` change below; re-running). Eve itself also refuses a reference into a shared domain:
+    "eve: a value with no eve bytes (a fn, a regex, an atom, a host object, ...) is held by reference,
+    and a reference never reaches a shared domain".
+  - `dev/u7/convey.clj`, two JVM processes in sequence on one disk atom: A `{:future-saw ["acme"
+    :a-side]}`; B `{:future-saw ["acme" :plain], :own-binding-wins "b-own"}`; refusal of an
+    unrepresentable conveyed binding `:unrepresentable`.
+  - booted check `eve_cohost_check_u7.clj` first run: 17 checks, 7 failures — two causes, both fixed:
+    (1) stock core's `(atom x :meta m)` is `(new Atom x)` then `reset-meta!`, so a kind arrives as a
+    promotion of a fresh atom → added `:fresh` (never published) so that path is create-or-join;
+    (2) layer errors carried `:cohost/class`, which the booted `ex-data` treats as a shim stand-in →
+    plain ex-info now. Re-running.
+  - jank side: first run created the domain files then sat in a futex wait with nothing printed
+    (stdout buffered); killed; re-running with flushed stage markers.
