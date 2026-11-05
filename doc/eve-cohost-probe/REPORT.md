@@ -57,3 +57,17 @@ works — which is the conveyance half of John's design, already present.
 (filled in as each host completes; numbers quoted as printed by the
 runner's SUMMARY lines)
 
+### JVM (the reference host) — complete
+
+`SUMMARY|jvm|ok=23 unsupported-shim=0 fail-other=0 wall-ms=2178`
+
+All twelve libraries load; every threading case answers: future-basic
+3, future-capture-local 42, future-capture-atom 1, future-binding 3,
+promise 7, delay 2, agent 1, pmap (2 3 4), spec-conform 2,
+test-stacktrace 26.
+
+Probe-design note (measured): the first JVM run never exited — after
+the agent/future cases, the JVM's non-daemon executor threads keep the
+process alive. The program now ends with `shutdown-agents` + a guarded
+`System/exit`, after printing its done line.
+

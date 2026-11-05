@@ -27,4 +27,9 @@
   ;; --- a library exercising its own internals on the surface's edge ---
   (probe "spec-conform" (fn [] (eval '(clojure.spec.alpha/conform even? 2))))
   (probe "test-stacktrace" (fn [] (eval '(count (.getStackTrace (Thread/currentThread))))))
-  (println "PROBE|done|OK"))
+  (println "PROBE|done|OK")
+  (flush)
+  ;; On the JVM, agent/future executor threads are non-daemon: without
+  ;; shutdown-agents the process never exits after the agent/future cases.
+  (try (shutdown-agents) (catch Throwable _))
+  (try (System/exit 0) (catch Throwable _)))
