@@ -64,9 +64,8 @@
   (println (if pass "PASS" "FAIL") label (if pass (str "=> " (pr-str detail)) detail)))
 
 ;; --- client side -------------------------------------------------------
-(def setup "(require '[clojure.java.io :as io])")
-(ref-eval setup)
-(cohost-eval setup)
+(ref-eval eve-http-programs/setup)
+(cohost-eval eve-http-programs/setup)
 
 (defn client-check [label src]
   (let [with-base (fn [base] (str "(let [base \"" base "\"] " src ")"))

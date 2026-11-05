@@ -1395,6 +1395,35 @@
              (scan-macros! c (host/current-ns))
              @first-error)))))))
 
+(defn- lib-fill
+  "{name fn} a layer gives library lib in place of its source, where this
+   seat has no source for it and no java.* surface of its own (the JVM and
+   jolt keep their own clojure.java.io), or nil. cohost.http fills
+   clojure.java.io when Eve's HTTP leaves are in."
+  [lib]
+  (when (and (not (host/interop-passthrough?)) (http/available?))
+    (get http/lib-fills lib)))
+
+(defn install-lib-fill!
+  "Intern lib's fill into the namespace lib boots into, as a loaded library
+   (its references renamed to that namespace). -> the namespace."
+  ([lib] (install-lib-fill! lib (get http/lib-fills lib)))
+  ([lib fill]
+   (let [target (stock-ns-name lib)]
+     (snap! {:op :lib-fill :lib lib})
+     (host/ensure-bare-ns! target)
+     (doseq [[nm f] fill] (host/intern! target nm f))
+     (swap! (:renames (ctx)) assoc (str lib) (str target))
+     (swap! (:loader-nses (ctx)) conj (str target))
+     (swap! state assoc-in [:libs lib] {:ns target :status :layer :ok (count fill) :error 0 :skipped 0})
+     target)))
+
+(defn snap-lib-fill!
+  "install-lib-fill! of the recorded boot."
+  [lib]
+  (install-lib-fill! lib)
+  nil)
+
 (defn load-lib!
   "Load lib (a symbol) once: its source from a source root, booted into its own
    namespace, or else the host's own require. -> the namespace to alias."
@@ -1436,9 +1465,11 @@
            (snap! {:op :lib-end :lib lib :entry (get-in @state [:libs lib]) :data (snap-state nil)})
            (swap! state assoc :loading outer)
            target)
-         (do (host/require-host! lib)
-             (swap! state assoc-in [:libs lib] {:ns lib :status :host})
-             lib)))))))
+         (if-let [fill (lib-fill lib)]
+           (install-lib-fill! lib fill)
+           (do (host/require-host! lib)
+               (swap! state assoc-in [:libs lib] {:ns lib :status :host})
+               lib))))))))
 
 (defn lib-report
   "{lib {:ns :status :ok :error :skipped :entries}} of every library loaded."

@@ -20,7 +20,8 @@
    byte streams of its own) holds it in an atom, never in a field.
    Equality is the map's: a named distance from the Java classes, as unit 1
    named it for the thread layer's values."
-  (:require [cohost.adapter :as host]))
+  (:require [cohost.adapter :as host]
+            [cohost.thread :as thread]))
 
 ;; ---------------------------------------------------------------------------
 ;; string helpers (the layer runs on every host: no clojure.string here)
@@ -77,7 +78,10 @@
    ::headers 'java.net.http.HttpHeaders
    ::optional 'java.util.Optional
    ::connection 'java.net.HttpURLConnection
-   ::input-stream 'java.io.InputStream})
+   ::input-stream 'java.io.InputStream
+   ::reader 'java.io.BufferedReader
+   ::output-stream 'java.io.OutputStream
+   ::writer 'java.io.BufferedWriter})
 
 (defn value?
   "True when x is a value of this layer."
@@ -228,6 +232,66 @@
         (contains? pub :text) {:body (:text pub)}
         :else {}))
 
+;; base64 -> a host byte array of signed bytes (the JVM's byte), for hosts
+;; whose adapter gives no byte streams; written here, host-free
+(def ^:private b64-alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+(def ^:private b64-index
+  (into {} (map (fn [i] [(subs b64-alphabet i (inc i)) i])) (range 64)))
+(defn b64->byte-array [s]
+  (let [s (str s)
+        sextets (keep (fn [i] (get b64-index (subs s i (inc i)))) (range (count s)))
+        bytes (loop [xs sextets out []]
+                (if (empty? xs)
+                  out
+                  (let [[a b c d] (take 4 xs)
+                        n (+ (* a 262144) (* (or b 0) 4096) (* (or c 0) 64) (or d 0))
+                        bs [(quot n 65536) (rem (quot n 256) 256) (rem n 256)]
+                        k (dec (count (take 4 xs)))]
+                    (recur (drop 4 xs) (into out (take k bs))))))]
+    (host/host-array (mapv (fn [b] (if (> b 127) (- b 256) b)) bytes))))
+
+;; text streams, for hosts whose adapter gives no byte streams of its own:
+;; InputStream and BufferedReader over one {:text :pos} state, OutputStream
+;; and Writer over one {:text} state (the bytes a program writes are decoded
+;; by the shim, which has the codecs)
+(defn text-reader
+  "A BufferedReader over text, or over a layer InputStream's state."
+  [src]
+  (if (is? ::input-stream src)
+    {:cohost/kind ::reader :state (:state src)}
+    {:cohost/kind ::reader :state (atom {:text (str src) :pos 0})}))
+
+(defn read-line!
+  "BufferedReader.readLine: the next line without its terminator (\n, \r\n
+   or \r), nil at the end."
+  [r]
+  (let [{:keys [text pos]} @(:state r)
+        n (count text)]
+    (when (< pos n)
+      (let [i (loop [i pos] (if (or (>= i n) (contains? #{"\n" "\r"} (subs text i (inc i)))) i (recur (inc i))))
+            next-pos (cond (>= i n) n
+                           (and (= "\r" (subs text i (inc i))) (< (inc i) n) (= "\n" (subs text (inc i) (+ i 2)))) (+ i 2)
+                           :else (inc i))]
+        (swap! (:state r) assoc :pos next-pos)
+        (subs text pos i)))))
+
+(defn read-char!
+  "Reader.read: the next char (a UTF-16 unit, as text holds it) or -1 at the
+   end; the caller (the shim) turns it into its code."
+  [r]
+  (let [{:keys [text pos]} @(:state r)]
+    (if (< pos (count text))
+      (do (swap! (:state r) assoc :pos (inc pos)) (subs text pos (inc pos)))
+      -1)))
+
+(defn new-output-stream [] {:cohost/kind ::output-stream :state (atom {:text ""})})
+(defn text-writer
+  "A Writer over a layer OutputStream's state."
+  [out]
+  {:cohost/kind ::writer :state (:state out)})
+(defn append-text! [o t] (swap! (:state o) update :text str t) nil)
+(defn written-text [o] (:text @(:state o)))
+
 (defn input-stream
   "An InputStream over a response body: the host's own over the bytes
    where it has byte streams, else the layer's over the text."
@@ -245,12 +309,15 @@
   [client req handler]
   (let [as (:as handler)
         want-bytes? (and (contains? #{:bytes :input-stream} as) (streams))
+        ;; ofByteArray on a host without byte streams of its own: the body's
+        ;; bytes through Eve's base64 answer, into a host byte array
+        b64? (and (= :bytes as) (not (streams)))
         resp (eve-request (merge {:method (:method req)
                                   :url (uri-string (:uri req))
                                   :headers (wire-headers (:map (:headers req)))}
                                  (body-args (:publisher req))
-                                 (when want-bytes? {:as :bytes})))
-        body (:body resp)]
+                                 (cond want-bytes? {:as :bytes} b64? {:as :b64})))
+        body (if b64? (b64->byte-array (:body resp)) (:body resp))]
     {:cohost/kind ::response
      :status (:status resp)
      :headers (headers (seq (:headers resp)))
@@ -262,6 +329,62 @@
              body)
      :request req
      :uri (:uri req)}))
+
+;; ---------------------------------------------------------------------------
+;; HttpClient.sendAsync: a CompletableFuture, as a layer future (cohost.thread)
+
+(defn- execution-exception
+  "What CompletableFuture.get (and deref) throw for a failed stage:
+   ExecutionException carrying the cause."
+  [e]
+  (host/ex* 'java.util.concurrent.ExecutionException (host/error-message e) e))
+
+(defn- stage-value
+  "A dependent stage's input: fut's value, or its failure's cause rethrown
+   (the stage then fails with that same cause, wrapped once)."
+  [fut]
+  (host/try-all (fn [] (thread/deref-future fut))
+                (fn [e] (throw (or (host/exception-cause e) e)))))
+
+(defn- run-async
+  "A layer future of (f): on the thread layer's send-off executor where the
+   host has one, else run now, on the caller's thread, into a completed
+   future. A failure is held as the ExecutionException get throws."
+  [f]
+  (let [g (fn [] (host/try-all f (fn [e] (throw (execution-exception e)))))]
+    (assoc (if (thread/available?)
+             (thread/submit-future (thread/send-off-executor) g)
+             (thread/completed-future (host/try-all (fn [] {:status :done :value (g)})
+                                                    (fn [e] {:status :error :error e}))))
+           ::async true)))
+
+(defn async? [x] (and (thread/future-value? x) (true? (get x ::async))))
+
+(defn send-async
+  "HttpClient.sendAsync: send-request on the layer's executor."
+  [client req handler]
+  (run-async (fn [] (send-request client req handler))))
+
+(defn- call-fn
+  "A java.util.function.Function / Consumer argument: a Clojure fn (as
+   Clojure 1.12 adapts one), else the object's own apply / accept."
+  [f member v]
+  (if (fn? f)
+    (f v)
+    (let [r (host/invoke-member f member [v] ::absent)]
+      (if (= ::absent r)
+        (throw (host/ex* 'java.lang.ClassCastException (str "cohost.http: not a java.util.function." (if (= "apply" member) "Function" "Consumer"))))
+        r))))
+
+(defn then-apply
+  "CompletableFuture.thenApply: a future of (f v) once fut's value v is in."
+  [fut f]
+  (run-async (fn [] (call-fn f "apply" (stage-value fut)))))
+
+(defn then-accept
+  "CompletableFuture.thenAccept: a future of nil after (f v)."
+  [fut f]
+  (run-async (fn [] (call-fn f "accept" (stage-value fut)) nil)))
 
 ;; ---------------------------------------------------------------------------
 ;; java.net.URL.openConnection: HttpURLConnection
@@ -305,7 +428,7 @@
       (throw (host/ex* 'java.net.ProtocolException "cannot write to a URLConnection if doOutput=false - call setDoOutput(true)")))
     (or (:out st)
         (let [bs (streams)
-              o (if bs ((:output bs)) (atom ""))]
+              o (if bs ((:output bs)) (new-output-stream))]
           ;; the JDK turns a GET with a body into a POST
           (swap! (:state c) (fn [s] (cond-> (assoc s :out o) (= "GET" (:method s)) (assoc :method "POST"))))
           o))))
@@ -320,7 +443,7 @@
             out (:out st)
             body (cond (nil? out) nil
                        bs {:body ((:output-bytes bs) out) :body-as :bytes}
-                       :else {:body @out})
+                       :else {:body (written-text out)})
             resp (eve-request (merge {:method (:method st)
                                       :url (:raw (:url c))
                                       :headers (wire-headers (header-map (:props st)))}
@@ -371,6 +494,7 @@
     ::uri (slurp-value (uri->url x))
     ::connection (stream->text (conn-input-stream x))
     ::input-stream (stream-drain! x)
+    ::reader (stream-drain! x)
     nil))
 
 ;; ---------------------------------------------------------------------------
@@ -388,6 +512,94 @@
         :else (throw (host/ex* 'java.lang.IllegalArgumentException
                                (str "Cannot open <" (pr-str f) "> as an InputStream.")))))
 
+(defn line-seq*
+  "clojure.core/line-seq where the host's core has none: the lines of a
+   BufferedReader, lazily -- a layer reader's, or the host object's own
+   readLine."
+  [rdr]
+  (when-let [line (if (is? ::reader rdr)
+                    (read-line! rdr)
+                    (host/invoke-member rdr "readLine" [] nil))]
+    (cons line (lazy-seq (line-seq* rdr)))))
+
 (def core-impls
   "{name fn}: the fills boot interns where the host core lacks the name."
-  {'slurp slurp*})
+  {'slurp slurp*
+   'line-seq line-seq*})
+
+;; ---------------------------------------------------------------------------
+;; clojure.java.io where the host has none (a host with no java.* surface of
+;; its own): the library's coercions over this layer's values, filled into
+;; the namespace the library boots into (cohost.boot/load-lib!). The JVM keeps
+;; its own clojure.java.io, whose IOFactory reaches the layer (cohost.http-eve).
+
+(defn- cannot-open [x what]
+  (throw (host/ex* 'java.lang.IllegalArgumentException (str "Cannot open <" (pr-str x) "> as " what "."))))
+
+(defn- url-string? [s]
+  (when-let [p (parse s)] (contains? url-protocols (lc (:scheme p)))))
+
+(defn io-as-url
+  "clojure.java.io/as-url: nil, a URL, a URI's URL, or a String's."
+  [x]
+  (cond (nil? x) nil
+        (is? ::url x) x
+        (is? ::uri x) (uri->url x)
+        (string? x) (new-url x)
+        :else (throw (host/ex* 'java.lang.IllegalArgumentException (str "Cannot coerce " (pr-str x) " to a URL")))))
+
+(defn io-input-stream
+  "clojure.java.io/input-stream: a URL's, URI's or HttpURLConnection's
+   stream (through Eve's leaf), a layer InputStream itself, a String naming
+   a URL, else a file's contents (the adapter's :slurp)."
+  [x & _opts]
+  (cond (is? ::input-stream x) x
+        (contains? #{::url ::uri ::connection} (kind-of x))
+        (case (kind-of x)
+          ::url (open-stream x)
+          ::uri (open-stream (uri->url x))
+          ::connection (conn-input-stream x))
+        (string? x) (if (url-string? x) (open-stream (new-url x)) (input-stream (host/slurp-file x)))
+        :else (cannot-open x "an InputStream")))
+
+(defn io-reader
+  "clojure.java.io/reader: a BufferedReader over io-input-stream's stream,
+   or a layer reader itself."
+  [x & opts]
+  (if (is? ::reader x) x (text-reader (apply io-input-stream x opts))))
+
+(defn io-output-stream
+  "clojure.java.io/output-stream: a layer OutputStream itself, or an
+   HttpURLConnection's request body."
+  [x & _opts]
+  (cond (is? ::output-stream x) x
+        (is? ::connection x) (conn-output-stream x)
+        :else (cannot-open x "an OutputStream")))
+
+(defn io-writer
+  "clojure.java.io/writer: a Writer over io-output-stream's stream, or a
+   layer writer itself."
+  [x & opts]
+  (if (is? ::writer x) x (text-writer (apply io-output-stream x opts))))
+
+(defn io-copy
+  "clojure.java.io/copy from a reader or InputStream (or a String) to a
+   writer or OutputStream of this layer."
+  [in out & _opts]
+  (let [t (cond (string? in) in
+                (contains? #{::reader ::input-stream} (kind-of in)) (stream-drain! in)
+                :else (cannot-open in "an InputStream"))]
+    (if (contains? #{::writer ::output-stream} (kind-of out))
+      (append-text! out t)
+      (cannot-open out "an OutputStream"))
+    nil))
+
+(def lib-fills
+  "{library {name fn}}: what boot interns into a library's namespace where
+   the host has no source for it and no java.* surface of its own."
+  {'clojure.java.io {'as-url io-as-url
+                     'input-stream io-input-stream
+                     'reader io-reader
+                     'output-stream io-output-stream
+                     'writer io-writer
+                     'copy io-copy}})

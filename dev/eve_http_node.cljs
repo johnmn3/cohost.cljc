@@ -33,6 +33,7 @@
   (case mode
     "client"
     (let [[base out] args
+          _ (println "setup:" (pr-str (cohost-eval eve-http-programs/setup)))
           answers (vec (for [[label src] eve-http-programs/client
                              :when (not (contains? eve-http-programs/jvm-only label))]
                          [label (cohost-eval (str "(let [base \"" base "\"] " src ")"))]))]

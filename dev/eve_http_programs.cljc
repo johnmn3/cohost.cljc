@@ -72,6 +72,26 @@
               (java.net.http.HttpResponse$BodyHandlers/ofString))
         :sent
         (catch java.io.IOException e :io-exception))"]
+   ["HttpClient.sendAsync: join, isDone, deref, get, thenApply"
+    "(let [c (java.net.http.HttpClient/newHttpClient)
+           req (.build (java.net.http.HttpRequest/newBuilder (java.net.URI/create (str base \"/hello\"))))
+           h (java.net.http.HttpResponse$BodyHandlers/ofString)
+           f (.sendAsync c req h)]
+       [(.statusCode (.join f)) (.isDone f) (.body @(.sendAsync c req h)) (.body (.get (.sendAsync c req h)))
+        (.join (.thenApply (.sendAsync c req h) (fn [r] (.body r))))
+        (.join (.thenApply (.thenApply (.sendAsync c req h) (fn [r] (.statusCode r))) inc))])"]
+   ["HttpClient.sendAsync failure: CompletionException at join, ExecutionException at get and deref"
+    "(let [c (java.net.http.HttpClient/newHttpClient)
+           bad (.build (java.net.http.HttpRequest/newBuilder (java.net.URI/create \"http://127.0.0.1:1/\")))
+           h (java.net.http.HttpResponse$BodyHandlers/ofString)]
+       [(try (.join (.sendAsync c bad h)) :joined
+             (catch java.util.concurrent.CompletionException e [:completion (instance? java.io.IOException (.getCause e))]))
+        (try (.get (.sendAsync c bad h)) :got
+             (catch java.util.concurrent.ExecutionException e [:execution (instance? java.io.IOException (.getCause e))]))
+        (try @(.sendAsync c bad h) :derefed
+             (catch java.util.concurrent.ExecutionException e [:execution (instance? java.io.IOException (.getCause e))]))
+        (try (.join (.thenApply (.sendAsync c bad h) (fn [r] (.statusCode r)))) :joined
+             (catch java.util.concurrent.CompletionException e [:completion (instance? java.io.IOException (.getCause e))]))])"]
    ["HttpURLConnection GET"
   "(let [c (.openConnection (java.net.URL. (str base \"/hello\")))]
      [(.getResponseCode c) (.getResponseMessage c) (slurp (.getInputStream c))
@@ -137,13 +157,10 @@
                      ["GET /empty (204, nil body)" ["GET" "/empty" nil {}]]
                      ["GET /missing (404)" ["GET" "/missing" nil {}]]])
 
+(def setup
+  "Evaluated once before the client programs, on every seat."
+  "(require '[clojure.java.io :as io])")
+
 (def jvm-only
-  "Client programs that need what only the JVM seat has today: the host's
-   clojure.java.io (no seat but the JVM has one yet), or the host's byte
-   arrays and output streams (the adapter's :byte-streams). A named
-   remainder of unit 9, not a pass."
-  #{"HttpClient UTF-8 body, ofString and ofByteArray"
-    "HttpURLConnection POST through io/writer on getOutputStream"
-    "HttpURLConnection PUT via setRequestMethod"
-    "clojure.java.io/reader + line-seq over a URL"
-    "clojure.java.io/input-stream over a URL; a seq body"})
+  "Client programs that need what only the JVM seat has today (none)."
+  #{})

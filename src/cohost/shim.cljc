@@ -247,6 +247,10 @@
     clojure.lang.Compiler$CompilerException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
     java.lang.InterruptedException [java.lang.Exception java.lang.Throwable java.lang.Object]
     java.io.IOException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.concurrent.ExecutionException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.concurrent.CompletionException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.concurrent.TimeoutException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.concurrent.CancellationException [java.lang.IllegalStateException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
     java.io.FileNotFoundException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
     java.net.MalformedURLException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
     java.net.ProtocolException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
@@ -264,6 +268,10 @@
     java.net.http.HttpHeaders [java.lang.Object]
     java.util.Optional [java.lang.Object]
     java.io.InputStream [java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.Reader [java.io.Closeable java.lang.AutoCloseable java.lang.Readable java.lang.Object]
+    java.io.BufferedReader [java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Readable java.lang.Object]
+    java.io.OutputStream [java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.BufferedWriter [java.io.Writer java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Appendable java.lang.Object]
     java.lang.Error [java.lang.Throwable java.lang.Object]
     java.lang.AssertionError [java.lang.Error java.lang.Throwable java.lang.Object]
     java.lang.StackOverflowError [java.lang.VirtualMachineError java.lang.Error java.lang.Throwable java.lang.Object]
@@ -1947,6 +1955,17 @@
 
 ;; HttpClient and its builder
 (def -send (http-member "send" {:cohost.http/client http/send-request}))
+(def -sendAsync (http-member "sendAsync" {:cohost.http/client http/send-async}))
+;; CompletableFuture's stages over a sendAsync future (cohost.thread's future value)
+(defn- async-member [m f]
+  (let [miss (missing-method (symbol m))]
+    (fn [x & args]
+      (if (http/async? x)
+        (apply f x args)
+        (let [r (if (nil? x) absent (host/invoke-member x m (vec args) absent))]
+          (if (identical? r absent) (apply miss x args) r))))))
+(def -thenApply (async-member "thenApply" http/then-apply))
+(def -thenAccept (async-member "thenAccept" http/then-accept))
 (def -build (http-member "build" {:cohost.http/client-builder http/build-client :cohost.http/request-builder http/build-request}))
 (def -followRedirects (http-member "followRedirects" {:cohost.http/client-builder (fn [b v] (http/client-builder-set b :follow-redirects v))
                                                       :cohost.http/client (fn [c] (get-in c [:opts :follow-redirects]))}))
@@ -1978,6 +1997,26 @@
 (def -map (http-member "map" {:cohost.http/headers http/headers-map}))
 (def -isPresent (http-member "isPresent" {:cohost.http/optional (fn [o] (some? (:value o)))}))
 (def -orElse (http-member "orElse" {:cohost.http/optional (fn [o d] (if (some? (:value o)) (:value o) d))}))
+
+;; the layer's text streams (a host without byte streams of its own):
+;; BufferedReader.readLine / read, OutputStream / Writer.write
+(def -readLine (http-member "readLine" {:cohost.http/reader http/read-line!}))
+(def -read (http-member "read" {:cohost.http/reader (fn [r] (let [c (http/read-char! r)] (if (= -1 c) -1 (code-of c))))}))
+(defn- written-as-text
+  "What OutputStream.write / Writer.write appends: a String (or a slice of
+   one), a char array's chars, a byte array's bytes decoded as UTF-8, or one
+   int as its char."
+  [x args]
+  (let [[off len] args]
+    (cond (string? x) (if off (subs x off (+ off len)) x)
+          (arr? x) (let [xs (if off (take len (drop off (seq x))) (seq x))]
+                     (if (= :chars (array-kind x))
+                       (apply str (map char-str xs))
+                       (let [v (vec xs)] (decode-bytes (Numbers-byte_array v) 0 (count v) "UTF-8"))))
+          (number? x) (char-str (bit-and x 0xFFFF))
+          :else (str x))))
+(def -write (http-member "write" (let [f (fn [o x & args] (http/append-text! o (written-as-text x args)))]
+                                   {:cohost.http/output-stream f :cohost.http/writer f})))
 
 ;; HttpURLConnection
 (def -setRequestMethod (http-member "setRequestMethod" {:cohost.http/connection http/conn-set-method!}))
@@ -2677,8 +2716,17 @@
                                       #?(:cljs (deref x) :default (deref x ms timeout-val))))))
 ;; the thread layer's members: Thread, Future, ExecutorService,
 ;; CountDownLatch over cohost.thread's values
-(def -join (fn ([x] (if (thread/thread-value? x)
-                      (thread/join-thread x)
+(def -join (fn ([x] (cond
+                      (thread/thread-value? x) (thread/join-thread x)
+                      ;; CompletableFuture.join (a sendAsync future): the value, or
+                      ;; the cause rethrown in a CompletionException
+                      (http/async? x)
+                      (host/try-all (fn [] (thread/deref-future x))
+                                    (fn [e] (throw (if (instance-of? 'java.util.concurrent.ExecutionException e)
+                                                     (host/ex* 'java.util.concurrent.CompletionException
+                                                               (host/error-message e) (host/exception-cause e))
+                                                     e))))
+                      :else
                       (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread")))))
                ([x ms] (if (thread/thread-value? x)
                          (thread/join-thread x ms)
@@ -3031,7 +3079,8 @@
                                   hi)))))
 (def -toCharArray (fn [s] (to-array* (vec (nn s)))))
 (def -append (fn [sb x] (h-sb-append! sb (if (nil? x) "null" x))))
-(def -close host/close!)
+;; a value of Eve's HTTP layer has nothing to release
+(def -close (fn [x] (if (http/value? x) nil (host/close! x))))
 (def -flush (fn [_] nil))
 (def -numerator (let [h (host-fn 'numerator identity)]
                   ;; (jank, A5-2: Ratio's numerator and denominator are BigIntegers, which

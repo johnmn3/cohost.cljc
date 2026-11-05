@@ -315,6 +315,13 @@
 (defn- new-future* []
   {:cohost/kind ::future :state (atom {:status :pending}) :bell (host/doorbell)})
 
+(defn completed-future
+  "A layer future already holding outcome ({:status :done :value v} or
+   {:status :error :error e}): what an asynchronous call answers on a host
+   with no thread layer, where the work ran on the caller's thread."
+  [outcome]
+  {:cohost/kind ::future :state (atom outcome) :bell nil})
+
 (defn- complete-future! [fut outcome]
   (let [won (atom false)]
     (swap! (:state fut)
