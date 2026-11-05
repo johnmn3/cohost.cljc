@@ -176,3 +176,24 @@ JVM runner re-check after (must stay 10/14, #13 PASS).
   worktree (detached; gateprobes measured ~37 min under contention),
   run the binary from a scratch dir, quote exit + lines; JVM runner
   re-check (cli.cljc is loaded by every JVM session).
+
+## 2026-11-05 ~01:40-01:50 ET — UNIT 2: implemented; verification moved to J (operator steer)
+
+- Impl committed: 8932728 (cli run-app-main! + temp-dir + emit
+  change). JVM runner re-check on this box: 10/14 PASS, 0 FAIL --
+  no regression from the cli.cljc change.
+- Local AOT build leg: FAILED at the emit step for an unrelated
+  reason -- RECORD-LIB-ERROR seam.throwmain "could not be found":
+  the probe-9 fixture dev/cli-demo/src/seam/throwmain.cljc exists
+  only on the gate probes branch (their commit), not on this base.
+  Fixture taken onto this branch @ 841cb76 (tip). Steps 1-2 of the
+  local build (AOT ensure + stock record) ran clean with the fix in
+  the tree; the only record error was the missing fixture.
+- Operator steer (John, 01:46 ET): run the verification build on J
+  (checked idle, load ~3). Local leg already dead (above); the
+  native lane's snapshot build in ~/workspace/cohost-native is NOT
+  mine and was left untouched. Sync = bundle of tip 841cb76 -> J;
+  JVM re-check on J, then bb build:jank detached (log
+  ~/jgate-logs/n13-u2-aot-build.log), then the binary from a
+  scratch dir: owed verdict = exit 1 + "Execution error" headline
+  + "Full report at:" + report EDN present.
