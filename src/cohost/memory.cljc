@@ -366,7 +366,7 @@
   (when-not (lookup-absent? coll k)
     ((get (host-fn* :ops) :find) coll k)))
 
-(def ^:private nth-absent (Object.))
+(def ^:private nth-absent (atom nil))
 
 (defn nth-of
   "nth at the seam for an Eve-backed value (the shim's RT-nth /
@@ -377,9 +377,12 @@
   ([coll i]
    (let [v ((get (host-fn* :ops) :nth) coll i nth-absent)]
      (if (identical? nth-absent v)
-       (throw (IndexOutOfBoundsException.
-               (str "Index " i " out of bounds for length "
-                    ((get (host-fn* :ops) :count) coll))))
+       (let [msg (str "Index " i " out of bounds for length "
+                      ((get (host-fn* :ops) :count) coll))]
+         #?(:jank (throw (ex-info msg {:type :cohost.memory/index-out-of-bounds}))
+            :cljs (throw (js/Error. msg))
+            :clj (throw (IndexOutOfBoundsException. msg))
+            :default (throw (ex-info msg {:type :cohost.memory/index-out-of-bounds}))))
        v)))
   ([coll i not-found]
    ((get (host-fn* :ops) :nth) coll i not-found)))
