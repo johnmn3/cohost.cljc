@@ -73,3 +73,17 @@
   sentinel), or (c) booted-ex-data reads nil for the attributed
   ex-info on jank.
 - JVM check running detached (log cohost-install/n13-jvm-check.log).
+
+## 2026-11-05 00:46 ET — JVM verdict IN; J snapshot building
+
+- JVM GROUND TRUTH (this base, full runner): "debug-seam:check jvm:
+  10/14 PASS, 0 FAIL"; "#13 PASS load exit 1, throw exit 1; report
+  names the macroexpansion". No regression; the JVM half stands.
+- J takeover COMPLETE (both remainders filed; #1/#6 PASS, #7 needle-
+  shape FAIL is theirs). Box free; my branch synced to ~/cohost-cpp
+  (J tree at 46aaf98), target/ wiped, bb boot:jank-snapshot launched
+  detached (log ~/jgate-logs/n13-snapshot.log on J; ~9 min by the two
+  takeover builds: 524/531 s).
+- Next when the snapshot lands: probe seam.throwmacro + seam.badmacro
+  via bin/cohost :jank -m in dev/cli-demo (exact gate shape), read
+  stderr + report EDN -- answers candidate (a)/(b)/(c) above.
