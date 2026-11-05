@@ -11,7 +11,8 @@
    The request map follows the Ring spec (SPEC.md, 1.x) from what Eve's
    server hands a handler ({:method :url :headers :body :body-b64}):
    :server-port, :server-name, :uri, :query-string, :scheme,
-   :request-method, :protocol, :headers, :body. Labeled distances, each
+   :request-method, :protocol, :headers, :content-type, :content-length,
+   :character-encoding, :ssl-client-cert, :body. Labeled distances, each
    what Eve's leaf carries today, not a choice made here:
    - :remote-addr is absent: the leaf's request has no peer address.
    - :headers holds one value per name (the leaf keeps the first); a
@@ -42,11 +43,36 @@
     ((:input bs) ((:b64-bytes bs) (or (:body-b64 req) "")))
     (http/input-stream (:body req))))
 
+(defn- trim* [s]
+  (let [ws? (fn [c] (contains? #{" " "\t"} c))
+        n (count s)
+        b (loop [i 0] (if (and (< i n) (ws? (subs s i (inc i)))) (recur (inc i)) i))
+        e (loop [i n] (if (and (> i b) (ws? (subs s (dec i) i))) (recur (dec i)) i))]
+    (subs s b e)))
+
+(defn- character-encoding
+  "The charset parameter of a Content-Type value (quotes removed), or nil:
+   what a servlet's getCharacterEncoding answers."
+  [ct]
+  (when ct
+    (some (fn [param]
+            (let [param (trim* param)
+                  i (idx param "=")]
+              (when (and i (= "charset" (host/lower-case (trim* (subs param 0 i)))))
+                (let [v (trim* (subs param (inc i)))]
+                  (if (and (> (count v) 1) (= "\"" (subs v 0 1)) (= "\"" (subs v (dec (count v)))))
+                    (subs v 1 (dec (count v)))
+                    v)))))
+          (rest (loop [s ct out []]
+                  (if-let [i (idx s ";")] (recur (subs s (inc i)) (conj out (subs s 0 i))) (conj out s)))))))
+
 (defn ->request
   "The Ring request map for a request Eve's server handed over on port."
   [req port]
   (let [[uri qs] (split-url (str (:url req)))
-        headers (:headers req)]
+        headers (:headers req)
+        content-type (get headers "content-type")
+        content-length (when-let [l (get headers "content-length")] (host/parse-long* (trim* l)))]
     {:server-port port
      :server-name (or (server-name headers) "localhost")
      :uri uri
@@ -55,6 +81,12 @@
      :request-method (keyword (host/lower-case (str (:method req))))
      :protocol "HTTP/1.1"
      :headers headers
+     ;; the servlet keys Ring's own adapters carry, read off the headers
+     :content-type content-type
+     :content-length content-length
+     :character-encoding (character-encoding content-type)
+     ;; plain HTTP: no client certificate
+     :ssl-client-cert nil
      :body (request-body req)}))
 
 (defn- header-value [v]

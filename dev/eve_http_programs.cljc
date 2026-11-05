@@ -17,6 +17,10 @@
        \"/json\" {:status 201 :headers {\"Content-Type\" \"application/json\"} :body \"{\\\"a\\\":1}\"}
        \"/utf8\" {:status 200 :headers {\"Content-Type\" \"text/plain; charset=utf-8\"} :body \"héllo ☃\"}
        \"/empty\" {:status 204 :headers {} :body nil}
+       \"/req\" {:status 200 :headers {\"Content-Type\" \"text/plain\"}
+                :body (pr-str [(into (sorted-map) (select-keys req [:content-type :content-length :character-encoding
+                                                                    :ssl-client-cert :server-name :scheme :query-string]))
+                               (contains? req :ssl-client-cert) (slurp (:body req))])}
        {:status 404 :headers {\"Content-Type\" \"text/plain\"} :body \"nope\"}))")
 
 (def client
@@ -146,7 +150,10 @@
 
 (def server
   "[label [method path body headers]] -- the requests the Ring handler is asked"
-  [["GET /hello" ["GET" "/hello" nil {}]]
+  [["POST /req: content-type, -length, character-encoding" ["POST" "/req?a=1" "abc" {"Content-Type" "text/plain; charset=UTF-8"}]]
+   ["POST /req: quoted charset" ["POST" "/req" "x" {"Content-Type" "application/json;charset=\"utf-8\""}]]
+   ["GET /req: no body, no content-type" ["GET" "/req" nil {}]]
+   ["GET /hello" ["GET" "/hello" nil {}]]
                      ["POST /echo with body, query, header" ["POST" "/echo?k=v" "the body" {"X-Echo" "hdr"}]]
                      ["PUT /echo" ["PUT" "/echo" "put" {}]]
                      ["DELETE /echo, no body" ["DELETE" "/echo" nil {}]]
