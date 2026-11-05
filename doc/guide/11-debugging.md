@@ -1,8 +1,10 @@
 # Debugging
 
 *2026-11-05. States below are measured, not aspirational: the JVM
-column is `bb debug-seam:check jvm` on this branch (10/14 PASS,
-0 FAIL); the jank column is the j gate run on the build server
+column is the traces lane's `bb debug-seam:check jvm` run of
+2026-11-04 (10/14 PASS, 0 FAIL — its tree differs from this
+branch only in the jank adapter, which the JVM run does not
+exercise); the jank column is the j gate run on the build server
 2026-11-04 (6 PASS, 5 FAIL, 3 SKIP) plus the separate gate probes
 of 2026-11-05. Where a fix has landed on a side branch since the
 gate but is not yet collated into `muse/debug-seam`, the text says
@@ -131,10 +133,10 @@ is the JVM's own reader, whose positions are native.
 ## Macro-expansion errors
 
 On the JVM, an error thrown while a macro expands is reported
-with the macroexpansion phase: the report's `:via` names the
-macro with its symbol, source and line, and a macro that expands
-to an unresolved symbol fails the load with that provenance
-(check #13 PASS).
+with the macroexpansion phase: the report names the
+macroexpansion and carries the macro's provenance, and a macro
+that expands to an unresolved symbol fails the load with that
+provenance (check #13 PASS).
 
 **Jank gap (2026-11-05):** a macro function's throw during JIT
 compilation crosses as a native C++ exception rather than a
@@ -156,7 +158,8 @@ Fix status, 2026-11-05: sibling catch clauses that translate
 jank's `error_ref` and `std::exception` into an ex-info — message
 read from the caught value in the clause — landed on branch
 `muse/debug-seam-native` and were verified there on the build
-server: the snapshot builds clean, `cli:check` 7/7, and a thrown
+server: the snapshot builds clean, `cli:check` 7/7, the
+runner's check #3 PASSes on that tree, and a thrown
 `std::runtime_error` is caught by `catch Throwable` with its
 message intact. Not yet collated into `muse/debug-seam`.
 
