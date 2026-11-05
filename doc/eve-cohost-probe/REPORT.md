@@ -142,6 +142,15 @@ closure crosses. `spec-conform` also fails ("ExceptionInfo :: ERROR"
 through the eval path; it names no threading form). test-stacktrace
 answers 0.
 
+### Phel (phel, PHP) — no row (as the research said)
+
+`bin/cohost :phel` dies before any cohost code runs: "Fatal error:
+Uncaught Error: Class \"Phar\" not found in
+/home/hatch/.cache/cohost-hosts/phel-v0.54.0/phel.phar:3", exit 255;
+and `php` is not on this box's PATH at all. An environment-level gap,
+consistent with the standing fact that PHP has no row ready today.
+The threading surface was never reached.
+
 Probe-design notes (measured): the first JVM run never exited — after
 the agent/future cases, the JVM's non-daemon executor threads keep the
 process alive. The program now ends with `shutdown-agents` + a guarded
