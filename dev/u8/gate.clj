@@ -5,6 +5,7 @@
 ;;      :jvm and :cljs -- every PROBE line equal -- with the cljs run's realm
 ;;      trace (COHOST_REALM_TRACE=1) showing the futures ran in a worker realm.
 (require '[babashka.process :as p]
+         '[clojure.edn]
          '[clojure.string :as str])
 
 (defn run-host [host program env]
@@ -15,13 +16,23 @@
     {:lines (filterv #(str/starts-with? % "PROBE|") (str/split-lines (str (:out r))))
      :err (:err r) :exit (:exit r) :ms (- (System/currentTimeMillis) t0)}))
 
+(defn- read-result
+  "A PROBE result as data when it reads (OK <edn>), else the text: rows
+   compare by value -- an Eve map prints in its own (hash) order, the JVM's
+   array map in insertion order, and the values are equal."
+  [r]
+  (if (and r (str/starts-with? r "OK "))
+    (try [:ok (clojure.edn/read-string (subs r 3))] (catch Exception _ r))
+    r))
+
 (defn compare-rows [label jvm cljs]
   (let [jm (into (sorted-map) (map (fn [l] (let [[_ n r] (str/split l #"\|" 3)] [n r]))) (:lines jvm))
         cm (into (sorted-map) (map (fn [l] (let [[_ n r] (str/split l #"\|" 3)] [n r]))) (:lines cljs))
         names (distinct (concat (keys jm) (keys cm)))
-        same (count (filter #(= (get jm %) (get cm %)) names))]
+        same? (fn [n] (= (read-result (get jm n)) (read-result (get cm n))))
+        same (count (filter same? names))]
     (doseq [n names]
-      (println (str "ROW|" label "|" n "|" (if (= (get jm n) (get cm n)) "SAME" "DIFF")
+      (println (str "ROW|" label "|" n "|" (if (same? n) "SAME" "DIFF")
                     "|jvm=" (get jm n) "|cljs=" (get cm n))))
     (println (str "SUMMARY|" label "|same=" same "/" (count names)
                   " jvm-ms=" (:ms jvm) " cljs-ms=" (:ms cljs)))

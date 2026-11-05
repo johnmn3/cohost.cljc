@@ -98,7 +98,9 @@
 
 (defn- trace [& xs]
   (when (trace?)
-    (.write js/process.stderr (str "cohost-realm[" (:realm @R) "]: " (string/join " " xs) "\n"))))
+    ;; synchronous: a worker's process.stderr drains through the core's
+    ;; event loop, which an exiting core never runs again
+    (fs/writeSync 2 (str "cohost-realm[" (:realm @R) "]: " (string/join " " xs) "\n"))))
 
 (defn available?
   "Eve hosting is in force in this realm."
@@ -274,7 +276,10 @@
     (set? x) (into #{} (map encode) x)
     (seq? x) (let [v (vec (take (inc seq-limit) x))]
                (when (> (count v) seq-limit) (refuse! :unbounded-seq))
-               (apply list (map encode v)))
+               ;; tagged: a list published into an Eve atom read back nil
+               ;; (measured: (future (list 1 2)) -> nil outcome), so a seq
+               ;; crosses as a vector and is rebuilt as a list
+               {::seq (mapv encode v)})
     :else (refuse! :host-object)))
 
 (defn- atom-for [k slot]
@@ -286,6 +291,7 @@
 (defn- decode [x]
   (cond
     (map? x) (cond (contains? x ::atom) (let [[k slot] (::atom x)] (atom-for k slot))
+                   (contains? x ::seq) (apply list (map decode (::seq x)))
                    (contains? x ::var) (let [q (::var x)]
                                          (or (cljs-host/var-name-root q)
                                              (throw (ex-info (str "cohost: " q " has no root in realm " (:realm @R))
@@ -328,6 +334,14 @@
 
 ;; ---------------------------------------------------------------------------
 ;; the mailboxes
+
+(defn- outbox-key
+  "The outbox's key for task id: a string. An Eve map's small integer key
+   whose value holds a nested collection reads back incremented on this
+   seat (measured: {1 {:z [1 2]}} -> {2 {:z [1 2]}}; Eve-side defect,
+   named in the unit report), so the transport never keys by integer."
+  [id]
+  (str "t" id))
 
 (defn- mail []
   (or (:mail @R)
@@ -416,12 +430,12 @@
     (and (map? m) (contains? m :cohost/done))
     (let [id (:cohost/done m)
           ob (:outbox (mail))
-          o (get @ob id)
+          o (get @ob (outbox-key id))
           complete (get-in @R [:pending id])]
-      (swap! ob dissoc id)
+      (swap! ob dissoc (outbox-key id))
       (swap! R update :pending dissoc id)
       (stat! :completed)
-      (trace "task" id "completed in realm" (:realm m))
+      (trace "task" id "completed in realm" (:realm m) (when (trace?) (pr-str o)))
       (when complete (complete (outcome->layer o))))
 
     (and (map? m) (contains? m :cohost/need-domain))
@@ -517,10 +531,11 @@
   (let [{:keys [inbox outbox]} (:mail @R)
         id (:id t)
         o (try {:ok (encode (run-task t opts))}
-               (catch :default e (error-outcome e)))]
-    (try (swap! outbox assoc id o)
+               (catch :default e (error-outcome e)))
+        _ (trace "task" id "outcome" (pr-str o))]
+    (try (swap! outbox assoc (outbox-key id) o)
          (catch :default e
-           (swap! outbox assoc id (error-outcome
+           (swap! outbox assoc (outbox-key id) (error-outcome
                                    (ex-info (str "cohost: the result cannot cross back to the core realm: "
                                                  (ex-message e))
                                             {})))))
