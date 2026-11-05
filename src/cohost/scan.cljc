@@ -212,6 +212,31 @@
     (loop [i 0 out [0]]
       (if (>= i n) out (recur (inc i) (if (= \newline (nth text i)) (conj out (inc i)) out))))))
 
+(defn- line-of
+  "The 1-based line of offset i, given line-starts: the line whose start
+   is the greatest start <= i."
+  [starts i]
+  (loop [lo 1 hi (count starts)]
+    (if (>= lo hi)
+      lo
+      (let [mid (quot (+ lo hi) 2)]
+        (if (<= (nth starts mid) i)
+          (recur (inc mid) hi)
+          (recur lo mid))))))
+
+(defn form-start
+  "text, n (0-based) -> the [line column] (both 1-based) at which text's
+   nth top-level form starts, or nil when text has fewer forms: the
+   position a reader failing at that form reports."
+  [text n]
+  (when (and (some? n) (<= 0 n))
+    (let [ext (top-extents text)]
+      (when (< n (count ext))
+        (let [a (nth (nth ext n) 0)
+              starts (line-starts text)
+              line (line-of starts a)]
+          [line (inc (- a (nth starts (dec line))))])))))
+
 (defn with-source
   "Run thunk as the read of text (resolved) with its spans; path (or nil) is
    where it came from. thunk gets a fn of no args that read-forms calls as
