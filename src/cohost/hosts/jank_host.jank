@@ -2362,6 +2362,19 @@ namespace cohost_err {
         s (if cut (subs s 0 cut) s)]
     (symbol (string/replace (string/replace s "-" "_") "/" "$"))))
 
+(defn- frame-file
+  "A cpptrace frame's file as the trace contract names it. Code with no
+   source file (string-eval'd, REPL-entered) carries the string \"nil\"
+   here -- the module jank compiled it under -- where a JVM frame for
+   the same code reports NO_SOURCE_FILE. pst's stack-element-str keys
+   its demunged rendering on that spelling (a file ending .clj/.cljc
+   or NO_SOURCE_FILE prints the demunged class; anything else prints
+   class.method raw), so the translation is what lets pst render a
+   source-less user frame as user/inner instead of
+   user$inner.invoke (nil:1)."
+  [file]
+  (if (or (nil? file) (= "nil" file)) "NO_SOURCE_FILE" file))
+
 (def ^:private ctor-head-prefixes
   ;; the construction machinery's class spellings, display (ns/name) and
   ;; munged (ns$name) alike: the C++ exception constructor (jank::), the
@@ -2370,19 +2383,37 @@ namespace cohost_err {
   ;; lane R's measured head: [jank::runtime::ex_info jank 1]
   ;; [clojure_core$ex_info_32861_2 jank 1] [object_ref::call oref.hpp
   ;; 566], then the user's frame; the AFn/RestFn frames of the JVM
-  ;; impl's ctor-frame?), the shim's and the adapter's plumbing
+  ;; impl's ctor-frame?), the shim's and the adapter's plumbing. The
+  ;; adapter's OWN frames lead the measured head on this host (traces
+  ;; lane, 2026-11-04, fallback path -- the snapshot head has the same
+  ;; shape): every ex-info construction funnels through the adapter's
+  ;; :ex-info wrapper (jank_host.jank:2729), whose cpptrace name is the
+  ;; MODULE spelling cohost.hosts.jank.host/fn (the file loads as the
+  ;; module cohost.hosts.jank.host), so the head reads
+  ;; [cohost.hosts.jank.host$fn jank_host.jank 2729]
+  ;; [object_ref::call oref.hpp 566] [cohost.adapter$ex_info* ...]
+  ;; [object_ref::call ...] [cohost_core$ex_info...] [user$...] -- and
+  ;; because the adapter frame matched no prefix, drop-while stopped
+  ;; on it and elided NOTHING. The adapter spellings below are that
+  ;; frame's: the module spelling as measured, the ns spelling
+  ;; (cohost.hosts.jank-host) raw and as frame-class munges it.
   ["jank::" "clojure_core$" "clojure.core$" "cohost_core$" "cohost.core$"
-   "object_ref::" "cohost.shim$" "cohost_shim$" "cohost.adapter$" "cohost_adapter$"])
+   "object_ref::" "cohost.shim$" "cohost_shim$" "cohost.adapter$" "cohost_adapter$"
+   "cohost.hosts.jank.host$" "cohost.hosts.jank_host$" "cohost.hosts.jank-host$"])
 
 (defn- ctor-frame?
-  "A construction-head frame: one of the prefixes above. Dropped from
-   the head of :ex-trace itself (the data layer, F2 -- triage, the
-   report file, pst and print-stack-trace all see the clean trace), as
-   the JVM impl's ctor-frame? drops its construction head for
+  "A construction-head frame: one of the prefixes above, or a C++
+   frame in any spelling (its class carries :: -- jank::runtime::...,
+   object_ref::call, the exception ctor itself; a Clojure frame's
+   class, an ns$name symbol, never carries ::). Dropped from the head
+   of :ex-trace itself (the data layer, F2 -- triage, the report file,
+   pst and print-stack-trace all see the clean trace), as the JVM
+   impl's ctor-frame? drops its construction head for
    fillInStackTrace parity."
   [frame]
   (let [c (str (first frame))]
-    (boolean (some (fn [p] (string/starts-with? c p)) ctor-head-prefixes))))
+    (boolean (or (some (fn [p] (string/starts-with? c p)) ctor-head-prefixes)
+                 (some? (string/index-of c "::"))))))
 
 (def adapter
   {:name :jank
@@ -2732,13 +2763,18 @@ namespace cohost_err {
                                 (if (and (map? d) (:cohost/nil-message d)) nil (ex-message e))))
    ;; frames from the error's own :trace (see cohost_err above): each
    ;; [name file line] becomes [class 'invoke file line]; the
-   ;; construction head is elided here, at the data layer (F2)
+   ;; construction head is elided here, at the data layer (F2). If
+   ;; elision would take every frame (an exception constructed inside
+   ;; the machinery itself), the unelided trace stands -- a headline
+   ;; frame, however mechanical, beats an empty trace.
    :ex-trace (fn [e] (let [m (cpp/cohost_err.ex_map e)]
                        (if (nil? m)
                          []
-                         (vec (drop-while ctor-frame?
-                                          (mapv (fn [[fname file line]] [(frame-class fname) 'invoke file line])
-                                                (:trace m)))))))
+                         (let [frames (mapv (fn [[fname file line]]
+                                              [(frame-class fname) 'invoke (frame-file file) line])
+                                            (:trace m))
+                               elided (drop-while ctor-frame? frames)]
+                           (vec (if (empty? elided) frames elided))))))
    ;; StringBuilder as a cohost type (sb-desc above)
    :string-builder (fn [] (new-instance sb-desc [(atom [])]))
    :sb? (fn [x] (identical? sb-desc (instance-desc x)))

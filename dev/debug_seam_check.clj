@@ -290,13 +290,19 @@
 ;; frame lines ("\tuser/inner (NO_SOURCE_FILE:0)"). U1's REPL report
 ;; line ("Execution error (ExceptionInfo) at user/inner (REPL:0).")
 ;; matches neither shape, so the check can no longer pass on it.
+;; The frame-line needle accepts the host's own demunged name: on
+;; jank the compiled fn is user$inner_11_1, demunged user/inner-11-1 --
+;; the -N-N suffix is jank's real naming, not a seam defect (ruling,
+;; John Newman via Toby, 2026-11-05: the needle absorbs the host
+;; shape; the demunger does not falsify names to match the JVM's).
+(def pst-frame-re #"\tuser/inner(-\d+-\d+)? \(")
 (record! 7
          (if (and (includes? repl-text "ExceptionInfo r {:x 2}")
-                  (includes? repl-text "\tuser/inner ("))
+                  (re-find pst-frame-re repl-text))
            "PASS" "FAIL")
          (str "pst output matched " (pr-str "ExceptionInfo r {:x 2}")
               " and a frame line "
-              (pr-str (or (some (fn [line] (when (str/includes? line "\tuser/inner (") (str/trim line)))
+              (pr-str (or (some (fn [line] (when (re-find pst-frame-re line) (str/trim line)))
                                 (str/split-lines repl-text))
                           "\tuser/inner ( -- none printed"))))
 
