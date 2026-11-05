@@ -77,8 +77,47 @@ Unit 3 complete. Probe 111/111; JVM battery 221/221 + libraries
 62/62, boot errors 0; jank battery 219/221 + libraries 62/62, boot
 errors 0. Full account: UNIT3-REPORT.md.
 
-Note (2026-11-05 ~09:45 ET, John's ruling, relayed via the parent):
-the heap Clojure sees is to BE an Eve atom — the two-zone model is
-superseded; this unit's contract stands as the foundation of that
-single world (the = / hasheq answers any representation must meet),
-not a bridge between worlds. The deliverable is unchanged.
+## Design ruling re-read (John, 2026-11-05 ~09:45 ET)
+
+John's ruling: "The host heap that Clojure sees on cohost should be
+implemented on top of an Eve atom, so that this discrepancy between
+types isn't there." There are not two value worlds (Zone H
+host-native vs Zone E Eve-backed) for this unit's contract to
+bridge: the heap itself is Eve-atom-backed (the default runtime
+atom domain), so the shim's data structures are Eve data structures
+by construction. **This unit's identity contract is the foundation
+of that single value world, not a mixed-representation bridge.**
+
+What does not change:
+- The contract itself: `hasheq` from the canonical Clojure-level
+  form; Eve's Merkle digest never crosses the seam as a hash
+  answer; `equiv` = canonical forms equal.
+- The gate: the probe's equality/hash-consistency checks now read
+  as **single-world invariants** — the answers any implementation
+  stratum of the same class must meet — not as cross-world
+  agreements. The no-regression bars stand (JVM 221/221, jank
+  219/221, libraries 62/62).
+
+What is re-read:
+- The design language premised on two coexisting representations
+  (this file's earlier sections, the `cohost.memory` docstring,
+  the probe's header, the plan's zone terms) now reads as
+  **implementation strata of the same classes within one
+  Eve-backed heap**: host stand-ins and Eve structures are two
+  strata a class's values may sit in today, on the way to the heap
+  itself being Eve-atom-backed — not two worlds with a border.
+  The probe's "H vs E / E vs H / E vs E" cases are stratum pairs,
+  and their symmetry is the invariant the single world requires.
+  The rewording is banked with this note (layer docstring + probe
+  header); UNIT3-REPORT.md carries a matching addendum rather than
+  a rewrite, as the record of the gate as run.
+
+**Concrete choices changed by the ruling: none.** The contract was
+defined on canonical forms, representation-agnostic from the
+start; the stand-in remains the seam's current stratum for Eve
+structures until units 4–6 put the classes — and then the heap —
+on Eve atoms proper, and the shim dispatch branches serve both
+readings identically. Assessed choice by choice (stand-in shape,
+canonical-form caching, dispatch points, `Object/hashCode` branch,
+probe construction): each is a statement about the seam's classes,
+not about two worlds, so each stands as built.

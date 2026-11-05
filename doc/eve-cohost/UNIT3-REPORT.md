@@ -96,3 +96,18 @@ collections, and lookup in collections keyed either way.
   that single world requires — the `=` / `hasheq` answers every
   representation behind the seam must meet — and nothing built
   here depends on the zone framing.
+
+## Addendum — the ruling's re-read (banked in UNIT3-STATUS.md)
+
+Under the ruling, this report's Zone H / Zone E language reads as
+implementation strata of the same classes within one Eve-backed
+heap, and the probe's H vs E / E vs H / E vs E cases read as
+single-world invariants across those strata. The parent lane
+assessed the ruling against every concrete choice in the unit
+(stand-in shape, canonical-form caching, dispatch points, the
+`Object/hashCode` branch, probe construction): **no concrete
+choice changes** — the contract was defined on canonical forms,
+representation-agnostic from the start, and each choice is a
+statement about the seam's classes, not about two worlds. The
+layer docstring and probe header carry the reworded framing; this
+report stands as the record of the gate as run.

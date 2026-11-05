@@ -2,25 +2,31 @@
   "Eve's value layer, hosted in cohost: the seam-identity contract for
    Eve-backed values (MEMORY-PLAN.md, unit 3).
 
-   A cohosted program's values are host values (Zone H). An Eve-backed
-   value (Zone E) reaches the program as a stand-in: a plain map tagged
-   :cohost/kind ::root, holding the Eve root under :memory/root and the
-   value's canonical Clojure-level form under :memory/form. Eve values
-   are immutable, so the canonical form is computed once, when the
-   root is wrapped (on the JVM seat: cohost.memory-eve), and never
-   changes under the stand-in.
+   Per John's 2026-11-05 ruling, the heap a cohosted program sees is
+   itself Eve-atom-backed: there is one value world, and the shim's
+   data structures are Eve data structures by construction. Until
+   the classes sit on Eve atoms proper (units 4-6), a value whose
+   class is answered by an Eve structure reaches the program through
+   the seam's current stratum for such values: a stand-in, a plain
+   map tagged :cohost/kind ::root, holding the Eve root under
+   :memory/root and the value's canonical Clojure-level form under
+   :memory/form. Eve values are immutable, so the canonical form is
+   computed once, when the root is wrapped (on the JVM seat:
+   cohost.memory-eve), and never changes under the stand-in. This
+   namespace's contract is the foundation the single world stands
+   on: the = / hasheq answers every stratum of a class must meet.
 
    Equality and hashing are seam-level contracts, not representation
    properties. This namespace defines them:
 
    - equiv: two values are equiv when their canonical forms are equal
      as host values. A stand-in's canonical form is its :memory/form;
-     any other value is its own canonical form. So a Zone-E vector
-     equals the Zone-H vector with the same elements, in both argument
-     orders, and two stand-ins wrapping equal roots are equiv --
-     retiring the tagged-map distance unit 1 carried (equality = map
-     equality of the stand-in), under which a stand-in equalled
-     nothing but a byte-identical stand-in.
+     any other value is its own canonical form. So an Eve-structure
+     vector equals the host-stratum vector with the same elements, in
+     both argument orders, and two stand-ins wrapping equal roots are
+     equiv -- retiring the tagged-map distance unit 1 carried
+     (equality = map equality of the stand-in), under which a
+     stand-in equalled nothing but a byte-identical stand-in.
    - hasheq: the host hash of the canonical form -- the Murmur-family
      collection hash over the value's Clojure-level form, exactly as
      stock defines it for the Zone-H twin. Eve's SHA-256 Merkle
@@ -34,13 +40,14 @@
    takes the host's own answer, unchanged.
 
    Named distances, kept from the plan:
-   - identical? never crosses zones (plan D2): a stand-in is not its
+   - identical? never crosses strata (plan D2): a stand-in is not its
      root, and two stand-ins are not identical however equal.
    - The contract holds at the seam's dispatch points for the values
-     themselves. A stand-in nested inside a Zone-H collection is
-     compared by the host collection's own machinery, which on the
-     JVM seat does not route through the shim; unit 4's Eve-backed
-     collections are where nested values meet this layer again."
+     themselves. A stand-in nested inside a host-stratum collection
+     is compared by the host collection's own machinery, which on
+     the JVM seat does not route through the shim; unit 4's
+     Eve-backed collections are where nested values meet this layer
+     again."
   (:refer-clojure :exclude [equiv hasheq]))
 
 (defn eve-value?

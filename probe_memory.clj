@@ -1,9 +1,14 @@
 ;; unit 3 gate probe, host-side JVM seat: run with
 ;; clojure -Sdeps '{:paths ["src" "/home/hatch/src/eve/src"]}' -M probe_memory.clj
 ;;
-;; Exercises the mixed-representation contract through the shim's own
+;; Exercises the seam-identity contract through the shim's own
 ;; dispatch vars (cohost.shim/Util-equiv, Util-hasheq, -equiv, -hasheq,
 ;; -hashCode) -- the equiv/hasheq paths stock core actually calls.
+;; Per John's 2026-11-05 ruling (the heap Clojure sees is an Eve
+;; atom; one value world), the H/E pairs below are implementation
+;; strata of the same classes within that world, and the checks are
+;; its invariants: whichever stratum a value sits in, the class's
+;; = / hasheq answers are the same.
 (require 'cohost.hosts.jvm 'cohost.shim 'cohost.memory 'cohost.memory-eve)
 (alias 'shim 'cohost.shim)
 (alias 'mem 'cohost.memory)
