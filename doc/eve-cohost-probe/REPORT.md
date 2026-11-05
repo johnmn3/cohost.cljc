@@ -112,6 +112,17 @@ yet: its boot is still in flight (doc/hosts/PLAN.md)". The host boots
 through its bb task only; through the CLI surface this probe measures,
 it has no row today. Recorded as the host's state, not a probe failure.
 
+### basilisp (lpy, Python) — boot fails through the CLI path
+
+No SUMMARY line: the boot itself fails in 7,358 ms (trivial
+`-e '(println "BOOT-OK")'` repro) with a basilisp CompilerException
+during macroexpansion, form `(basilisp.core/fn temp-dir []
+(System/getProperty "java.io.tmpdir"))`, file
+`src/cohost/cli.cljc`. A `System/getProperty` shim gap in the CLI
+namespace — the probe reaches hosts through the CLI, so basilisp has
+no probe row on this tree. Not a threading failure; the threading
+surface was never reached.
+
 Probe-design note (measured): the first JVM run never exited — after
 the agent/future cases, the JVM's non-daemon executor threads keep the
 process alive. The program now ends with `shutdown-agents` + a guarded
