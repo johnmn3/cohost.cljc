@@ -1,8 +1,9 @@
 # Eve-in-cohost — HEAP SPIKE: the heap Clojure sees, on an Eve atom
 
 > DECLARATION — spike COMPLETE, banked 2026-11-05 on branch
-> `muse/eve-cohost-impl` (skeleton @ 2a4410c; this full text
-> sits on top — verify with `git log
+> `muse/eve-cohost-impl` (skeleton @ 2a4410c; full text @
+> fcd3c1d; the contention-domain refinement below folded in
+> on top — verify with `git log
 > origin/muse/eve-cohost-impl`). Exploration only — no
 > implementation code. Headline: **the ruling survives as a
 > semantic commitment on every seat, and as a substrate claim
@@ -10,7 +11,21 @@
 > Eve's current JVM implementations as the heap's mechanism,
 > it is a real blocker on the JVM seat — measured, not
 > argued (§P3). The shape the exploration supports is in §2;
-> two questions are genuinely John's (§3).**
+> three questions are genuinely John's (§3).**
+>
+> RULINGS UNDER TEST — (1) the heap ruling (John,
+> 2026-11-05 ~09:45 ET; MEMORY-PLAN §8): the heap Clojure
+> sees on cohost is implemented on top of an Eve atom.
+> (2) **the contention-domain refinement** (John, 2026-11-05
+> ~09:47 ET): "We can use different atoms as well for
+> different contention domains if certain things during
+> startup and during runtime need separate contention
+> domains." The design is therefore **not one runtime atom
+> for everything**: multiple Eve atoms, one per contention
+> domain, startup-phase and runtime-phase state separated
+> where their contention profiles differ. P1 and P5
+> evaluate the split as the expected shape, with the
+> resident-to-domain mapping in §P5 and §2.4.
 
 ## 0. The direction under test
 
@@ -22,6 +37,21 @@ John (2026-11-05 ~09:45 ET; MEMORY-PLAN §8):
 
 …followed by: "You're going to have to explore that and see
 if there's any problems with that idea."
+
+And the refinement (John, 2026-11-05 ~09:47 ET):
+
+> We can use different atoms as well for different
+> contention domains if certain things during startup and
+> during runtime need separate contention domains.
+
+So the atom the heap sits on is not singular: one Eve atom
+per contention domain, with startup-phase state and
+runtime-phase state in separate atoms where their
+contention profiles differ. The problem axes below test
+the heap ruling *with* the split as the expected shape —
+§P1 for what the split does to bootstrap, §P5 for which
+runtime residents (locals, analyzer/compiler state, the
+var registry) naturally fall into which domain.
 
 Under the ruling, the heap a cohosted program sees — its
 collections, its runtime objects, its locals/analyzer/compiler
@@ -108,9 +138,68 @@ heap, not the program's, and the ruling governs the program's.
   an in-memory heap slab ctx with no files, which is the
   entry shape P1 needs.
 
+**The split, at boot (the refinement applied to this
+axis).** Terminology first, because two different things
+are called "domain": a **contention domain** is one atom —
+one CAS root, one writer-side story (contention-domains
+§1) — while Eve's `atom-domain` is a slab container that
+already holds *many* atoms by slot (`eve/src/eve/atom.cljc`
+line 78: slot 0 = the registry atom, slot 1 = the default
+atom — separate CAS roots sharing one slab). A split can
+therefore be realized two ways: several atoms in one slab
+domain (shared allocation, independent arbitration), or
+separate slab domains (independent allocation *and*
+independent mint/adopt/replay units). Contention only ever
+cares about the CAS root; bootstrap cares about the second
+granularity, because the slab domain is the unit that gets
+minted, adopted, or replayed.
+
+Under the split, boot mints the domains **in phase order,
+not all at once**:
+
+1. The **startup domain** is minted in `boot-setup!`'s
+   slot, before core.clj's first form — it must be: the
+   analyzer/compiler-side state and the var registry are
+   written by the very act of loading core (the resident
+   mapping is §P5's table). This is the only domain whose
+   existence boot's first steps depend on.
+2. The **runtime domain** (steady-state residents: the
+   thread layer's registries, runtime services) is minted
+   at the phase transition — and cohost's boot already has
+   the marker in code: `install-thread-layer!`
+   (boot.cljc:909), whose docstring is "runs after the
+   companions and before the libraries." That fill *is* a
+   phase boundary: everything it installs is runtime-phase
+   machinery. Alternatively the runtime domain is CAS-minted
+   on first steady-state touch, `pm_runtime_atom`-style,
+   and never exists at all in a boot that only compiles.
+
+The split **shrinks** P1's two priced residues rather than
+adding to them:
+
+- The construction price is paid per domain, but only the
+  startup domain's is on boot's critical path, and it is
+  the smaller of the two traffic classes; the runtime
+  domain's mint is deferred off the boot path entirely.
+- The snapshot contract stops being one obligation and
+  becomes a natural half plus a non-obligation. A cohost
+  snapshot *is* a recording of the startup phase — so its
+  replay product is exactly the startup domain
+  (mint-by-replay, deterministically, as today), and the
+  runtime domain is simply **not in the snapshot**: it is
+  per-process state by definition (contention-domains §6:
+  the runtime domain is a local affair, never
+  network-backed), minted fresh on first touch after load
+  or adopted where a seat wants warm state. The sharpest
+  sub-problem from the unsplit reading — "how does a
+  replay reproduce *the* heap-atom?" — dissolves into
+  "replay reproduces the startup domain," which is what
+  the snapshot already does for host-side boot state.
+
 **Verdict: non-problem as a paradox; priced cost as
 engineering** (domain construction price + the snapshot
-replay obligation).
+replay obligation — the obligation now scoped to the
+startup domain only, per the split above).
 
 ### P2. Identity & GC — Eve residents vs host objects in Eve clothing
 
@@ -313,23 +402,47 @@ a uniform Eve-backed heap.
   network-backed. Peers cannot share a heap."
   (contention-domains §6). Distribution lives in user
   atoms, never in the runtime domain. **Non-problem.**
-- **Contention.** Read naively — every local a domain
-  transaction — the runtime domain would be the hottest
-  CAS point in the system. The shape in P3 removes the
-  naive reading: intra-domain data is read in place; only
-  genuine state changes swap. Those are the runtime's own
-  writes: var-root changes and registry updates. Unit 1's
-  registry atom already works this way at thread-layer
-  scale (29/29 probe; no contention pathology measured).
-  The one named residue: a single registry atom serializes
-  `def`/`redef` through one CAS — boot is single-threaded
-  anyway, and analyzer/compiler state is boot-phase state,
-  quiescent while programs run. If a profile ever shows it,
-  the model's own tool is the answer: **split contention
-  domains** (frame/temporary domains per scope vs the
-  shared registry domain — the Q5 ruling's locals already
-  live in per-scope local atoms in Eve's law). Priced:
-  acceptable as plotted, with the split available.
+- **Contention — evaluated under the split, which is the
+  expected shape (refinement ruling, §0).** The governing
+  principle is the model's own: contention is a property
+  of *writes*. Reads never contend — a deref pins an epoch
+  and takes no CAS (contention-domains §1) — so each
+  resident is placed by its **write profile**, and its
+  reads follow for free. Read naively (every local a
+  transaction on one runtime atom), the heap-atom would be
+  the hottest CAS point in the system; under the split,
+  no resident's write profile contends with another's:
+
+  | resident | write profile | domain |
+  |---|---|---|
+  | locals, temporaries, form env & bindings | one thread, scope lifetime | **per-scope local atoms** — not a shared domain at all (Eve's atom law; in cohost the slots are host frames anyway, §P6 — the *values* are domain values) |
+  | analyzer/compiler-side state — in cohost's terms: the codemod ctx, the macro table `scan-macros!` builds, the shim's eval/load hook state | bursts: continuous through boot, per-`eval` at runtime; effectively one writer at a time | **startup domain** |
+  | var registry — namespace table, interning, var roots | writes concentrated in load episodes (boot, library load, `require`, `def`/`redef`); reads constant, cross-thread, contention-free | **startup domain** (placed by its writes; its hot reads pay nothing) |
+  | thread-layer state — unit 1's executor/future/agent/latch registries | steady-state, multi-threaded, written whenever programs spawn work | **runtime domain** |
+  | runtime services & program-facing steady-state registries | steady-state | **runtime domain** |
+
+  Two consequences worth naming. First, the unsplit
+  reading's one residue — a single registry atom
+  serializing every `def` — dissolves: registry writes are
+  load episodes, and load episodes already live in the
+  startup domain, away from steady-state traffic. (Unit
+  1's registry atom works at thread-layer scale today —
+  29/29 probe, no contention pathology — and under the
+  split it is a *runtime-domain* resident, which is where
+  its traffic belongs.) Second, the split buys failure
+  isolation for free: a bad swap in one domain cannot tear
+  the other's tree (per-atom snapshots; §7's "no fourth
+  form" of sharing), and steady state can die or restart
+  without touching the startup domain's product.
+  The one honest residue: **compile/load episodes at
+  runtime** (`eval`, `require`, `redef`) write the startup
+  domain while programs run — a startup-shaped burst
+  crossing into runtime phase. It introduces no new
+  hazard: a program reading a var mid-`redef` pins an
+  epoch and sees the old root or the new one (per-atom
+  snapshot law), and the serialization itself is parity
+  with stock Clojure, whose loads are lock-serialized on
+  the host today. Priced: parity, not regression.
 - **Snapshot semantics.** Per-atom snapshots are the law; a
   var root changing under a running fn is stock Clojure
   behavior, not a new hazard. The genuinely new surface is
@@ -345,10 +458,12 @@ a uniform Eve-backed heap.
   time-throttled retire flush, OBJ-1) — for the disk/net
   atom kinds that use it, not for the runtime domain.
 
-**Verdict: non-problem, with one priced item** (registry
-contention; mitigated by domain splitting). The failure
-taxonomy stays the walled world's: misses, loudly, at the
-deref that asked (contention-domains §9).
+**Verdict: non-problem under the split, with one priced
+item at parity** (runtime compile/load episodes write the
+startup domain — the serialization stock Clojure already
+has). The failure taxonomy stays the walled world's:
+misses, loudly, at the deref that asked
+(contention-domains §9).
 
 ### P6. The VS precedent — what VS already does
 
@@ -402,10 +517,37 @@ the JVM seat."
    slots are host machinery. Eve-the-library on the JVM
    lives with exactly this split today.
 
+**The precedent on the split itself.** Here the
+refinement goes one named step beyond VS's text, and VS
+explains why it can. Contention-domains §6 names **one**
+runtime domain — compiler/analyzer state and form working
+data together — and does not split startup from runtime
+inside it. VS doesn't need the phase split because its
+boot *is* warm-start adoption: the previous run's runtime
+atom is read back whole, so there is no long, distinct
+construction phase with a traffic profile of its own.
+Cohost's boot is the opposite shape — a minutes-to-seconds
+construction episode (codemod, core, companions,
+libraries) followed by steady state — and that episode is
+exactly what the startup domain quarantines. What VS
+*does* supply for the split: §1's definition (a contention
+domain is one atom; splitting means more atoms, never
+wider ones), §7's pointer-value form (a registry atom "can
+name a hundred data atoms without holding a single
+foreign subtree" — domains reference each other without
+merging), and Eve's own micro-precedent inside one slab:
+the registry atom and the default atom are already
+separate CAS roots (atom.cljc:78). The split is the
+precedent's tools applied at a phase boundary VS happens
+not to have.
+
 **Verdict: the precedent carries the ruling** — it
 supplies the two load-bearing shapes (mint/adopt at a
 well-known root; lax cost-only internals) and honestly
-marks the two places cohost's shape differs.
+marks the two places cohost's shape differs. On the
+domain split it supplies the tools and the definitions;
+the startup/runtime cut itself is cohost's, earned by
+cohost's boot shape.
 
 ## 2. The shape the exploration supports
 
@@ -413,9 +555,9 @@ marks the two places cohost's shape differs.
    value world: every value a program can hold is a domain
    value; crossings only at deref/swap; atom kinds as
    metadata (Q5); runtime state *as values* — var roots,
-   registries, analyzer/compiler state — in the default
-   runtime atom domain. This layer of the ruling has no
-   measured problem anywhere in this spike.
+   registries, analyzer/compiler state — in the runtime
+   atom domains, split per (4). This layer of the ruling
+   has no measured problem anywhere in this spike.
 2. **Realization per seat, labeled** (the plan's EVE AS-IS
    / COUNTERPART discipline, applied to the heap itself):
    substrate-backed where Eve's substrate is fast (cljs
@@ -424,18 +566,28 @@ marks the two places cohost's shape differs.
    `cohost.thread` pattern — on the JVM seat and the
    no-Eve seats. Host-heap-lax internals inside the domain
    on every seat (precedent §6: cost-only).
-3. **Minted or adopted, never constructed.** The runtime
-   domain sits at a well-known root and is created by CAS
-   on first touch (VS's `pm_runtime_atom`), in
-   `boot-setup!`'s slot; the snapshot path owes it a
-   re-mint-or-adopt contract (P1).
-4. **Split by contention class from the start:** per-scope
-   frame/temporary domains vs the shared runtime registry
-   domain — the model's own discipline, cheap to adopt
-   before the traffic exists (P5). Consistent with John's
-   standing direction that different atoms serve different
-   contention domains, startup-phase and runtime-phase
-   state in separate domains where their profiles differ.
+3. **Minted or adopted, never constructed.** Each domain
+   sits at a well-known root and is created by CAS on
+   first touch (VS's `pm_runtime_atom`). In phase order:
+   the startup domain in `boot-setup!`'s slot; the runtime
+   domain at the phase transition (`install-thread-layer!`'s
+   boundary) or on first steady-state touch. The snapshot
+   path owes a re-mint-or-adopt contract for the startup
+   domain only; the runtime domain is never snapshotted
+   (P1).
+4. **Split by contention domain from the start** (the
+   refinement ruling): residents placed by write profile,
+   reads following for free (P5's table). **Per-scope
+   local atoms** for locals/temporaries. A **startup
+   domain** — analyzer/compiler-side state, the var
+   registry — written in boot/load episodes and
+   write-silent at steady state; it is the snapshot's
+   replay product. A **runtime domain** — thread-layer
+   registries, runtime services — carrying steady-state
+   concurrent traffic. Compile/load episodes at runtime
+   write the startup domain, at parity with stock load
+   serialization. VS's §6 names one runtime domain; the
+   phase cut is cohost's, earned by its boot shape (P6).
 5. **`eve.atom` is not the runtime heap's mechanism.** It
    is the durable/cross-process atom — unit 5/7's disk/net
    *kind* machinery — and its materializing deref is
