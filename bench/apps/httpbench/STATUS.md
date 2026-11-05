@@ -178,3 +178,30 @@
   pre-syncing this branch to a separate J tree now (the gate's
   ~/cohost-cpp is not touched) and will launch build 8 on J the
   moment the gate banks.
+
+## 2026-11-05 03:52 ET — BUILD 8 (on J): record step PASSED with the fix; step 4 moved the wall; fixes banked
+- Build 8 ran on J (~/cohost-httpbench, synced @ 9272e0a) in
+  ~7 min: step 0.5 OK, step 1 AOT ensure OK, **step 2 RECORD
+  PASSED — SNAPSHOT-EVENTS written, MODULE emitted. Builds 5/6
+  died exactly here; the record-lib cure works in the real path.**
+  Step 3 emit OK. Step 4 (jank compile of cohost.app-main) failed:
+  its own JIT session reported Symbols not found for the
+  us_internal_ssl_* family (+ unlink_socket, is_shut_down).
+- Diagnosis, all firsthand on J: the symbols EXIST in the archive
+  and the .so — but only as UNDEFINED. (i) Step 4's JIT loads
+  nothing from -L/-l (those feed the static link only); a hand
+  re-run of the failed step-4 command with -L record-lib added
+  materialized cleanly and reached the linker. (ii) The static
+  link then failed on the real gaps: uSockets' core sources call
+  us_internal_ssl_* unconditionally, but the defining file
+  crypto/openssl.c was never in the app's :sources — and it is
+  empty without -DLIBUS_USE_OPENSSL and needs crypto/sni_tree.cpp
+  beside it; uWebSockets' PerMessageDeflate needs -lz.
+- Fixes banked @ f2fa324 (build 9 runs with them):
+  * src/cohost/build_jank.clj: :cpp learns :defines (passed as
+    -D to the step-0.5 compiles); step 4's compile line now also
+    carries -L record-lib after -L work (archive still wins the
+    static link; the .so serves step 4's JIT, as it serves step 2's).
+  * bench/apps/httpbench/deps.edn (the app's own config): :sources
+    += crypto/openssl.c, crypto/sni_tree.cpp; :defines
+    [LIBUS_USE_OPENSSL]; :libs [ssl crypto z] (all present on J).
