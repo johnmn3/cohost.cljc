@@ -84,13 +84,20 @@
   [x]
   (if (eve-value? x) (:memory/form x) x))
 
+(declare canonical-form-of)
+
 (defn equiv
   "Seam equality: canonical forms equal as host values. Sequential
    forms keep stock semantics (a Zone-E vector equals a Zone-H
    list with the same elements), because the canonical forms are
-   host values compared by the host's own =."
+   host values compared by the host's own =. The canonical form
+   is canonical-form-of's: a bare Eve-backed value (unit 4)
+   canonicalizes through its hosting, which is also where
+   resident references resolve -- Eve's own equiv cannot see
+   through a reference to the registered object, so the seam
+   answers, not the root."
   [a b]
-  (= (canonical-form a) (canonical-form b)))
+  (= (canonical-form-of a) (canonical-form-of b)))
 
 (defn hasheq
   "Seam hash: the host hash of the canonical form -- the same
@@ -98,7 +105,7 @@
    twin, so hasheq agrees wherever equiv holds. Never the Eve
    root's Merkle digest."
   [x]
-  (hash (canonical-form x)))
+  (hash (canonical-form-of x)))
 
 ;; ---------------------------------------------------------------------------
 ;; Unit 4: Eve-backed collections behind the shim's creators.
@@ -202,15 +209,18 @@
    collections of representable values. Chars, ratios, BigInt,
    BigDecimal, records, host objects and closures are not
    representable -- they are residents of the runtime domain
-   whose crossing rules are units 5/7 material (MEMORY-PLAN.md
-   SS8); at this unit's construction sites they are a named,
-   loud error, never a silent host-backed flip."
+   (John, Nov 5 2026 ~11:02 ET): at construction they are
+   registered on entry and stored as references by the hosting,
+   never rejected and never a silent host-backed flip. This
+   predicate remains the codec question itself, for callers
+   that need it."
   [v]
   ((host-fn* :representable?) v))
 
 (defn unrepresentable!
   "Throw the seam's named error for a value Eve's codec cannot
-   write."
+   write. Retained for explicit-check callers; the construction
+   path no longer throws it (residents, above)."
   [v]
   (throw (ex-info (str "cohost.memory: value is not representable in Eve's codec: "
                        (pr-str (type v)))
@@ -273,7 +283,9 @@
   [x]
   (if (eve-value? x)
     (:memory/form x)
-    ((host-fn* :canonical-form) x)))
+    (if (hosting-registered?)
+      ((host-fn* :canonical-form) x)
+      x)))
 
 (defn compare-values
   "Seam compare for Eve-backed collections: the host compare of
@@ -283,8 +295,6 @@
    Comparable; this is the seam answer the token world promises
    (class-of names them Comparable)."
   [a b]
-  (check-representable! a)
-  (check-representable! b)
   (compare (canonical-form-of a) (canonical-form-of b)))
 
 (defn with-meta*
@@ -298,29 +308,27 @@
     (with-meta x m)))
 
 (defn conj-checked
-  "conj at the seam for an Eve-backed coll: the incoming element
-   is representability-checked before Eve's codec can meet it,
-   so an unrepresentable element fails with the named error at
-   the seam instead of Eve's raw codec error mid-write."
+  "conj at the seam for an Eve-backed coll: the hosting's
+   conversion re-homes the incoming element on entry (codec
+   values in Eve form; host references registered as domain
+   residents), so conj never meets a value Eve cannot hold."
   [coll x]
-  (check-representable! x)
   ((get (host-fn* :ops) :conj) coll x))
 
 (defn assoc-checked
   "assoc at the seam for an Eve-backed coll: key and value
-   representability-checked first, as conj-checked."
+   re-homed on entry, as conj-checked."
   [coll k v]
-  (check-representable! k)
-  (check-representable! v)
   ((get (host-fn* :ops) :assoc) coll k v))
 
 (defn- lookup-absent?
-  "A key that cannot be in an Eve collection: outside the codec
-   universe (it could never have been written), or not an
-   integer for a vector (stock's shape for both)."
+  "A key that cannot be in an Eve collection: not an integer
+   for a vector (stock's shape). Whether a key's Eve form
+   exists at all is the hosting's probe conversion to answer
+   (a non-resident host reference is absent; a resident is
+   looked up by its reference)."
   [coll k]
-  (or (not (representable? k))
-      (and (= :vector (eve-kind coll)) (not (integer? k)))))
+  (and (= :vector (eve-kind coll)) (not (integer? k))))
 
 (defn lookup
   "get at the seam for an Eve-backed coll: an absent-shaped key
@@ -417,20 +425,16 @@
   (t-check! t)
   (if (and (= :map (:memory/kind t)) (some? x))
     (cond
-      (map? x) (reduce (fn [t2 [k v]] (t-swap-root! t2 (get (host-fn* :ops) :assoc) (check-representable! k) (check-representable! v))) t (seq x))
+      (map? x) (reduce (fn [t2 [k v]] (t-swap-root! t2 (get (host-fn* :ops) :assoc) k v)) t (seq x))
       (sequential? x) (if (= 2 (count x))
-                        (do (check-representable! (first x)) (check-representable! (second x))
-                            (t-swap-root! t (get (host-fn* :ops) :assoc) (first x) (second x)))
+                        (t-swap-root! t (get (host-fn* :ops) :assoc) (first x) (second x))
                         (throw (ex-info "Vector arg to map conj must be a pair" {:type :cohost.memory/bad-conj})))
       :else (throw (ex-info (str "Don't know how to conj " (pr-str (type x)) " onto a map transient") {:type :cohost.memory/bad-conj})))
-    (do (check-representable! x)
-        (t-swap-root! t (get (host-fn* :ops) :conj) x))))
+    (t-swap-root! t (get (host-fn* :ops) :conj) x)))
 
 (defn t-assoc
   "assoc! at the seam (assocN for a vector transient)."
   [t k v]
-  (check-representable! k)
-  (check-representable! v)
   (t-swap-root! t (get (host-fn* :ops) :assoc) k v))
 
 (defn t-dissoc
@@ -465,21 +469,17 @@
   ([t k] (t-get t k nil))
   ([t k not-found]
    (t-check! t)
-   (if (representable? k)
-     ((get (host-fn* :ops) :get) (t-root t) k not-found)
-     not-found)))
+   ((get (host-fn* :ops) :get) (t-root t) k not-found)))
 
 (defn t-contains?
   [t k]
   (t-check! t)
-  (and (representable? k)
-       (boolean ((get (host-fn* :ops) :contains) (t-root t) k))))
+  (boolean ((get (host-fn* :ops) :contains) (t-root t) k)))
 
 (defn t-find
   [t k]
   (t-check! t)
-  (when (representable? k)
-    ((get (host-fn* :ops) :find) (t-root t) k)))
+  ((get (host-fn* :ops) :find) (t-root t) k))
 
 (defn t-peek
   [t]

@@ -46,6 +46,89 @@
 
 (defonce ^:private atom-ids (atom 0))
 
+;; ---------------------------------------------------------------------------
+;; Domain residents (John, Nov 5 2026 ~11:02 ET): a host reference
+;; that crosses into Eve space is a resident of the one runtime
+;; domain -- registered on entry, no special accounting. A value
+;; Eve's codec cannot write (a closure, a Var, a record, a char,
+;; any host object) is registered here and its Eve form is a
+;; tagged reference, {:cohost/kind :cohost.memory/host-ref :id n}
+;; (the layer's :cohost/kind tag convention, as unit 3's stand-in
+;; carries ::root). Reads resolve the reference back to the
+;; registered object: deeply in canonical forms (the = / hasheq
+;; contract), one level at a time in the seam's ops -- the
+;; guarded materialization of the touched part. The registry's
+;; state lives in one atom; the identity map and id vector are
+;; its contents on this seat, mutated only under its lock.
+
+(defonce ^:private residents
+  (atom {:by-obj (java.util.IdentityHashMap.) :by-id []}))
+
+(defn- resident-id
+  "The registry id of host object o, or nil when o is not one."
+  [o]
+  (.get ^java.util.IdentityHashMap (:by-obj @residents) o))
+
+(defn- register-resident!
+  "Register host object o as a domain resident; returns its id.
+   Idempotent per object identity."
+  [o]
+  (locking residents
+    (let [st @residents]
+      (or (.get ^java.util.IdentityHashMap (:by-obj st) o)
+          (let [id (count (:by-id st))]
+            (.put ^java.util.IdentityHashMap (:by-obj st) o id)
+            (reset! residents (assoc st :by-id (conj (:by-id st) o)))
+            id)))))
+
+(defn- resident
+  "The host object registered under id."
+  [id]
+  (nth (:by-id @residents) id))
+
+(defn- probe-resident-id
+  "The registry id a lookup probe for o should use: identity,
+   with an equality fallback for Characters (a char is a value,
+   and a probe char need not be the identical object the store
+   registered)."
+  [o]
+  (or (resident-id o)
+      (when (instance? Character o)
+        (first (keep-indexed (fn [i r] (when (and (instance? Character r) (= r o)) i))
+                             (:by-id @residents))))))
+
+(defn- marker-form
+  "The host form of the Eve-side reference to resident id."
+  [id]
+  {:cohost/kind :cohost.memory/host-ref :id id})
+
+(defn- ref-marker?
+  "True when a canonicalized (host-form) value is a resident
+   reference."
+  [v]
+  (and (map? v) (= 2 (count v))
+       (= :cohost.memory/host-ref (:cohost/kind v))
+       (integer? (:id v))))
+
+(defn- resolve-refs
+  "A canonicalized value with a top-level resident reference
+   resolved to the registered object; anything else itself.
+   (Canonicalize resolves nested references as it rebuilds.)"
+  [v]
+  (if (ref-marker? v) (resident (:id v)) v))
+
+(defn- eve-ref?
+  "True when an Eve-form value is a resident reference."
+  [v]
+  (and (instance? eve.map.EveHashMap v) (= 2 (count v))
+       (= :cohost.memory/host-ref (get v :cohost/kind))))
+
+(defn- resolve-value
+  "A value an Eve op produced, with a top-level resident
+   reference resolved to the registered object."
+  [v]
+  (if (eve-ref? v) (resident (get v :id)) v))
+
 (defn canonicalize
   "Walk an Eve root (or a host value Eve's codec materialized) to
    its canonical Clojure-level form: Eve collections become the
@@ -55,11 +138,11 @@
   [v]
   (cond
     (instance? eve.vec.EveVector v) (into [] (map canonicalize) (seq v))
-    (instance? eve.map.EveHashMap v) (into {} (map (fn [e] [(canonicalize (key e)) (canonicalize (val e))])) (seq v))
+    (instance? eve.map.EveHashMap v) (resolve-refs (into {} (map (fn [e] [(canonicalize (key e)) (canonicalize (val e))])) (seq v)))
     (instance? eve.set.EveHashSet v) (into #{} (map canonicalize) (seq v))
     (instance? eve.list.EveList v) (apply list (map canonicalize (seq v)))
     (vector? v) (into [] (map canonicalize) v)
-    (map? v) (into {} (map (fn [e] [(canonicalize (key e)) (canonicalize (val e))])) v)
+    (map? v) (resolve-refs (into {} (map (fn [e] [(canonicalize (key e)) (canonicalize (val e))])) v))
     (set? v) (into #{} (map canonicalize) v)
     (sequential? v) (apply list (map canonicalize v))
     :else v))
@@ -144,9 +227,9 @@
    values. Eve values (bare, wrapped, stand-ins) are already in
    Eve. Chars, ratios, BigInt, BigDecimal, BigInteger, records,
    and arbitrary host objects (closures included) are not --
-   they are runtime-domain residents whose crossing rules are
-   units 5/7 material; constructors reject them with the seam's
-   named error rather than storing a lossy form."
+   they are domain residents (see the registry above): the
+   conversion registers them on entry and stores their tagged
+   reference, never a lossy form."
   [v]
   (cond
     (nil? v) true
@@ -178,9 +261,6 @@
 ;; or a wrapper contributes its Eve root when stored into an Eve
 ;; collection; any other value itself (host values are
 ;; flat-encoded by Eve's writer; nested Eve values nest).
-
-(defn- check-all! [coll]
-  (run! memory/check-representable! coll))
 
 (defn- analyzer-active?
   "True when the host analyzer is macroexpanding on this
@@ -215,26 +295,74 @@
         ser (partial eve-mem/value+sio->eve-bytes sio)]
     (eve-list/jvm-sab-list-from-offset sio (eve-list/jvm-write-list! sio ser (apply list items)))))
 
-(defn- ->eve
-  "Deep-convert a value for Eve's writer. Eve-backed values give
-   their root; host collections are rebuilt in Eve form with
-   converted elements. The conversion a bare seq needs is the
-   point: Eve's writer encodes a generic seq (a Cons, a lazy
-   seq) as a VECTOR, which would change the value's kind at the
-   seam -- a macro expansion is a seq, not a vector, and the
-   analyzer knows the difference. A seq therefore becomes an
-   Eve list here, at any depth."
-  [x]
+(def ^:private absent-key ::absent-key)
+
+(defn- convert
+  "Deep-convert a value for Eve's writer, in one of two modes.
+   Eve-backed values give their root; host collections are
+   rebuilt in Eve form with converted elements (re-homed at the
+   facade, per the Nov 5 hash-facade ruling: from entry on, the
+   value lives and hashes in Eve's world). The conversion a
+   bare seq needs is the point: Eve's writer encodes a generic
+   seq (a Cons, a lazy seq) as a VECTOR, which would change the
+   value's kind at the seam -- a macro expansion is a seq, not
+   a vector, and the analyzer knows the difference. A seq
+   therefore becomes an Eve list here, at any depth.
+
+   A leaf Eve's codec can write passes through. A leaf it
+   cannot (a closure, a Var, a record, a char, any host object)
+   is a domain resident: in :store mode it is registered on
+   entry and converts to its tagged reference; in :probe mode
+   (a lookup key) a leaf that is not already a resident makes
+   the whole conversion answer ::absent-key -- the key cannot
+   be in the collection."
+  [x mode]
   (cond (value?* x) (unwrap x)
-        (vector? x) (eve-vec/eve-vec (ctx) (map ->eve x))
-        (map? x) (let [sio (ctx)]
-                   (eve-map/jvm-eve-hash-map-from-offset
-                    sio (eve-map/jvm-write-map! sio (into {} (map (fn [e] [(->eve (key e)) (->eve (val e))]) x)))))
-        (set? x) (let [sio (ctx)
-                       ser (partial eve-mem/value+sio->eve-bytes sio)]
-                   (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser (map ->eve x))))
-        (seq? x) (write-list-raw (map ->eve x))
-        :else x))
+        ;; a record is a map to the walk, but it is a host value
+        ;; with a type: it converts as a leaf (a resident when
+        ;; the codec cannot write it), never rebuilt as a map
+        (instance? clojure.lang.IRecord x)
+        (cond (representable? x) x
+              (= mode :store) (convert (marker-form (register-resident! x)) :store)
+              :else (if-let [id (probe-resident-id x)]
+                      (convert (marker-form id) :store)
+                      absent-key))
+        (vector? x) (let [items (mapv #(convert % mode) x)]
+                      (if (some #(= absent-key %) items)
+                        absent-key
+                        (eve-vec/eve-vec (ctx) items)))
+        (map? x) (let [entries (mapv (fn [e] [(convert (key e) mode) (convert (val e) mode)]) x)]
+                   (if (some (fn [[k v]] (or (= absent-key k) (= absent-key v))) entries)
+                     absent-key
+                     (let [sio (ctx)]
+                       (eve-map/jvm-eve-hash-map-from-offset
+                        sio (eve-map/jvm-write-map! sio (into {} entries))))))
+        (set? x) (let [items (mapv #(convert % mode) x)]
+                   (if (some #(= absent-key %) items)
+                     absent-key
+                     (let [sio (ctx)
+                           ser (partial eve-mem/value+sio->eve-bytes sio)]
+                       (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser items)))))
+        (seq? x) (let [items (mapv #(convert % mode) x)]
+                   (if (some #(= absent-key %) items)
+                     absent-key
+                     (write-list-raw items)))
+        :else (cond (representable? x) x
+                    (= mode :store) (convert (marker-form (register-resident! x)) :store)
+                    :else (if-let [id (probe-resident-id x)]
+                            (convert (marker-form id) :store)
+                            absent-key))))
+
+(defn- ->eve
+  "Deep-convert a value being STORED into Eve form."
+  [x]
+  (convert x :store))
+
+(defn- ->eve-probe
+  "Deep-convert a lookup key: like ->eve, but ::absent-key when
+   the key holds a host reference that is not a resident."
+  [x]
+  (convert x :probe))
 
 (defn build-vector
   "A bare Eve vector holding coll's elements (a host vector
@@ -242,8 +370,7 @@
   [coll]
   (if (analyzer-active?)
     (vec coll)
-    (do (check-all! coll)
-        (eve-vec/eve-vec (ctx) (map ->eve coll)))))
+    (eve-vec/eve-vec (ctx) (map ->eve coll))))
 
 (defn build-map
   "A bare Eve hash map from a flat alternating key/value seq.
@@ -256,7 +383,6 @@
   (if (analyzer-active?)
     (apply hash-map flat-kvs)
     (let [pairs (partition 2 flat-kvs)
-          _ (run! (fn [[k v]] (memory/check-representable! k) (memory/check-representable! v)) pairs)
           m (reduce (fn [m [k v]] (assoc m (->eve k) (->eve v))) {} pairs)
           sio (ctx)]
       (eve-map/jvm-eve-hash-map-from-offset sio (eve-map/jvm-write-map! sio m)))))
@@ -272,10 +398,9 @@
   [coll]
   (if (analyzer-active?)
     (set coll)
-    (do (check-all! coll)
-        (let [sio (ctx)
-              ser (partial eve-mem/value+sio->eve-bytes sio)]
-          (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser (map ->eve coll)))))))
+    (let [sio (ctx)
+          ser (partial eve-mem/value+sio->eve-bytes sio)]
+      (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser (map ->eve coll))))))
 
 (defn build-list
   "A bare Eve list holding coll's elements, in order (a host
@@ -283,8 +408,7 @@
   [coll]
   (if (analyzer-active?)
     (apply list coll)
-    (do (check-all! coll)
-        (write-list-raw (map ->eve coll)))))
+    (write-list-raw (map ->eve coll))))
 
 (def empty-vector (eve-vec/eve-vec (ctx) []))
 (def empty-map (build-map []))
@@ -582,16 +706,25 @@
   ;; the ops convert what they store and what they probe with,
   ;; like the constructors: a stored seq must land as an Eve
   ;; list (see ->eve), and a seq probe key must be encoded as
-  ;; the list it was stored as, or the lookup misses
+  ;; the list it was stored as, or the lookup misses. Probe
+  ;; keys convert in :probe mode: a key holding a host
+  ;; reference that is not a resident answers absent, it does
+  ;; not register. Values the ops hand back resolve a top-level
+  ;; resident reference to the registered object.
   :ops {:conj (fn [c x] (conj c (->eve x)))
         :assoc (fn [c k v] (assoc c (->eve k) (->eve v)))
-        :dissoc (fn [c k] (dissoc c (->eve k)))
-        :disj (fn [c k] (disj c (->eve k)))
+        :dissoc (fn [c k] (let [ek (->eve-probe k)] (if (= absent-key ek) c (dissoc c ek))))
+        :disj (fn [c k] (let [ek (->eve-probe k)] (if (= absent-key ek) c (disj c ek))))
         :pop (fn [c] (pop c))
-        :peek (fn [c] (peek c))
-        :nth (fn [c i nf] (nth c i nf))
+        :peek (fn [c] (resolve-value (peek c)))
+        :nth (fn [c i nf] (resolve-value (nth c i nf)))
         :count (fn [c] (count c))
-        :get (fn [c k nf] (get c (->eve k) nf))
-        :contains (fn [c k] (contains? c (->eve k)))
-        :find (fn [c k] (find c (->eve k)))}
+        :get (fn [c k nf] (let [ek (->eve-probe k)]
+                            (if (= absent-key ek) nf (resolve-value (get c ek nf)))))
+        :contains (fn [c k] (let [ek (->eve-probe k)]
+                              (and (not= absent-key ek) (contains? c ek))))
+        :find (fn [c k] (let [ek (->eve-probe k)]
+                          (when (not= absent-key ek)
+                            (when-let [e (find c ek)]
+                              (clojure.lang.MapEntry. (resolve-value (key e)) (resolve-value (val e)))))))}
   :install-fill install-fill!})

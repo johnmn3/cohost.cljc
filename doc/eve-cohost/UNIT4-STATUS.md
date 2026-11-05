@@ -159,15 +159,31 @@ bindings once they land. Any jank numbers produced before
 that are against PRE-RELEASE bindings and are marked as such.
 JVM-seat gates stand as final.
 
+**Residents fix — LANDED (same day, ~1:50 PM ET).**
+The registry + tagged-reference conversion is in
+`cohost.memory-eve` (residents atom; `convert` in :store /
+:probe modes; canonicalize and the seam ops resolve
+references) and `cohost.memory` (construction no longer
+throws the named error; `equiv`/`hasheq` canonicalize bare
+Eve-backed values through `canonical-form-of`, since Eve's
+own equiv cannot see through a reference). Host-side probe
+dev/u4_probe29: **12/12** — fn value stored in an Eve map
+comes back identical and callable (42), Var key lookup +
+contains, char nth + char key probed by a different Character
+instance, never-stored fn probe answers not-found, equiv +
+hasheq against the host twin true, record value returns
+identical, transient assoc of a fn survives persistent!.
+Next: battery with fill forced, then probe_collections.
+
 **What is running / remains.**
 - Running at this bank: nothing — the last legs (battery
   controls + the eduction reruns) have completed and are
-  reported above. Next: the residents fix, then
-  probe_collections.clj full run (M5; ~78 booted-world checks,
-  its earlier partial run: 49 PASS before the macroexpand fix,
-  with the remaining failures since attributed to the probe
-  itself using literal-bodied small arities + the residents
-  gap).
+  reported above. Next: the residents fix (landed, above),
+  then probe_collections.clj full run (M5; ~78 booted-world
+  checks, its earlier partial run: 49 PASS before the
+  macroexpand fix, with the remaining failures since
+  attributed to the probe itself using literal-bodied small
+  arities + the residents gap).
 - Remains before the corpus run: residents fix + battery back
   to 221/221 with fill forced (M6), probe_collections green.
 - Then: the 4,401-case corpus, fill forced vs the host-backed

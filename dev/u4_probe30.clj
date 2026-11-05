@@ -1,0 +1,5 @@
+(println "user.dir:" (System/getProperty "user.dir"))
+(println "../eve/src exists:" (.exists (java.io.File. "../eve/src")))
+(println "../eve/src canonical:" (.getCanonicalPath (java.io.File. "../eve/src")))
+(println "eve/atom.cljc resource:" (clojure.java.io/resource "eve/atom.cljc"))
+(println "cohost/shim.cljc resource:" (clojure.java.io/resource "cohost/shim.cljc"))
