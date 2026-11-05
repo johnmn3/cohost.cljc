@@ -123,7 +123,26 @@ namespace — the probe reaches hosts through the CLI, so basilisp has
 no probe row on this tree. Not a threading failure; the threading
 surface was never reached.
 
-Probe-design note (measured): the first JVM run never exited — after
+### ClojureScript (cljs, self-hosted on Node) — the edge, measured
+
+`SUMMARY|cljs|ok=15 unsupported-shim=0 fail-other=8 wall-ms=9055`
+
+All twelve libraries load. `delay` answers (2 — in-process, no thread
+crosses). **Every case that routes through the executor/latch seam
+fails, identically**: future-basic, future-capture-local,
+future-capture-atom, future-binding, promise, agent and pmap all fail
+with `java.lang.NullPointerException :: Cannot read properties of
+undefined (reading 'call')`. `promise` belongs in that family: core's
+Promise waits on a `CountDownLatch`. In the shim, `CountDownLatch`,
+`java.lang.Thread` and the Agent executors are the unsupported set;
+through the JS layer the missing entries surface as an undefined-call
+NPE rather than the shim's clean "not available" exception. Closure
+capture itself is never reached — the machinery fails before any
+closure crosses. `spec-conform` also fails ("ExceptionInfo :: ERROR"
+through the eval path; it names no threading form). test-stacktrace
+answers 0.
+
+Probe-design notes (measured): the first JVM run never exited — after
 the agent/future cases, the JVM's non-daemon executor threads keep the
 process alive. The program now ends with `shutdown-agents` + a guarded
 `System/exit`, after printing its done line.

@@ -9,13 +9,9 @@
     (try (println (str "PROBE|" nm "|OK " (pr-str (f))))
          (catch Throwable t
            (println (str "PROBE|" nm "|FAIL " (.getName (class t)) " :: " (ex-message t))))))
-  ;; --- the twelve libraries, each required on its own ---
-  (doseq [lib '[clojure.walk clojure.set clojure.string clojure.zip
-                clojure.data clojure.edn clojure.template clojure.test
-                clojure.math clojure.stacktrace clojure.repl
-                clojure.spec.alpha]]
-    (probe (str "load-" lib) (fn [] (require lib) :loaded)))
   ;; --- the threading surface, as library code and its users call it ---
+  ;; (the twelve library loads run before this form as separate
+  ;; top-level -e forms; see dev/eve_probe.clj for why)
   (probe "future-basic"        (fn [] (deref (future (+ 1 2)))))
   (probe "future-capture-local" (fn [] (let [x 41] (deref (future (inc x))))))
   (probe "future-capture-atom" (fn [] (let [a (atom 0)] (deref (future (swap! a inc))) @a)))
