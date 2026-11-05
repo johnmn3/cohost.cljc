@@ -128,6 +128,11 @@
    :format (fn [fmt & args] (apply format fmt args))
    :sort-array! (fn [arr cmp] (java.util.Arrays/sort arr cmp) arr)
    :close! (fn [x] (.close x))
+   ;; a JVM array (byte[] from .getBytes or a java.net.http body, Object[]
+   ;; from to-array): Clojure 1.12 has no array? of its own, and without
+   ;; this the shim read none as an array -- (String. bytes "UTF-8") threw
+   ;; its ClassCastException on a byte[] (measured, unit 9)
+   :array? (fn [x] (and (some? x) (.isArray (class x))))
    ;; cohost.http's bodies as java.io's own byte streams (unit 9): a body a
    ;; program reads through slurp, clojure.java.io or .read is the host's
    ;; InputStream, as the JDK's HttpURLConnection hands it out
