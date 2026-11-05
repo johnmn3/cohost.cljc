@@ -388,19 +388,30 @@ namespace cohost_thread {
 namespace cohost_bell {
   struct bell { std::mutex m; std::condition_variable cv; bool signalled = false; };
   inline std::mutex reg_m;
-  inline std::unordered_map<long long, std::shared_ptr<bell>> reg;
+  // The registry map is constructed lazily behind call_once: under
+  // jank's AOT linking a namespace-scope container can sit in
+  // zero-initialized storage whose constructor never ran, and an
+  // unordered_map there has bucket count 0 -- the first insert's
+  // hash-modulo is a SIGFPE (measured, unit 2). POD state only at
+  // namespace scope; the map itself is heap-constructed on first use.
+  inline std::unordered_map<long long, std::shared_ptr<bell>> *reg_ptr{nullptr};
+  inline std::once_flag reg_once;
+  inline std::unordered_map<long long, std::shared_ptr<bell>> &reg() {
+    std::call_once(reg_once, [] { reg_ptr = new std::unordered_map<long long, std::shared_ptr<bell>>(); });
+    return *reg_ptr;
+  }
   inline std::atomic<long long> next_id{1};
   inline long long make() {
     auto const id = next_id.fetch_add(1);
     auto b = std::make_shared<bell>();
     std::lock_guard<std::mutex> g(reg_m);
-    reg[id] = b;
+    reg()[id] = b;
     return id;
   }
   inline std::shared_ptr<bell> get(long long id) {
     std::lock_guard<std::mutex> g(reg_m);
-    auto const it = reg.find(id);
-    return it == reg.end() ? nullptr : it->second;
+    auto const it = reg().find(id);
+    return it == reg().end() ? nullptr : it->second;
   }
   inline void signal(long long id) {
     auto const b = get(id);
