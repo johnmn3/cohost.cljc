@@ -1,9 +1,12 @@
-# U6 / check #11 — transform introspection: lane report (IN-PROGRESS)
+# U6 / check #11 — transform introspection: lane report (FINAL)
 
 Branch muse/debug-seam-introspect, base muse/debug-seam @ 030cc0a.
-Status: IN-PROGRESS — probe evidence banked; fix being implemented in
-bin/cohost; end-to-end verification (fresh snapshot + full runner)
-routes to the j gate via lane M's bundle (see "local venue" below).
+Fix @ 37d340c (bin/cohost + doc/CLI.md). Status: DONE locally —
+diagnosis proven, fix landed, routing verified end-to-end on the
+shapes this box can run; the one remaining verification is the
+full runner on a fresh snapshot, which routes to the j gate via
+lane M's bundle (four local snapshot builds failed tonight, all
+environmental — see "local venue").
 
 ## The question
 
@@ -38,6 +41,8 @@ path and core boots from source), pre-fix code, measured locally
   which the runner captures — capture and needles are not the bug.
   (The analysis lane's earlier measurement of this shape: 1,572
   hits; the off-by-one is run variance.)
+- First dump line naming cohost:
+  `#line 283 "/home/hatch/workspace/cohost-introspect/src/cohost/cli.cljc"`
 
 Shape C — `run-main` over the snapshot's objects (launcher binary
 skipped, snapshot module path kept): not measured. The fix does not
@@ -60,22 +65,48 @@ U6's passthrough was spiked and verified on the JIT/source-boot
 path only (5fde5fb: "dumps jank's IR on the JIT path"); the
 launcher shape was never measured until the gate.
 
-## Fix (bin/cohost only; no patches on jank)
+## Fix @ 37d340c (bin/cohost only; no patches on jank)
 
 When `JANK_PRINT_CODEGEN` or `JANK_PRINT_IR` is set (any value but
 "0"/""), the run takes the source boot — the same treatment
 `COHOST_JANK_PROFILE=1` already gets, one layer deeper:
 
-- `jank-launch`: the launch map is overridden to the AOT/source
-  shape (cohost's -O3 AOT objects + `src`, `:snapshot? false`), so
-  cohost.cli boots core from source and the rewritten forms compile
-  in the run, dumping as they go.
+- `jank-introspect?` (new, bin/cohost): either var set as above.
+- `jank-launch`: under introspection the launch map is overridden
+  to the source boot (cohost's -O3 AOT objects + `src`,
+  `:snapshot? false`) and the per-project snapshot is skipped, so
+  core and the project's namespaces compile in the run, dumping
+  as they go.
 - `launch!`: the compiled launcher is not exec'd for such a run
   (it would ignore the launch map's module path entirely).
+- doc/CLI.md: the introspection paragraph now says an
+  introspection request takes the source boot for that run, like
+  a profile request takes the JIT path.
 
-doc/CLI.md gains a sentence saying an introspection request takes
-the source-boot path for that run, like a profile request takes
-the JIT path.
+Paren check on bin/cohost: OK, 31 forms.
+
+## Verification (local, this tree @ 37d340c)
+
+- Post-fix routing probe — the runner's exact invocation
+  (`bin/cohost :jank -e "(+ 1 2)"`, dev/cli-demo,
+  `JANK_PRINT_CODEGEN=1`; the half-built snapshot dir in place,
+  `COHOST_JANK_SNAPSHOT=off` so the stale snapshot does not trigger
+  a rebuild first — on a fresh-snapshot machine that step is a
+  no-op check and the override replaces the launcher launch):
+  **exit 0, stdout 557,866 bytes (byte-identical to shape B),
+  1,571 lines naming cohost, stderr empty.**
+- Ordinary run unchanged: same invocation without the vars →
+  exit 0, prints `3`, no dump.
+- JVM runner suite: `bb debug-seam:check jvm` →
+  **10/14 PASS, 0 FAIL**; `#11 SKIP jank-only (no transform to
+  introspect on the JVM host)`; no other check moved.
+- OWED (j gate, via lane M's bundle of this branch): build the
+  snapshot on j from 37d340c, run `bb debug-seam:check jank`;
+  expected #11 PASS with the dump's own line quoted by the runner
+  (the codegen half now boots from source; the profile half is
+  untouched and already passes). Every other jank check should
+  read exactly as at the 358048e gate — the fix is inert unless
+  an introspection var is set.
 
 ## Local venue (why the definitive verification runs on j)
 
@@ -100,6 +131,4 @@ environmental causes, none in the seam's code:
 
 Per the standing venue order, the snapshot + runner verification
 of the fixed tree runs on j.slaa.us from lane M's bundle of this
-branch. Local verification that does not need the snapshot: the
-JVM runner suite, and the shape-B routing behavior of the fixed
-bin/cohost.
+branch.
