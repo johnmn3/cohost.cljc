@@ -148,3 +148,13 @@
   jank -X:test, per the spec order.
 - J remains the final gate's (its snapshot still in flight at
   08:07 UTC; gate's JVM check reported 10/14 PASS 0 FAIL).
+
+## 2026-11-05 03:26 ET — BUILD 7: still step 1, on the shim module (~34 min in)
+- 7 AOT objects banked. The in-flight module is cohost/shim — the
+  giant java-facade file and the graph's known monster at -O3. Its
+  clang has ~1:20 CPU after ~10 min wall (it is getting a fraction
+  of a core under load ~13) and RSS is 1.8 GB and growing — the
+  step to watch: if anything OOMs on this box tonight it will be
+  this compile or a neighbor of it.
+- Nothing else to report: no step boundary crossed since 03:11,
+  build neither finished nor failed. Steps 2-4 still ahead.
