@@ -151,6 +151,15 @@ refuses it, since the snapshot's key reads `jank print-binary-version`, which a 
 move), and `COHOST_JANK_O` is the JIT optimization flag (default `-O3`; `none` passes no `-O`;
 any other value, e.g. `-O0`, replaces it).
 
+Jank's own introspection reaches the run the same way: the launcher passes its environment to
+the jank process unchanged, so `JANK_PRINT_IR=1` and `JANK_PRINT_CODEGEN=1` print jank's
+intermediate representation and the generated C++ for the forms as cohost rewrote them (shim
+and `cohost.core` names included -- what the host compiler actually receives). For a profile,
+`COHOST_JANK_PROFILE=1 bin/cohost :jank ...` runs the program under jank's `--profile` and
+jank writes its trace to `jank.profile` in the project directory (a full enter/exit trace --
+expect tens of megabytes for a booting run). A compiled snapshot launcher cannot take the
+flag, so a profile request takes the JIT `run-main` path for that run.
+
 ## jank: where `cohost :jank` spends its time
 
 Measured 2026-11-02 ET in `dev/cli-demo` with a fresh snapshot, `bash dev/perf/jank_snapshot_cli_parts.sh`: each part is its own command, three runs, seconds (the jank parts run the launch's own `jank -O3 ... run-main cohost.cli` with a config that stops at that point).

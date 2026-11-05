@@ -122,6 +122,18 @@
                (jank-cli ["-e" "(+ 1 2)"] "" {"JANK_PRINT_CODEGEN" "1"})))
 (def codegen-text (when codegen (str (:out codegen) "\n" (:err codegen))))
 
+;; U6: a profile on request -- COHOST_JANK_PROFILE=1 must produce
+;; jank's trace file in the project directory
+(def profile-file-path (str demo "/jank.profile"))
+(def profile-existed? (fs/exists? profile-file-path))
+(def profile-run (when (= target "jank")
+                   (jank-cli ["-e" "(+ 1 2)"] "" {"COHOST_JANK_PROFILE" "1"})))
+(def profile-made? (when (= target "jank")
+                     (and (fs/exists? profile-file-path)
+                          (pos? (fs/size profile-file-path)))))
+(when (and (= target "jank") profile-made? (not profile-existed?))
+  (fs/delete profile-file-path))
+
 ;; ---- the checks ------------------------------------------------------
 
 (defn first-real-line [s]
@@ -194,18 +206,23 @@
          (str "/ exit " (:exit div-run) ", quot exit " (:exit quot-run)
               "; " (first-real-line (:err div-run))))
 ;; #11 transform introspection: the launcher passes JANK_PRINT_CODEGEN
-;; through and the rewritten forms' codegen prints (jank only)
+;; through and the rewritten forms' codegen prints, and a profile is
+;; produced on request (jank only)
 (record! 11
          (if (= target "jvm")
            "SKIP"
            (if (and (= 0 (:exit codegen))
-                    (includes? codegen-text "cohost"))
+                    (includes? codegen-text "cohost")
+                    (= 0 (:exit profile-run))
+                    profile-made?)
              "PASS"
              "FAIL"))
          (if (= target "jvm")
            "jank-only (no transform to introspect on the JVM host)"
-           (str "exit " (:exit codegen) ", codegen names cohost: "
-                (boolean (includes? codegen-text "cohost")))))
+           (str "codegen exit " (:exit codegen) ", names cohost: "
+                (boolean (includes? codegen-text "cohost"))
+                "; profile exit " (:exit profile-run)
+                ", jank.profile written: " (boolean profile-made?))))
 (record! 12 "SKIP" "owned by U4c (gdb break-on-throw)")
 ;; #13 macro-expansion error: the load fails and the report identifies
 ;; the macro call site
