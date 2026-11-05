@@ -89,3 +89,37 @@
   the final static link (the .so must NOT sit where step 4's -l cpp
   can find it first — a dynamic dependency would break the
   run-from-another-directory gate).
+
+## 2026-11-05 03:10 ET — FIX COMMITTED (9a0e41e); BUILD 7 LAUNCHED on this box
+- build_jank.clj (the one permitted src/cohost file): the :cpp sources
+  now compile ONCE with -fPIC at step 0.5, before the record step;
+  the archive still serves step 4's static link from work/, and a
+  shared twin goes to work/record-lib/libcpp.so, passed to the record
+  jank as -L work/record-lib -l cpp. Old step 3.5's duplicate compile
+  is gone (flags only). Paren check OK; file parses (13 forms).
+- Venue: J's heavy slot is still the debug-seam final gate's (its
+  snapshot log touched 07:48 UTC, tree at the collated tip be95bb2),
+  so build 7 runs HERE (box load ~1 at launch): bin/cohost -T:build
+  build in bench/apps/httpbench/, detached, log bench/apps/httpbench/
+  build7.log. First attempt died on a wrong relative path to
+  bin/cohost (mine, cost ~0); relaunched absolute. JANK-EXE-BUILD
+  .../target/httpbench/run (new) is in the log — the exe is named
+  "run" (that also identifies Nov 4's 18:20 binary as a build product
+  of this same path).
+
+## 2026-11-05 03:10 ET — FIX COMMITTED (9a0e41e); BUILD 7 LAUNCHED on this box
+- build_jank.clj (the one permitted src/cohost file): the :cpp sources
+  now compile ONCE with -fPIC at step 0.5, before the record step;
+  the archive still serves step 4's static link from work/, and a
+  shared twin goes to work/record-lib/libcpp.so, passed to the record
+  jank as -L work/record-lib -l cpp. Old step 3.5's duplicate compile
+  is gone (flags only). Paren check OK; file parses (13 forms).
+- Venue: J's heavy slot is still the debug-seam final gate's (its
+  snapshot log touched 07:48 UTC, tree at the collated tip be95bb2),
+  so build 7 runs HERE (box load ~1 at launch): bin/cohost -T:build
+  build in bench/apps/httpbench/, detached, log bench/apps/httpbench/
+  build7.log. First attempt died on a wrong relative path to
+  bin/cohost (mine, cost ~0); relaunched absolute. JANK-EXE-BUILD
+  .../target/httpbench/run (new) is in the log — the exe is named
+  "run" (that also identifies Nov 4's 18:20 binary as a build product
+  of this same path).
