@@ -224,3 +224,18 @@
 - Next per spec: cohost -X:test on jank and JVM; the binary from
   another directory; docs:check jank; measurements (measure.sh);
   README; CAPSTONE report.
+
+## 2026-11-05 04:12 ET — gates on J: tests PASS both hosts; from-another-dir PASS
+- cohost -X:test on J: JVM 4 tests / 17 assertions, 0 failures,
+  exit 0; JANK same counts, exit 0 (fresh snapshot built in this
+  tree, 364 s).
+- From-another-directory: the binary copied alone to
+  ~/hb-elsewhere/run and started from / served HTTP 200 with
+  exactly 1024 bytes; killed by PID afterwards.
+- Measurement prep on J: nginx present (/usr/sbin/nginx); wrk
+  absent (building from the wrk source kept on the hatch box);
+  ephemeral range 32768-60999 = 28,232 ports, so the concurrency
+  series runs 100 / 1,000 / 10,000 and a capped top row at 25,000
+  under the spec's cap clause; hard fd limit is ~1.07e9 (no fd cap).
+- Remaining: wrk build, measure.sh run, docs:check jank, README,
+  CAPSTONE report.
