@@ -126,3 +126,23 @@ persistent_queue among its runtime objects either).
   `:host-lacks` opt, so the adapter declaration alone must route
   the family). Then the J AOT gate + battery, then the probe row,
   then cljs.
+
+## Coordinator banking, 2026-11-05 ~10:55 AM ET (verified firsthand from J's logs + this worktree)
+
+The three doorbell fixes below were committed locally but unpushed and
+unreported; the coordinator pushed them (tip now includes 0cbd476) and
+banks the gate state from J's ~/u2-gate-logs directly:
+
+- 43f7f75 — doorbell registry lazily constructed (AOT SIGFPE).
+- 566e4f3 — lazy init via atomic flag, not std::call_once (its
+  __once_call emulated-TLS symbols are unresolvable by jank's module
+  loader).
+- 0cbd476 — doorbell reg() resolved before locking reg_m (the lazy-init
+  call under the held mutex self-deadlocked make/get). This was the
+  hang: the stage-4 probe stopped after "self 1" (10:41, empty log).
+- AOT gate after the fixes (aot-rebuild3.log, 10:48 ET): boot 821
+  top-level forms, errors 0; battery 219/221 — the only FAILs are the
+  standing named pair (subs count nth first last butlast /
+  Character outside ASCII); libraries 62/62. AOT cache holds 15 files.
+- Remaining: the probe row, then the cljs half (real Eve SAB slab
+  atom). The hang-hunt diag scripts in dev/ are untracked scratch.
