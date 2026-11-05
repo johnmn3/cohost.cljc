@@ -2366,9 +2366,13 @@ namespace cohost_err {
   ;; the construction machinery's class spellings, display (ns/name) and
   ;; munged (ns$name) alike: the C++ exception constructor (jank::), the
   ;; core's ex-info the construction was reached through (clojure_core$ /
-  ;; cohost.core$), the shim's and the adapter's constructor plumbing
+  ;; cohost.core$), the runtime's apply trampoline (object_ref::call --
+  ;; lane R's measured head: [jank::runtime::ex_info jank 1]
+  ;; [clojure_core$ex_info_32861_2 jank 1] [object_ref::call oref.hpp
+  ;; 566], then the user's frame; the AFn/RestFn frames of the JVM
+  ;; impl's ctor-frame?), the shim's and the adapter's plumbing
   ["jank::" "clojure_core$" "clojure.core$" "cohost_core$" "cohost.core$"
-   "cohost.shim$" "cohost_shim$" "cohost.adapter$" "cohost_adapter$"])
+   "object_ref::" "cohost.shim$" "cohost_shim$" "cohost.adapter$" "cohost_adapter$"])
 
 (defn- ctor-frame?
   "A construction-head frame: one of the prefixes above. Dropped from
