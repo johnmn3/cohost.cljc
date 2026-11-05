@@ -2413,7 +2413,7 @@ namespace cohost_err {
   [frame]
   (let [c (str (first frame))]
     (boolean (or (some (fn [p] (string/starts-with? c p)) ctor-head-prefixes)
-                 (not (neg? (string/index-of c "::")))))))
+                 (some? (string/index-of c "::"))))))
 
 (def adapter
   {:name :jank
