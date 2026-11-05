@@ -1,0 +1,86 @@
+ROW|probe|agent|SAME|jvm=OK 1|cljs=OK 1
+ROW|probe|delay|SAME|jvm=OK 2|cljs=OK 2
+ROW|probe|done|SAME|jvm=OK|cljs=OK
+ROW|probe|future-basic|SAME|jvm=OK 3|cljs=OK 3
+ROW|probe|future-binding|SAME|jvm=OK 3|cljs=OK 3
+ROW|probe|future-capture-atom|SAME|jvm=OK 1|cljs=OK 1
+ROW|probe|future-capture-local|SAME|jvm=OK 42|cljs=OK 42
+ROW|probe|load-clojure.data|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.edn|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.math|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.repl|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.set|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.spec.alpha|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.stacktrace|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.string|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.template|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.test|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.walk|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|load-clojure.zip|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|probe|pmap|SAME|jvm=OK (2 3 4)|cljs=OK (2 3 4)
+ROW|probe|promise|SAME|jvm=OK 7|cljs=OK 7
+ROW|probe|spec-conform|SAME|jvm=OK 2|cljs=OK 2
+ROW|probe|test-stacktrace|DIFF|jvm=OK 26|cljs=OK 0
+SUMMARY|probe|same=22/23 jvm-ms=1242 cljs-ms=25029
+ROW|crossing|atom-born-elsewhere|SAME|jvm=OK {:born :elsewhere, :touched :here}|cljs=OK {:touched :here, :born :elsewhere}
+ROW|crossing|contended-swaps|SAME|jvm=OK [:done 1000]|cljs=OK [:done 1000]
+ROW|crossing|done|SAME|jvm=OK|cljs=OK
+ROW|crossing|frame-and-local|SAME|jvm=OK [42 2]|cljs=OK [42 2]
+ROW|crossing|load-clojure.data|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.edn|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.math|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.repl|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.set|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.spec.alpha|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.stacktrace|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.string|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.template|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.test|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.walk|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|load-clojure.zip|SAME|jvm=OK :loaded|cljs=OK :loaded
+ROW|crossing|made-elsewhere|SAME|jvm=OK [{:made :elsewhere, :v [0 1 2]} {:made :elsewhere, :v [0 1 2 3]}]|cljs=OK [{:v [0 1 2], :made :elsewhere} {:v [0 1 2 3], :made :elsewhere}]
+SUMMARY|crossing|same=17/17 jvm-ms=1152 cljs-ms=26045
+TRACE|probe|lines=23 handed-over=7 completed-in-worker=7 closures=0
+TRACE|probe|cohost-realm[0]: started worker realms [1] in 4 ms
+TRACE|probe|cohost-realm[0]: task 1 handed over: (fn [] (do (cljs.core/+ 1 2)))
+TRACE|probe|cohost-realm[1]: serving
+TRACE|probe|cohost-realm[1]: task 1 outcome {:ok 3}
+TRACE|probe|cohost-realm[0]: task 1 completed in realm 1 {:ok 3}
+TRACE|probe|cohost-realm[0]: task 2 handed over: (fn [x] (do (cljs.core/inc x)))
+TRACE|probe|cohost-realm[1]: task 2 outcome {:ok 42}
+TRACE|probe|cohost-realm[0]: task 2 completed in realm 1 {:ok 42}
+TRACE|probe|cohost-realm[0]: task 3 handed over: (fn [a] (do (swap! a inc)))
+TRACE|probe|cohost-realm[1]: task 3 outcome {:ok 1}
+TRACE|probe|cohost-realm[0]: task 3 completed in realm 1 {:ok 1}
+TRACE|probe|cohost-realm[0]: task 4 handed over: (fn [] (do *print-length*))
+TRACE|probe|cohost-realm[1]: task 4 outcome {:ok 3}
+TRACE|probe|cohost-realm[0]: task 4 completed in realm 1 {:ok 3}
+TRACE|probe|cohost-realm[0]: task 5 handed over: (fn [f xs] (apply f xs))
+TRACE|probe|cohost-realm[0]: task 6 handed over: (fn [f xs] (apply f xs))
+TRACE|probe|cohost-realm[1]: task 5 outcome {:ok 2}
+TRACE|probe|cohost-realm[0]: task 7 handed over: (fn [f xs] (apply f xs))
+TRACE|probe|cohost-realm[0]: task 5 completed in realm 1 {:ok 2}
+TRACE|probe|cohost-realm[1]: task 6 outcome {:ok 3}
+TRACE|probe|cohost-realm[0]: task 6 completed in realm 1 {:ok 3}
+TRACE|probe|cohost-realm[1]: task 7 outcome {:ok 4}
+TRACE|probe|cohost-realm[0]: task 7 completed in realm 1 {:ok 4}
+TRACE|crossing|lines=17 handed-over=5 completed-in-worker=5 closures=0
+TRACE|crossing|cohost-realm[0]: started worker realms [1] in 3 ms
+TRACE|crossing|cohost-realm[0]: task 1 handed over: (fn [a] (do (reset! a {:made :elsewhere, :v (vec (range 3))})))
+TRACE|crossing|cohost-realm[1]: serving
+TRACE|crossing|cohost-realm[1]: task 1 outcome {:ok {:v [0 1 2], :made :elsewhere}}
+TRACE|crossing|cohost-realm[0]: task 1 completed in realm 1 {:ok {:v [0 1 2], :made :elsewhere}}
+TRACE|crossing|cohost-realm[0]: task 2 handed over: (fn [a] (do (update (deref a) :v conj 3)))
+TRACE|crossing|cohost-realm[1]: task 2 outcome {:ok {:v [0 1 2 3], :made :elsewhere}}
+TRACE|crossing|cohost-realm[0]: task 2 completed in realm 1 {:ok {:v [0 1 2 3], :made :elsewhere}}
+TRACE|crossing|cohost-realm[0]: task 3 handed over: (fn [] (do (atom {:born :elsewhere})))
+TRACE|crossing|cohost-realm[1]: task 3 outcome {:ok {:cohost.hosts.cljs-eve/atom ["r1-d1" 1]}}
+TRACE|crossing|cohost-realm[0]: task 3 completed in realm 1 {:ok {:cohost.hosts.cljs-eve/atom ["r1-d1" 1]}}
+TRACE|crossing|cohost-realm[0]: task 4 handed over: (fn [c] (do (dotimes [_ 500] (swap! c inc)) :done))
+TRACE|crossing|cohost-realm[1]: task 4 outcome {:ok :done}
+TRACE|crossing|cohost-realm[0]: task 4 completed in realm 1 {:ok :done}
+TRACE|crossing|cohost-realm[0]: task 5 handed over: (fn [x] ...)
+TRACE|crossing|cohost-realm[1]: task 5 outcome {:ok [42 2]}
+TRACE|crossing|cohost-realm[0]: task 5 completed in realm 1 {:ok [42 2]}
+GATE|RED
+rc=0

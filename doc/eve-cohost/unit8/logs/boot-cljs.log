@@ -60,8 +60,4 @@ libraries: 62/62 cases pass across 12 clojure.* libraries
   clojure.stacktrace  2/2
   clojure.repl  3/3
   clojure.spec.alpha  6/6
-
-real	0m30.511s
-user	0m56.548s
-sys	0m2.058s
 rc=0
