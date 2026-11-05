@@ -86,4 +86,43 @@ persistent_queue among its runtime objects either).
 
 ## State
 
-- Design + probes banked (this file). Implementation next.
+- Design + probes banked @ 0f93f4c.
+- **Layer queue fallback landed** @ 17a16b8 (`empty-queue` falls back
+  to the two-list queue when the host cap yields nil; q-* helpers at
+  every queue call site). JVM helper probe: FIFO order held under
+  interleaved pops/conjs; host queue values pass through untouched.
+- **Two pre-existing executor races found and fixed** @ 17a16b8 —
+  they are in unit 1's layer code (pristine unit-1 code fails the
+  same way, ~1 run in 3 on this box; unit 1's banked 29/29 was one
+  sample). Found by instrumented stress (agent traffic + pmap
+  rounds, per-item submit/claim/start accounting):
+  1. `run-worker`'s idle branch re-claimed as a lost-wakeup guard
+     and **discarded what it claimed**: a submit landing between the
+     two claims lost its item — future pending forever, queue empty,
+     workers idle (the probe's intermittent "restart-agent resumes"
+     FAIL and pmap HANG are both this). Fix: the branch waits on the
+     generation bell only (sticky signal; the 100 ms timeout bounds
+     the rest).
+  2. `claim!` leaked a discarded `swap!` run's head when the
+     committed run saw an empty queue: the same item was delivered
+     to two claimers (traced items claimed x2). Fix: the result atom
+     is reset on every swap-fn run.
+  After: layer probe **29/29 x6 runs**; instrumented stress (50
+  agent dispatches + 200 pmap rounds) clean; the standalone
+  restart-agent repro passes.
+- **`:core-lacks` + jank leaves landed** @ bf4dc25: adapter contract
+  + default `#{}`, boot unions it into `:host-lacks`, jank adapter
+  declares `policy/thread-names` and supplies the five caps +
+  `:thread-bindings`. No policy change was needed (the names already
+  decide `:host`; lacked + in thread-names = skipped at boot, then
+  filled by `install-thread-layer!`). Caps JIT-probed standalone
+  (`dev/u2-probe2.jank`): self ids stable/distinct per thread,
+  future deref answers the worker's id, doorbell timeout / sticky
+  signal / cross-thread release all correct.
+- JVM regression so far: booted check **21/21** with the new code
+  (the JVM adapter's `:core-lacks` is the default `#{}`).
+- In flight: the booted check on the jank seat, JIT
+  (`dev/u2-jank-check.jank` — same 21 checks, boot! with NO
+  `:host-lacks` opt, so the adapter declaration alone must route
+  the family). Then the J AOT gate + battery, then the probe row,
+  then cljs.

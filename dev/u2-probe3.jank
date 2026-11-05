@@ -1,0 +1,17 @@
+;; unit 2 probe 3: are the jank thread caps visible through the adapter?
+(ns u2-probe3
+  (:require [cohost.hosts.jank-host]
+            [cohost.adapter :as host]
+            [cohost.thread :as thread]))
+(println "cap thread-spawn:" (some? (host/capability :thread-spawn)))
+(println "cap thread-self:" (some? (host/capability :thread-self)))
+(println "cap doorbell:" (some? (host/capability :doorbell)))
+(println "cap doorbell-wait:" (some? (host/capability :doorbell-wait)))
+(println "cap doorbell-signal:" (some? (host/capability :doorbell-signal)))
+(println "cap thread-bindings:" (some? (host/capability :thread-bindings)))
+(println "core-lacks:" (host/core-lacks))
+(println "thread/available?:" (thread/available?))
+(println "thread-spawn runs:" (some? (host/thread-spawn (fn [] 1))))
+(println "thread-self:" (host/thread-self))
+(println "doorbell roundtrip:" (let [db (host/doorbell)] [(host/doorbell-wait db 20) (do (host/doorbell-signal db) (host/doorbell-wait db 20))]))
+(println "PROBE3-DONE")
