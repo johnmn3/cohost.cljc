@@ -937,7 +937,7 @@
   ([{:keys [root files verbose profile? record? host-lacks] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
    (reset! snapshot-log (when record? []))
-   (swap! state assoc :host-lacks (set host-lacks))
+   (swap! state assoc :host-lacks (into (set host-lacks) (host/core-lacks)))
    (snap! {:op :begin :opts {:root root :files files}})
    (if profile?
      (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
