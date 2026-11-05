@@ -88,6 +88,22 @@
 (def reader-run (run-e "(defn broken [x"))
 (def reader-text (str (:out reader-run) "\n" (:err reader-run)))
 
+;; #2 source meta at read (the research checklist's probe, jank only):
+;; read a probe file's forms through the adapter's read-forms and print
+;; the defn form's meta -- its :jank/source must name the file and the
+;; defn's file-absolute line (line 3 below)
+(def pos-path (str tmp "/pos_probe.clj"))
+(spit pos-path "(ns posprobe)\n;; a comment\n(defn inner [x] (throw (ex-info \"r\" {:x x})))\n")
+(def pos-run
+  (when (= target "jank")
+    (run-e (str "(require 'cohost.adapter)"
+                " (let [fs (atom [])]"
+                "   (cohost.adapter/read-forms (slurp " (pr-str pos-path) ")"
+                "     (fn [f] (swap! fs conj f)) " (pr-str pos-path) ")"
+                "   (prn :pos2 (meta (second @fs)))"
+                "   (prn :pos2sym (meta (second (second @fs)))))"))))
+(def pos-text (str (:out pos-run) "\n" (:err pos-run)))
+
 ;; ---- the checks ------------------------------------------------------
 
 (defn first-real-line [s]
@@ -106,7 +122,18 @@
               "; report " (if report-text "written, :trace non-empty" "missing/empty")
               "; stderr: " (first-real-line (:err uncaught))))
 
-(record! 2 "SKIP" "owned by U4a (positions at the JIT read end)")
+(record! 2
+         (if (= target "jank")
+           (if (and (includes? pos-text (str ":file \"" pos-path "\""))
+                    (includes? pos-text ":line 3"))
+             "PASS" "FAIL")
+           "SKIP")
+         (if (= target "jank")
+           (str "form meta read from " pos-path ": "
+                (or (some (fn [line] (when (str/includes? line ":pos2 ") (str/trim line)))
+                          (str/split-lines pos-text))
+                    "nothing printed"))
+           "jank read-end probe; the JVM read end is a stream reader (positions native)"))
 (record! 3 "SKIP" "owned by U3 (load-time analysis parity)")
 ;; #4 reader error: the probe runs; the :read-source phase is U4a's
 ;; read-end work, so until then this reports the measured state as SKIP
