@@ -205,3 +205,22 @@
   * bench/apps/httpbench/deps.edn (the app's own config): :sources
     += crypto/openssl.c, crypto/sni_tree.cpp; :defines
     [LIBUS_USE_OPENSSL]; :libs [ssl crypto z] (all present on J).
+
+## 2026-11-05 04:00 ET — BUILD 9 GREEN on J; loopback smoke PASS
+- JANK-EXE-BUILT in 285,992 ms: target/httpbench/run, 48,209,472
+  bytes. Steps: 0.5 = 9 cpp objects; record SNAPSHOT-EVENTS;
+  emit MODULE; step-4 compile + static link clean.
+- ldd: NO libcpp dependency (system libssl/libcrypto/libz only) —
+  the archive won the static link; the record-lib .so served both
+  JIT sessions (steps 2 and 4) without leaking into the binary.
+- Smoke (J, 127.0.0.1:8931): GET / -> HTTP 200, body EXACTLY
+  1024 bytes, the fixed JSON with 48 items; second request 200.
+  Server killed by PID after the check.
+- Note vs the spec's "(OpenSSL off)": the server is plain HTTP
+  only, but the vendored uSockets core calls us_internal_ssl_*
+  unconditionally and ships no stub file, so its real openssl.c
+  backend is compiled and linked (system ssl/crypto) purely to
+  satisfy the link. No TLS is served.
+- Next per spec: cohost -X:test on jank and JVM; the binary from
+  another directory; docs:check jank; measurements (measure.sh);
+  README; CAPSTONE report.
