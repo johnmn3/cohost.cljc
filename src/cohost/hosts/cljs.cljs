@@ -361,21 +361,24 @@
 
 (defn- doorbell-wait [db timeout-ms]
   (let [flag (:flag db)]
-    (if @flag
-      true
-      (do (pump-tasks! (fn [] (boolean @flag)))
-          (cond @flag true
-                ;; inside a task: unwind and be re-queued, timed or not --
-                ;; the layer's waiters all re-check and re-wait on entry
-                ;; (the worker loop above all), and a task that spun here
-                ;; would starve the very pump that can ring its bell
-                (not= 0 @task-self) (throw yield-marker)
-                (some? timeout-ms) false
-                ;; main flow, untimed, queue drained: block in slices --
-                ;; only an asynchronous (host) event can ring this bell now
-                :else (loop [] (if @flag true (do (pump-tasks! (fn [] (boolean @flag)))
-                                                  (when-not @flag (block-ms! 5))
-                                                  (recur)))))))))
+    (cond @flag true
+          ;; inside a task: unwind and be re-queued at once, timed or not.
+          ;; Only the outermost wait pumps (iteratively), so the stack
+          ;; stays flat no matter how many tasks are waiting; the layer's
+          ;; waiters all re-check and re-wait on entry (the worker loop
+          ;; above all), and a task that pumped or spun here would starve
+          ;; -- or, nested deep enough, overflow -- the very machinery
+          ;; that can ring its bell.
+          (not= 0 @task-self) (throw yield-marker)
+          :else (do (pump-tasks! (fn [] (boolean @flag)))
+                    (cond @flag true
+                          (some? timeout-ms) false
+                          ;; main flow, untimed, queue drained: block in
+                          ;; slices -- only an asynchronous (host) event
+                          ;; can ring this bell now
+                          :else (loop [] (if @flag true (do (pump-tasks! (fn [] (boolean @flag)))
+                                                            (when-not @flag (block-ms! 5))
+                                                            (recur)))))))))
 
 (defn- raw-root
   "The value underneath every binding frame: the oldest frame that saved it."
