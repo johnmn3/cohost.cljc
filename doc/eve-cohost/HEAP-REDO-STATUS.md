@@ -33,8 +33,16 @@ including its §4 postscript + per-problem audit table).
 - [x] Eve platform structure probed (~/src/eve @ main
       c7dc390): reader features are exactly :cljs / :clj /
       :bb; IMemRegion backends enumerated per feature.
-- [ ] P3 cljs bench run (eve.atom SAB atom + eve.map on
-      Node) — numbers as printed or NOT MEASURED + blocker.
+- [x] P3 cljs bench run — MEASURED (Node v24.22.1,
+      shadow-cljs release build of Eve @ main c7dc390,
+      bench source banked at dev/heap_cljs_bench.cljs).
+      Release passes agree: eve SAB atom deref 708-737 ns,
+      swap! 4,347-4,511 ns; eve map get 1,970-2,335 ns,
+      assoc ~9,340-9,607 ns/op; foreign 100-map root deref
+      (materialization) 96.6-105.0 us; capacity: 10k map OK,
+      1k vec OK (the two builds the JVM heap domain died
+      on). Stock controls same runs: deref 9 ns, swap! 30,
+      get 48-52, assoc 433-486.
 - [ ] §5 redo sections written; P4 replaced with pointer;
       P2 clause rewritten; P3/§2 addenda marked.
 - [ ] Final declaration (chat + doc).
