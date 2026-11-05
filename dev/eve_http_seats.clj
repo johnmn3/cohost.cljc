@@ -72,7 +72,7 @@
                        (java.net.http.HttpRequest$BodyPublishers/noBody)))
         r (.send ^java.net.http.HttpClient jdk-client (.build b) (java.net.http.HttpResponse$BodyHandlers/ofString))
         h (.headers r)]
-    [(.statusCode r) (.orElse (.firstValue h "content-type") nil) (.orElse (.firstValue h "x-method") nil) (.body r)]))
+    [(.statusCode r) (eve-http-programs/media-type (.orElse (.firstValue h "content-type") nil)) (.orElse (.firstValue h "x-method") nil) (.body r)]))
 
 (build!)
 (def jetty (ring.adapter.jetty/run-jetty (second (ref-eval programs/handler-src)) {:port 0 :join? false :host "127.0.0.1"}))

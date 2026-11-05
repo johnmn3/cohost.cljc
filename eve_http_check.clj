@@ -90,7 +90,7 @@
                                 (java.net.http.HttpRequest$BodyPublishers/noBody)))
         r (.send jdk-client (.build b) (java.net.http.HttpResponse$BodyHandlers/ofString))
         h (.headers r)]
-    [(.statusCode r) (.orElse (.firstValue h "content-type") nil) (.orElse (.firstValue h "x-method") nil) (.body r)]))
+    [(.statusCode r) (eve-http-programs/media-type (.orElse (.firstValue h "content-type") nil)) (.orElse (.firstValue h "x-method") nil) (.body r)]))
 
 (doseq [[label req] eve-http-programs/server]
   (let [j (ask jetty-base req)

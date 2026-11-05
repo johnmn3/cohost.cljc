@@ -171,3 +171,30 @@
 (def jvm-only
   "Client programs that need what only the JVM seat has today (none)."
   #{})
+
+(defn media-type
+  "A Content-Type value parsed as RFC 9110 reads it, for the server-side
+   comparison: [type/subtype {parameter value}], the type and parameter
+   names lower-cased (case-insensitive), a quoted value unquoted, a charset
+   value lower-cased (charset names are case-insensitive); nil for nil.
+   Operator ruling, 2026-11-05 ~2:13 PM ET (atom.broker muse/cohost-reports
+   @ 02d22fff6): headers are stored and sent as raw text, the handler's
+   header as written is the reference; servers that recompose Content-Type
+   (Jetty: no space after ';') send the same header, so the gate compares
+   it parsed, not as a raw string."
+  [v]
+  (when v
+    (let [trim (fn [s] (.trim ^String s))
+          [t & params] (map trim (.split ^String v ";"))]
+      [(.toLowerCase ^String t)
+       (into (sorted-map)
+             (keep (fn [p]
+                     (let [i (.indexOf ^String p "=")]
+                       (when (pos? i)
+                         (let [k (.toLowerCase ^String (trim (subs p 0 i)))
+                               raw (trim (subs p (inc i)))
+                               v (if (and (> (count raw) 1) (.startsWith ^String raw "\"") (.endsWith ^String raw "\""))
+                                   (subs raw 1 (dec (count raw)))
+                                   raw)]
+                           [k (if (= "charset" k) (.toLowerCase ^String v) v)])))))
+             params)])))
