@@ -749,3 +749,20 @@ table and P3's conclusion. The probe's measured facts
 never reached, never the failure) are unaffected. The
 inference from "no executor today" to "no shared heap on
 this seat" is what the ruling removes.
+
+## 5. Redo — the contaminated parts, under the corrected premises (2026-11-05)
+
+> REDO IN PROGRESS — banked in slices; status in
+> `HEAP-REDO-STATUS.md` on this branch. Framing is John's
+> rulings of 2026-11-05 ~10:05 ET: (1) no counterparts
+> anywhere — every seat's runtime atom domain is real Eve
+> or the seat waits on named Eve-side work; (2) cljs/node
+> seats have the shared heap (workers + SharedArrayBuffer
+> + Eve's shared atoms); (3) `eve.atom` the durable kind
+> is not the runtime heap's mechanism (P3's measurement,
+> standing). What stands unredone: P1, P5, P6, P3's JVM
+> measurements. What is redone below: §5.1 P4 (full —
+> the original §P4 is replaced by a pointer here),
+> §5.2 P3's cljs/SAB half (measured) + both halves'
+> conclusions redrawn, §5.3 P2's clause, §5.4 §2's shape
+> redrawn.
