@@ -279,3 +279,15 @@ plan's construction (it depends on units 2, 5, 7); (a) is the
 dependency step. The probe's cljs row stands as the test that
 flips when this lands (today: every executor case fails with the
 undefined-call NPE; delay answers).
+
+## CLOSE (2026-11-05 ~12:40 PM ET)
+
+Unit 2 is complete as scoped: jank seat DONE (leaves + probe row
+ok=18 with agent/pmap flipped to JVM values), the snapshot-replay
+fill bug found by the probe row and fixed in cohost's own layers,
+final gates green (JVM 221/221 + 62/62, errors 0; jank 219/221
+standing pair only + 62/62, errors 0), cljs half banked as a named
+NOT-YET with its blocking work (Eve-in-the-cljs-build; a
+spawn-by-form conveyance contract = unit 8's design) and its
+baseline row re-measured identical on this branch (ok=15,
+fail-other=8). Full write-up: doc/eve-cohost/UNIT2-REPORT.md.
