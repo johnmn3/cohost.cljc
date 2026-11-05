@@ -37,3 +37,18 @@ Branch `agent1/eve-unit8-cljs-shared-heap` (cohost.cljc). All times US Eastern.
   name lookup, boot interns cohost.realm/future-form-call on a realm seat only; build: Eve's :cljs row
   + node: bridges in cljs-cli/cljs-node builds (bin/cohost, bb boot:cljs/bench:cljs, bench_programs).
   Gate runner dev/u8/gate.clj + crossing program dev/u8/realm_crossing_program.cljc.
+- First crossing: `(let [x 41] @(future (inc x)))` → 42, task completed in worker realm 1
+  (logs/smoke-first-crossing.log). Fixes on the way: a worker realm opens its domains with Eve's
+  opener step only (atom-domain's init-domain-views! asks slab instances for wasm memory a worker
+  does not have); worker trace written synchronously.
+- EVE-SIDE DEFECT found (named, not patched): on this seat an Eve map's small integer key whose value
+  holds a nested collection reads back incremented — `(swap! a assoc 1 {:z [1 2]})` → `{2 {:z [1 2]}}`
+  (scalar values under int keys, and keyword/string keys, are fine). Cohost's outbox now keys by
+  string; user programs with int-keyed maps of collections in atoms will hit it (report remainder).
+- spec-conform FAIL diagnosed: `require` called as a function (inside the probe runner's try) was the
+  host's cljs require → goog.require → silently loaded nothing. Fixed: boot/install-runtime-loader!
+  (cljs entry points only) routes require/use calls through cohost's loader. spec-conform → 2.
+- Gate run 2 (logs/gate-run2.log, before the require fix): probe 9/11 — all 7 executor futures crossed
+  into realm 1, completed there, JVM values; crossing program values all JVM-equal (Eve map print order
+  differs; runner now compares as data).
+- Running: official probe row (bb dev/eve_probe.clj jvm cljs) + gate run 3.
