@@ -47,3 +47,29 @@
 1. JVM ground truth: bb debug-seam:check jvm (expect #13 PASS; no regress).
 2. Probe on the native snapshot when built.
 3. Fix in cohost layers only, if a fix is needed.
+
+## 2026-11-05 00:41 ET — probe vehicle reassessed; J queue position known
+
+- The cohost-native snapshot build: its LAUNCHER compile was OOM-KILLED
+  on this box (native-snapshot3.log: "clang frontend command failed
+  with exit code -2"; the script fell back to compiling the modules
+  alone). Same wall the introspection lane (x4) and gateprobes lane
+  hit locally. Local snapshot = dead end; J is the probe vehicle.
+- J box (TAKEOVER-STATUS.md, read 00:41 ET): Remainder 1 DONE --
+  introspect snapshot built on J in 524,475 ms, #11 PASS; full runner
+  7/14 PASS / 4 FAIL / 3 SKIP, "only #11 moved vs the 358048e gate"
+  (so #13 still FAILs on jank on the introspect tree, which has NO
+  doors -- consistent with the wrapper alone not fixing jank).
+  Takeover has switched to the traces tree (Remainder 2, snapshot
+  building). My jank run queues behind Remainder 2.
+- Code read since pickup (all in-tree): load-source! keeps the FIRST
+  failure's original exception object and load-lib! rethrows it
+  untouched -> the attributed ex-info, if produced, reaches the CLI
+  report layer intact. cli throwable->map takes :phase from the FIRST
+  :via entry's booted-ex-data. So the jank break is at or before
+  wrap-macro's handler: (a) jank's analyzer expands (m 1) instead of
+  the codemod, (b) try-all's object_ref catch misses the macro throw
+  in the snapshot's compiled boot (falls to the :default native
+  sentinel), or (c) booted-ex-data reads nil for the attributed
+  ex-info on jank.
+- JVM check running detached (log cohost-install/n13-jvm-check.log).
