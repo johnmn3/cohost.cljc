@@ -88,6 +88,34 @@
                          [(symbol (.getClassName el)) (symbol (.getMethodName el))
                           (.getFileName el) (.getLineNumber el)])
                        (drop-while ctor-frame? (.getStackTrace ^Throwable e))))))
+   ;; the thread leaves under cohost.thread (Eve's thread layer): a real
+   ;; java.lang.Thread runs the thunk; workers are daemons so a process
+   ;; whose work is done can exit (stock Clojure holds the process open
+   ;; with non-daemon agent threads until shutdown-agents; the layer's
+   ;; contract is the conveyed-binding shape, not the exit policy)
+   :thread-spawn (fn [thunk]
+                   (let [t (Thread. ^Runnable (fn [] (thunk)))]
+                     (.setDaemon t true)
+                     (.start t)
+                     t))
+   :thread-self (fn [] (Thread/currentThread))
+   ;; a doorbell is an atom holding its signal, used as its own monitor
+   :doorbell (fn [] (atom false))
+   :doorbell-wait (fn [db timeout-ms]
+                    (locking db
+                      (if @db
+                        true
+                        (do (.wait ^Object db (long (or timeout-ms 0)))
+                            (boolean @db)))))
+   :doorbell-signal (fn [db]
+                      (locking db
+                        (reset! db true)
+                        (.notifyAll ^Object db)
+                        true))
+   ;; the running thread's binding frame as a plain {var value} map: the
+   ;; layer's conveyance captures with this and restores through the
+   ;; adapter's :with-thread-bindings!
+   :thread-bindings (fn [] (into {} (clojure.lang.Var/getThreadBindings)))
    :nano-time (fn [] (System/nanoTime))
    :current-time-millis (fn [] (System/currentTimeMillis))
    :math-ceil (fn [x] (Math/ceil x))

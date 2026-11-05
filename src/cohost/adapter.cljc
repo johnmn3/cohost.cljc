@@ -77,6 +77,15 @@
    :with-thread-bindings! [['bindings 'thunk] "(thunk) inside the frame bindings ({handle value}) establishes; the frame ends when it returns or throws (default: push, try, pop)"]
    :thread-bindings [[] "Var.getThreadBindings where the host core has no get-thread-bindings: {var value} of this thread's bindings, the innermost value of each (default {})"]
    :var-set!        [['h 'v] "Var.set where the host core has no var-set: set the value of the innermost binding of a var bound in this thread (default: alter-var-root!)"]
+   ;; threads: the leaf primitives under cohost.thread (Eve's thread layer).
+   ;; A host that cannot run code on another thread leaves these nil and the
+   ;; layer is unavailable there; everything above the leaves is one shared
+   ;; implementation (registry, executors, conveyance) in cohost.thread.
+   :thread-spawn    [['thunk] "run thunk on a new host thread; return an opaque handle for it, or nil (the default) when the host cannot spawn"]
+   :thread-self     [[] "the opaque handle of the thread this call runs on, or nil (the default)"]
+   :doorbell        [[] "a fresh doorbell: an opaque wait handle with sticky signal semantics, or nil (the default) when the host has none"]
+   :doorbell-wait   [['db 'timeout-ms] "wait on doorbell db until it is signalled or timeout-ms (nil: no timeout) passes; true when signalled"]
+   :doorbell-signal [['db] "signal doorbell db: every current and future wait on it returns true"]
    :current-ns      [[] "the symbol of the namespace evaluated code currently runs in (*ns*)"]
    :macroexpand-1   [['form] "the host's one-step macroexpansion of form in the current namespace"]
    :macro-def-style [[] ":meta when `(def ^:macro x (fn [&form &env ...]))` + mark-macro! makes a macro; :defmacro when only a defmacro form does"]
@@ -351,6 +360,11 @@ namespace cohost_err {
                              ((cap :push-thread-bindings!) m)
                              (try (thunk) (finally ((cap :pop-thread-bindings!)))))
     :thread-bindings (fn [] {})
+    :thread-spawn nil
+    :thread-self nil
+    :doorbell nil
+    :doorbell-wait nil
+    :doorbell-signal nil
     :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
     :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
     :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
@@ -804,6 +818,28 @@ namespace cohost_err {
 (defn with-thread-bindings! [m thunk] ((cap :with-thread-bindings!) m thunk))
 (defn binding-style [] (cap :binding-style))
 (defn thread-bindings [] ((cap :thread-bindings)))
+;; the thread leaves under cohost.thread: each returns nil on a host that
+;; does not supply it, and the layer reads nil as "no thread layer here"
+(defn thread-spawn
+  "Run thunk on a new host thread; its opaque handle, or nil."
+  [thunk]
+  (when-let [f (cap :thread-spawn)] (f thunk)))
+(defn thread-self
+  "The opaque handle of the running thread, or nil."
+  []
+  (when-let [f (cap :thread-self)] (f)))
+(defn doorbell
+  "A fresh doorbell (opaque, sticky signal), or nil."
+  []
+  (when-let [f (cap :doorbell)] (f)))
+(defn doorbell-wait
+  "Wait on doorbell db until signalled or timeout-ms (nil: no timeout); true when signalled."
+  [db timeout-ms]
+  (when-let [f (cap :doorbell-wait)] (f db timeout-ms)))
+(defn doorbell-signal
+  "Signal doorbell db: every current and future wait on it returns true."
+  [db]
+  (when-let [f (cap :doorbell-signal)] (f db)))
 (defn var-set! [h v] ((cap :var-set!) h v))
 (defn current-ns [] ((cap :current-ns)))
 (defn macroexpand-1* [form] ((cap :macroexpand-1) form))
