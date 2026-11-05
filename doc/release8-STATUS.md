@@ -65,3 +65,14 @@ locally).
   cases pass across 12 clojure.* libraries" (log:
   ~/workspace/release8-logs/boot-jvm.log) — matches the gate.
   cli:check jvm + debug-seam:check jvm next.
+- 2026-11-05 ~08:4x ET: local verification COMPLETE on the
+  release tree, all matching the gate:
+  - cli:check jvm: 7/7 SAME, exit 0
+    (~/workspace/release8-logs/cli-check-jvm.log).
+  - debug-seam:check jvm: 10 PASS, 0 FAIL, 4 SKIP (#2/#9/#11/
+    #12 jank-only or probe-owned), as printed in
+    ~/workspace/release8-logs/debug-seam-jvm.log (runner exit
+    code 1 as printed; the PASS/FAIL rows are the verdict and
+    match the banked gate's JVM read exactly).
+  Release notes drafted: doc/release8-notes.md (0.9.3).
+  J legs next, on the tip that carries the notes.
