@@ -29,13 +29,49 @@
 
 (def gated-exit 3)
 
+(defn- v
+  "Eve's var for sym, resolved at run time: this file must read and compile
+   on a seat where Eve is not loadable yet, so it names no Eve var
+   statically."
+  [sym]
+  @(resolve sym))
+
+(def ^:private eve-loaded?
+  "true once load-eve! has loaded Eve on this seat."
+  (atom false))
+
+(defn- stage
+  "On jank, a progress line on stderr (C stderr, unbuffered: jank's *err* is
+   (cpp/box cpp/stderr)), so a process that faults still shows the last stage
+   it reached; stdout to a file is buffered and lost on a fault. Nothing on
+   the JVM seat."
+  [s]
+  #?(:jank (binding [*out* *err*] (println "STAGE" s))
+     :clj nil))
+
 (defn- exit! [code]
-  #?(:jank (cpp/exit code)
+  ;; on jank, a process holding Eve ends through eve.process/exit! (the exit
+  ;; hooks, a flush, _exit): the flagship's documented end for a jank program
+  ;; (eve/doc/hosts/jank.md "No exit hook on a normal end", upstream defect 10:
+  ;; std::exit with a live timer thread -- a disk domain's heartbeat -- is exit
+  ;; 139), as its launcher test/eve/runner/jank_main.jank ends
+  #?(:jank (if @eve-loaded?
+             ((v 'eve.process/exit!) code)
+             (cpp/exit code))
      :clj (System/exit code)))
 
 (defn- pid []
   #?(:jank (cpp/getpid)
      :clj (.pid (java.lang.ProcessHandle/current))))
+
+(def ^:private eve-namespaces
+  ;; On jank, Eve's namespaces load only after Eve's core completion:
+  ;; eve.host-completion interns defprotocol, deftype, extend-protocol, ...
+  ;; into clojure.core, and a namespace sees them only when it is created
+  ;; after them -- the flagship's launcher (test/eve/runner/jank_main.jank)
+  ;; requires it first. The JVM seat has no completion and loads as before.
+  #?(:jank '[eve.host-completion eve.atom eve.digest eve.deftype-proto.data]
+     :clj '[eve.atom eve.digest eve.deftype-proto.data]))
 
 (defn- load-eve!
   "nil when Eve's atom, digest and data namespaces load on this seat, else
@@ -43,6 +79,7 @@
   []
   (some (fn [ns-sym]
           (try
+            (stage (str "require " ns-sym))
             (require ns-sym)
             nil
             (catch #?(:jank :default :clj Throwable) e
@@ -51,14 +88,7 @@
               (str "(require '" ns-sym ") failed on this seat"
                    (when (some? e)
                      (str ": " #?(:jank (pr-str e) :clj (.getMessage ^Throwable e))))))))
-        '[eve.atom eve.digest eve.deftype-proto.data]))
-
-(defn- v
-  "Eve's var for sym, resolved at run time: this file must read and compile
-   on a seat where Eve is not loadable yet, so it names no Eve var
-   statically."
-  [sym]
-  @(resolve sym))
+        eve-namespaces))
 
 (def atom-id :u6.residence-probe/root)
 
@@ -72,6 +102,14 @@
    :set #{1 :two "three"}
    :list '(7 8 9)
    :n 1234567890123})
+
+;; deref and reset! of an Eve atom, by the var's current root: on jank the
+;; completion re-roots clojure.core's deref/reset! onto its protocols, and a
+;; re-rooted name holds only for namespaces compiled after the completion
+;; (eve.host-completion's docstring) -- this one is compiled before it loads
+;; (load-eve!, at run time). On the JVM the roots are clojure.core's own.
+(defn- eve-deref [a] ((v 'clojure.core/deref) a))
+(defn- eve-reset! [a x] ((v 'clojure.core/reset!) a x))
 
 (defn- open-atom [base]
   ((v 'eve.atom/atom) {:id atom-id :persistent base} nil))
@@ -90,7 +128,7 @@
        " pid=" (pid)
        ;; comma-joined, no spaces: the runner reads fields up to a space
        " digest=" (if-let [d (root-digest a)] (apply str (interpose "," d)) "nil")
-       " value=" (pr-str @a)))
+       " value=" (pr-str (eve-deref a))))
 
 (defn -main [& [role base tag]]
   (when-not (contains? #{"write" "read"} role)
@@ -99,12 +137,19 @@
   (when-let [why (load-eve!)]
     (println "GATED" why)
     (exit! gated-exit))
+  (reset! eve-loaded? true)
+  (stage "open")
   (let [a (open-atom base)]
     (when (= role "write")
-      (reset! a (probe-value tag))
+      (stage "reset!")
+      (eve-reset! a (probe-value tag))
+      (stage "sync!")
       ((v 'eve.atom/sync!) a))
+    (stage "root-line")
     (println (root-line role a))
+    (stage "close!")
     ((v 'eve.atom/close!) a))
+  (stage "exit")
   (exit! 0))
 
 #?(:jank nil

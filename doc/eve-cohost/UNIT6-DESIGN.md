@@ -6,7 +6,9 @@ estimates a number the flagship has not measured. Base: MEMORY-PLAN.md on
 `muse/eve-cohost-impl` @ 0fa021f — the "Unit 6" section, §5 (sequence), and
 the rulings §7–§10. Eve facts are read from github.com/SeniorCareMarket/eve
 main @ d241de3 and labeled with that sha; facts about the flagship branch
-are labeled **[unverified: flagship branch not read]**.
+were labeled **[unverified: flagship branch not read]** until step 0 read it
+(2026-11-05 ~4:30 PM ET): §7 now carries them, cited file:line under `eve/`
+in atom.broker `claude/eve-jank` @ 14add0b15 (the flagship's gated tip).
 
 The probe scaffolding this design calls for is on the same branch:
 `dev/u6/residence_probe.cljc` + `dev/u6/residence.sh` (§4).
@@ -65,9 +67,10 @@ The plan's unit-6 text predates §§8–10. Read through them:
   canonical codec bytes, latched in a write-once side block (layout
   B-prime); `root-digest` answers nil for content held by reference.
 - The flagship (region + slab + typed-view on jank, the `slab_io.jank:153`
-  require fix) is what makes `eve.atom` load on jank. **[unverified:
-  flagship branch not read]** — its API names, its `eve_obj` layout and its
-  module path are taken at step 0 (§6) from its gate report.
+  require fix) is what makes `eve.atom` load on jank. Read at step 0 (§7):
+  its API names, its `eve_obj` layout and its module path are §7.1–§7.3;
+  `eve.atom`, `eve.digest` and `eve.deftype-proto.data` load on jank once
+  `eve.host-completion` has loaded first (measured, §7.6).
 
 ## 3. Below the seam: the three pieces
 
@@ -79,8 +82,8 @@ not collide), slots `descriptor`, `methods` (vector; 0 equiv, 1 hasheq,
 2 toString, 3 toCodeString, 4 invoke, 5 deref, 6 get, 7 seq, 8 compare,
 9 find), `fields`, `extmap`, `meta_`; behaviors call/get/find/compare/
 seqable/indexable/deref. Eve's side: one tagged object
-(`eve_host::eve_obj` {tag, fields}) **[unverified: flagship branch not
-read]**; Eve main's types are `opaque_box` structs.
+(`eve_host::eve_obj` {tag, fields}, `opaque_box`, no behaviors — read at
+step 0, §7.1); Eve main's types are `opaque_box` structs.
 
 Design: **one struct, one jank type id, two descriptor families.**
 
@@ -206,14 +209,133 @@ differs, those two legs FAIL and that is a finding, not a probe bug.
 3. Re-point units 3–5 on jank (§3c); runtime domain on Eve's slab.
 4. Gate run (§5), numbers as printed.
 
-## 7. Open design points (to settle at step 0, against measured facts)
 
-- Which struct survives the convergence (§3a.3) — decided by the
-  flagship's measured `eve_obj` layout and its dispatch cost.
-- Whether the runtime (default, in-mem) domain on jank lives in a heap
-  region or an anonymous MAP_SHARED region — the latter is what a later
-  unit-7 two-process share would want; unit 6 needs only the former.
-- Whether jank 0.1's `catch` can carry a failed `require`'s reason: on
-  jank 0.1-noble a failed `(require 'eve.atom)` is caught with the error
-  bound as `nil` (measured 2026-11-05), so the probe's GATED line on jank
-  names the namespace only.
+## 7. Step 0 — the flagship read, and the open points settled against it
+
+Read 2026-11-05 ~4:30 PM ET on the coordinator's box from atom.broker
+`claude/eve-jank` @ 14add0b15 (the flagship's gated tip; its J3 GATE report
+is `docs/port-gap-closure/coordination/reports/eve-jank-J3-flagship-REPORT.md`
+in that tree). Paths below are under `eve/` there. Names, layout and line
+numbers only — no flagship code is copied into this repository.
+
+### 7.1 Eve's object on jank: `eve_host::eve_obj`
+
+- `adapters/completion/jank/src/eve/host_completion.jank:78–101`:
+  `struct eve_obj : object`. Its jank type is `object_type::opaque_box`
+  (:79), its behaviors `object_behavior::none` (:80), `pointer_free` false
+  (:81). Two slots: `object_ref tag` (:82) — the deftype's tag, a
+  namespace-qualified symbol (`(symbol (str *ns*) (name type-name))`, :737),
+  which is also the value of the type's var (:750) — and `object_ref fields`
+  (:83), a vector of the field values in factory order (a mutable field holds
+  a `volatile!` cell, :10–13). Overridden virtuals: `to_string` /
+  `to_code_string`, `equal`, `to_hash` (:88–101), each through one
+  process-global hook — `printer`, `equiv`, `hasher`, file-static
+  `object_ref`s registered with `GC_add_roots` (:72–77); unset, `equal` is
+  identity and `to_hash` the address.
+- C++ API, namespace `eve_host` (:104–114): `make(tag, fields)`, `is(o)`
+  (`opaque_box` and a `dynamic_cast<eve_obj *>`), `tag(o)`, `fields(o)`,
+  `set_printer` / `set_equiv` / `set_hasher` (:108–110), `addr(o)`,
+  `i8_array(n)`. Clojure API, `eve.host-completion`: `make-object` (:118),
+  `object?` (:123), `object-tag` (:128), `object-fields` (:129),
+  `object-addr` (:130), `set-type-equality!` (:554), `set-printer!` (:601);
+  the macros `defprotocol` (:383), `deftype` (:733), `defrecord` (:768 — a
+  map carrying `:eve/record` in its meta, not an `eve_obj`), `reify` (:801).
+- Dispatch keys on the tag: a protocol is a table per method keyed by a
+  value's type key — a deftype's tag, a record's, `::nil`, else jank's own
+  type name (:158–164); `type` / `class` / `instance?` are re-rooted onto it
+  (:166–167, :183).
+- An Eve slab-backed value is an `eve_obj` whose fields carry its slab
+  handle: Eve's deftypes store `[slab-off__ sio__]` — the header-block slab
+  offset and the domain's slab I/O (`src/eve/deftype_proto.cljc:53`). There
+  is no inline root-pointer field: an atom's root pointer `[class:3|block:29]`
+  is read from the domain's root region slot (`src/eve/atom.cljc:975`, in
+  `read-pinned`), not from an object.
+- Load order (:25–29): what the completion interns or re-roots into
+  `clojure.core` — `deftype`, `defprotocol`, ..., `=` (:582), `hash` (:590),
+  `deref` (:502), `swap!` (:508), `reset!` (:515), `defn` / `fn` / `let` /
+  `loop` (:312–321, which strip native type hints), `case` (:350), `meta`
+  (:596), `sort` (:882) — holds only for namespaces compiled after it loads.
+
+### 7.2 Eve's region adapter on jank: `eve.region`
+
+`adapters/region/jank/src/eve/region.jank`:
+
+- `JankRegion [base size fd]` (:121) implements `eve.mem/IMemRegion` (:122),
+  `IHostAtomics`, and `ISyncableRegion` (:144–146: `-sync!` /
+  `-sync-range!`, msync; nothing when `fd` is nil). `JankLockedRegion [base
+  size fd]` (:157) is the Lustre (fcntl-lock) variant.
+- Exported constructors: `open-mmap-region` `[path size]` / `[path size
+  opts]` (:199–217; `opts {:lustre? ...}`; creates or opens, grows, never
+  truncates, `MAP_SHARED`, keeps the descriptor open) and
+  `make-heap-region` `[size]` (:219–225; `calloc`, never freed — "a region
+  lives as long as its domain"). Also `lustre-region?` (:227) and
+  `region-base` (:232).
+- Sync is `eve.mem/sync-region!` (`src/eve/mem.cljc:135`) over
+  `ISyncableRegion` (`src/eve/mem.cljc:124`).
+- No close: the C++ `unmap` (:50) and `close_fd` (:56) have no Clojure
+  caller anywhere under `eve/` (grep at 14add0b15); Eve exports no function
+  that unmaps or closes a region.
+
+### 7.3 The API unit 6 calls (all present at 14add0b15, names as the probe uses them)
+
+- `eve.atom` (`src/eve/atom.cljc`): `atom` (:1398 — `{:persistent path}`
+  opens `persistent-atom-domain`, else an in-process domain,
+  `open-heap-domain!` :663, whose root and reader map are `make-heap-region`s
+  and whose slabs are `alloc/heap-domain-sio!`), `persistent-atom-domain`
+  (:1065; `journal?` is opt-in and unset by default), `read-pinned` (:964),
+  `sync!` (:1144), `close!` (:1139), `close-atom-domain!` (:1130),
+  `lookup-or-create-mmap-atom!` (:1239), `atom-domain` (:1446),
+  `shared-atom?` (:1418), the `MmapAtom` type (:990).
+- `eve.digest/root-digest` (`src/eve/digest.cljc:185`);
+  `eve.deftype-proto.data`: `IEveRoot` / `-root-header-off` (:458),
+  `IEveSio` / `-eve-sio` (:464).
+- `eve.process/exit!` (`adapters/process/jank/src/eve/process.jank:137`):
+  the exit hooks, `fflush`, `_exit` — the end a jank program holding Eve
+  takes (`eve/doc/hosts/jank.md`, "No exit hook on a normal end"; upstream
+  defect 10).
+- Module path: `bb classpath jank` in `eve/` — 16 roots: `src` and the
+  `:jank` row's adapters `slab-io/jank`, `core/clojure`, `completion/jank`,
+  `coll/jank`, `slab/heap`, `region/jank`, `typed-view/jank`,
+  `encoding/jank`, `int32/jank`, `codec/byte-array`, `process/jank`,
+  `thread/none`, `types/jank`, `crypto/jank`, `journal-file/unsupported`.
+  The journal adapter on jank is `unsupported`: the model law's "no
+  journals" holds on this seat by Eve's own row.
+
+### 7.4 The flagship's numbers (consumed, not re-measured)
+
+From the J3 GATE report @ 14add0b15: seams 5 (slab) + 6 (typed-view) GATE
+PASS, the `hosts.edn` flips stay; §5 step 1 8 tests / 212 assertions / 0 / 0;
+slab-io conformance 4 / 51 / 0 / 0; typed-view's scalar C++ ~2,400–4,900× Eve's
+element loops at n=8000. The report states the node-C++-extension rows (atom
+swap, mmap shapes) are VS Agent 2's lane A — they are not in the gate report.
+Findings it carries out, each relevant here: F-3 (a deftype instance inside an
+atom: "Objects of type `opaque_box` are not associatively writable", both
+arms), the 64 KB slab-class-6 wall of the default domain, and multi-namespace
+runner processes faulting (139/135) at moving points on both arms.
+
+### 7.5 The open points, settled where the facts settle them
+
+1. **Which struct survives (§3a.3) — settled by layout; its mechanism is
+   OPEN (§8).** `eve_obj` is {tag, fields} plus three process-global hooks
+   and no behaviors; `cohost_object` is {descriptor, methods, fields, extmap,
+   meta_} with its own derived type id and seven behaviors (call, get, find,
+   compare, seqable, indexable, deref) that cohost's battery runs through.
+   `eve_obj` carries no field `cohost_object` lacks (no inline root pointer,
+   §7.1), so by §3a.3's rule the converged object is cohost's shape and adds
+   no field: Eve's tag takes the descriptor slot (both are the value of the
+   type's var), Eve's field vector the fields slot. Dispatch cost: not
+   measured here [unverified].
+2. **Runtime domain: heap region or anonymous MAP_SHARED — settled by Eve's
+   exports.** Eve's in-process domain is `open-heap-domain!` over
+   `make-heap-region` (calloc), and Eve on jank exports no anonymous-shared
+   constructor (§7.2). Under §9 the default runtime domain on jank is Eve's
+   heap domain; an anonymous shared mapping (unit 7's two-process share) is
+   Eve's to add, not cohost's to build.
+3. **jank's `catch` and a failed `require` — unchanged.** The flagship's
+   jank.md records the same (upstream defect 3: `:default` binds nil); the
+   probe's GATED line on jank names the namespace only.
+4. **Region leaves (§3b) — settled by the settling rule.** `:region-open` =
+   `eve.region/open-mmap-region`; `:region-heap` = `eve.region/make-heap-region`;
+   `:region-sync` = `eve.mem/sync-region!`. **`:region-close` is struck**:
+   Eve's jank adapter exports no close (§7.2), and the rule admits no
+   operation Eve's contract lacks.
