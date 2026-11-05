@@ -46,16 +46,55 @@
   (:next-id (swap! registry update :next-id inc)))
 
 (defn- empty-queue []
-  ((host/capability :empty-queue)))
+  (or ((host/capability :empty-queue))
+      ;; a host with no persistent queue of its own (jank) gets the
+      ;; layer's two-list queue: a tagged map, :front a list whose head
+      ;; is the oldest item, :back a list holding newer items reversed.
+      ;; A pure value, like the host's queue: a swap! may retry under
+      ;; contention and must see the same queue each time.
+      {:cohost/kind ::queue :front () :back ()}))
+
+(defn- queue-value? [q] (and (map? q) (= ::queue (:cohost/kind q))))
+
+(defn- q-norm
+  "Restore the two-list invariant: :front is non-empty when the queue is."
+  [q]
+  (if (and (empty? (:front q)) (seq (:back q)))
+    (assoc q :front (reverse (:back q)) :back ())
+    q))
+
+(defn- q-conj [q item]
+  (if (queue-value? q)
+    (q-norm (assoc q :back (conj (:back q) item)))
+    (conj q item)))
+
+(defn- q-peek [q]
+  (if (queue-value? q)
+    (first (:front (q-norm q)))
+    (peek q)))
+
+(defn- q-pop [q]
+  (if (queue-value? q)
+    (let [q (q-norm q)] (assoc q :front (rest (:front q))))
+    (pop q)))
+
+(defn- q-empty? [q]
+  (if (queue-value? q)
+    (and (empty? (:front q)) (empty? (:back q)))
+    (empty? q)))
 
 (defn- claim!
   "Atomically take the head item of queue atom q; nil when empty."
   [q]
   (let [got (atom ::none)]
     (swap! q (fn [qq]
-               (if (empty? qq)
+               ;; reset on every run: a swap! retry whose predecessor
+               ;; was discarded must not leak that run's head -- the
+               ;; item would be delivered twice (measured, unit 2)
+               (reset! got ::none)
+               (if (q-empty? qq)
                  qq
-                 (do (reset! got (peek qq)) (pop qq)))))
+                 (do (reset! got (q-peek qq)) (q-pop qq)))))
     (let [v @got] (when-not (= ::none v) v))))
 
 (defn- now-ms [] (host/current-time-millis))
@@ -195,10 +234,15 @@
               (do (host/try-all item)
                   (recur))
               (:shutdown @(:ctl ex)) nil
-              :else (let [bell (:bell @(:ctl ex))]
-                      (when (nil? (claim! (:queue ex)))
-                        (host/doorbell-wait bell 100))
-                      (recur)))))
+              ;; wait on the current generation bell: a submit after
+              ;; the claim swaps and signals the bell it replaces, and
+              ;; the signal is sticky, so no wakeup is missed; the
+              ;; 100 ms timeout bounds the rest. (Unit 1 re-claimed
+              ;; here as a guard and discarded what it claimed -- a
+              ;; submit landing between the two claims lost its item;
+              ;; measured, unit 2.)
+              :else (do (host/doorbell-wait (:bell @(:ctl ex)) 100)
+                        (recur)))))
     (finally
       (swap! (:ctl ex) update :running dec))))
 
@@ -210,7 +254,7 @@
    (when (:shutdown @(:ctl ex))
      (throw (host/ex* 'java.util.concurrent.RejectedExecutionException
                       "cohost: executor is shut down" nil)))
-   (swap! (:queue ex) conj thunk)
+   (swap! (:queue ex) q-conj thunk)
    (ensure-workers! ex)
    (signal-workers! ex)
    (or fut ex)))
@@ -424,7 +468,7 @@
 (declare drain kick!)
 
 (defn- enqueue-action! [ag action]
-  (swap! (:queue ag) conj action)
+  (swap! (:queue ag) q-conj action)
   (kick! ag))
 
 (defn- kick! [ag]
@@ -433,7 +477,7 @@
                                c
                                (do (reset! won true) (assoc c :queued true)))))
     (when @won
-      (let [ex (or (:executor (peek @(:queue ag))) (send-executor))]
+      (let [ex (or (:executor (q-peek @(:queue ag))) (send-executor))]
         (submit! ex (fn [] (drain ag ex)))))))
 
 (defn- release-held! [held]
@@ -500,7 +544,7 @@
             (do (swap! (:ctl ag) assoc :queued false)
                 ;; an enqueue between the empty claim and the flag clear
                 ;; saw :queued true and did not kick: kick for it
-                (when-not (empty? @(:queue ag)) (kick! ag)))
+                (when-not (q-empty? @(:queue ag)) (kick! ag)))
             (:failed @(:ctl ag))
             (swap! (:ctl ag) assoc :queued false)
             :else
@@ -521,7 +565,7 @@
                 (when (action-failed! ag (:error verdict)) (recur))
                 (do (reset! (:state ag) (:value verdict))
                     ;; hand off when the next action names another executor
-                    (let [nxt (peek @(:queue ag))]
+                    (let [nxt (q-peek @(:queue ag))]
                       (if (and nxt (:executor nxt) (not (identical? (:executor nxt) ex)))
                         (do (swap! (:ctl ag) assoc :queued false) (kick! ag))
                         (recur))))))))))
@@ -584,7 +628,7 @@
   (reset! (:errors ag) [])
   (swap! (:ctl ag) assoc :failed nil)
   (when clear-actions? (reset! (:queue ag) (empty-queue)))
-  (when-not (empty? @(:queue ag)) (kick! ag))
+  (when-not (q-empty? @(:queue ag)) (kick! ag))
   ag)
 
 (defn set-error-mode! [ag mode]
