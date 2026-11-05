@@ -420,9 +420,14 @@
 (defn- mark-macro!
   "Move an interned fn to the namespace's macros side and register its use.
    The analyzer finds a macro by its property on the $macros namespace object
-   (find-macros-ns / findInternedVar); a :defs entry is deliberately NOT
-   added: check-macro-arity consults one when present and, lacking
-   :method-params, rejects every call."
+   (find-macros-ns / findInternedVar), and Var.isMacro reads the marker off
+   the fn object itself: (.-cljs$lang$macro f) -- the property cljs's own
+   defmacro emits `(set! (. name -cljs$lang$macro) true)` to set. A fill fn
+   interned from cohost.thread never passed through defmacro, so without
+   setting it here the analyzer never treats the name as a macro and compiles
+   (future ...) as a call of an undeclared var (runtime: reading 'call' of
+   undefined). A :defs entry is deliberately NOT added: check-macro-arity
+   consults one when present and, lacking :method-params, rejects every call."
   [h]
   (if (:macro? h)
     h
@@ -430,6 +435,7 @@
           ns-sym (:ns h) mns (macros-ns ns-sym) sym (:name h)
           f (js-path ns-sym sym)]
       (js-set-path! mns sym f)                 ; replaces the forwarding alias
+      (set! (.-cljs$lang$macro f) true)        ; the marker Var.isMacro reads
       (swap! st update-in [::ana/namespaces ns-sym :defs] dissoc sym)
       (swap! st update-in [::ana/namespaces mns :defs] dissoc sym)
       (swap! st update-in [::ana/namespaces mns :uses] dissoc sym)
