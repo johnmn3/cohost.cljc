@@ -13,7 +13,8 @@
 ;;   read  <path>      a fresh process: install the leaves, open the same file
 ;;                     region, print the REGION line
 ;;
-;; REGION line: "REGION role=<r> pid=<pid> regions=<bool> heap0=<i32> heap=<i32> a=<i32> b=<i32>"
+;; REGION line: "REGION role=<r> pid=<pid> regions=<bool> conv=<bool> heap0=<i32> heap=<i32> a=<i32> b=<i32>"
+;; (conv: both regions are cohost objects carrying Eve's tag -- unit 6 step 2, cohost.object-eve)
 ;; (heap0: a fresh heap region's byte 0, zeroed by Eve; heap: n read back).
 ;; Where Eve does not load (its jank realization off the module path) the
 ;; program prints "GATED <reason>" and exits 3, as dev/u6/residence_probe.cljc.
@@ -85,6 +86,9 @@
     (println (str "REGION role=" role
                   " pid=" (cpp/getpid)
                   " regions=" regions
+                  ;; step 2: Eve's region is cohost's object with Eve's tag (cohost.object-eve)
+                  " conv=" (boolean (and ((v 'cohost.object-eve/eve-instance?) h)
+                                         ((v 'cohost.object-eve/eve-instance?) r)))
                   " heap0=" heap0
                   " heap=" heap
                   " a=" (load-i32 r 0)

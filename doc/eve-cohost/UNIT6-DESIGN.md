@@ -217,7 +217,7 @@ differs, those two legs FAIL and that is a finding, not a probe bug.
    **Built** (§8.1, check and gates §8.4).
 2. Struct convergence (§3a) behind the existing `cohost_object` API
    (`is_cohost`, `descriptor_of`, `fields_of`), no caller changes.
-   **Stopped** on a decision (§8.2).
+   **Built** per option (a), lane M's answer of 2026-11-05 ~5:47 PM ET (§8.5); one regression open there.
 3. Re-point units 3–5 on jank (§3c); runtime domain on Eve's slab.
    **Blocked** on step 2 and the jank fault (§8.3).
 4. Gate run (§5), numbers as printed. **Not run** (needs step 3).
@@ -405,7 +405,7 @@ LC_ALL=en_US.UTF-8 bash dev/u6/residence.sh jvm jank jvm-jank jank-jvm`,
   back by a second process started after the first exited. GATED where Eve
   is not on the module path. Results: §8.4.
 
-### 8.2 Step 2 — struct convergence: STOPPED on a decision the design and rulings §7–§10 do not settle
+### 8.2 Step 2 — struct convergence: the decision (stopped here at first; answered: option (a), §8.5)
 
 Step 0 settled the shape (§7.5 point 1: cohost's struct, no field added).
 What it leaves open is where Eve's side changes. For an Eve value on jank
@@ -446,7 +446,9 @@ to from-host (544/141 → 542/143), which two not identified [unverified].
 Neither option is built until the operator answers.
 
 **The question (operator):** (a) or (b); and whose gate re-measures
-Eve-on-jank on the converged object.
+Eve-on-jank on the converged object. **Answered** (lane M, REPORTS.md @
+9076c28dc, ~5:47 PM ET): (a), Eve-side; the shape confirmed at e4a863fa3
+(~6:12 PM ET). Built: §8.5.
 
 ### 8.3 Step 3 — re-pointing units 3–5: BLOCKED, on step 2 and on the jank fault
 
@@ -457,15 +459,20 @@ Eve-on-jank on the converged object.
   shim does not dispatch.
 - Unit 5: an Eve atom's `deref` outside a `$` region answers plain data
   (`d/eve->clj`, `src/eve/atom.cljc:813–826`), so the atom's values need no
-  converged object. Its handle does: `cohost.atom` calls `deref` / `swap!` on
-  the handle with jank's own core fns (cohost is AOT-compiled before the
-  completion loads, and the completion's re-roots hold only for namespaces
-  compiled after it — the completion's own measured statement,
-  host_completion.jank:29; not measured on cohost here), and an `eve_obj`
-  `MmapAtom` has no jank `deref` behavior (`object_behavior::none`, :80). The converged object —
-  whose `deref` slot is a jank behavior — is what lets the layer hold Eve's
-  atom unchanged; the alternative, adding handle-operation fns to the
-  portable layer's factory, is a unit-5 design change this unit does not own.
+  converged object. Its handle: this bullet first said `cohost.atom` calls
+  `deref` / `swap!` on the handle with jank's own core fns, because cohost
+  is AOT-compiled before the completion loads and the completion's re-roots
+  hold only for namespaces compiled after it (its docstring,
+  host_completion.jank:29). **Corrected at step 2 (§8.5), measured:** jank
+  resolves `clojure.core/deref`'s root at call time, also from a fn
+  compiled before the re-root — the completion's own `object?`, compiled
+  before :502, reached the re-rooted `deref` and recursed without end (a
+  segfault at load). So a `deref` call compiled before the completion loads
+  can reach the completion's `deref`, which dispatches Eve's `IDeref` for an
+  Eve atom whatever its object. Whether cohost's AOT-compiled atom layer
+  resolves the same way is not measured [unverified], so whether unit 5's
+  handle needs anything from the converged object is open, not settled
+  either way.
 - The fault: printing a value deref'd from an Eve atom on jank exits 139
   (§7.6), and the gate run (§5: `bb boot:jank` with the fill forced) prints
   values. No step-3 code is written: its representation waits on §8.2 and
@@ -506,3 +513,77 @@ Eve-on-jank on the converged object.
   `EVE-COMPLETION-LOADED`, `booted as stock: 542   from host: 143
   natives: 28   skipped: 108   errors: 0`, `battery: 219/221` (the same
   two FAILs), `libraries: 62/62`.
+
+### 8.5 Step 2 — the converged object, option (a): BUILT; one regression open
+
+**How Eve builds cohost's object without depending on cohost's repo.** Eve's
+completion gains a host-object seam; Eve names no cohost type.
+
+- Eve side (atom.broker `agent3/eve-u6-converge`, 2cf927eee, on d87d627fa):
+  `eve.host-completion/set-host-object!` takes `{:make (fn [tag fields])
+  :object? :tag :fields}`; `make-object`, `object?`, `object-tag` and
+  `object-fields` go through it when it is set, and `object?` answers both
+  representations. `object-behaviors` `{:equiv :hash :str}` are `eve_host`'s
+  new `equiv_of` / `hash_of` / `str_of` over the existing hooks, which
+  `eve_obj`'s virtuals now call too (one implementation). Unset — every host
+  but cohost's jank seat — an instance is `eve_obj` as before.
+- cohost side (this branch): `cohost.hosts.jank-host/new-object [desc
+  methods fields]` (one wrapper over `cohost_obj::make`), and
+  `src/cohost/object_eve.jank`, which on load installs cohost's object. The
+  descriptor is Eve's tag (a symbol; cohost's own descriptors are maps — the
+  family test). Slots 0–3 are Eve's `equiv` / `hash` / `str` / `str`; slots
+  4–9 are nil, since an Eve value answers Eve's protocols, as before.
+  `cohost.region-eve` loads Eve through it, so its regions are converged
+  objects.
+- A first build segfaulted at load: `object?` read the seam's volatile
+  through `clojure.core/deref`. The completion re-roots `deref` (:502) onto
+  `host-ref?`, which asks `object?`, so the read recursed without end. Eve
+  now reads it through jank's own `deref`, captured before the re-root. This
+  is how the call-time resolution in §8.3's correction was measured.
+
+**Re-gate** (the stated floor; the 12-namespace set is unlocated). One
+process per namespace. Numbers as printed are tests/pass/fail/error. Arms:
+
+- A: base d87d627fa, `bb test:jank <ns>`.
+- B: the change, Eve alone, `bb test:jank <ns>`.
+- D: the change, Eve's runner inside a cohost process with cohost's object
+  installed (`dev/u6/eve_tests_on_cohost.jank converged`).
+- C: the control, the same cohost process with the completion only, so
+  instances are `eve_obj` (`... plain`).
+
+| namespace | A | B | D | C |
+|---|---|---|---|---|
+| eve.hamt-util-test | 5/51/0/0 | 5/51/0/0 | 5/51/0/0 | |
+| eve.host-completion-test | 4/46/0/0 | 4/46/0/0 | **ABORT 134** | 4/46/0/0 |
+| eve.slab-io-test | 4/51/0/0 | 4/51/0/0 | 4/51/0/0 | |
+| eve.eve-bytes-fixture-test | 3/161/0/0 | 3/161/0/0 | 3/161/0/0 | 3/161/0/0 |
+| eve.thread-host-test | 13/30/0/0 | 13/30/0/0 | 13/30/0/0 | |
+| eve.net.bytes-codec-test | 6/103/0/0 | 6/103/0/0 | 6/103/0/0 | |
+| eve.net.codec-compat-test | 2/4/1/7 | 2/4/1/7 | 2/4/1/7 | |
+| eve.net.codec-fixture-test | 7/34/12/5 | 7/34/12/5 | 7/34/12/5 | 7/34/12/5 |
+
+The codec trio is 141/13/12 on every arm: this line lacks the F-1 codec fix
+09b1493.
+
+- cohost, before (3c0053c, Eve at d87d627fa's code) and after (this change,
+  Eve at 2cf927eee), the same commands. `bb boot:jank`: before `544/141/28/108/0`,
+  219/221, 62/62; after (6:21–6:29 PM ET, rc=0, 483 s, AOT-RECOMPILE)
+  `544/141/28/108/0`, 219/221 (the standing pair), 62/62.
+  `dev/u6/boot_with_completion.jank`: before `542/143/28/108/0`, 219/221,
+  62/62; after (160 s) the same. `dev/u6/boot_with_converged.jank`, the
+  completion with cohost's object installed (after only, 157 s):
+  `EVE-OBJECT-CONVERGED`, `542/143/28/108/0`, 219/221, 62/62.
+- `dev/u6/region.sh` on the change, whose regions are now converged objects
+  (its new `conv=` field must be true): `REGION-CHECK PASS
+  writer-pid=5111 reader-pid=3279 n=1833951024` (65 s).
+
+**The open regression.** In D, `eve.host-completion-test` aborts with
+"Panic encountered: invalid object type: unknown, raw value 71" in
+`jank::runtime::is_collection`, from host_completion_test.jank:42, `(is (not
+(coll? x)))`. That is jank's own `coll?` on cohost's object, whose type id
+(`object_type::max + 1` = 71) jank's type dispatch does not know. A panic
+ends the process; it is not a catchable error. On `eve_obj` (`opaque_box`, a
+type jank knows) `coll?` answers false: C passes 4/46. cohost never calls
+jank's `coll?` on its own objects (its shim answers for them, §3a), but Eve's
+code calls jank's core on its values directly. Which of jank's core fns
+answer, throw or abort on a converged instance is inventoried in §8.6.

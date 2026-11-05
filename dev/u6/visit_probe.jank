@@ -1,0 +1,25 @@
+;; Eve-in-cohost unit 6, step 2 (doc/eve-cohost/UNIT6-DESIGN.md section 8.5): what one of jank's own clojure.core
+;; fns does with an Eve instance -- a real one, eve.region's heap region -- when the instance is cohost's object
+;; (mode converged: cohost.object-eve) and when it is Eve's eve_obj (mode plain), inside a cohost process. One fn per
+;; process: a jank panic ends the process (dev/u6/visit_probe.sh runs the list and reads each exit).
+;;
+;;   LC_ALL=en_US.UTF-8 jank --module-path <cohost>/src:<bb classpath jank> run dev/u6/visit_probe.jank -- converged|plain <fn>
+;;
+;; Prints "PROBE <mode> <fn> => <answer>", the answer pr-str'd, or "threw ..." for a thrown value.
+(require 'cohost.hosts.jank-host)
+(let [[mode f] *command-line-args*]
+  (if (= mode "converged") (require 'cohost.object-eve) (require 'eve.host-completion))
+  (require 'eve.region)
+  (let [r ((resolve 'eve.region/make-heap-region) 64)
+        r2 ((resolve 'eve.region/make-heap-region) 64)
+        fv @(resolve (symbol "clojure.core" f))
+        call (case f
+               ("=" "identical?") (fn [] (fv r r2))
+               ("get" "contains?" "find") (fn [] (fv r :k))
+               "conj" (fn [] (fv r 1))
+               "nth" (fn [] (fv r 0))
+               (fn [] (fv r)))
+        out (try (pr-str (call))
+                 (catch std.exception e (str "threw std.exception: " (cpp/.what e)))
+                 (catch jank.runtime.object_ref e (str "threw " (pr-str e))))]
+    (println "PROBE" mode f "=>" out)))

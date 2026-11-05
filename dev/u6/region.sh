@@ -4,7 +4,8 @@
 # :region-open / :region-heap / :region-sync leaves, filled with Eve's region
 # adapter (cohost.region-eve), are exercised through cohost.adapter only:
 # a heap region round-trips a number; a file region written and synced by one
-# process is read back by another that started after the writer exited.
+# process is read back by another that started after the writer exited; and
+# (step 2) each region Eve makes is cohost's object carrying Eve's tag.
 # Prints one verdict line:
 #
 #   REGION-CHECK PASS|FAIL|GATED  writer-pid=.. reader-pid=.. n=..  (reason)
@@ -53,6 +54,7 @@ if [ -n "$wl" ] && [ -n "$rl" ]; then
   b=$(( -n - 1 ))
   [ "$wp" = "$rp" ] && why="$why same pid;"
   for l in "$wl" "$rl"; do [ "$(field regions "$l")" = "true" ] || why="$why regions not true;"; done
+  for l in "$wl" "$rl"; do [ "$(field conv "$l")" = "true" ] || why="$why region not cohost's object (conv);"; done
   [ "$(field heap0 "$wl")" = "0" ] || why="$why heap region not zeroed;"
   [ "$(field heap "$wl")" = "$n" ] || why="$why heap round trip;"
   [ "$(field a "$wl")" = "$n" ] || why="$why writer a;"

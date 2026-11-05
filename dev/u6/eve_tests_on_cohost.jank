@@ -1,0 +1,15 @@
+;; Eve-in-cohost unit 6, step 2's re-gate (doc/eve-cohost/UNIT6-DESIGN.md section 8.5): Eve's own jank test runner,
+;; run inside a cohost process -- cohost's jank host loaded first, as on the seat -- with Eve's instances built as
+;; cohost's object (mode converged: cohost.object-eve) or as Eve's own eve_obj (mode plain: the completion alone,
+;; the control). Eve's runner then loads the named test namespaces and exits through eve.process/exit!.
+;;
+;;   LC_ALL=en_US.UTF-8 jank --module-path <cohost>/src:<bb classpath jank>:<eve>/adapters/completion/jank/test:\
+;;     <eve>/adapters/slab-io/test:<eve>/test run dev/u6/eve_tests_on_cohost.jank -- converged|plain <test-ns> ...
+(require 'cohost.hosts.jank-host)
+(let [[mode & nses] *command-line-args*]
+  (if (= mode "converged")
+    (require 'cohost.object-eve)
+    (require 'eve.host-completion))
+  (println "EVE-ON-COHOST mode=" mode)
+  (require 'eve.runner.jank-main)
+  (apply (resolve 'eve.runner.jank-main/-main) "test" nses))

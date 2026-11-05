@@ -1177,6 +1177,13 @@ namespace cohost_obj {
   ([desc fields extmap] (cpp/cohost_obj.make desc (:methods desc) fields extmap nil))
   ([desc fields extmap m] (cpp/cohost_obj.make desc (:methods desc) fields extmap m)))
 
+(defn new-object
+  "A cohost object over an explicit descriptor and method-slot vector (the slots cohost_object's behaviors call, in
+   its order: 0 equiv, 1 hasheq, 2 toString, 3 toCodeString, 4 invoke, 5 deref, 6 get, 7 seq, 8 compare, 9 find).
+   Eve-in-cohost unit 6: the object Eve's completion builds for its instances on this seat (cohost.object-eve) --
+   its descriptor Eve's tag, its slots Eve's =, hash and print."
+  [desc methods fields] (cpp/cohost_obj.make desc methods fields nil nil))
+
 (defn with-inst-meta [x m]
   (if-let [f (:with-meta-fn (instance-desc x))]
     (f x m)

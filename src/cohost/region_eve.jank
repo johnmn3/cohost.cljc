@@ -13,16 +13,18 @@
    and no operation of its own (MEMORY-PLAN.md section 9); Eve's jank region
    adapter exports no close, so there is no close leaf.
 
-   eve.host-completion is required first: on jank, Eve's namespaces load
-   only after Eve's core completion, which interns deftype, defprotocol, ...
-   into clojure.core, seen only by namespaces created after it (Eve's own
-   launcher, test/eve/runner/jank_main.jank, requires it first). The
+   cohost.object-eve is required first: it loads Eve's core completion -- on
+   jank, Eve's namespaces load only after it, since it interns deftype,
+   defprotocol, ... into clojure.core, seen only by namespaces created after
+   it (Eve's own launcher, test/eve/runner/jank_main.jank, requires it first)
+   -- and gives the completion cohost's object, so the regions Eve makes here
+   are cohost objects with Eve's tag (unit 6 step 2, design section 3a). The
    completion also re-roots clojure.core names (defn, fn, let, =, hash,
-   deref, ...) for every namespace compiled after it, so this namespace is
-   required after cohost's own jank host has loaded (dev/u6/region_check.jank
-   does); whether cohost's jank host also compiles correctly after the
-   completion is not measured."
-  (:require [eve.host-completion]
+   deref, ...) for every namespace compiled after it; cohost's jank host is
+   loaded before it (cohost.object-eve requires it), and cohost's battery
+   and libraries with the completion loaded measured 219/221 and 62/62
+   (design section 8.4)."
+  (:require [cohost.object-eve]
             [cohost.adapter :as adapter]
             [eve.mem :as eve-mem]
             [eve.region :as eve-region]))
