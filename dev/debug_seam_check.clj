@@ -19,14 +19,16 @@
 
 (defn run-proc
   "-> {:out :err :exit} (:exit :timeout past the limit)."
-  [cmd dir stdin]
-  (let [proc (p/process {:cmd cmd :dir dir :in stdin
-                         :out :string :err :string
-                         :extra-env {"CLJ_CONFIG" (or (System/getenv "CLJ_CONFIG") "")}})
-        done (deref proc 900000 :timeout)]
-    (if (= done :timeout)
-      (do (p/destroy proc) {:out "" :err "" :exit :timeout})
-      {:out (:out done) :err (:err done) :exit (:exit done)})))
+  ([cmd dir stdin] (run-proc cmd dir stdin {}))
+  ([cmd dir stdin extra-env]
+   (let [proc (p/process {:cmd cmd :dir dir :in stdin
+                          :out :string :err :string
+                          :extra-env (merge {"CLJ_CONFIG" (or (System/getenv "CLJ_CONFIG") "")}
+                                            extra-env)})
+         done (deref proc 900000 :timeout)]
+     (if (= done :timeout)
+       (do (p/destroy proc) {:out "" :err "" :exit :timeout})
+       {:out (:out done) :err (:err done) :exit (:exit done)}))))
 
 (defn jvm-cli
   "cohost.cli on the JVM host with the given config map; stdin a string."
@@ -40,8 +42,18 @@
 
 (defn jank-cli
   "bin/cohost :jank with clojure-style args in the demo project."
-  [args stdin]
-  (run-proc (into [(str repo "/bin/cohost") ":jank"] args) demo stdin))
+  ([args stdin] (jank-cli args stdin {}))
+  ([args stdin extra-env]
+   (run-proc (into [(str repo "/bin/cohost") ":jank"] args) demo stdin extra-env)))
+
+(defn run-main
+  "A fixture namespace's -main through the seam (the load path:
+   the namespace loads through the loader, then -main runs)."
+  [ns-sym]
+  (case target
+    "jvm" (jvm-cli {:roots [(str demo "/src")]
+                    :main {:type :main :ns ns-sym :args []}} "")
+    "jank" (jank-cli ["-m" ns-sym] "")))
 
 (defn run-e
   "One -e program (a single string of forms), uncaught errors and all."
@@ -88,6 +100,28 @@
 (def reader-run (run-e "(defn broken [x"))
 (def reader-text (str (:out reader-run) "\n" (:err reader-run)))
 
+;; U3: a bad defn in a loaded namespace (the load path), and a native
+;; C++ exception against a stock catch (the catch hole)
+(def bad-load (run-main "seam.bad"))
+(def bad-load-text (str (:out bad-load) "\n" (:err bad-load)))
+(def native-catch
+  (run-e "#?(:jank (try (throw (cpp/std.runtime_error \"boom\")) (catch Throwable e (prn :caught (ex-message e)))) :default (try (throw (ex-info \"boom\" {})) (catch Throwable e (prn :caught (ex-message e))))"))
+(def native-catch-text (str (:out native-catch) "\n" (:err native-catch)))
+
+;; U3: a macro that expands to an unresolved symbol, loaded as a namespace
+(def bad-macro (run-main "seam.badmacro"))
+(def bad-macro-text (str (:out bad-macro) "\n" (:err bad-macro)))
+
+;; U7: integer divide by zero, both spellings
+(def div-run (run-e "(/ 5 0)"))
+(def quot-run (run-e "(quot 5 0)"))
+(def div-text (str (:out div-run) "\n" (:err div-run) "\n" (:out quot-run) "\n" (:err quot-run)))
+
+;; U6: transform introspection through the launcher (jank only)
+(def codegen (when (= target "jank")
+               (jank-cli ["-e" "(+ 1 2)"] "" {"JANK_PRINT_CODEGEN" "1"})))
+(def codegen-text (when codegen (str (:out codegen) "\n" (:err codegen))))
+
 ;; ---- the checks ------------------------------------------------------
 
 (defn first-real-line [s]
@@ -107,7 +141,18 @@
               "; stderr: " (first-real-line (:err uncaught))))
 
 (record! 2 "SKIP" "owned by U4a (positions at the JIT read end)")
-(record! 3 "SKIP" "owned by U3 (load-time analysis parity)")
+;; #3 unresolved symbol: load refuses with the diagnostic, and a native
+;; exception is caught by a stock catch Throwable with its message
+(record! 3
+         (if (and (not= 0 (:exit bad-load))
+                  (includes? bad-load-text "this-var-does-not-exist")
+                  (includes? native-catch-text ":caught" "boom"))
+           "PASS"
+           "FAIL")
+         (str "load: exit " (:exit bad-load)
+              (if (includes? bad-load-text "this-var-does-not-exist")
+                ", names the symbol" ", no diagnostic")
+              "; native catch: " (first-real-line (:out native-catch))))
 ;; #4 reader error: the probe runs; the :read-source phase is U4a's
 ;; read-end work, so until then this reports the measured state as SKIP
 (record! 4
@@ -139,10 +184,38 @@
 
 (record! 8 "SKIP" "owned by U5 (*err* separation)")
 (record! 9 "SKIP" "owned by U4c (AOT report)")
-(record! 10 "SKIP" "owned by U7 (ArithmeticException)")
-(record! 11 "SKIP" "owned by U6 (transform introspection)")
+;; #10 integer divide by zero: a catchable ArithmeticException (exit 1),
+;; never a signal (136)
+(record! 10
+         (if (and (= 1 (:exit div-run)) (= 1 (:exit quot-run))
+                  (includes? div-text "Divide by zero"))
+           "PASS"
+           "FAIL")
+         (str "/ exit " (:exit div-run) ", quot exit " (:exit quot-run)
+              "; " (first-real-line (:err div-run))))
+;; #11 transform introspection: the launcher passes JANK_PRINT_CODEGEN
+;; through and the rewritten forms' codegen prints (jank only)
+(record! 11
+         (if (= target "jvm")
+           "SKIP"
+           (if (and (= 0 (:exit codegen))
+                    (includes? codegen-text "cohost"))
+             "PASS"
+             "FAIL"))
+         (if (= target "jvm")
+           "jank-only (no transform to introspect on the JVM host)"
+           (str "exit " (:exit codegen) ", codegen names cohost: "
+                (boolean (includes? codegen-text "cohost")))))
 (record! 12 "SKIP" "owned by U4c (gdb break-on-throw)")
-(record! 13 "SKIP" "owned by U3 (macro-expansion error)")
+;; #13 macro-expansion error: the load fails and the report identifies
+;; the macro call site
+(record! 13
+         (if (and (not= 0 (:exit bad-macro))
+                  (or (includes? bad-macro-text "Expanded from this macro")
+                      (includes? bad-macro-text "macroexpanding")))
+           "PASS"
+           "FAIL")
+         (str "exit " (:exit bad-macro) "; " (first-real-line (:err bad-macro))))
 (record! 14
          (if (and (= 1 (:exit uncaught)) (= 0 (:exit clean)) (includes? (:out clean) "3"))
            "PASS" "FAIL")

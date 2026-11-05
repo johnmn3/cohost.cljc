@@ -360,6 +360,45 @@
       (symbol (str "clojure." (subs head 7) (if (neg? dollar) "" (subs s dollar))))
       class)))
 
+;; a native C++ exception caught on jank, as the shim's exception value.
+;; On jank, rewrite's try translation (rw-try) appends catch clauses for
+;; cpp/jank.error_ref and cpp/std.exception to a folded stock try; each
+;; clause binds the caught C++ value, passes it to one of these, and runs
+;; the user's dispatch chain on the result -- so a stock
+;; (catch Throwable ..) holds what a native throw threw, message intact,
+;; where before it escaped every catch the stock libraries can write.
+#?(:jank (cpp/raw "#include <exception>
+#include <string>
+#include <jank/error.hpp>
+#include <jank/runtime/obj/persistent_string.hpp>
+namespace cohost_shim_err {
+  using namespace jank::runtime;
+  inline object_ref error_message(jank::error_ref const e)
+  { return make_box(e->message); }
+  inline object_ref std_what(std::exception const &e)
+  { return make_box<obj::persistent_string>(jtl::immutable_string(std::string(e.what()))); }
+}"))
+
+(defn wrap-jank-error
+  "The exception value a caught jank::error (cpp/jank.error_ref) becomes:
+   an ex-info carrying its message, classed as a compiler exception, as
+   cohost.adapter/try-all classes it for cohost's own code. Only jank
+   emits the catch that calls this; on other hosts the value passes
+   through."
+  [e]
+  #?(:jank (ex-info (cpp/cohost_shim_err.error_message e)
+                    {:cohost/class 'clojure.lang.Compiler$CompilerException})
+     :default e))
+
+(defn wrap-std-exception
+  "The exception value a caught std::exception (cpp/std.exception)
+   becomes: an ex-info carrying its what() message. Only jank emits the
+   catch that calls this; on other hosts the value passes through."
+  [e]
+  #?(:jank (ex-info (cpp/cohost_shim_err.std_what e)
+                    {:cohost/class 'java.lang.Exception :cohost/native true})
+     :default e))
+
 (defn class-of
   "The JVM class token (a symbol) of a host value."
   [x]

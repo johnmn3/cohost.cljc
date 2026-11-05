@@ -1206,16 +1206,18 @@
         exprs (rw-all ctx (remove #(or (catch? %) (finally? %)) body))
         catches (filter catch? body)
         finallys (map (fn [[_ & fb]] (apply list 'finally (rw-all ctx fb))) (filter finally? body))
-        ;; this codemod's own output, walked again inside a macro's expansion:
-        ;; its one catch-all clause is kept, not wrapped in another layer
-        own? (and (= 1 (count catches))
-                  (let [[_ c b] (first catches)]
-                    (and (= c (:catch-all ctx)) (symbol? b) (starts-with? (name (*plain* b)) "e__stock"))))
         ;; a catch of a cpp/... class on a :cpp? host is the host's own
         ;; catch, emitted as a sibling clause (jank's try takes several
         ;; typed catches); the folded dispatch below could only fold it
         ;; into an instance? test, a type in value position there
         cpp-catch? (fn [[_ c]] (and (host/cpp?) (symbol? c) (some? (cpp-tag c))))
+        ;; this codemod's own output, walked again inside a macro's expansion:
+        ;; its one folded catch-all clause is kept, not wrapped in another
+        ;; layer (cpp sibling clauses -- its own native-translation clauses
+        ;; included -- stand as they did)
+        own? (and (= 1 (count (remove cpp-catch? catches)))
+                  (let [[_ c b] (first (remove cpp-catch? catches))]
+                    (and (= c (:catch-all ctx)) (symbol? b) (starts-with? (name (*plain* b)) "e__stock"))))
         cpp-clause (fn [[_ c b & cb]]
                      [(apply list 'catch (*plain* c) b
                              (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb))))])
@@ -1235,16 +1237,34 @@
                                        (if (true? test) then (list 'if test then else)))
                                      (list 'throw e)
                                      (reverse clauses))]
-                   [(list 'catch (:catch-all ctx) e chain)])))
+                   ;; -> [the folded clause, the bound symbol, the dispatch
+                   ;; chain]: the native-translation clauses below reuse
+                   ;; the chain with a translated exception bound to e
+                   [(list 'catch (:catch-all ctx) e chain) e chain])))
         catch-clauses
         (if own?
-          (let [[_ c b & cb] (first catches)]
-            [(apply list 'catch c b (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb))))])
+          (map (fn [[_ c b & cb]]
+                 (apply list 'catch c b (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb)))))
+               catches)
           (if-not (some cpp-catch? catches)
-            (fold catches)
+            (let [f (fold catches)]
+              (when f
+                (into [(first f)]
+                      (if (host/cpp?)
+                        ;; a native C++ exception is no object_ref, so the
+                        ;; folded clause never sees it: two more doors, in
+                        ;; try-all's order, each translating the caught C++
+                        ;; value into the shim's exception value and then
+                        ;; running the same dispatch chain (U3b)
+                        (let [e (second f) chain (nth f 2) raw (gensym "e__raw")]
+                          [(list 'catch 'cpp/jank.error_ref raw
+                                 (list 'let* [e (list (shim-fn "wrap-jank-error") raw)] chain))
+                           (list 'catch 'cpp/std.exception raw
+                                 (list 'let* [e (list (shim-fn "wrap-std-exception") raw)] chain))])
+                        []))))
             ;; source order kept: runs of JVM catches fold together,
             ;; cpp catches stand as siblings between them
-            (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (fold g)))
+            (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (let [f (fold g)] (if f [(first f)] []))))
                     (partition-by cpp-catch? catches))))]
     (apply list 'try (concat exprs catch-clauses finallys))))
 
