@@ -1143,7 +1143,20 @@
 ;; ---------------------------------------------------------------------------
 ;; Var, Keyword, Symbol, Namespace, Compiler
 
-(def Var-pushThreadBindings (fn [m] (host/push-thread-bindings! m)))
+;; the thread-binding push is a facade crossing into the host's
+;; Var machinery, which iterates the bindings map itself and
+;; casts each key to Var: an Eve-backed bindings map materializes
+;; at the crossing -- keys and values with resident references
+;; resolved one level (the values themselves keep their Eve form;
+;; only the references the host machinery would meet raw are
+;; resolved), in a host map the host's push accepts
+(defn- bindings-map [m]
+  (if (memory/eve-backed? m)
+    (into {} (map (fn [e] [(memory/resolve-resident (key e))
+                           (memory/resolve-resident (val e))]))
+          (seq m))
+    m))
+(def Var-pushThreadBindings (fn [m] (host/push-thread-bindings! (bindings-map m))))
 (declare Var-popThreadBindings)
 (def Var-getThreadBindings (host-fn 'get-thread-bindings (fn [] (host/thread-bindings))))
 (def Var-cloneThreadBindingFrame (fn [] nil))
@@ -1211,7 +1224,7 @@
 ;; call: what the codemod writes where the host's bindings are scoped only
 ;; (:binding-style :with-bindings)
 (defn with-thread-bindings [m f]
-  (try (host/with-thread-bindings! m f)
+  (try (host/with-thread-bindings! (bindings-map m) f)
        (finally (unmap-dead-locals!))))
 
 (def Keyword-intern (fn ([x] (if (symbol? x)
@@ -2875,10 +2888,17 @@
                  ([a f x y args] (swap-vals* a f (cons x (cons y args))))))
 (def -resetVals (fn [a x] (loop [] (let [old @a] (if (compare-and-set! a old x) [old x] (recur))))))
 (def -compareAndSet (host-fn 'compare-and-set! (unsupported "compare-and-set!")))
-(def -addWatch (host-fn 'add-watch (unsupported "add-watch")))
+;; a watch fn and a validator are invoked BY the host's atom
+;; machinery: a resident reference stored in an Eve-backed opts
+;; map (as (atom 0 :validator f) builds under the fill) resolves
+;; to the registered fn at this crossing, or the host would
+;; invoke the reference itself (unit 4)
+(def -addWatch (let [add-watch* (host-fn 'add-watch (unsupported "add-watch"))]
+                 (fn [a k f] (add-watch* a k (memory/resolve-resident f)))))
 (def -removeWatch (host-fn 'remove-watch (unsupported "remove-watch")))
 (def -getWatches (host-fn 'get-watches (fn [_] {})))
-(def -setValidator (host-fn 'set-validator! (unsupported "set-validator!")))
+(def -setValidator (let [set-validator!* (host-fn 'set-validator! (unsupported "set-validator!"))]
+                     (fn [a f] (set-validator!* a (memory/resolve-resident f)))))
 (def -getValidator (host-fn 'get-validator (fn [_] nil)))
 (def -isRealized (let [host-realized (host-fn 'realized? nil)]
                    (fn [x] (cond (or (thread/future-value? x) (thread/promise-value? x)) (thread/future-done? x)

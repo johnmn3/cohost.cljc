@@ -53,10 +53,14 @@ identity contract is unit 4's dependency).
   probe-series update — see the dated section below.
 - [ ] M5 — layer probe (probe_collections.clj): creators, ops,
   transients (post-seal + cross-scope throws), meta, seam
-  contract through the booted core, fill forced.
-- [ ] M6 — JVM gate, fill forced: battery 221/221, libraries
-  62/62, boot errors 0; corpus vs host-backed run, no new
-  failures; same-run H vs E timings, interleaved.
+  contract through the booted core, fill forced. (Probe file
+  needs its unrepresentable-error checks updated to resident
+  round-trips before the full run; see below.)
+- [~] M6 — JVM gate, fill forced: **battery 221/221,
+  libraries 62/62, boot errors 0** (dev/u4_gate.clj on,
+  2026-11-05 ~2:10 PM ET; launch shape: -Sdeps paths, no
+  -M:eve — see the eduction diagnostic). Remains in M6: the
+  corpus comparison + same-run H vs E timings.
 - [ ] M7 — jank gate on J: `bb boot:jank` AOT-compiles the new
   shim/layer code; battery 219/221 (standing pair only).
 - [ ] M8 — standing checks (cli:check 7/7 SAME, debug-seam JVM
@@ -174,6 +178,29 @@ instance, never-stored fn probe answers not-found, equiv +
 hasheq against the host twin true, record value returns
 identical, transient assoc of a fn survives persistent!.
 Next: battery with fill forced, then probe_collections.
+
+**Residents at the crossings — battery green (2026-11-05
+~2:10 PM ET).** Two follow-on fixes after the residents
+landing: (1) references arrive in two shapes — Eve's lookups
+decode a reference as an Eve map, Eve's ITERATION materializes
+it as a host map — so the hosting's one-level resolution
+recognizes both; (2) the thread-binding push is a facade
+crossing into the host's Var machinery (it iterates the
+bindings map and casts keys to Var), so the shim's
+Var-pushThreadBindings / with-thread-bindings materialize an
+Eve-backed bindings map at the crossing (references resolved
+one level, values keep their Eve form). Five binding-family
+checks went green on that. The last battery row, atoms, was
+the same shape one level over: (atom 0 :validator f) builds
+its opts map through the fill, and the host atom machinery
+later INVOKES what :validator holds — the shim's
+-setValidator / -addWatch now resolve a resident fn at that
+crossing. **Battery 221/221, libraries 62/62, boot errors 0,
+fill forced.** FLAG for the unit 5 lane (per this lane's
+coordination rule): the -setValidator / -addWatch edits touch
+atom-surface method vars in shim.cljc; the change is confined
+to resolving a resident reference argument before the host
+call — no atom semantics, no var surfaces touched.
 
 **What is running / remains.**
 - Running at this bank: nothing — the last legs (battery

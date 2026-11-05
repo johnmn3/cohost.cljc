@@ -158,6 +158,8 @@
                      (values, not fns)}
      :representable? (fn [v]) -- v can be written by Eve's codec
      :canonical-form (fn [x]) -- x's canonical Clojure-level form
+     :resolve       (fn [v]) -- v with a top-level resident
+                    reference resolved to the registered object
      :with-meta     (fn [x m]) -- x carrying meta m (wrapper minted
                     when m is non-nil and x is bare)
      :ops           {:conj :assoc :dissoc :disj :pop :peek :nth
@@ -273,6 +275,18 @@
    registered none."
   []
   (when-let [f (host-fn* :install-fill)] (f)))
+
+(defn resolve-resident
+  "A value read out of Eve space (an op result, an iterated
+   entry) with a top-level resident reference resolved to the
+   registered host object -- the hosting's one-level
+   resolution. Any other value passes through. Crossings into
+   host machinery that consume entries directly (the thread
+   binding push, below in the shim) materialize through this."
+  [v]
+  (if (hosting-registered?)
+    ((host-fn* :resolve) v)
+    v))
 
 (defn canonical-form-of
   "x's canonical Clojure-level form, for any value: an Eve-backed

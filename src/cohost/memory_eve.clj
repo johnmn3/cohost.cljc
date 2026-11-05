@@ -124,10 +124,15 @@
        (= :cohost.memory/host-ref (get v :cohost/kind))))
 
 (defn- resolve-value
-  "A value an Eve op produced, with a top-level resident
-   reference resolved to the registered object."
+  "A value read out of Eve space, with a top-level resident
+   reference resolved to the registered object. The reference
+   arrives in whichever form the read produced: Eve's own
+   lookups decode it as an Eve map; Eve's iteration
+   materializes nested maps as host maps."
   [v]
-  (if (eve-ref? v) (resident (get v :id)) v))
+  (cond (eve-ref? v) (resident (get v :id))
+        (ref-marker? v) (resident (:id v))
+        :else v))
 
 (defn canonicalize
   "Walk an Eve root (or a host value Eve's codec materialized) to
@@ -702,6 +707,7 @@
                  :empty-list empty-list}
   :representable? representable?
   :canonical-form canonical-form-of
+  :resolve resolve-value
   :with-meta with-meta*
   ;; the ops convert what they store and what they probe with,
   ;; like the constructors: a stored seq must land as an Eve
