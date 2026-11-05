@@ -6,7 +6,9 @@
             [cohost.boot :as boot]
             [cohost.battery :as battery]
             [cohost.lib-battery :as lib-battery]
-            [cohost.bench :as bench]))
+            [cohost.bench :as bench]
+            #?@(:cljs [[cohost.hosts.cljs-eve :as cljs-eve]
+                       [cohost.hosts.cljs-realm :as cljs-realm]])))
 
 (defn -main
   "args: [root] [--verbose] [--no-libs] [--bench [--scale=x] [--quick]] [--eval src ...]:
@@ -16,14 +18,19 @@
    timed instead (--scale=x: each case at x times its size; --quick: one call
    per side, to check the cases run)."
   [& args]
+  ;; unit 8: a worker realm runs this same image; its life is its entry
+  (when-not #?(:cljs (cljs-eve/run-thread!) :default false)
   (let [[args evals] (split-with #(not= "--eval" %) args)
         evals (rest evals)
         flags (set (filter #(and (string? %) (= "--" (subs % 0 (min 2 (count %))))) args))
         root (or (first (remove flags args)) "resources/cohost/clojure-1.12.0")
         t0 (host/nano-time)
-        report (boot/boot! {:root root :verbose (contains? flags "--verbose")})
+        report (boot/boot! (merge {:root root :verbose (contains? flags "--verbose")}
+                                  ;; unit 8: the Node seat's heap is Eve's
+                                  #?(:cljs (cljs-realm/core-boot-opts {:root root :roots []}))))
         boot-ms (/ (double (- (host/nano-time) t0)) 1000000.0)]
     (boot/print-report report)
+    #?(:cljs (boot/install-runtime-loader!))
     (boot/make-user-ns!)
     (cond
       (seq evals)
@@ -49,7 +56,8 @@
           (when-not (contains? flags "--no-libs")
             (lib-battery/run-lib-battery! boot/eval-str))))
     ;; a future's thread pool keeps the JVM (and jolt) alive a minute
-    #?(:jolt (shutdown-agents) :cljw (shutdown-agents) :clj (shutdown-agents))
-    nil))
+    #?(:jolt (shutdown-agents) :cljw (shutdown-agents) :clj (shutdown-agents)
+       :cljs (cljs-eve/shutdown!))
+    nil)))
 
 #?(:cljs (set! *main-cli-fn* -main))

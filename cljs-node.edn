@@ -3,4 +3,13 @@
  :output-to "target/cljs-node/main.js"
  :output-dir "target/cljs-node"
  :optimizations :none
- :dump-core true}
+ :dump-core true
+ ;; unit 8: Eve is in the Node seat's build (cohost.hosts.cljs-eve). Its
+ ;; one file with node:-prefixed requires (eve.thread-host) resolves them
+ ;; through these bridges (doc/eve-cohost/CLJS-DEP-STATUS.md, wall 2);
+ ;; Eve's hosts.edn :cljs row joins the classpath through -Sdeps
+ ;; (dev/eve-cljs/eve_paths.clj, called by bin/cohost and bb.edn).
+ :foreign-libs [{:file "dev/eve-cljs/bridges/node_fs.js" :provides ["node:fs"] :global-exports {"node:fs" __eve_node_fs}}
+                {:file "dev/eve-cljs/bridges/node_os.js" :provides ["node:os"] :global-exports {"node:os" __eve_node_os}}
+                {:file "dev/eve-cljs/bridges/node_path.js" :provides ["node:path"] :global-exports {"node:path" __eve_node_path}}
+                {:file "dev/eve-cljs/bridges/node_worker_threads.js" :provides ["node:worker_threads"] :global-exports {"node:worker_threads" __eve_node_worker_threads}}]}

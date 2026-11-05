@@ -941,7 +941,13 @@
       (when-not (host/interned-var core-ns nm)
         (host/intern! core-ns nm f)
         (host/mark-macro! (host/interned-var core-ns nm))
-        (record! report :replaced {:name nm :reason :thread-layer}))))
+        (record! report :replaced {:name nm :reason :thread-layer})))
+    ;; unit 8: a seat with realms (cljs on Node with Eve hosting) gets
+    ;; the form-carrying future's entry, outside core (core's publics
+    ;; stay stock's); the future fill expands to it on that seat only
+    (when (host/capability :realm-submit)
+      (host/ensure-bare-ns! 'cohost.realm)
+      (host/intern! 'cohost.realm 'future-form-call thread/future-form-call)))
   report)
 
 (def ^:private atom-surface-names
@@ -1392,6 +1398,21 @@
                           :else (if-let [m (get @(:renames (ctx)) (str t))] (symbol m) t))]
               (host/alias! cur a t)
               [nil cur]))))
+
+(defn install-runtime-loader!
+  "Unit 8 (cljs seat): require and use called as functions -- anywhere a
+   top-level directive is not, inside a try or a fn -- load through this
+   loader, as the directive does. ClojureScript's own require, which the
+   seat took from its host, compiles to goog.require, which finds no
+   library the loader did not compile into the image: the namespace never
+   loaded and the call returned as though it had (measured: the probe's
+   (try (require 'clojure.spec.alpha) ...) printed OK and the later eval
+   failed reading clojure.spec.alpha off undefined). Called by the cljs
+   entry points after boot; other seats keep their host's require."
+  []
+  (host/intern! core-ns 'require (fn [& args] (require! (host/current-ns) args false) nil))
+  (host/intern! core-ns 'use (fn [& args] (require! (host/current-ns) args true) nil))
+  nil)
 
 (defn- core-var [sym]
   (or (host/interned-var core-ns sym) (host/resolve-core sym)))

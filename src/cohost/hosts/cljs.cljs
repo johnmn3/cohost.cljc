@@ -238,6 +238,17 @@
     h))
 (defn- slot [h] (let [h (as-handle h)] [(:ns h) (:name h)]))
 
+;; unit 8: a var as a realm crossing names it, and back
+(defn var-qsym
+  "The qualified symbol of a var handle or a cljs.core/Var."
+  [h]
+  (let [[ns nm] (slot h)] (symbol (str ns) (str nm))))
+
+(defn var-handle
+  "This realm's var handle for qualified symbol q."
+  [q]
+  (handle (symbol (namespace q)) (symbol (name q)) false))
+
 ;; thread bindings: ClojureScript has one thread and no binding stack of its
 ;; own for arbitrary vars, so a frame saves each var's current value and the
 ;; binding overwrites the var's slot; popping restores the frame.
@@ -287,6 +298,55 @@
 (defonce ^:private kick-pending (atom false))
 (def ^:private yield-marker (js-obj))
 
+;; Unit 8: the realm hook. On the Node seat with Eve hosting
+;; (cohost.hosts.cljs-eve) this realm is one of several -- the core realm
+;; and worker realms meeting at shared Eve atoms over SharedArrayBuffers.
+;; Completions of work that ran in another realm arrive as messages on
+;; eve.thread-host's mesh; the hook drains them. (poll ms): ms 0 never
+;; blocks; ms > 0 may block up to ms on this realm's mesh doorbell (an
+;; Atomics.wait that a message rings). nil = a single-realm seat.
+(defonce ^:private realm-poll (atom nil))
+
+(defn set-realm-poll!
+  "Install (or clear, with nil) the realm hook (cohost.hosts.cljs-eve)."
+  [f]
+  (reset! realm-poll f)
+  nil)
+
+(defn- poll-realms! [ms]
+  (when-let [f @realm-poll] (f ms)))
+
+;; fn <-> var name, for values crossing a realm: a fn that is a var's
+;; root crosses as the var's qualified name (eve.thread's rule: a
+;; registered name travels, a plain closure is refused), and the
+;; receiving realm -- the same image, booted the same way -- resolves
+;; the name to its own root.
+(defonce ^:private fn-names (js/WeakMap.))
+
+(defn fn-var-name
+  "The qualified symbol of a var whose root is f, or nil."
+  [f]
+  (when (fn? f)
+    (if (.has fn-names f)
+      (.get fn-names f)
+      (let [nss (keys (::ana/namespaces @st))
+            ;; the booted core first: nearly every crossing fn is one of its
+            nss (sort-by (fn [n] (if (string/includes? (str n) "core") 0 1)) nss)
+            q (some (fn [ns-sym]
+                      (when-not (string/ends-with? (str ns-sym) "$macros")
+                        (some (fn [sym]
+                                (when (identical? f (try (js-path ns-sym sym) (catch :default _ nil)))
+                                  (symbol (str ns-sym) (str sym))))
+                              (keys (defs ns-sym)))))
+                    nss)]
+        (.set fn-names f q)
+        q))))
+
+(defn var-name-root
+  "The root of the var named by qualified symbol q in this realm, or nil."
+  [q]
+  (try (js-path (symbol (namespace q)) (symbol (name q))) (catch :default _ nil)))
+
 (defn- note-progress! [] (swap! task-progress inc) nil)
 
 (defn- run-task!
@@ -310,6 +370,7 @@
    ring)."
   [goal]
   (loop [idle 0]
+    (poll-realms! 0)
     (when-not (goal)
       (let [q @task-queue]
         (when (and (seq q) (<= idle (count q)))
@@ -342,6 +403,8 @@
       handle)))
 
 (defn- thread-self [] @task-self)
+
+
 
 (defn- doorbell [] {:cohost/doorbell true :flag (atom false)})
 
@@ -377,7 +440,12 @@
                           ;; slices -- only an asynchronous (host) event
                           ;; can ring this bell now
                           :else (loop [] (if @flag true (do (pump-tasks! (fn [] (boolean @flag)))
-                                                            (when-not @flag (block-ms! 5))
+                                                            (when-not @flag
+                                                              (if @realm-poll
+                                                                ;; another realm's completion rings
+                                                                ;; this realm's mesh doorbell
+                                                                (poll-realms! 5)
+                                                                (block-ms! 5)))
                                                             (recur)))))))))
 
 (defn- raw-root

@@ -83,6 +83,7 @@
    ;; implementation (registry, executors, conveyance) in cohost.thread.
    :thread-spawn    [['thunk] "run thunk on a new host thread; return an opaque handle for it, or nil (the default) when the host cannot spawn"]
    :thread-self     [[] "the opaque handle of the thread this call runs on, or nil (the default)"]
+   :realm-submit    [['task] "unit 8: run a form-carrying task in another realm of this seat (a worker heap meeting this one at shared Eve atoms): task {:ns sym :form (fn [locals] body) :args [values] :frame {var value} :future layer-future}; true when the task was handed over (the realm completes the future), false when it cannot cross (the caller runs the closure here). nil (the default): a single-realm seat"]
    :doorbell        [[] "a fresh doorbell: an opaque wait handle with sticky signal semantics, or nil (the default) when the host has none"]
    :doorbell-wait   [['db 'timeout-ms] "wait on doorbell db until it is signalled or timeout-ms (nil: no timeout) passes; true when signalled"]
    :doorbell-signal [['db] "signal doorbell db: every current and future wait on it returns true"]
@@ -375,6 +376,7 @@ namespace cohost_err {
     :thread-spawn nil
     :thread-self nil
     :doorbell nil
+    :realm-submit nil
     :doorbell-wait nil
     :doorbell-signal nil
     :core-lacks #{}

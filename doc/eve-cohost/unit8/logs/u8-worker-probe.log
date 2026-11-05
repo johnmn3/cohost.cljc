@@ -1,0 +1,5 @@
+U8-PROBE main got {:eve.thread/exit 1, :reason :normal} after 582 ms
+U8-PROBE final {:n 4000, :worker-wrote {:v [1 2 3], :made-in-worker 1}}
+U8-PROBE RESULT PASS
+U8-PROBE worker 1 sees {:n 1558}
+U8-PROBE worker done

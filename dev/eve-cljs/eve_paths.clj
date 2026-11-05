@@ -45,3 +45,14 @@
     (let [hosts (edn/read-string (slurp hosts-file))
           roots (mapv #(str (io/file eve-root %)) (:cljs hosts))]
       (pr-str {:paths roots}))))
+
+(defn eve-cljs-build-sdeps
+  "The -Sdeps EDN for cohost's own Node builds (unit 8: cohost.hosts.cljs-eve
+  is in them): Eve's :cljs row plus cohost's own :paths (an -Sdeps :paths
+  replaces the project's), merged over the EDN string extra (or nil) --
+  COHOST_CLI_SDEPS, whose :paths are added and other keys kept."
+  [repo extra]
+  (let [eve (edn/read-string (eve-cljs-sdeps repo))
+        own (:paths (edn/read-string (slurp (io/file repo "deps.edn"))))
+        x (when-not (str/blank? extra) (edn/read-string extra))]
+    (pr-str (assoc (or x {}) :paths (vec (distinct (concat own (:paths x) (:paths eve))))))))
