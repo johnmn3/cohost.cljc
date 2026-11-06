@@ -27,7 +27,6 @@
             [cljs.nodejs :as nodejs]))
 
 (nodejs/enable-util-print!)
-
 ;; Entry wiring: cljs.nodejscli invokes cljs.core/*main-cli-fn* -- but a
 ;; top-level (set! *main-cli-fn* ...) in THIS namespace runs BEFORE
 ;; nodejscli's check only if the namespace loads first; in the emitted
@@ -51,7 +50,6 @@
 ;; read). The explicit trailing invocation is what a :none build can
 ;; promise; it runs the probe when, and only when, the runtime marks
 ;; this file as the process main (always true for this artifact).
-(-main)
 
 (def checks (atom 0))
 (def failures (atom []))
@@ -114,3 +112,8 @@
                (str "PROBE-TX-DOMAINS-CLJS: ALL " @checks " CHECKS PASS")
                (str "PROBE-TX-DOMAINS-CLJS: " (count @failures) " FAILURES: " @failures)))
     (js/process.exit (if (empty? @failures) 0 1))))
+
+;; The trailing invocation is the LAST form of the namespace:
+;; _main must exist when it runs (compile6 emitted it at the top and
+;; node threw on the not-yet-defined var).
+(-main)

@@ -1,0 +1,17 @@
+/home/hatch/workspace/wt/eve-cohost-stm/target/stm-domains/probe_tx_domains_main.js:11
+probe_tx_domains_main._main.call(null);
+                            ^
+
+TypeError: Cannot read properties of undefined (reading 'call')
+    at Object.<anonymous> (/home/hatch/workspace/wt/eve-cohost-stm/target/stm-domains/probe_tx_domains_main.js:11:29)
+    at Module._compile (node:internal/modules/cjs/loader:1929:14)
+    at Object..js (node:internal/modules/cjs/loader:2060:10)
+    at Module.load (node:internal/modules/cjs/loader:1651:32)
+    at Module._load (node:internal/modules/cjs/loader:1443:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.require (node:internal/modules/cjs/loader:1674:12)
+    at require (node:internal/modules/helpers:157:16)
+    at global.CLOSURE_IMPORT_SCRIPT (/home/hatch/workspace/wt/eve-cohost-stm/target/stm-domains/goog/bootstrap/nodejs.js:88:13)
+    at goog.Dependency.load (/home/hatch/workspace/wt/eve-cohost-stm/target/stm-domains/goog/base.js:2908:23)
+
+Node.js v24.22.1

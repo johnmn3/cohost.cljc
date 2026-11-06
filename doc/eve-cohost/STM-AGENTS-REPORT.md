@@ -1767,3 +1767,31 @@ spellings in probe_tx_reclaim.clj. Everything else is
 probes, runners, and this report. Double declaration:
 this STATUS is the committed copy; the same text goes
 to the operator's chat as the lane's final message.
+
+## STATUS 19 — 2026-11-06 ~1:5x AM ET — addendum to the final declaration: the Node standalone entry, honestly
+
+STATUS 18 said the trailing-(-main) compile was "in
+flight"; it has now landed and been RUN, and the
+result is one more ordering wrinkle, recorded rather
+than smoothed over: compile6 emitted the trailing
+invocation at the TOP of the probe's JS file (the
+cljs emitter hoists the *main-cli-fn* assignment and
+the call site did not stay last), and `node main.js`
+threw "Cannot read properties of undefined" on the
+not-yet-defined _main. The probe source now places
+the invocation as the literal last form of the
+namespace (compile7, in flight as this is banked).
+The STM checks themselves are unaffected and already
+proven three times over on this seat (11/11, direct
+invocation of the exported -main, two different
+builds). This addendum exists so the declaration's
+"in flight" never reads as "done": the standalone
+entry is a build-wiring detail of ONE probe artifact,
+and its final state is whatever compile7's run prints
+-- if it does not print the PASS lines under a bare
+`node main.js`, the honest line stays "checks proven
+by direct invocation; standalone entry still wired
+wrong", and the fix belongs to whoever next touches
+the cljs probe build (it is the :none bootstrap's
+require ordering, a known cohost build quirk, not an
+STM property).
