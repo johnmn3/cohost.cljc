@@ -982,7 +982,9 @@ namespace cohost_obj {
   struct cohost_object : object {
     // the first tag past jank's own (object_type::max is its last, 70 on 0.1): derived,
     // so a jank that adds a type does not collide with it
-    static constexpr object_type obj_type{ static_cast<object_type>(static_cast<unsigned char>(object_type::max) + 1) };
+    // SCRATCH (unit 6 design section 8.6, option (1), measured as data only): jank's opaque_box, a type jank's own
+    // dispatch knows -- told apart from jank's opaque_box values and eve_obj by dynamic_cast (is_cohost)
+    static constexpr object_type obj_type{ object_type::opaque_box };
     static constexpr object_behavior obj_behaviors{
       object_behavior::call | object_behavior::get | object_behavior::find
       | object_behavior::compare | object_behavior::seqable | object_behavior::indexable
@@ -1102,7 +1104,7 @@ namespace cohost_obj {
     return make_box<cohost_object>(d, m, f, e, mt);
   }
   bool is_cohost(object_ref x) {
-    return !x.is_nil() && x.get_type() == cohost_object::obj_type;
+    return !x.is_nil() && x.get_type() == cohost_object::obj_type && dynamic_cast<cohost_object *>(x.ptr()) != nullptr;
   }
   object_ref descriptor_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->descriptor; }
   object_ref fields_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->fields; }
@@ -1124,7 +1126,7 @@ namespace cohost_obj {
   std::atomic<jank::i64> proto_generation{ 0 };
   jank::i64 bump_generation() { return ++proto_generation; }
   object_ref cached_impl(object_ref c, object_ref x) {
-    if (x.is_nil() || x.get_type() != cohost_object::obj_type) { return make_box<obj::nil>(); }
+    if (!is_cohost(x)) { return make_box<obj::nil>(); }
     auto const v = expect_object<obj::volatile_>(c)->val;
     if (v.get_type() != object_type::persistent_vector) { return make_box<obj::nil>(); }
     auto const &d = expect_object<obj::persistent_vector>(v)->data;
@@ -1136,7 +1138,7 @@ namespace cohost_obj {
     return d[1];
   }
   object_ref fill_cache(object_ref c, object_ref x, object_ref impl, jank::i64 gen) {
-    if (!x.is_nil() && x.get_type() == cohost_object::obj_type) {
+    if (is_cohost(x)) {
       expect_object<obj::volatile_>(c)->val = make_box<obj::persistent_vector>(
         std::in_place, static_cast<cohost_object *>(x.ptr())->descriptor, impl, make_box<obj::integer>(gen));
     }
