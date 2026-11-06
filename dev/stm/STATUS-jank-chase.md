@@ -131,8 +131,24 @@ directory, not Clojure's ns-root rule. Runner now uses the relative
 `(load "probe_tx_jank_generated")` — the generated file sits beside
 the runner in dev/stm/.
 
+## Milestone 7 — 2026-11-06 ~9:50 AM ET — attempts 5/6: `load` can't reach subdirectory modules at all; require-by-ns-name can (measured)
+
+Attempt 5: absolute `(load "/dev/stm/probe_tx_jank_generated")` →
+module-not-found. Attempt 6: relative `(load
+"probe_tx_jank_generated")` → module-not-found (my
+relative-to-loading-module theory was WRONG). Decisive modtest with a
+subdirectory module: `(load "/sub/gen")` ✗, `(load "sub/gen")` ✗,
+`(require 'sub.gen)` ✓ LOADED. So in this jank build, `load`'s string
+forms reach only flat same-root modules, and the general mechanism is
+require's ns-name → munged-path resolution.
+
+Runner now: the generated copy carries an
+`(ns dev.stm.probe-tx-jank-generated)` header (its forms evaluate in
+that ns, as they would under load-file) and the runner requires it by
+name.
+
 ## Next
-Probe attempt 6: from repo root,
+Probe attempt 7: from repo root,
 `jank --module-path src:. run dev/stm/probe_tx_jank.jank`
 (loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
 23 semantics checks the JVM seat runs; refs seat in host atoms on this

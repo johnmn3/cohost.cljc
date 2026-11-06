@@ -18,13 +18,17 @@
 ;;     search resolves only .jank/.cljc files -- a .clj file is
 ;;     invisible to it at any module path (measured).
 ;; So: materialize the shared script as a .jank module (generated file,
-;; gitignored -- probe_tx.clj remains the single source) and load that.
+;; gitignored -- probe_tx.clj remains the single source) and REQUIRE it
+;; by namespace name. Measured loader behavior (modtest, attempts 4-6):
+;; `load` finds only flat same-root modules, by any path spelling;
+;; subdirectory modules resolve ONLY via require's ns-name -> path
+;; munging ('dev.stm.probe-tx-jank-generated ->
+;; dev/stm/probe_tx_jank_generated.jank). The generated copy therefore
+;; carries an ns form for that name; the script's own forms evaluate
+;; inside it exactly as they would under load-file.
 ;; (cohost's booted path fills load-file via core-extras; this raw
 ;; runner does not boot.)
-(spit "dev/stm/probe_tx_jank_generated.jank" (slurp "probe_tx.clj"))
-;; NB: jank's `load` resolves relative paths against the LOADING
-;; module's own directory (this file lives in dev/stm/, beside the
-;; generated module); the Clojure-style absolute "/dev/stm/..." form
-;; is module-not-found here (attempt 5).
-(load "probe_tx_jank_generated")
+(spit "dev/stm/probe_tx_jank_generated.jank"
+      (str "(ns dev.stm.probe-tx-jank-generated)\n" (slurp "probe_tx.clj")))
+(require 'dev.stm.probe-tx-jank-generated)
 (println "INFO probe_tx_jank: script completed")
