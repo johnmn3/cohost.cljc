@@ -74,10 +74,6 @@
    "cat" cat
    "char" char
    "char-array" char-array
-   "char-blank?" char-blank?
-   "char-ends-with?" char-ends-with?
-   "char-includes?" char-includes?
-   "char-starts-with?" char-starts-with?
    "char?" char?
    "chars" chars
    "chunk" chunk
@@ -263,17 +259,6 @@
    "nthnext" nthnext
    "nthrest" nthrest
    "num" num
-   "num-even?" num-even?
-   "num-float?" num-float?
-   "num-integer?" num-integer?
-   "num-nat-int?" num-nat-int?
-   "num-neg-int?" num-neg-int?
-   "num-neg?" num-neg?
-   "num-odd?" num-odd?
-   "num-pos-int?" num-pos-int?
-   "num-pos?" num-pos?
-   "num-rational?" num-rational?
-   "num-zero?" num-zero?
    "number?" number?
    "object-array" object-array
    "odd?" odd?
@@ -300,32 +285,6 @@
    "print-str" print-str
    "println-str" println-str
    "prn-str" prn-str
-   "prog-h-catch?" prog-h-catch?
-   "prog-h-cell-get" prog-h-cell-get
-   "prog-h-cell-put!" prog-h-cell-put!
-   "prog-h-clojure-version" prog-h-clojure-version
-   "prog-h-def-meta!" prog-h-def-meta!
-   "prog-h-def-unbound" prog-h-def-unbound
-   "prog-h-def-var!" prog-h-def-var!
-   "prog-h-defmulti" prog-h-defmulti
-   "prog-h-defonce" prog-h-defonce
-   "prog-h-field-cell" prog-h-field-cell
-   "prog-h-field-get" prog-h-field-get
-   "prog-h-field-set!" prog-h-field-set!
-   "prog-h-fieldable?" prog-h-fieldable?
-   "prog-h-io!" prog-h-io!
-   "prog-h-jindex-of" prog-h-jindex-of
-   "prog-h-jlast-index-of" prog-h-jlast-index-of
-   "prog-h-loaded-libs" prog-h-loaded-libs
-   "prog-h-local-var" prog-h-local-var
-   "prog-h-raw-get" prog-h-raw-get
-   "prog-h-state-swap-stmt2" prog-h-state-swap-stmt2
-   "prog-h-state-swap-stmt3" prog-h-state-swap-stmt3
-   "prog-h-state-swap-stmt4" prog-h-state-swap-stmt4
-   "prog-h-throwable" prog-h-throwable
-   "prog-h-type-object" prog-h-type-object
-   "prog-h-var-field-miss!" prog-h-var-field-miss!
-   "prog-h-vs-type" prog-h-vs-type
    "promise" promise
    "qualified-ident?" qualified-ident?
    "qualified-keyword?" qualified-keyword?
@@ -384,23 +343,6 @@
    "reversible?" reversible?
    "rseq" rseq
    "rsubseq" rsubseq
-   "rt-dbl-bits" rt-dbl-bits
-   "rt-dyn" rt-dyn
-   "rt-kvmap-own" rt-kvmap-own
-   "rt-lng-bits" rt-lng-bits
-   "rt-map?" rt-map?
-   "rt-regex?" rt-regex?
-   "rt-scat" rt-scat
-   "rt-setof-own" rt-setof-own
-   "rt-typed" rt-typed
-   "rt-var-of" rt-var-of
-   "rt-var-of-as" rt-var-of-as
-   "rt-var-of-root" rt-var-of-root
-   "rt-var-set!" rt-var-set!
-   "rt-var?" rt-var?
-   "rt-win-open" rt-win-open
-   "rt-win-q1" rt-win-q1
-   "rt-win-q2" rt-win-q2
    "run!" run!
    "run-loop!" run-loop!
    "satisfies?" satisfies?
