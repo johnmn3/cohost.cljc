@@ -95,8 +95,9 @@
                  @(:cell victim))))
 
 ;; the layer is not wedged: an honest transaction still commits
+(def after-ref (tx/make-ref 42))
 (check "honest transaction still commits after the fault" 43
-       (tx/run-in-transaction (fn [] (tx/alter* from + [43]))))
+       (tx/run-in-transaction (fn [] (tx/alter* after-ref inc []))))
 
 (println (if (empty? @failures)
            (str "PROBE-TX-RETRY-BOUND: ALL " @checks " CHECKS PASS")
