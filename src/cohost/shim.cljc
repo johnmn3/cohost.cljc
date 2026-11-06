@@ -23,6 +23,7 @@
             [cohost.atom :as atom-layer]
             [cohost.memory :as memory]
             [cohost.thread :as thread]
+            [cohost.tx :as tx-layer]
             [cohost.http :as http]
             [cohost.hosts.auto]
             #?(:cljs [goog.object :as gobj]))
@@ -151,6 +152,12 @@
    turned its fill on and this seat has Eve hosting installed."
   []
   (and (atom-layer/fill-active?) (atom-layer/available?)))
+
+(defn- tx-fill?
+  "cohost's STM layer (cohost.tx) is in force for new refs and for
+   LockingTransaction: the boot turned its fill on (:eve-stm)."
+  []
+  (tx-layer/fill-active?))
 
 (defn- var-ns-sym [v] (symbol (str (host/var-ns v))))
 
@@ -1516,7 +1523,17 @@
 ;; and a transaction that throws puts back every ref it wrote. (A watch fires
 ;; at each write, where the JVM fires it once, at the commit.) The stock ref,
 ;; ref-set, alter, commute, ensure, sync, dosync and io! boot over these.
-(def new-Ref (host-fn 'ref (fn ([x] (host/atom* x)) ([x m] (host/atom* x m)))))
+(def ^:private host-ref (host-fn 'ref nil))
+(def new-Ref
+  ;; STM lane: with the tx fill in force, a layer ref (cohost.tx);
+  ;; else the host's own ref where the host has one; else, on a
+  ;; ref-less host, the atom fallback the undo-log transaction serves
+  (fn ([x] (cond (tx-fill?) (tx-layer/make-ref x)
+                 host-ref (host-ref x)
+                 :else (host/atom* x)))
+      ([x m] (cond (tx-fill?) (tx-layer/make-ref x m)
+                   host-ref (host-ref x m)
+                   :else (host/atom* x m)))))
 (def ^:private tx (atom nil))
 (defn- in-tx! [] (when (nil? @tx) (throw (host/ex* 'java.lang.IllegalStateException "No transaction running"))))
 (defn- tx-write! [r f]
@@ -1525,17 +1542,21 @@
   (f))
 (def LockingTransaction-runInTransaction
   (fn [f]
-    (if (some? @tx)
-      (f)
-      (do (reset! tx {})
-          (try (host/try-all f
-                             (fn [e]
-                               (let [written @tx]
-                                 (reset! tx nil)
-                                 (doseq [[r v] written] (reset! r v)))
-                               (throw e)))
-               (finally (reset! tx nil)))))))
-(def LockingTransaction-isRunning (fn [] (some? @tx)))
+    (if (tx-fill?)
+      (tx-layer/run-in-transaction f)
+      (if (some? @tx)
+        (f)
+        (do (reset! tx {})
+            (try (host/try-all f
+                               (fn [e]
+                                 (let [written @tx]
+                                   (reset! tx nil)
+                                   (doseq [[r v] written] (reset! r v)))
+                                 (throw e)))
+                 (finally (reset! tx nil))))))))
+(def LockingTransaction-isRunning (fn [] (if (tx-fill?)
+                                             (tx-layer/in-transaction?)
+                                             (some? @tx))))
 (def new-Agent (host-fn 'agent (fn [state] (thread-layer "agent" (fn [] (thread/new-agent state {}))))))
 ;; clojure.lang.MultiFn, stock: the state (name, dispatch fn, default,
 ;; hierarchy var, methods, prefers) rides in the fn's metadata, and dispatch
@@ -2801,20 +2822,28 @@
 (def ^:private h-var-set #?(:jank nil :default (host-fn 'var-set nil)))
 ;; Var.set: the thread binding; a host without var-set (ClojureScript) keeps
 ;; a binding frame's value in the var's slot
-(def -set (fn [x v] (cond (h-atom? x) (tx-write! x #(reset! x v))
+(def -set (fn [x v] (cond (tx-layer/ref-value? x) (tx-layer/ref-set* x v)
+                          (h-atom? x) (tx-write! x #(reset! x v))
                           h-var-set (h-var-set x v)
                           (host/var-thread-bound? x) (host/var-set! x v)
                           :else (throw (host/ex* 'java.lang.IllegalStateException
                                                  (str "Can't change/establish root binding of: " (host/var-sym x) " with set"))))))
-;; Ref.alter / commute / touch / history over the atom a Ref is here
-(def -alter (fn [r f args] (tx-write! r #(apply swap! r f args))))
-(def -commute (fn [r f args] (tx-write! r #(apply swap! r f args))))
-(def -touch (fn [_] (in-tx!) nil))
-(def -setMaxHistory (fn [r _] r))
-(def -setMinHistory (fn [r _] r))
-(def -getHistoryCount (fn [_] 0))
-(def -getMinHistory (fn [_] 0))
-(def -getMaxHistory (fn [_] 10))
+;; Ref.alter / commute / touch / history: over a layer ref (cohost.tx)
+;; when the receiver is one; over the atom a Ref is here otherwise
+(def -alter (fn [r f args] (if (tx-layer/ref-value? r)
+                             (tx-layer/alter* r f args)
+                             (tx-write! r #(apply swap! r f args)))))
+(def -commute (fn [r f args] (if (tx-layer/ref-value? r)
+                               (tx-layer/commute* r f args)
+                               (tx-write! r #(apply swap! r f args)))))
+(def -touch (fn [r] (if (tx-layer/ref-value? r)
+                      (do (tx-layer/ensure* r) nil)
+                      (do (in-tx!) nil))))
+(def -setMaxHistory (fn [r n] (if (tx-layer/ref-value? r) (tx-layer/set-max-history! r n) r)))
+(def -setMinHistory (fn [r n] (if (tx-layer/ref-value? r) (tx-layer/set-min-history! r n) r)))
+(def -getHistoryCount (fn [r] (if (tx-layer/ref-value? r) (tx-layer/ref-history-count r) 0)))
+(def -getMinHistory (fn [r] (if (tx-layer/ref-value? r) (tx-layer/ref-min-history r) 0)))
+(def -getMaxHistory (fn [r] (if (tx-layer/ref-value? r) (tx-layer/ref-max-history r) 10)))
 (def ^:private host-alter-meta!
   #?(;; phel.core's alter-meta! of a var installs an override its compiler
      ;; never reads and no later def replaces: a var's goes to the adapter
@@ -2858,6 +2887,7 @@
                                          (pop x))
                                  :default (pop x)))))
 (def -meta (fn [x] (cond (atom-layer/atom-value? x) (atom-layer/meta-of x)
+                         (tx-layer/ref-value? x) (tx-layer/meta-of x)
                          (memory/transient-value? x) (memory/t-meta x)
                          :else (host/meta* x))))
 ;; let-go: a symbol given no metadata is the bare symbol (with-meta makes a
@@ -2865,21 +2895,27 @@
 (def -withMeta #?(:lg (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m))))
                   ;; a cohost type instance's meta is its own slot, which
                   ;; jank's with-meta cannot reach (it panics on the type)
-                  :jank (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (host/with-meta* x m)))
+                  :jank (fn [x m] (cond (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m)
+                                        (tx-layer/ref-value? x) (tx-layer/with-meta-ref x m)
+                                        :else (host/with-meta* x m)))
                   ;; the collection seam (unit 4): a layer transient
                   ;; keeps its meta in its state atom; an Eve-backed
                   ;; value's meta rides the layer's wrapper (Eve
                   ;; collections carry no meta of their own)
                   :default (fn [x m] (cond (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m)
+                                           (tx-layer/ref-value? x) (tx-layer/with-meta-ref x m)
                                            (memory/transient-value? x) (memory/t-with-meta x m)
                                            (memory/eve-backed? x) (memory/with-meta* x m)
                                            :else (with-meta x m)))))
 (defn- host-meta [m] (if (host/strip-inline?) (dissoc m :inline :inline-arities) m))
 (defn- meta-map [m]
   (if (or (nil? m) (map? m)) m (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentMap m)))))
-(def -alterMeta (fn [x f args] (if (atom-layer/atom-value? x)
-                                 (atom-layer/alter-meta-atom x f args)
-                                 (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args))))
+(def -alterMeta (fn [x f args] (cond (atom-layer/atom-value? x)
+                                     (atom-layer/alter-meta-atom x f args)
+                                     (tx-layer/ref-value? x)
+                                     (tx-layer/alter-meta-ref x f args)
+                                     :else
+                                     (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args))))
 (def -resetMeta (let [rm (host-fn 'reset-meta! (fn [x m] (host-alter-meta! x (constantly m))))]
                   (fn [x m] (let [m (host-meta (meta-map m))]
                               (if (atom-layer/atom-value? x)
@@ -2890,10 +2926,12 @@
 (def -deref (fn ([x] (cond (or (thread/future-value? x) (thread/promise-value? x))
                            (thread/deref-blocking x)
                            (thread/agent-value? x) (thread/agent-state x)
+                           (tx-layer/ref-value? x) (tx-layer/deref-ref x)
                            (atom-layer/atom-value? x) (atom-layer/deref-atom x)
                            :else (deref x)))
                 ([x ms timeout-val] (cond (or (thread/future-value? x) (thread/promise-value? x))
                                           (thread/deref-blocking x ms timeout-val)
+                                          (tx-layer/ref-value? x) (tx-layer/deref-ref x)
                                           (atom-layer/atom-value? x) (atom-layer/deref-atom x)
                                           :else #?(:cljs (deref x) :default (deref x ms timeout-val))))))
 ;; the thread layer's members: Thread, Future, ExecutorService,
@@ -2916,9 +2954,13 @@
 (def -isAlive (fn [x] (if (thread/thread-value? x)
                         (thread/thread-alive? x)
                         (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))))
-;; the layer has no interrupt leaf: interrupt is accepted and ignored
+;; Thread.interrupt on a layer thread now lands (STM+agents lane,
+;; closing unit 1's remainder): it sets the thread's cancel flag and
+;; rings its bell; the layer's blocking waits throw the interrupt
+;; exception at their next slice. Cooperative, as the JVM's is.
 (def -interrupt (fn [x] (when-not (thread/thread-value? x)
                            (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))
+                    (thread/interrupt-thread! x)
                     nil))
 (def -cancel (fn [x & _args] (if (thread/future-value? x)
                                (thread/future-cancel x)
@@ -3175,25 +3217,40 @@
 ;; map (as (atom 0 :validator f) builds under the fill) resolves
 ;; to the registered fn at this crossing, or the host would
 ;; invoke the reference itself (unit 4)
-(def -addWatch (fn [a k f] (if (atom-layer/atom-value? a)
-                             (atom-layer/add-watch-atom! a k f)
-                             (host-add-watch a k (memory/resolve-resident f)))))
+(def -addWatch (fn [a k f] (cond (atom-layer/atom-value? a)
+                                 (atom-layer/add-watch-atom! a k f)
+                                 (tx-layer/ref-value? a)
+                                 (tx-layer/add-watch* a k f)
+                                 :else
+                                 (host-add-watch a k (memory/resolve-resident f)))))
 (def ^:private host-remove-watch (host-fn 'remove-watch (unsupported "remove-watch")))
-(def -removeWatch (fn [a k] (if (atom-layer/atom-value? a)
-                              (atom-layer/remove-watch-atom! a k)
-                              (host-remove-watch a k))))
+(def -removeWatch (fn [a k] (cond (atom-layer/atom-value? a)
+                                  (atom-layer/remove-watch-atom! a k)
+                                  (tx-layer/ref-value? a)
+                                  (tx-layer/remove-watch* a k)
+                                  :else
+                                  (host-remove-watch a k))))
 (def ^:private host-get-watches (host-fn 'get-watches (fn [_] {})))
-(def -getWatches (fn [a] (if (atom-layer/atom-value? a)
-                           (atom-layer/get-watches-atom a)
-                           (host-get-watches a))))
+(def -getWatches (fn [a] (cond (atom-layer/atom-value? a)
+                               (atom-layer/get-watches-atom a)
+                               (tx-layer/ref-value? a)
+                               (tx-layer/get-watches a)
+                               :else
+                               (host-get-watches a))))
 (def ^:private host-set-validator (host-fn 'set-validator! (unsupported "set-validator!")))
-(def -setValidator (fn [a f] (if (atom-layer/atom-value? a)
-                               (atom-layer/set-validator-atom! a f)
-                               (host-set-validator a (memory/resolve-resident f)))))
+(def -setValidator (fn [a f] (cond (atom-layer/atom-value? a)
+                                   (atom-layer/set-validator-atom! a f)
+                                   (tx-layer/ref-value? a)
+                                   (tx-layer/set-validator* a f)
+                                   :else
+                                   (host-set-validator a (memory/resolve-resident f)))))
 (def ^:private host-get-validator (host-fn 'get-validator (fn [_] nil)))
-(def -getValidator (fn [a] (if (atom-layer/atom-value? a)
-                             (atom-layer/get-validator-atom a)
-                             (host-get-validator a))))
+(def -getValidator (fn [a] (cond (atom-layer/atom-value? a)
+                                 (atom-layer/get-validator-atom a)
+                                 (tx-layer/ref-value? a)
+                                 (tx-layer/get-validator a)
+                                 :else
+                                 (host-get-validator a))))
 (def -isRealized (let [host-realized (host-fn 'realized? nil)]
                    (fn [x] (cond (or (thread/future-value? x) (thread/promise-value? x)) (thread/future-done? x)
                                  host-realized (host-realized x)

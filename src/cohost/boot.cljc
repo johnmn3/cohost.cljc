@@ -18,6 +18,7 @@
             [cohost.memory :as memory]
             [cohost.thread :as thread]
             [cohost.atom :as atom-layer]
+            [cohost.tx :as tx-layer]
             [cohost.http :as http]
             [cohost.scan :as scan]))
 
@@ -725,7 +726,7 @@
   (set '[def defn defn- defonce definline]))
 
 ;; defined with install-atom-layer! below; native-of consults it
-(declare atom-surface-names)
+(declare atom-surface-names ref-surface-names)
 
 (defn- native-of
   "The adapter's native (adapter :natives) for the def form `form` of library
@@ -739,7 +740,9 @@
                ;; swap! casts its receiver, and a layer atom is a
                ;; value behind the facade. The stock definition,
                ;; which dispatches through the shim, boots instead.
-               (not (and (:eve-atoms @state) (contains? atom-surface-names nm))))
+               (not (and (:eve-atoms @state) (contains? atom-surface-names nm)))
+               ;; STM lane: same rule for the ref surface under :eve-stm
+               (not (and (:eve-stm @state) (contains? ref-surface-names nm))))
       (when-let [impl (get (host/natives) (symbol lib (name nm)))]
         (if (= :host impl)
           (when-let [hv (and (= lib "clojure.core") (host/resolve-core nm))]
@@ -943,6 +946,22 @@
         (host/intern! core-ns nm f)
         (host/mark-macro! (host/interned-var core-ns nm))
         (record! report :replaced {:name nm :reason :thread-layer})))
+    ;; STM lane: a host whose core has no STM names at all gets them
+    ;; from cohost.tx, and the layer serves that host's transactions
+    ;; (the atom fallback and the undo-log hack retire there). Hosts
+    ;; that booted stock's names reach the layer through the shim
+    ;; under :eve-stm instead; this fill touches nothing of theirs.
+    (when-not (host/interned-var core-ns 'ref)
+      (doseq [[nm v] tx-layer/core-impls]
+        (when-not (host/interned-var core-ns nm)
+          (host/intern! core-ns nm v)
+          (record! report :replaced {:name nm :reason :tx-layer})))
+      (doseq [[nm f] tx-layer/core-macros]
+        (when-not (host/interned-var core-ns nm)
+          (host/intern! core-ns nm f)
+          (host/mark-macro! (host/interned-var core-ns nm))
+          (record! report :replaced {:name nm :reason :tx-layer})))
+      (tx-layer/set-fill! true))
     ;; unit 8: a seat with realms (cljs on Node with Eve hosting) gets
     ;; the form-carrying future's entry, outside core (core's publics
     ;; stay stock's); the future fill expands to it on that seat only
@@ -987,6 +1006,29 @@
       (doseq [ns-sym nses]
         (atom-layer/publish-namespace! ns-sym)))
     (record! report :replaced {:name 'eve-atoms :reason :atom-layer}))
+  report)
+
+(def ^:private ref-surface-names
+  "The clojure.core STM names whose host versions would bypass the
+   shim for a layer ref -- the host's alter/commute/dosync cast or
+   construct clojure.lang.Ref/LockingTransaction directly, and a
+   layer ref is a value behind the facade. With the STM fill in
+   force these boot as if host-lacked, so the booted definitions --
+   which call through the shim's dispatch -- serve layer refs and
+   host refs alike."
+  '#{ref alter commute ref-set ensure dosync sync})
+
+(defn install-stm-layer!
+  "Turn on cohost's STM layer (cohost.tx) for the booted program,
+   when the boot opts ask for it (:eve-stm). The shim's Ref surface
+   and LockingTransaction statics route to the layer from here on:
+   the booted program's refs are layer refs and its transactions run
+   the world-atom construction. Default boots never pass the opt;
+   the standing batteries are untouched."
+  [report eve-stm]
+  (when eve-stm
+    (tx-layer/set-fill! true)
+    (record! report :replaced {:name 'eve-stm :reason :tx-layer}))
   report)
 
 (defn install-http-layer!
@@ -1041,15 +1083,19 @@
    :eve-atoms -- turn on Eve's atom layer for the booted program
    (unit 5; needs the seat's Eve hosting installed);
    :eve-collections -- force the Eve collection fill on (true) or
-   off (false); absent, it is the seat's default (unit 4)."
+   off (false); absent, it is the seat's default (unit 4);
+   :eve-stm -- turn on cohost's STM layer (cohost.tx) for the booted
+   program: refs are layer refs, transactions run on the world atom."
   ([] (boot! {}))
-  ([{:keys [root files verbose profile? record? host-lacks eve-atoms eve-collections] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
+  ([{:keys [root files verbose profile? record? host-lacks eve-atoms eve-collections eve-stm] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
    (reset! snapshot-log (when record? []))
    (swap! state assoc :eve-atoms (boolean eve-atoms)
+                      :eve-stm (boolean eve-stm)
                       :host-lacks (into (set host-lacks)
                                         (concat (host/core-lacks)
-                                                (when eve-atoms atom-surface-names))))
+                                                (when eve-atoms atom-surface-names)
+                                                (when eve-stm ref-surface-names))))
    (install-collection-fill! eve-collections)
    (snap! {:op :begin :opts {:root root :files files}})
    (if profile?
@@ -1110,6 +1156,7 @@
      ;; the registry is minted and the booted namespaces published
      ;; before libraries or user code can intern or create atoms
      (install-atom-layer! ctx report eve-atoms)
+     (install-stm-layer! report eve-stm)
      (install-http-layer! report)
      (scan-macros! ctx)
      (install-host-reducers!)

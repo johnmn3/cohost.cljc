@@ -118,6 +118,7 @@
              :name (atom nil)
              :state state
              :bell bell
+             :cancel (atom false)
              :runnable f
              :handle (atom nil)}]
     (if-let [h (host/thread-spawn
@@ -162,6 +163,7 @@
     :name (atom nm)
     :state (atom :new)
     :bell (host/doorbell)
+    :cancel (atom false)
     :runnable f
     :handle (atom nil)}))
 
@@ -177,19 +179,79 @@
                    :name (atom nil)
                    :state (atom :running)
                    :bell (host/doorbell)
+                   :cancel (atom false)
                    :runnable nil
                    :handle (atom h)}]
           (register-thread! rec h)))))
 
+;; ---------------------------------------------------------------------------
+;; cooperative interruption (STM+agents lane, closing unit 1's remainder)
+;;
+;; The JVM's interrupt is cooperative too: Thread.interrupt sets a flag and
+;; blocking points throw InterruptedException; nothing stops a thread
+;; mid-computation. The layer now does the same: interrupt-thread! sets the
+;; thread's cancel flag and rings its bell; the layer's blocking waits
+;; (join, latch await, future deref) wait in bounded slices and throw the
+;; interrupt exception when their own thread's flag is set. Code in a pure
+;; compute loop is not interrupted -- exactly the JVM's distance, no more.
+
+(defn interrupted-ex
+  "The layer's InterruptedException: an ex-info user code can catch by
+   its data, {:cohost.thread/interrupted true}."
+  []
+  (host/ex-info* "thread interrupted" {:cohost.thread/interrupted true}))
+
+(defn interrupted-ex? [e]
+  (boolean (and (map? (ex-data e)) (:cohost.thread/interrupted (ex-data e)))))
+
+(defn interrupt-thread!
+  "Thread.interrupt for a layer thread: set its cancel flag and ring its
+   bell so a blocked wait wakes and throws. True when t is a layer thread."
+  [t]
+  (if (and (map? t) (= ::thread (:cohost/kind t)) (:cancel t))
+    (do (reset! (:cancel t) true)
+        (host/doorbell-signal (:bell t))
+        true)
+    false))
+
+(defn interrupted?
+  "The running thread's cancel flag (Thread.isInterrupted, non-clearing)."
+  []
+  (boolean (when-let [c (:cancel (current-thread))] @c)))
+
+(defn clear-interrupted!
+  "Clear the running thread's cancel flag; the previous value."
+  []
+  (let [c (:cancel (current-thread))
+        was (boolean (and c @c))]
+    (when c (reset! c false))
+    was))
+
+(defn- wait-sliced
+  "doorbell-wait in slices of at most 50 ms, throwing the interrupt
+   exception when the running thread's cancel flag is set. timeout-ms
+   nil waits without a deadline. True when the bell was signalled."
+  [bell timeout-ms]
+  (let [deadline (when (some? timeout-ms) (+ (now-ms) (long timeout-ms)))]
+    (loop []
+      (when (interrupted?) (throw (interrupted-ex)))
+      (let [slice (if deadline
+                    (min 50 (max 0 (- deadline (now-ms))))
+                    50)]
+        (cond (host/doorbell-wait bell slice) true
+              (and deadline (>= (now-ms) deadline)) false
+              :else (recur))))))
+
 (defn thread-alive? [t] (= :running @(:state t)))
 
 (defn join-thread
-  "Wait for thread t to finish; with timeout-ms, false when it passes."
-  ([t] (host/doorbell-wait (:bell t) nil) true)
+  "Wait for thread t to finish; with timeout-ms, false when it passes.
+   Throws the interrupt exception when the WAITING thread is interrupted."
+  ([t] (wait-sliced (:bell t) nil) true)
   ([t timeout-ms]
    (if (= :done @(:state t))
      true
-     (let [signalled (host/doorbell-wait (:bell t) timeout-ms)]
+     (let [signalled (wait-sliced (:bell t) timeout-ms)]
        (boolean (and signalled (= :done @(:state t))))))))
 
 ;; ---------------------------------------------------------------------------
@@ -422,8 +484,8 @@
              (let [remaining (- deadline (now-ms))]
                (if (<= remaining 0)
                  timeout-val
-                 (do (host/doorbell-wait (:bell fut) remaining) (recur))))
-             (do (host/doorbell-wait (:bell fut) nil) (recur)))))))))
+                 (do (wait-sliced (:bell fut) remaining) (recur))))
+             (do (wait-sliced (:bell fut) nil) (recur)))))))))
 
 (defn new-promise []
   {:cohost/kind ::promise :state (atom {:status :pending}) :bell (host/doorbell)})
@@ -476,9 +538,9 @@
      (loop []
        (cond (zero? @(:count l)) true
              (and deadline (>= (now-ms) deadline)) false
-             :else (do (host/doorbell-wait (:bell l)
-                                           (when deadline
-                                             (max 0 (- deadline (now-ms)))))
+             :else (do (wait-sliced (:bell l)
+                                    (when deadline
+                                      (max 0 (- deadline (now-ms)))))
                        (recur)))))))
 
 ;; ---------------------------------------------------------------------------
@@ -616,6 +678,30 @@
                         (do (swap! (:ctl ag) assoc :queued false) (kick! ag))
                         (recur))))))))))
 
+;; The STM seam (cohost.tx): a hook the transaction layer installs.
+;; dispatch! offers every action to it first; the hook returns true when
+;; it has held the action (a send inside a transaction is dispatched only
+;; by the successful attempt, exactly once). nil = no hook (default).
+(defonce ^:private send-hold-hook (atom nil))
+
+(defn set-send-hold-hook!
+  "Install the send-hold hook: a fn of one action map -> boolean."
+  [f]
+  (reset! send-hold-hook f)
+  nil)
+
+(defn enqueue-or-hold!
+  "Enqueue an already-built action, or hold it in the running action's
+   pending sends when called from inside one. The transaction layer's
+   commit path releases held sends through here, so a send released by
+   a transaction that ran inside an agent action is held by the action
+   in turn -- the two holds nest, as stock's do."
+  [action]
+  (if *pending-sends*
+    (swap! *pending-sends* conj action)
+    (enqueue-action! (:ag action) action))
+  nil)
+
 (defn dispatch!
   "The send machinery: capture the caller's bindings, hold the action
    when the caller is itself running an action, else enqueue it."
@@ -626,9 +712,9 @@
   (when (:failed @(:ctl ag))
     (throw (host/ex* 'java.lang.IllegalStateException "Agent is failed" nil)))
   (let [action {:ag ag :f f :args args :bindings (capture-bindings) :executor ex}]
-    (if *pending-sends*
-      (swap! *pending-sends* conj action)
-      (enqueue-action! ag action))
+    (if (and @send-hold-hook (@send-hold-hook action))
+      nil
+      (enqueue-or-hold! action))
     ag))
 
 (defn await1
