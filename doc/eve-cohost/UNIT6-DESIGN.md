@@ -587,3 +587,60 @@ type jank knows) `coll?` answers false: C passes 4/46. cohost never calls
 jank's `coll?` on its own objects (its shim answers for them, §3a), but Eve's
 code calls jank's core on its values directly. Which of jank's core fns
 answer, throw or abort on a converged instance is inventoried in §8.6.
+
+### 8.6 jank's own core on an Eve instance, per object — and the decision it needs
+
+`dev/u6/visit_probe.sh`: a cohost process (cohost's AOT objects), Eve at
+2cf927eee, a real Eve instance (`eve.region/make-heap-region`). One jank
+`clojure.core` fn per process, 120 s limit. 2026-11-05, 6:51–7:29 PM ET; the
+first pass's `plain seq` hung 23 min before the limit existed.
+
+| fn | converged (cohost's object, type id 71) | plain (`eve_obj`, `opaque_box`) |
+|---|---|---|
+| `coll?` | **abort 134**: "Panic encountered: invalid object type: unknown, raw value 71" | false |
+| `counted?` | **abort 134**, the same panic | false |
+| `empty?` | **abort 134**, the same panic | throws `std.exception` "Objects of type `opaque_box` do not support emptiness checks." |
+| `count` | **abort 134**, the same panic | throws `std.exception` "Objects of type `opaque_box` are not seqable." |
+| `seq` | **abort 134**: "terminate called after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'" | did not return in 120 s |
+| `first` | **abort 134**, the same terminate | did not return in 120 s |
+| `seq?` / `map?` / `vector?` | false / false / false | false / false / false |
+| `seqable?` | true | false |
+| `str` / `pr-str` | `#object[eve.region/JankRegion 0x...]` (Eve's printer) | the same |
+| `hash` / `=` (two regions) / `meta` / `get` | an integer / false / nil / nil | the same |
+
+What these show:
+
+- jank's own type dispatch panics on a type id outside its enum. That is a
+  process abort, not an error a `catch` can take. `eve_obj` claims
+  `opaque_box`, a type jank knows, so those fns fail politely or answer.
+- cohost's object fails `seq` / `first` another way. Its `seq()` with no slot
+  throws a `make_box<obj::exception_info>`, whose C++ type
+  (`oref<obj::exception_info>`) neither of jank's catch arms
+  (`jank.runtime.object_ref`, `std.exception`) matches. cohost's shim never
+  reaches it for cohost's own types.
+- Eve's own pin test, `(is (not (coll? x)))` (host_completion_test.jank:42),
+  is how the regression showed (§8.5). The other seven floor namespaces did
+  not reach such a call on an instance.
+
+**The decision (stop condition: not settled by the design or rulings §7–§10;
+lane M's (a) settled who builds the object, not its jank type id).** Making
+an Eve instance in cohost's object safe for jank's own core needs one of:
+
+1. **cohost's object takes a type id jank knows** — `opaque_box`, as `eve_obj`
+   does. This is a change to cohost's struct for every cohost type.
+   - Its effect on cohost's battery is unmeasured.
+   - `opaque_box` is claimed by a struct that is not `obj::opaque_box`; that
+     is the same claim `eve_obj` makes today, and whether any jank visitor
+     reads `opaque_box`'s fields is not measured [unverified].
+2. **Eve's completion re-roots the type-dispatching jank core fns**
+   (`coll?`, `counted?`, `empty?`, `count`, `seq`, `first`, ... — the table
+   above is a sample, not the inventory) to answer for `object?` values first.
+   - This is Eve-side, like (a).
+   - Per §8.3's measurement, these re-roots reach every caller at call time,
+     cohost's runtime included.
+3. **A jank patch** — excluded (no patches to jank).
+
+Not built: neither option is started until it is chosen. Cheapest
+measurement for each: (1) is one line in cohost's struct, one `bb boot:jank`
+(~8 min) and the D arm (~5 min). (2) needs the full list of jank core fns
+that dispatch on type, then the same runs.
