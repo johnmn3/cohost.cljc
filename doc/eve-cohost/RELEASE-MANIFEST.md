@@ -25,6 +25,14 @@ Nothing in this lane writes to cohost main.
   to the impl line's own banked log. PENDING-REBIND rows recorded.
   Final declaration written below. Lane complete; the branch awaits
   its PENDING rows and the operator's word.
+- 2026-11-05 ~7:06 PM ET — operator sequencing note applied: the Eve
+  release branch (`release/eve-0.9.3`, SeniorCareMarket/eve) is
+  pushed out first; this branch then rebases/adopts its Eve-facing
+  parts against it. The bindings-adoption row and every
+  PENDING-REBIND row now name that branch as their dependency
+  (ls-remote: not yet on the Eve remote at this check), and the
+  branch pins to no pre-release Eve state. Awaiting the follow-up
+  steer when the Eve branch is verified on its remote.
 
 ## Rows
 
@@ -68,12 +76,19 @@ Nothing in this lane writes to cohost main.
   implemented on Agent 3's `agent3/eve-u6-converge` line in the Eve
   tree; its after-arm gates land in Agent 3's ledger. Step 3 follows
   step 2. Lands here by merge when Agent 3 banks it green.
-- **Eve 0.9.3 released-bindings adoption.** The `:eve` pin in `deps.edn`
-  currently names Eve main's 0.9.1-line commit (its own comment says the
-  pin moves to the Eve 0.9.3 release commit when that release lands).
-  Blocked on the Eve 0.9.3 cut (the Jank release, collating in the
-  atom.broker channel). Owner: this release lane, on the operator's
-  word once 0.9.3 exists.
+- **Eve 0.9.3 released-bindings adoption.** PENDING on the pushed
+  `release/eve-0.9.3` branch in SeniorCareMarket/eve, per the
+  operator's sequencing (2026-11-05 ~7:04 PM ET): the Eve release
+  branch is pushed out FIRST; this branch then rebases/adopts its
+  Eve-facing parts against that latest Eve, on a follow-up steer once
+  the Eve branch is verified on its remote. As of this writing the
+  Eve branch is not yet on its remote (checked by ls-remote). This
+  branch does NOT pin to any pre-release Eve state: the `:eve` pin it
+  currently carries in `deps.edn` is the impl mainline's inherited
+  pin (Eve main's 0.9.1 line; the pin's own comment already says it
+  moves at the 0.9.3 release) and stands as a placeholder until the
+  adoption steer lands. Owner: this release lane, on the follow-up
+  steer.
 - **Jank-seat gate re-runs on the released bindings** — see
   PENDING-REBIND under Gates. Includes unit 9's jank harness leg
   (owner: cohost Agent 3, `agent3/unit9-jank-seat`), which runs up to
@@ -127,7 +142,10 @@ serially on this box (8 GB).
 
 ### PENDING-REBIND — jank-seat rows that only gain meaning on the released bindings
 
-Recorded, not forced, per the lane brief:
+Recorded, not forced, per the lane brief. Every row here is PENDING
+on the same dependency as the bindings adoption above: the pushed
+`release/eve-0.9.3` in SeniorCareMarket/eve, verified on its remote,
+followed by the adoption steer.
 
 - **Unit 9's jank harness leg** (`dev/eve_http_seats.clj`, 36-check
   shape; owner: cohost Agent 3, `agent3/unit9-jank-seat`): on the
