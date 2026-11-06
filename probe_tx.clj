@@ -1,7 +1,7 @@
 ;; STM lane: the tx layer probe. Run on the JVM seat:
 ;;   clojure -Sdeps '{:paths ["src"]}' -M probe_tx.clj
 ;; Exercises cohost.tx directly (the shim/boot wiring is exercised by
-;; eve_cohost_check_stm.clj through a booted core): world-atom STM
+;; eve_cohost_check_stm.clj through a booted core): the tx layer's STM
 ;; semantics against stock Clojure 1.12.0's answers, the send-hold seam
 ;; into cohost.thread's agents, the retry signal (including its cost),
 ;; and cooperative interruption.
@@ -179,11 +179,17 @@
      (fn [] (tx/alter* hot inc [])
        (when-not @done
          (reset! done true)
-         ;; a competing commit between this attempt's snapshot and its
-         ;; own commit: the attempt must retry via the exception
-         (let [cells (:cells (:world hot))]
-           (swap! cells update (:id hot)
-                  (fn [c] (assoc c :version (inc (:version c)))))))))))
+         ;; a competing commit between this attempt's read point and
+         ;; its own commit: the attempt must retry via the exception.
+         ;; (The world-atom construction's probe manufactured this by
+         ;; poking the world map's version counter; the per-ref
+         ;; construction manufactures the identical conflict through
+         ;; the public surface only: a phantom commit from another
+         ;; thread -- same value, moved commit point.)
+         (let [t (thread/spawn
+                  (fn [] (tx/run-in-transaction
+                          (fn [] (tx/ref-set* hot (tx/deref-ref hot))))))]
+           (thread/join-thread t))))))))
 (def throw-ms (/ (- (System/nanoTime) throw-t0) 1e6))
 (println (format "INFO forced-retry tx (throw + rerun each): %.0f tx/ms"
                  (/ throw-n throw-ms)))

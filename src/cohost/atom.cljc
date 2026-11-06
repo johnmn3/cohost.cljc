@@ -335,6 +335,44 @@
                                  :watches {} :validator validator :meta meta
                                  :readers 0})))))))))
 
+(defn make-domain-atom
+  "A layer atom that is the ONLY atom of a fresh Eve atom domain:
+   the seat hosting's :make-domain-atom mints a new domain and one
+   atom in it, so this atom's contention domain -- its slab, root,
+   epoch and arbitration point -- is shared with no other atom.
+   This is the STM lane's per-ref cell shape (a ref is an atom in
+   its OWN domain; doc/eve-cohost/STM-AGENTS-REPORT.md STATUS 3).
+
+   There is deliberately no fallback: a seat whose Eve hosting is
+   installed but cannot mint a domain atom throws here, rather than
+   quietly seating the atom in a shared program domain. (Where no
+   Eve hosting exists at all this namespace is unavailable and
+   callers use the seat's own atoms -- a host atom is a contention
+   domain of one by construction.) opts as make-atom's."
+  ([init] (make-domain-atom init nil))
+  ([init {:keys [meta validator]}]
+   (let [mk (:make-domain-atom @factory)]
+     (when-not mk
+       (throw (kind-error (str "cohost.atom: this seat's Eve hosting cannot mint an atom "
+                               "in its own domain (:make-domain-atom missing) -- refusing "
+                               "to seat it in a shared domain instead")
+                          {:cohost.atom/error :domain-atom-unavailable})))
+     (let [rep (root-representable? init)
+           h (mk (if rep init host-held))
+           st (atom {:eve h
+                     :gate (if rep :open :host)
+                     :root (when-not rep init)
+                     :kind :mem
+                     :own-domain true
+                     :fresh true
+                     :watches {}
+                     :validator validator
+                     :meta meta
+                     :readers 0})
+           a (layer-atom st)]
+       (validate! validator init)
+       a))))
+
 ;; Unit 8: an atom crossing realms. On the cljs Node seat the program's
 ;; atoms live in Eve domains over SharedArrayBuffers that every realm of
 ;; the process maps; an atom crosses as its Eve handle (domain + slot)

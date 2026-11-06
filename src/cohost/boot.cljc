@@ -1023,7 +1023,7 @@
    when the boot opts ask for it (:eve-stm). The shim's Ref surface
    and LockingTransaction statics route to the layer from here on:
    the booted program's refs are layer refs and its transactions run
-   the world-atom construction. Default boots never pass the opt;
+   the per-ref/per-domain MVCC construction. Default boots never pass the opt;
    the standing batteries are untouched."
   [report eve-stm]
   (when eve-stm

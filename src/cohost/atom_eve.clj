@@ -47,6 +47,26 @@
                                             (str "cohost.atom/a" n)
                                             slab-init))))
 
+(defn- make-domain-atom
+  "The STM lane's per-ref cell handle: a FRESH Eve atom domain
+   (eve.atom/atom-domain) holding exactly one atom. Unlike
+   make-eve-atom above -- which shards program atoms across
+   shared domains of 255 slots -- nothing else ever joins this
+   domain: it is the ref's own contention domain. Domain cost
+   is measured in the STM lane report (STATUS 4): ~6.8 MB of
+   eager heap and ~10^2 ms per domain at Eve's current
+   geometry; the hosting counts them (:ref-domains) so probes
+   report the number rather than assume it."
+  [slab-init]
+  (locking hosting
+    (let [d (eve-atom/atom-domain {})
+          n (inc (:counter @hosting))]
+      (swap! hosting (fn [s] (-> s
+                                 (assoc :counter n)
+                                 (update :ref-domains (fnil inc 0)))))
+      (eve-atom/lookup-or-create-mmap-atom! d (str "cohost.tx/ref" n)
+                                            slab-init))))
+
 (defn- registry-eve-atom []
   (locking hosting
     (or (:registry @hosting)
@@ -142,6 +162,7 @@
    Returns true."
   []
   (atom-layer/install-factory! {:make-atom make-eve-atom
+                                :make-domain-atom make-domain-atom
                                 :make-tier-atom make-tier-atom
                                 ;; unit 7 conveyance: the disk atom's Eve
                                 ;; meta-atom (coordination state beside it)
@@ -156,5 +177,6 @@
   []
   (let [s @hosting]
     {:program-domains (count (:domains s))
+     :ref-domains (:ref-domains s 0)
      :atoms-minted (:counter s)
      :startup-domain? (some? (:startup s))}))
