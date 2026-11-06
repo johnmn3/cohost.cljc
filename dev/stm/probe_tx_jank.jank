@@ -1,0 +1,13 @@
+;; STM lane (continuation): probe_tx on the JANK seat.
+;; Run: jank --module-path src run dev/stm/probe_tx_jank.jank
+;; Installs the jank host adapter, then loads the seat-agnostic probe
+;; script (probe_tx.clj -- the same 23 semantics checks the JVM seat
+;; runs) so cohost.tx executes on jank's runtime. Eve hosting is NOT
+;; installed on this seat (cohost.atom-eve's jank joint is unbuilt --
+;; STATUS 10), so refs seat in host atoms: this run proves the STM
+;; semantics + the throw-crossing question (STATUS 1) on jank frames.
+(ns probe-tx-jank
+  (:require [cohost.hosts.jank-host]))
+
+(load-file "probe_tx.clj")
+(println "INFO probe_tx_jank: script completed")

@@ -1313,3 +1313,53 @@ meet the per-ref-domain contract after its named probe;
 a leg failing twice identically without a banked
 diagnosis; any design point that seems to need a
 journal/scan/counter/arena (stop and report instead).
+
+## STATUS 12 — 2026-11-05 ~10:3x PM ET — continuation lane in flight: jank environment repair; Node leaf implemented, probe written
+
+- **Jank seat: first probe run died on the ENVIRONMENT,
+  not the STM.** `jank --module-path src run
+  dev/stm/probe_tx_jank.jank` (new runner: jank host +
+  load-file of the seat-agnostic probe_tx.clj) failed in
+  jank's JIT with `'math.h' file not found` from gcc-13's
+  libstdc++ headers: this box's gcc-14 dev stack
+  (libgcc-14-dev / libstdc++-14-dev, which jank's clang
+  needs) was wiped by a VM replacement; only gcc-13
+  headers remain. The cached debs sit in
+  ~/workspace/cohost-install/ (the same restore this
+  seat needed before). Install is queued behind a
+  system apt transaction holding the dpkg frontend lock
+  (infrastructure os-intent replay, not ours); the
+  moment it releases: dpkg -i the three cached debs,
+  rerun the probe. Diagnosis banked here per the
+  two-attempt rule — this is attempt 1, cause named,
+  fix mechanical.
+- **Node (cljs): implementation FIRST, done.**
+  src/cohost/hosts/cljs_eve.cljs's factory now carries
+  :make-domain-atom (this lane's leaf): a fresh
+  realm-local Eve domain (fresh-domain -- deliberately
+  NOT announced to other realms: STATUS 10's per-realm
+  STM scope) holding exactly one atom named
+  cohost.tx/ref<n>, mirroring cohost.atom-eve's JVM
+  leaf. The no-silent-fallback throw in cohost.atom
+  (STATUS 10's "make-ref throws at creation today") is
+  now satisfiable on this seat.
+- **Node probe written:** dev/stm/probe_tx_domains_main.cljs
+  + dev/stm/probe_domains.edn (worker_probe.edn's
+  foreign-lib bridges) -- install-core!, then residence
+  / 10 distinct domain-states off the Eve handles /
+  independence / two-ref cross-domain commit, probe_tx's
+  core semantics subset over domain cells (alter, ref-set,
+  commute), and the disjoint run (800 commits / 0 retries
+  as the layer's stats print them; single-realm
+  cooperative interleaving -- cross-task contention is a
+  worker-realm question, not claimed here). One build
+  lesson banked: probes off the :paths roots must add
+  their dir through eve-cljs-build-sdeps' extra
+  ({:paths ["dev/stm"]}), else cljs.main reports the
+  namespace missing. Compile in flight.
+- Drift handling (STATUS 11's contract): the cljs seat
+  binds Eve by the deps.edn :cljs PIN (d241de3, Eve
+  main / the 0.9.1 line) -- a pinned release binding,
+  not the drifting sibling checkout; the pin moves to
+  the 0.9.3 release commit when it lands, and Node's
+  RELEASE-READY line will be re-read against it then.

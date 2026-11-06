@@ -235,8 +235,24 @@
                          "and jank seats)")
                     {:cohost.atom/error :kind-unhosted :seat :cljs}))))
 
+(defn- make-domain-atom
+  "The STM lane's per-ref cell handle (STATUS 10/11): a FRESH Eve
+   domain holding exactly one atom -- the ref's own contention
+   domain, as cohost.atom-eve's :make-domain-atom mints on the JVM
+   seat. Realm-local by design (STATUS 10: refs do not cross realms
+   as live objects; each realm runs its own STM), so the domain is
+   opened with fresh-domain and not announced to other realms.
+   Nothing else ever joins this domain."
+  [slab-init]
+  (let [d (fresh-domain)
+        s (swap! R update-in [:hosting :counter] inc)]
+    (ea/lookup-or-create-mmap-atom! d
+                                    (str "cohost.tx/ref" (get-in s [:hosting :counter]))
+                                    slab-init)))
+
 (defn- install-factory! []
   (atom-layer/install-factory! {:make-atom make-eve-atom
+                                :make-domain-atom make-domain-atom
                                 :make-tier-atom (unhosted-kind "a tiered atom kind")
                                 :frame-atom (unhosted-kind "binding conveyance through a disk atom")
                                 :registry-atom registry-eve-atom
