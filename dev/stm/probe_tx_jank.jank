@@ -22,5 +22,9 @@
 ;; (cohost's booted path fills load-file via core-extras; this raw
 ;; runner does not boot.)
 (spit "dev/stm/probe_tx_jank_generated.jank" (slurp "probe_tx.clj"))
-(load "/dev/stm/probe_tx_jank_generated")
+;; NB: jank's `load` resolves relative paths against the LOADING
+;; module's own directory (this file lives in dev/stm/, beside the
+;; generated module); the Clojure-style absolute "/dev/stm/..." form
+;; is module-not-found here (attempt 5).
+(load "probe_tx_jank_generated")
 (println "INFO probe_tx_jank: script completed")

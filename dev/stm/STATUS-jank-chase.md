@@ -119,8 +119,20 @@ slurp/spit verified as real implementations in jank core (C++ bodies,
 not stubs). The no-ns script body executing under module load was
 proven by the modtest run.
 
+## Milestone 6 — 2026-11-06 ~9:45 AM ET — attempt 5: spit works, absolute load path doesn't; relative-to-module it is
+
+Attempt 5 (log probe-run-5.log): the self-generation worked (the
+10,474-byte generated module was written) but
+`(load "/dev/stm/probe_tx_jank_generated")` → module-not-found.
+Combined with the modtest evidence (relative `(load "probe_tx")` from
+a same-directory module WORKED; every absolute form failed), jank's
+`load` resolves relative paths against the loading module's own
+directory, not Clojure's ns-root rule. Runner now uses the relative
+`(load "probe_tx_jank_generated")` — the generated file sits beside
+the runner in dev/stm/.
+
 ## Next
-Probe attempt 5: from repo root,
+Probe attempt 6: from repo root,
 `jank --module-path src:. run dev/stm/probe_tx_jank.jank`
 (loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
 23 semantics checks the JVM seat runs; refs seat in host atoms on this
