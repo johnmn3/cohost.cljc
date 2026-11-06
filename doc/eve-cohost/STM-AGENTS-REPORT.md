@@ -1403,3 +1403,79 @@ journal/scan/counter/arena (stop and report instead).
   wait on the system's apt transaction (still holding
   the dpkg lock at last check). Node: cljs probe
   compile in flight.
+
+## STATUS 14 — 2026-11-05 ~11:4x PM ET — JOLT residence stands; throw-crossing: a REAL retry loop found on the seat (and on the JVM) — manufacture-dependent; Node compile still running
+
+- **Jolt throw-crossing probe: NOT PASSED — and the
+  failure is a genuine finding about cohost.tx, not
+  about jolt.** A first manufacture was wrong twice
+  (nested run-in-transaction JOINS the attempt; an
+  alter*-before-conflict touches at the new point), and
+  correcting it exposed the real thing: when a ref's
+  cell moves to a point BEYOND the global commit-point
+  clock while an attempt's read point is fixed AND the
+  cell's retained history does not reach back to that
+  read point, `value-at` answers ::too-short on EVERY
+  retry — the retry re-fixes the read point lazily from
+  the same stale cell-vs-clock relation and faults
+  identically forever. Observed three ways: on jolt, a
+  cell bumped to point 1 over an EMPTY history with the
+  clock at 0 loops the attempt body unboundedly (the
+  runner never returns); on the JVM seat the identical
+  manufacture reproduces the identical non-return
+  (verified firsthand tonight) — so this is a layer
+  semantics gap, not a jolt frame problem.
+- Why the shipped probes never saw it: the fault needs
+  a cell whose point outruns the commit-point clock --
+  which no legal sequence of layer commits produces
+  (install! always claims the next clock point and
+  pushes the displaced entry into history first, so
+  history always reaches). It takes an out-of-band
+  writer moving a cell without the clock/history
+  discipline — the shape a NON-layer writer of the same
+  Eve atom would have (another Eve host process sharing
+  the ref's domain: the tiered/shared-atom world). The
+  layer's read path assumes the layer is the cell's
+  only writer. **Dispositions (named, not silently
+  patched):** (i) if the single-writer assumption is
+  the design's contract, it must be STATED as such in
+  tx.cljc and the ::too-short retry bounded by stock's
+  own answer (stock faults the transaction after its
+  retry limit rather than spinning); (ii) if foreign
+  writers are in scope, the fix is a layer change:
+  on ::too-short, re-base the attempt's read point to
+  the cell's oldest reachable point instead of
+  re-faulting. This lane does not choose between them
+  unilaterally — it is a semantics decision for the
+  mainline/operator, and it gates STM over SHARED
+  (multi-writer) atoms, not single-process STM. The
+  probe (dev/stm/probe_throw_jolt.clj) keeps the
+  manufacture and the failing/hanging checks as the
+  evidence; its genuine-error section passes on the
+  seat (surfaced, one attempt, no partial write).
+- What throw-crossing DID establish on jolt before the
+  loop: the genuine-error path unwinds correctly
+  through cohost.tx's host/try-all on jolt frames
+  (ex-info surfaces, partial writes do not land). The
+  retry-signal crossing itself remains unproven on the
+  seat until the loop above is dispositioned, because
+  every manufacture of a legal in-layer conflict needs
+  a second thread (the seat's thread story is the
+  remaining probe: cohost.thread futures on jolt have
+  still never run — STATUS 10).
+- **Jank:** the system apt replay is STILL cycling
+  (multiple apt-get processes over ~1.5 h at ~0 CPU);
+  the dpkg lock has not released. The gcc-14 deb
+  install stays queued behind it; nothing about the
+  jank seat itself has changed. (Infrastructure note,
+  not a lane failure; the seat-port lane's jank runs
+  proceed because jank's own binary needs the headers
+  only for cohost's JIT-compiled C++ interop in
+  jank_runtime.jank — Eve's pure-jank adapters compile
+  without it, this lane's runner does not.)
+- **Node:** the cljs probe compile is still running
+  (past 20 min under box contention — the seat-port
+  lane's jank battery is on the same box). Per the
+  no-long-measurements rule it is a compile, not a
+  measurement; it either lands or the next STATUS
+  diagnoses it.
