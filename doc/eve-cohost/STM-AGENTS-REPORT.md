@@ -1217,3 +1217,99 @@ the STM's design or in STATUS 5's host contract fails
 on any of the three targets — every gap named above
 is a missing joint, a missing leaf, or a missing run,
 not a missing mechanism.
+
+## STATUS 11 — 2026-11-05 ~10:1x PM ET — PICKUP (continuation lane): STM on every remaining target; destination = the cohost release
+
+The operator stood this lane back up with a direct order:
+get STM RUNNING on all the remaining targets (not just
+assessed), and "we'll get that in on the cohost release."
+
+**Inherited state (verified from this branch's own
+record, STATUS 1–10; not re-derived).** STM lives in
+cohost's layer above the shim (src/cohost/tx.cljc): each
+ref is a cell atom in its OWN Eve atom domain; commit
+locks written AND ensured refs in fixed order, validates,
+claims one commit point, installs with one CAS per ref;
+retry is a dedicated exception with the flag-checked
+cooperative fallback; interruption is cooperative
+(per-task cancel flag in cohost.thread, polled at
+blocking leaves and once per attempt); history trim
+REBUILDS a fresh vector (the subvec sharing defect is
+fixed — do not regress it) and reclamation rides the
+domain retire/epoch machinery (STATUS 9; R-RECLAIM
+flush-before-alloc filed Eve-side). JVM seat verified:
+probe_tx 23/23 host cells; domains probe 15/15 over Eve
+cells; disjoint 800 commits / 0 retries; reclaim probe
+4/4; booted check 20/22 (the 2 red = pre-existing
+hinted-interop remainder, NOT this lane's). STATUS 10's
+feasibility assessment is banked on this branch and is
+this lane's map: Node = works with named work (closest);
+Go = glojure blocked on a missing cohost seat, let-go
+blocked at the Eve layer; Jolt = works with named work
+(seat exists, hosting joint unbuilt, atom-eve drift
+gates loading).
+
+**Landing target (operator, ~10:11 PM ET): the COHOST
+RELEASE** — the release branch assembled off cohost
+main carrying the Eve-in-cohost mainline
+(muse/eve-cohost-impl lineage; release/eve-in-cohost).
+Consequences, accepted as this lane's contract:
+- A target's STM counts as RELEASE-READY only when its
+  probes pass against the RELEASE BINDINGS (the
+  mainline's Eve), not against a drifting sibling
+  checkout.
+- The atom-eve drift (cohost.atom-eve / unit-7
+  root-digests name eve.atom/seal + eve.digest, both
+  gone — STATUS 7/8 remainder 2) is therefore IN THIS
+  LANE'S PATH for the release: per target, verification
+  states how it is handled — fixed on the mainline
+  side, or called out as a release blocker with an
+  owner. It is NEVER silently worked around in the STM
+  layer. (Probe-local factory installs remain a probe
+  technique for feasibility runs; they do not make a
+  target release-ready while the drift stands.)
+- Final declaration carries a per-target RELEASE-READY
+  / NOT-READY line with the evidence.
+
+**Order of work** (brief order; STATUS 10's banked
+evidence applied): (1) jank-seat run of the existing
+probes (probe_tx + domains + reclaim) — the oldest
+named remainder; (2) Node/cljs — smallest probe first
+(add :make-domain-atom to the cljs_eve factory, run
+probe_tx_domains residence + disjoint), then probe_tx's
+23 on the seat; (3) Go/glojure — smallest probe first
+(boot cohost's shim on glojure off the JVM-adapter
+template; probe_tx over host cells); per-ref Eve
+domains on glojure need the hosting joint ported — if
+the seat does not boot cheaply, STOP on Go and bank the
+missing cohost glojure seat as the named blocker
+(STATUS 10's verdict), do not build a seat as a side
+quest beyond the probe; let-go is recorded blocked at
+the Eve layer (no slab/region adapters) and is not
+attempted; (4) Jolt — smallest probe first (probe-local
+domain factory, residence check: 10 refs / 10 distinct
+domains), then throw-crossing on jolt frames, then both
+probes on the seat.
+
+**Rules carried in force.** Implementation first across
+targets, verification after — no sitting on one target's
+test leg while others are unimplemented. NO silent
+fallback: if a target cannot mint per-ref Eve domains,
+STOP on that target and bank exactly what is missing as
+a named Eve-side (or seat-side) requirement, as
+R-RECLAIM was filed. Probes first at REPL/scoped scale;
+any leg priced over ~15 min names the cheaper
+alternative or stops and reports; a leg failing twice
+the same way stops with a banked diagnosis. Never patch
+jank (or any upstream host); host defects leave as
+evidence + a named remainder. Install what's missing is
+a step, never a stop. STATUS every 10–20 min; commit as
+I go; work product only under ~/workspace/. MEMORY:
+atoms all the way down — no journals, liveness scans,
+counters, or arenas bolted on.
+
+**Stop conditions for this lane:** a target that cannot
+meet the per-ref-domain contract after its named probe;
+a leg failing twice identically without a banked
+diagnosis; any design point that seems to need a
+journal/scan/counter/arena (stop and report instead).
