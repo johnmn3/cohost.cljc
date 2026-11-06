@@ -982,3 +982,238 @@ the construction feeds by shape and obstructs in no way; and the
 substrate's one missing primitive is named as R-RECLAIM with its
 measurement, filed to the Eve side alongside the geometry
 finding.
+
+## STATUS 10 — 2026-11-05 ~10:2x PM ET — feasibility: Node, Go, Jolt (operator's question; assessment only, no implementation)
+
+The operator asked whether this STM can also work over
+**Node**, **the Go target**, and **Jolt**. Assessed from
+evidence in this repo and the two Eve lines; extends
+STATUS 5's table, does not restart it. Three premise
+corrections first, because the answers turn on them:
+
+- **Jolt is Clojure on Chez Scheme** (cohost.hosts.jolt's
+  own docstring; jolt-lang v0.8.23), JVM-shaped: it ships a
+  java.* shim and clojure.lang.* classes under their JVM
+  names, so cohost's jolt adapter is "nearly the JVM
+  adapter". It is not a Lua host.
+- **"The Go target" is two different runtimes.** Glojure
+  (:glj) is a Clojure on the Go runtime and is *Eve's* Go
+  host. Let-go (:lg) is a Clojure dialect on a Go VM and
+  is *cohost's* Go seat. The TARGET-AUDIT (§3.12/§3.15)
+  treats them as siblings, not one seat. Assessed
+  separately below; the headline Go answer is glojure.
+- **Two Eve lines.** This lane's hosting (cohost.atom-eve,
+  hosts/cljs_eve) is built on the standalone Eve
+  (~/src/eve). The green host batteries for :jolt and
+  :glj live on the vendored line (atom.broker eve/hosts.edn
+  + doc/hosts/README). A vendored battery proves Eve's
+  design tolerates the host; it does not by itself give
+  cohost a hosting joint on that host. Verdicts keep the
+  lines separate.
+
+The STM's actual dependencies (STATUS 3/5): the three-op
+cell contract (deref, CAS, an atom in its own domain —
+with host atoms as the honest no-hosting residence), a
+retry exception that unwinds frames (STATUS 1, with the
+flag-checked fallback), cooperative interruption
+(cancel flag + bounded waits + one poll per attempt,
+cohost.thread — portable .cljc, already written), a
+dynamically bound attempt record, and STATUS 9's
+reclamation story. Plus the universal substrate gate
+(STATUS 4/8): per-domain geometry (~6.8 MB and ~10^2 ms
+per domain at JVM heap geometry; 1,248-install ceiling;
+R-RECLAIM) — its shape follows every seat below until
+Eve grows small-domain capacities; its numbers must be
+re-measured per seat, not carried over.
+
+### Node (the cljs seat)
+
+1. **Eve layer — present, one leaf short.** Standalone
+   Eve runs on cljs today (SAB AtomDomain), and unit 8's
+   hosts/cljs_eve.cljs already installs a cohost.atom
+   factory over eve.atom/atom-domain on this seat. But
+   reading that factory's source: it installs :make-atom,
+   :make-tier-atom, :frame-atom, :registry-atom and
+   :eve-value? — **no :make-domain-atom**. With Eve
+   hosting in force, make-ref therefore throws at
+   creation today (the no-silent-fallback rule working
+   as designed). The missing leaf's pieces sit in the
+   same file (mint-domain!/fresh-domain over
+   ea/atom-domain + lookup-or-create-mmap-atom!). With
+   no hosting installed, refs seat in cljs host atoms
+   and the protocol is seatable in principle — but
+   probe_tx has never run on this seat (the lane's
+   final verification is JVM-only; the booted STM check
+   is a .clj file).
+2. **Threads + interruption.** A Node realm is
+   single-threaded; concurrency is the unit-8 mesh
+   (core realm + worker realms, tasks as data). Inside
+   one realm, tasks are cooperative, so a dosync attempt
+   that hits no blocking leaf runs uninterleaved:
+   contention is nearly vacuous, semantics hold
+   trivially, retries ~never fire. Refs do not cross
+   realms as live objects (closures cannot cross —
+   unit 8's named divergence), so there is no
+   cross-realm transaction and no cross-realm attempt
+   scope; each realm would run its own STM. The
+   cooperative-interrupt machinery is portable .cljc
+   and present on the cljs leaves; Node workers can
+   Atomics.wait in bounded slices (cljs_eve already
+   spins that way); the main realm cannot block, but
+   the STM runner never blocks — it retries — so this
+   does not bite. Named hazard for the probe: the
+   attempt record is a cljs `binding` (realm-global
+   dynamic), safe only while attempts do not interleave
+   mid-body; a dosync body that awaits a mesh task
+   mid-attempt would break that scoping.
+   :stm-interruptible? on this seat = true within a
+   realm (cooperative), not applicable across realms.
+3. **Reclamation.** JS is a GC host: STATUS 9's
+   reachability story for materialized copies and host
+   cells (including the fixed subvec defect). SAB
+   domains free via the CLJS retire path (retire queue
+   + epoch-gated flush in the domain), subject to
+   R-RECLAIM exactly as on the JVM.
+4. **Verdict: works with named work — the closest of
+   the three.** Named work: (i) add :make-domain-atom
+   to the cljs_eve factory; (ii) run probe_tx and
+   probe_tx_domains on the Node seat (never run);
+   (iii) record the per-realm scope in the seat's
+   capability row. **Smallest first probe:** in one
+   Node worker realm with unit-8 hosting installed,
+   add the domain-atom leaf and run probe_tx_domains'
+   residence + disjoint checks, then probe_tx's 23
+   under the cljs boot with the :eve-stm fill.
+
+### Go — glojure (:glj), Eve's Go host
+
+1. **Eve layer — Eve proven, cohost absent.** On the
+   vendored line the :glj host is green (182 tests /
+   4,458 assertions; final sweep 168/2,866; slab/heap +
+   region/glojure + thread/glojure + completion/glojure).
+   But cohost has **no glojure seat** (its Go seat is
+   let-go), cohost's Eve hosting is .clj against the
+   standalone line, and the standalone line has no :glj
+   branch. Both upper joints of cohost-over-Eve-over-
+   glojure are missing today; what exists is proof the
+   substrate tolerates the design.
+2. **Threads + interruption — the best model of the
+   three.** Eve's thread/glojure adapter runs on
+   goroutines: real parallel threads, futex waits,
+   closures shipped by reference, one Go heap (its
+   driving table: :parallel true, :block :cheap,
+   :wake :futex). Go offers no thread kill, which costs
+   the design nothing — its interruption was always
+   cooperative (cancel flag + bounded waits), and that
+   maps directly. On paper, glojure satisfies STATUS
+   5's minimal host contract better than Node does.
+3. **Reclamation.** Go is a GC host (reachability for
+   host cells/copies). :glj domains are slab/heap
+   domains — the retire/epoch story carries in design;
+   geometry, the install ceiling and R-RECLAIM must be
+   re-measured there. Cost warning from the audit's
+   perf table: glojure carries the slowest compiled-
+   host Eve prices (deref-small ~318 us), and an STM
+   commit is O(written refs) Eve publishes at seat
+   prices.
+4. **Verdict: blocked on a named missing piece — a
+   cohost glojure seat** (adapter + boot, plus a port
+   of the Eve hosting joint). Not an STM-design
+   blocker: nothing in the protocol or the host
+   contract fails on glojure; the cohost layer simply
+   does not exist there. **Smallest first probe:** boot
+   cohost's shim on glojure using the JVM adapter as
+   the template (glojure presents clojure.lang.* names,
+   as jolt does) and run probe_tx over host cells only
+   (no Eve hosting): if the shim boots, STM semantics
+   run there the same day, and the Eve-domain residence
+   becomes a hosting-port question, not a feasibility
+   one.
+   *Let-go footnote:* cohost's actual Go seat cannot
+   carry the Eve story today — the vendored :lg host
+   is core/completion-only with thread/none and no
+   slab/region/coll adapters, so Eve's memory-level
+   atoms do not exist there, and the standalone line
+   has no let-go branch at all. STM on let-go would be
+   the STATUS 5 basilisp row (host cells only, no
+   domains, no retire path). Blocked at the Eve layer;
+   glojure is the Go path.
+
+### Jolt (Clojure on Chez Scheme)
+
+1. **Eve layer — both layers exist; the joint does
+   not.** Vendored Eve is green on jolt (199 tests /
+   4,479 assertions; sweep 185/2,887; region/jolt-ffi +
+   slab/heap, thread adapter = the JVM one), and cohost
+   boots on jolt today (hosts/jolt.clj; battery and
+   bench rows on the seat). But TARGET-AUDIT §3.10's
+   note stands: jolt has no Eve branch in the
+   *standalone* line — the port exists only on the
+   vendored line — and cohost.atom-eve is written
+   against the standalone line and has never loaded on
+   jolt. The standing atom-eve drift (eve.atom/seal,
+   eve.digest gone — STATUS 7/8 remainder 2, the
+   mainline's to repair) blocks loading it on any seat
+   until fixed. Shallower than glojure's gap by one
+   level: the seat exists; only the hosting joint is
+   unbuilt.
+2. **Threads + interruption.** Jolt is JVM-shaped
+   (java.* shim, clojure.lang.* names), and Eve's
+   vendored host chose adapters/thread/jvm for it —
+   the strongest available signal that its thread
+   surface is JVM-like, with Chez threads underneath.
+   cohost.thread's cooperative machinery (cancel flags,
+   bounded waits, layer interrupt exception) targets
+   exactly this shape. Unproven specifics, both probe
+   items: whether cohost.thread's futures/agents have
+   ever run on jolt (no evidence in this repo), and
+   STATUS 1's throw-crossing question on jolt frames
+   (jolt compiles to Scheme; the retry exception rides
+   its Throwable shim) — the same probe class jank
+   still owes.
+3. **Reclamation.** Chez is a GC host: reachability
+   for host cells and materialized copies. Eve domains
+   on jolt are slab/heap: the retire/epoch story
+   carries in design, R-RECLAIM applies, geometry
+   unmeasured on the seat (vendored perf prices jolt
+   deref-small ~17 us — STM per-op costs will be
+   jolt-priced, not absurd).
+4. **Verdict: works with named work.** Named work:
+   (i) the atom-eve drift repair (mainline's; gates
+   every seat, not just this one); (ii) load cohost's
+   Eve hosting on jolt — or install the factory
+   probe-locally, as this lane's JVM probes did — and
+   run both probes on the seat; (iii) the throw-
+   crossing probe on jolt frames. **Smallest first
+   probe:** on the jolt seat, install the domain
+   factory probe-locally (the same two Eve calls
+   probe_tx_domains used) and run its residence check
+   alone — 10 refs, 10 pairwise-distinct domains. One
+   run separates "the hosting joint works" from
+   everything downstream.
+
+### Summary
+
+| target | Eve layer | threads / interrupt | reclamation | verdict |
+|---|---|---|---|---|
+| Node (cljs) | present; factory lacks :make-domain-atom | cooperative intra-realm; no cross-realm attempts | GC + SAB retire path; R-RECLAIM | works with named work (closest) |
+| Go (glojure) | Eve green (vendored); no cohost seat, no hosting joint | goroutines, real parallel; cooperative maps directly | GC + slab/heap retire in design; re-measure | blocked: cohost glojure seat missing |
+| Go (let-go) | no Eve atoms (no slab/region adapters) | thread/none on the Eve side | host GC only; no retire path | blocked at the Eve layer |
+| Jolt | Eve green (vendored); cohost seat exists; hosting joint unbuilt + drift | JVM-shaped; thread/jvm adapter on the Eve side | GC + slab/heap retire in design; R-RECLAIM | works with named work |
+
+**Already proven vs genuinely open.** Proven: the STM
+protocol and semantics end to end (JVM, host and Eve
+cells); Eve's design green on all three substrates
+(vendored batteries; Node/cljs is a headline seat of
+the standalone line too); the cooperative-interrupt
+machinery as portable .cljc; a working cohost.atom
+factory on the Node seat (unit 8). Genuinely open:
+:make-domain-atom on cljs; any probe_tx run off the
+JVM seat (jank's is already a named remainder; these
+three join it); the whole cohost-on-glojure seat;
+atom-eve loading on jolt; throw-crossing on jolt;
+per-seat geometry and R-RECLAIM behaviour. Nothing in
+the STM's design or in STATUS 5's host contract fails
+on any of the three targets — every gap named above
+is a missing joint, a missing leaf, or a missing run,
+not a missing mechanism.
