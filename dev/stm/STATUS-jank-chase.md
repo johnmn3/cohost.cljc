@@ -147,8 +147,29 @@ Runner now: the generated copy carries an
 that ns, as they would under load-file) and the runner requires it by
 name.
 
+## Milestone 8 — 2026-11-06 ~9:55 AM ET — attempt 7: require route WORKS; jank's lexer rejects ALL non-ASCII source (isolated); one-char seat fix in tx.cljc
+
+Attempt 7 (log probe-run-7.log): the generated module loaded and its
+requires began resolving — then jank's lexer failed with
+"Unterminated string" on src/cohost/tx.cljc line 2, the ns docstring.
+Isolated in modtest (seconds each): a `×` inside a string →
+Unterminated string; a `×` inside a COMMENT → "Unicode character
+literal is unfinished"; an em dash in a string → Unterminated string.
+**This jank build's lexer rejects non-ASCII characters anywhere in a
+source file, strings and comments alike** (the reader non-ASCII gap
+previously met on unit 9's jank leg).
+
+Blast radius, measured: across ALL of cohost's src only TWO files
+contain any non-ASCII at all — hosts/jolt.clj (JVM-side, not in this
+load set) and tx.cljc, which has exactly ONE non-ASCII character: the
+`×` in its ns docstring. Seat-side fix (committed on this branch):
+that one character is now `/` ("STM/agent seam" — docstring only, no
+code touched). General finding for the mainline: any future non-ASCII
+character landing in a jank-loaded cohost/Eve source file is a hard
+load failure on this seat until jank's lexer learns UTF-8.
+
 ## Next
-Probe attempt 7: from repo root,
+Probe attempt 8: from repo root,
 `jank --module-path src:. run dev/stm/probe_tx_jank.jank`
 (loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
 23 semantics checks the JVM seat runs; refs seat in host atoms on this

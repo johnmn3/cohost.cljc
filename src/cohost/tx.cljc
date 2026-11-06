@@ -1,5 +1,5 @@
 (ns cohost.tx
-  "STM + the STM×agent seam for cohost (doc/eve-cohost/STM-AGENTS-REPORT.md):
+  "STM + the STM/agent seam for cohost (doc/eve-cohost/STM-AGENTS-REPORT.md):
    stock Clojure's software transactional memory -- ref, dosync/sync,
    alter, commute, ref-set, ensure, ref history, validators and watches --
    implemented in COHOST's layer, above the shim, on Eve's facilities
