@@ -618,3 +618,27 @@ interruption as a named per-seat capability
 (`:stm-interruptible?`) — so the relocation, if ordered,
 is a move of cohost.tx's core into Eve plus a per-target
 capability table, not a second design.
+
+## STATUS 6 — 2026-11-05 ~9:2x PM ET — verification in flight
+
+- probe_tx (the 23-check semantics suite, host-atom cells):
+  **ALL 23 CHECKS PASS** over the reworked construction
+  (log dev/stm/logs/probe-tx-redesign.log). Transfer bench
+  took 2658 attempts for 2000 transactions (retries real,
+  scoped, and the invariant held); the forced-retry bench's
+  phantom-commit conflict retries via the exception as
+  designed. The ONE adaptation, named in STATUS 2's plan
+  and in the probe's own comment: the forced-retry bench
+  manufactures its conflict with a public-API phantom
+  commit instead of poking the deleted world map. Every
+  check line is unchanged.
+- eve_cohost_check_stm (booted-context check): re-running
+  detached; the boot itself (full stock core through the
+  shim) is slow on this loaded box (load ~4–6) and a first
+  foreground attempt hit the runner's timeout before the
+  boot finished printing. Not a failure signal; the result
+  lands in STATUS 7 with its log.
+- probe_tx_domains (new; residence + zero-retry disjoint +
+  scoped-retry over real Eve domains) runs next, then
+  probe_tx again with the Eve hosting installed (the 23
+  checks over domain cells).
