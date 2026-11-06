@@ -304,7 +304,10 @@
    ;; does not reach and no macro of the name can replace; of them, fn and
    ;; defn- have no var in its core to take (:special: neither taken nor booted)
    :cljrs {:host (set '[let loop defn defmacro defonce and or letfn binding])
-           :special (set '[fn defn-])}})
+           :special (set '[fn defn-])}
+   ;; ValueScript's analyzer owns let, loop and fn in every shape (its runtime
+   ;; compiler refuses a def of the name: "reserved name: let is a special form")
+   :vs {:special (set '[let loop fn])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."
