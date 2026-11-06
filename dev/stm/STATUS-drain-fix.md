@@ -34,3 +34,63 @@ never the long-lived executor worker — consistent with all three.
 Next: reproduce diag2 as baseline, then bisect with small probes
 (doorbell roundtrip; raw executor submit + ctl/queue inspection;
 claim! alone).
+
+## Milestone 2 — 2026-11-06 ~9:55 AM ET — DIAGNOSIS (measured end to end)
+
+Baseline reproduced firsthand: diag2 → "plain send NEVER landed
+within 8s; state: []" (+ known F-2 teardown segfault).
+
+Bisect probes (dev/drain/probe1-5.jank, all run under pty):
+- probe1: the doorbell is innocent — signal wakes a parked waiter
+  (true), unsignalled timed wait returns false. The RAW executor is
+  innocent too: submit! to a fresh solo executor ran the item
+  immediately (flag :ran, queue drained, worker alive).
+- probe2: after a plain send, the agent's queue is EMPTY (the action
+  was claimed), :queued is stuck TRUE, :errors is EMPTY, state
+  unchanged. So drain claimed the action and died before running it —
+  silently (the worker's try-all eats the throw; agent-failed! is
+  never reached, so nothing is recorded anywhere).
+- probe3: synchronous calls of drain's unguarded pieces —
+  adapter/resolve-core => nil (fine); capture-bindings fine;
+  **adapter/interned-var THROWS**; agent-var-handle THROWS (inherits);
+  a manual run-action THROWS the same way.
+- probe4: the throw is jank's ns-interns error: "The provided value
+  was not resolvable as a namespace." {:value cohost.core}.
+- probe5: find-ns answers nil for an unloaded ns (no throw);
+  ns-interns works for loaded namespaces; a find-ns-guarded lookup
+  answers nil / the var correctly in both cases.
+
+**Mechanism:** cohost.thread's run-action calls agent-var-handle,
+which calls host/interned-var BEFORE its try-all (thread.cljc:629ff).
+The cap contract (adapter.cljc:47) says :interned-var answers the
+handle "or nil". The DEFAULT (adapter.cljc:350) goes through the
+default :ns-interns = plain (ns-interns ns-sym), which on jank
+THROWS when the namespace is not resolvable in the process (here
+cohost.core, unbooted in the probe processes). The JVM seat carries
+a nil-safe :interned-var override (hosts/jvm.clj:36, find-ns
+guarded); the glj seat received the identical fix during the Go
+chase (registry-miss answers {}/nil, "the caps' stated contract").
+The jank seat never got one — it defines neither :interned-var nor
+:ns-interns, so the throwing default is what runs. Every agent
+action on jank dies in run-action; drain's :queued sticks true; no
+send ever lands, in or out of a transaction. The STM, the executor,
+the doorbell and claim! are all exonerated by direct measurement.
+
+**Fix (seat-scoped, jank_host.jank, beside :resolve-core):** add
+:interned-var and :ns-interns caps that guard with find-ns and
+answer nil / {} when the namespace is not resolvable — the cap
+contract, mirroring the JVM and glj seats. No shared code touched.
+
+## Milestone 3 — 2026-11-06 ~10:05 AM ET — FIX IN; acceptance (1) MET
+
+Fix in src/cohost/hosts/jank_host.jank (beside :resolve-core):
+:interned-var and :ns-interns caps guarded by find-ns, answering
+nil / {} when the namespace is not resolvable — the cap contract.
+Seat-scoped only; no shared code touched.
+
+diag2.jank now prints: "DIAG2 plain send landed after(ms):
+4534.02..." — the send drains. (The ms includes the worker's
+first-action JIT of the drain path; the poll grain is 250 ms.)
+The F-2 teardown segfault still follows, as documented — separate
+mechanism (runtime shutdown with live threads), not this defect:
+the drain failure is fully explained and closed by the cap throw.

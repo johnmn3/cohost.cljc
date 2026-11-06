@@ -2601,6 +2601,16 @@ namespace cohost_err {
    ;; shim's Numbers/unchecked_dec prefers the host fn over its dec
    ;; fallback -- report it absent so the fallback runs
    :resolve-core (fn [sym] (when-not (= 'unchecked-dec sym) (get (ns-publics 'clojure.core) sym)))
+   ;; the caps' contract is "or nil": the adapter's default :interned-var
+   ;; goes through (ns-interns ns-sym), which on jank THROWS ("not
+   ;; resolvable as a namespace") when the ns is not loaded in this
+   ;; process -- and cohost.thread's run-action calls interned-var
+   ;; before its try-all, so every agent action died there and no send
+   ;; ever drained (F-1 AGENT-DRAIN-JANK, measured). find-ns answers
+   ;; nil without throwing; guard with it, as the JVM seat's override
+   ;; does. Same guard for :ns-interns ({} on a miss, as on glj).
+   :interned-var (fn [ns-sym sym] (when (find-ns ns-sym) (get (ns-interns ns-sym) sym)))
+   :ns-interns (fn [ns-sym] (if (find-ns ns-sym) (ns-interns ns-sym) {}))
    :mark-macro! (fn [v] (alter-meta! v assoc :macro true) v)
    :expand-macro expand-macro
    ;; its compiler honors a var's :inline, and core.clj's write raw JVM interop:

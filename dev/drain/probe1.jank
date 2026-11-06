@@ -1,0 +1,36 @@
+(ns probe1
+  (:require [cohost.hosts.jank-host]
+            [cohost.thread :as thread]
+            [cohost.adapter :as adapter]))
+
+(defn slp [ms] (@#'clojure.core/sleep ms))
+(defn now [] (cpp/cohost_time.nano_time))
+
+(println "== A: doorbell roundtrip ==")
+(def bell (adapter/doorbell))
+(println "bell:" bell)
+(def res (atom ::pending))
+(def th (thread/spawn (fn [] (reset! res (adapter/doorbell-wait bell 5000)))))
+(slp 300)
+(println "waiter state before signal:" @res)
+(adapter/doorbell-signal bell)
+(loop [i 0]
+  (when (and (= ::pending @res) (< i 20)) (slp 100) (recur (inc i))))
+(println "waiter result after signal:" @res)
+
+(println "== A2: unsignalled timed wait ==")
+(def bell2 (adapter/doorbell))
+(def t0 (now))
+(def w (adapter/doorbell-wait bell2 150))
+(println "wait(150) unsignalled =>" w "elapsed(ms):" (/ (- (now) t0) 1e6))
+
+(println "== B: raw executor ==")
+(def flag (atom false))
+(def ex (thread/new-executor :solo 1))
+(thread/submit! ex (fn [] (reset! flag :ran)))
+(loop [i 0]
+  (let [c @(:ctl ex)]
+    (println "t+" (* i 500) "ms flag:" @flag "running:" (:running c)
+             "shutdown:" (:shutdown c) "queue:" (pr-str @(:queue ex))))
+  (when (< i 6) (slp 500) (recur (inc i))))
+(println "PROBE1 done")

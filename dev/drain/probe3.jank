@@ -1,0 +1,21 @@
+(ns probe3
+  (:require [cohost.hosts.jank-host]
+            [cohost.thread :as thread]
+            [cohost.adapter :as adapter]))
+
+(defn attempt [label f]
+  (try (println label "=>" (pr-str (f)))
+       (catch cpp/jank.runtime.object_ref e
+         (println label "THREW:" (pr-str e) "| msg:" (try (ex-message e) (catch cpp/jank.runtime.object_ref _ "<none>"))))))
+
+(attempt "interned-var cohost.core/*agent*" #(adapter/interned-var 'cohost.core '*agent*))
+(attempt "resolve-core *agent*" #(adapter/resolve-core '*agent*))
+(attempt "agent-var-handle" #(@#'cohost.thread/agent-var-handle))
+(attempt "capture-bindings" #(thread/capture-bindings))
+(attempt "thread-bindings cap" #(adapter/thread-bindings))
+
+(def ag (thread/new-agent [] {}))
+(def action {:ag ag :f conj :args [[:x]] :bindings {} :executor nil})
+(attempt "run-action manual" #(@#'cohost.thread/run-action ag action))
+(println "state after manual run-action:" @(:state ag))
+(println "PROBE3 done")

@@ -1,0 +1,19 @@
+(ns probe2
+  (:require [cohost.hosts.jank-host]
+            [cohost.thread :as thread]))
+
+(defn slp [ms] (@#'clojure.core/sleep ms))
+
+(println "== C: agent internals after plain send ==")
+(def ag (thread/new-agent [] {}))
+(thread/dispatch! ag conj [:plain] (thread/send-executor))
+(slp 1000)
+(println "state:" @(:state ag))
+(println "queue:" (pr-str @(:queue ag)))
+(println "ctl:" @(:ctl ag))
+(println "errors count:" (count @(:errors ag)))
+(doseq [e @(:errors ag)]
+  (println "error:" (pr-str e) "| msg:" (try (ex-message e) (catch cpp/jank.runtime.object_ref _ "<no ex-message>"))))
+(slp 2000)
+(println "after +2s state:" @(:state ag) "errors:" (count @(:errors ag)))
+(println "PROBE2 done")

@@ -1,0 +1,11 @@
+(ns probe4
+  (:require [cohost.hosts.jank-host]
+            [cohost.thread :as thread]
+            [cohost.adapter :as adapter]))
+
+(try (adapter/interned-var 'cohost.core '*agent*)
+     (catch cpp/jank.runtime.object_ref e
+       (println "MSG:" (try (ex-message e) (catch cpp/jank.runtime.object_ref _ "<no msg>")))
+       (println "DATA:" (pr-str (try (ex-data e) (catch cpp/jank.runtime.object_ref _ "<no data>"))))
+       (println "STR:" (pr-str e))))
+(println "PROBE4 done")
