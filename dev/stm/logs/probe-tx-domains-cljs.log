@@ -1,17 +1,14 @@
-/home/hatch/workspace/wt/eve-cohost-stm/target/stm-domains/probe_tx_domains_main.js:11
-probe_tx_domains_main._main.call(null);
-                            ^
-
-TypeError: Cannot read properties of undefined (reading 'call')
-    at Object.<anonymous> (/home/hatch/workspace/wt/eve-cohost-stm/target/stm-domains/probe_tx_domains_main.js:11:29)
-    at Module._compile (node:internal/modules/cjs/loader:1929:14)
-    at Object..js (node:internal/modules/cjs/loader:2060:10)
-    at Module.load (node:internal/modules/cjs/loader:1651:32)
-    at Module._load (node:internal/modules/cjs/loader:1443:12)
-    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
-    at Module.require (node:internal/modules/cjs/loader:1674:12)
-    at require (node:internal/modules/helpers:157:16)
-    at global.CLOSURE_IMPORT_SCRIPT (/home/hatch/workspace/wt/eve-cohost-stm/target/stm-domains/goog/bootstrap/nodejs.js:88:13)
-    at goog.Dependency.load (/home/hatch/workspace/wt/eve-cohost-stm/target/stm-domains/goog/base.js:2908:23)
-
-Node.js v24.22.1
+INFO make-ref over Eve domains (cljs): 87 ms for 10 refs
+PASS every ref's cell is :eve-own-domain => (:eve-own-domain)
+PASS the refs' Eve handles sit in 10 distinct domains => 10
+PASS refs hold independent values => [0 1 2 3 4 5 6 7 8 9]
+PASS a two-ref transaction commits across domains => [1 8]
+PASS dosync alter returns new value => 42
+PASS committed => 42
+PASS ref-set => 7
+PASS commute folds at commit => 17
+INFO disjoint stats (cljs): {:attempts 800, :retries 0, :commits 800}
+PASS disjoint values all landed => [100 100 100 100 100 100 100 100]
+PASS disjoint transactions: 800 commits => 800
+PASS disjoint transactions: ZERO retries => 0
+PROBE-TX-DOMAINS-CLJS: ALL 11 CHECKS PASS

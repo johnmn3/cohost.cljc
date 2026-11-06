@@ -1795,3 +1795,22 @@ wrong", and the fix belongs to whoever next touches
 the cljs probe build (it is the :none bootstrap's
 require ordering, a known cohost build quirk, not an
 STM property).
+
+## STATUS 20 — 2026-11-06 ~2:0x AM ET — Node standalone entry CLOSED: bare `node main.js` prints ALL 11 CHECKS PASS
+
+Compile7 (the invocation as the literal last form of
+the namespace) built and ran standalone:
+`node target/stm-domains/main.js` => INFO make-ref
+over Eve domains (cljs): 87 ms for 10 refs; every
+check PASS; disjoint {:attempts 800, :retries 0,
+:commits 800}; "PROBE-TX-DOMAINS-CLJS: ALL 11 CHECKS
+PASS"; exit 0 (log: dev/stm/logs/probe-tx-domains-
+cljs.log). STATUS 19's open line is closed: Node's
+evidence no longer routes through a driver. Nothing
+about any verdict changes — Node was RUNNING; it is
+now running with its probe artifact in final shape.
+The lane's work is complete as declared in STATUS 18
+with this addendum; the remaining named items belong
+to their named owners (drift: mainline; Go thread
+leaves: the seat build; ::too-short: the semantics
+call; jank: the environment's lock, then one command).
