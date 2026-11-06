@@ -37,8 +37,21 @@
 
 (defn- cohost-files [] (source-files "src/cohost"))
 
+;; Eve-in-cohost unit 6 (option 3): cohost.hosts.jank-host requires Eve's completion, so the compile reads
+;; Eve's jank realization from EVE_JANK_PATH and the stamp covers the completion's sources too.
+(defn- eve-jank-path []
+  (let [p (System/getenv "EVE_JANK_PATH")]
+    (when (str/blank? p)
+      (throw (ex-info "EVE_JANK_PATH is unset: cohost's jank seat needs Eve's completion" {})))
+    p))
+
+(defn- eve-completion-files []
+  (->> (str/split (eve-jank-path) #":")
+       (filter #(str/ends-with? % "adapters/completion/jank/src"))
+       (mapcat source-files)))
+
 (defn source-hash []
-  (let [files (cohost-files)
+  (let [files (concat (cohost-files) (eve-completion-files))
         _ (when (empty? files) (throw (ex-info "no files under src/cohost" {})))
         sums (cohost.dev.sha256/sha256sum-listing files)]
     (cohost.dev.sha256/sha256-hex sums)))
@@ -79,7 +92,7 @@
   (when (fs/exists? (fs/path aot-root "_cache"))
     (fs/delete-tree (fs/path aot-root "_cache")))
   (fs/create-dirs aot-root)
-  (shell jank-bin "--module-path" "src" "compile-module" "cohost.run"
+  (shell jank-bin "--module-path" (str "src:" (eve-jank-path)) "compile-module" "cohost.run"
          "-O3" "--target-dir" aot-root)
   (let [runs (run-objects)]
     (when-not (= 1 (count runs))
