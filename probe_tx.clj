@@ -189,7 +189,7 @@
          (let [t (thread/spawn
                   (fn [] (tx/run-in-transaction
                           (fn [] (tx/ref-set* hot (tx/deref-ref hot))))))]
-           (thread/join-thread t))))))))
+           (thread/join-thread t)))))))
 (def throw-ms (/ (- (System/nanoTime) throw-t0) 1e6))
 (println (format "INFO forced-retry tx (throw + rerun each): %.0f tx/ms"
                  (/ throw-n throw-ms)))
