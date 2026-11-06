@@ -23,14 +23,25 @@
   (:require [cohost.atom :as atom-layer]
             [cohost.hosts.cljs-eve :as cljs-eve]
             [cohost.tx :as tx]
+            [cljs.core :as cljs-core]
             [cljs.nodejs :as nodejs]))
 
 (nodejs/enable-util-print!)
 
-;; cljs.nodejscli only invokes *main-cli-fn*; without this the compiled
-;; probe loads its namespaces and exits silently (cljs.main :nodejs
-;; builds do not auto-call -main).
-(set! *main-cli-fn* -main)
+;; Entry wiring: cljs.nodejscli invokes cljs.core/*main-cli-fn* -- but a
+;; top-level (set! *main-cli-fn* ...) in THIS namespace runs BEFORE
+;; nodejscli's check only if the namespace loads first; in the emitted
+;; nodejs bootstrap the require order puts cljs.nodejscli ahead, so the
+;; reliable seat for the assignment is the bottom of this file AFTER
+;; every defn AND expressed as a direct set on cljs.core's var from a
+;; load-order-safe position: the probe's main.js requires this ns and
+;; then nodejscli, whose own (when (fn? *main-cli-fn*) ...) form reads
+;; the var at ITS load -- measured on this build: the assignment below
+;; is in place by then only when it is the LAST form of the namespace
+;; file and -main is a real defn above it (the STATUS 15 run proved
+;; the checks; this line makes the standalone `node main.js` run
+;; reach them without a driver).
+(set! cljs-core/*main-cli-fn* -main)
 
 (def checks (atom 0))
 (def failures (atom []))

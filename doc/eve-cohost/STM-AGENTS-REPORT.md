@@ -1612,3 +1612,43 @@ journal/scan/counter/arena (stop and report instead).
 - Jank remains environment-blocked (dpkg lock); Node's
   standalone `node main.js` re-verification (compile4)
   is in flight.
+
+## STATUS 17 — 2026-11-06 ~1:2x AM ET — JOLT reclaim sections PASS (7/7); GO core prefix verified as its own artifact (6/6); two probe-authoring lessons banked
+
+- **Jolt reclaim: PROBE-TX-RECLAIM-SECTIONS ALL 7 PASS**
+  (dev/stm/probe_tx_reclaim_sections.clj — sections
+  1–3 of probe_tx_reclaim: bounded history with the
+  newest retained, trimmed versions LEAVE the cell
+  (the trim must release, STATUS 9 — the sentinel is
+  neither in history nor current after trims), and a
+  live read point still reads its snapshot across
+  trims, then commits on fresh values). Section 4
+  (WeakReference reachability) is JVM-only by
+  construction and stays a JVM-seat row. The run
+  needed the thread leaves of STATUS 15 (it spawns a
+  reader thread) — it is downstream evidence for them.
+- **GO core prefix: PROBE-TX-GLJ-CORE 6 checks, 0
+  failures** (dev/stm/probe_tx_glj_core.clj — probe_tx's
+  pre-thread prefix as a standalone artifact, so the
+  line in STATUS 16 is reproducible without the
+  thread section's named stop).
+- Probe-authoring lessons from this seat, banked so
+  the next porter doesn't re-pay them: (i) jolt's
+  `doseq` over a bare number throws "Don't know how
+  to create ISeq from: java.lang.Long" where the JVM
+  tolerates it — write (range n); probe_tx_reclaim.clj
+  carried two such forms (its sections never ran
+  anywhere but the JVM script context) and they are
+  fixed in the script itself; (ii) jolt's Thread.
+  wants ^Runnable hints (its .start dispatches on the
+  hint, the JVM adapter's own precedent); (iii) the
+  reclaim JVM script's `[@a @b]` literal form reads
+  differently on jolt — (deref a) spells it portably.
+  None of these touched cohost.tx or the semantics.
+- Node: compile5 (the *main-cli-fn* var-reference fix)
+  still compiling under contention; the standalone
+  re-verification is the only Node item left. Jank:
+  the system apt replay still holds the dpkg lock
+  (hours now, near-zero CPU — an infrastructure stall,
+  reported as such; the gcc-14 debs remain queued
+  behind it and the jank probe behind them).
