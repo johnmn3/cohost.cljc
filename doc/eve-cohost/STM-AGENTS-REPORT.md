@@ -1652,3 +1652,118 @@ journal/scan/counter/arena (stop and report instead).
   (hours now, near-zero CPU — an infrastructure stall,
   reported as such; the gcc-14 debs remain queued
   behind it and the jank probe behind them).
+
+## STATUS 18 — 2026-11-06 ~1:3x AM ET — FINAL DECLARATION (this continuation lane): per-target verdicts + release lines
+
+**Node (cljs): RUNNING.** probe_tx_domains on the seat:
+ALL 11 CHECKS PASS over per-ref Eve domains (the
+:make-domain-atom leaf this lane added to the cljs_eve
+factory), 800 commits / 0 retries disjoint, 10 domains
+in 124–335 ms across runs (vs ~10^2 ms per domain on
+the JVM seat — SAB geometry is cheaper; the geometry
+item is seat-priced). The standalone `node main.js`
+entry is the one ragged edge: with :optimizations :none
+the cljs_deps require order does not guarantee the
+*main-cli-fn* assignment precedes nodejscli's check
+(three compiles measured: assignment present in the
+probe's own file, var unset at nodejscli's read, direct
+invocation of the exported -main runs everything). The
+probe now also emits an explicit trailing (-main) call;
+the compile carrying it is the lane's last in-flight
+item, and the checks themselves are proven either way
+(two full direct-invocation runs, logs banked).
+Remaining, named: probe_tx's thread sections on this
+seat ride the unit-8 realm machinery (worker realms,
+not this probe's single realm); the fn-valued-ref
+checks stay JVM-form (STATUS 10's realm rule).
+**RELEASE-READY: NOT-READY** — the drift rule
+(STATUS 11): this seat binds Eve by the deps.edn pin
+(d241de3); the pin must move to the release's Eve and
+the probe re-run there. Everything else is in place.
+
+**Jolt: RUNNING — the fullest non-JVM seat.**
+probe_tx 23/23 (host cells; incl. the interrupt checks
+— throw-crossing answered YES on jolt frames),
+probe_tx_domains 15/15 (Eve domain cells; victim 173 /
+bystander 0), reclaim sections 7/7. New seat work in
+cohost's layer: the jolt adapter gained its thread
+leaves (measured missing-then-present; booted battery
+unregressed at 218/221 with the same pre-existing named
+row). Remaining, named: the ::too-short finding (next
+paragraph) applies here as everywhere; cohost.atom-eve
+cannot load on the seat until the drift is repaired,
+so Eve hosting on jolt is probe-local today.
+**RELEASE-READY: NOT-READY** — gated on the atom-eve
+drift (mainline owner) exactly as STATUS 11 framed it;
+the probe evidence says the seat itself is ready when
+the joint is.
+
+**Go (glojure): PARTIAL — core RUNNING, seat
+incomplete, STOPPED on a named piece.** The cohost
+glojure seat now exists (hosts/glj.clj) and the STM's
+core checks pass on it (6/6 pre-thread prefix, 0
+failures). Glojure v0.7.22 has no java.lang.Thread /
+Runnable surface (measured), so cohost.thread's leaves
+need a goroutine-shaped build (go macro + channels) —
+a seat build in cohost.thread, not an adapter entry;
+and the Eve hosting joint has no :glj port yet.
+Let-go stands as STATUS 10 left it: blocked at the Eve
+layer (no slab/region adapters), not attempted.
+**RELEASE-READY: NOT-READY** — named blockers: the
+go-shaped thread leaves (cohost.thread) and the :glj
+hosting joint (atom-eve port), owners = the seat work,
+not this lane's remaining hours.
+
+**Jank: NOT RUN — environment, named precisely.**
+jank's JIT compiles cohost's jank_runtime.jank C++
+interop, which needs the gcc-14 dev headers; a VM
+replacement wiped them; the cached debs
+(~/workspace/cohost-install/: gcc-14-base,
+libgcc-14-dev, libstdc++-14-dev) restore them, but a
+system apt replay has held the dpkg frontend lock for
+this lane's entire run (multiple apt-get processes,
+near-zero CPU — an infrastructure stall outside the
+lane). The probe (dev/stm/probe_tx_jank.jank) is
+written and waiting on `dpkg -i` of those three debs;
+the seat-port lane's jank work proceeds meanwhile
+because Eve's pure-jank adapters don't need the
+headers. **RELEASE-READY: NOT-READY** — untested, not
+failed; the first post-lock run decides.
+
+**Cross-cutting findings this lane banks for their
+owners:**
+1. **The ::too-short unbounded retry (STATUS 14)** —
+   reproduced on the JVM: a cell whose point outruns
+   the commit-point clock with history not reaching
+   faults identically on every retry. In-layer commits
+   can never produce it (install! claims the clock
+   point and pushes displaced history first); a foreign
+   writer of the same Eve atom could. Two dispositions
+   named (state the single-writer contract + bound the
+   retry, as stock faults; or re-base on ::too-short).
+   A mainline/operator semantics call; it gates STM
+   over SHARED multi-writer atoms, not single-process
+   STM. NOT silently patched here.
+2. **The atom-eve drift** (eve.atom/seal, eve.digest
+   gone; STATUS 7/8 remainder 2) — per STATUS 11 it is
+   THE release gate for every seat's Eve hosting:
+   fixed on the mainline side, or a named release
+   blocker with the mainline as owner. This lane did
+   not work around it in the STM layer; every seat's
+   domain evidence here is probe-local-factory or
+   cljs-factory (the cljs factory is real product code
+   in hosts/cljs_eve.cljs, not probe-local — Node's
+   leaf is the exception that ships).
+3. **Geometry/R-RECLAIM (Eve-side, prior lane's
+   filings)** stand unchanged; Node's numbers soften
+   the geometry concern on SAB seats specifically.
+
+**What this lane changed in product code:** (a) the
+cljs_eve factory's :make-domain-atom leaf; (b) the
+jolt adapter's five thread leaves; (c) the new glojure
+adapter (a seat skeleton whose core passes and whose
+thread leaves are honestly absent); (d) two portable
+spellings in probe_tx_reclaim.clj. Everything else is
+probes, runners, and this report. Double declaration:
+this STATUS is the committed copy; the same text goes
+to the operator's chat as the lane's final message.

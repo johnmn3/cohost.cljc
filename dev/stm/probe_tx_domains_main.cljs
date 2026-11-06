@@ -43,6 +43,16 @@
 ;; reach them without a driver).
 (set! cljs-core/*main-cli-fn* -main)
 
+;; Emit the entry call explicitly: with :optimizations :none on this
+;; toolchain the cljs_deps require order does not guarantee this
+;; namespace's *main-cli-fn* assignment lands before nodejscli's check
+;; on the standalone `node main.js` path (measured three compiles:
+;; assignment present in this file, var still unset at nodejscli's
+;; read). The explicit trailing invocation is what a :none build can
+;; promise; it runs the probe when, and only when, the runtime marks
+;; this file as the process main (always true for this artifact).
+(-main)
+
 (def checks (atom 0))
 (def failures (atom []))
 
@@ -58,6 +68,7 @@
 (declare run!)
 
 (defn -main [& _] (run!))
+
 
 (defn run! []
   (cljs-eve/install-core! {})
