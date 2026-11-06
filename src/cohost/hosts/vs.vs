@@ -12,8 +12,31 @@
    analyzer compiles has; alter-var-root! keeps that stamp on a registered macro
    so cohost's expansion wrapper (boot.cljc wrap-macro) stays a macro."
   (:require [cohost.adapter :as adapter]
+            [cohost.hosts.vs-core-fns :as core-fns]
             [clojure.string :as string]
             [vs.reader :as rdr]))
+
+;; ---------------------------------------------------------------------------
+;; the core's vars, rooted: VS resolves a core var by name at run time (ns-resolve, resolve) to a var with no root —
+;; `@(resolve 'inc)` is nil (MEASURED 2026-11-06) — while a fn referenced by name in compiled code is the value. The
+;; host's core is the program's own table (one registry), so each name of cohost.hosts.vs-core-fns (the vocabulary's
+;; fns, generated) roots its var once, at install; resolve-core answers only those names and the analyzer's own
+;; macros, so a name VS lacks (bigdec, rationalize) boots stock's definition, as cohost's policy expects.
+
+(defn- root-core-vars! []
+  (doseq [[n f] core-fns/fns]
+    (when-let [v (ns-resolve 'clojure.core (symbol n))]
+      (when (nil? (var-get v)) (alter-var-root v (constantly f))))))
+
+(defn- core-macro? [sym] (boolean (vs.macros/builtin-macro-name? (name sym))))
+
+(defn- resolve-core [sym]
+  (when (or (contains? core-fns/fns (name sym)) (core-macro? sym))
+    (ns-resolve 'clojure.core sym)))
+
+(defn- macro-var? [v]
+  (or (true? (:macro (meta v)))
+      (and (= 'clojure.core (:ns (meta v))) (core-macro? (:name (meta v))))))
 
 ;; ---------------------------------------------------------------------------
 ;; forms: the reader's form values as data (symbol metadata rides along)
@@ -127,8 +150,11 @@
 (defn- mark-macro! [v]
   (let [qn (var-qname v)
         stamp (vs.analyzer-scope/-name-hash qn)]
-    (vs.analyzer/mx-register! qn stamp)
-    (alter-var-root v (fn [f] (stamped f stamp)))
+    ;; a var with no fn root is one of the analyzer's own macros taken from the host (cohost interns the host's
+    ;; macro var and marks it): the analyzer expands it by name already; registering it would route the call to nil
+    (when (fn? (var-get v))
+      (vs.analyzer/mx-register! qn stamp)
+      (alter-var-root v (fn [f] (stamped f stamp))))
     (alter-meta! v assoc :macro true)
     v))
 
@@ -152,7 +178,8 @@
    :refer! refer!
    :alias! alias!
    :require-host! require-host!
-   :resolve-core (fn [sym] (ns-resolve 'clojure.core sym))
+   :resolve-core resolve-core
+   :macro-var? macro-var?
    :interned-var (fn [ns-sym sym] (when (find-ns ns-sym) (get (ns-interns ns-sym) sym)))
    :ns-interns (fn [ns-sym] (ns-interns ns-sym))
    :ns-public-names (fn [ns-sym] (set (keys (ns-publics ns-sym))))
@@ -199,4 +226,5 @@
    :slurp (fn [path] (slurp path))
    :spit (fn [path s] (spit path s))})
 
+(root-core-vars!)
 (adapter/install! adapter)
