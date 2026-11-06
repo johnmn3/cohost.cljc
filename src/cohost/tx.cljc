@@ -19,8 +19,9 @@
    one. A transaction fixes a read point (the layer's commit-point
    counter, stock's lastPoint) and reads each ref's value as of that
    point from its per-ref versioned history. Commit locks each ref it
-   installs into (the lock lives in the ref's own state atom, where
-   stock keeps its locks -- in the Ref, not the value), validates that
+   installs into and each ref it ensured (the lock lives in the ref's
+   own state atom, where stock keeps its locks -- in the Ref, not the
+   value; stock's ensure write-locks the same way), validates that
    every written or ensured ref still stands at the point the attempt
    read, claims the next commit point, and installs each written ref
    with one CAS on its own cell atom. Commutes are not validated; at
@@ -392,10 +393,20 @@
   (let [touched @(:touched att)
         entries (sort-by (fn [e] (:seq (:ref e))) (vals touched))
         installs (filter (fn [e] (seq (:actions e))) entries)
+        ;; the lock set is installs UNION ensured: stock's ensure
+        ;; write-locks the ref for the rest of the transaction
+        ;; (LockingTransaction.ensure), and that lock is what closes
+        ;; the validate/install race for a ref this attempt does not
+        ;; write. Locking only installs left the race open -- invisible
+        ;; over nanosecond host cells, a lost skew check over
+        ;; millisecond Eve cells (probe_tx over domain cells,
+        ;; 2026-11-05). Validation below then runs under the locks.
+        lock-set (filter (fn [e] (or (seq (:actions e)) (:ensured e))) entries)
         locked (atom [])]
     (try
-      ;; (1) lock every ref we will install into, in creation order
-      (doseq [e installs]
+      ;; (1) lock every ref we will install into or ensured, in
+      ;; creation order
+      (doseq [e lock-set]
         (if (lock! att (:ref e))
           (swap! locked conj (:ref e))
           (throw (retry-ex))))
