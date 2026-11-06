@@ -1,5 +1,5 @@
 ;; STM lane (continuation): probe_tx on the JANK seat.
-;; Run: jank --module-path src run dev/stm/probe_tx_jank.jank
+;; Run: jank --module-path src:. run dev/stm/probe_tx_jank.jank
 ;; Installs the jank host adapter, then loads the seat-agnostic probe
 ;; script (probe_tx.clj -- the same 23 semantics checks the JVM seat
 ;; runs) so cohost.tx executes on jank's runtime. Eve hosting is NOT
@@ -9,11 +9,14 @@
 (ns probe-tx-jank
   (:require [cohost.hosts.jank-host]))
 
-;; jank's clojure.core has no load-file (checked in the installed
-;; core.jank: load, load-reader, load-string, slurp only) -- the
-;; load-string/slurp pair is the raw-jank equivalent. (STM jank chase
-;; lane, 2026-11-06: the runner as banked could not resolve load-file;
-;; cohost's booted path fills load-file via core-extras, this raw
-;; runner does not boot.)
-(load-string (slurp "probe_tx.clj"))
+;; Loading probe_tx.clj from raw jank (STM jank chase lane, 2026-11-06):
+;; the runner as banked used load-file, which jank's clojure.core does
+;; not define at all; load-string and load-reader ARE defined in the
+;; installed core.jank but both are "TODO: port" stubs that throw
+;; (attempts 2 and 3, logs probe-run-2.log / probe-run-3.log). The one
+;; implemented loader is `load`, which loads a module from the module
+;; path via the runtime -- hence the run command's --module-path src:.
+;; and the absolute module path below. (cohost's booted path fills
+;; load-file via core-extras; this raw runner does not boot.)
+(load "/probe_tx")
 (println "INFO probe_tx_jank: script completed")

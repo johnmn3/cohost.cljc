@@ -86,9 +86,24 @@ Fix (committed on this branch): the runner now uses
 Attempt 3 proceeds on this change (not a blind retry: new failure, named
 mechanism, named fix).
 
+## Milestone 4 — 2026-11-06 ~9:33 AM ET — attempt 3: load-string is a TODO stub; route = `load`
+
+Attempt 3 (log probe-run-3.log) died immediately: jank's `load-string`
+throws ex-info "TODO: port load-string". Reading the installed
+core.jank settled the whole family: `load-reader` and `load-string`
+are both unimplemented TODO stubs; `load` IS implemented (runtime
+load_module over the module path). Each attempt has failed on a
+distinct, diagnosed mechanism (PCH mix → unresolved load-file →
+load-string stub), banked before the next — not blind retries.
+
+Runner now uses `(load "/probe_tx")` and the run command gains `.` on
+the module path (`--module-path src:.`) so the repo-root probe_tx.clj
+resolves as a module. If jank's module loader rejects a no-ns .clj
+script, the fallback is a read/eval loop over the file's forms.
+
 ## Next
-Probe attempt 3: from repo root,
-`jank --module-path src run dev/stm/probe_tx_jank.jank`
+Probe attempt 4: from repo root,
+`jank --module-path src:. run dev/stm/probe_tx_jank.jank`
 (loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
 23 semantics checks the JVM seat runs; refs seat in host atoms on this
 seat, Eve hosting joint unbuilt — STATUS 10 of the prior lane).
