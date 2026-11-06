@@ -36,6 +36,27 @@
    a transaction are held in the attempt record and dispatched by the
    successful attempt only, through cohost.thread's send-hold hook.
 
+   THE SINGLE-WRITER CONTRACT (the lane report's STATUS 14 item;
+   dispositioned by the operator, 2026-11-06): a ref's cell is
+   written ONLY through this layer -- transactions, and agent sends
+   the layer releases at commit. The cell rides an ordinary atom and
+   nothing physically stops other code from swapping it, but doing
+   so is outside the contract: state that needs uncoordinated
+   writers is a plain Eve atom, not a ref -- the choice stock
+   Clojure makes at the type level, where a Ref's cell cannot be
+   written outside a transaction at all. An out-of-band write can
+   move a cell where no legal commit sequence can put it (its point
+   beyond the commit-point clock, its retained history not reaching
+   an attempt's read point), and an attempt against such a cell can
+   never validate: it would retry identically forever. The runner
+   therefore counts those impossible-progress failures (basis
+   faults, below) and, at basis-fault-limit, faults the transaction
+   with an IllegalStateException -- stock's answer, cf.
+   LockingTransaction's retry limit -- instead of spinning. The
+   bound is scoped to impossible progress: ordinary
+   transaction-vs-transaction contention retries are NOT counted
+   and stay unbounded, as stock's do.
+
    A ref is a plain map tagged :cohost/kind ::ref (the layer value
    shape): {:seq :cell :state}; :state is a host atom holding the
    ref's non-transactional facts (validator, watches, meta, history
@@ -82,6 +103,29 @@
 (defn retry-ex? [e]
   (boolean (and (map? (ex-data e)) (:cohost.tx/retry (ex-data e)))))
 
+;; ---------------------------------------------------------------------------
+;; the basis-fault signal: the retry signal's sibling, thrown instead
+;; of it when a failure carries the out-of-band signature (a cell
+;; standing beyond the commit-point clock -- see beyond-clock?). The
+;; runner counts these per transaction invocation and, at
+;; basis-fault-limit, faults the transaction (IllegalStateException)
+;; rather than retrying: the attempt's basis is being destroyed by a
+;; writer outside the layer, so no retry can land. Ordinary
+;; validation failures keep the plain retry signal and are never
+;; counted.
+
+(defonce ^:private basis-fault-signal (atom nil))
+
+(defn- basis-fault-ex []
+  (or @basis-fault-signal
+      (let [e (host/ex-info* "cohost.tx: transaction basis fault (cell moved outside the layer)"
+                             {:cohost.tx/basis-fault true})]
+        (reset! basis-fault-signal e)
+        e)))
+
+(defn basis-fault-ex? [e]
+  (boolean (and (map? (ex-data e)) (:cohost.tx/basis-fault (ex-data e)))))
+
 (defn- illegal-state [msg]
   (host/ex* 'java.lang.IllegalStateException msg nil))
 
@@ -101,6 +145,33 @@
 ;; one program share.
 
 (defonce ^:private commit-point (atom 0))
+
+(def basis-fault-limit
+  "How many impossible-progress (basis-fault) failures one
+   run-in-transaction invocation tolerates before faulting the
+   transaction with an IllegalStateException. The number is stock's:
+   LockingTransaction's RETRY_LIMIT is 10000, after which stock
+   throws \"Transaction failed after reaching retry limit\". The
+   SCOPE is deliberately narrower than a global attempt cap: only
+   basis faults count toward it. Contention retries -- validation
+   failures against movement the layer's own commit path produced --
+   are not counted, are not reset by basis faults, and stay
+   unbounded: they are the model working."
+  10000)
+
+(defn- beyond-clock?
+  "True when a cell's point stands beyond the commit-point clock.
+   The layer's commit path cannot produce that state: commit!
+   claims the next point from the clock and install! writes only
+   claimed points, and the clock never decreases, so every
+   layer-installed cell satisfies (:point cell) <= @commit-point at
+   every later observation. A cell beyond the clock was moved by a
+   writer outside the layer -- the single-writer contract's
+   violation signature, and the precise shape of the STATUS 14
+   manufacture (a cell bumped past the clock over history that does
+   not reach back)."
+  [cell]
+  (> (:point cell) @commit-point))
 
 ;; ---------------------------------------------------------------------------
 ;; cells: a ref's committed state {:value :point :version :history},
@@ -199,9 +270,15 @@
   (let [t @(:touched att)]
     (or (get t (:seq r))
         (let [rp (read-point! att)
-              va (value-at (cell-deref r) rp)]
+              cell (cell-deref r)
+              va (value-at cell rp)]
           (when (= ::too-short va)
-            (throw (retry-ex)))
+            ;; ::too-short against a cell within the clock is the
+            ;; legal history-trim case: a fresh attempt's read point
+            ;; advances to the clock and is served -- plain retry.
+            ;; Against a cell beyond the clock the fresh point can
+            ;; never be served: a basis fault (STATUS 14's spin).
+            (throw (if (beyond-clock? cell) (basis-fault-ex) (retry-ex))))
           (let [e {:ref r :base-point (first va) :base-value (second va)
                    :ensured false :actions []}]
             (swap! (:touched att) assoc (:seq r) e)
@@ -390,7 +467,7 @@
                                 (ref-max-history r))}]
         (cond (cell-cas! r cur new-cell) [r (:value cur) final]
               (< n 100) (recur (inc n))
-              :else (throw (retry-ex)))))))
+              :else (throw (if (beyond-clock? cur) (basis-fault-ex) (retry-ex))))))))
 
 (defn- commit!
   "Validate the attempt against the touched refs' own cells and
@@ -423,8 +500,12 @@
       ;; commute-only refs are not validated (stock's answers).
       (doseq [e entries]
         (when (or (:ensured e) (written? e))
-          (when (not= (:base-point e) (:point (cell-deref (:ref e))))
-            (throw (retry-ex)))))
+          (let [cur (cell-deref (:ref e))]
+            (when (not= (:base-point e) (:point cur))
+              ;; a validation failure against a cell the commit path
+              ;; moved is contention (plain retry); against a cell
+              ;; standing beyond the clock it is a basis fault.
+              (throw (if (beyond-clock? cur) (basis-fault-ex) (retry-ex)))))))
       ;; (3) validators against final values
       (doseq [e installs]
         (let [validator (:validator @(:state (:ref e)))]
@@ -454,11 +535,18 @@
    interruptible layer). A nested call joins the running attempt, as
    stock's does. Validators run at commit; watches fire once per
    written ref after the winning installs, before the attempt's held
-   sends are released."
+   sends are released.
+
+   Retries are unbounded for contention. Basis faults -- failures
+   carrying the out-of-band signature (the single-writer contract,
+   see the ns docstring) -- are counted per invocation; at
+   basis-fault-limit the invocation throws an IllegalStateException
+   instead of retrying, as stock's runner faults after its retry
+   limit."
   [f]
   (if *tx*
     (f)
-    (loop []
+    (loop [basis-faults 0]
       (when (thread/interrupted?)
         (throw (thread/interrupted-ex)))
       (swap! stats* update :attempts inc)
@@ -474,8 +562,13 @@
                            {:value v :watches watches}))
                        (fn [e] {:error e})))]
         (if-let [e (:error outcome)]
-          (cond (retry-ex? e) (do (swap! stats* update :retries inc)
-                                  (recur))
+          (cond (basis-fault-ex? e)
+                (if (>= basis-faults basis-fault-limit)
+                  (throw (illegal-state "Transaction failed after reaching retry limit"))
+                  (do (swap! stats* update :retries inc)
+                      (recur (inc basis-faults))))
+                (retry-ex? e) (do (swap! stats* update :retries inc)
+                                  (recur basis-faults))
                 (thread/interrupted-ex? e) (throw e)
                 :else (throw e))
           (do (swap! stats* update :commits inc)
