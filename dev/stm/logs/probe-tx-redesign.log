@@ -1,0 +1,28 @@
+WARNING: get-validator already refers to: #'clojure.core/get-validator in namespace: cohost.tx, being replaced by: #'cohost.tx/get-validator
+PASS ref-value? => true
+PASS deref outside tx => 41
+PASS dosync alter returns new value => 42
+PASS committed => 42
+PASS alter outside tx throws => :threw
+PASS abort rolls back both refs => [42 100]
+PASS snapshot read point stable => [42 42]
+PASS outside read sees the commit => 555
+PASS write skew happens without ensure (stock answer too) => 80
+PASS ensure prevents the skew => 100
+PASS 8 threads x 200 commutes, none lost => 1600
+PASS transfer invariant holds => 20000
+PASS all transfers landed => [8000 12000]
+INFO transfer attempts (retries included): 2658 for 2000 transactions
+PASS validator rejects the commit => :threw
+PASS value unchanged after rejected commit => 5
+PASS watch fired once, pre-commit and final values => [[:w 1 3]]
+PASS history count => 1
+PASS send from a committing tx fired once => [:committed]
+PASS send from an aborting tx never fired => [:committed]
+INFO uncontended commute tx: 5 tx/ms (no throw taken)
+INFO forced-retry tx (throw + rerun each): 0 tx/ms
+PASS hot ref landed every increment => 200
+PASS interrupt wakes a blocked latch wait with the interrupt exception => :interrupted
+PASS interrupted tx thread abandons => :interrupted
+PASS abandoned tx wrote nothing => 555
+PROBE-TX: ALL 23 CHECKS PASS

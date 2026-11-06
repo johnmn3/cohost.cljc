@@ -745,3 +745,94 @@ capability table, not a second design.
 - probe_tx over Eve domain cells (the 23 semantics checks with the
   factory installed) is running detached; its result lands in the
   final STATUS.
+
+## STATUS 8 — 2026-11-05 ~10:3x PM ET — FINAL: the Eve-cells run caught a real bug; fixed; the substrate's write ceiling measured
+
+Running the semantics suite over real Eve domain cells earned its
+keep twice over:
+
+- **A real bug in this lane's construction, caught only by the slow
+  seat.** First Eve-cells run: `ensure prevents the skew` FAILED
+  (both transactions committed). Diagnosis: stock's `ensure`
+  *write-locks* the ref for the rest of the transaction
+  (`LockingTransaction.ensure`) — that lock is what closes the
+  validate/install race for a ref the attempt does not write. This
+  lane's commit locked only the refs it installed into. Over host
+  cells the race window is nanoseconds and the check passed by
+  timing; over Eve cells the window is milliseconds and it failed
+  deterministically. **Fixed**: commit's lock set is installs ∪
+  ensured, still in creation order, still per-ref (disjoint
+  transactions unaffected). After the fix, `ensure` passes on both
+  seats by mechanism.
+- **A measured substrate ceiling, not a semantics failure.** The
+  high-volume benches over Eve cells lost writes at *identical*
+  counts in both runs (commutes 1248/1600; transfers net 752) while
+  the transfer invariant held in every run — atomicity never broke;
+  worker threads were dying on `coalesc-alloc!: out of memory` thrown
+  from Eve's slab writer. A dedicated scratch
+  (`dev/stm/scratch-ceiling.clj`, raw Eve handle, no cohost code)
+  measures it exactly: **a fresh domain sustains precisely 1,248
+  installs of a cell-shaped map at default geometry — the commute
+  bench's landed count to the digit — and after a 20 s quiescent
+  pause it is still full**: no reclamation arrives in place under
+  this usage. This is STATUS 4's geometry finding in operational
+  form, and the measured evidence for the operator's reclamation
+  note (STATUS 7): per-domain capacity + explicit version retirement
+  are Eve-side work, and they gate domain-per-ref STM at production
+  write volumes on every seat. Below the ceiling, everything passes.
+
+### Final verification state (all post-fix, logs in `dev/stm/logs/`)
+
+- probe_tx, host cells: **ALL 23 CHECKS PASS**
+  (`probe-tx-final.log`) — the semantics suite, check lines
+  unchanged.
+- probe_tx_domains, Eve domain cells: **ALL 15 CHECKS PASS**
+  (`probe-tx-domains-final.log`) — residence proven off the handles
+  (10 refs, 10 distinct domain states); disjoint transactions
+  800 commits / **0 retries**; scoped contention: victim 198 retries,
+  bystander on an untouched ref **1** retry.
+- probe_tx over Eve domain cells (`probe-tx-eve-cells2.log`):
+  every semantic check passes, including ensure post-fix and the
+  transfer invariant; the two volume benches stop at the measured
+  1,248-install domain ceiling (writes throw past it; no wrong value
+  is ever produced), and a later bench's main-thread write hit the
+  same ceiling and ended that run early.
+- Booted-context check: **20/22** (`check-stm-redesign2.log`), from
+  12/22 — the classification fix is this lane's; the last 2 rows are
+  the pre-existing hinted-interop gap named in STATUS 7.
+
+### Remainders, named for their owners
+
+1. **Eve-side (gates STM at volume, all seats):** domain geometry +
+   version reclamation — a default-geometry domain costs ~6.8 MB and
+   ~0.1–0.4 s to create and sustains ~1.2×10³ cell writes before
+   refusing more, with no in-place recovery observed. Levers exist
+   inside Eve (capacities threaded through the public opener;
+   epoch-gated retirement driven by an oldest-live-read-point
+   watermark, STATUS 7); both are Eve changes, outside this lane.
+2. **Mainline (cohost):** `cohost.atom-eve` does not compile against
+   the current Eve checkout (`eve.atom/seal`, `eve.digest` gone) —
+   pre-existing drift in unit-7 code; until repaired, Eve hosting
+   cannot be loaded on this box, and this lane's `atom_eve.clj`
+   `:make-domain-atom` (same two Eve calls the probes exercised
+   probe-locally) is unverified-by-load.
+3. **Rewrite/interop (cohost):** hinted method calls on layer refs
+   (`.getHistoryCount`, `.getMeta`) reach a host checkcast — the
+   booted check's last 2 rows; diagnosis trail in STATUS 7.
+4. **Jank seat:** the whole construction is portable-shape but was
+   run here only on the JVM seat (the semantic reference); the
+   throw-crossing probe from STATUS 1 and a jank run of both probes
+   remain for the seat that owns jank time.
+
+### Declaration
+
+The redesign the operator ordered is built and verified as far as
+this box and this lane's seams reach: real refs, one Eve atom domain
+per ref, stock's MVCC mechanism (read point, per-ref validation,
+per-ref locks — including ensure's), no world atom, no shared-domain
+fallback (creation throws instead). The probe suite the semantics
+were pinned by passes unchanged on host cells and — the two measured
+substrate ceilings and the two named pre-existing gaps aside —
+over real Eve domains. What blocks domain-per-ref STM in production
+is no longer design or semantics; it is Eve's per-domain geometry
+and version reclamation, measured above and filed to the Eve side.
