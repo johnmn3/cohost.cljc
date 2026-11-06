@@ -274,3 +274,67 @@ answer, so it is stated plainly:
   `cohost.tx` / `cohost.thread`. Eve gets nothing; Eve
   hosts that cannot interrupt lose nothing, because STM
   was never theirs to carry.
+
+## STATUS 2 — 2026-11-05 ~8:2x PM ET — REDESIGN PICKUP (replacement lane)
+
+The previous agent banked the world-atom implementation +
+probe (23/23 on JVM) and then went silent ~27 min after the
+operator's redesign ruling landed; the coordinator closed
+it as dead and re-dispatched. This lane picks up cold from
+git. Everything banked survives; nothing is redone that the
+ruling did not order redone.
+
+My reading of the state, from source (not from summaries):
+
+- `src/cohost/tx.cljc` (404 lines) implements the REJECTED
+  construction: all ref cells in one map inside one atom
+  per "world"; commit = validate + one CAS on that atom.
+  The probe suite (`probe_tx.clj`, 23 checks) pins the
+  SEMANTICS (snapshot stability, skew bare vs ensure,
+  commute folding, transfer invariant, validators, watches,
+  history, exactly-once sends, retry cost, cooperative
+  interrupt) and stays the bar for the rework.
+- One gap the earlier statuses did not name: the design
+  text (STATUS 0) says the world atom "is a unit-5 layer
+  atom where the seat's Eve hosting is installed", but the
+  code holds cells in a plain host atom and the probe never
+  installs the Eve hosting (`cohost.atom-eve/install!` is
+  nowhere in the probe or the booted STM check) — so "refs
+  ride on an Eve atom" was never exercised by this lane's
+  own evidence. The redesign closes this too: the new
+  probes install the hosting and count domains.
+- Eve's domain facts (source: eve.atom, cohost.atom-eve):
+  a domain is Eve's contention unit — own slab, root,
+  epoch, arbitration. `eve.atom/atom-domain {}` mints a
+  heap domain on the JVM seat. Cohost's atom hosting
+  deliberately SHARDS program atoms across shared domains
+  (255 slots each) — the exact sharing the ruling forbids
+  for refs. Domain-per-ref therefore needs a new factory
+  capability in cohost.atom, not a reuse of `:make-atom`.
+
+The ruling this lane works under (John, tonight):
+
+1. The world-atom construction is rejected: real refs,
+   separate contention domains — per-ref versioned
+   history, per-ref read points, per-ref commit
+   validation; disjoint transactions never contend.
+2. Separate domains means separate ATOM DOMAINS: per-ref
+   atoms inside a shared Eve domain do not count. A ref
+   is an atom in its OWN domain. Build domain-per-ref, or
+   measure its cost and report with evidence. No silent
+   shared-domain fallback.
+3. The Eve-level STM question is live and gets scoped in
+   the design (portable parts / minimal host contract /
+   per-target table). Cohost-on-jank still goes first, in
+   the portable shape. JVM is the semantic reference seat.
+
+Plan, in the brief's order: design rewrite (next STATUS);
+domain-per-ref cost measurement on the JVM seat with
+evidence; Eve-level scoping section; tx rework
+(per-ref/per-domain cells, Clojure's mechanism — read
+point + per-ref validation + per-ref commit locks, the
+LockingTransaction shape, not a container snapshot);
+verification = the 23-check probe unchanged in its checks
+plus the two new probes (disjoint transactions commit
+with zero retries; a contended pair retries scoped to the
+conflicting ref only).
