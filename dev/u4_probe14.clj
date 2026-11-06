@@ -1,0 +1,20 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(alias 'memory 'cohost.memory)
+
+(def report (boot/boot! {:eve-collections false}))
+(boot/make-user-ns!)
+(defn ev [label src]
+  (println label
+           (try (let [v (boot/eval-str src)] (str (pr-str v) " | " (type v)))
+                (catch Throwable e (str "ERR " (.getMessage e))))))
+(memory/set-fill! true)
+(def WM "(with-meta (cons (quote fn) (list (quote ([x] x)))) {:rettag nil})")
+(ev "alone:" WM)
+(ev "in list 1-arg:" (str "(list " WM ")"))
+(ev "in do:" (str "(do " WM ")"))
+(ev "in fn arg:" (str "((fn [y] y) " WM ")"))
+(ev "in vector lit:" (str "[" WM "]"))
+(ev "quoted cons form:" "(quote (fn ([x] x)))")
+(ev "cons of two quotes:" "(cons (quote fn) (quote (([x] x))))")
+(println :done)

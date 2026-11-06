@@ -1,0 +1,100 @@
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/slab-io/protocol/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/slab-io/cljs-compiler/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/http/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/http-server/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/crypto/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/crypto/js-bigint/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/core/clojure/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/completion/clojure/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/core/cljs-compiler/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/coll/cljs/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/slab/module/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/typed-view/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/region/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/encoding/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/int32/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/codec/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/process/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/thread/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/journal-file/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/coll/jvm/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/slab/heap/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/region/jvm-varhandle/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/encoding/java/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/int32/jvm/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/codec/byte-array/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/process/java/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/thread/jvm/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/types/jvm/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/types/js/src
+WARNING: array-chunk already refers to: cljs.core/array-chunk being replaced by: eve.core/array-chunk at line 70 /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/adapters/coll/cljs/src/eve/core.cljs
+WARNING: hash-long already refers to: cljs.core/hash-long being replaced by: eve.net.xxh3/hash-long at line 145 /root/.gitlibs/libs/eve/eve/d241de3fbc27e5dd80d5f1e17661103b0680b9c0/src/eve/net/xxh3.cljc
+WARNING: -write already refers to: cljs.core/-write being replaced by: cohost.shim/-write at line 2153 /home/hatch/workspace/wt/unit9-control/src/cohost/shim.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /home/hatch/workspace/wt/unit9-control/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /home/hatch/workspace/wt/unit9-control/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /home/hatch/workspace/wt/unit9-control/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /home/hatch/workspace/wt/unit9-control/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1581 /home/hatch/workspace/wt/unit9-control/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1581 /home/hatch/workspace/wt/unit9-control/src/cohost/rewrite.cljc
+cohost.boot on cljs: 822 top-level forms
+  booted as stock: 554   from host: 87   natives: 41   skipped: 140   errors: 0
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-kinds?
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-kinds?
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/unit-param-kinds
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/static-types!
+WARNING: No such namespace: cohost.rewrite, could not locate cohost/rewrite.cljs, cohost/rewrite.cljc, or JavaScript source providing "cohost.rewrite"
+WARNING: Use of undeclared Var cohost.rewrite/static-types!
+WARNING: No such namespace: cohost.boot, could not locate cohost/boot.cljs, cohost/boot.cljc, or JavaScript source providing "cohost.boot"
+WARNING: Use of undeclared Var cohost.boot/eval-str
+WARNING: No such namespace: cohost.scan, could not locate cohost/scan.cljs, cohost/scan.cljc, or JavaScript source providing "cohost.scan"
+WARNING: Use of undeclared Var cohost.scan/provenance
+battery: 219/221 stock behaviors pass
+   FAIL numeric tower
+        got      [3 -5 6 2 3 1 1 2 0 2 1 true true true true true true true true true true]
+        expected [3 -5 6 2 3 1 1 2 0 2 1 true true true true true true true true false true]
+   FAIL defmacro &form &env
+        got      [8 m2]
+        expected [2 m2]
+WARNING: Use of undeclared Var cohost.repl/proxy
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: Use of undeclared Var cohost.repl/proxy-super
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: No such namespace: sun.misc.Signal, could not locate sun/misc/Signal.cljs, sun/misc/Signal.cljc, or JavaScript source providing "sun.misc.Signal"
+WARNING: Use of undeclared Var sun.misc.Signal/handle
+WARNING: Use of undeclared Var cohost.repl/proxy
+WARNING: Use of undeclared Var cohost.repl/handle
+WARNING: Use of undeclared Var cohost.repl/signal
+WARNING: Use of undeclared Var cohost.repl/signal
+libraries: 62/62 cases pass across 12 clojure.* libraries
+  clojure.walk  7/7
+  clojure.set  5/5
+  clojure.string  10/10
+  clojure.zip  7/7
+  clojure.data  5/5
+  clojure.edn  4/4
+  clojure.template  2/2
+  clojure.test  4/4
+  clojure.math  7/7
+  clojure.stacktrace  2/2
+  clojure.repl  3/3
+  clojure.spec.alpha  6/6
+CONTROL-CLJS EXIT: 0

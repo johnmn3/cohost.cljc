@@ -1,0 +1,12 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(def report (boot/boot! {:eve-collections false}))
+(boot/make-user-ns!)
+(println "errors:" (clojure.core/count (:errors report)))
+(defn ev [label src]
+  (println label (try (pr-str (boot/eval-str src)) (catch Throwable e (str "ERR " (type e) " " (.getMessage e))))))
+(ev "eduction:" "(reduce + (eduction (filter odd?) [1 2 3 4 5]))")
+(ev "meta lit:" "(meta ^{:tag :int} [1 2])")
+(ev "both:" "[(reduce + (eduction (filter odd?) [1 2 3 4 5])) (meta ^{:tag :int} [1 2])]")
+(ev "meta vec fn:" "(meta (with-meta [1 2] {:tag :int}))")
+(println :done)

@@ -1,0 +1,12 @@
+(require 'cohost.hosts.jvm 'cohost.boot 'cohost.adapter 'cohost.memory 'cohost.memory-eve)
+(alias 'boot 'cohost.boot)
+(def report (boot/boot! {}))
+(boot/make-user-ns!)
+(defn ev [label src]
+  (println label (try (pr-str (boot/eval-str src))
+                      (catch Throwable e (str "ERR " (type e) " " (.getMessage e))))))
+(ev "booted compare:" "(compare (vector 1 2 9 9 9 9 9) (vector 1 3 9 9 9 9 9))")
+(ev "shim Util-compare:" "(cohost.shim/Util-compare (vector 1 2 9 9 9 9 9) (vector 1 3 9 9 9 9 9))")
+(ev "booted sort:" "(sort (vector 3 1 2 9 9 9 9))")
+(println "booted compare fn:" (boot/eval-str "compare"))
+(println :done)
