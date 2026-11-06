@@ -1,0 +1,21 @@
+(ns diag2
+  (:require [cohost.hosts.jank-host]
+            [cohost.thread :as thread]))
+
+;; Plain agent send OUTSIDE any transaction on the jank seat.
+(def ag (thread/new-agent [] {}))
+(println "DIAG2 agent created:" (some? ag))
+(def t0 (cpp/cohost_time.nano_time))
+(try
+  (thread/dispatch! ag conj [:plain] (thread/send-executor))
+  (println "DIAG2 dispatch! outside tx accepted")
+  (catch cpp/jank.runtime.object_ref e
+    (println "DIAG2 dispatch! outside tx THREW:" (ex-message e))))
+(loop [i 0]
+  (let [st (thread/agent-state ag)]
+    (cond
+      (= [:plain] st)
+      (println "DIAG2 plain send landed after(ms):" (/ (- (cpp/cohost_time.nano_time) t0) 1e6))
+      (> i 32) (println "DIAG2 plain send NEVER landed within 8s; state:" st)
+      :else (do (@#'clojure.core/sleep 250) (recur (inc i))))))
+(println "DIAG2 done")
