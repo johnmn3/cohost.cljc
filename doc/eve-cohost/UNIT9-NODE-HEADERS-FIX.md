@@ -154,6 +154,87 @@ to the correct value. No collateral movement on the Node seat.
   check takes unit 4's transient cases down the same branch as
   before, as designed.
 
+## STATUS 5 — 2026-11-05 ~8:55 PM ET — jank gate: toolchain restored, shim AOT-compiled, run in flight
+
+First `bb boot:jank` attempt died in the AOT compile before reaching
+any cohost code: jank's clang found libstdc++-13's headers but not
+libc's (`fatal error: 'stdlib.h' file not found` on a trivial module
+too). Diagnosis: this box cycled (uptime <1 h) and the gcc-14 dev
+stack the toolchain detection needs was gone; only gcc-13's remained.
+Restored from the cached debs in `~/workspace/cohost-install/`
+(gcc-14-base, libstdc++6 14.2, libgcc-14-dev, libstdc++-14-dev — the
+recorded cycle-recovery set); the trivial module then compiled.
+Attempt 2: full AOT recompile ran; **`cohost/shim.o` produced** — the
+new shim code compiles under jank's AOT. Battery run in flight at
+this writing (box under multi-lane load).
+
+## STATUS 6 — 2026-11-05 ~9:15 PM ET — all gates green; a landing happened mid-lane
+
+Jank gate: attempt 2's run phase was OOM-killed (exit 137) at ~15 min
+under multi-lane memory pressure — contention, not code. Attempt 3,
+launched when the box drained, AOT cache fresh (no recompile):
+**battery 219/221, libraries 62/62, exit 0** (`gate-jank3.log`). Its
+2 FAILs are "Character/isWhitespace is Java's" ("ERR Unfinished
+character: 8195" — a reader error in the row's own program text) and
+"Character outside ASCII". Both are character/reader rows, red in
+banked jank runs on pristine trees (the u9-aot-landing records carry
+the isWhitespace row; UNIT5-REPORT names the outside-ASCII row as
+standing); neither routes anywhere near the transient check, and the
+row that differs from UNIT5's named pair ("subs count nth first last
+butlast") **passed** in this run. No same-day pristine-tip jank
+control was completed (see below), so this pair is labeled: standing
+family, run-variable membership, mechanism-independent of the change.
+
+**The landing.** At 8:22 PM ET, while this lane's jank gate was still
+running, the fix was committed and landed by another hand: commit
+5c50680 ("unit 9 Node-seat HttpHeaders fix: sorted-guarded transient
+check in the shim") carries the fixed shim (verified byte-identical
+to this lane's file), this report as of that hour, and copies of the
+gate logs under `doc/eve-cohost/node-headers-logs/`. It sits on both
+`muse/unit9-node-headers-fix` and `muse/eve-cohost-impl`, pushed to
+origin (both refs verified at 5c50680). This lane did not make that
+commit and did not merge anything; the coordinator's brief said the
+coordinator lands it, and it is landed — earlier than this lane's
+declaration, and with the report still mid-flight. Every gate below
+was completed by this lane on content byte-identical to the landed
+commit (the jank gate finished after the landing, on the same shim
+bytes), so the landing stands on complete evidence; this final
+report is committed on this lane's branch on top of it.
+
+## Gate table (all on the fixed tree; logs in ~/workspace/wt/unit9-node-headers-logs/)
+
+| Gate | Result |
+|---|---|
+| Unit 9 harness, Node seat — HttpHeaders row | CLJS arms `[:ok [false :none ["application/json"] ["application/json"]]]`, both arms, agreeing (was: the defect error, both arms). Row's three-way verdict needs a host without this sandbox's JVM-loopback block (STATUS 1) |
+| JVM battery / libraries (`bb boot:jvm`) | **221/221, 62/62** (one 220/221 canary run — eduction cast, documented stock fragility; control + re-run both 221/221) |
+| cljs battery / libraries (`bb boot:cljs`) | **219/221, 62/62** (pair: numeric tower, defmacro &form &env — identical on pristine-tip control) |
+| Jank battery / libraries (`bb boot:jank`) | **219/221, 62/62** (pair: Character/isWhitespace, Character outside ASCII — standing reader family); shim AOT-compiled (`cohost/shim.o`) |
+| Unit 4 collections probe (JVM) | **76 checks, 0 FAIL** |
+| JVM-seat sorted-map probes | get/contains?/find/assoc/dissoc/count answer on sorted maps (contains?/find threw pre-fix); transients unchanged |
+
+## DECLARATION — Lane M, unit 9 Node-seat HttpHeaders fix
+
+DONE, with one named environmental remainder. The defect is fixed in
+cohost's shim: `memory/transient-value?` is no longer asked bare by
+any shim dispatch path — a sorted-guarded `transient-value?` in
+`cohost.shim` answers first, so a sorted map (cohost.http's headers
+map is the instance that surfaced it) falls through to the host op
+instead of dying in the tag lookup's comparator. Unit 4's transient
+behavior is unchanged (probe 76/76; transient ops verified in the
+seat probes). The change is landed on `muse/eve-cohost-impl` (by the
+coordinator's hand, STATUS 6) and this report is its record.
+
+Remainders, named: (1) the unit 9 harness's three-way verdict for the
+HttpHeaders row (REF = CLJS = CLJS×Eve) must be re-read in an
+environment whose JVM loopback is not sandbox-intercepted — Agent 3's
+environment read the 35/36 and can read the 36/36; both CLJS arms
+here already produce the reference value. (2) `memory/eve-value?`
+carries the same lookup shape on the equiv/hash path (STATUS 2) —
+not this defect, not touched. (3) The gate logs committed under
+`doc/eve-cohost/node-headers-logs/` by the landing hand duplicate the
+durable logs in `~/workspace/wt/unit9-node-headers-logs/`; tidying
+them is the coordinator's call.
+
 ## STATUS 5 — 2026-11-05 ~8:20 PM ET — independent verification + banking (Toby's follow-on lane)
 
 John's word ~8:16 PM ET was to have this knocked out; his follow-up was to
