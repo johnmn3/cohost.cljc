@@ -148,3 +148,34 @@ these leaves as they ride every seat's.
 
 Remaining: the Eve hosting joint on this seat (domains probe
 over Eve domains on glojure) — next step.
+
+## STATUS 3 — 2026-11-06 ~9:5x AM ET — Eve hosting joint: domains probe attempts 1–2 fail in Eve's completion load; diagnosis banked before attempt 3
+
+probe_tx_domains on glojure needs eve.atom loadable in the
+same process as cohost. Vehicle: dev/stm/probe_tx_domains_glj
+.clj; Eve classpath = the 0.9.3 tree's hosts.edn :glj roots
+(the roots Eve's own test:glj composes), logs
+probe-tx-domains-glj.log / -glj2.log.
+
+- Attempt 1 (no Eve preamble): loading eve.atom dies in
+  eve.guard's load — nil-pointer at eve/host_completion.glj
+  :132 `(core a f)`, called from :95 (the completion's
+  protocol-registry swap!) during LazyMap's extend.
+- Attempt 2 (require eve.host-completion before eve.atom,
+  but AFTER cohost.hosts.auto/glj): identical fault, same
+  two lines.
+- Diagnosis: Eve's runner docstring states the contract --
+  "eve.host-completion loads first: a namespace refers the
+  names the completion adds to clojure.core only when it is
+  made after them." Attempt 2 did not meet it: cohost's
+  namespaces loaded (and cohost.adapter's install! ran
+  swap!) before the completion's alter-var-root wrappers
+  captured clojure.core's roots. What changes in attempt 3:
+  eve.host-completion is the FIRST require in the process,
+  before cohost.hosts.auto — the exact order Eve's own glj
+  runner uses. If attempt 3 fails at the same lines, the
+  joint is named: Eve's glj completion cannot load in a
+  process that also loads cohost's layer in the probe's
+  order, and the fix belongs to the cohost-boot/Eve-
+  completion load-order question (mainline), not the
+  thread leaves — which are already proven by probe_tx.
