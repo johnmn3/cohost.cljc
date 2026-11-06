@@ -43,8 +43,33 @@ same versions).
   handles includes its own way. Probe-authoring detail, not a toolchain
   defect.
 
+## Milestone 2 — 2026-11-06 ~9:20 AM ET — probe attempt 1: mixed-install PCH (diagnosed)
+
+Probe attempt 1 (log ~/workspace/stm-jank-chase/probe-run-1.log) died in
+the C++ JIT compile of cohost/adapter.cljc's interop: mass
+"redefinition of 'platform' / 'is_trivially_movable' / …" errors, with
+the "previous definition" notes pointing into a SECOND jank tree at
+~/opt/jank-root/usr/local/lib/jank/0.1 while the current definitions
+came from /usr/local/lib/jank/0.1.
+
+Diagnosis (verified): the box carries TWO extractions of the same jank
+build (both binaries print binary-version cf627abb…): /usr/local
+(restored today) and ~/opt/jank-root (Nov 5 08:42, another lane's
+extraction). jank's user cache keys on binary version, so both share
+~/.cache/jank/…-cf627abb…, which held an 88 MB incremental.pch built
+Nov 5 08:42 against the OPT tree's headers. Today's /usr/local binary
+loaded that PCH, then re-included the same jtl headers from its own
+tree → every definition twice. Pure-Clojure runs (hello) never touch
+the C++ headers, which is why the smoke passed.
+
+Fix applied: both stale caches moved aside (recoverable):
+~/.cache/jank-stale-mixed-cf627abb (the 88 MB PCH) and
+~/.cache/jank-stale-opt-6187d5ff (an older build's cache). Attempt 2
+rebuilds the PCH from the single /usr/local install. This is an
+environment defect, not a jank-seat or STM defect.
+
 ## Next
-Run the probe: from repo root,
+Probe attempt 2: from repo root,
 `jank --module-path src run dev/stm/probe_tx_jank.jank`
 (loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
 23 semantics checks the JVM seat runs; refs seat in host atoms on this
