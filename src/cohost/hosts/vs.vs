@@ -18,8 +18,58 @@
 ;; ---------------------------------------------------------------------------
 ;; forms: the reader's form values as data (symbol metadata rides along)
 
+;; `#_` discards are removed from the text first: VS's run-time reader (vs.reader, the corpus reader a program carries)
+;; mis-reads a discarded number, string or list inside a collection — `(vs.reader/read-string-all "(do #_1 2)" nil)`
+;; answers a form whose form-count trips, where `#_x` (a symbol) reads right and the compiler's own reader reads every
+;; discard right (MEASURED 2026-11-06 on main's builder; docs/vs-cohost/STATUS.md names it). Stock core.clj's `for`
+;; carries two (`#_"not the inner-most loop"`). The scan is the reader's own token rules: strings, character
+;; literals, comments, the delimiters; a discarded form's own discards are skipped with it.
+(defn- skip-ws [s i n]
+  (loop [i i] (if (and (< i n) (let [c (nth s i)] (or (= c \space) (= c \newline) (= c \tab) (= c \return) (= c \,)))) (recur (inc i)) i)))
+(declare skip-form)
+(defn- skip-string [s i n]                       ;; i at the opening quote -> the index after the closing one
+  (loop [i (inc i)]
+    (cond (>= i n) n
+          (= (nth s i) \\) (recur (+ i 2))
+          (= (nth s i) \") (inc i)
+          :else (recur (inc i)))))
+(defn- skip-token [s i n]
+  (loop [i i] (if (and (< i n) (let [c (nth s i)] (not (or (= c \space) (= c \newline) (= c \tab) (= c \return) (= c \,)
+                                                             (= c \() (= c \)) (= c \[) (= c \]) (= c \{) (= c \}) (= c \") (= c \;)))))
+                (recur (inc i)) i)))
+(defn- skip-coll [s i n]                         ;; i at the opener -> the index after its closer
+  (loop [i (inc i)]
+    (if (>= i n) n
+      (let [c (nth s i)]
+        (cond (or (= c \)) (= c \]) (= c \})) (inc i)
+              (= c \;) (recur (let [j (loop [j i] (if (and (< j n) (not= (nth s j) \newline)) (recur (inc j)) j))] j))
+              (= c \space) (recur (inc i))
+              :else (recur (skip-form s i n)))))))
+(defn- skip-form [s i n]                         ;; i at a form's first byte (no leading whitespace) -> the index after it
+  (let [c (nth s i)]
+    (cond (= c \") (skip-string s i n)
+          (= c \\) (skip-token s (+ i 2) n)
+          (= c \;) (loop [j i] (if (and (< j n) (not= (nth s j) \newline)) (recur (inc j)) j))
+          (or (= c \() (= c \[) (= c \{)) (skip-coll s i n)
+          (and (= c \#) (< (inc i) n) (= (nth s (inc i)) \_)) (skip-form s (skip-ws s (+ i 2) n) n)
+          (and (= c \#) (< (inc i) n) (= (nth s (inc i)) \")) (skip-string s (inc i) n)
+          (and (= c \#) (< (inc i) n) (or (= (nth s (inc i)) \() (= (nth s (inc i)) \{))) (skip-coll s (inc i) n)
+          (or (= c \') (= c \`) (= c \~) (= c \@) (= c \^) (= c \#)) (skip-form s (skip-ws s (inc i) n) n)
+          :else (skip-token s i n))))
+(defn strip-discards [s]
+  (let [n (count s)]
+    (loop [i 0 out (StringBuilder.)]
+      (if (>= i n)
+        (str out)
+        (let [c (nth s i)]
+          (cond (= c \") (let [j (skip-string s i n)] (recur j (.append out (subs s i j))))
+                (= c \\) (let [j (skip-token s (+ i 2) n)] (recur j (.append out (subs s i j))))
+                (= c \;) (let [j (loop [j i] (if (and (< j n) (not= (nth s j) \newline)) (recur (inc j)) j))] (recur j (.append out (subs s i j))))
+                (and (= c \#) (< (inc i) n) (= (nth s (inc i)) \_)) (recur (skip-form s (skip-ws s (+ i 2) n) n) out)
+                :else (recur (inc i) (.append out c))))))))
+
 (defn- read-forms [src cb]
-  (doseq [f (rdr/read-string-all src nil)]
+  (doseq [f (rdr/read-string-all (strip-discards src) nil)]
     (cb (vs.core/prog-h-misc-form-val f))))
 
 ;; ---------------------------------------------------------------------------
