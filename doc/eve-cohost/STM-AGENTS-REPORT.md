@@ -1363,3 +1363,43 @@ journal/scan/counter/arena (stop and report instead).
   not the drifting sibling checkout; the pin moves to
   the 0.9.3 release commit when it lands, and Node's
   RELEASE-READY line will be re-read against it then.
+
+## STATUS 13 — 2026-11-05 ~10:5x PM ET — JOLT: smallest probe PASSES (hosting joint works); jank still environment-blocked
+
+- **Jolt residence probe: ALL 5 CHECKS PASS**
+  (dev/stm/probe_tx_domains_jolt.clj). The probe installs
+  the domain factory probe-locally (the same two Eve
+  calls: eve.atom/atom-domain +
+  lookup-or-create-mmap-atom!) and runs
+  probe_tx_domains' residence section on the seat:
+  every ref's cell :eve-own-domain; exactly one domain
+  minted per ref; the Eve handles sit in 10 pairwise-
+  distinct domain states, read off the handles; values
+  independent; a two-ref transaction commits across
+  domains. STATUS 10's separating question is answered:
+  **the hosting joint works on jolt.**
+- The run's classpath is the lesson: Eve's src ALONE
+  does not load on jolt -- eve.mem dies with "No
+  dependency provides java.lang.invoke.MethodHandles"
+  (jolt resolves JDK classes per RFC 0014 :jolt/provides,
+  supplied by the seat's adapter row, here
+  adapters/region/jolt-ffi). With the :jolt row from
+  hosts.edn composed after Eve's src (the row read off
+  the d241de3 checkout's hosts.edn -- the same pin the
+  cljs seat binds), everything loads and runs. One run,
+  first failure was classpath composition, not code:
+  noted, not counted as a leg failure of the probe.
+- Standing for jolt, still owed: the full probes on the
+  seat (probe_tx's 23 + the domains probe's contention
+  sections -- the residence run is this target's proof
+  probe, not its full verification), the throw-crossing
+  probe on jolt frames (STATUS 1's question: the retry
+  exception rides jolt's Throwable shim), and the
+  atom-eve drift, which gates RELEASE-readiness on this
+  seat exactly as STATUS 11 states (the probe-local
+  factory does not make the seat release-ready while
+  cohost.atom-eve cannot load).
+- Jank: no change since STATUS 12 -- the gcc-14 debs
+  wait on the system's apt transaction (still holding
+  the dpkg lock at last check). Node: cljs probe
+  compile in flight.

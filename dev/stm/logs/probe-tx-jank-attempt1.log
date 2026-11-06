@@ -1,0 +1,10 @@
+In file included from <<< inputs >>>:1:
+In file included from /home/hatch/workspace/wt/eve-cohost-stm/src/cohost/hosts/jank_runtime.jank:40:
+/usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/cmath:47:15: fatal error: 'math.h' file not found
+   47 | #include_next <math.h>
+      |               ^~~~~~~~
+error: Parsing failed.
+─ codegen/internal-failure ─────────────────────────────────────────────────────
+error: Unable to compile C++ source.
+
+https://book.jank-lang.org/reference/error/codegen/internal-failure.html
