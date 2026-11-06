@@ -338,3 +338,283 @@ verification = the 23-check probe unchanged in its checks
 plus the two new probes (disjoint transactions commit
 with zero retries; a contended pair retries scoped to the
 conflicting ref only).
+
+## STATUS 3 — 2026-11-05 ~8:5x PM ET — design rewrite: per-ref, per-domain STM
+
+This section REPLACES the STATUS 0 consistency construction.
+The world atom is gone. What follows is Clojure's own
+mechanism, re-based on Eve's facilities: MVCC over per-ref
+versioned history, a transaction read point, per-ref commit
+validation, and per-ref commit locks — the LockingTransaction
+shape, with no container snapshot anywhere.
+
+### Where a ref lives
+
+A ref is a layer value `{:cohost/kind ::ref :cell … :state …}`:
+
+- `:cell` — the ref's committed state, an atom holding ONE
+  immutable cell map `{:value v :point p :version n
+  :history [{:point :value} …]}` (history newest-first,
+  bounded by the ref's max-history, never below
+  min-history). The cell atom is the ref's alone:
+  - where the seat's Eve hosting is installed, the cell is
+    a cohost.atom layer atom minted by a NEW factory
+    capability, `:make-domain-atom`, whose Eve handle is
+    the sole atom of a FRESH Eve atom domain
+    (`eve.atom/atom-domain {}` + one registered atom). The
+    domain is the ref's contention domain: its own slab,
+    root, epoch and arbitration point, shared with no
+    other ref. If the hosting is installed but cannot mint
+    a domain atom, creation throws — there is no path from
+    make-ref to a shared-domain atom (the no-silent-
+    fallback guarantee, enforced in cohost.atom, not by
+    convention).
+  - where no Eve hosting exists on the seat, the cell is
+    a plain host atom — which is already a contention
+    domain of one (a host atom arbitrates nothing but
+    itself), so the construction's guarantee is the same
+    statement in the seat's own terms. Which residence a
+    ref got is a measured fact the probes print
+    (`:cell-residence`), never a doc claim.
+  A cell whose value Eve cannot represent seats in the
+  wrapper's host seat by cohost.atom's existing gate
+  machinery (one-way, named in the state) — semantics
+  preserved, residence degraded per-ref, exactly as
+  unit 5's atoms behave.
+- `:state` — a host atom with the ref's non-transactional
+  facts (validator, watches, meta, history bounds) AND
+  its commit lock (`:lock`, nil or the owning attempt's
+  token). The lock lives here, not in the cell, because
+  stock keeps its locks in the Ref object, not in the
+  value: lock traffic never publishes to Eve.
+
+There is no world, no domain registry of refs, and no
+map of cells anywhere in the layer. Refs of one program
+share exactly one thing: the commit-point counter below.
+
+### The transaction mechanism (stock's, step for step)
+
+- **Commit points.** One layer atom holds a monotonic
+  long: the last commit point. It carries no ref data;
+  it is the point clock stock keeps as LockingTransaction's
+  global lastPoint. A commit claims its point by one
+  increment, after validation, before installing. Points
+  are only an ordering; aborted attempts consume none.
+- **Read point.** An attempt fixes its read point `rp`
+  lazily at its first ref touch: `rp` = the current commit
+  point. Every value the attempt reads is the value as of
+  `rp`: for each ref, the newest cell entry with
+  `point ≤ rp` (the live value if the cell's point ≤ rp,
+  else a history entry; if history no longer reaches `rp`,
+  the attempt faults and retries with a fresh point —
+  stock's "history too short" answer). An in-flight
+  attempt's view cannot move, because committed history is
+  immutable and trimming never removes the newest entry.
+- **Reads and writes in the attempt.** The attempt record
+  (a per-scope local atom, dynamically bound — unchanged
+  from the previous design) records per touched ref: the
+  base point (the point of the value it read), the ordered
+  action list (:set / :commute), and the ensured flag.
+  Reads serve from the attempt's view (base value folded
+  with its own actions), as before.
+- **Commit.** (1) Lock every written ref, in ref order
+  (creation sequence — deterministic, so no lock-order
+  cycles), by CAS on the ref's own `:state`. A lock held
+  by another attempt: release all, throw the retry signal
+  (try-lock + retry, not blocking locks; the named
+  difference from stock is no barging — liveness rests on
+  the retry loop and the small contention windows, and
+  the concurrency probes are the evidence it suffices).
+  (2) Validate: every ensured or written ref's base must
+  still be its value at `rp`, and every READ-only ref must
+  show no commit with point > `rp` (its cell point must
+  still be ≤ `rp` with the same base) — a ref that moved
+  after `rp` retries the attempt, stock's read validation.
+  Commute-only refs are not validated. (3) Run validators
+  against final values. (4) Claim the commit point.
+  (5) Install each written ref with one CAS on its own
+  cell atom: written (alter/ref-set) refs fold their
+  actions over the value at `rp`; commute-only refs fold
+  over the cell's CURRENT value, in call order, under
+  their lock. The new cell prepends the replaced state to
+  history and bumps the ref's version. (6) Unlock, fire
+  watches once per written ref with the pre-commit and
+  final values, release held agent sends.
+- **Why disjoint transactions cannot contend.** Two
+  attempts touching disjoint ref sets lock disjoint
+  `:state` atoms, validate against disjoint cells, and CAS
+  disjoint cell atoms. The only shared write is the
+  commit-point increment — one atomic increment per
+  commit, stock's own global, which carries no ref's
+  data and validates nothing. It cannot make an attempt
+  retry: retries come only from a touched ref's lock or
+  validation. The new probe (STATUS 6) measures exactly
+  this: attempts counted, retries = 0 across concurrent
+  disjoint transactions.
+- **Atomicity and visibility.** Installation is per-ref
+  under per-ref locks, as stock's is; a concurrent reader
+  with read point < the commit point reads pre-commit
+  history (immutable), a reader with a later point reads
+  the new cells. The commit point is claimed before
+  installation begins — the same order stock assigns its
+  commit point before setting tvals — so the construction
+  inherits the reference mechanism's visibility edges
+  rather than inventing new ones.
+- **Retry and interruption** are unchanged from STATUS 1:
+  the layer's shared retry exception, caught only by the
+  runner; the thread layer's cooperative interrupt checked
+  once per attempt; held sends released only by the
+  successful attempt (exactly-once).
+
+### What changed relative to the rejected design
+
+Snapshot-by-container → snapshot-by-read-point over
+per-ref histories. One CAS on one atom → per-ref locks +
+per-ref CAS on per-ref cell atoms in per-ref domains.
+Cross-ref consistency no longer comes from a single deref;
+it comes from the read point + validation, which is where
+stock gets it. The price, named: a transaction's reads are
+one cell deref per ref (not one per world), commits are
+O(written refs) Eve publishes (not O(1)), and consistent
+reads of moved refs depend on bounded per-ref history —
+the STM cost model every MVCC has, now honestly per-ref.
+
+## STATUS 4 — 2026-11-05 ~9:0x PM ET — domain-per-ref cost, measured (JVM seat)
+
+Question (ruling 2): what does an atom in its OWN Eve atom
+domain cost per ref? Measured against the sibling Eve
+checkout this worktree's deps name (`../eve`, JVM heap
+domains, `eve.atom/atom-domain {}`), scratch probes in
+dev/stm/scratch-domains*.clj; the box was loaded (load
+~4–6, 4 cores, other lanes active) — creation TIME below
+carries that taint and is reported as an upper bound; the
+memory figure is structural and load-independent.
+
+- **Memory: ≈ 6.8 MB of eager heap per domain.** 120 fresh
+  domains grew used heap by 812 MB (GC'd, steady). Source
+  agrees: a JVM heap domain eagerly allocates 6 bitmap
+  slab regions at 1 MiB default capacity, a 256 KiB reader
+  map, a 64 KiB coalescing region and the root region —
+  before any atom exists. Corroborated from the other
+  side: minting ~220 domains OOM'd a default-heap JVM at
+  eve.mem/make-heap-region. On this seat a heap domain's
+  regions are heap byte arrays, so a domain's memory is
+  reclaimable when the ref dies with it; the cost is per
+  LIVE ref.
+- **Creation time: ~110–370 ms per domain** on the loaded
+  box (median ~160 ms; a host ref is ~µs). Even discounting
+  the load generously this is a 10⁴–10⁵× ref-creation
+  cost. A program minting refs casually (a ref per entity,
+  10³–10⁴ refs) pays seconds-to-minutes and gigabytes.
+- **Per-op cost: unchanged by geometry.** In the same
+  runs, deref/swap! on a sole-domain atom and on an atom
+  in a shared domain were indistinguishable (both ride the
+  same eve.atom mmap path; tonight both were slow in
+  absolute terms — ~0.3–0.9 ms deref under load vs 0.38 µs
+  for a host atom in the same JVM — a property of Eve's
+  JVM path on this checkout + box, NOT of domain geometry;
+  it taxes shared-domain atoms identically).
+- **The capacities lever, named and NOT taken:** Eve's
+  private domain opener accepts per-class slab capacities,
+  but the public `atom-domain` discards its opts on the
+  JVM seat, and bitmap slab classes are fixed at creation
+  (only the coalescing class grows) — a shrunk domain
+  risks allocation failure under a large ref value.
+  Threading capacities through Eve's public API is
+  Eve-side work, outside cohost's layer and this lane's
+  mandate. Estimated floor if it were done: ~0.7–1 MB per
+  domain (reader map + root + minimal slabs) — still
+  10³–10⁴× a host ref.
+
+**Finding, for the operator:** domain-per-ref is built
+(this lane, STATUS 5) and the semantics verify against it,
+but at Eve's current domain geometry it costs ≈6.8 MB and
+≈10² ms per ref on the JVM seat. That is a sound price for
+the coarse-grained refs STM is idiomatically used with
+(dozens), and prohibitive as a universal default (10³+
+refs). The construction in cohost does NOT silently shard
+refs into shared domains to dodge this: where Eve hosting
+serves, a ref is a domain; the cost is reported here, and
+the geometry fix, if wanted, is an Eve-side decision
+(small-domain capacities), not a cohost fallback.
+
+## STATUS 5 — 2026-11-05 ~9:0x PM ET — the Eve-level question, scoped
+
+Ruling 3: IF refs are separate-domain atoms AND cooperative
+interruption can be built between arbitrary threads of an
+arbitrary host, STM could live IN EVE across its targets.
+Scoped against Eve's actual surface (this checkout):
+
+### What is already portable (would move into Eve unchanged)
+
+- The MVCC core as now designed: per-ref cell maps
+  ({:value :point :version :history}), the read-point /
+  validation / commit-point protocol, commute folding,
+  ensure, bounded history. It is written against three
+  cell operations — deref, CAS, and "an atom in its own
+  domain" — and Eve has all three on every seat Eve runs
+  on: Eve atoms ARE the substrate (eve.atom on JVM/CLJS;
+  the same domain/atom model is Eve's own cross-host
+  design). Nothing in the protocol names a host type.
+- The send-hold seam shape: "actions dispatched inside a
+  transaction fire only on commit" needs only an
+  enqueue-with-hold callback from the host's task system.
+- Ref metadata state (validators/watches/meta) as data
+  beside the cell — pure data, portable. (Validators and
+  watches are host FUNCTIONS: they stay host-resident
+  values held beside the cell, as cohost.atom's wrapper
+  already holds unrepresentables; the protocol only calls
+  them.)
+
+### The minimal host contract (what Eve would have to require)
+
+1. **Cooperative interrupt points.** A per-task cancel
+   flag the host's blocking leaves ( waits, sleeps, queue
+   takes) poll in bounded slices, surfacing cancellation
+   as a throwable the transaction runner can distinguish.
+   Plus one poll per transaction attempt by the runner
+   itself. This is the ONLY hard requirement, and it is
+   the layering ruling's original reason STM sits in
+   cohost: not every Eve host can promise it.
+2. **A retry signal that unwinds user frames** — any
+   host exception/throw mechanism (universal in Eve's
+   targets: JVM/CLJS/jank all throw). A flag-checked
+   degradation (STATUS 1) covers frame classes a throw
+   cannot cross; an Eve-level STM would carry the same
+   named fallback.
+3. **Thread/task identity + a dynamic-scope binding** for
+   the attempt record (thread-local or equivalent). Eve's
+   mesh tasks already carry task identity; CLJS's single
+   realm carries it trivially (and serializes attempts by
+   construction).
+4. **Domain-per-ref atoms at viable geometry** — the
+   STATUS 4 finding is the real gate: an Eve-level STM
+   inherits the ~6.8 MB/ref geometry unless Eve grows a
+   small-domain profile. Portable protocol, heavyweight
+   substrate: this, not interruptibility, is today's
+   binding constraint.
+
+### Per-target table (Eve's hosts, as this project knows them)
+
+| target | own-domain atoms | interrupt points | attempt scope | verdict |
+|---|---|---|---|---|
+| JVM (Eve on JVM) | yes (heap domains) | yes (thread interrupt + cohost thread layer) | thread-local | ready modulo geometry |
+| jank (Eve on jank) | yes (Eve's domain model) | cooperative via cohost thread layer (this lane's STATUS 1) | thread-local | ready modulo geometry + the throw-crossing probe (STATUS 1) |
+| CLJS / Node | yes (SAB domains) | cooperative only within the realm's task system; no preemption | realm/task-local | protocol fits; interrupt degrades to poll-at-attempt-boundary |
+| CLJS / browser | yes (SAB domains) | same, weaker (worker messaging) | task-local | same, named weaker |
+| WASM / VS seat | Eve domains in the seat's model | isolates cannot be interrupted (operator's standing fact; hard stop = restart the isolate) | task-local | retry works; interruption is isolate-restart granularity — an Eve-level STM must name this seat :stm-interruptible? false |
+| basilisk/basilisp, phel, other shim hosts | n/a (no Eve hosting) | host-dependent | host thread-local | out of Eve's reach by definition — cohost's layer remains their STM |
+
+### The scoping conclusion
+
+An Eve-level STM is a protocol relocation, not a rewrite:
+the MVCC core + cell contract move; the host contract is
+four items, of which interrupt points are the only one
+that can fail per-target, and geometry (STATUS 4) is the
+only one that fails TODAY on every target. Cohost's build
+therefore goes first in exactly the shape Eve would need —
+per-domain ref atoms behind a three-op cell contract,
+interruption as a named per-seat capability
+(`:stm-interruptible?`) — so the relocation, if ordered,
+is a move of cohost.tx's core into Eve plus a per-target
+capability table, not a second design.
