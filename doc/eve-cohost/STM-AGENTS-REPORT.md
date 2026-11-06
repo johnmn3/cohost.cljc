@@ -642,3 +642,106 @@ capability table, not a second design.
   scoped-retry over real Eve domains) runs next, then
   probe_tx again with the Eve hosting installed (the 23
   checks over domain cells).
+
+## STATUS 7 — 2026-11-05 ~9:5x PM ET — the ruling's probes PASS over Eve domain cells; booted check 12/22 → 20/22
+
+- **probe_tx_domains: ALL 15 CHECKS PASS** (log
+  `dev/stm/logs/probe-tx-domains.log`). The probe installs an Eve
+  factory first, so refs are real domain cells, and verifies with
+  evidence read off the handles themselves: 10 refs → the factory
+  minted exactly 10 domains and the refs' Eve handles sit in 10
+  pairwise-distinct domain states; a two-ref transaction commits
+  across domains; a fn-valued ref seats its cell value in the
+  wrapper's host seat (gate `:host`) and transacts. **Disjoint
+  transactions: 800 attempts, 800 commits, ZERO retries** (8 refs ×
+  100 alter-inc on 8 threads). **Scoped retries:** with ref P hammered
+  by an aggressor (400 transactions) and a victim doing 20 P+Q
+  transactions, the victim retried 171 times while a bystander doing
+  400 Q-only transactions retried **2** times — bounded by Q's own
+  conflicts with the victim's 20 commits, against 800+ total commits.
+  Under the rejected world-atom construction the bystander would have
+  retried on commits anywhere. make-ref over Eve domains measured
+  407 ms/ref in this run (box loaded; consistent with STATUS 4).
+- **The factory is installed probe-locally** — the same two Eve calls
+  `cohost.atom-eve`'s `:make-domain-atom` makes — because
+  **cohost.atom-eve does not compile against the current Eve
+  checkout**: its unit-7 `root-digests` references `eve.atom/seal` and
+  resolves `eve.digest/compute-digest`, and neither exists in Eve at
+  the sibling checkout's current state (no `seal`, no `eve.digest`
+  namespace). That drift predates this lane (the compile error sits
+  in unit-7 code this lane never touched) and is filed here as a
+  **remainder for the mainline**: until it is repaired, no probe on
+  this box can load `cohost.atom-eve`. This lane's `atom_eve.clj`
+  `:make-domain-atom` implementation stands as written (it uses only
+  `atom-domain` + `lookup-or-create-mmap-atom!`, both present) but is
+  itself unverified-by-load for exactly this reason; the path under
+  test here — `cohost.atom/make-domain-atom` → the seat's installed
+  `:make-domain-atom` — is exercised fully.
+- **Booted-context check: 12/22 → 20/22** (logs
+  `dev/stm/logs/check-stm-redesign.log` before,
+  `check-stm-redesign2.log` after). The 10 failures were all one
+  mechanism, **pre-existing and construction-independent**: the dead
+  lane's own scratch log (`dev/stm/logs/check-stm-1.log`, against the
+  world-atom build) shows the identical 12/22 with the identical
+  failure set — the dead lane's "23/23" headline never mentioned this
+  check. Diagnosis from the shim source: every Ref METHOD fn
+  (`-deref`, `-set`, `-alter`, `-commute`, …) already dispatched on
+  `tx-layer/ref-value?`, but the shim's *classification* layer did
+  not — `class-of` had no layer-ref case (a layer ref fell through to
+  the map branch and was named `clojure.lang.PersistentArrayMap`,
+  literally the class in every cast error), `token-ancestors` had no
+  `clojure.lang.Ref` entry, and the `IDeref`/`IRef`/`IReference`
+  class-token predicates omitted refs (so booted `deref` routed a ref
+  down the future path). **Fix** (shim only, mirroring the unit-5
+  layer-atom precedents at the same sites): a `class-of` ref branch,
+  a `token-ancestors` Ref entry, and refs added to the three
+  predicates. After it, `ref + deref`, `dosync alter`, `ref-set`,
+  `commute`, `sync runs`, abort-rollback, snapshot, and
+  validator-left-the-value all pass.
+- **The remaining 2 booted-check rows are a different, second
+  pre-existing mechanism**, filed as a remainder: `ref-history-count`
+  and `ref meta` fail with genuine JVM checkcasts
+  (`PersistentArrayMap cannot be cast to clojure.lang.Ref` /
+  `…IReference`) — in the pre-redesign log these two rows already
+  failed with these same cast targets while the other eight wore the
+  Future signature. They are the two core fns whose bodies make
+  *hinted interop method calls* (`.getHistoryCount` on a `^Ref`,
+  `.getMeta` on an `^IReference`): somewhere in the rewrite/interop
+  path those calls reach a host checkcast instead of the shim's Ref
+  method vars (`-getHistoryCount` exists and is correct; meta has a
+  shim path via `meta-of`). Fixing that dispatch is rewrite-layer work
+  with battery implications beyond this lane's seam; the trail above
+  is the diagnosis a follow-up needs. Everything else in the check —
+  including all agent rows — passes.
+- **Version reclamation (operator note, Nov 5 ~8:55 PM, relayed
+  mid-lane): accepted as a design gap in this lane's construction.**
+  On hosts without a GC (VS and the other non-GC Eve targets), merely
+  unlinking a trimmed history version would leak slab storage under
+  steady writes — and this implementation trims by dropping entries
+  from an immutable cell map, i.e. exactly the unlinking shape.
+  What exists toward it in Eve today, from the substrate source: a
+  domain's slab retires freed blocks through its epoch gate — blocks
+  return only when no reader can still see them, which is the
+  substrate-side half an MVCC trim needs (a version's block may be
+  retired once no live read point can reach it). What does NOT exist:
+  (a) any path in this lane that hands a trimmed version's storage
+  back (the JVM seat's GC makes the omission invisible here — the
+  cell map's dropped entries are ordinary garbage); (b) a
+  read-point watermark in the transaction layer: commit already knows
+  the oldest live read point in principle (an attempt's read point is
+  fixed at first touch and attempts are short), but nothing tracks
+  the minimum over running attempts, which is the input a trim would
+  need before retiring anything past `max-history`. Design for the
+  Eve-level build, recorded in STATUS 5's terms: trim keeps
+  `max-history` entries AND every version at or after the oldest live
+  read point; retirement is an explicit per-version release at trim
+  time (on an Eve seat: the version's root goes to the domain's retire
+  queue; on a host seat: deref-and-drop). On the JVM seat this is a
+  no-op by construction. Not implemented in this lane: the lane's
+  build targets cohost-on-jank semantics with the JVM as reference,
+  and the mechanism only bites on seats this lane does not run — but
+  it is now a named requirement of the construction, not a silent
+  property of the GC.
+- probe_tx over Eve domain cells (the 23 semantics checks with the
+  factory installed) is running detached; its result lands in the
+  final STATUS.
