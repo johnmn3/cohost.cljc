@@ -246,13 +246,21 @@
 
 (defn join-thread
   "Wait for thread t to finish; with timeout-ms, false when it passes.
-   Throws the interrupt exception when the WAITING thread is interrupted."
-  ([t] (wait-sliced (:bell t) nil) true)
+   Throws the interrupt exception when the WAITING thread is interrupted.
+   The bell alone is not the answer: interrupt-thread! also rings it, so
+   join waits for the :done STATE, re-waiting after any other signal."
+  ([t]
+   (loop []
+     (if (= :done @(:state t))
+       true
+       (do (wait-sliced (:bell t) nil) (recur)))))
   ([t timeout-ms]
-   (if (= :done @(:state t))
-     true
-     (let [signalled (wait-sliced (:bell t) timeout-ms)]
-       (boolean (and signalled (= :done @(:state t))))))))
+   (let [deadline (+ (now-ms) (long timeout-ms))]
+     (loop []
+       (cond (= :done @(:state t)) true
+             (>= (now-ms) deadline) false
+             :else (do (wait-sliced (:bell t) (max 0 (- deadline (now-ms))))
+                       (recur)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; executors

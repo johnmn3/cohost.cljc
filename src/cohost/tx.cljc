@@ -102,10 +102,9 @@
   ([x] (make-ref x {}))
   ([x opts]
    (let [w (or (:world opts) (world))
-         id (:next-id (swap! (:next-id w) inc))
-         ;; swap! returns the new value of next-id atom: (dec) because
-         ;; the atom holds the count, ids start at 0
-         id (dec id)]
+         ;; swap! returns the atom's new value: the count after this
+         ;; ref's mint, so the id is one less (ids start at 0)
+         id (dec (swap! (:next-id w) inc))]
      (swap! (:cells w) assoc id {:value x :version 0 :history []})
      {:cohost/kind ::ref
       :id id
@@ -269,10 +268,15 @@
    (bounded), then also escalates to the retry signal. Returns the
    watch list [[ref old new] ...] of the winning swap."
   [att]
-  (let [w @(:world att)
-        cells (:cells w)
-        touched @(:touched att)
-        snapshot @(:snapshot att)]
+  (if (nil? @(:world att))
+    ;; an attempt that touched no ref (a send-only body) has no world
+    ;; and nothing to validate or swap: commit is vacuous, the runner
+    ;; still releases its held sends
+    []
+    (let [w @(:world att)
+          cells (:cells w)
+          touched @(:touched att)
+          snapshot @(:snapshot att)]
     (loop [n 0]
       (let [cur @cells
             bad (some (fn [[id e]]
@@ -311,7 +315,7 @@
               @watches
               (if (< n 100)
                 (recur (inc n))
-                (throw (retry-ex))))))))))
+                (throw (retry-ex)))))))))))
 
 (defn- release-sends! [att]
   (doseq [action @(:held-sends att)]

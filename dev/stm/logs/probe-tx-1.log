@@ -1,0 +1,6 @@
+WARNING: get-validator already refers to: #'clojure.core/get-validator in namespace: cohost.tx, being replaced by: #'cohost.tx/get-validator
+Execution error (NullPointerException) at cohost.tx/make-ref (tx.cljc:108).
+Cannot invoke "Object.getClass()" because "x" is null
+
+Full report at:
+/tmp/clojure-6427118436934631780.edn
