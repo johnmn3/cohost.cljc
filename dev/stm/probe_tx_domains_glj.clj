@@ -6,15 +6,17 @@
 ;; leaves stay in force. Eve comes from the 0.9.3 tree's :glj
 ;; roots (hosts.edn), the classpath Eve's own test:glj composes;
 ;; GLJ_CLASSPATH=src:<stub>:<eve glj roots>.
+;; Eve's own load order on this seat (eve.runner.glj-main's
+;; docstring): eve.host-completion loads FIRST -- before any
+;; other namespace -- because a namespace refers the names the
+;; completion adds to clojure.core only when it is made after
+;; them, and its alter-var-root wrappers capture core's roots.
+;; Attempts 1-2 (STATUS-go-chase STATUS 3) loaded cohost first
+;; and died identically in eve.guard's load; this is the order
+;; Eve's own glj runner uses.
+(require 'eve.host-completion)
 (require 'cohost.hosts.auto)
 (require '[cohost.hosts.glj :as glj-host])
 (glj-host/install!)
-;; Eve's own load order on this seat (eve.runner.glj-main's
-;; docstring): eve.host-completion loads FIRST -- a namespace
-;; refers the names the completion adds to clojure.core only
-;; when it is made after them. Without it eve.atom's load dies
-;; inside eve.guard with a nil-pointer in the completion's
-;; extend machinery (attempt 1, probe-tx-domains-glj.log).
-(require 'eve.host-completion)
 (load-file "probe_tx_domains.clj")
 (println "INFO probe_tx_domains on glojure (Eve domain cells): script completed")

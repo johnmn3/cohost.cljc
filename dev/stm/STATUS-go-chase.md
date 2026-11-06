@@ -179,3 +179,65 @@ probe-tx-domains-glj.log / -glj2.log.
   order, and the fix belongs to the cohost-boot/Eve-
   completion load-order question (mainline), not the
   thread leaves — which are already proven by probe_tx.
+
+## STATUS 4 — 2026-11-06 ~9:5x AM ET — FINAL: the joint, named precisely; lane declaration
+
+Attempt 3 (eve.host-completion literally first in the
+process, Eve's own order): identical fault. Then the
+control that settles whose wall this is: **eve.atom alone**
+on this glj-eve binary — no cohost anywhere, Eve's own
+composed :glj classpath, Eve's own load order — fails the
+same way (log eve-atom-control-glj.log): eve.guard's load
+hits a nil-pointer in eve.host-completion's swap! wrapper
+(host_completion.glj:132 `(core a f)`, from the registry
+swap! at :95) while extending LazyMap.
+
+**The Eve hosting joint on Go, named precisely:** the
+missing piece is NOT in cohost and NOT in the thread work.
+`eve.atom` (0.9.3 tree) does not load on glj-eve in this
+environment at all; Eve's own test:glj would hit the same
+wall here. First check for the Eve-side owner: the glj-eve
+binary in use (~/workspace/stm-glj/build/glj-eve) is the
+prior lane's build from the vendored impls/glojure; the
+0.9.3 tree's own target/glj-eve was never built in
+eve-093-verify — binary provenance vs tree state is the
+open variable, and it is Eve-side either way (the fault is
+inside Eve's completion/guard load, not at any cohost
+call). Behind that wall sit the already-known items: the
+atom-eve drift (eve.atom/seal, eve.digest — mainline) and
+then the :glj port of the hosting joint itself. The thread
+leaves were the probe's stated prerequisite and they are
+done and proven; they do not unblock this wall.
+
+## Declaration (this lane)
+
+The operator's instinct was right: the Go stop was not a
+real blocker. What glojure lacked was never concurrency --
+it runs goroutines, channels, futures and promises -- it
+lacked leaves in goroutine shape, because cohost's adapter
+was written against a JVM class surface glojure does not
+have. Those leaves now exist in src/cohost/hosts/glj.clj
+(spawn = lang.AgentSubmit, self = eveglj:host.GoroutineID,
+doorbell = promise), plus one seat cap fix the work exposed
+(:ns-interns/:interned-var absorbing glojure's registry
+quirk, without which agent actions died silently in drain).
+
+Evidence, all on glojure (glj-eve), logs in dev/stm/logs/:
+- probe_tx FULL: **ALL 23 CHECKS PASS** -- semantics,
+  thread sections (snapshot, skew/ensure, commute and
+  transfer under real goroutine contention, sends held and
+  exactly-once), and both interrupt checks (blocked latch
+  wakes with the interrupt exception; interrupted tx
+  abandons and writes nothing).
+- probe_interrupt_glj: ALL 4 PASS -- the cooperative
+  contract measured in both directions: polling compute
+  stops at its next poll; non-polling compute completes
+  unobserved. No preemption, honestly -- the JVM's own
+  distance, and the only shape Go offers.
+- probe_tx_glj_core: 6/6, unregressed.
+- STM over Eve domains on Go: NOT RUN -- blocked by the
+  Eve-side load fault named in STATUS 4 above, control-
+  proven without cohost in the process.
+
+Branch: muse/stm-go-threads. Nothing here touches
+cohost.thread, cohost.tx, or any other seat.

@@ -1,0 +1,20 @@
+WARNING: defprotocol already refers to #'clojure.core/defprotocol in namespace: eve.host-completion, being replaced by: #'eve.host-completion/defprotocol
+WARNING: IDeref already refers to clojure.lang.IDeref in namespace: eve.host-completion, being replaced by: #'eve.host-completion/IDeref
+WARNING: IBlockingDeref already refers to clojure.lang.IBlockingDeref in namespace: eve.host-completion, being replaced by: #'eve.host-completion/IBlockingDeref
+WARNING: IAtom already refers to clojure.lang.IAtom in namespace: eve.host-completion, being replaced by: #'eve.host-completion/IAtom
+WARNING: IPending already refers to clojure.lang.IPending in namespace: eve.host-completion, being replaced by: #'eve.host-completion/IPending
+2026/11/06 14:22:23 error evaluating eve/atom.cljc: error evaluating eve/guard.clj: runtime error: invalid memory address or nil pointer dereference
+
+GLJ Stack:
+eve/host_completion.glj:132:34:	(core a f)
+eve/host_completion.glj:95:9:	(swap! p (fn [m] (-> m (update :impls (fn [is] (if (some (fn* [p1__3#] (= atype p1__3#)) is) is (conj (vec is) atype)))) (cond-> (:eve/fast m) (update-in [:fns atype] merge mmap)) (dissoc :sat))))
+%!s(<nil>):%!d(<nil>):%!d(<nil>):	(clojure.core/extend LazyMap clojure.lang.ILookup {:valAt (clojure.core/fn ([_ k] (clojure.core/let [v (.-v _) cell (.-cell _)] (check! cell) (wrap (.valAt v k) cell))) ([_ k nf] (clojure.core/let [v (.-v _) cell (.-cell _)] (check! cell) (wrap (.valAt v k nf) cell))))})
+
+
+GLJ Stack:
+%!s(<nil>):%!d(<nil>):%!d(<nil>):	(clojure.core/require (quote [eve.host :refer [aget alength long class volatile! vswap! locking transient persistent! conj! bytes token]]) (quote [eve.encoding :as enc]) (quote [eve.int32 :as i32]) (quote [eve.process :as proc]) (quote [eve.journal-file :as jf]) (quote [eve.read-region :as rr]) (quote [eve.guard :as guard]) (quote [eve.deftype-proto.data :as d]) (quote [eve.slab-io :as slab]) (quote [eve.deftype-proto.alloc :as alloc]) (quote [eve.process-slab]) (quote [eve.deftype-proto.serialize :as ser]) (quote [eve.region :as region]) (quote [eve.mem :as mem]) (quote [eve.hamt-util :as hu]) (quote [eve.map :as eve-map]) (quote [eve.set :as eve-set]) (quote [eve.vec :as eve-vec]) (quote [eve.list :as eve-list]) (quote [eve.retire :as retire]) (quote [eve.tally :as tally]) (quote [eve.core :as ecore]) (quote [eve.deftype :as edt]) (quote [eve.array :as arr]) (quote [eve.obj]) (quote [eve.deftype-proto.macros]))
+%!s(<nil>):%!d(<nil>):%!d(<nil>):	((clojure.core/fn loading__0__auto__ [] (github.com:glojurelang:glojure:pkg:lang.PushThreadBindings {}) (try (clojure.core/refer-clojure (quote :exclude) (quote [atom aget alength long class volatile! vswap! locking transient persistent! conj! bytes])) (clojure.core/require (quote [eve.host :refer [aget alength long class volatile! vswap! locking transient persistent! conj! bytes token]]) (quote [eve.encoding :as enc]) (quote [eve.int32 :as i32]) (quote [eve.process :as proc]) (quote [eve.journal-file :as jf]) (quote [eve.read-region :as rr]) (quote [eve.guard :as guard]) (quote [eve.deftype-proto.data :as d]) (quote [eve.slab-io :as slab]) (quote [eve.deftype-proto.alloc :as alloc]) (quote [eve.process-slab]) (quote [eve.deftype-proto.serialize :as ser]) (quote [eve.region :as region]) (quote [eve.mem :as mem]) (quote [eve.hamt-util :as hu]) (quote [eve.map :as eve-map]) (quote [eve.set :as eve-set]) (quote [eve.vec :as eve-vec]) (quote [eve.list :as eve-list]) (quote [eve.retire :as retire]) (quote [eve.tally :as tally]) (quote [eve.core :as ecore]) (quote [eve.deftype :as edt]) (quote [eve.array :as arr]) (quote [eve.obj]) (quote [eve.deftype-proto.macros])) (finally (github.com:glojurelang:glojure:pkg:lang.PopThreadBindings)))))
+
+
+GLJ Stack:
+<unknown-file>:1:32:	(require (quote eve.atom))
