@@ -1,0 +1,15 @@
+;; Bisect 7: var resolution forms on glojure
+(require 'cohost.hosts.auto)
+(require '[cohost.hosts.glj :as glj-host])
+(glj-host/install!)
+(require '[cohost.tx :as tx])
+(defn try* [label f]
+  (try (println label "=>" (pr-str (f)))
+       (catch Throwable e (println label "THREW:" (ex-message e)))))
+(try* "ns-publics clojure.core" #(count (ns-publics 'clojure.core)))
+(try* "ns-resolve cohost.core *agent*" #(ns-resolve 'cohost.core '*agent*))
+(try* "ns-resolve with the-ns" #(ns-resolve (the-ns 'cohost.core) '*agent*))
+(try* "resolve qualified" #(resolve 'cohost.core/*agent*))
+(try* "var via find-var" #(find-var 'cohost.core/*agent*))
+(println "DONE")
+(System/exit 0)

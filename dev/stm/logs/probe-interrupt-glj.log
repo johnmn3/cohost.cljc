@@ -1,0 +1,5 @@
+PASS polling compute goroutine stops at its next poll => :interrupted
+PASS polling loop stopped far short of its bound => true
+PASS interrupt-thread! accepted the layer thread => true
+PASS non-polling compute goroutine ran to completion (flag unobserved) => 4499998500000
+PROBE-INTERRUPT-GLJ: ALL 4 CHECKS PASS

@@ -1,0 +1,15 @@
+;; Bisect 6: ns-interns forms on glojure
+(require 'cohost.hosts.auto)
+(require '[cohost.hosts.glj :as glj-host])
+(glj-host/install!)
+(require '[cohost.tx :as tx])
+(defn try* [label f]
+  (try (println label "=>" (pr-str (f)))
+       (catch Throwable e (println label "THREW:" (ex-message e)))))
+(try* "ns-interns by symbol" #(ns-interns 'cohost.core))
+(try* "ns-interns by the-ns object" #(count (ns-interns (the-ns 'cohost.core))))
+(try* "interned var via the-ns" #(get (ns-interns (the-ns 'cohost.core)) '*agent*))
+(try* "ns-publics by symbol" #(count (ns-publics 'cohost.core)))
+(try* "find-ns then ns-interns" #(count (ns-interns (find-ns 'cohost.core))))
+(println "DONE")
+(System/exit 0)

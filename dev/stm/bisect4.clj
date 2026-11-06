@@ -1,0 +1,23 @@
+;; Bisect 4: inspect agent + executor state after dispatch
+(require 'cohost.hosts.auto)
+(require '[cohost.hosts.glj :as glj-host])
+(glj-host/install!)
+(require '[cohost.tx :as tx]
+         '[cohost.thread :as thread]
+         '[cohost.adapter :as host])
+(tx/set-fill! true)
+(def ag (thread/new-agent [] {}))
+(thread/dispatch! ag conj [:direct] (thread/send-executor))
+(Thread/sleep 300)
+(println "queue count:" (count @(:queue ag)))
+(println "ctl:" (pr-str (dissoc @(:ctl ag) :handler :validator)))
+(println "errors:" (pr-str @(:errors ag)))
+(println "state:" (pr-str (thread/agent-state ag)))
+(println "ex queue count:" (count @(:queue (thread/send-executor))))
+(println "ex ctl:" (pr-str (dissoc @(:ctl (thread/send-executor)) :bell)))
+(println "await1 test:")
+(def l (thread/await1 ag))
+(println "latch opened within 2s?" (thread/await-latch l 2000))
+(println "state now:" (pr-str (thread/agent-state ag)))
+(println "DONE")
+(System/exit 0)

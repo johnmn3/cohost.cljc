@@ -7,11 +7,18 @@
    STATUS 10's smallest-probe verdict for the Go target). What is
    known to differ is what this file does NOT inherit silently:
 
-   - thread leaves: goroutines are real parallel threads and Go has
+   - thread leaves: goroutine-shaped (Go chase lane, STATUS-go-
+     chase.md). glojure has no java.lang.Thread/Runnable class
+     surface ((Thread. f) throws; Runnable does not resolve), so
+     the leaves are built from what the runtime actually runs:
+     spawn is glojure's own future machinery (lang.AgentSubmit,
+     a fresh goroutine), self is the goroutine's id (eveglj:host
+     .GoroutineID -- Eve's provision, the identity eve.process
+     /thread-id keeps on this seat), and the doorbell is a
+     promise (a channel-backed blocking reference in the
+     runtime). Goroutines are real parallel threads and Go has
      no thread kill; cohost.thread's contract is cooperative
-     (cancel flag + bounded waits), which maps directly. The JVM
-     shapes below run the thunk on a fresh java.lang.Thread, which
-     glojure realizes as a goroutine-backed thread.
+     (cancel flag + bounded waits), which maps directly.
    - macro status, read-forms, var machinery: inherited from the
      JVM adapter's construction through cohost.hosts.java, exactly
      as the jolt adapter inherits them; where glojure's surface
@@ -47,6 +54,20 @@
                          (ns-unmap into-ns sym)
                          (refer 'clojure.core :only [sym])))
    :resolve-core (fn [sym] (get (ns-publics 'clojure.core) sym))
+   ;; glojure's ns-interns / ns-publics consult a registry that
+   ;; only stdlib namespaces are in: for a namespace loaded from
+   ;; source (cohost.core, any user ns) they THROW "No namespace:
+   ;; X found" even though find-ns sees it and its code runs
+   ;; (measured, STATUS-go-chase STATUS 2). The caps' contract is
+   ;; "the map, or the var, or nil" -- a throw for a loaded ns
+   ;; breaks callers that fall back on nil (cohost.thread's
+   ;; agent-var-handle: interned-var cohost.core/*agent* throws
+   ;; instead of reaching its resolve-core fallback, and the
+   ;; worker's drain dies silently -- agent sends never fire).
+   ;; The seat absorbs its own quirk: no registry entry = empty.
+   :ns-interns (fn [ns-sym] (try (ns-interns ns-sym) (catch Throwable _ {})))
+   :interned-var (fn [ns-sym sym]
+                   (try (get (ns-interns ns-sym) sym) (catch Throwable _ nil)))
    :macro-var? (fn [v] (boolean (:macro (meta v))))
    :var-raw-root (fn [v] (.getRawRoot v))
    :dynamic-var? (fn [v] (boolean (:dynamic (meta v))))
@@ -54,34 +75,40 @@
    :namespace? (fn [x] (instance? clojure.lang.Namespace x))
    :var-bound? (fn [v] (bound? v))
    :var-thread-bound? (fn [v] (thread-bound? v))
-   ;; the thread leaves under cohost.thread, the JVM adapter's shapes
+   ;; the thread leaves under cohost.thread, goroutine-shaped.
+   ;; Spawn: lang.AgentSubmit is the call clojure.core/future-call
+   ;; itself makes on this runtime -- the thunk runs on a fresh
+   ;; goroutine; the returned future is the opaque handle (the
+   ;; layer never derefs it; it keys nothing and proves nothing --
+   ;; truthy is the contract).
    :thread-spawn (fn [thunk]
-                   (let [t (Thread. ^Runnable (fn [] (thunk)))]
-                     (.setDaemon t true)
-                     (.start t)
-                     t))
-   :thread-self (fn [] (Thread/currentThread))
-   :doorbell (fn [] (atom false))
+                   (github.com:glojurelang:glojure:pkg:lang.AgentSubmit thunk))
+   ;; Self: the goroutine's id, an int64 -- stable for the
+   ;; goroutine's life, distinct across goroutines (measured:
+   ;; main = 1; spawns distinct). Thread/currentThread cannot
+   ;; serve here: the runtime's javacompat returns a fresh object
+   ;; per call, which would mint a new layer thread record (and a
+   ;; new cancel flag) on every lookup.
+   :thread-self (fn [] (eveglj:host.GoroutineID))
+   ;; Doorbell: a promise. Its deref parks the goroutine on the
+   ;; runtime's done channel until deliver; deref with a timeout
+   ;; is a select against a timer -- the channel receive with a
+   ;; timeout case, in the runtime's own implementation. Sticky:
+   ;; a delivered promise stays delivered. NOTE: glojure's timed
+   ;; deref answers its own :clojure.core/timeout rather than the
+   ;; caller's timeout value, so the wait answers (realized? db),
+   ;; never the deref value.
+   :doorbell (fn [] (promise))
    :doorbell-wait (fn [db timeout-ms]
-                    (locking db
-                      (if @db
-                        true
-                        (do (.wait ^Object db (long (or timeout-ms 0)))
-                            (boolean @db)))))
+                    (if (realized? db)
+                      true
+                      (do (if (some? timeout-ms)
+                            (deref db (long timeout-ms) nil)
+                            @db)
+                          (boolean (realized? db)))))
    :doorbell-signal (fn [db]
-                      (locking db
-                        (reset! db true)
-                        (.notifyAll ^Object db)
-                        true))
-   ;; glojure v0.7.22 has NO java.lang.Thread / Runnable class forms
-   ;; (measured: Class/forName is itself an unimplemented host form;
-   ;; `Runnable` does not resolve). Goroutines are reached through
-   ;; glojure's own `go` macro over Go channels -- a different shape
-   ;; from the JVM leaves, needing a go-shaped doorbell (a channel
-   ;; receive with timeout) and layer work in cohost.thread, which is
-   ;; a seat build, not an adapter entry (STATUS 16). The leaves stay
-   ;; ABSENT here rather than wrong: thread/spawn throws its named
-   ;; 'no thread-spawn' error, as it does on any seat without them.
+                      (deliver db true)
+                      true)
    :lazy-seq (fn [f] (clojure.lang.LazySeq. f))
    :delay (fn [f] (clojure.lang.Delay. f))
    :exception? (fn [x] (instance? Throwable x))

@@ -1,0 +1,8 @@
+WARNING: get-validator already refers to #'clojure.core/get-validator in namespace: cohost.tx, being replaced by: #'cohost.tx/get-validator
+PASS ref-value? => true
+PASS deref outside tx => 41
+PASS dosync alter returns new value => 42
+PASS committed => 42
+PASS alter outside tx throws => :threw
+PASS abort rolls back both refs => [42 100]
+PROBE-TX-GLJ-CORE: 6 checks, 0 failures

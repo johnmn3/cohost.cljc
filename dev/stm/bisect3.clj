@@ -1,0 +1,16 @@
+;; Bisect 3: agent dispatch without printing composite values
+(require 'cohost.hosts.auto)
+(require '[cohost.hosts.glj :as glj-host])
+(glj-host/install!)
+(require '[cohost.tx :as tx]
+         '[cohost.thread :as thread])
+(tx/set-fill! true)
+(println "step: new-agent")
+(def ag (thread/new-agent [] {}))
+(println "step: dispatch!")
+(thread/dispatch! ag conj [:direct] (thread/send-executor))
+(println "step: dispatched; sleep 1000")
+(Thread/sleep 1000)
+(println "step: state is" (count (thread/agent-state ag)) "items")
+(println "DONE")
+(System/exit 0)

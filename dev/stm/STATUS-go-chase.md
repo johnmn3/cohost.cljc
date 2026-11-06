@@ -77,3 +77,74 @@ layer's sliced waits and once per tx attempt) rides the same
 leaves. The one honest difference to name when it lands: no
 preemption (Go cannot kill a goroutine) — which is the STM
 design's standing contract on every seat, JVM included.
+
+## STATUS 2 — 2026-11-06 ~9:4x AM ET — leaves BUILT; probe_tx ALL 23 PASS on glojure; one seat cap gap found and fixed on the way
+
+**The leaves** (src/cohost/hosts/glj.clj, replacing the JVM
+shapes that could not run — (Thread. f) throws on this runtime):
+- :thread-spawn = lang.AgentSubmit (the call clojure.core's own
+  future-call makes; a fresh goroutine per thunk).
+- :thread-self = (eveglj:host.GoroutineID) — an int64, stable
+  per goroutine, distinct across them. Thread/currentThread was
+  measured unusable: the runtime's javacompat returns a fresh
+  object per call, which would mint a new layer thread record
+  (and a new cancel flag) at every lookup.
+- :doorbell = a promise; :doorbell-wait = deref-with-timeout,
+  answering (realized? db) (glojure's timed deref returns its
+  own :clojure.core/timeout, not the caller's timeout value —
+  measured); :doorbell-signal = deliver. Sticky, channel-backed
+  in the runtime — the channel receive with a timeout case.
+cohost.thread and cohost.tx are untouched: join, executors,
+agents and the cooperative interrupt are layer code and ride
+these leaves as they ride every seat's.
+
+**Two vehicle/seat findings on the way:**
+1. probe_tx_glj.clj installed glj BEFORE probe_tx.clj's
+   (require 'cohost.hosts.auto), whose :clj arm loads
+   cohost.hosts.jvm — and jvm.clj installs at namespace load,
+   clobbering glj. STATUS 16's thread stop was therefore the
+   JVM adapter's Runnable resolution, reached through the
+   wrong adapter (its core prefix artifact never required
+   auto, so its 6/6 genuinely ran under glj). The vehicle now
+   loads auto first, installs glj over it, then loads the
+   probe (auto's require is a no-op the second time). Wiring
+   a :glj arm into auto remains mainline's call (STATUS 16).
+2. **Agent sends never fired** — drained silently. Diagnosis
+   (bisect probes dev/stm/bisect*.clj): drain claimed the
+   action and died in run-action at (agent-var-handle):
+   glojure's ns-interns/ns-publics consult a registry only
+   stdlib namespaces are in — for a source-loaded namespace
+   (cohost.core) they THROW "No namespace: cohost.core found"
+   although find-ns sees it and its code runs. The default
+   :interned-var cap throws instead of answering nil, so the
+   layer's designed fallback (resolve-core '*agent* — which
+   works: clojure.core/*agent* resolves, binds, reads) was
+   never reached, and run-worker's try-all swallowed the
+   throw. Fix, in the seat adapter where seat quirks belong:
+   glj.clj gains :ns-interns / :interned-var entries that
+   answer {}/nil when the runtime's registry has no entry —
+   the caps' stated contract. No layer code changed.
+
+**Runs (logs in dev/stm/logs/):**
+- probe_tx on glojure, FULL: **PROBE-TX: ALL 23 CHECKS PASS**
+  (probe-tx-glj-go-chase.log), exit 0. Thread sections
+  verbatim: snapshot read point stable; skew bare vs ensure;
+  8 threads x 200 commutes = 1600, none lost; transfer
+  invariant 20000 with 2441 attempts for 2000 transactions
+  (retries real and scoped). Sends: held in tx, fired once
+  on commit, never on abort. Interrupt sections:
+  "interrupt wakes a blocked latch wait with the interrupt
+  exception" PASS; "interrupted tx thread abandons" PASS;
+  "abandoned tx wrote nothing" PASS.
+- probe_tx_glj_core (regression): 6 checks, 0 failures.
+- probe_interrupt_glj (new, dev/stm/probe_interrupt_glj.clj):
+  ALL 4 PASS — a polling compute goroutine stops at its next
+  poll after interrupt-thread!; a NON-polling compute
+  goroutine (3M iterations) runs to completion with the flag
+  set and unobserved. That is the cooperative contract
+  stated plainly: no preemption on this seat, exactly the
+  JVM's distance; Go cannot kill a goroutine and the layer
+  does not pretend otherwise.
+
+Remaining: the Eve hosting joint on this seat (domains probe
+over Eve domains on glojure) — next step.
