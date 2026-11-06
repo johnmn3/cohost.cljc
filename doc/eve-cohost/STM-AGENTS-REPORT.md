@@ -1814,3 +1814,47 @@ with this addendum; the remaining named items belong
 to their named owners (drift: mainline; Go thread
 leaves: the seat build; ::too-short: the semantics
 call; jank: the environment's lock, then one command).
+
+## STATUS 21 — 2026-11-06 ~10:1x AM ET — the ::too-short unbounded retry is DISPOSITIONED and FIXED (operator ruling; Lane M implementation lane, branch muse/stm-retry-bound)
+
+STATUS 14's open item is closed. The operator ruled (2026-11-06
+9:44 AM ET; filed in REPORTS.md on muse/cohost-reports as
+"DECISION RECORDED — STM unbounded-retry disposition"):
+disposition (i) is adopted with stock Clojure's scoping, and
+disposition (ii) (re-base the read point on ::too-short) is
+REJECTED — no silent re-basing, ever: it would change a
+transaction's snapshot mid-flight.
+
+Implemented in src/cohost/tx.cljc on muse/stm-retry-bound:
+- The single-writer contract is STATED (tx ns docstring): a ref's
+  cell is written only through transactions and layer-released
+  agent sends; state needing uncoordinated writers is a plain Eve
+  atom, not a ref — stock's type-level choice.
+- The out-of-band signature is named in code (`beyond-clock?`): a
+  cell whose point stands beyond the commit-point clock. The
+  layer's commit path cannot produce it (install! writes only
+  clock-claimed points; the clock never decreases), so the
+  signature is exact, not heuristic.
+- touch! (::too-short), commit! validation, and install! CAS
+  give-up throw a distinct basis-fault signal when the failing
+  cell carries the signature; failures without it keep the plain
+  retry signal (the legal history-trim ::too-short still
+  self-heals on a fresh read point).
+- run-in-transaction counts basis faults per invocation;
+  contention retries neither increment nor reset the count and
+  stay unbounded. At `basis-fault-limit` (10000 — stock's
+  RETRY_LIMIT number, scope deliberately narrower than a global
+  cap) the invocation throws IllegalStateException "Transaction
+  failed after reaching retry limit".
+
+Evidence (JVM seat): probe_tx ALL 23 CHECKS PASS, unmoved.
+New probe dev/stm/probe_tx_retry_bound.clj: ALL 8 CHECKS PASS —
+the transfer-shape contention control lands 2000/2000 transfers
+(3,896 attempts, no fault); the STATUS 14 manufacture (cell at
+Long/MAX_VALUE, history emptied) faults after exactly 10,001
+attempts in ~129 ms with stock's message, the poisoned cell left
+unmoved (no re-basing), and an honest transaction commits after
+the fault. Note: probe_throw_jolt.clj's deep-conflict manufacture
+is the out-of-band shape; its first section now faults with the
+retry-limit exception instead of hanging — the disposition
+working. Full record: dev/stm/STATUS-retry-bound.md (FINAL).
