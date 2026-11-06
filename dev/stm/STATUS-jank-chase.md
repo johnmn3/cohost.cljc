@@ -1,0 +1,52 @@
+# STATUS — STM jank chase lane (Lane M)
+
+Operator directive (John Newman, 2026-11-06): the STM multi-target lane
+declared jank "NOT RUN (not failed)" behind an apt/dpkg lock. Operator:
+"Those don't seem like real blockers" — chase it down.
+
+Branch: `muse/stm-jank-probe` off `origin/muse/eve-cohost-stm-agents`
+(tip 228e0c1 at branch creation). Worktree: `~/workspace/wt/stm-jank`.
+
+## Milestone 1 — 2026-11-06 ~9:13 AM ET — lock state + toolchain restore
+
+**Lock state, firsthand:** NO apt/dpkg process exists on this box and
+`fuser` shows no holder on /var/lib/dpkg/lock or lock-frontend (the lock
+FILES exist, dated today 12:50–12:53 UTC, held by nobody — stale files,
+not a held lock). Whatever held the lock during the prior lane's run is
+gone. No apt was needed for the restore regardless.
+
+**What was actually missing:** only jank itself. A VM cycle wiped
+/usr/local again; everything else the prior lane named was already back:
+gcc-14-base, libgcc-14-dev, libstdc++-14-dev are dpkg-registered
+(os replay restored them), /usr/include/c++/14 headers present, system
+libstdc++ is .so.6.0.33 (gcc-14 runtime, GLIBCXX up to 3.4.33), and all of
+jank.deb's declared dev deps (libbz2-dev, libzstd-dev, libxml2-dev,
+zlib1g-dev, libboost-all-dev) are installed. The three cached gcc-14 debs
+were ALSO extracted with `dpkg-deb -x` as belt-and-braces (idempotent,
+same versions).
+
+**Restore:** `dpkg-deb -x ~/workspace/cohost-install/jank.deb /`
+(no dpkg lock involved). jank → /usr/local/bin/jank, resources →
+/usr/local/lib/jank/0.1 (bundled clang-23). `ldd` clean, no missing libs.
+
+**Smoke, as printed:**
+- `jank check-health`: all green — runtime initialized, resource dir
+  found, runtime clang found, **"jank can jit compile c++" ✅**.
+- Hello run: `jank run hello.jank` → `hello from jank: 3` (1.3 s, warm
+  PCH cache in ~/.cache/jank).
+- C++ JIT spot check: bundled clang-23 demonstrably parses the
+  libstdc++-14 headers (a deliberately malformed probe got a semantic
+  error citing /usr/include/c++/14/ratio). NOTE: raw `#include` inside
+  `(cpp/raw ...)` at top level does NOT take effect for later forms —
+  the cpp-include mechanics documented in
+  ~/workspace/cohost-install/cpp-include-problem.md; cohost's boot
+  handles includes its own way. Probe-authoring detail, not a toolchain
+  defect.
+
+## Next
+Run the probe: from repo root,
+`jank --module-path src run dev/stm/probe_tx_jank.jank`
+(loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
+23 semantics checks the JVM seat runs; refs seat in host atoms on this
+seat, Eve hosting joint unbuilt — STATUS 10 of the prior lane).
+Interrupt sections called out explicitly in the run report.
