@@ -1,0 +1,83 @@
+SLF4J: No SLF4J providers were found.
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See https://www.slf4j.org/codes.html#noProviders for further details.
+FAIL client: HttpClient GET ofString 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok [200 "hello" "text/plain" "/hello"]]
+      CLJS x Eve node server [:ok [200 "hello" "text/plain" "/hello"]]
+FAIL client: HttpClient POST ofString, request header, query 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok [200 [:post "/echo" "q=1&r=two" "posted body" "echoed" :http true] "post" "POST"]]
+      CLJS x Eve node server [:ok [200 [:post "/echo" "q=1&r=two" "posted body" "echoed" :http true] "post" "POST"]]
+FAIL client: HttpClient builder: newBuilder/build, PUT, DELETE 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok [[:put "/echo" nil "p" nil :http true] [:delete "/echo" nil "" nil :http true]]]
+      CLJS x Eve node server [:ok [[:put "/echo" nil "p" nil :http true] [:delete "/echo" nil "" nil :http true]]]
+FAIL client: HttpClient 404, 201, 204 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok [[404 "nope"] [201 "{\"a\":1}"] [204 ""]]]
+      CLJS x Eve node server [:ok [[404 "nope"] [201 "{\"a\":1}"] [204 ""]]]
+FAIL client: HttpClient UTF-8 body, ofString and ofByteArray 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok ["h?llo ?" "h?llo ?" 10]]
+      CLJS x Eve node server [:ok ["h?llo ?" "h?llo ?" 10]]
+FAIL client: HttpClient ofInputStream through slurp 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok "a\nb\nc\n"]
+      CLJS x Eve node server [:ok "a\nb\nc\n"]
+FAIL client: HttpHeaders: firstValue absent, allValues, map lookup 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:error "Cannot compare :cohost/kind to date  (outer: ERROR)"]
+      CLJS x Eve node server [:error "Cannot compare :cohost/kind to content-length  (outer: ERROR)"]
+PASS client: HttpClient connection refused is an IOException => :io-exception
+FAIL client: HttpClient.sendAsync: join, isDone, deref, get, thenApply 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok [200 true "hello" "hello" "hello" 201]]
+      CLJS x Eve node server [:ok [200 true "hello" "hello" "hello" 201]]
+PASS client: HttpClient.sendAsync failure: CompletionException at join, ExecutionException at get and deref => [[:completion true] [:execution true] [:execution true] [:completion true]]
+FAIL client: HttpURLConnection GET 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok [200 "OK" "hello" "text/plain" "text/plain" "GET"]]
+      CLJS x Eve node server [:ok [200 "OK" "hello" "text/plain" "text/plain" "GET"]]
+FAIL client: HttpURLConnection POST through io/writer on getOutputStream 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok [200 [:post "/echo" "via=conn" "written" "prop" :http true] "POST"]]
+      CLJS x Eve node server [:ok [200 [:post "/echo" "via=conn" "written" "prop" :http true] "POST"]]
+FAIL client: HttpURLConnection PUT via setRequestMethod 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok [:put "/echo" nil "put-bytes" nil :http true]]
+      CLJS x Eve node server [:ok [:put "/echo" nil "put-bytes" nil :http true]]
+FAIL client: HttpURLConnection 404: FileNotFoundException, error stream 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok [404 "Not Found" :file-not-found "nope"]]
+      CLJS x Eve node server [:ok [404 "Not Found" :file-not-found "nope"]]
+FAIL client: slurp a URL 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok "hello"]
+      CLJS x Eve node server [:ok "hello"]
+FAIL client: clojure.java.io/reader + line-seq over a URL 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok ["a" "b" "c"]]
+      CLJS x Eve node server [:ok ["a" "b" "c"]]
+FAIL client: clojure.java.io/input-stream over a URL; a seq body 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok "xyz"]
+      CLJS x Eve node server [:ok "xyz"]
+FAIL client: slurp a URL with a UTF-8 body 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok "h?llo ?"]
+      CLJS x Eve node server [:ok "h?llo ?"]
+FAIL client: URL.openStream 
+      REF [:error "Syntax error macroexpanding at (1:1)."]
+      CLJS [:ok "hello"]
+      CLJS x Eve node server [:ok "hello"]
+PASS client: slurp a URL: connection refused is an IOException => :io-exception
+PASS client: URL accessors => ["http" "example.com" 8080 80 "/a/b.txt" "x=1&y=%20" "/a/b.txt?x=1&y=%20" "frag" "user@example.com:8080" "user" "http://user@example.com:8080/a/b.txt?x=1&y=%20#frag" "http://user@example.com:8080/a/b.txt?x=1&y=%20#frag" [-1 "" nil nil 443]]
+PASS client: URI accessors, resolve, toURL / toURI => ["http" "example.com" 81 "/dir/page" "a=b c" "a=b%20c" "top" true "http://example.com:81/dir/other" "http://example.com:81/root" "http://example.com:81/dir/page?a=b%20c#top" "http://example.com/x" "rel/path" false "rel/path"]
+PASS client: uri?, instance?, class, MalformedURLException => [true false true true "java.net.URL" "java.net.URI" "no protocol: no-protocol" "unknown protocol: zzz" true]
+Execution error (IOException) at sun.nio.ch.SocketDispatcher/writev0 (REPL:-2).
+Broken pipe
+
+Full report at:
+/tmp/clojure-11232677097148037632.edn
+HARNESS EXIT: 1

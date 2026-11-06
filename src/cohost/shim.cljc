@@ -86,6 +86,18 @@
 (def ^:private h-re-find-at (host/capability :re-find-at))
 (def ^:private h-re-match-full (host/capability :re-match-full))
 
+;; the layer's transient check, sorted-guarded: a guarded transient is a
+;; plain tagged map (memory/as-transient), never a sorted collection --
+;; the rule the transient-class predicates below already state ("sorted
+;; collections have no transient form") -- and memory/transient-value?'s
+;; tag lookup inside a sorted map is a tree search whose comparator
+;; throws on the keyword probe: a string-keyed sorted map (cohost.http's
+;; headers map) dies with "Cannot compare :cohost/kind to date" on the
+;; Node seat, a ClassCastException on the JVM seat. Every shim dispatch
+;; path asks this, never memory/transient-value? directly.
+(def ^:private transient-value?
+  (fn [x] (and (not (h-sorted? x)) (memory/transient-value? x))))
+
 ;; ---------------------------------------------------------------------------
 ;; misses
 
@@ -561,16 +573,16 @@
    'clojure.lang.IEditableCollection #(and (or (vector? %) (map? %) (set? %)) (not (h-sorted? %)) (not (host-record? %)))
    ;; layer guarded transients (unit 4) answer the transient
    ;; predicates by kind, as stock's transient classes do
-   'clojure.lang.ITransientCollection #(or (h-transient? %) (memory/transient-value? %))
+   'clojure.lang.ITransientCollection #(or (h-transient? %) (transient-value? %))
    'clojure.lang.ITransientAssociative #(or (h-transient? %)
-                                             (and (memory/transient-value? %)
+                                             (and (transient-value? %)
                                                   (contains? #{:vector :map} (memory/transient-kind %))))
    'clojure.lang.ITransientMap #(or (h-transient? %)
-                                    (and (memory/transient-value? %) (= :map (memory/transient-kind %))))
+                                    (and (transient-value? %) (= :map (memory/transient-kind %))))
    'clojure.lang.ITransientVector #(or (h-transient? %)
-                                       (and (memory/transient-value? %) (= :vector (memory/transient-kind %))))
+                                       (and (transient-value? %) (= :vector (memory/transient-kind %))))
    'clojure.lang.ITransientSet #(or (h-transient? %)
-                                    (and (memory/transient-value? %) (= :set (memory/transient-kind %))))
+                                    (and (transient-value? %) (= :set (memory/transient-kind %))))
    ;; vectors and lists here; ranges, an Eduction, a user type: the host's answer
    'clojure.lang.IReduceInit #(or (vector? %) (list? %) (jank-impl? % :reduce) (host/host-instance? 'clojure.lang.IReduceInit %))
    'clojure.lang.IReduce #(or (vector? %) (list? %) (jank-impl? % :reduce) (host/host-instance? 'clojure.lang.IReduce %))
@@ -764,7 +776,7 @@
 ;; false for ordinary values on every host, fill or no fill.
 (defn- layer-conj
   [coll x]
-  (cond (memory/transient-value? coll)
+  (cond (transient-value? coll)
         (throw (host/ex* 'java.lang.ClassCastException
                          (str "class " (memory/transient-class-token coll)
                               " cannot be cast to class clojure.lang.IPersistentCollection")))
@@ -777,7 +789,7 @@
 (def RT-first first)
 (def RT-next next)
 (def RT-more rest)
-(def RT-seq (fn [x] (if (memory/transient-value? x)
+(def RT-seq (fn [x] (if (transient-value? x)
                       (throw (host/ex* 'java.lang.ClassCastException
                                        (str "class " (memory/transient-class-token x)
                                             " cannot be cast to class clojure.lang.Seqable")))
@@ -796,7 +808,7 @@
                                  (if-let [f (:count d)] (f x)
                                    (throw (host/ex* 'java.lang.UnsupportedOperationException (str "count not supported on this type: " (:name d)))))
                                  (count x)))
-                 :default (fn [x] (if (memory/transient-value? x) (memory/t-count x) (count x)))))
+                 :default (fn [x] (if (transient-value? x) (memory/t-count x) (count x)))))
 (def RT-nth #?(:jank (fn ([x i] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                   (if-let [f (:nth d)] (f x i)
                                     (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
@@ -810,10 +822,10 @@
                                    (if-let [f (:nth d)] (f x i nf)
                                      (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
                                    (nth x i nf))))
-               :default (fn ([x i] (cond (memory/transient-value? x) (memory/t-nth x i)
+               :default (fn ([x i] (cond (transient-value? x) (memory/t-nth x i)
                                          (memory/eve-backed? x) (memory/nth-of x i)
                                          :else (nth x i)))
-                          ([x i nf] (cond (memory/transient-value? x) (memory/t-nth x i nf)
+                          ([x i nf] (cond (transient-value? x) (memory/t-nth x i nf)
                                           (memory/eve-backed? x) (memory/nth-of x i nf)
                                           :else (nth x i nf))))))
 ;; Phel's get reads any other object as a PHP array, which throws: the JVM's
@@ -823,10 +835,10 @@
                                      (php/is_a m "Phel\\Lang\\Collections\\HashSet\\TransientHashSetInterface")))]
              (fn ([m k] (if (lookup? m) (get m k) nil))
                ([m k nf] (if (lookup? m) (get m k nf) nf))))
-     :default (fn ([m k] (cond (memory/transient-value? m) (memory/t-get m k)
+     :default (fn ([m k] (cond (transient-value? m) (memory/t-get m k)
                                (memory/eve-backed? m) (memory/lookup m k nil)
                                :else (get m k)))
-                ([m k nf] (cond (memory/transient-value? m) (memory/t-get m k nf)
+                ([m k nf] (cond (transient-value? m) (memory/t-get m k nf)
                                 (memory/eve-backed? m) (memory/lookup m k nf)
                                 :else (get m k nf))))))
 ;; a record on Phel is a struct, which holds its fields alone: a key outside
@@ -841,7 +853,7 @@
      ;; the collection seam (unit 4): a layer transient target is
      ;; stock's ClassCastException; an Eve-backed target goes
      ;; through the layer's checked assoc
-     :default (fn [m k v] (cond (memory/transient-value? m)
+     :default (fn [m k v] (cond (transient-value? m)
                                 (throw (host/ex* 'java.lang.ClassCastException
                                                  (str "class " (memory/transient-class-token m)
                                                       " cannot be cast to class clojure.lang.Associative")))
@@ -852,7 +864,7 @@
                                        (if-let [f (:dissoc d)] (reduce f m ks)
                                          (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.IPersistentMap"))))
                                        (apply dissoc m ks)))
-                  :default (fn [m & ks] (if (memory/transient-value? m)
+                  :default (fn [m & ks] (if (transient-value? m)
                                           (throw (host/ex* 'java.lang.ClassCastException
                                                            (str "class " (memory/transient-class-token m)
                                                                 " cannot be cast to class clojure.lang.IPersistentMap")))
@@ -860,21 +872,21 @@
 (def RT-contains #?(:jank (fn [coll k] (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                                          (some? (if-let [f (:find d)] (f coll k) (when-let [g (:get d)] (g coll k))))
                                          (contains? coll k)))
-                    :default (fn [coll k] (cond (memory/transient-value? coll) (memory/t-contains? coll k)
+                    :default (fn [coll k] (cond (transient-value? coll) (memory/t-contains? coll k)
                                                  (memory/eve-backed? coll) (memory/lookup-contains? coll k)
                                                  :else (contains? coll k)))))
 (def RT-find #?(:jank (fn [coll k] (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                                      (if-let [f (:find d)] (f coll k)
                                        (when-let [g (:get d)] (let [v (g coll k ::absent)] (when (not= ::absent v) [k v]))))
                                      (find coll k)))
-                :default (fn [coll k] (cond (memory/transient-value? coll) (memory/t-find coll k)
+                :default (fn [coll k] (cond (transient-value? coll) (memory/t-find coll k)
                                              (memory/eve-backed? coll) (memory/lookup-find coll k)
                                              :else (find coll k)))))
 (def RT-keys keys)
 (def RT-vals vals)
-(def RT-peek (fn [x] (if (memory/transient-value? x) (memory/t-peek x) (peek x))))
+(def RT-peek (fn [x] (if (transient-value? x) (memory/t-peek x) (peek x))))
 (def RT-pop #?(:phel (fn [coll] (pop coll))
-               :default (fn [coll] (if (memory/transient-value? coll)
+               :default (fn [coll] (if (transient-value? coll)
                                       (throw (host/ex* 'java.lang.ClassCastException
                                                        (str "class " (memory/transient-class-token coll)
                                                             " cannot be cast to class clojure.lang.IPersistentCollection")))
@@ -2676,12 +2688,12 @@
 (def -hasNext host/iter-has-next?)
 (def -more rest)
 ;; (.seq coll) and Sorted.seq(ascending): subseq/rsubseq walk either way
-(def -seq (fn ([x] (if (memory/transient-value? x)
+(def -seq (fn ([x] (if (transient-value? x)
                       (throw (host/ex* 'java.lang.ClassCastException
                                        (str "class " (memory/transient-class-token x)
                                             " cannot be cast to class clojure.lang.Seqable")))
                       (seq x)))
-            ([x ascending?] (cond (memory/transient-value? x)
+            ([x ascending?] (cond (transient-value? x)
                                   (throw (host/ex* 'java.lang.ClassCastException
                                                    (str "class " (memory/transient-class-token x)
                                                         " cannot be cast to class clojure.lang.Seqable")))
@@ -2692,7 +2704,7 @@
                                   (memory/eve-backed? x) (reverse (seq x))
                                   :else (rseq x)))))
 (def -cons layer-conj)
-(def -count (fn [x] (cond (memory/transient-value? x) (memory/t-count x)
+(def -count (fn [x] (cond (transient-value? x) (memory/t-count x)
                           (host/mlist? x) (count @(:state x))
                           :else (count x))))
 ;; a String method on nil is the JVM's NullPointerException
@@ -2795,7 +2807,7 @@
                                (apply thread/get-future x args)
                                ;; cohost.http's Optional (HttpHeaders.firstValue)
                                (http/is? :cohost.http/optional x) (http/optional-get x)
-                               (memory/transient-value? x) (apply memory/t-get x args)
+                               (transient-value? x) (apply memory/t-get x args)
                                (memory/eve-backed? x) (if (= 1 (count args))
                                                         (memory/lookup x (first args) nil)
                                                         (apply memory/lookup x args))
@@ -2831,40 +2843,40 @@
 (def ^:private h-dissoc! (host-fn 'dissoc! nil))
 (def ^:private h-disj! (host-fn 'disj! nil))
 (def ^:private h-pop! (host-fn 'pop! nil))
-(def -assoc (fn [x k v] (cond (memory/transient-value? x) (memory/t-assoc x k v)
+(def -assoc (fn [x k v] (cond (transient-value? x) (memory/t-assoc x k v)
                               (h-transient? x) (h-assoc! x k v)
                               :else (assoc* x k v))))
 (def -assocN -assoc)
-(def -without (fn [x k] (cond (memory/transient-value? x) (memory/t-dissoc x k)
+(def -without (fn [x k] (cond (transient-value? x) (memory/t-dissoc x k)
                               (h-transient? x) (h-dissoc! x k)
                               :else (dissoc x k))))
-(def -disjoin (fn [x k] (cond (memory/transient-value? x) (memory/t-disj x k)
+(def -disjoin (fn [x k] (cond (transient-value? x) (memory/t-disj x k)
                               (h-transient? x) (h-disj! x k)
                               :else (disj x k))))
-(def -valAt (fn ([x k] (cond (memory/transient-value? x) (memory/t-get x k)
+(def -valAt (fn ([x k] (cond (transient-value? x) (memory/t-get x k)
                              (memory/eve-backed? x) (memory/lookup x k nil)
                              :else (get x k)))
-              ([x k d] (cond (memory/transient-value? x) (memory/t-get x k d)
+              ([x k d] (cond (transient-value? x) (memory/t-get x k d)
                              (memory/eve-backed? x) (memory/lookup x k d)
                              :else (get x k d)))))
-(def -entryAt (fn [x k] (cond (memory/transient-value? x) (memory/t-find x k)
+(def -entryAt (fn [x k] (cond (transient-value? x) (memory/t-find x k)
                               (memory/eve-backed? x) (memory/lookup-find x k)
                               :else (find x k))))
-(def -containsKey (fn [x k] (cond (memory/transient-value? x) (memory/t-contains? x k)
+(def -containsKey (fn [x k] (cond (transient-value? x) (memory/t-contains? x k)
                                   (memory/eve-backed? x) (memory/lookup-contains? x k)
                                   :else (contains? x k))))
 (def -peek #?(:jank (fn [x] (if (cohost-inst? x)
                               (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
                               (peek x)))
-              :default (fn [x] (if (memory/transient-value? x) (memory/t-peek x) (peek x)))))
-(def -pop (fn [x] (cond (memory/transient-value? x) (memory/t-pop x)
+              :default (fn [x] (if (transient-value? x) (memory/t-peek x) (peek x)))))
+(def -pop (fn [x] (cond (transient-value? x) (memory/t-pop x)
                         (h-transient? x) (h-pop! x)
                         :else #?(:jank (if (cohost-inst? x)
                                          (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
                                          (pop x))
                                  :default (pop x)))))
 (def -meta (fn [x] (cond (atom-layer/atom-value? x) (atom-layer/meta-of x)
-                         (memory/transient-value? x) (memory/t-meta x)
+                         (transient-value? x) (memory/t-meta x)
                          :else (host/meta* x))))
 ;; let-go: a symbol given no metadata is the bare symbol (with-meta makes a
 ;; wrapper no symbol equals, even of none)
@@ -2877,7 +2889,7 @@
                   ;; value's meta rides the layer's wrapper (Eve
                   ;; collections carry no meta of their own)
                   :default (fn [x m] (cond (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m)
-                                           (memory/transient-value? x) (memory/t-with-meta x m)
+                                           (transient-value? x) (memory/t-with-meta x m)
                                            (memory/eve-backed? x) (memory/with-meta* x m)
                                            :else (with-meta x m)))))
 (defn- host-meta [m] (if (host/strip-inline?) (dissoc m :inline :inline-arities) m))
@@ -3006,7 +3018,7 @@
                            (if-let [f (:empty d)] (f coll)
                              (throw (host/ex* 'java.lang.UnsupportedOperationException (str "Can't create empty: " (:name d)))))
                            (h coll))
-                   :default (cond (memory/transient-value? coll)
+                   :default (cond (transient-value? coll)
                                   (throw (host/ex* 'java.lang.UnsupportedOperationException
                                                    (str "Can't create empty: " (memory/transient-class-token coll))))
                                   (memory/eve-backed? coll) (memory/empty-of coll)
@@ -3016,7 +3028,7 @@
 ;; jank's rseq is a TODO stub; reversing is its whole content there
 (def -rseq #?(:jank (fn [coll] (seq (reverse coll)))
               :default (let [h (host-fn 'rseq nil)]
-                         (fn [coll] (cond (memory/transient-value? coll)
+                         (fn [coll] (cond (transient-value? coll)
                                           (throw (host/ex* 'java.lang.ClassCastException
                                                            (str "class " (memory/transient-class-token coll)
                                                                 " cannot be cast to class clojure.lang.Reversible")))
@@ -3032,11 +3044,11 @@
 ;; layer value are the layer's guarded transients; every other
 ;; value keeps the host's own
 (def -persistent (let [h (host-fn 'persistent! (unsupported "persistent!"))]
-                   (fn [x] (if (memory/transient-value? x) (memory/t-persistent! x) (h x)))))
+                   (fn [x] (if (transient-value? x) (memory/t-persistent! x) (h x)))))
 (def -asTransient (let [h (host-fn 'transient (unsupported "transient"))]
                     (fn [x] (if (memory/eve-backed? x) (memory/as-transient x) (h x)))))
 (def -conj (let [h (host-fn 'conj! (unsupported "conj!"))]
-             (fn [t x] (if (memory/transient-value? t) (memory/t-conj t x) (h t x)))))
+             (fn [t x] (if (transient-value? t) (memory/t-conj t x) (h t x)))))
 (def -add (if-let [append (:chunk-append hc)]
            ;; an ArrayList stand-in, or a host ChunkBuffer (new-ChunkBuffer)
            (fn [l x] (if (host/mlist? l) (do (swap! (:state l) conj x) true) (do (append l x) nil)))
