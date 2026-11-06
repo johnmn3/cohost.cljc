@@ -7,28 +7,54 @@
 ;; STATUS 10), so refs seat in host atoms: this run proves the STM
 ;; semantics + the throw-crossing question (STATUS 1) on jank frames.
 (ns probe-tx-jank
-  (:require [cohost.hosts.jank-host]))
+  (:require [cohost.hosts.jank-host]
+            [clojure.string :as str]))
 
 ;; Loading probe_tx.clj from raw jank (STM jank chase lane, 2026-11-06;
 ;; the runner as originally banked never ran -- see
-;; STATUS-jank-chase.md milestones 3-5 for the measured chain):
+;; STATUS-jank-chase.md milestones 3-9 for the measured chain):
 ;;   * load-file does not exist in jank's clojure.core;
 ;;   * load-string / load-reader exist but are "TODO: port" stubs;
-;;   * `load` IS implemented (runtime module loader), but jank's module
-;;     search resolves only .jank/.cljc files -- a .clj file is
-;;     invisible to it at any module path (measured).
-;; So: materialize the shared script as a .jank module (generated file,
-;; gitignored -- probe_tx.clj remains the single source) and REQUIRE it
-;; by namespace name. Measured loader behavior (modtest, attempts 4-6):
-;; `load` finds only flat same-root modules, by any path spelling;
-;; subdirectory modules resolve ONLY via require's ns-name -> path
-;; munging ('dev.stm.probe-tx-jank-generated ->
-;; dev/stm/probe_tx_jank_generated.jank). The generated copy therefore
-;; carries an ns form for that name; the script's own forms evaluate
-;; inside it exactly as they would under load-file.
-;; (cohost's booted path fills load-file via core-extras; this raw
-;; runner does not boot.)
+;;   * `load` reaches only flat same-root modules; subdirectory modules
+;;     resolve via require's ns-name -> munged-path rule, and jank's
+;;     module search sees .jank/.cljc files only (.clj is invisible).
+;; So the shared script is materialized as a generated .jank module
+;; (gitignored; probe_tx.clj remains the single source) and required by
+;; name. The generated copy is SEAT-ADAPTED in spelling only -- the
+;; checks, their order and their expected values are untouched:
+;;   * JVM class catches -> (catch cpp/jank.runtime.object_ref ...):
+;;     on this seat every cohost-layer throw (host/ex* products and
+;;     ex-infos alike) crosses as a jank object_ref, and this catch
+;;     binds it properly -- (catch :default e) would bind e to nil,
+;;     which the interrupt checks cannot use (they pass e to
+;;     thread/interrupted-ex?). JVM class names do not resolve in
+;;     jank's analyzer at all.
+;;   * (Exception. "boom") -> (ex-info "boom" {}): the seat-native
+;;     throwable; the abort checks only need a throw that propagates.
+;;   * (Thread/sleep -> (@#'clojure.core/sleep: jank core keeps its
+;;     sleep private (cpp/jank.runtime.sleep); Thread/ does not
+;;     resolve on raw jank.
+;;   * (System/nanoTime) -> (cpp/cohost_time.nano_time): the chrono
+;;     clock cohost's jank host itself installs (jank_host.jank).
+;;   * (System/exit ...) -> dropped (a println remains): raw jank has
+;;     no System/exit; the probe's own PROBE-TX verdict line is the
+;;     result of record.
+;; (cohost's booted path fills these gaps via core-extras and the
+;; codemod; this raw runner does not boot.)
+(defn- jank-adapt [s]
+  (-> s
+      (str/replace "(catch IllegalStateException"
+                   "(catch cpp/jank.runtime.object_ref")
+      (str/replace "(catch Exception"
+                   "(catch cpp/jank.runtime.object_ref")
+      (str/replace "(Exception. \"boom\")" "(ex-info \"boom\" {})")
+      (str/replace "(Thread/sleep" "(@#'clojure.core/sleep")
+      (str/replace "(System/nanoTime)" "(cpp/cohost_time.nano_time)")
+      (str/replace "(System/exit (if (empty? @failures) 0 1))"
+                   "(println \"INFO probe_tx_jank: System/exit dropped on raw jank\")")))
+
 (spit "dev/stm/probe_tx_jank_generated.jank"
-      (str "(ns dev.stm.probe-tx-jank-generated)\n" (slurp "probe_tx.clj")))
+      (str "(ns dev.stm.probe-tx-jank-generated)\n"
+           (jank-adapt (slurp "probe_tx.clj"))))
 (require 'dev.stm.probe-tx-jank-generated)
 (println "INFO probe_tx_jank: script completed")

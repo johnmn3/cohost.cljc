@@ -168,8 +168,39 @@ code touched). General finding for the mainline: any future non-ASCII
 character landing in a jank-loaded cohost/Eve source file is a hard
 load failure on this seat until jank's lexer learns UTF-8.
 
+## Milestone 9 — 2026-11-06 ~10:00 AM ET — attempt 8: PROBE RUNS (4 PASS), then jank's analyzer rejects JVM catch classes; seat-adapted spellings in the generated copy
+
+Attempt 8 (log probe-run-8.log) is the first run to EXECUTE the probe:
+ref-value?, deref outside tx, dosync alter, committed — 4/4 PASS as
+printed, on jank, through cohost.tx over host atoms. It then stopped
+at the first JVM-spelled catch: jank's analyzer cannot resolve
+`IllegalStateException` "within the global namespace"
+(analyze/invalid-try). Full inventory of JVM spellings in the shared
+script (grep): 2× (catch IllegalStateException, 4× (catch Exception,
+2× (Exception. "boom"), 9× (Thread/sleep, 4× (System/nanoTime),
+1× (System/exit). Each has a measured seat spelling:
+
+- Catches: cohost's own adapter (adapter.cljc try-all, :jank branch)
+  catches thrown values as (catch cpp/jank.runtime.object_ref e) —
+  every cohost-layer throw on this seat (host/ex* products, ex-infos)
+  crosses as an object_ref and binds properly. (:default would bind e
+  to nil; the interrupt checks pass e to thread/interrupted-ex?, whose
+  contract reads (ex-data e) for :cohost.thread/interrupted — so
+  object_ref is the only faithful spelling.)
+- (Exception. "boom") → (ex-info "boom" {}).
+- (Thread/sleep → (@#'clojure.core/sleep — jank core's sleep is
+  private (cpp/jank.runtime.sleep underneath); verified callable.
+- (System/nanoTime) → (cpp/cohost_time.nano_time) — the chrono clock
+  jank_host.jank itself installs for the seat.
+- (System/exit ...) → dropped; the probe's PROBE-TX verdict line is
+  the result of record.
+
+All six substitutions are applied ONLY to the generated .jank copy,
+spelling-only, documented in the runner header; probe_tx.clj is
+byte-untouched and the 23 checks keep their order and expectations.
+
 ## Next
-Probe attempt 8: from repo root,
+Probe attempt 9: from repo root,
 `jank --module-path src:. run dev/stm/probe_tx_jank.jank`
 (loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
 23 semantics checks the JVM seat runs; refs seat in host atoms on this
