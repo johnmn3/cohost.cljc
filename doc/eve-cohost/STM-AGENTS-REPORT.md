@@ -140,3 +140,137 @@ lives in cohost, per the layering ruling).
 Seats plan: JVM first (reference), then cljs, then jank —
 each as far as the leaves honestly go; remainders named
 with evidence, never stubbed over.
+
+## STATUS 1 — 2026-11-05 ~7:34 PM ET — interruptibility design (operator input banked)
+
+Restart of the lane (first session died in a daemon restart;
+picked up from this file + the scratch probes in dev/stm/).
+Operator input, this evening, verbatim in substance: he is
+curious how this lane solves interruptibility, and his
+recollection of the JVM reference is that Clojure hacked
+interruptibility in through the EXCEPTION system — "which
+you're not supposed to do, but he did anyway." The
+recollection is correct, and this design follows the same
+precedent, in cohost's layer only. Nothing in this section
+puts machinery into Eve's tree.
+
+### How the JVM reference actually does it (measured + source)
+
+- **Retry is an exception.** `clojure.lang.LockingTransaction`
+  signals a failed attempt by throwing a dedicated singleton
+  exception (`RetryEx`) up through the dosync body; only the
+  transaction runner catches it, and it loops the body
+  against a fresh snapshot. User code never sees it (unless
+  it catches Throwable broadly — a documented stock hazard
+  this design inherits and names, see below). Retry is not
+  a return code and not a status flag: it unwinds arbitrary
+  user frames, which is exactly why it has to be an
+  exception.
+- **Interruption is an exception too.** Blocking points
+  (future deref, agent `await` on its latch, `Thread/sleep`)
+  surface cancellation as `InterruptedException` when
+  `Thread.interrupt` lands; the interrupt itself is
+  cooperative — it stops nothing that isn't blocked or
+  polling the flag. Stock STM's retry loop is bounded by
+  contention, not by a timeout; interruption is how a
+  thread parked inside STM-cooperating code gets out.
+
+### 1. The retry signal on jank: a cohost-layer exception type
+
+This layer does the same thing, with cohost's own type:
+
+- `cohost.tx` defines ONE dedicated retry exception value
+  type (a layer exception, in the `cohost.thread` layer
+  exception family), with a single shared instance. A
+  failed commit validation throws it; ONLY the transaction
+  runner in `cohost.tx` catches it (by identity/type check
+  in the runner's catch, rethrowing everything else). It
+  is never exposed as a var user code can catch by name;
+  a user `catch Throwable`/`catch Exception` around a
+  dosync body can swallow it exactly as on the JVM — named
+  here as inherited stock behavior, not a new defect.
+- **Viability on jank is probed, not assumed.** Open
+  question: does a throw of a layer exception cross
+  jank-compiled frames (nested fn calls, `letfn` cycles,
+  calls through the shim's filled core fns) and land in
+  the runner's catch, in both JIT (boot context) and AOT
+  (shim compile) modes? The probe (`probe_tx.clj` jank
+  leg) throws the retry type from depth ≥3 of compiled
+  frames and from inside a callback invoked by layer code,
+  and times the throw/catch path.
+- **Cost, named in advance:** jank's throw allocates an
+  error object and unwinds via the host exception path —
+  not free. The cost lands ONLY on contended retries: an
+  uncontended commit never throws (validation passes, CAS
+  wins, done). Retry frequency is contention frequency;
+  the probe reports throws/sec so the number is on record.
+  If the measured cost is pathological, the mitigation is
+  fewer retries (bounded spin/backoff in the runner before
+  the throw-driven re-run), NOT a different signal —
+  unwinding user frames has no second mechanism.
+- **Fallback if a throw cannot cross some frame class:**
+  if the probe finds a frame class the exception cannot
+  cross (the candidates: host/C++ callback frames, Eve
+  thread-task boundaries), the runner degrades for bodies
+  that pass through such frames to a **flag-checked
+  cooperative retry**: a per-attempt retry-request flag on
+  the attempt record, set by the ref ops, checked at every
+  ref-op boundary and at body exit; a set flag discards
+  the attempt's writes and re-runs the body instead of
+  unwinding it. Named semantic difference: the doomed
+  attempt runs to its end rather than unwinding at the
+  conflict point, so body side effects after the conflict
+  point execute in the doomed attempt too (stock dosync
+  already re-runs bodies; this widens one attempt's
+  execution, it does not add executions). Any seat/frame
+  class on this fallback is named in STATUS with probe
+  evidence — never silently.
+
+### 2. Interrupts proper — closing unit 1's remainder, cooperatively
+
+Unit 1 banked the remainder: on Eve's thread layer behind
+the shim, `future-cancel` and `Thread.interrupt` don't
+interrupt yet. This lane's agent story depends on the
+answer, so it is stated plainly:
+
+- `await` / `await-for` do NOT need target-thread
+  interruption: they are timed waits on the WAITER's side
+  (latch with timeout). `await-for` returning false on
+  timeout, with the agent action still queued/running, is
+  stock semantics and works on every seat as-is.
+- Cancelling or interrupting RUNNING work does need it.
+  This lane closes the unit-1 remainder **in cohost's
+  thread layer, cooperatively** — which is also all the
+  JVM ever does: a per-task cancel flag on layer tasks;
+  `future-cancel` / agent shutdown set the flag and wake
+  the task's waiters; every blocking leaf in the layer
+  (latch await, queue take, sleep, agent await) waits in
+  bounded slices and, on seeing its task's flag, throws
+  the layer's interrupt exception. Pure compute loops are
+  not interrupted — identical to the JVM, where interrupt
+  surfaces only at blocking points or explicit polls. The
+  tx runner checks the flag once per attempt: an
+  interrupted thread abandons the transaction with the
+  interrupt exception instead of retrying forever.
+- What is NOT claimed: preemption. No seat gets the power
+  to stop a thread mid-computation, and no doc in this
+  lane will say "cancel stops the action" without the
+  words "at its next blocking point."
+
+### 3. Seats where interruptibility cannot be provided
+
+- If a seat's thread layer cannot carry even the
+  cooperative flag (no tasks, no blocking leaves — the
+  single-realm case), STM still installs, with the seat's
+  STATUS entry stating: retry is uninterruptible on this
+  seat (a contended transaction retries until contention
+  resolves; `await-for` timeouts still bound agent waits,
+  since those are waiter-side). The capability is a named
+  per-seat fact in the probe output (`:stm-interruptible?`),
+  checked by the booted-context gate — a seat flipping
+  either way changes a measured row, not a doc claim.
+- Layering, restated: the retry exception type, the cancel
+  flags, and the interrupt exception all live in
+  `cohost.tx` / `cohost.thread`. Eve gets nothing; Eve
+  hosts that cannot interrupt lose nothing, because STM
+  was never theirs to carry.
