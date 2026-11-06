@@ -1,0 +1,15 @@
+(require '[eve.atom :as eve-atom])
+(defn rate [label n f]
+  (let [s (System/nanoTime)] (f n)
+    (let [ms (/ (- (System/nanoTime) s) 1e6)]
+      (println (format "%-24s %9.0f ops/ms (%7.2f µs/op)" label (/ n ms) (* ms (/ 1000.0 n)))))))
+(def ca (atom {:value 0}))
+(rate "host atom deref" 200000 (fn [n] (dotimes [_ n] @ca)))
+(rate "host atom swap!" 20000 (fn [n] (dotimes [_ n] (swap! ca update :value inc))))
+(def d1 (eve-atom/atom-domain {}))
+(def a1 (eve-atom/lookup-or-create-mmap-atom! d1 "a" 0))
+(rate "eve deref (long root)" 20000 (fn [n] (dotimes [_ n] @a1)))
+(rate "eve swap! (long root)" 2000 (fn [n] (dotimes [_ n] (swap! a1 inc))))
+(def a2 (eve-atom/lookup-or-create-mmap-atom! d1 "b" {:value 0 :point 0 :version 0 :history []}))
+(rate "eve deref (cell map)" 20000 (fn [n] (dotimes [_ n] @a2)))
+(rate "eve swap! (cell map)" 2000 (fn [n] (dotimes [_ n] (swap! a2 update :value inc))))
