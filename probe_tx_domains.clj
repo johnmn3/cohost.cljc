@@ -1,11 +1,12 @@
 ;; STM lane (redesign): the per-ref/per-domain probe. Run on the JVM seat:
 ;;   clojure -M:eve probe_tx_domains.clj
-;; Installs the seat's Eve hosting FIRST, so cohost.tx's refs are minted
-;; as cohost.atom domain atoms -- one Eve atom domain per ref -- and
+;; Installs an Eve factory FIRST, so cohost.tx's refs are minted as
+;; cohost.atom domain atoms -- one Eve atom domain per ref -- and
 ;; verifies the redesign's three claims with evidence:
-;;   1. residence: every ref's cell is :eve-own-domain, and the hosting
-;;      mints exactly one domain per ref (none into the shared program
-;;      domains);
+;;   1. residence: every ref's cell is :eve-own-domain, the factory
+;;      minted exactly one domain per ref, and the refs' Eve handles
+;;      sit in pairwise-distinct domain states (read off the handles
+;;      themselves, not a counter's word);
 ;;   2. disjoint transactions never contend: concurrent transactions on
 ;;      disjoint ref sets commit with ZERO retries (tx/stats);
 ;;   3. retries are scoped to the conflicting ref: under heavy contention
@@ -14,14 +15,32 @@
 ;;      they would retry on EVERY commit anywhere.
 ;; Plus: an unrepresentable ref value (a fn) still transacts, seated in
 ;; its domain atom's wrapper host seat, as unit 5's atoms behave.
+;;
+;; The factory is installed probe-locally, with the same two Eve calls
+;; cohost.atom-eve's :make-domain-atom makes (eve.atom/atom-domain +
+;; lookup-or-create-mmap-atom!), because cohost.atom-eve itself does
+;; not compile against the current Eve checkout: its unit-7
+;; root-digests references eve.atom/seal and eve.digest, neither of
+;; which exists in Eve at the sibling checkout's current state. That
+;; drift predates this lane and is named in its report as a remainder
+;; for the mainline; the factory path exercised here (cohost.atom/
+;; make-domain-atom -> the seat's :make-domain-atom fn) is the code
+;; under test either way.
 
 (require 'cohost.hosts.auto)
-(require '[cohost.atom-eve :as atom-eve]
+(require '[eve.atom :as eve-atom]
          '[cohost.atom :as atom-layer]
          '[cohost.tx :as tx]
          '[cohost.thread :as thread])
 
-(atom-eve/install!)
+(def domains-minted (atom 0))
+(atom-layer/install-factory!
+ {:make-domain-atom
+  (fn [slab-init]
+    (let [d (eve-atom/atom-domain {})
+          n (swap! domains-minted inc)]
+      (eve-atom/lookup-or-create-mmap-atom! d (str "cohost.tx/ref" n)
+                                            slab-init)))})
 (tx/set-fill! true)
 
 (def checks (atom 0))
@@ -35,19 +54,17 @@
 (defn check-true [label actual] (check label true (boolean actual)))
 
 ;; -- 1. residence + one domain per ref ---------------------------------
-(def h0 (atom-eve/hosting-state))
 (def t0 (System/nanoTime))
 (def rs (mapv (fn [i] (tx/make-ref i)) (range 10)))
 (def create-ms (/ (- (System/nanoTime) t0) 1e6))
-(def h1 (atom-eve/hosting-state))
 (println (format "INFO make-ref over Eve domains: %.0f ms for 10 refs (%.0f ms/ref)"
                  create-ms (/ create-ms 10.0)))
 (check "every ref's cell is :eve-own-domain" [:eve-own-domain]
        (distinct (map tx/cell-residence rs)))
-(check "one domain minted per ref" 10
-       (- (:ref-domains h1) (:ref-domains h0)))
-(check "no ref rode the shared program domains" 0
-       (- (:program-domains h1) (:program-domains h0)))
+(check "the factory minted one domain per ref" 10 @domains-minted)
+(check "the refs' Eve handles sit in 10 distinct domains" 10
+       (count (distinct (map (fn [r] (.-domain-state (atom-layer/eve-handle (:cell r))))
+                             rs))))
 (check "refs hold independent values" [0 1 2 3 4 5 6 7 8 9]
        (mapv tx/deref-ref rs))
 (tx/run-in-transaction (fn [] (tx/alter* (nth rs 0) inc [])
@@ -65,7 +82,7 @@
 (check "fn-valued ref transacts" 5 ((tx/deref-ref fr) 2))
 
 ;; -- 2. disjoint transactions: zero retries -----------------------------
-(def disjoint-refs (mapv (fn [i] (tx/make-ref 0)) (range 8)))
+(def disjoint-refs (mapv (fn [_] (tx/make-ref 0)) (range 8)))
 (tx/reset-stats!)
 (def dthreads
   (mapv (fn [r] (thread/spawn
