@@ -1,0 +1,81 @@
+== opt2 cohost=9e634fa eve=4e1126d55 10:18:28 PM ET load=1.78 1.12 0.81
+INSTANCE opt2 cohost-object? true eve-object? true tag eve.region/JankRegion
+DBENCH opt2 warm coll? answer false ns/call 1201.84922
+DBENCH opt2 warm counted? answer false ns/call 969.058544
+DBENCH opt2 warm coll? answer false ns/call 964.115187
+DBENCH opt2 warm counted? answer false ns/call 964.35026
+DBENCH opt2 region value rep 0 coll? answer false ns/call 992.9182
+DBENCH opt2 region value rep 0 counted? answer false ns/call 1001.453513
+DBENCH opt2 region value rep 1 coll? answer false ns/call 984.967104
+DBENCH opt2 region value rep 1 counted? answer false ns/call 992.771994
+DBENCH opt2 region value rep 2 coll? answer false ns/call 938.190602
+DBENCH opt2 region value rep 2 counted? answer false ns/call 1007.656192
+DBENCH opt2 region value rep 3 coll? answer false ns/call 1010.19206
+DBENCH opt2 region value rep 3 counted? answer false ns/call 953.046419
+DBENCH opt2 region value rep 4 coll? answer false ns/call 1011.522984
+DBENCH opt2 region value rep 4 counted? answer false ns/call 947.117036
+DBENCH opt2 region value rep 5 coll? answer false ns/call 983.216058
+DBENCH opt2 region value rep 5 counted? answer false ns/call 960.684514
+DBENCH opt2 region value rep 6 coll? answer false ns/call 1014.421411
+DBENCH opt2 region value rep 6 counted? answer false ns/call 942.029922
+EVEVEC eve-object? false tag nil
+DBENCH opt2 evevector value rep 0 count answer 8 ns/call 534.758066
+DBENCH opt2 evevector value rep 0 seq answer true ns/call 822.869805
+DBENCH opt2 evevector value rep 0 first answer 1 ns/call 598.989265
+DBENCH opt2 evevector value rep 1 count answer 8 ns/call 531.059693
+DBENCH opt2 evevector value rep 1 seq answer true ns/call 664.516026
+DBENCH opt2 evevector value rep 1 first answer 1 ns/call 604.591718
+DBENCH opt2 evevector value rep 2 count answer 8 ns/call 541.988024
+DBENCH opt2 evevector value rep 2 seq answer true ns/call 651.295708
+DBENCH opt2 evevector value rep 2 first answer 1 ns/call 599.24176
+DBENCH opt2 evevector value rep 3 count answer 8 ns/call 525.618669
+DBENCH opt2 evevector value rep 3 seq answer true ns/call 655.666709
+DBENCH opt2 evevector value rep 3 first answer 1 ns/call 598.059379
+DBENCH opt2 evevector value rep 4 count answer 8 ns/call 578.282849
+DBENCH opt2 evevector value rep 4 seq answer true ns/call 666.582005
+DBENCH opt2 evevector value rep 4 first answer 1 ns/call 636.971853
+DBENCH opt2 evevector value rep 5 count answer 8 ns/call 540.358315
+DBENCH opt2 evevector value rep 5 seq answer true ns/call 684.397811
+DBENCH opt2 evevector value rep 5 first answer 1 ns/call 610.342477
+DBENCH opt2 evevector value rep 6 count answer 8 ns/call 531.021552
+DBENCH opt2 evevector value rep 6 seq answer true ns/call 643.87985
+DBENCH opt2 evevector value rep 6 first answer 1 ns/call 638.65736
+DONE
+opt2 rc=0 wall=126s
+== opt1 cohost=04649fc eve=4e1126d55 10:20:34 PM ET load=1.30 1.12 0.85
+INSTANCE opt1 cohost-object? true eve-object? true tag eve.region/JankRegion
+DBENCH opt1 warm coll? answer false ns/call 288.800517
+DBENCH opt1 warm counted? answer false ns/call 84.806505
+DBENCH opt1 warm coll? answer false ns/call 85.948535
+DBENCH opt1 warm counted? answer false ns/call 83.989376
+DBENCH opt1 region value rep 0 coll? answer false ns/call 83.366967
+DBENCH opt1 region value rep 0 counted? answer false ns/call 83.917183
+DBENCH opt1 region direct rep 0 coll? ns/call 142.196672
+DBENCH opt1 region direct rep 0 counted? ns/call 208.432416
+DBENCH opt1 region value rep 1 coll? answer false ns/call 91.346529
+DBENCH opt1 region value rep 1 counted? answer false ns/call 84.08473
+DBENCH opt1 region direct rep 1 coll? ns/call 15.290684
+DBENCH opt1 region direct rep 1 counted? ns/call 91.956718
+DBENCH opt1 region value rep 2 coll? answer false ns/call 90.198856
+DBENCH opt1 region value rep 2 counted? answer false ns/call 85.662689
+DBENCH opt1 region direct rep 2 coll? ns/call 15.232712
+DBENCH opt1 region direct rep 2 counted? ns/call 90.148618
+DBENCH opt1 region value rep 3 coll? answer false ns/call 92.824701
+DBENCH opt1 region value rep 3 counted? answer false ns/call 87.95263
+DBENCH opt1 region direct rep 3 coll? ns/call 16.557003
+DBENCH opt1 region direct rep 3 counted? ns/call 107.880268
+DBENCH opt1 region value rep 4 coll? answer false ns/call 85.592582
+DBENCH opt1 region value rep 4 counted? answer false ns/call 86.27571
+DBENCH opt1 region direct rep 4 coll? ns/call 15.829037
+DBENCH opt1 region direct rep 4 counted? ns/call 89.805706
+DBENCH opt1 region value rep 5 coll? answer false ns/call 84.793514
+DBENCH opt1 region value rep 5 counted? answer false ns/call 84.180005
+DBENCH opt1 region direct rep 5 coll? ns/call 15.409523
+DBENCH opt1 region direct rep 5 counted? ns/call 91.280811
+DBENCH opt1 region value rep 6 coll? answer false ns/call 84.954904
+DBENCH opt1 region value rep 6 counted? answer false ns/call 85.448805
+DBENCH opt1 region direct rep 6 coll? ns/call 15.362863
+DBENCH opt1 region direct rep 6 counted? ns/call 91.562028
+DONE
+opt1 rc=0 wall=26s
+== end 10:21:00 PM ET

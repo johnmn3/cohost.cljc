@@ -1,0 +1,45 @@
+;; unit 6 option (2) measurement (scratch): (d) per-call cost on an Eve COLLECTION instance (built by Eve's serializer). mode opt2: cohost's object with
+;; type id 71 (cohost.cljc 9e634fa), the option-(2) wrapper answering an Eve instance from its descriptor (Eve's tag);
+;; mode opt1: cohost's object as opaque_box (04649fc), jank's own fns, no wrapper. Value-call loops (the fn taken
+;; from its var, then called); direct call sites under opt2 bypass the wrapper (part (c)) and are not run.
+(require 'cohost.hosts.jank-host)
+(require 'cohost.object-eve)
+(require 'eve.region)
+(require 'eve.core)
+(def mode (first *command-line-args*))
+(def hc-object? @(resolve 'eve.host-completion/object?))
+(def object-tag @(resolve 'eve.host-completion/object-tag))
+(def r ((resolve 'eve.region/make-heap-region) 64))
+(println "INSTANCE" mode "cohost-object?" (cohost.hosts.jank-host/cohost-object? r) "eve-object?" (hc-object? r) "tag" (object-tag r))
+(def coll-tags #{'eve.vec/EveVector 'eve.map/EveHashMap 'eve.set/EveHashSet 'eve.list/EveList})
+(def eve-answers {'coll? (fn [x] (contains? coll-tags (object-tag x)))
+                  'counted? (fn [x] (contains? coll-tags (object-tag x)))
+                  'count @(resolve 'eve.core/count)
+                  'seq @(resolve 'eve.core/seq)
+                  'first @(resolve 'eve.core/first)})
+(defn option2-wrapper [core-f eve-f] (fn [x] (if (hc-object? x) (eve-f x) (core-f x))))
+(def n 1000000)
+(defn value-call [f v n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (if (f v) (inc acc) acc)) acc)))
+(defn direct-coll? [v n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (if (coll? v) (inc acc) acc)) acc)))
+(defn direct-counted? [v n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (if (counted? v) (inc acc) acc)) acc)))
+(defn time-ns [thunk] (let [t0 (cpp/jank.runtime.current_time) _ (thunk) t1 (cpp/jank.runtime.current_time)] (- t1 t0)))
+(defn bench [label s inst]
+  (let [var (resolve (symbol "clojure.core" (name s))) core @var]
+    (when (= mode "opt2") (alter-var-root var (fn [_] (option2-wrapper core (eve-answers s)))))
+    (let [f @var
+          ans (f inst)
+          t (time-ns #(value-call f inst n))]
+      (when (= mode "opt2") (alter-var-root var (fn [_] core)))
+      (println "DBENCH" mode label s "answer" (pr-str (if (= s 'seq) (some? ans) ans)) "ns/call" (/ (double t) n)))))
+(require 'eve.atom)
+(def a ((resolve 'eve.atom/atom) {:id :u6o2/v} 0))
+(def ev ((resolve 'eve.deftype-proto.serialize/convert-to-eve) ((resolve 'eve.atom/atom-sio) a) [1 2 3 4 5 6 7 8]))
+(println "EVEVEC eve-object?" (hc-object? ev) "tag" (object-tag ev) "cohost-object?" (cohost.hosts.jank-host/cohost-object? ev))
+(if (= mode "opt2")
+  (do (bench "evevector warm" 'count ev)
+      (doseq [rep (range 7) s '[count seq first]]
+        (bench (str "evevector value rep " rep) s ev)))
+  (let [s (symbol (second *command-line-args*))]
+    (println "OPT1-CALL" s "on the Eve vector (jank's own fn, opaque_box object)")
+    (println "OPT1-RESULT" s (pr-str ((deref (resolve (symbol "clojure.core" (name s)))) ev)))))
+(println "DONE")

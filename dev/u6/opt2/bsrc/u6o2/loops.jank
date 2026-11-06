@@ -1,0 +1,10 @@
+(ns u6o2.loops
+  "unit 6 option (2) measurement (scratch): hot loops over jank core fns. direct-*: the call written at the call site
+   (jank may inline it); value-call: the fn taken from its var once, then called n times (the path a re-root
+   intercepts).")
+(defn direct-count [v n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (+ acc (count v))) acc)))
+(defn direct-seq [v n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (if (seq v) (inc acc) acc)) acc)))
+(defn direct-first [v n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (if (first v) (inc acc) acc)) acc)))
+(defn direct-coll? [v n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (if (coll? v) (inc acc) acc)) acc)))
+(defn value-call [f v n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (if (f v) (inc acc) acc)) acc)))
+(def marker :compiled)

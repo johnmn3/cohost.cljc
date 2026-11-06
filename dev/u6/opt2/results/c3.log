@@ -1,0 +1,38 @@
+compile rc=0
+03:14:43 /tmp/claude-0/-home-user-atom-broker/fcd2c088-6a69-5efc-a32d-2f9026fe32a9/scratchpad/u6o2/caot/_cache/x86_64-unknown-linux-gnu-d41ef4a07a9d4dd9963044192227fbfde2da40c9f817907bab326588f8e7ef94/u6o2/callsites.o
+02:14:43 /tmp/claude-0/-home-user-atom-broker/fcd2c088-6a69-5efc-a32d-2f9026fe32a9/scratchpad/u6o2/csrc-old/u6o2/callsites.jank
+== AOT run 10:14:43 PM ET
+MODULE marker :compiled (pre-count [1 2]) = 2
+INTERCEPT control (var-get #'count) called 1
+INTERCEPT control (var-get #'first) called 1
+INTERCEPT pre  count 0
+INTERCEPT post count 0
+INTERCEPT pre  seq 0
+INTERCEPT post seq 0
+INTERCEPT pre  first 0
+INTERCEPT post first 0
+INTERCEPT pre  next 0
+INTERCEPT post next 0
+INTERCEPT pre  rest 0
+INTERCEPT post rest 0
+INTERCEPT pre  coll? 0
+INTERCEPT post coll? 0
+INTERCEPT pre  counted? 1
+INTERCEPT post counted? 1
+INTERCEPT pre  empty? 0
+INTERCEPT post empty? 0
+INTERCEPT pre  nth 0
+INTERCEPT post nth 0
+INTERCEPT pre  get 0
+INTERCEPT post get 0
+INTERCEPT pre  higher-order count 1
+INTERCEPT pre  higher-order first 1
+INTERCEPT pre  higher-order coll? 1
+INTERCEPT core (doall (map inc v)) -> seq 0
+INTERCEPT core (doall (map inc v)) -> first 0
+INTERCEPT core (into [] v) -> seq 0
+INTERCEPT core (every? odd? v) -> first 0
+INTERCEPT core (every? odd? v) -> seq 0
+INTERCEPT core (last v) -> next 0
+INTERCEPT core (last v) -> first 0
+DONE

@@ -1,0 +1,18 @@
+== opt2 10:21:43 PM ET load=0.86 1.03 0.84
+opt2 rc=124
+== opt1 count 10:31:43 PM ET
+terminate called after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+opt1 count rc=134
+== opt1 seq 10:33:01 PM ET
+terminate called after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+opt1 seq rc=134
+== opt1 first 10:34:24 PM ET
+terminate called after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+opt1 first rc=134
+== opt1 coll? 10:35:48 PM ET
+EVEVEC eve-object? true tag eve.vec/EveVector cohost-object? true
+OPT1-CALL coll? on the Eve vector (jank's own fn, opaque_box object)
+OPT1-RESULT coll? false
+DONE
+opt1 coll? rc=0
+== end 10:37:16 PM ET

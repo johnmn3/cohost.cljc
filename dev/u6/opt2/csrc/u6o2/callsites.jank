@@ -1,0 +1,17 @@
+(ns u6o2.callsites
+  "unit 6 option (2) measurement (scratch): call sites of jank core fns, compiled before any re-root -- loaded either
+   JIT from this source or AOT from compile-module's object.")
+(defn pre-count [v] (count v))
+(defn pre-seq [v] (seq v))
+(defn pre-first [v] (first v))
+(defn pre-next [v] (next v))
+(defn pre-rest [v] (rest v))
+(defn pre-coll? [v] (coll? v))
+(defn pre-counted? [v] (counted? v))
+(defn pre-empty? [v] (empty? v))
+(defn pre-nth [v] (nth v 0))
+(defn pre-get [m] (get m :a))
+(defn pre-ho-count [v] (let [f count] (f v)))
+(defn pre-ho-first [v] (let [f first] (f v)))
+(defn pre-ho-coll? [v] (let [f coll?] (f v)))
+(def marker :compiled)

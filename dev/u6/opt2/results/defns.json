@@ -1,0 +1,2139 @@
+[
+{
+"name": "list?",
+"line": 77,
+"kind": "def",
+"runtime": [
+"is_list"
+]
+},
+{
+"name": "list",
+"line": 82,
+"kind": "def",
+"runtime": [
+"list"
+]
+},
+{
+"name": "type",
+"line": 100,
+"kind": "def",
+"runtime": [
+"object_type_str"
+]
+},
+{
+"name": "with-meta",
+"line": 105,
+"kind": "def",
+"runtime": [
+"with_meta"
+]
+},
+{
+"name": "ex-info",
+"line": 113,
+"kind": "def",
+"runtime": [
+"ex_info"
+]
+},
+{
+"name": "ex-message",
+"line": 123,
+"kind": "def",
+"runtime": [
+"ex_message"
+]
+},
+{
+"name": "ex-data",
+"line": 130,
+"kind": "def",
+"runtime": [
+"ex_data"
+]
+},
+{
+"name": "ex-cause",
+"line": 137,
+"kind": "def",
+"runtime": [
+"ex_cause"
+]
+},
+{
+"name": "ex-map",
+"line": 145,
+"kind": "def",
+"runtime": [
+"ex_map"
+]
+},
+{
+"name": "nil?",
+"line": 154,
+"kind": "def",
+"runtime": [
+"is_nil"
+]
+},
+{
+"name": "empty?",
+"line": 171,
+"kind": "def",
+"runtime": [
+"is_empty"
+]
+},
+{
+"name": "empty",
+"line": 178,
+"kind": "def",
+"runtime": [
+"empty"
+]
+},
+{
+"name": "count",
+"line": 185,
+"kind": "def",
+"runtime": [
+"sequence_length"
+]
+},
+{
+"name": "boolean",
+"line": 195,
+"kind": "def",
+"runtime": [
+"truthy"
+]
+},
+{
+"name": "int",
+"line": 202,
+"kind": "def",
+"runtime": [
+"to_int"
+]
+},
+{
+"name": "float",
+"line": 209,
+"kind": "def",
+"runtime": [
+"to_real"
+]
+},
+{
+"name": "seq",
+"line": 218,
+"kind": "def",
+"runtime": [
+"seq"
+]
+},
+{
+"name": "first",
+"line": 238,
+"kind": "def",
+"runtime": [
+"first"
+]
+},
+{
+"name": "next",
+"line": 253,
+"kind": "def",
+"runtime": [
+"next"
+]
+},
+{
+"name": "second",
+"line": 275,
+"kind": "def",
+"runtime": [
+"second"
+]
+},
+{
+"name": "rest",
+"line": 283,
+"kind": "def",
+"runtime": [
+"rest"
+]
+},
+{
+"name": "cons",
+"line": 292,
+"kind": "def",
+"runtime": [
+"cons"
+]
+},
+{
+"name": "coll?",
+"line": 301,
+"kind": "def",
+"runtime": [
+"is_collection"
+]
+},
+{
+"name": "seq?",
+"line": 309,
+"kind": "def",
+"runtime": [
+"is_seq"
+]
+},
+{
+"name": "seqable?",
+"line": 317,
+"kind": "def",
+"runtime": [
+"is_seqable"
+]
+},
+{
+"name": "vector?",
+"line": 355,
+"kind": "def",
+"runtime": [
+"is_vector"
+]
+},
+{
+"name": "vec",
+"line": 363,
+"kind": "def",
+"runtime": [
+"vec"
+]
+},
+{
+"name": "subvec",
+"line": 372,
+"kind": "def",
+"runtime": [
+"subvec",
+"to_int"
+]
+},
+{
+"name": "conj",
+"line": 388,
+"kind": "def",
+"runtime": [
+"conj"
+]
+},
+{
+"name": "hash-map",
+"line": 430,
+"kind": "def",
+"runtime": [
+"obj"
+]
+},
+{
+"name": "sorted-map",
+"line": 440,
+"kind": "def",
+"runtime": [
+"obj"
+]
+},
+{
+"name": "map?",
+"line": 450,
+"kind": "def",
+"runtime": [
+"is_map"
+]
+},
+{
+"name": "associative?",
+"line": 456,
+"kind": "def",
+"runtime": [
+"is_associative"
+]
+},
+{
+"name": "assoc",
+"line": 462,
+"kind": "def",
+"runtime": [
+"assoc"
+]
+},
+{
+"name": "string?",
+"line": 483,
+"kind": "def",
+"runtime": [
+"is_string"
+]
+},
+{
+"name": "char?",
+"line": 489,
+"kind": "def",
+"runtime": [
+"is_char"
+]
+},
+{
+"name": "str",
+"line": 495,
+"kind": "def",
+"runtime": [
+"str"
+]
+},
+{
+"name": "symbol?",
+"line": 511,
+"kind": "def",
+"runtime": [
+"is_symbol"
+]
+},
+{
+"name": "symbol",
+"line": 517,
+"kind": "def",
+"runtime": [
+"to_qualified_symbol",
+"to_unqualified_symbol"
+]
+},
+{
+"name": "simple-symbol?",
+"line": 529,
+"kind": "def",
+"runtime": [
+"is_simple_symbol"
+]
+},
+{
+"name": "qualified-symbol?",
+"line": 535,
+"kind": "def",
+"runtime": [
+"is_qualified_symbol"
+]
+},
+{
+"name": "true?",
+"line": 543,
+"kind": "def",
+"runtime": [
+"is_true"
+]
+},
+{
+"name": "false?",
+"line": 551,
+"kind": "def",
+"runtime": [
+"is_false"
+]
+},
+{
+"name": "not",
+"line": 559,
+"kind": "def",
+"runtime": [
+"not_"
+]
+},
+{
+"name": "some?",
+"line": 567,
+"kind": "def",
+"runtime": [
+"is_some"
+]
+},
+{
+"name": "meta",
+"line": 576,
+"kind": "def",
+"runtime": [
+"meta"
+]
+},
+{
+"name": "reset-meta!",
+"line": 582,
+"kind": "def",
+"runtime": [
+"reset_meta"
+]
+},
+{
+"name": "print",
+"line": 589,
+"kind": "def",
+"runtime": [
+"print",
+"print1"
+]
+},
+{
+"name": "println",
+"line": 605,
+"kind": "def",
+"runtime": [
+"println"
+]
+},
+{
+"name": "pr",
+"line": 611,
+"kind": "def",
+"runtime": [
+"pr"
+]
+},
+{
+"name": "prn",
+"line": 620,
+"kind": "def",
+"runtime": [
+"prn"
+]
+},
+{
+"name": "apply*",
+"line": 638,
+"kind": "def",
+"runtime": [
+"apply_to"
+]
+},
+{
+"name": "=",
+"line": 654,
+"kind": "def",
+"runtime": [
+"equal"
+]
+},
+{
+"name": "==",
+"line": 676,
+"kind": "def",
+"runtime": [
+"is_equiv"
+]
+},
+{
+"name": "defn",
+"line": 720,
+"kind": "def",
+"runtime": [
+"contains"
+]
+},
+{
+"name": "macroexpand-1",
+"line": 781,
+"kind": "defn",
+"runtime": [
+"macroexpand1"
+]
+},
+{
+"name": "macroexpand",
+"line": 787,
+"kind": "defn",
+"runtime": [
+"macroexpand"
+]
+},
+{
+"name": "gensym",
+"line": 794,
+"kind": "defn",
+"runtime": [
+"gensym"
+]
+},
+{
+"name": "transientable?",
+"line": 937,
+"kind": "defn-",
+"runtime": [
+"is_transientable"
+]
+},
+{
+"name": "transient",
+"line": 945,
+"kind": "defn",
+"runtime": [
+"transient"
+]
+},
+{
+"name": "persistent!",
+"line": 953,
+"kind": "defn",
+"runtime": [
+"persistent"
+]
+},
+{
+"name": "conj!",
+"line": 963,
+"kind": "defn",
+"runtime": [
+"conj_in_place"
+]
+},
+{
+"name": "assoc!",
+"line": 977,
+"kind": "defn",
+"runtime": [
+"assoc_in_place"
+]
+},
+{
+"name": "dissoc!",
+"line": 993,
+"kind": "defn",
+"runtime": [
+"dissoc_in_place"
+]
+},
+{
+"name": "pop!",
+"line": 1007,
+"kind": "defn",
+"runtime": [
+"pop_in_place"
+]
+},
+{
+"name": "disj!",
+"line": 1013,
+"kind": "defn",
+"runtime": [
+"disj_in_place"
+]
+},
+{
+"name": "apply",
+"line": 1047,
+"kind": "defn",
+"runtime": [
+"apply_to"
+]
+},
+{
+"name": "deref",
+"line": 1082,
+"kind": "defn",
+"runtime": [
+"deref"
+]
+},
+{
+"name": "reduced",
+"line": 1102,
+"kind": "defn",
+"runtime": [
+"reduced"
+]
+},
+{
+"name": "reduced?",
+"line": 1107,
+"kind": "defn",
+"runtime": [
+"is_reduced"
+]
+},
+{
+"name": "reduce",
+"line": 1126,
+"kind": "defn",
+"runtime": [
+"reduce"
+]
+},
+{
+"name": "peek",
+"line": 1215,
+"kind": "defn",
+"runtime": [
+"peek"
+]
+},
+{
+"name": "pop",
+"line": 1221,
+"kind": "defn",
+"runtime": [
+"pop"
+]
+},
+{
+"name": "setup-reference",
+"line": 1246,
+"kind": "defn-",
+"runtime": [
+"reset_meta",
+"set_validator"
+]
+},
+{
+"name": "atom",
+"line": 1254,
+"kind": "defn",
+"runtime": [
+"atom"
+]
+},
+{
+"name": "swap!",
+"line": 1272,
+"kind": "defn",
+"runtime": [
+"swap_atom"
+]
+},
+{
+"name": "swap-vals!",
+"line": 1286,
+"kind": "defn",
+"runtime": [
+"swap_vals"
+]
+},
+{
+"name": "compare-and-set!",
+"line": 1300,
+"kind": "defn",
+"runtime": [
+"compare_and_set"
+]
+},
+{
+"name": "reset!",
+"line": 1307,
+"kind": "defn",
+"runtime": [
+"reset"
+]
+},
+{
+"name": "reset-vals!",
+"line": 1313,
+"kind": "defn",
+"runtime": [
+"reset_vals"
+]
+},
+{
+"name": "volatile!",
+"line": 1320,
+"kind": "defn",
+"runtime": [
+"volatile_"
+]
+},
+{
+"name": "vreset!",
+"line": 1328,
+"kind": "defn",
+"runtime": [
+"vreset"
+]
+},
+{
+"name": "vswap!",
+"line": 1338,
+"kind": "defn",
+"runtime": [
+"vswap"
+]
+},
+{
+"name": "volatile?",
+"line": 1351,
+"kind": "defn",
+"runtime": [
+"is_volatile"
+]
+},
+{
+"name": "force",
+"line": 1364,
+"kind": "defn",
+"runtime": [
+"force"
+]
+},
+{
+"name": "+",
+"line": 1371,
+"kind": "defn",
+"runtime": [
+"add",
+"number"
+]
+},
+{
+"name": "-",
+"line": 1388,
+"kind": "defn",
+"runtime": [
+"sub"
+]
+},
+{
+"name": "*",
+"line": 1403,
+"kind": "defn",
+"runtime": [
+"mul",
+"number"
+]
+},
+{
+"name": "/",
+"line": 1420,
+"kind": "defn",
+"runtime": [
+"div"
+]
+},
+{
+"name": "bit-not",
+"line": 1436,
+"kind": "defn",
+"runtime": [
+"bit_not"
+]
+},
+{
+"name": "bit-and",
+"line": 1443,
+"kind": "defn",
+"runtime": [
+"bit_and"
+]
+},
+{
+"name": "bit-or",
+"line": 1454,
+"kind": "defn",
+"runtime": [
+"bit_or"
+]
+},
+{
+"name": "bit-xor",
+"line": 1465,
+"kind": "defn",
+"runtime": [
+"bit_xor"
+]
+},
+{
+"name": "bit-and-not",
+"line": 1476,
+"kind": "defn",
+"runtime": [
+"bit_and_not"
+]
+},
+{
+"name": "bit-clear",
+"line": 1487,
+"kind": "defn",
+"runtime": [
+"bit_clear"
+]
+},
+{
+"name": "bit-set",
+"line": 1495,
+"kind": "defn",
+"runtime": [
+"bit_set"
+]
+},
+{
+"name": "bit-flip",
+"line": 1503,
+"kind": "defn",
+"runtime": [
+"bit_flip"
+]
+},
+{
+"name": "bit-test",
+"line": 1511,
+"kind": "defn",
+"runtime": [
+"bit_test"
+]
+},
+{
+"name": "bit-shift-left",
+"line": 1519,
+"kind": "defn",
+"runtime": [
+"bit_shift_left"
+]
+},
+{
+"name": "bit-shift-right",
+"line": 1527,
+"kind": "defn",
+"runtime": [
+"bit_shift_right"
+]
+},
+{
+"name": "unsigned-bit-shift-right",
+"line": 1535,
+"kind": "defn",
+"runtime": [
+"bit_unsigned_shift_right"
+]
+},
+{
+"name": "<",
+"line": 1551,
+"kind": "defn",
+"runtime": [
+"lt"
+]
+},
+{
+"name": "<=",
+"line": 1567,
+"kind": "defn",
+"runtime": [
+"lte"
+]
+},
+{
+"name": ">",
+"line": 1583,
+"kind": "defn",
+"runtime": [
+"lt"
+]
+},
+{
+"name": ">=",
+"line": 1599,
+"kind": "defn",
+"runtime": [
+"lte"
+]
+},
+{
+"name": "min",
+"line": 1615,
+"kind": "defn",
+"runtime": [
+"min"
+]
+},
+{
+"name": "max",
+"line": 1630,
+"kind": "defn",
+"runtime": [
+"max"
+]
+},
+{
+"name": "inc",
+"line": 1645,
+"kind": "defn",
+"runtime": [
+"inc"
+]
+},
+{
+"name": "dec",
+"line": 1654,
+"kind": "defn",
+"runtime": [
+"dec"
+]
+},
+{
+"name": "pos?",
+"line": 1663,
+"kind": "defn",
+"runtime": [
+"is_pos"
+]
+},
+{
+"name": "neg?",
+"line": 1671,
+"kind": "defn",
+"runtime": [
+"is_neg"
+]
+},
+{
+"name": "zero?",
+"line": 1679,
+"kind": "defn",
+"runtime": [
+"is_zero"
+]
+},
+{
+"name": "rem",
+"line": 1687,
+"kind": "defn",
+"runtime": [
+"rem"
+]
+},
+{
+"name": "quot",
+"line": 1695,
+"kind": "defn",
+"runtime": [
+"quot"
+]
+},
+{
+"name": "integer?",
+"line": 1712,
+"kind": "defn",
+"runtime": [
+"is_integral"
+]
+},
+{
+"name": "float?",
+"line": 1720,
+"kind": "defn",
+"runtime": [
+"is_real"
+]
+},
+{
+"name": "boolean?",
+"line": 1728,
+"kind": "defn",
+"runtime": [
+"is_boolean"
+]
+},
+{
+"name": "number?",
+"line": 1736,
+"kind": "defn",
+"runtime": [
+"is_number"
+]
+},
+{
+"name": "even?",
+"line": 1744,
+"kind": "defn",
+"runtime": [
+"is_even"
+]
+},
+{
+"name": "odd?",
+"line": 1752,
+"kind": "defn",
+"runtime": [
+"is_odd"
+]
+},
+{
+"name": "inc'",
+"line": 1760,
+"kind": "defn",
+"runtime": [
+"promoting_inc"
+]
+},
+{
+"name": "+'",
+"line": 1785,
+"kind": "defn",
+"runtime": [
+"number",
+"promoting_add"
+]
+},
+{
+"name": "*'",
+"line": 1796,
+"kind": "defn",
+"runtime": [
+"number",
+"promoting_mul"
+]
+},
+{
+"name": "-'",
+"line": 1807,
+"kind": "defn",
+"runtime": [
+"promoting_sub"
+]
+},
+{
+"name": "abs",
+"line": 1818,
+"kind": "defn",
+"runtime": [
+"abs"
+]
+},
+{
+"name": "dec'",
+"line": 1829,
+"kind": "defn",
+"runtime": [
+"promoting_dec"
+]
+},
+{
+"name": "unchecked-inc",
+"line": 1842,
+"kind": "defn",
+"runtime": [
+"unchecked_inc"
+]
+},
+{
+"name": "int?",
+"line": 1940,
+"kind": "defn",
+"runtime": [
+"is_integer"
+]
+},
+{
+"name": "rand",
+"line": 1966,
+"kind": "defn",
+"runtime": [
+"rand"
+]
+},
+{
+"name": "subs",
+"line": 1979,
+"kind": "defn",
+"runtime": [
+"subs"
+]
+},
+{
+"name": "sequential?",
+"line": 1988,
+"kind": "defn",
+"runtime": [
+"is_sequential"
+]
+},
+{
+"name": "chunk-buffer",
+"line": 2034,
+"kind": "defn",
+"runtime": [
+"chunk_buffer"
+]
+},
+{
+"name": "chunk-append",
+"line": 2038,
+"kind": "defn",
+"runtime": [
+"chunk_append"
+]
+},
+{
+"name": "chunk",
+"line": 2042,
+"kind": "defn",
+"runtime": [
+"chunk"
+]
+},
+{
+"name": "chunk-first",
+"line": 2046,
+"kind": "defn",
+"runtime": [
+"chunk_first"
+]
+},
+{
+"name": "chunk-next",
+"line": 2050,
+"kind": "defn",
+"runtime": [
+"chunk_next"
+]
+},
+{
+"name": "chunk-rest",
+"line": 2054,
+"kind": "defn",
+"runtime": [
+"chunk_rest"
+]
+},
+{
+"name": "chunk-cons",
+"line": 2058,
+"kind": "defn",
+"runtime": [
+"chunk_cons"
+]
+},
+{
+"name": "chunked-seq?",
+"line": 2063,
+"kind": "defn",
+"runtime": [
+"is_chunked_seq"
+]
+},
+{
+"name": "get",
+"line": 2338,
+"kind": "defn",
+"runtime": [
+"get"
+]
+},
+{
+"name": "get-in",
+"line": 2350,
+"kind": "defn",
+"runtime": [
+"get_in"
+]
+},
+{
+"name": "dissoc",
+"line": 2363,
+"kind": "defn",
+"runtime": [
+"dissoc"
+]
+},
+{
+"name": "contains?",
+"line": 2380,
+"kind": "defn",
+"runtime": [
+"contains"
+]
+},
+{
+"name": "find",
+"line": 2392,
+"kind": "defn",
+"runtime": [
+"find"
+]
+},
+{
+"name": "hash-set",
+"line": 2424,
+"kind": "defn",
+"runtime": [
+"obj"
+]
+},
+{
+"name": "sorted-set",
+"line": 2431,
+"kind": "defn",
+"runtime": [
+"obj"
+]
+},
+{
+"name": "disj",
+"line": 2445,
+"kind": "defn",
+"runtime": [
+"disj"
+]
+},
+{
+"name": "set?",
+"line": 2462,
+"kind": "defn",
+"runtime": [
+"is_set"
+]
+},
+{
+"name": "hash",
+"line": 2478,
+"kind": "defn",
+"runtime": [
+"to_hash"
+]
+},
+{
+"name": "named?",
+"line": 2488,
+"kind": "defn-",
+"runtime": [
+"is_named"
+]
+},
+{
+"name": "name",
+"line": 2492,
+"kind": "defn",
+"runtime": [
+"name"
+]
+},
+{
+"name": "namespace",
+"line": 2497,
+"kind": "defn",
+"runtime": [
+"namespace_"
+]
+},
+{
+"name": "var?",
+"line": 2514,
+"kind": "defn",
+"runtime": [
+"is_var"
+]
+},
+{
+"name": "var-get",
+"line": 2519,
+"kind": "defn",
+"runtime": [
+"var_get"
+]
+},
+{
+"name": "alter-var-root",
+"line": 2524,
+"kind": "defn",
+"runtime": [
+"alter_var_root"
+]
+},
+{
+"name": "bound?",
+"line": 2530,
+"kind": "defn",
+"runtime": [
+"is_var_bound"
+]
+},
+{
+"name": "thread-bound?",
+"line": 2536,
+"kind": "defn",
+"runtime": [
+"is_var_thread_bound"
+]
+},
+{
+"name": "keyword?",
+"line": 2543,
+"kind": "defn",
+"runtime": [
+"is_keyword"
+]
+},
+{
+"name": "simple-keyword?",
+"line": 2547,
+"kind": "defn",
+"runtime": [
+"is_simple_keyword"
+]
+},
+{
+"name": "qualified-keyword?",
+"line": 2551,
+"kind": "defn",
+"runtime": [
+"is_qualified_keyword"
+]
+},
+{
+"name": "keyword",
+"line": 2556,
+"kind": "defn",
+"runtime": [
+"keyword"
+]
+},
+{
+"name": "nth",
+"line": 2583,
+"kind": "defn",
+"runtime": [
+"nth"
+]
+},
+{
+"name": "push-thread-bindings",
+"line": 2766,
+"kind": "defn",
+"runtime": [
+"push_thread_bindings"
+]
+},
+{
+"name": "pop-thread-bindings",
+"line": 2782,
+"kind": "defn",
+"runtime": [
+"pop_thread_bindings"
+]
+},
+{
+"name": "get-thread-bindings",
+"line": 2788,
+"kind": "defn",
+"runtime": [
+"get_thread_bindings"
+]
+},
+{
+"name": "iterate",
+"line": 2821,
+"kind": "defn",
+"runtime": [
+"iterate"
+]
+},
+{
+"name": "range",
+"line": 2827,
+"kind": "defn",
+"runtime": [
+"obj"
+]
+},
+{
+"name": "repeat",
+"line": 3158,
+"kind": "defn",
+"runtime": [
+"obj",
+"to_int"
+]
+},
+{
+"name": "ifn?",
+"line": 4049,
+"kind": "defn",
+"runtime": [
+"is_callable"
+]
+},
+{
+"name": "fn?",
+"line": 4054,
+"kind": "defn",
+"runtime": [
+"is_fn"
+]
+},
+{
+"name": "defmethod*",
+"line": 4128,
+"kind": "defn-",
+"runtime": [
+"defmethod"
+]
+},
+{
+"name": "remove-all-methods",
+"line": 4137,
+"kind": "defn",
+"runtime": [
+"remove_all_methods"
+]
+},
+{
+"name": "remove-method",
+"line": 4142,
+"kind": "defn",
+"runtime": [
+"remove_method"
+]
+},
+{
+"name": "prefer-method",
+"line": 4147,
+"kind": "defn",
+"runtime": [
+"prefer_method"
+]
+},
+{
+"name": "methods",
+"line": 4153,
+"kind": "defn",
+"runtime": [
+"methods"
+]
+},
+{
+"name": "get-method",
+"line": 4158,
+"kind": "defn",
+"runtime": [
+"get_method"
+]
+},
+{
+"name": "prefers",
+"line": 4164,
+"kind": "defn",
+"runtime": [
+"prefers"
+]
+},
+{
+"name": "sleep",
+"line": 4535,
+"kind": "defn-",
+"runtime": [
+"sleep"
+]
+},
+{
+"name": "current-time",
+"line": 4537,
+"kind": "defn-",
+"runtime": [
+"current_time"
+]
+},
+{
+"name": "with-redefs-fn",
+"line": 4549,
+"kind": "defn",
+"runtime": [
+"var_bind_root",
+"var_get_root"
+]
+},
+{
+"name": "in-ns",
+"line": 4587,
+"kind": "defn",
+"runtime": [
+"in_ns"
+]
+},
+{
+"name": "create-ns",
+"line": 4592,
+"kind": "defn",
+"runtime": [
+"intern_ns"
+]
+},
+{
+"name": "find-ns",
+"line": 4599,
+"kind": "defn",
+"runtime": [
+"find_ns"
+]
+},
+{
+"name": "find-var",
+"line": 4604,
+"kind": "defn",
+"runtime": [
+"find_var"
+]
+},
+{
+"name": "remove-ns",
+"line": 4610,
+"kind": "defn",
+"runtime": [
+"remove_ns"
+]
+},
+{
+"name": "the-ns",
+"line": 4616,
+"kind": "defn",
+"runtime": [
+"is_ns"
+]
+},
+{
+"name": "ns-name",
+"line": 4628,
+"kind": "defn",
+"runtime": [
+"ns_name"
+]
+},
+{
+"name": "ns-map",
+"line": 4634,
+"kind": "defn",
+"runtime": [
+"ns_map"
+]
+},
+{
+"name": "ns-publics",
+"line": 4640,
+"kind": "defn",
+"runtime": [
+"var_ns"
+]
+},
+{
+"name": "ns-resolve",
+"line": 4675,
+"kind": "defn",
+"runtime": [
+"ns_resolve"
+]
+},
+{
+"name": "alias",
+"line": 4708,
+"kind": "defn",
+"runtime": [
+"alias"
+]
+},
+{
+"name": "refer",
+"line": 4717,
+"kind": "defn",
+"runtime": [
+"refer"
+]
+},
+{
+"name": "refer-global",
+"line": 4757,
+"kind": "defn",
+"runtime": [
+"object_source",
+"refer_global",
+"rename_referred_globals"
+]
+},
+{
+"name": "load",
+"line": 4801,
+"kind": "defn",
+"runtime": [
+"__rt_ctx",
+"module"
+]
+},
+{
+"name": "load-lib",
+"line": 4836,
+"kind": "defn-",
+"runtime": [
+"object_ref"
+]
+},
+{
+"name": "compile",
+"line": 4891,
+"kind": "defn",
+"runtime": [
+"compile"
+]
+},
+{
+"name": "intern",
+"line": 4984,
+"kind": "defn",
+"runtime": [
+"intern_var",
+"reset_meta",
+"to_qualified_symbol",
+"var_bind_root"
+]
+},
+{
+"name": "to-array",
+"line": 5020,
+"kind": "defn",
+"runtime": [
+"object_array"
+]
+},
+{
+"name": "delay?",
+"line": 5059,
+"kind": "defn",
+"runtime": [
+"object_type"
+]
+},
+{
+"name": "compare",
+"line": 5064,
+"kind": "defn",
+"runtime": [
+"compare"
+]
+},
+{
+"name": "add-watch",
+"line": 5251,
+"kind": "defn",
+"runtime": [
+"add_watch"
+]
+},
+{
+"name": "remove-watch",
+"line": 5268,
+"kind": "defn",
+"runtime": [
+"remove_watch"
+]
+},
+{
+"name": "set-validator!",
+"line": 5404,
+"kind": "defn",
+"runtime": [
+"set_validator"
+]
+},
+{
+"name": "get-validator",
+"line": 5414,
+"kind": "defn",
+"runtime": [
+"get_validator"
+]
+},
+{
+"name": "sort",
+"line": 5661,
+"kind": "defn",
+"runtime": [
+"sort"
+]
+},
+{
+"name": "eval",
+"line": 5686,
+"kind": "defn",
+"runtime": [
+"eval"
+]
+},
+{
+"name": "num",
+"line": 5768,
+"kind": "defn",
+"runtime": [
+"number"
+]
+},
+{
+"name": "long",
+"line": 5773,
+"kind": "defn",
+"runtime": [
+"to_int"
+]
+},
+{
+"name": "double",
+"line": 5778,
+"kind": "defn",
+"runtime": [
+"to_real"
+]
+},
+{
+"name": "char",
+"line": 5795,
+"kind": "defn",
+"runtime": [
+"to_char"
+]
+},
+{
+"name": "ratio?",
+"line": 5842,
+"kind": "defn",
+"runtime": [
+"is_ratio"
+]
+},
+{
+"name": "numerator",
+"line": 5847,
+"kind": "defn",
+"runtime": [
+"numerator"
+]
+},
+{
+"name": "denominator",
+"line": 5852,
+"kind": "defn",
+"runtime": [
+"denominator"
+]
+},
+{
+"name": "decimal?",
+"line": 5857,
+"kind": "defn",
+"runtime": [
+"is_big_decimal"
+]
+},
+{
+"name": "bigint",
+"line": 5868,
+"kind": "defn",
+"runtime": [
+"to_big_integer"
+]
+},
+{
+"name": "biginteger",
+"line": 5873,
+"kind": "defn",
+"runtime": [
+"to_big_integer"
+]
+},
+{
+"name": "bigdec",
+"line": 5878,
+"kind": "defn",
+"runtime": [
+"to_big_decimal"
+]
+},
+{
+"name": "read-string",
+"line": 5974,
+"kind": "defn",
+"runtime": [
+"read_string"
+]
+},
+{
+"name": "alength",
+"line": 6021,
+"kind": "defn",
+"runtime": [
+"alength"
+]
+},
+{
+"name": "aclone",
+"line": 6030,
+"kind": "defn",
+"runtime": [
+"aclone"
+]
+},
+{
+"name": "aget",
+"line": 6039,
+"kind": "defn",
+"runtime": [
+"aget"
+]
+},
+{
+"name": "aset",
+"line": 6050,
+"kind": "defn",
+"runtime": [
+"aset"
+]
+},
+{
+"name": "all-ns",
+"line": 6187,
+"kind": "defn",
+"runtime": [
+"all_ns"
+]
+},
+{
+"name": "ns-unmap",
+"line": 6192,
+"kind": "defn",
+"runtime": [
+"ns_unmap"
+]
+},
+{
+"name": "ns-unalias",
+"line": 6218,
+"kind": "defn",
+"runtime": [
+"ns_unalias"
+]
+},
+{
+"name": "array-map",
+"line": 6249,
+"kind": "defn",
+"runtime": [
+"obj"
+]
+},
+{
+"name": "re-pattern",
+"line": 6352,
+"kind": "defn",
+"runtime": [
+"re_pattern"
+]
+},
+{
+"name": "re-matcher",
+"line": 6358,
+"kind": "defn",
+"runtime": [
+"re_matcher"
+]
+},
+{
+"name": "re-groups",
+"line": 6364,
+"kind": "defn",
+"runtime": [
+"re_groups"
+]
+},
+{
+"name": "re-matches",
+"line": 6372,
+"kind": "defn",
+"runtime": [
+"re_matches"
+]
+},
+{
+"name": "re-find",
+"line": 6379,
+"kind": "defn",
+"runtime": [
+"re_find"
+]
+},
+{
+"name": "re-seq",
+"line": 6389,
+"kind": "defn",
+"runtime": [
+"re_matcher"
+]
+},
+{
+"name": "hash-unordered-coll",
+"line": 6574,
+"kind": "defn",
+"runtime": [
+"hash_unordered"
+]
+},
+{
+"name": "float-array",
+"line": 6620,
+"kind": "defn",
+"runtime": [
+"float_array"
+]
+},
+{
+"name": "boolean-array",
+"line": 6633,
+"kind": "defn",
+"runtime": [
+"boolean_array"
+]
+},
+{
+"name": "byte-array",
+"line": 6646,
+"kind": "defn",
+"runtime": [
+"byte_array"
+]
+},
+{
+"name": "char-array",
+"line": 6659,
+"kind": "defn",
+"runtime": [
+"char_array"
+]
+},
+{
+"name": "short-array",
+"line": 6672,
+"kind": "defn",
+"runtime": [
+"short_array"
+]
+},
+{
+"name": "double-array",
+"line": 6685,
+"kind": "defn",
+"runtime": [
+"double_array"
+]
+},
+{
+"name": "object-array",
+"line": 6698,
+"kind": "defn",
+"runtime": [
+"object_array"
+]
+},
+{
+"name": "int-array",
+"line": 6707,
+"kind": "defn",
+"runtime": [
+"int_array"
+]
+},
+{
+"name": "long-array",
+"line": 6720,
+"kind": "defn",
+"runtime": [
+"long_array"
+]
+},
+{
+"name": "bytes?",
+"line": 6775,
+"kind": "defn",
+"runtime": [
+"array_element_type",
+"object_type"
+]
+},
+{
+"name": "format",
+"line": 6950,
+"kind": "defn",
+"runtime": [
+"format"
+]
+},
+{
+"name": "sorted?",
+"line": 7002,
+"kind": "defn",
+"runtime": [
+"is_sorted"
+]
+},
+{
+"name": "counted?",
+"line": 7007,
+"kind": "defn",
+"runtime": [
+"is_counted"
+]
+},
+{
+"name": "inst-ms",
+"line": 7268,
+"kind": "defn",
+"runtime": [
+"inst_ms"
+]
+},
+{
+"name": "inst?",
+"line": 7273,
+"kind": "defn",
+"runtime": [
+"is_inst"
+]
+},
+{
+"name": "uuid?",
+"line": 7282,
+"kind": "defn",
+"runtime": [
+"is_uuid"
+]
+},
+{
+"name": "random-uuid",
+"line": 7287,
+"kind": "defn",
+"runtime": [
+"random_uuid"
+]
+},
+{
+"name": "reduce-kv",
+"line": 7316,
+"kind": "defn",
+"runtime": [
+"reduce_kv"
+]
+},
+{
+"name": "future-call",
+"line": 7354,
+"kind": "defn",
+"runtime": [
+"future"
+]
+},
+{
+"name": "future-cancel",
+"line": 7373,
+"kind": "defn",
+"runtime": [
+"cancel_future"
+]
+},
+{
+"name": "future-cancelled?",
+"line": 7378,
+"kind": "defn",
+"runtime": [
+"is_future_cancelled"
+]
+},
+{
+"name": "clojure-version",
+"line": 7449,
+"kind": "defn",
+"runtime": [
+"jank_version"
+]
+},
+{
+"name": "promise",
+"line": 7454,
+"kind": "defn",
+"runtime": [
+"promise"
+]
+},
+{
+"name": "shuffle",
+"line": 7516,
+"kind": "defn",
+"runtime": [
+"shuffle"
+]
+},
+{
+"name": "realized?",
+"line": 7563,
+"kind": "defn",
+"runtime": [
+"is_realized"
+]
+},
+{
+"name": "tagged-literal?",
+"line": 7649,
+"kind": "defn",
+"runtime": [
+"is_tagged_literal"
+]
+},
+{
+"name": "tagged-literal",
+"line": 7654,
+"kind": "defn",
+"runtime": [
+"tagged_literal"
+]
+},
+{
+"name": "parse-long",
+"line": 7782,
+"kind": "defn",
+"runtime": [
+"parse_long"
+]
+},
+{
+"name": "parse-double",
+"line": 7788,
+"kind": "defn",
+"runtime": [
+"parse_double"
+]
+},
+{
+"name": "parse-uuid",
+"line": 7796,
+"kind": "defn",
+"runtime": [
+"parse_uuid"
+]
+},
+{
+"name": "NaN?",
+"line": 7814,
+"kind": "defn",
+"runtime": [
+"is_nan"
+]
+},
+{
+"name": "infinite?",
+"line": 7819,
+"kind": "defn",
+"runtime": [
+"is_infinite"
+]
+}
+]

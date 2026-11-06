@@ -1,0 +1,220 @@
+;; unit 6 option (2) measurement (scratch, not committed): one jank clojure.core fn on a type-71 cohost_obj instance
+;; -- cohost's struct, its C++ block copied verbatim from cohost.cljc src/cohost/hosts/jank_host.jank @ 9e634fa --
+;; with Eve-family slots (0-3 set, 4-9 nil, as cohost.object-eve builds them). Each attempt is logged to stderr
+;; before the next, so an abort names the call that ended the process.
+;;   jank run probe_fn.jank -- <fn>
+(cpp/raw "
+#include <jank/runtime/object.hpp>
+#include <jank/runtime/core/seq.hpp>
+#include <jank/runtime/core/call.hpp>
+#include <jank/runtime/core/truthy.hpp>
+#include <jank/runtime/obj/persistent_vector.hpp>
+#include <jank/runtime/obj/cons.hpp>
+#include <jank/runtime/obj/exception_info.hpp>
+#include <jank/runtime/obj/nil.hpp>
+#include <jank/runtime/obj/volatile.hpp>
+#include <jank/runtime/obj/number.hpp>
+#include <atomic>
+
+namespace cohost_obj {
+  using namespace jank::runtime;
+
+  [[noreturn]] inline void unsupported(char const *what) {
+    throw make_box<obj::exception_info>(jtl::immutable_string{ what }, make_box<obj::nil>());
+  }
+
+  /* methods vector slots: 0 equiv, 1 hasheq, 2 toString, 3 toCodeString,
+     4 invoke, 5 deref, 6 get, 7 seq, 8 compare, 9 find */
+  struct cohost_object : object {
+    // the first tag past jank's own (object_type::max is its last, 70 on 0.1): derived,
+    // so a jank that adds a type does not collide with it
+    static constexpr object_type obj_type{ static_cast<object_type>(static_cast<unsigned char>(object_type::max) + 1) };
+    static constexpr object_behavior obj_behaviors{
+      object_behavior::call | object_behavior::get | object_behavior::find
+      | object_behavior::compare | object_behavior::seqable | object_behavior::indexable
+      | object_behavior::deref };
+    static constexpr bool pointer_free{ false };
+
+    object_ref descriptor;
+    object_ref methods;
+    object_ref fields;
+    object_ref extmap;
+    object_ref meta_;
+
+    cohost_object(object_ref d, object_ref m, object_ref f, object_ref e, object_ref mt)
+      : object{ obj_type, obj_behaviors }, descriptor{ d }, methods{ m }, fields{ f },
+        extmap{ e }, meta_{ mt } {}
+
+    object_ref self() const { return object_ref{ detail::untagged(this) }; }
+    object_ref slot(jank::i64 i) const { return methods.is_nil() ? methods : methods.nth(make_box(i)); }
+    bool has_slot(jank::i64 i) const { return !slot(i).is_nil(); }
+
+    bool equal(object const &o) const override {
+      if (!has_slot(0)) { return this == &o; }
+      return truthy(slot(0).call(self(), object_ref{ detail::untagged(&o) }));
+    }
+    jank::uhash to_hash() const override {
+      if (!has_slot(1)) { return static_cast<jank::uhash>(reinterpret_cast<uintptr_t>(this) >> 4); }
+      return static_cast<jank::uhash>(slot(1).call(self()).to_integer());
+    }
+    jtl::immutable_string to_string() const override {
+      if (!has_slot(2)) { return jtl::immutable_string{ \"#cohost-object\" }; }
+      return jank::runtime::to_string(slot(2).call(self()));
+    }
+    void to_string(jtl::string_builder &b) const override { b(to_string()); }
+    jtl::immutable_string to_code_string() const override {
+      if (!has_slot(3)) { return to_string(); }
+      return jank::runtime::to_string(slot(3).call(self()));
+    }
+    object_ref deref() override {
+      if (!has_slot(5)) { unsupported(\"cohost: this type does not implement IDeref\"); }
+      return slot(5).call(self());
+    }
+    object_ref get(object_ref key) const override {
+      if (!has_slot(6)) { return make_box<obj::nil>(); }
+      return slot(6).call(self(), key);
+    }
+    object_ref get(object_ref key, object_ref fb) const override {
+      if (!has_slot(6)) { return fb; }
+      return slot(6).call(self(), key, fb);
+    }
+    bool contains(object_ref key) const override {
+      if (has_slot(9)) { return !slot(9).call(self(), key).is_nil(); }
+      return !get(key).is_nil();
+    }
+    object_ref find(object_ref key) const override {
+      if (has_slot(9)) { return slot(9).call(self(), key); }
+      auto v = get(key);
+      if (v.is_nil()) { return v; }
+      return make_box<obj::persistent_vector>(std::in_place, key, v);
+    }
+    object_ref seq() const override {
+      if (!has_slot(7)) { unsupported(\"cohost: this type is not Seqable\"); }
+      return slot(7).call(self());
+    }
+    object_ref fresh_seq() const override { return seq(); }
+    jank::i64 compare(object const &o) const override {
+      if (!has_slot(8)) { unsupported(\"cohost: this type is not Comparable\"); }
+      return slot(8).call(self(), object_ref{ detail::untagged(&o) }).to_integer();
+    }
+    object_ref nth(object_ref) const override { unsupported(\"cohost: nth is the shim's, not jank's\"); }
+    object_ref nth(object_ref, object_ref fb) const override { return fb; }
+    object_ref call() const override { return invoke0(); }
+    object_ref call(object_ref a1) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1); }
+    object_ref call(object_ref a1, object_ref a2) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6, a7); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7, object_ref a8) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6, a7, a8); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7, object_ref a8, object_ref a9) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6, a7, a8, a9); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7, object_ref a8, object_ref a9, object_ref a10) const override { if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); } return slot(4).call(self(), a1, a2, a3, a4, a5, a6, a7, a8, a9, a10); }
+    object_ref call(object_ref a1, object_ref a2, object_ref a3, object_ref a4, object_ref a5, object_ref a6, object_ref a7, object_ref a8, object_ref a9, object_ref a10, object_ref more) const override {
+      if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); }
+      object_ref args = more;
+      args = make_box<obj::cons>(a10, args);
+      args = make_box<obj::cons>(a9, args);
+      args = make_box<obj::cons>(a8, args);
+      args = make_box<obj::cons>(a7, args);
+      args = make_box<obj::cons>(a6, args);
+      args = make_box<obj::cons>(a5, args);
+      args = make_box<obj::cons>(a4, args);
+      args = make_box<obj::cons>(a3, args);
+      args = make_box<obj::cons>(a2, args);
+      args = make_box<obj::cons>(a1, args);
+      args = make_box<obj::cons>(self(), args);
+      return apply_to(slot(4), args);
+    }
+    object_ref invoke0() const {
+      if (!has_slot(4)) { unsupported(\"cohost: this type is not callable\"); }
+      return slot(4).call(self());
+    }
+    void set_validator(object_ref const) override { unsupported(\"cohost: no validator on a cohost type\"); }
+    object_ref get_validator() const override { return make_box<obj::nil>(); }
+    void add_watch(object_ref const, object_ref const) override { unsupported(\"cohost: no watches on a cohost type\"); }
+    void remove_watch(object_ref const) override { unsupported(\"cohost: no watches on a cohost type\"); }
+    jank::i64 to_integer() const override { unsupported(\"cohost: not a number\"); }
+    jank::f64 to_real() const override { unsupported(\"cohost: not a number\"); }
+    object_ref first() const override { unsupported(\"cohost: not a sequence\"); }
+    object_ref next() const override { unsupported(\"cohost: not a sequence\"); }
+    object_ref next_in_place() override { unsupported(\"cohost: not a sequence\"); }
+    array_element_type get_element_type() const override { unsupported(\"cohost: not an array\"); }
+    object_ref aset(jank::i64 const, object_ref const) override { unsupported(\"cohost: not an array\"); }
+    object_ref aclone() const override { unsupported(\"cohost: not an array\"); }
+  };
+
+  object_ref make(object_ref d, object_ref m, object_ref f, object_ref e, object_ref mt) {
+    return make_box<cohost_object>(d, m, f, e, mt);
+  }
+  bool is_cohost(object_ref x) {
+    return !x.is_nil() && x.get_type() == cohost_object::obj_type;
+  }
+  object_ref descriptor_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->descriptor; }
+  object_ref fields_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->fields; }
+  object_ref extmap_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->extmap; }
+  object_ref meta_of(object_ref x) { return static_cast<cohost_object *>(x.ptr())->meta_; }
+  object_ref field(object_ref x, jank::i64 i) {
+    auto const &f = static_cast<cohost_object *>(x.ptr())->fields;
+    // fields is the constructor's vector (or an assoc of it): index it directly
+    if (f.get_type() == object_type::persistent_vector) {
+      auto const &d = expect_object<obj::persistent_vector>(f)->data;
+      if (0 <= i && static_cast<jank::usize>(i) < d.size()) { return d[static_cast<jank::usize>(i)]; }
+    }
+    return f.nth(make_box(i));
+  }
+
+  // protocol method inline caches (doc/research/jank-dispatch.md): a method's cache is a
+  // volatile holding [descriptor impl generation]; a hit is the instance's descriptor,
+  // identical, under the current generation, which every extend bumps
+  std::atomic<jank::i64> proto_generation{ 0 };
+  jank::i64 bump_generation() { return ++proto_generation; }
+  object_ref cached_impl(object_ref c, object_ref x) {
+    if (x.is_nil() || x.get_type() != cohost_object::obj_type) { return make_box<obj::nil>(); }
+    auto const v = expect_object<obj::volatile_>(c)->val;
+    if (v.get_type() != object_type::persistent_vector) { return make_box<obj::nil>(); }
+    auto const &d = expect_object<obj::persistent_vector>(v)->data;
+    if (d.size() != 3 || d[0] != static_cast<cohost_object *>(x.ptr())->descriptor
+        || d[2].get_type() != object_type::integer
+        || expect_object<obj::integer>(d[2])->data != proto_generation.load()) {
+      return make_box<obj::nil>();
+    }
+    return d[1];
+  }
+  object_ref fill_cache(object_ref c, object_ref x, object_ref impl, jank::i64 gen) {
+    if (!x.is_nil() && x.get_type() == cohost_object::obj_type) {
+      expect_object<obj::volatile_>(c)->val = make_box<obj::persistent_vector>(
+        std::in_place, static_cast<cohost_object *>(x.ptr())->descriptor, impl, make_box<obj::integer>(gen));
+    }
+    return impl;
+  }
+  jank::i64 generation() { return proto_generation.load(); }
+
+  // the stock multimethod's hit (X2-2): cell is the shim's cache atom holding
+  // [state-value hierarchy-ref hierarchy-value {dv method}]; a hit is the state
+  // atom's value and the hierarchy's value both identical to the cell's, and dv in
+  // the table. nil on any miss: the shim's mf-fast-method (the slow path) runs
+  object_ref mm_hit(object_ref cell, object_ref state, object_ref dv) {
+    auto const e = cell.deref();
+    if (e.get_type() != object_type::persistent_vector) { return make_box<obj::nil>(); }
+    auto const &d = expect_object<obj::persistent_vector>(e)->data;
+    if (d.size() != 4 || d[0] != state.deref() || d[2] != d[1].deref()) { return make_box<obj::nil>(); }
+    return get(d[3], dv);
+  }
+}
+")
+(defn- err [& xs] (binding [*out* *err*] (apply println xs)))
+;; positional variant: args after the fn name are a spec; "x" is the instance, anything else is read as data
+(let [[f & spec] *command-line-args*
+      x (cpp/cohost_obj.make 'eve.probe/T
+                             [(fn [a b] (identical? a b)) (fn [a] 7) (fn [a] "#probe") (fn [a] "#probe")
+                              nil nil nil nil nil nil]
+                             [] nil nil)
+      args (mapv (fn [t] (if (= t "x") x (read-string t))) spec)
+      fv @(resolve (symbol "clojure.core" f))]
+  (err "CALL" f spec)
+  (let [r (try (let [v (apply fv args)] (err "RETURNED" f) [:ok (str (type v))])
+               (catch std.exception e [:threw (str "std.exception: " (cpp/.what e))])
+               (catch jank.runtime.object_ref e [:threw (str "jank: " (pr-str e))]))]
+    (err "OUT" f (first r) (second r)))
+  (err "DONE" f))

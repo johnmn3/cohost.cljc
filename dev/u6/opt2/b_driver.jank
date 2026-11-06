@@ -1,0 +1,30 @@
+;; unit 6 option (2) measurement (scratch): (b) per-call cost of an option-(2) wrapper on plain jank values. The
+;; wrapper is the re-root option (2) installs: (fn [x] (if (eve.host-completion/object? x) (eve-f x) (core-f x))),
+;; with Eve's real object? and cohost's object installed (cohost.object-eve), so a native value pays exactly what it
+;; would. Rounds interleave unwrapped / wrapped; each prints ns per call.
+(require 'cohost.hosts.jank-host)
+(require 'cohost.object-eve)
+(require 'u6o2.loops)
+(def mode (first *command-line-args*))
+(println "MODULE marker" u6o2.loops/marker "mode" mode)
+(def hc-object? @(resolve 'eve.host-completion/object?))
+(defn option2-wrapper [core-f]
+  (fn [x] (if (hc-object? x) (throw (ex-info "eve path not exercised here" {})) (core-f x))))
+(def n 1000000)
+(def vals {"vec" [1 2 3 4 5 6 7 8] "map" {:a 1 :b 2 :c 3 :d 4 :e 5 :f 6 :g 7 :h 8}})
+(def fns [['count u6o2.loops/direct-count] ['seq u6o2.loops/direct-seq]
+          ['first u6o2.loops/direct-first] ['coll? u6o2.loops/direct-coll?]])
+(defn time-ns [thunk] (let [t0 (cpp/jank.runtime.current_time) _ (thunk) t1 (cpp/jank.runtime.current_time)] (- t1 t0)))
+(defn round [style s direct v]
+  (if (= style "direct")
+    (time-ns #(direct v n))
+    (let [f @(resolve (symbol "clojure.core" (name s)))] (time-ns #(u6o2.loops/value-call f v n)))))
+(dotimes [_ 2] (doseq [[s direct] fns [_ v] vals st ["direct" "value"]] (round st s direct v)))   ; warm-up
+(doseq [rep (range 7) [s direct] fns [vn v] vals st ["direct" "value"]]
+  (let [var (resolve (symbol "clojure.core" (name s))) core @var
+        u (round st s direct v)
+        _ (alter-var-root var (fn [_] (option2-wrapper core)))
+        w (round st s direct v)
+        _ (alter-var-root var (fn [_] core))]
+    (println "BENCH" mode st s vn "rep" rep "unwrapped-ns/call" (/ (double u) n) "wrapped-ns/call" (/ (double w) n))))
+(println "DONE")

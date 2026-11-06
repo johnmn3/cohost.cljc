@@ -1,0 +1,27 @@
+start 10:43:04 PM ET load=0.72 0.95 0.98
+rc=0 wall=96s
+STAGE warm count
+STAGE warm done
+EVEVEC eve-object? true tag eve.vec/EveVector cohost-object? true
+DBENCH opt2 evevector warm count answer 8 ns/call 54237.805
+DBENCH opt2 evevector value rep 0 count answer 8 ns/call 23748.1366
+DBENCH opt2 evevector value rep 0 seq answer true ns/call 24289.6738
+DBENCH opt2 evevector value rep 0 first answer 1 ns/call 50970.0763
+DBENCH opt2 evevector value rep 1 count answer 8 ns/call 23556.9548
+DBENCH opt2 evevector value rep 1 seq answer true ns/call 28952.0204
+DBENCH opt2 evevector value rep 1 first answer 1 ns/call 50112.2105
+DBENCH opt2 evevector value rep 2 count answer 8 ns/call 24673.8673
+DBENCH opt2 evevector value rep 2 seq answer true ns/call 24568.9041
+DBENCH opt2 evevector value rep 2 first answer 1 ns/call 45471.972
+DBENCH opt2 evevector value rep 3 count answer 8 ns/call 24487.9345
+DBENCH opt2 evevector value rep 3 seq answer true ns/call 25430.2428
+DBENCH opt2 evevector value rep 3 first answer 1 ns/call 57418.3134
+DBENCH opt2 evevector value rep 4 count answer 8 ns/call 24129.321
+DBENCH opt2 evevector value rep 4 seq answer true ns/call 31874.9826
+DBENCH opt2 evevector value rep 4 first answer 1 ns/call 46603.1146
+DBENCH opt2 evevector value rep 5 count answer 8 ns/call 24476.0119
+DBENCH opt2 evevector value rep 5 seq answer true ns/call 24433.0512
+DBENCH opt2 evevector value rep 5 first answer 1 ns/call 44777.825
+DBENCH opt2 evevector value rep 6 count answer 8 ns/call 23656.4835
+DBENCH opt2 evevector value rep 6 seq answer true ns/call 24905.8812
+DBENCH opt2 evevector value rep 6 first answer 1 ns/call 49833.7627

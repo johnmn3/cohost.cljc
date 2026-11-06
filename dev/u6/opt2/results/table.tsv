@@ -1,0 +1,265 @@
+list?	77	ANSWERS	arity 1: false
+list	82	ANSWERS	arity 1: (#probe)
+type	100	ANSWERS	arity 1: "unknown"
+nil?	154	ANSWERS	arity 1: false
+boolean	195	ANSWERS	arity 1: true
+seq?	309	ANSWERS	arity 1: false
+seqable?	317	ANSWERS	arity 1: true
+vector?	355	ANSWERS	arity 1: false
+conj	388	ANSWERS	arity 1: #probe
+hash-map	430	ANSWERS	arity 2: {#probe :k}
+sorted-map	440	ANSWERS	arity 2: {#probe :k}
+map?	450	ANSWERS	arity 1: false
+string?	483	ANSWERS	arity 1: false
+char?	489	ANSWERS	arity 1: false
+str	495	ANSWERS	arity 1: "#probe"
+symbol?	511	ANSWERS	arity 1: false
+simple-symbol?	529	ANSWERS	arity 1: false
+qualified-symbol?	535	ANSWERS	arity 1: false
+true?	543	ANSWERS	arity 1: false
+false?	551	ANSWERS	arity 1: false
+not	559	ANSWERS	arity 1: false
+some?	567	ANSWERS	arity 1: true
+print	589	ANSWERS	arity 1: nil
+println	605	ANSWERS	arity 1: nil
+pr	611	ANSWERS	arity 1: nil
+prn	620	ANSWERS	arity 1: nil
+=	654	ANSWERS	arity 1: true
+==	676	ANSWERS	arity 1: true
+macroexpand-1	781	ANSWERS	arity 1: #probe
+macroexpand	787	ANSWERS	arity 1: #probe
+gensym	794	ANSWERS	arity 1: user$#probe_64
+conj!	963	ANSWERS	arity 1: #probe
+disj!	1013	ANSWERS	arity 1: #probe
+reduced	1102	ANSWERS	arity 1: #object [reduced 0x7fd2e49b6560]
+reduced?	1107	ANSWERS	arity 1: false
+atom	1254	ANSWERS	arity 1: #object [atom 0x7f6b8292c600]
+volatile!	1320	ANSWERS	arity 1: #object [volatile_ 0x7f093d614440]
+volatile?	1351	ANSWERS	arity 1: false
+force	1364	ANSWERS	arity 1: #probe
+<	1551	ANSWERS	arity 1: true
+<=	1567	ANSWERS	arity 1: true
+>	1583	ANSWERS	arity 1: true
+>=	1599	ANSWERS	arity 1: true
+min	1615	ANSWERS	arity 1: #probe
+max	1630	ANSWERS	arity 1: #probe
+integer?	1712	ANSWERS	arity 1: false
+float?	1720	ANSWERS	arity 1: false
+boolean?	1728	ANSWERS	arity 1: false
+number?	1736	ANSWERS	arity 1: false
+int?	1940	ANSWERS	arity 1: false
+get	2338	ANSWERS	arity 2: nil
+dissoc	2363	ANSWERS	arity 1: #probe
+contains?	2380	ANSWERS	arity 2: false
+find	2392	ANSWERS	arity 2: nil
+hash-set	2424	ANSWERS	arity 1: #{#probe}
+sorted-set	2431	ANSWERS	arity 1: #{#probe}
+disj	2445	ANSWERS	arity 1: #probe
+set?	2462	ANSWERS	arity 1: false
+hash	2478	ANSWERS	arity 1: 7
+var?	2514	ANSWERS	arity 1: false
+keyword?	2543	ANSWERS	arity 1: false
+simple-keyword?	2547	ANSWERS	arity 1: false
+qualified-keyword?	2551	ANSWERS	arity 1: false
+keyword	2556	ANSWERS	arity 1: nil
+ifn?	4049	ANSWERS	arity 1: true
+fn?	4054	ANSWERS	arity 1: false
+refer-global	4757	ANSWERS	arity 2: nil
+delay?	5059	ANSWERS	arity 1: false
+get-validator	5414	ANSWERS	arity 1: nil
+ratio?	5842	ANSWERS	arity 1: false
+decimal?	5857	ANSWERS	arity 1: false
+array-map	6249	ANSWERS	arity 2: {#probe :k}
+hash-unordered-coll	6574	ANSWERS	arity 1: 7
+bytes?	6775	ANSWERS	arity 1: false
+sorted?	7002	ANSWERS	arity 1: false
+inst?	7273	ANSWERS	arity 1: false
+uuid?	7282	ANSWERS	arity 1: false
+reduce-kv	7316	ANSWERS	arity 3: :k
+tagged-literal?	7649	ANSWERS	arity 1: false
+tagged-literal	7654	ANSWERS	arity 2: ##probe :k
+cons	292	EXIT-1	arity 2; https://book.jank-lang.org/reference/error/runtime/unsupported-behavior.html
+apply*	638	EXIT-1	arity 2; https://book.jank-lang.org/reference/error/runtime/unsupported-behavior.html
+apply	1047	EXIT-1	arity 2; https://book.jank-lang.org/reference/error/runtime/unsupported-behavior.html
+reduce	1126	EXIT-1	arity 2; https://book.jank-lang.org/reference/error/runtime/unsupported-behavior.html
+setup-reference	1246	EXIT-1	arity 2; https://book.jank-lang.org/reference/error/runtime/unsupported-behavior.html
+get-in	2350	EXIT-1	arity 2; https://book.jank-lang.org/reference/error/runtime/unsupported-behavior.html
+nth	2583	EXIT-1	arity 2; https://book.jank-lang.org/reference/error/runtime/unsupported-behavior.html
+push-thread-bindings	2766	EXIT-1	arity 1; 
+load	4801	EXIT-1	arity 1; https://book.jank-lang.org/reference/error/runtime/module-not-found.html
+compile	4891	EXIT-1	arity 1; https://book.jank-lang.org/reference/error/runtime/module-not-found.html
+repeat	3158	NO-RETURN-120s	arity 1
+with-meta	105	PANIC	arity 2: invalid object type: unknown, raw value 71
+empty?	171	PANIC	arity 1: invalid object type: unknown, raw value 71
+empty	178	PANIC	arity 1: invalid object type: unknown, raw value 71
+count	185	PANIC	arity 1: invalid object type: unknown, raw value 71
+coll?	301	PANIC	arity 1: invalid object type: unknown, raw value 71
+subvec	372	PANIC	arity 2: invalid object type: unknown, raw value 71
+associative?	456	PANIC	arity 1: invalid object type: unknown, raw value 71
+assoc	462	PANIC	arity 3: invalid object type: unknown, raw value 71
+symbol	517	PANIC	arity 1: invalid object type: unknown, raw value 71
+meta	576	PANIC	arity 1: invalid object type: unknown, raw value 71
+reset-meta!	582	PANIC	arity 2: invalid object type: unknown, raw value 71
+transientable?	937	PANIC	arity 1: invalid object type: unknown, raw value 71
+transient	945	PANIC	arity 1: invalid object type: unknown, raw value 71
+persistent!	953	PANIC	arity 1: invalid object type: unknown, raw value 71
+assoc!	977	PANIC	arity 3: invalid object type: unknown, raw value 71
+dissoc!	993	PANIC	arity 2: invalid object type: unknown, raw value 71
+peek	1215	PANIC	arity 1: invalid object type: unknown, raw value 71
+pop	1221	PANIC	arity 1: invalid object type: unknown, raw value 71
+sequential?	1988	PANIC	arity 1: invalid object type: unknown, raw value 71
+chunk-first	2046	PANIC	arity 1: invalid object type: unknown, raw value 71
+chunk-next	2050	PANIC	arity 1: invalid object type: unknown, raw value 71
+chunk-rest	2054	PANIC	arity 1: invalid object type: unknown, raw value 71
+chunk-cons	2058	PANIC	arity 2: invalid object type: unknown, raw value 71
+chunked-seq?	2063	PANIC	arity 1: invalid object type: unknown, raw value 71
+named?	2488	PANIC	arity 1: invalid object type: unknown, raw value 71
+name	2492	PANIC	arity 1: invalid object type: unknown, raw value 71
+namespace	2497	PANIC	arity 1: invalid object type: unknown, raw value 71
+to-array	5020	PANIC	arity 1: invalid object type: unknown, raw value 71
+eval	5686	PANIC	arity 1: invalid object type: unknown, raw value 71
+bigint	5868	PANIC	arity 1: invalid object type: unknown, raw value 71
+biginteger	5873	PANIC	arity 1: invalid object type: unknown, raw value 71
+bigdec	5878	PANIC	arity 1: invalid object type: unknown, raw value 71
+alength	6021	PANIC	arity 1: invalid object type: unknown, raw value 71
+float-array	6620	PANIC	arity 1: invalid object type: unknown, raw value 71
+boolean-array	6633	PANIC	arity 1: invalid object type: unknown, raw value 71
+byte-array	6646	PANIC	arity 1: invalid object type: unknown, raw value 71
+char-array	6659	PANIC	arity 1: invalid object type: unknown, raw value 71
+short-array	6672	PANIC	arity 1: invalid object type: unknown, raw value 71
+double-array	6685	PANIC	arity 1: invalid object type: unknown, raw value 71
+object-array	6698	PANIC	arity 1: invalid object type: unknown, raw value 71
+int-array	6707	PANIC	arity 1: invalid object type: unknown, raw value 71
+long-array	6720	PANIC	arity 1: invalid object type: unknown, raw value 71
+counted?	7007	PANIC	arity 1: invalid object type: unknown, raw value 71
+realized?	7563	PANIC	arity 1: invalid object type: unknown, raw value 71
+int	202	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+float	209	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+seq	218	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+first	238	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+next	253	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+second	275	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+rest	283	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+vec	363	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+deref	1082	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+chunk-buffer	2034	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+iterate	2821	TERMINATE	arity 2: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+sleep	4535	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+with-redefs-fn	4549	TERMINATE	arity 2: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+compare	5064	TERMINATE	arity 2: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+add-watch	5251	TERMINATE	arity 3: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+remove-watch	5268	TERMINATE	arity 2: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+set-validator!	5404	TERMINATE	arity 2: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+long	5773	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+double	5778	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+char	5795	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+aclone	6030	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+future-call	7354	TERMINATE	arity 1: after throwing an instance of 'jank::runtime::oref<jank::runtime::obj::exception_info>'
+ex-info	113	THROWS	arity 3: std.exception: An object of type `persistent_string` was expected here, but a `unknown` wa
+ex-message	123	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fde0f1228f0]` with `3` ar
+ex-data	130	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f9ffeda5840]` with `3` ar
+ex-cause	137	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fcd4d725790]` with `3` ar
+ex-map	145	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f7d3c2f36e0]` with `3` ar
+defn	720	THROWS	arity 3: jank: #error {
+pop!	1007	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7febc49c9b00]` with `3` ar
+swap!	1272	THROWS	arity 3: std.exception: An object of type `atom` was expected here, but a `unknown` was provided in
+swap-vals!	1286	THROWS	arity 3: std.exception: An object of type `atom` was expected here, but a `unknown` was provided in
+compare-and-set!	1300	THROWS	arity 3: std.exception: An object of type `atom` was expected here, but a `unknown` was provided in
+reset!	1307	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fb7a33ca630]` with `3` ar
+reset-vals!	1313	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fd36cfcc580]` with `3` ar
+vreset!	1328	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f0a0abcc370]` with `3` ar
+vswap!	1338	THROWS	arity 3: std.exception: An object of type `volatile_` was expected here, but a `unknown` was provid
++	1371	THROWS	arity 3: std.exception: not a number: #probe
+-	1388	THROWS	arity 3: std.exception: not a number: #probe
+*	1403	THROWS	arity 3: std.exception: not a number: #probe
+/	1420	THROWS	arity 3: std.exception: not a number: #probe
+bit-not	1436	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fd3095ddc60]` with `3` ar
+bit-and	1443	THROWS	arity 3: std.exception: An `integer` value was required here, but a `unknown` was provided.
+bit-or	1454	THROWS	arity 3: std.exception: An `integer` value was required here, but a `unknown` was provided.
+bit-xor	1465	THROWS	arity 3: std.exception: An `integer` value was required here, but a `unknown` was provided.
+bit-and-not	1476	THROWS	arity 3: std.exception: An `integer` value was required here, but a `unknown` was provided.
+bit-clear	1487	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f28f63de8f0]` with `3` ar
+bit-set	1495	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f53dfc5f840]` with `3` ar
+bit-flip	1503	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f9a08fdd790]` with `3` ar
+bit-test	1511	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f59c68b46e0]` with `3` ar
+bit-shift-left	1519	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f50cc5df630]` with `3` ar
+bit-shift-right	1527	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7ff9c05dd4d0]` with `3` ar
+unsigned-bit-shift-right	1535	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f3d0fdde370]` with `3` ar
+inc	1645	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fc9ed1e2dc0]` with `3` ar
+dec	1654	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f306f057d10]` with `3` ar
+pos?	1663	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fc163c57c60]` with `3` ar
+neg?	1671	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fcebb057bb0]` with `3` ar
+zero?	1679	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f7d78453a50]` with `3` ar
+rem	1687	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fa4d42ce9a0]` with `3` ar
+quot	1695	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fba4deba8f0]` with `3` ar
+even?	1744	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f508de512c0]` with `3` ar
+odd?	1752	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f7a1bde4210]` with `3` ar
+inc'	1760	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fb8c69e40b0]` with `3` ar
++'	1785	THROWS	arity 3: std.exception: not a number: #probe
+*'	1796	THROWS	arity 3: std.exception: not a number: #probe
+-'	1807	THROWS	arity 3: std.exception: not a number: #probe
+abs	1818	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fbd10058dc0]` with `3` ar
+dec'	1829	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f47a8fe9d10]` with `3` ar
+unchecked-inc	1842	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fe075e5cbb0]` with `3` ar
+rand	1966	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f7db766ea50]` with `3` ar
+subs	1979	THROWS	arity 3: std.exception: The first argument to `subs` must be a `persistent_string`, not `unknown`.
+chunk-append	2038	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f57cd5f04d0]` with `3` ar
+chunk	2042	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f36a46c6420]` with `3` ar
+var-get	2519	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7ff7f5cee840]` with `3` ar
+alter-var-root	2524	THROWS	arity 3: std.exception: An object of type `var` was expected here, but a `unknown` was provided ins
+bound?	2530	THROWS	arity 3: std.exception: An object of type `var` was expected here, but a `unknown` was provided ins
+thread-bound?	2536	THROWS	arity 3: std.exception: An object of type `var` was expected here, but a `unknown` was provided ins
+pop-thread-bindings	2782	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f1faa6b49a0]` with `3` ar
+get-thread-bindings	2788	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fa254e828f0]` with `3` ar
+range	2827	THROWS	arity 3: std.exception: not a number: nil
+defmethod*	4128	THROWS	arity 3: std.exception: An object of type `multi_function` was expected here, but a `unknown` was p
+remove-all-methods	4137	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fbdaea30840]` with `3` ar
+remove-method	4142	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f9b59f9b6e0]` with `3` ar
+prefer-method	4147	THROWS	arity 3: std.exception: An object of type `multi_function` was expected here, but a `unknown` was p
+methods	4153	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f5769f646e0]` with `3` ar
+get-method	4158	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f113cbd6420]` with `3` ar
+prefers	4164	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f9a695d6370]` with `3` ar
+current-time	4537	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fc2a0b4c2c0]` with `3` ar
+in-ns	4587	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f659459b210]` with `3` ar
+create-ns	4592	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f817f19af20]` with `3` ar
+find-ns	4599	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f353bcbde70]` with `3` ar
+find-var	4604	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fcd82cdedc0]` with `3` ar
+remove-ns	4610	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fe194994bb0]` with `3` ar
+the-ns	4616	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f292b263e70]` with `3` ar
+ns-name	4628	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f476b2b8e70]` with `3` ar
+ns-map	4634	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fb0ec483dc0]` with `3` ar
+ns-publics	4640	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fd117fffd10]` with `3` ar
+ns-resolve	4675	THROWS	arity 3: std.exception: An object of type `symbol` was expected here, but a `unknown` was provided 
+alias	4708	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f13ab07e790]` with `3` ar
+refer	4717	THROWS	arity 3: std.exception: An object of type `symbol` was expected here, but a `unknown` was provided 
+load-lib	4836	THROWS	arity 3: std.exception: The value for comparison must be a `symbol`, not a `unknown`.
+intern	4984	THROWS	arity 3: std.exception: An object of type `symbol` was expected here, but a `unknown` was provided 
+sort	5661	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fb2d7dda000]` with `3` ar
+num	5768	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f3430f28840]` with `3` ar
+numerator	5847	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fe79d4e8e70]` with `3` ar
+denominator	5852	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f6123a95d10]` with `3` ar
+read-string	5974	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f06f2c95210]` with `3` ar
+aget	6039	THROWS	arity 3: std.exception: An object of type `integer` was expected here, but a `keyword` was provided
+aset	6050	THROWS	arity 3: std.exception: An object of type `integer` was expected here, but a `keyword` was provided
+all-ns	6187	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fab0d944f20]` with `3` ar
+ns-unmap	6192	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f1660582e70]` with `3` ar
+ns-unalias	6218	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f0f76985bb0]` with `3` ar
+re-pattern	6352	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f1961b82210]` with `3` ar
+re-matcher	6358	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fd13fb82160]` with `3` ar
+re-groups	6364	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f1e85d850b0]` with `3` ar
+re-matches	6372	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f5644385000]` with `3` ar
+re-find	6379	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f1aa4fc1f20]` with `3` ar
+re-seq	6389	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f8f4db4ee70]` with `3` ar
+format	6950	THROWS	arity 3: std.exception: An object of type `persistent_string` was expected here, but a `unknown` wa
+inst-ms	7268	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f292a526f20]` with `3` ar
+random-uuid	7287	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f4557dbdd10]` with `3` ar
+future-cancel	7373	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f9b8e3a68f0]` with `3` ar
+future-cancelled?	7378	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f4f52fa0840]` with `3` ar
+clojure-version	7449	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f84dd1404d0]` with `3` ar
+promise	7454	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7ff7edb6e420]` with `3` ar
+shuffle	7516	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f8bed940000]` with `3` ar
+parse-long	7782	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f8580306f20]` with `3` ar
+parse-double	7788	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7fec5fb67e70]` with `3` ar
+parse-uuid	7796	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f6646167dc0]` with `3` ar
+NaN?	7814	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f4687bbac60]` with `3` ar
+infinite?	7819	THROWS	arity 3: std.exception: Invalid call to `#object [unknown jit_function 0x7f3e1d36bdc0]` with `3` ar
