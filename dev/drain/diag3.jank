@@ -1,0 +1,21 @@
+(ns diag3
+  (:require [cohost.hosts.jank-host]
+            [cohost.thread :as thread]))
+
+(defn slp [ms] (@#'clojure.core/sleep ms))
+(defn now [] (cpp/cohost_time.nano_time))
+
+(def ag (thread/new-agent [] {}))
+(defn timed-send [label v]
+  (let [t0 (now)]
+    (thread/dispatch! ag conj [v] (thread/send-executor))
+    (loop [i 0]
+      (let [st (thread/agent-state ag)]
+        (cond (some #(= v %) st)
+              (println label "landed after(ms):" (/ (- (now) t0) 1e6) "state:" st)
+              (> i 400) (println label "NEVER landed; state:" st)
+              :else (do (slp 25) (recur (inc i))))))))
+(timed-send "SEND1" :one)
+(timed-send "SEND2" :two)
+(timed-send "SEND3" :three)
+(println "DIAG3 done")
