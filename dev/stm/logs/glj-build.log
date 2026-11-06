@@ -1,0 +1,9 @@
+$ cp -r /home/hatch/go/pkg/mod/github.com/glojurelang/glojure@v0.7.22 glojure; patch -p1 < each of /home/hatch/workspace/eve-093-verify/adapters/completion/glojure/go/*.patch
+  applied goroutine-id.patch
+  applied host-field.patch
+  applied nth-slice.patch
+  applied record-factory.patch
+$ gen-import-interop -packages syscall,unsafe,eveglj/region,eveglj/types,eveglj/host > gljimports/gljimports.go   (for linux/amd64)
+  generated 2355 lines, 2320 registrations in 75904 ms
+$ go build -o glj-eve ./cmd/glj-eve
+  built /home/hatch/workspace/stm-glj/build/glj-eve (29229342 bytes) in 131617 ms

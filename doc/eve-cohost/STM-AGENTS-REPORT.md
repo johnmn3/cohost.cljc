@@ -1552,3 +1552,63 @@ journal/scan/counter/arena (stop and report instead).
   on the atom-eve drift's disposition (STATUS 11: the
   drift is mainline's to fix or a named release
   blocker — it is not worked around here).
+
+## STATUS 16 — 2026-11-06 ~12:5x AM ET — GO (glojure): the seat now EXISTS and the STM core RUNS on it; threads are the named gap (goroutine shape, not JVM shape)
+
+- **The missing cohost glojure seat is built**
+  (src/cohost/hosts/glj.clj): the JVM adapter as template,
+  per STATUS 10's probe design -- adapter map over the
+  clojure.lang/java.lang surface, JVM-shaped thread
+  leaves initially (corrected below), installed
+  explicitly by the probe (auto.cljc has no glojure
+  reader feature; wiring one is mainline's call).
+  Vehicle: glj-eve, built from the vendored line's own
+  impls/glojure/build.sh (glojure v0.7.22 + Eve's
+  completion patches) into ~/workspace/stm-glj/ --
+  29 MB binary, `(+ 1 2)` => 3.
+- **The probe ran** (dev/stm/probe_tx_glj.clj;
+  GLJ_CLASSPATH=src:<stub>): the STM's opening checks
+  PASS on glojure, verbatim: ref-value?, deref outside
+  tx, dosync alter, committed, alter-outside-tx throws,
+  abort rolls back both refs. The core is seat-clean;
+  what stopped the run at probe_tx.clj:52 is the THREAD
+  section, and the diagnosis is measured, not guessed:
+- **Glojure has no java.lang.Thread.** `Runnable` does
+  not resolve; `Class/forName` is itself an unimplemented
+  host form (EvalASTMaybeHostForm). STATUS 10's "jolt
+  presents clojure.lang.* names, as glojure does" holds
+  for the VALUE classes (LazySeq/Delay/Atom/transients
+  all construct and pass install!'s capability gate)
+  but NOT for the thread classes: goroutines are reached
+  through glojure's `go` macro over Go channels. So the
+  thread leaves are a different SHAPE here: :thread-spawn
+  = a `go` block; :doorbell-wait = a channel receive
+  with a timeout case; :thread-self = a goroutine id
+  glojure does not expose the JVM way. That is real seat
+  work in cohost.thread's terms (an afternoon-class
+  build with its own probes), NOT an adapter entry --
+  the glj adapter therefore leaves the thread leaves
+  ABSENT (spawn throws its named error) rather than
+  carrying JVM shapes that cannot compile. **Go verdict:
+  STM core RUNNING on the seat; STM complete on Go is
+  STOPPED on the named missing piece -- a go-shaped
+  thread-leaf set for cohost.thread (spawn/doorbell/self
+  over goroutines+channels), after which probe_tx's
+  thread sections and the domains probe (which needs the
+  Eve hosting joint ported to :glj as well) are the
+  remaining runs.** Nothing in the STM's design fails
+  here; the gap is the seat's thread surface, exactly
+  where STATUS 10 said the risk was not (it rated
+  threads glojure's strength -- true of the RUNTIME,
+  not of the JVM-shaped class surface cohost's leaves
+  were written against).
+- Also measured on the way: glojure's stdlib ships NO
+  clojure.edn; cohost.hosts.java requires it. The probe
+  carries a minimal literal-only clojure.edn stub on
+  its own classpath (~/workspace/stm-glj/stub, clearly
+  marked a load vehicle, not a library): a real EDN
+  reader for the seat is glojure-side/cohost-seat work,
+  named here, never silently stubbed into src/.
+- Jank remains environment-blocked (dpkg lock); Node's
+  standalone `node main.js` re-verification (compile4)
+  is in flight.

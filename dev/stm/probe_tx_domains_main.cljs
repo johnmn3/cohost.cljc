@@ -44,7 +44,11 @@
 
 (defn check-true [label actual] (check label true (boolean actual)))
 
-(defn -main [& _]
+(declare run!)
+
+(defn -main [& _] (run!))
+
+(defn run! []
   (cljs-eve/install-core! {})
   (tx/set-fill! true)
   ;; -- 1. residence + one domain per ref -------------------------------
