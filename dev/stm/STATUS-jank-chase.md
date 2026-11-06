@@ -199,8 +199,123 @@ All six substitutions are applied ONLY to the generated .jank copy,
 spelling-only, documented in the runner header; probe_tx.clj is
 byte-untouched and the 23 checks keep their order and expectations.
 
-## Next
-Probe attempt 9: from repo root,
+## Milestone 10 — 2026-11-06 ~10:05 AM ET — attempt 9: PROBE RUNS END-TO-END — 20/23 PASS, interrupt checks PASS
+
+Run under a pty (script -qec; plain redirected stdout is block-buffered
+and a late crash eats it — log probe-run-9c.log; the two earlier
+attempt-9 runs, 9/9b, segfaulted at process teardown AFTER the probe
+completed, losing the buffered output). **All 23 checks executed, as
+printed:**
+
+PASS (20): ref-value? · deref outside tx · dosync alter returns new
+value · committed · alter outside tx throws · abort rolls back both
+refs · snapshot read point stable · outside read sees the commit ·
+ensure prevents the skew · 8 threads x 200 commutes, none lost (1600)
+· transfer invariant holds (20000) · all transfers landed [8000
+12000] (INFO: 2253 attempts for 2000 transactions) · validator
+rejects the commit · value unchanged after rejected commit · watch
+fired once [[:w 1 3]] · history count · hot ref landed every
+increment (200) · **interrupt wakes a blocked latch wait with the
+interrupt exception => :interrupted** · **interrupted tx thread
+abandons => :interrupted** · **abandoned tx wrote nothing (555)**.
+
+FAIL (3): "write skew happens without ensure (stock answer too)"
+expected 80 got 100 · "send from a committing tx fired once" expected
+[:committed] got [] · "send from an aborting tx never fired" expected
+[:committed] got [] (inherits the previous row's empty agent state).
+
+**INTERRUPT VERDICT (the STATUS 1 throw-crossing question): YES on
+jank.** Both interrupt checks pass exactly as designed: the interrupt
+exception crosses the transaction body on jank frames, is caught as a
+jank object_ref, and thread/interrupted-ex? identifies it via ex-data
+(:cohost.thread/interrupted) — the abandoning transaction wrote
+nothing. Jank behaves JVM-family here, like Jolt's "throw-crossing
+YES", NOT flag-only like the JS seats. Cooperative interruption is
+therefore PROVEN on the jank seat, not just designed.
+
+Also as printed: the two bench INFO lines render their format string
+UNSUBSTITUTED ("INFO uncontended commute tx: %.0f tx/ms") — jank's
+format does not substitute %.0f, so the retry-cost numbers do not
+print on this seat (minor; finding F-3 below). The verdict line
+"PROBE-TX: ..." never prints because the runner's generation replaced
+the System/exit form — the per-check lines + the runner's "script
+completed" are the record (the failures atom is listed in the FAIL
+lines above).
+
+Teardown: after "INFO probe_tx_jank: script completed" the process
+SEGFAULTS on exit (139) — reproducibly, also after both diagnostic
+scripts. The probe's work is complete before the crash; it is a
+runtime-shutdown crash with live layer threads (finding F-2).
+
+## Milestone 11 — 2026-11-06 ~10:20 AM ET — the 3 FAILs diagnosed: 1 probe-timing artifact, 1 real seat defect BELOW the STM
+
+Diagnostics (~/workspace/stm-jank-chase/diag1.jank, diag2.jank; logs
+alongside):
+
+- **Write skew = TIMING ARTIFACT, STM semantics CORRECT.** The
+  section's overlap window is an in-transaction (sleep 60). Re-run of
+  the identical shape with a 2000 ms window: skew total = **80**, the
+  stock answer. On this JIT seat, thread start + first-call JIT of the
+  second transaction's body exceeds 60 ms, so the probe's two
+  transactions serialize (second reads the committed 100 and declines
+  the debit). Not an STM defect; the probe's 60 ms choreography is
+  calibrated for a warm JVM. (The ensure row passes under both
+  schedules, as it should.)
+- **Agent sends = REAL SEAT DEFECT, but NOT in the STM.** Diag part B:
+  a transaction-held send never lands (8 s poll, state stays []).
+  Diag 2: a PLAIN send outside any transaction ALSO never lands
+  (dispatch! accepted, state [] after 8 s). So the tx→agent hold seam
+  is exonerated: cohost.thread's agent machinery on the jank seat
+  accepts sends and never drains them. The executor is layer code
+  (queue atom + control atom + generation doorbell, workers spawned
+  through the seat's thread leaves, thread.cljc:266ff) — one-shot
+  spawned closures run fine on this seat (every threaded STM section
+  passes), so the suspect locus is the long-lived worker/doorbell
+  path (doorbell wait/signal on jank), the same family as the known
+  jank thread-suite gap around closures sent to worker pools.
+  **Finding F-1 (named, with repro): AGENT-DRAIN-JANK** —
+  repro = diag2.jank (20 lines, deterministic: dispatch! accepted,
+  agent-state [] forever). Owner: the cohost.thread jank seat work
+  (unit 1/2 line), not the STM layer and not this lane. The STM's
+  send-HOLD semantics are unproven-on-jank only insofar as delivery
+  itself is broken beneath them; the hold/release code ran without
+  error in both diag parts.
+
+## FINAL — 2026-11-06 ~10:25 AM ET
+
+**Toolchain:** the "blocker" was not real. No process held the dpkg
+lock (stale lock files only); the gcc-14 dev stack the prior lane
+named was already dpkg-restored; only jank itself was missing (VM
+cycle wiped /usr/local). Restored via `dpkg-deb -x` of the cached
+jank.deb (+ the three cached gcc-14 debs, idempotent). Smoke:
+check-health all green incl. "can jit compile c++", hello runs. One
+environment trap found and cleared: two extractions of the same jank
+build shared one PCH cache keyed by binary version — the stale
+opt-tree PCH poisoned compiles until moved aside (milestone 2).
+
+**Probe:** probe_tx runs END-TO-END on the jank seat —
+**20/23 checks PASS as printed**, including both cooperative-
+interrupt checks and the full contention battery (8×200 commutes
+exact, transfers exact with retries counted). Of the 3 FAILs: one is
+a probe-timing artifact (skew proven correct at a 2000 ms window),
+two are one real defect BELOW the STM (agent sends never drain on
+this seat — F-1, repro banked). Named findings: F-1 AGENT-DRAIN-JANK
+(thread-layer seat) · F-2 jank process segfaults at shutdown after
+completed runs (exit 139; verdicts print before it) · F-3 jank's
+format does not substitute %.0f (bench INFO numbers don't print) ·
+plus the seat facts established en route: jank's lexer rejects ALL
+non-ASCII source (one-char docstring fix in tx.cljc on this branch),
+jank core lacks load-file and stubs load-string/load-reader, and its
+module search is .jank/.cljc-only with require-by-ns-name as the
+general loader (runner restructured accordingly, spelling-only seat
+adaptations documented in its header; probe_tx.clj byte-untouched).
+
+**Jank STM verdict: RUNNING** — semantics + cooperative interruption
+proven on the seat over host atoms. (Eve-hosted refs on jank remain
+the unbuilt atom-eve jank joint, STATUS 10 — unchanged by this lane.)
+The prior lane's "NOT RUN (not failed)" is hereby closed: it ran.
+— Lane M, STM jank chase
+
 `jank --module-path src:. run dev/stm/probe_tx_jank.jank`
 (loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
 23 semantics checks the JVM seat runs; refs seat in host atoms on this
