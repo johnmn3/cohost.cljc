@@ -221,6 +221,7 @@
     clojure.lang.Keyword [clojure.lang.Named clojure.lang.IFn java.lang.Comparable java.lang.Object]
     clojure.lang.Var [clojure.lang.IRef clojure.lang.IReference clojure.lang.IDeref clojure.lang.IMeta clojure.lang.IFn clojure.lang.Settable java.lang.Object]
     clojure.lang.Atom [clojure.lang.IAtom clojure.lang.IAtom2 clojure.lang.IRef clojure.lang.IReference clojure.lang.IDeref clojure.lang.IMeta java.lang.Object]
+    clojure.lang.Ref [clojure.lang.IRef clojure.lang.IReference clojure.lang.IDeref clojure.lang.IMeta java.lang.Comparable java.lang.Object]
     clojure.lang.Delay [clojure.lang.IDeref clojure.lang.IPending java.lang.Object]
     clojure.lang.Volatile [clojure.lang.IDeref java.lang.Object]
     clojure.lang.Reduced [clojure.lang.IDeref java.lang.Object]
@@ -444,6 +445,9 @@
     ;; a layer atom (unit 5) IS a clojure.lang.Atom through the
     ;; facade; before the map branch, which would name it a map
     (atom-layer/atom-value? x) 'clojure.lang.Atom
+    ;; a layer ref (the STM lane) IS a clojure.lang.Ref through the
+    ;; facade; same reasoning, same place
+    (tx-layer/ref-value? x) 'clojure.lang.Ref
     (map? x) (cond ;; an Eve-backed map is a hash map at the seam
                    ;; (unit 4): Eve has the one map type
                    (memory/eve-backed? x) 'clojure.lang.PersistentHashMap
@@ -557,11 +561,11 @@
    'clojure.lang.Fn host/host-fn?
    'clojure.lang.IObj #(or (jank-impl? % :name) (and (not (cohost-inst? %)) (or (and (coll? %) (not (and host-has-map-entry? (host-map-entry? %)))) (symbol? %) (fn? %))))
    'clojure.lang.IMeta #(or (jank-impl? % :name) (and (not (cohost-inst? %)) (or (coll? %) (symbol? %) (fn? %) (h-var? %) (h-namespace? %) (h-atom? %))))
-   'clojure.lang.IReference #(or (h-var? %) (h-namespace? %) (h-atom? %))
-   'clojure.lang.IRef #(or (h-var? %) (h-atom? %))
+   'clojure.lang.IReference #(or (h-var? %) (h-namespace? %) (h-atom? %) (tx-layer/ref-value? %))
+   'clojure.lang.IRef #(or (h-var? %) (h-atom? %) (tx-layer/ref-value? %))
    ;; the thread layer's futures and promises are blocking derefs, its
    ;; agents plain derefs: stock deref branches on exactly these
-   'clojure.lang.IDeref #(or (h-deref? %) (atom-layer/atom-value? %) (thread/future-value? %) (thread/promise-value? %) (thread/agent-value? %))
+   'clojure.lang.IDeref #(or (h-deref? %) (atom-layer/atom-value? %) (tx-layer/ref-value? %) (thread/future-value? %) (thread/promise-value? %) (thread/agent-value? %))
    'clojure.lang.IBlockingDeref #(or (h-deref? %) (thread/future-value? %) (thread/promise-value? %))
    'clojure.lang.IPending #(or (h-pending? %) (thread/future-value? %) (thread/promise-value? %))
    ;; sorted collections have no transient form
