@@ -354,11 +354,19 @@
   "Bound a history vector: never more than max-history entries,
    never fewer than min-history (stock's fault window lives between
    the two: a read point older than the oldest retained entry
-   retries with a fresh point)."
+   retries with a fresh point).
+
+   The kept prefix is rebuilt as a FRESH vector, never a subvec:
+   a subvec shares the untrimmed vector's backing storage, so the
+   trimmed entries would stay reachable through the cell -- on a
+   GC host a small bounded over-retention, on a host without a GC
+   (the VS seat) a slab tree pinned forever per ref. A trim must
+   RELEASE, not merely unlist (report STATUS 9; probe_tx_reclaim
+   caught the subvec shape retaining exactly one trimmed version)."
   [h mn mx]
   (let [keep (max mn mx)]
     (if (> (count h) keep)
-      (subvec h 0 keep)
+      (vec (take keep h))
       h)))
 
 (defn- install!

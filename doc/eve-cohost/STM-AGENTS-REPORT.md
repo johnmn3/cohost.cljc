@@ -596,14 +596,14 @@ Scoped against Eve's actual surface (this checkout):
 
 ### Per-target table (Eve's hosts, as this project knows them)
 
-| target | own-domain atoms | interrupt points | attempt scope | verdict |
-|---|---|---|---|---|
-| JVM (Eve on JVM) | yes (heap domains) | yes (thread interrupt + cohost thread layer) | thread-local | ready modulo geometry |
-| jank (Eve on jank) | yes (Eve's domain model) | cooperative via cohost thread layer (this lane's STATUS 1) | thread-local | ready modulo geometry + the throw-crossing probe (STATUS 1) |
-| CLJS / Node | yes (SAB domains) | cooperative only within the realm's task system; no preemption | realm/task-local | protocol fits; interrupt degrades to poll-at-attempt-boundary |
-| CLJS / browser | yes (SAB domains) | same, weaker (worker messaging) | task-local | same, named weaker |
-| WASM / VS seat | Eve domains in the seat's model | isolates cannot be interrupted (operator's standing fact; hard stop = restart the isolate) | task-local | retry works; interruption is isolate-restart granularity — an Eve-level STM must name this seat :stm-interruptible? false |
-| basilisk/basilisp, phel, other shim hosts | n/a (no Eve hosting) | host-dependent | host thread-local | out of Eve's reach by definition — cohost's layer remains their STM |
+| target | own-domain atoms | interrupt points | attempt scope | history reclamation (STATUS 9) | verdict |
+|---|---|---|---|---|---|
+| JVM (Eve on JVM) | yes (heap domains) | yes (thread interrupt + cohost thread layer) | thread-local | domain retire-diff + epoch-gated flush on the write path; materialized copies GC'd; subject to R-RECLAIM | ready modulo geometry |
+| jank (Eve on jank) | yes (Eve's domain model) | cooperative via cohost thread layer (this lane's STATUS 1) | thread-local | the same :clj-family retire machinery, compiled native; subject to R-RECLAIM | ready modulo geometry + the throw-crossing probe (STATUS 1) |
+| CLJS / Node | yes (SAB domains) | cooperative only within the realm's task system; no preemption | realm/task-local | CLJS retire path (retire queue + epoch-gated flush in the SAB domain) | protocol fits; interrupt degrades to poll-at-attempt-boundary |
+| CLJS / browser | yes (SAB domains) | same, weaker (worker messaging) | task-local | same, in the worker's SAB domain | same, named weaker |
+| WASM / VS seat | Eve domains in the seat's model | isolates cannot be interrupted (operator's standing fact; hard stop = restart the isolate) | task-local | Eve's slab IS the memory — no host GC beneath to catch a miss; the domain retire path is the ONLY free; exposure is exactly R-RECLAIM, compounded by the seat's restart-only remedy | retry works; interruption is isolate-restart granularity — an Eve-level STM must name this seat :stm-interruptible? false |
+| basilisk/basilisp, phel, other shim hosts | n/a (no Eve hosting) | host-dependent | host thread-local | host cells only: the host's GC where it has one; a non-GC host without Eve hosting has NO reclamation story in this layer (no domain, no retire path) — stated, not assumed | out of Eve's reach by definition — cohost's layer remains their STM |
 
 ### The scoping conclusion
 
@@ -741,7 +741,9 @@ capability table, not a second design.
   build targets cohost-on-jank semantics with the JVM as reference,
   and the mechanism only bites on seats this lane does not run — but
   it is now a named requirement of the construction, not a silent
-  property of the GC.
+  property of the GC. (Taken up in full as STATUS 9: the design
+  section, the per-target reclamation column in STATUS 5, the
+  layer-retention audit, and a checked invariant.)
 - probe_tx over Eve domain cells (the 23 semantics checks with the
   factory installed) is running detached; its result lands in the
   final STATUS.
@@ -836,3 +838,147 @@ substrate ceilings and the two named pre-existing gaps aside —
 over real Eve domains. What blocks domain-per-ref STM in production
 is no longer design or semantics; it is Eve's per-domain geometry
 and version reclamation, measured above and filed to the Eve side.
+
+## STATUS 9 — 2026-11-05 ~9:4x PM ET — history reclamation, designed (operator's addition; completes STATUS 7's note)
+
+The operator's rule, stated as a design requirement: **a history
+trim must RELEASE the trimmed versions, not merely unlist them.**
+On the JVM the difference is invisible (unreachable = collected);
+on a host without a GC — the VS seat above all — unlisted-but-
+retained is a leak that runs forever. This section is the design:
+who frees a trimmed history entry, and when, per host class; what
+this layer does and deliberately does not do; and the one Eve-side
+primitive the mechanism still needs.
+
+### The two levels of "version" (do not conflate them)
+
+1. **History entries inside a cell.** A commit prepends the
+   superseded value to the cell's `:history` and bounds the vector
+   to max-history (never below min-history). Trimming drops entries
+   from the NEW cell.
+2. **Superseded cells inside the domain.** Every install replaces
+   the domain atom's root (the whole cell map). The old cell —
+   including its longer history — becomes a superseded VALUE in the
+   ref's own domain.
+
+Each level has exactly one owner of its freeing, and neither owner
+is a collector this layer builds.
+
+### GC hosts (host cells: JVM, CLJS, any GC host without Eve hosting)
+
+Freeing is reachability: a trimmed entry is freed when nothing
+references it, by the host GC, at its own pace. Stated, not
+belabored — but reachability is a property the LAYER must actually
+produce, and the first version of this construction did not:
+
+- **Caught by probe, fixed:** `trim-history` bounded the vector
+  with `subvec`. A subvec shares the untrimmed vector's backing
+  storage, so the "trimmed" entries stayed reachable through the
+  cell itself — exactly one trimmed version pinned per ref at any
+  time (the probe's alive-set was cellₙ ∪ cellₙ₋₁ to the entry).
+  On the JVM: a bounded over-retention. On a non-GC seat: a slab
+  tree pinned forever, per ref. The trim now rebuilds the kept
+  prefix as a fresh vector (`vec`/`take`), which is also the
+  correct SHAPE for the Eve level below: the new cell references
+  only what it lists.
+- **The layer-retention audit** (this layer's source, grepped for
+  any second home for a version value): the cell is the ONLY
+  version store. Attempt records hold `:base-value` per touched
+  ref but are runner locals — created per attempt, dropped on
+  retry (a fresh attempt replaces them) and on completion; they
+  are in-flight state, not retention. Watch notifications are
+  `[ref old new]` triples fired synchronously by the runner after
+  the winning installs and dropped — never stored (a watch FN may
+  retain what it is handed; that is the program's choice, as in
+  stock). Held sends hold ACTIONS (agent, fn, args — user data),
+  released on commit, dropped with the attempt on abort; never
+  versions. The ref's `:state` holds validator/watches/meta/
+  history bounds/a lock id — no values. The cohost.atom wrapper's
+  state carries exactly one root — the current cell — at rest.
+  `probe_tx_reclaim.clj` checks the consequence: nine sentinel
+  values installed in sequence (max-history 3, a non-retaining
+  watch attached so the watch path runs too), only WeakReferences
+  kept — **the five trimmed sentinels clear under GC; the three
+  retained history values and the current value survive. ALL 4
+  CHECKS PASS** (log `dev/stm/logs/probe-tx-reclaim.log`; before
+  the trim fix this probe failed on exactly the subvec retention).
+  probe_tx is unchanged and still 23/23.
+
+### Eve seats (any host language): the domain's retire path is the free
+
+On an Eve seat there are two memories: the host's (materialized
+copies — the host's GC story, above) and the domain's slab, which
+NO host GC manages. Slab freeing is Eve's own machinery, and it
+already has the right shape for STM — read from `eve.atom`'s
+source at the sibling checkout:
+
+- On every successful root transition, the seat collects the
+  superseded value's **retire-diff** — the slab offsets of the
+  nodes that changed between old and new value (per-type
+  collectors in eve.map/vec/set/list; an alloc-log for values
+  written from non-Eve types) — tags them with the new epoch, and
+  enqueues them on the DOMAIN's retire queue.
+- A flush on the write path frees queued offsets whose epoch is
+  older than the minimum epoch any reader slot in the domain
+  currently pins; reads pin their epoch for the read's duration,
+  so a value being read cannot be freed under its reader. The
+  flush is time-throttled (a scan at most every 50 ms, or when
+  the queue passes 64 entries) — in the source's own words, "we
+  only delay freeing, never free too early."
+- Applied to STM: a commit's install IS a root transition, so the
+  superseded cell — history and all — is retired by the same diff
+  as any superseded atom value. **The layer therefore does
+  nothing per trim beyond dropping the reference, and must not
+  invent a per-entry free:** Eve values are persistent slab
+  trees; there is no freeing a subtree out of the middle of one,
+  and a cohost-side collector (side tables of dead versions, a
+  journal of trims, a liveness scan) is exactly what the memory
+  model forbids. Trimming is domain-local retirement because the
+  history lives in the ref's own domain — the ruling's geometry
+  is what makes the reclamation story this simple.
+- STM attempts never pin slab storage: a transaction's read point
+  is a logical commit point, served from the CURRENT cell's
+  history vector — no old root is epoch-pinned by an attempt, so
+  transactions never hold the epoch gate shut. (A value a
+  transaction is actively folding over is a materialized host
+  copy, under the host's story.)
+
+### The gap that remains is Eve-side, and it is named, not worked around
+
+The flush runs only AFTER a successful transition — the incoming
+value is allocated first. Once a domain's slab is saturated, the
+incoming allocation throws before any flush can run, no idle
+driver exists, and the domain is write-bricked even though its
+retire queue holds epoch-safe blocks: STATUS 8's ceiling,
+measured — 1,248 cell installs at default geometry, still full
+after a 20 s quiescent pause. Under a sustained write stream the
+throttled, post-allocation flush cannot keep up with an STM ref's
+commit rate even before saturation; at saturation it can never
+run again at all.
+
+**Eve-side requirement R-RECLAIM:** allocation in a domain must
+be able to force an unthrottled flush of that domain's retire
+queue before failing — flush-before-alloc, or flush-on-alloc-
+failure with one retry — so epoch-safe storage is reclaimable
+under write pressure and at the wall, not only in the aftermath
+of successful writes. This joins STATUS 4's geometry item
+(capacities through the public domain opener) as the second
+Eve-side gate on an Eve-level STM; STATUS 5's table now carries
+the per-target reclamation column, with the VS/WASM row stated
+plainly: there the slab is the only memory, retirement is the
+only free, and a wedged domain's remedy is the seat's remedy for
+everything — restart the isolate. No cohost-side mechanism is
+improvised for any of this; per the operator's instruction, the
+requirement is filed to Eve.
+
+### Declaration for this addition
+
+The reclamation design is now explicit end to end: GC hosts free
+by reachability, and this layer is now PROVEN (probe, not
+inspection) to make trimmed versions unreachable — one real
+retention defect (subvec sharing) found by that probe and fixed;
+Eve seats free by the domain's epoch-gated retire path, which
+the construction feeds by shape and obstructs in no way; and the
+substrate's one missing primitive is named as R-RECLAIM with its
+measurement, filed to the Eve side alongside the geometry
+finding.

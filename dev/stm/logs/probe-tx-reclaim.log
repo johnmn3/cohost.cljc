@@ -1,0 +1,6 @@
+WARNING: get-validator already refers to: #'clojure.core/get-validator in namespace: cohost.tx, being replaced by: #'cohost.tx/get-validator
+PASS history is trimmed to max-history => 3
+PASS current value is the last sentinel installed => true
+PASS trimmed versions are unreachable (weak refs cleared) => true
+PASS retained history + current values survive GC => [true true true true]
+PROBE-TX-RECLAIM: ALL 4 CHECKS PASS
