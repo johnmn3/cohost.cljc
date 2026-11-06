@@ -9,5 +9,11 @@
 (ns probe-tx-jank
   (:require [cohost.hosts.jank-host]))
 
-(load-file "probe_tx.clj")
+;; jank's clojure.core has no load-file (checked in the installed
+;; core.jank: load, load-reader, load-string, slurp only) -- the
+;; load-string/slurp pair is the raw-jank equivalent. (STM jank chase
+;; lane, 2026-11-06: the runner as banked could not resolve load-file;
+;; cohost's booted path fills load-file via core-extras, this raw
+;; runner does not boot.)
+(load-string (slurp "probe_tx.clj"))
 (println "INFO probe_tx_jank: script completed")

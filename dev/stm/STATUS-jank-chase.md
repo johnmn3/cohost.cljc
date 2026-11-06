@@ -68,8 +68,26 @@ Fix applied: both stale caches moved aside (recoverable):
 rebuilds the PCH from the single /usr/local install. This is an
 environment defect, not a jank-seat or STM defect.
 
+## Milestone 3 — 2026-11-06 ~9:27 AM ET — attempt 2: PCH fixed; runner's load-file unresolved (fixed)
+
+Attempt 2 (log probe-run-2.log): the PCH rebuilt cleanly against the
+single /usr/local install ("Building pre-compiled header… done!") and
+compilation got past the C++ header stage — the mixed-install defect is
+closed. New, distinct failure at analysis of the runner itself:
+`load-file` could not be resolved (dev/stm/probe_tx_jank.jank:12).
+jank's clojure.core (installed core.jank) defines load / load-reader /
+load-string / slurp but NO load-file; cohost's booted path fills
+load-file via core-extras, but this raw runner doesn't boot, so the
+symbol isn't there. The prior lane wrote the runner but never ran it —
+this is exactly the probe-infrastructure class the chase brief covers.
+
+Fix (committed on this branch): the runner now uses
+`(load-string (slurp "probe_tx.clj"))`, the raw-jank equivalent.
+Attempt 3 proceeds on this change (not a blind retry: new failure, named
+mechanism, named fix).
+
 ## Next
-Probe attempt 2: from repo root,
+Probe attempt 3: from repo root,
 `jank --module-path src run dev/stm/probe_tx_jank.jank`
 (loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
 23 semantics checks the JVM seat runs; refs seat in host atoms on this
