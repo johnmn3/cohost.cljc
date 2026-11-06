@@ -22,7 +22,15 @@
    question this probe does not claim)."
   (:require [cohost.atom :as atom-layer]
             [cohost.hosts.cljs-eve :as cljs-eve]
-            [cohost.tx :as tx]))
+            [cohost.tx :as tx]
+            [cljs.nodejs :as nodejs]))
+
+(nodejs/enable-util-print!)
+
+;; cljs.nodejscli only invokes *main-cli-fn*; without this the compiled
+;; probe loads its namespaces and exits silently (cljs.main :nodejs
+;; builds do not auto-call -main).
+(set! *main-cli-fn* -main)
 
 (def checks (atom 0))
 (def failures (atom []))
@@ -63,7 +71,7 @@
       (check "ref-set" 7
              (tx/run-in-transaction (fn [] (tx/ref-set* r1 7))))
       (check "commute folds at commit" 17
-             (tx/run-in-transaction (fn [] (tx/commute* r1 + [] 10)))))
+             (tx/run-in-transaction (fn [] (tx/commute* r1 + [10])))))
     ;; -- 3. disjoint transactions: zero retries (single realm) ----------
     (let [drefs (mapv (fn [_] (tx/make-ref 0)) (range 8))]
       (tx/reset-stats!)

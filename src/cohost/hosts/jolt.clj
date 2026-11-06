@@ -36,6 +36,31 @@
    :var-raw-root (fn [v] (.getRawRoot v))
    :set-dynamic! (fn [v] (.setDynamic v) (alter-meta! v assoc :dynamic true) v)
    :dynamic-var? (fn [v] (boolean (or (.isDynamic v) (:dynamic (meta v)))))
+   ;; the thread leaves under cohost.thread (Eve's thread layer), the
+   ;; JVM adapter's shapes verbatim: jolt's java.lang.Thread is a real
+   ;; Chez thread (measured on the seat: construct/start/join/self and
+   ;; monitor wait/notifyAll all work -- dev/stm scratch, STM lane
+   ;; STATUS 15). Their absence was an adapter omission, not a host
+   ;; limit: without them every layer future/agent failed on this seat.
+   :thread-spawn (fn [thunk]
+                   (let [t (Thread. ^Runnable (fn [] (thunk)))]
+                     (.setDaemon t true)
+                     (.start t)
+                     t))
+   :thread-self (fn [] (Thread/currentThread))
+   ;; a doorbell is an atom holding its signal, used as its own monitor
+   :doorbell (fn [] (atom false))
+   :doorbell-wait (fn [db timeout-ms]
+                    (locking db
+                      (if @db
+                        true
+                        (do (.wait ^Object db (long (or timeout-ms 0)))
+                            (boolean @db)))))
+   :doorbell-signal (fn [db]
+                      (locking db
+                        (reset! db true)
+                        (.notifyAll ^Object db)
+                        true))
    :empty-queue (fn [] clojure.lang.PersistentQueue/EMPTY)
    :namespace? (fn [x] (instance? clojure.lang.Namespace x))
    :var-bound? (fn [v] (bound? v))

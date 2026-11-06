@@ -1479,3 +1479,76 @@ journal/scan/counter/arena (stop and report instead).
   no-long-measurements rule it is a compile, not a
   measurement; it either lands or the next STATUS
   diagnoses it.
+
+## STATUS 15 — 2026-11-06 ~12:0x AM ET — NODE and JOLT both RUN the STM (per-ref Eve domains on both); jolt gains its thread leaves; Node's auto-run wired
+
+- **NODE (cljs seat): STM RUNNING over per-ref Eve
+  domains — PROBE-TX-DOMAINS-CLJS: ALL 11 CHECKS PASS**
+  (dev/stm/logs/probe-tx-domains-cljs.log). With this
+  lane's :make-domain-atom leaf in the cljs_eve factory:
+  every ref's cell :eve-own-domain; the Eve handles sit
+  in 10 pairwise-distinct domains; 10 refs minted in
+  152 ms total on this seat (vs ~10^2 ms PER domain at
+  JVM heap geometry — the geometry item is seat-priced,
+  and Node's SAB geometry is far cheaper); independence,
+  a two-ref cross-domain commit, the semantics subset
+  (alter / ref-set / commute) over domain cells, and the
+  disjoint run: **800 commits / 0 retries** from the
+  layer's own stats. Two build lessons, both banked in
+  the probe's header: cljs :nodejs builds do not
+  auto-call -main (cljs.nodejscli invokes *main-cli-fn*
+  — the probe now sets it, and enables util print); and
+  the domains probe's fn-valued-ref checks are JVM-form
+  only on this seat (STATUS 10's realm rule: unrepresent-
+  able roots stay in the realm's host seat; named, not
+  silently dropped — the cljs probe checks what the
+  seat's contract claims).
+- **JOLT: STM RUNNING, both probes, both cell kinds.**
+  (1) probe_tx_domains over Eve domain cells: **ALL 15
+  CHECKS PASS** — residence off the handles, disjoint
+  800/0, scoped contention (victim 173 retries,
+  bystander 0). (2) probe_tx over host cells: **ALL 23
+  CHECKS PASS** — the full semantics suite, including
+  the interrupt checks ("interrupt wakes a blocked
+  latch wait with the interrupt exception",
+  "interrupted tx thread abandons", "abandoned tx wrote
+  nothing"): STATUS 1's throw-crossing question is
+  answered YES on jolt frames by the suite itself (the
+  forced-retry bench runs its throw+rerun at 2 tx/ms on
+  the seat; the retry signal crosses nested frames,
+  user catches, and the runner's own commit path).
+  The dedicated throw probe's remaining red is the
+  ::too-short manufacture of STATUS 14 — a layer
+  semantics question (single-writer assumption), not a
+  frame-crossing failure; it stays named there.
+- **Jolt's thread leaves were MISSING — an adapter
+  omission, now fixed in cohost's layer.** probe_tx
+  first died at line 52: "this host provides no
+  thread-spawn". A 30-line scratch measured the seat
+  first (Chez threads: Thread construct/start/join/
+  currentThread and monitor wait/notifyAll all work),
+  then src/cohost/hosts/jolt.clj gained :thread-spawn,
+  :thread-self, :doorbell, :doorbell-wait,
+  :doorbell-signal with the JVM adapter's shapes
+  verbatim — jolt's adapter is "nearly the JVM adapter"
+  by its own docstring; the leaves were simply never
+  carried over. Regression check: the booted jolt run
+  after the change — battery 218/221 with the same
+  single named FAIL row the seat carries (sort-result
+  meta walk; pre-existing, not a thread row), boot
+  errors 0. This also unblocks every layer future/agent
+  on the seat, not just STM.
+- **The Eve binding for both runs** is the pinned line
+  (the d241de3 checkout's src + hosts.edn rows), the
+  same pin the cljs seat binds — release bindings in
+  the STATUS 11 sense for the standalone line; the
+  vendored-line question stays with the release lane.
+- Still open at this STATUS: jank (environment — the
+  dpkg lock saga continues; the seat itself untested),
+  Go/glojure (the decisive seat-boot probe), the full
+  probe_tx (23) ported to the cljs runner (subset ran;
+  the thread sections need the realm machinery, named),
+  and every target's RELEASE-READY line, which waits
+  on the atom-eve drift's disposition (STATUS 11: the
+  drift is mainline's to fix or a named release
+  blocker — it is not worked around here).
