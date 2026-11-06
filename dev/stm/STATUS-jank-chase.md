@@ -101,8 +101,26 @@ the module path (`--module-path src:.`) so the repo-root probe_tx.clj
 resolves as a module. If jank's module loader rejects a no-ns .clj
 script, the fallback is a read/eval loop over the file's forms.
 
+## Milestone 5 — 2026-11-06 ~9:40 AM ET — attempt 4: .clj invisible to jank's module loader (measured); runner self-generates a .jank copy
+
+Attempt 4 (log probe-run-4.log): `(load "/probe_tx")` →
+runtime/module-not-found. Isolated in a scratch dir (modtest, warm PCH,
+seconds per run): `(load "probe_tx")`, `(load "/probe_tx")`,
+`(load "probe-tx")` and `(require 'probe-tx)` ALL fail to find
+probe_tx.clj at relative or absolute module paths — while the identical
+content named probe_tx.jank loads immediately. **jank's runtime module
+search resolves .jank/.cljc only; .clj files are invisible to it.**
+(That's also why the seat's own sources are .jank/.cljc.)
+
+Runner restructured (committed): it now spits the shared script to
+dev/stm/probe_tx_jank_generated.jank (gitignored; probe_tx.clj stays
+the single source) and `(load "/dev/stm/probe_tx_jank_generated")`.
+slurp/spit verified as real implementations in jank core (C++ bodies,
+not stubs). The no-ns script body executing under module load was
+proven by the modtest run.
+
 ## Next
-Probe attempt 4: from repo root,
+Probe attempt 5: from repo root,
 `jank --module-path src:. run dev/stm/probe_tx_jank.jank`
 (loads cohost.hosts.jank-host, then load-file "probe_tx.clj" — the same
 23 semantics checks the JVM seat runs; refs seat in host atoms on this

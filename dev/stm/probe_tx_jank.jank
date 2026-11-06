@@ -9,14 +9,18 @@
 (ns probe-tx-jank
   (:require [cohost.hosts.jank-host]))
 
-;; Loading probe_tx.clj from raw jank (STM jank chase lane, 2026-11-06):
-;; the runner as banked used load-file, which jank's clojure.core does
-;; not define at all; load-string and load-reader ARE defined in the
-;; installed core.jank but both are "TODO: port" stubs that throw
-;; (attempts 2 and 3, logs probe-run-2.log / probe-run-3.log). The one
-;; implemented loader is `load`, which loads a module from the module
-;; path via the runtime -- hence the run command's --module-path src:.
-;; and the absolute module path below. (cohost's booted path fills
-;; load-file via core-extras; this raw runner does not boot.)
-(load "/probe_tx")
+;; Loading probe_tx.clj from raw jank (STM jank chase lane, 2026-11-06;
+;; the runner as originally banked never ran -- see
+;; STATUS-jank-chase.md milestones 3-5 for the measured chain):
+;;   * load-file does not exist in jank's clojure.core;
+;;   * load-string / load-reader exist but are "TODO: port" stubs;
+;;   * `load` IS implemented (runtime module loader), but jank's module
+;;     search resolves only .jank/.cljc files -- a .clj file is
+;;     invisible to it at any module path (measured).
+;; So: materialize the shared script as a .jank module (generated file,
+;; gitignored -- probe_tx.clj remains the single source) and load that.
+;; (cohost's booted path fills load-file via core-extras; this raw
+;; runner does not boot.)
+(spit "dev/stm/probe_tx_jank_generated.jank" (slurp "probe_tx.clj"))
+(load "/dev/stm/probe_tx_jank_generated")
 (println "INFO probe_tx_jank: script completed")
