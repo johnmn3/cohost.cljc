@@ -20,6 +20,11 @@ Nothing in this lane writes to cohost main.
   62/62, errors 0; cljs cli:check 7/7 SAME; boot:cljs 219/221 + 62/62
   (the impl line's named pristine pair only); marker sweep 0/0/0.
   Jank leg running.
+- 2026-11-05 ~7:05 PM ET — jank leg landed: boot:jank rc=0, errors 0,
+  219/221 + 62/62, shim.o produced; the two red rows byte-identical
+  to the impl line's own banked log. PENDING-REBIND rows recorded.
+  Final declaration written below. Lane complete; the branch awaits
+  its PENDING rows and the operator's word.
 
 ## Rows
 
@@ -109,5 +114,51 @@ serially on this box (8 GB).
   filter: **0 / 0 / 0**. Raw-substring grep names 8 files, all
   `doc/eve-cohost/` landing records whose prose quotes the markers —
   the identical set exists on the impl parent; the merge added none.
-- Jank (`bb boot:jank`): RUNNING — any row the pre-release `:eve`
-  bindings make meaningless is recorded PENDING-REBIND, not forced.
+- Jank (`bb boot:jank`): **rc=0, errors: 0; booted as stock 544;
+  battery: 219/221; libraries: 62/62** (log: `boot-jank.log`). The
+  AOT build produced `cohost/shim.o` on this tree — the unit-9 AOT
+  fix's artifact, verified present in the AOT cache. The two red rows
+  are the impl line's standing jank pair, byte-identical to the impl
+  line's own banked `boot:jank` log (unit 8's logs): "FAIL
+  Character/isWhitespace is Java's" (got "ERR Unfinished character:
+  8195") and "FAIL Character outside ASCII" (got [false false true
+  false]). Both are jank-seat character-literal rows; neither is merge
+  damage.
+
+### PENDING-REBIND — jank-seat rows that only gain meaning on the released bindings
+
+Recorded, not forced, per the lane brief:
+
+- **Unit 9's jank harness leg** (`dev/eve_http_seats.clj`, 36-check
+  shape; owner: cohost Agent 3, `agent3/unit9-jank-seat`): on the
+  pre-release bindings it runs up to the seam-8 load fault and can
+  read no further; its verdict belongs to the re-run against the Eve
+  0.9.3 released bindings, after the pin adoption above.
+- **Full jank-seat gate re-run on the 0.9.3 pin** (`bb boot:jank`,
+  plus the cljs Eve-fill rows): the rows above were taken against the
+  pre-release `:eve` pin (Eve main's 0.9.1 line). They stand as this
+  branch's pre-release numbers; the release verdict is the same gates
+  re-run once the pin moves to the 0.9.3 release commit.
+- **Unit 6's jank rows** ride with unit 6 itself (PENDING, Agent 3).
+
+## FINAL DECLARATION — this lane
+
+`release/eve-in-cohost` is prepared and proven to the extent the
+pre-release bindings allow:
+
+- Base: cohost main's fetched tip (cohost 0.9 line), untouched and
+  unmoved — nothing in this lane wrote to cohost main.
+- The Eve-in-cohost impl mainline is merged in whole, zero textual
+  conflicts, auto-merge verified file-by-file on the historically
+  contended files.
+- Gates on the merged tree, as printed: JVM 221/221 + 62/62, errors 0;
+  cljs cli:check 7/7 SAME; boot:cljs 219/221 + 62/62 (the named
+  pristine pair); boot:jank 219/221 + 62/62, errors 0, shim.o
+  produced (the standing jank pair, byte-identical to the impl line's
+  own log); conflict-marker sweep 0/0/0.
+- Every project row is dispositioned above: units 1–5, 7–9 and the
+  unit-9 AOT fix IN; unit 6, the 0.9.3 pin adoption + rebind re-runs,
+  and the documentation chapters PENDING with named owners; nothing
+  EXCLUDED.
+- The branch moves to cohost main only on the operator's word, after
+  the PENDING rows land or are explicitly waived.
