@@ -32,8 +32,6 @@
           ;; start (dev/perf/jank_gc_env.clj; the user's GC_* win, COHOST_JANK_GC=none
           ;; sets nothing)
           (load-file "dev/perf/jank_gc_env.clj")
-          (defn jank-shell [& args]
-            (apply babashka.process/shell {:extra-env (jank-gc-env)} args))
           ;; Eve-in-cohost unit 6 (option 3): cohost's jank seat builds its type instances as Eve's one object,
           ;; defined in Eve's completion (eve.host-completion), which cohost.hosts.jank-host requires first. So
           ;; every jank task's module path carries Eve's jank realization: EVE_JANK_PATH, the output of
@@ -44,6 +42,16 @@
                 (throw (ex-info "EVE_JANK_PATH is unset: cohost's jank seat needs Eve's completion (bb classpath jank in an Eve checkout)" {})))
               p))
           (defn jank-src [] (str "src:" (eve-jank-path)))
+          ;; Eve's completion header (eve/eve_obj.hpp) dir, from EVE_JANK_PATH: the completion's src root, include for src.
+          ;; jank's clang reads CPLUS_INCLUDE_PATH (measured), so it goes in the jank process's environment.
+          (defn eve-jank-env []
+            (let [inc (->> (clojure.string/split (eve-jank-path) (re-pattern ":"))
+                           (filter (fn [p] (clojure.string/ends-with? p "adapters/completion/jank/src")))
+                           (map (fn [p] (str (subs p 0 (- (count p) 3)) "include"))))
+                  cur (System/getenv "CPLUS_INCLUDE_PATH")]
+              {"CPLUS_INCLUDE_PATH" (clojure.string/join ":" (cond-> (vec inc) (not (clojure.string/blank? cur)) (conj cur)))}))
+          (defn jank-shell [& args]
+            (apply babashka.process/shell {:extra-env (merge (jank-gc-env) (eve-jank-env))} args))
           (defn jank! [& args]
             (apply jank-shell (concat [jank-bin] (jank-o) args)))
           ;; unit 8: the -Sdeps of cohost's Node cljs builds -- Eve's hosts.edn

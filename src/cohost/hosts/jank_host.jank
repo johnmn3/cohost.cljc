@@ -973,6 +973,9 @@ namespace cohost_dcall_init {
 #include <jank/runtime/obj/volatile.hpp>
 #include <jank/runtime/obj/number.hpp>
 #include <atomic>
+/* Eve's one object, from Eve's completion header (adapters/completion/jank/include; every cohost jank task puts it on
+   CPLUS_INCLUDE_PATH): under AOT one module's cpp/raw never sees another's, so the struct is included, not inherited */
+#include <eve/eve_obj.hpp>
 
 namespace cohost_obj {
   using namespace jank::runtime;

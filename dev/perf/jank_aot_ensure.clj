@@ -45,10 +45,17 @@
       (throw (ex-info "EVE_JANK_PATH is unset: cohost's jank seat needs Eve's completion" {})))
     p))
 
-(defn- eve-completion-files []
+(defn- eve-completion-dirs []
   (->> (str/split (eve-jank-path) #":")
-       (filter #(str/ends-with? % "adapters/completion/jank/src"))
-       (mapcat source-files)))
+       (filter #(str/ends-with? % "adapters/completion/jank/src"))))
+
+;; the completion's header dir (eve/eve_obj.hpp): its src root, include for src
+(defn- eve-include-dirs []
+  (map #(str (subs % 0 (- (count %) 3)) "include") (eve-completion-dirs)))
+
+(defn- eve-completion-files []
+  (concat (mapcat source-files (eve-completion-dirs))
+          (mapcat source-files (filter fs/directory? (eve-include-dirs)))))
 
 (defn source-hash []
   (let [files (concat (cohost-files) (eve-completion-files))
@@ -92,7 +99,8 @@
   (when (fs/exists? (fs/path aot-root "_cache"))
     (fs/delete-tree (fs/path aot-root "_cache")))
   (fs/create-dirs aot-root)
-  (shell jank-bin "--module-path" (str "src:" (eve-jank-path)) "compile-module" "cohost.run"
+  (shell {:extra-env {"CPLUS_INCLUDE_PATH" (str/join ":" (eve-include-dirs))}}
+         jank-bin "--module-path" (str "src:" (eve-jank-path)) "compile-module" "cohost.run"
          "-O3" "--target-dir" aot-root)
   (let [runs (run-objects)]
     (when-not (= 1 (count runs))

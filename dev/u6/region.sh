@@ -26,6 +26,10 @@ out="${U6_DIR:-$repo/target/u6-region}"
 # (eve/doc/hosts/jank.md, "The locale")
 export LC_ALL="${LC_ALL:-en_US.UTF-8}"
 rm -rf "$out"; mkdir -p "$out"
+# Eve's completion header (eve/eve_obj.hpp, unit 6 option 3) on jank's include path: its src root on
+# EVE_JANK_PATH, include for src; jank's clang reads CPLUS_INCLUDE_PATH
+eve_inc="$(tr ':' '\n' <<<"${EVE_JANK_PATH:-}" | sed -n 's|adapters/completion/jank/src$|adapters/completion/jank/include|p' | paste -sd:)"
+[ -n "$eve_inc" ] && export CPLUS_INCLUDE_PATH="$eve_inc${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
 path="$out/region.bin"
 n=$(( ($$ * 7919 + $(date +%s)) % 2000000000 ))
 

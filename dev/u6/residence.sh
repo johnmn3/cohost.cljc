@@ -34,6 +34,10 @@ jank_bin="${JANK_BIN:-jank}"
 out="${U6_DIR:-$repo/target/u6-residence}"
 export LANG="${LANG:-C.UTF-8}"   # jank's lexer wants a UTF-8 locale (dev/install/jank-src.sh)
 mkdir -p "$out"
+# Eve's completion header (eve/eve_obj.hpp, unit 6 option 3) on jank's include path: its src root on
+# EVE_JANK_PATH, include for src; jank's clang reads CPLUS_INCLUDE_PATH
+eve_inc="$(tr ':' '\n' <<<"${EVE_JANK_PATH:-}" | sed -n 's|adapters/completion/jank/src$|adapters/completion/jank/include|p' | paste -sd:)"
+[ -n "$eve_inc" ] && export CPLUS_INCLUDE_PATH="$eve_inc${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
 
 jvm_cp() {
   if [ -n "${EVE_JVM_CP:-}" ]; then echo "$EVE_JVM_CP"; return; fi

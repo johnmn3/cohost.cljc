@@ -8,6 +8,10 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; repo="$(cd "$here/../.." && pwd)"
 export LC_ALL="${LC_ALL:-en_US.UTF-8}"
+# Eve's completion header (eve/eve_obj.hpp, unit 6 option 3) on jank's include path: its src root on
+# EVE_JANK_PATH, include for src; jank's clang reads CPLUS_INCLUDE_PATH
+eve_inc="$(tr ':' '\n' <<<"${EVE_JANK_PATH:-}" | sed -n 's|adapters/completion/jank/src$|adapters/completion/jank/include|p' | paste -sd:)"
+[ -n "$eve_inc" ] && export CPLUS_INCLUDE_PATH="$eve_inc${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
 fns=("$@"); [ ${#fns[@]} -eq 0 ] && fns=(coll? seq? seqable? sequential? map? vector? set? string? fn? ifn? counted? associative? empty? count seq str pr-str hash = identical? meta type get contains? conj nth)
 for mode in ${VISIT_MODES:-converged plain}; do
   for f in "${fns[@]}"; do
