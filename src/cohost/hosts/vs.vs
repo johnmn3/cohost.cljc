@@ -202,6 +202,11 @@
    :ns-interns (fn [ns-sym] (ns-interns ns-sym))
    :ns-public-names (fn [ns-sym] (set (keys (ns-publics ns-sym))))
    :intern! (fn [ns-sym sym v] (intern ns-sym sym v))
+   ;; every VS value is the host's own data: no VS instance answers a member of its own (:user-type? is the adapter's
+   ;; default, false), so the shim's dot$m dispatcher may skip its type lookup — MEASURED before (atom.broker
+   ;; docs/vs-cohost/STATUS.md 2026-11-07 5:35 PM ET, WORKPROBE): `dot$nth` 34.9 µs a call where the stock `nth` it
+   ;; wraps is 1.2 — host-object? took x's class and a map lookup at every call
+   :host-data? (fn [_] true)
    :current-ns current-ns
    :with-ns with-ns
    :set-current-ns! (fn [ns-sym] (in-ns ns-sym) nil)
