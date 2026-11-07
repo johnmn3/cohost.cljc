@@ -17,24 +17,20 @@
    snapshot model."
   (:require [cohost.memory :as memory]
             [eve.deftype-proto.alloc :as alloc]
-            [eve.mem :as eve-mem]
+            [eve.codec :as eve-codec]
             [eve.vec :as eve-vec]
             [eve.map :as eve-map]
             [eve.set :as eve-set]
             [eve.list :as eve-list]
             [eve.atom :as eve-atom]))
 
-;; requiring-resolve, nil when the namespace or var is absent
-(defn- requiring-resolve-quiet [sym]
-  (try (requiring-resolve sym) (catch Exception _ nil)))
-
-;; Eve's value serializer moved from eve.mem (the standalone line
-;; units 3-5 were first run on) to eve.codec (the adapter-architecture
-;; line, eve 0.9.x and the vendored eve-jank line unit 7 runs both
-;; seats on). Resolved once, from whichever line is on the classpath.
-(def ^:private value+sio->eve-bytes
-  (or (requiring-resolve-quiet 'eve.codec/value+sio->eve-bytes)
-      (requiring-resolve-quiet 'eve.mem/value+sio->eve-bytes)))
+;; Eve's value serializer is eve.codec/value+sio->eve-bytes (the codec
+;; adapter, adapters/codec/byte-array on the JVM: Eve 0.9.x moved it there
+;; from eve.mem, the standalone line units 3-5 were first run on). Every
+;; use below calls it there: on Eve 0.9.3 eve.mem no longer has it, and
+;; the call sites that still named eve-mem/ kept this namespace from
+;; compiling, so the JVM seat's fill fell back to off (Eve-in-cohost
+;; unit 6 step 3, measured).
 
 (defonce ^:private slab-ctx
   ;; the seat's one in-memory heap slab context, held in an atom
@@ -184,7 +180,7 @@
    holding s's elements."
   [s]
   (let [sio (ctx)
-        ser (partial @value+sio->eve-bytes sio)
+        ser (partial eve-codec/value+sio->eve-bytes sio)
         root (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser s))]
     (memory/wrap :set root (canonicalize root))))
 
@@ -193,7 +189,7 @@
    holding l's elements."
   [l]
   (let [sio (ctx)
-        ser (partial @value+sio->eve-bytes sio)
+        ser (partial eve-codec/value+sio->eve-bytes sio)
         root (eve-list/jvm-sab-list-from-offset sio (eve-list/jvm-write-list! sio ser l))]
     (memory/wrap :list root (canonicalize root))))
 
@@ -237,7 +233,7 @@
 (declare wrapped? wrap unwrap root-of value?*)
 
 (defn representable?
-  "True when v can be written by Eve's JVM codec (eve.mem's
+  "True when v can be written by Eve's JVM codec (eve.codec's
    value->eve-bytes / value+sio->eve-bytes universe): nil,
    booleans, strings, keywords, symbols, Long/Integer/Short/Byte,
    Double/Float, UUID, Date, and collections of representable
@@ -309,7 +305,7 @@
   "The Eve list of already-converted items."
   [items]
   (let [sio (ctx)
-        ser (partial eve-mem/value+sio->eve-bytes sio)]
+        ser (partial eve-codec/value+sio->eve-bytes sio)]
     (eve-list/jvm-sab-list-from-offset sio (eve-list/jvm-write-list! sio ser (apply list items)))))
 
 (def ^:private absent-key ::absent-key)
@@ -358,7 +354,7 @@
                    (if (some #(= absent-key %) items)
                      absent-key
                      (let [sio (ctx)
-                           ser (partial eve-mem/value+sio->eve-bytes sio)]
+                           ser (partial eve-codec/value+sio->eve-bytes sio)]
                        (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser items)))))
         (seq? x) (let [items (mapv #(convert % mode) x)]
                    (if (some #(= absent-key %) items)
@@ -416,7 +412,7 @@
   (if (analyzer-active?)
     (set coll)
     (let [sio (ctx)
-          ser (partial eve-mem/value+sio->eve-bytes sio)]
+          ser (partial eve-codec/value+sio->eve-bytes sio)]
       (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser (map ->eve coll))))))
 
 (defn build-list

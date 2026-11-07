@@ -3,8 +3,13 @@
  :aliases
  {;; Eve as a source dependency (unit 4's hosting loads
   ;; cohost.memory-eve, which requires Eve's namespaces): the
-  ;; sibling checkout, per MEMORY-PLAN.md SS1
-  :eve {:extra-paths ["../eve/src"]}
+  ;; sibling checkout, per MEMORY-PLAN.md SS1, as a :local/root dep, so
+  ;; its classpath is Eve's own deps.edn :paths -- src and the JVM's
+  ;; adapter roots (hosts.edn :jvm, what `bb classpath jvm` prints) --
+  ;; and follows Eve's layout. Eve 0.9.x moved eve.host and the codec
+  ;; into those roots; the old ../eve/src alone no longer loads Eve
+  ;; (Eve-in-cohost unit 6 step 3, measured on 0.9.3).
+  :eve {:extra-deps {eve/eve {:local/root "../eve"}}}
   ;; :cljs -- the ClojureScript seat. Eve is a dependency of this seat:
   ;; eve.shared-atom (the SAB-backed shared atom) and its transitive Eve
   ;; namespaces come from the Eve repo as a tools.deps git dep, pinned to

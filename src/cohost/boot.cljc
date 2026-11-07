@@ -1021,14 +1021,32 @@
         want (if forced (boolean eve-collections) (= :clj (host/host-name)))]
     (when want
       (when-not (memory/hosting-registered?)
-        (host/try-all (fn [] (host/eval-form '(require (quote cohost.memory-eve))))))
+        ;; the JVM seat keeps why its hosting did not load (unit 6 step 3: on Eve 0.9.3 it stopped
+        ;; loading and the seat's default fill went off unseen); every other seat as before
+        #?(:clj (host/try-all (fn [] (host/eval-form '(require (quote cohost.memory-eve))))
+                              (fn [e] (swap! state assoc :eve-collections-error
+                                             (or (host/try-all (fn [] (host/error-message e))) (str e)))))
+           :default (host/try-all (fn [] (host/eval-form '(require (quote cohost.memory-eve)))))))
       (if (memory/hosting-registered?)
         (do (memory/install-fill!)
             (memory/set-fill! true))
-        (when forced
-          (throw (ex-info "cohost.boot: :eve-collections is NOT-YET on this seat -- no Eve hosting loads here"
-                          {:type :cohost.boot/eve-collections-not-yet
-                           :host (host/host-name)})))))
+        #?(:clj
+           ;; the JVM seat: a forced fill, or its default with Eve's sources on the classpath (-M:eve: Eve
+           ;; was asked for), fails the boot with the cause; the default with no Eve on the classpath goes on
+           ;; with the fill off, and the boot report says so (print-report)
+           (let [cause (:eve-collections-error @state)]
+             (if (or forced (some? (.getResource (clojure.lang.RT/baseLoader) "eve/atom.cljc")))
+               (throw (ex-info (str "cohost.boot: :eve-collections is NOT-YET on this seat -- no Eve hosting loads here"
+                                    (when cause (str " (" cause ")")))
+                               {:type :cohost.boot/eve-collections-not-yet
+                                :host (host/host-name)
+                                :load-error cause}))
+               (swap! state assoc :eve-collections-error (or cause "no Eve hosting registered"))))
+           :default
+           (when forced
+             (throw (ex-info "cohost.boot: :eve-collections is NOT-YET on this seat -- no Eve hosting loads here"
+                             {:type :cohost.boot/eve-collections-not-yet
+                              :host (host/host-name)}))))))
     (swap! state assoc :eve-collections (if (memory/fill-on?) :on :off)))
   nil)
 
@@ -1046,6 +1064,7 @@
   ([{:keys [root files verbose profile? record? host-lacks eve-atoms eve-collections] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
    (reset! verbose? (boolean verbose))
    (reset! snapshot-log (when record? []))
+   #?(:clj (swap! state dissoc :eve-collections-error))
    (swap! state assoc :eve-atoms (boolean eve-atoms)
                       :host-lacks (into (set host-lacks)
                                         (concat (host/core-lacks)
@@ -1117,7 +1136,8 @@
      (let [r (assoc @report
                     :rewrite-misses (rw/misses ctx)
                     :host-name (host/host-name)
-                    :eve-collections (:eve-collections @state))]
+                    :eve-collections (:eve-collections @state)
+                    #?@(:clj [:eve-collections-error (:eve-collections-error @state)]))]
        (when t-boot
          (swap! (:profile @state) assoc :boot-wall (- (host/nano-time) t-boot)))
        (swap! state assoc :report r)
@@ -1656,6 +1676,9 @@
     (println (str "  booted as stock: " (+ ok replaced) "   from host: " from-host
                   (when (pos? natives) (str "   natives: " natives))
                   "   skipped: " skipped "   errors: " error))
+    ;; the JVM seat's default fill with no Eve hosting: said, never a silent off (unit 6 step 3)
+    #?(:clj (when-let [why (:eve-collections-error r)]
+              (println (str "  EVE COLLECTIONS OFF: this seat's default Eve collection fill did not load its hosting -- " why))))
     (when (pos? error)
       (println "  errors:")
       (doseq [e (filter #(= :error (:status %)) entries)]
