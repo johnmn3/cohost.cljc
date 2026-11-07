@@ -309,3 +309,119 @@ placement 857/872, batteries 219/221 + 62/62 wherever run).
 The full declaration is INSTALL-PORTABLE-REPORT.md at the
 branch tip. Heavy-queue slot released. Nothing to main,
 nothing to release/eve-in-cohost.
+
+## Successor session — Jolt + ClojureCLR seats (Nov 7 2026, ~17:03 ET)
+
+Operator order: add Jolt and ClojureCLR as official install.cljc
+seat targets, to the same proven standard. Base verified on the
+fetched remote ref: FETCH_HEAD == HEAD ==
+5952698418d711d1c4cd27ae1a2811cb9ff2ebc2. Predecessor's report +
+this STATUS + install.cljc read end to end before any edit.
+
+### Host facts, established firsthand (probes on this box)
+
+- **Jolt** is jolt-lang/jolt v0.8.23 (the version cohost's
+  dev/install/jolt.sh pins; binary at /home/hatch/.local/bin/jolt).
+  It runs a file directly: `jolt run FILE [args]` / `jolt FILE`.
+  Reader features probed with arm-selection files: **`:jolt` AND
+  `:clj`** (a :clj-only arm matches; with both present, first
+  written wins) — so :jolt arms must be written ahead of :clj,
+  which is also the house rule (dev/lint_reader_order.clj: "two
+  hosts also have :clj: jolt ({:jolt :clj ...}) and cljw").
+  *command-line-args* works. Bundled and FUNCTIONAL (probed, not
+  just loadable): babashka.process (shell capture + exit codes),
+  babashka.fs, clojure.java.shell; (System/getenv ...) works;
+  /proc/self/exe readlink via its java.nio.file emulation returns
+  the real jolt path; (System/exit ...) is its exit (the STM ants
+  lane's jolt host main uses it).
+- **ClojureCLR** is ClojureCLR 1.12.6, the `Clojure.Main` dotnet
+  tool (~/.dotnet/tools/Clojure.Main; installed per the STM lanes'
+  recipe: dotnet-install --channel 8.0 + `dotnet tool install -g
+  Clojure.Main --version '1.12.*'`). It runs a file directly:
+  `Clojure.Main FILE [args]`, namespaces via CLOJURE_LOAD_PATH +
+  `-m`. Reader feature probed: **`:cljr` only** (a :clj-only arm
+  does NOT match). Eve's own sources carry :cljr arms (9 in the
+  stm-ants tree). *command-line-args* works.
+- **ClojureCLR shim facilities all probed working**:
+  (System.Environment/GetEnvironmentVariable ...),
+  (System.Environment/ProcessPath) -> the Clojure.Main path,
+  System.Diagnostics.Process capture (stdout read + ExitCode)
+  and inherit (exit 7 propagated), (System.Environment/Exit ...)
+  is the ants cljr main's exit. A :cljr shim arm for install.cljc
+  itself is implementable. The blocker is the build drive only
+  (next section).
+
+### The build drive, per seat — evidence
+
+The bb/clj shape is: the seat loads dev/perf/
+jank_snapshot_ensure.clj (which loads jank_snapshot_key.clj;
+requires babashka.fs + babashka.process; sha256.clj hashes
+in-process via java.security.MessageDigest).
+
+- **Jolt drives it, with one pinned dep.** key.clj loads under
+  jolt and its sibling loads via *file* work; fresh-path then
+  faulted exactly once: "No dependency provides
+  java.security.MessageDigest — a concrete implementation of the
+  JDK classes must be provided. A library supplies one by
+  declaring :jolt/provides in its deps.edn (RFC 0014)." The
+  provider is **jolt-lang/crypto** (jolt's own conformance
+  manifest: "jolt-lang/crypto supplies java.security.MessageDigest";
+  its deps.edn declares :jolt/provides for it). With
+  `-Sdeps '{:deps {io.github.jolt-lang/crypto {:git/url
+  "https://github.com/jolt-lang/crypto" :git/tag "v0.2.0"
+  :git/sha "e6981b853adc543120b785a0c29b6d7d6a10f0fe"}}}'`
+  (tag+sha both required — tag alone failed in jolt's resolver),
+  the whole key chain runs under jolt: KEY-LOADED, fresh-path
+  computes the key over all inputs and reports the stale state
+  correctly ("SNAPSHOT-STALE no stamp", nil on the snapshot-less
+  worktree). A further probe loading jank_aot_ensure.clj directly
+  started an actual AOT recompile under jolt drive (that file
+  builds on load; killed by the probe's timeout, worktree target/
+  cleaned) — the drive reaches the build's subprocess steps.
+- **ClojureCLR cannot drive either in-repo build — evidenced,
+  not inferred.** (a) babashka.fs / babashka.process have NO
+  :cljr arms in any release: checked the pinned versions
+  (fs v0.5.24, process v0.5.22 — the clj seat's pins) and the
+  latest tags (fs v0.5.34, process v0.6.25); zero cljr matches in
+  either tree. Loading the original ensure under Clojure.Main
+  with the pinned sources on CLOJURE_LOAD_PATH fails at once:
+  "Execution error (FileNotFoundException) at babashka.fs/...
+  Could not locate clojure/java/io with extensions .cljr, .cljc,
+  .clj, ... on load path" — ClojureCLR has no clojure.java.io at
+  all, and fs's arms are java.nio.file interop besides. (b) The
+  jank-native build (dev/install/jank_build.cljc) loads
+  cohost.install.shim, which is raw-jank C++ with no reader
+  conditionals: loading it under Clojure.Main fails at
+  shim.cljc:11:2 — "No such namespace: cpp". So there is no
+  ClojureCLR-loadable form of the snapshot build in the repo or
+  in released libraries. The missing facility, named precisely:
+  **a ClojureCLR reader path for the snapshot build** (CLR arms
+  for the build's driver libraries, or a CLR arm of the install
+  shim library). Per the brief, that is the seat's verdict:
+  ClojureCLR is NOT armed in install.cljc (an arm would run and
+  die at step 2 — not a seat target), and the docs will name it
+  unproven with this reason. Unblock condition for a future lane:
+  babashka.fs/process ship :cljr arms, or dev/install's shim
+  gains a non-cpp arm the jank_build can load.
+
+### Plan from here
+
+1. install.cljc: :jolt arms (seat def ahead of :clj, bp require
+   splice, capture/sh! mirroring :bb, self-exe mirroring :bb with
+   a `which jolt` fallback, Throwable catch + System/exit in the
+   bottom handler), step-2 dispatch to the original ensure under
+   jolt with the crypto dep pinned as above, banner/die text.
+   No :cljr arm (verdict above). No change to the proven arms'
+   behavior; no new regex literals.
+2. Local load checks per seat from a neutral cwd (all five
+   readers parse; jolt seat: banner + no-checkout death + rc 1).
+3. J proofs for the jolt seat, mirroring the clj seat's shape:
+   stage A cold build (clojure poisoned; jank + bb present as
+   build collaborators — the emit wart is inherited, bb is the
+   emit hand on a cold build), stage B fresh snapshot with bb +
+   clojure poisoned; snapshot key must equal df88adac...;
+   battery on the jolt-built snapshot; deps-new parity; -e -> 3.
+   Staging on /home/john/j per the predecessor's disk lesson.
+4. Docs: README + getting-started name Jolt once proven;
+   ClojureCLR named unproven with the missing facility.
+5. INSTALL-PORTABLE-REPORT-2.md + double declaration.
