@@ -8,13 +8,15 @@
 ;;   jank -O3 --module-path <the snapshot's module path> run dev/u6/snapshot_root.jank
 ;;
 ;; Run once per snapshot build: the snapshot cleaned and built again between runs, the two ROOT lines must match.
+;; Its own namespace, every core name jank's: the snapshot's booted core is cohost.core, and the user namespace a
+;; booted program gets (cohost.boot/make-user-ns!) refers it -- its deref is stock's, which casts to a Future.
+(ns u6.snapshot-root)
 (require 'cohost.run)
 (require 'cohost.adapter)
 (require 'cohost.boot)
 (require 'cohost.core)
 (when-not (cohost.boot/snapshot-report)
   (throw (ex-info "cohost.core loaded, but it is not a snapshot (no snapshot report)" {})))
-(cohost.boot/make-user-ns!)
 (require 'cohost.atom)
 (require 'cohost.atom-eve)
 (require 'eve.digest)
