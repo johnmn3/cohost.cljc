@@ -92,3 +92,45 @@ NEXT: on J — claim slot; clone this branch to ~/cohost-install-jank;
 (1) reference probe: real CLI `-Ttools install-latest` in a scratch
 CLJ_CONFIG_DIR, record every file written; (2) raw-jank probes:
 .cljc load + clojure.edn read, directory walk, sha256sum capture.
+
+UPDATE (successor, ~13:00 ET): SUBSTRATE GREEN; TOOL + INSTALLER
+WRITTEN; COLD BUILD IN FLIGHT.
+- 30b47ab (verified on the fetched ref): fs shim, shim.cljc (probes
+  green on J: sha256 byte-exact vs sha256sum, walk=41, env/self-exe/
+  stat), jank_build.cljc (aot-ensure + snapshot-key ports).
+- EMIT RUNS ON JANK (no bb): under jank + the babashka.fs shim, on a
+  regenerated copy carrying six exact ASSERTED transforms (a silent
+  non-match throws at build time; T1 goes by line after a
+  backslash-count miss bit once): T1 phel lookbehind literal
+  (phel-only path), T2 IObj guards x3 (with-meta throws on
+  non-carriers = the guard), T3 Pattern instance?, T4 ^String hints,
+  T5 bind only *print-meta*, T6 String.indexOf -> str/index-of.
+  A/B vs bb emit on identical events: PLACEMENT IDENTICAL (857/872).
+  Module bytes differ ONLY in (i) metadata spans — jank's pr-str
+  ignores *print-meta* (probed firsthand) and (ii) >8-entry hash-map
+  print order — jank's map hash differs from Clojure's. Both are
+  standing upstream jank findings; byte parity is unachievable in
+  principle on (ii), so the bar is functional (the gates through the
+  jank-built tool). Owner: upstream jank, already on the release
+  record; this lane adds the build-level evidence.
+- The bb reference build in the J checkout COMPLETED meanwhile
+  (SNAPSHOT-BUILT df88adac… in 791,536 ms; launcher present) — the
+  tool can be proven against it immediately, and jank_build's fresh
+  check against that bb-built snapshot doubles as a cross-flow key
+  check.
+- COLD BUILD: fresh clone of the branch on J (~/cohost-cold),
+  jank_build ensure: AOT OK, record OK, emit OK (857/872), snapshot
+  compile in flight at this bank.
+- WRITTEN: dev/install/lib/cohost/tool.cljc (the `cohost` command:
+  native -Ttools install/install-latest byte-modeled on the
+  reference probe; default/:jank runs the snapshot via cfg EDN as
+  bin/cohost does; other -T/:jvm/-Sdescribe delegate to a real
+  clojure when present, else die naming the gap; other hosts die
+  pointing at bin/cohost; deps = documented subset),
+  tool_main.cljc (AOT entry), install.cljc at the repo root
+  (SELF-CONTAINED installer).
+
+NEXT: tool smoke against the bb-built snapshot in the J checkout
+  (fresh check + run-main -e), then the cold build's launcher, then
+  scratch-HOME install via install.cljc, then the no-clojure/no-bb
+  PATH proof suite, then README/docs, then declaration.

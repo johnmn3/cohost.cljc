@@ -185,6 +185,25 @@
        "(clojure.core/defn -main [& args]\n"
        "  (clojure.core/apply cohost.cli/-main args))\n"))
 
+(defn- must-replace
+  "str/replace that fails loud when its form is absent — a transform
+   that silently stops matching would emit a broken copy downstream."
+  [s from to]
+  (when-not (str/includes? s from)
+    (throw (ex-info (str "emit transform found nothing to replace: "
+                         (subs from 0 (min 60 (count from)))) {})))
+  (str/replace s from to))
+
+(defn- transform-emit-line
+  "T1 by line: swap the one line holding the phel lookbehind literal
+   for the same call with a parseable literal."
+  [s]
+  (let [lines (str/split-lines s)
+        idx (first (keep-indexed (fn [i l] (when (str/includes? l "(?<!") i)) lines))]
+    (when-not idx (throw (ex-info "emit transform T1: no lookbehind line found" {})))
+    (let [body (str/join "\n" (assoc lines idx "         (str/replace text #\"\\\\\\$\" \"$1\\\\$\")"))]
+      (if (str/ends-with? s "\n") (str body "\n") body))))
+
 (defn- rebuild! [k]
   (let [stage1 (aot-ensure!)]
     (shim/rm-rf snap-root)
@@ -203,35 +222,37 @@
     (spit "target/install/jank_snapshot_emit.clj"
           (-> (slurp "dev/perf/jank_snapshot_emit.clj")
               ;; T1: the phel-only lookbehind literal (never evaluated
-              ;;     on the jank path) for a parseable one
-              (str/replace "#\"(?<!\\\\)((?:\\\\)*)\\\\\\$\""
-                           "#\"\\\\\\$\"")
+              ;;     on the jank path) for a parseable one — replaced by
+              ;;     line, because the literal's backslash pile defies
+              ;;     exact string matching
+              (transform-emit-line)
+              ;; (the remaining transforms match exact forms and assert)
               ;; T2: clojure.lang.IObj does not resolve on jank; with-meta
               ;;     throws there on values that cannot carry meta, which
               ;;     is exactly each guard's meaning (three sites)
-              (str/replace "(if (instance? clojure.lang.IObj v) (with-meta v m) v)"
-                           "(try (with-meta v m) (catch :default _e v))")
-              (str/replace "(if (and (instance? clojure.lang.IObj y) (meta x))\n                   (with-meta y (strip (meta x)))\n                   y)"
-                           "(if (meta x) (try (with-meta y (strip (meta x))) (catch :default _e y)) y)")
-              (str/replace "(if (and (instance? clojure.lang.IObj y) (meta x)) (with-meta y (meta x)) y)"
-                           "(if (meta x) (try (with-meta y (meta x)) (catch :default _e y)) y)")
+              (must-replace "(if (instance? clojure.lang.IObj v) (with-meta v m) v)"
+                            "(try (with-meta v m) (catch :default _e v))")
+              (must-replace "(if (and (instance? clojure.lang.IObj y) (meta x))\n                   (with-meta y (strip (meta x)))\n                   y)"
+                            "(if (meta x) (try (with-meta y (strip (meta x))) (catch :default _e y)) y)")
+              (must-replace "(if (and (instance? clojure.lang.IObj y) (meta x)) (with-meta y (meta x)) y)"
+                            "(if (meta x) (try (with-meta y (meta x)) (catch :default _e y)) y)")
               ;; T3: jank's regex type prints as re_pattern
-              (str/replace "(instance? java.util.regex.Pattern x)"
-                           "(= \"re_pattern\" (str (type x)))")
+              (must-replace "(instance? java.util.regex.Pattern x)"
+                            "(= \"re_pattern\" (str (type x)))")
               ;; T4: ^String hints do not resolve on jank; hints are
               ;;     inert for the string operations emit performs
-              (str/replace "^String " "")
+              (must-replace "^String " "")
               ;; T5: jank has no *print-length* / *print-level* /
               ;;     *print-namespace-maps* vars, and its printer does
               ;;     not truncate by default, so binding only
               ;;     *print-meta* (which jank has) prints identically
-              (str/replace "(binding [*print-length* nil *print-level* nil *print-meta* true *print-namespace-maps* false]"
-                           "(binding [*print-meta* true]")
+              (must-replace "(binding [*print-length* nil *print-level* nil *print-meta* true *print-namespace-maps* false]"
+                            "(binding [*print-meta* true]")
               ;; T6: String.indexOf interop (after T4 stripped its
               ;;     hints); jank's str/index-of has the same 3-arity
               ;;     but answers nil where Java answers -1
-              (str/replace "(.indexOf text (first cs) idx)"
-                           "(or (str/index-of text (first cs) idx) -1)")))
+              (must-replace "(.indexOf text (first cs) idx)"
+                            "(or (str/index-of text (first cs) idx) -1)")))
     (let [rc (shim/sh! (str (shim/q jank-bin) " --module-path dev/install/shim run target/install/jank_snapshot_emit.clj"
                             " -- --events " (shim/q (str snap-root "/events.edn"))
                             " --out " (shim/q snap-src-dir)))]

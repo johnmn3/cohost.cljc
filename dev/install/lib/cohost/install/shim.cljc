@@ -191,6 +191,12 @@ namespace cohost_shim {
 
 ;; ---------------------------------------------------------------- misc
 
+(defn exit!
+  "Leave the process with code (the AOT tool's exit path)."
+  [code]
+  (cpp/raw "std::exit(L0_0);"
+           (cpp/int code)))
+
 (defn now-ms [] (parse-long (capture-trim "date +%s%3N")))
 
 (defn read-edn-file
