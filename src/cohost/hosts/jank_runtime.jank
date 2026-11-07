@@ -636,7 +636,7 @@ namespace cohost_leaf {
    byte size (cohost_leaf::count_or reads persistent_string's data.size()), and stock
    counts characters -- jank's seq walks them."
   [stock]
-  (fn [c] (if (string? c) (count (seq c)) (cpp/cohost_leaf.count_or c stock))))
+  (fn [c] (if (string? c) (clojure.core/count (seq c)) (cpp/cohost_leaf.count_or c stock))))
 
 (defn str-with
   "A4 (d): str for cohost.core on jank: fixed arities, one string builder, plain values written
