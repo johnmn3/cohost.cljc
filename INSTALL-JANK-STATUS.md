@@ -58,3 +58,37 @@ NEXT: probes — (1) raw jank reads .cljc + clojure.edn; (2) read
 dev/perf/jank_aot_ensure.clj + jank_snapshot_emit.clj fs usage (the
 bb-free emit path); (3) reference probe of the real CLI's -Ttools
 install-latest: exactly what files it writes (scratch CLJ_CONFIG).
+
+## Successor session pickup (07:18 ET, Nov 7 2026)
+
+Predecessor died in a daemon restart after banking 597ac69 (pushed,
+verified on the fetched ref). Picked up from its NEXT, no verified step
+redone. Survey of the NEXT items, firsthand:
+
+- dev/perf/jank_snapshot_emit.clj: babashka usage is ONLY babashka.fs
+  (delete-tree, create-dirs, parent, path) + slurp/spit/read-string.
+  Everything else is portable Clojure. A bb-free emit = same file with a
+  small fs shim (path/parent are string ops; create-dirs/delete-tree via
+  std::system or cpp std::filesystem).
+- dev/perf/jank_snapshot_key.clj rebuild!: step 1 (record) is jank
+  itself; step 2 is the ONLY bb call in the whole snapshot build
+  (`bb dev/perf/jank_snapshot_emit.clj`); step 3 (compile) is jank.
+  Its other bb surface is babashka.process/shell + babashka.fs, same
+  shim class as dev/perf/jank_aot_ensure.clj (which is otherwise pure:
+  shell out to `jank compile-module cohost.run -O3`).
+- dev/perf/jank_inputs.clj: fs/glob + fs/components only — a directory
+  walk (find via std::system, or cpp filesystem iterator).
+- dev/perf/sha256.clj is JVM interop (java.security.MessageDigest) —
+  does NOT run on jank. Replacement: sha256 via spawned
+  sha256sum/shasum (std::system proven by the predecessor's raw-jank
+  probe) with output captured through a temp file.
+- Venue: this box rebooted (~07:13 ET) and is still hot (load 32/14/5
+  at 07:17); jank is not on this box's PATH. All jank builds/proofs run
+  on j.slaa.us under the heavy-queue slot `slot.cohostinstall`
+  (queue was empty at check, 07:18 ET; J load ~5.2, jank +
+  clojure at /usr/local/bin there).
+
+NEXT: on J — claim slot; clone this branch to ~/cohost-install-jank;
+(1) reference probe: real CLI `-Ttools install-latest` in a scratch
+CLJ_CONFIG_DIR, record every file written; (2) raw-jank probes:
+.cljc load + clojure.edn read, directory walk, sha256sum capture.
