@@ -1,12 +1,13 @@
 ;; install.cljc — install the cohost tool. The prerequisite is any
-;; one Clojure-like to run this file — Jank, Babashka, or the Clojure
-;; CLI — plus Jank itself, which compiles the tool on every seat
-;; (when the seat is not Jank and no jank is on the path, step 1.5
-;; below installs it via the checkout's dev/install/jank.sh).
+;; one Clojure-like to run this file — Jank, Babashka, the Clojure
+;; CLI, or Jolt — plus Jank itself, which compiles the tool on every
+;; seat (when the seat is not Jank and no jank is on the path, step
+;; 1.5 below installs it via the checkout's dev/install/jank.sh).
 ;;
 ;;   jank run install.cljc [--bin DIR] [--repo DIR]
 ;;   bb install.cljc [--bin DIR] [--repo DIR]
 ;;   clojure -M install.cljc [--bin DIR] [--repo DIR]
+;;   jolt run install.cljc [--bin DIR] [--repo DIR]
 ;;   — or from a checkout with any of the three; a curl'd copy runs
 ;;   the same way, since this file requires nothing from the repo it
 ;;   is about to fetch.
@@ -19,9 +20,13 @@
 ;;      that ran this file: jank -> dev/install/jank_build.cljc (jank
 ;;      alone); bb -> the original bb build (dev/perf/
 ;;      jank_snapshot_ensure.clj); clj -> the same original build
-;;      under the Clojure CLI. The build's record/compile steps are
-;;      jank's on every seat, and a snapshot built by any flow is
-;;      fresh to the others (byte-identical keys);
+;;      under the Clojure CLI; jolt -> the same original build under
+;;      Jolt, with jolt-lang/crypto pinned in -Sdeps (it declares
+;;      :jolt/provides for java.security.MessageDigest, which the
+;;      build's in-process hashing needs and Jolt does not bundle).
+;;      The build's record/compile steps are jank's on every seat,
+;;      and a snapshot built by any flow is fresh to the others
+;;      (byte-identical keys);
 ;;   3. compiles the `cohost` command from dev/install/lib/cohost/
 ;;      tool_main.cljc with jank and puts it in --bin (default
 ;;      ~/.local/bin);
@@ -36,13 +41,14 @@
 ;; lives in dev/install/lib for the tool, on the jank seat).
 (ns cohost.install
   (:require [clojure.string :as str]
-            #?@(:bb [[babashka.process :as bp]])))
+            #?@(:jolt [[babashka.process :as bp]]
+                :bb [[babashka.process :as bp]])))
 
 (def ^:private seat
-  "The Clojure-like running this file. Arm order matters: jank and
-   bb also read :clj arms, so their own features come first (the
-   house reader-order rule)."
-  #?(:jank :jank :bb :bb :clj :clj))
+  "The Clojure-like running this file. Arm order matters: jank, bb
+   and jolt also read :clj arms, so their own features come first
+   (the house reader-order rule)."
+  #?(:jank :jank :jolt :jolt :bb :bb :clj :clj))
 
 ;; Seat dispatch below is if-chains, never `case`: this jank
 ;; build's JIT codegen for case* on keywords is broken (the errors
@@ -101,6 +107,8 @@
 (defn- q [s] (str "'" (str/replace (str s) "'" "'\\''") "'"))
 
 #?(:jank (defn- capture [cmd] (cpp/cohost_install_capture_impl cmd))
+   :jolt (defn- capture [cmd]
+           (:out (bp/shell {:out :string :err :inherit :continue true} "sh" "-c" cmd)))
    :bb (defn- capture [cmd]
          (:out (bp/shell {:out :string :err :inherit :continue true} "sh" "-c" cmd)))
    :clj (defn- capture [cmd]
@@ -112,6 +120,8 @@
             out)))
 
 #?(:jank (defn- sh! [cmd] (cpp/cohost_install_run_impl cmd))
+   :jolt (defn- sh! [cmd]
+           (:exit (bp/shell {:in :inherit :out :inherit :err :inherit :continue true} "sh" "-c" cmd)))
    :bb (defn- sh! [cmd]
          (:exit (bp/shell {:in :inherit :out :inherit :err :inherit :continue true} "sh" "-c" cmd)))
    :clj (defn- sh! [cmd]
@@ -127,6 +137,11 @@
     (when-not (empty? s) s)))
 
 #?(:jank (defn- self-exe [] (let [s (cpp/cohost_install_self_exe_impl)] (when-not (empty? s) s)))
+   :jolt (defn- self-exe []
+           (or (try (str (java.nio.file.Files/readSymbolicLink
+                          (java.nio.file.Paths/get "/proc/self/exe" (into-array String []))))
+                    (catch Throwable _ nil))
+               (which "jolt")))
    :bb (defn- self-exe []
          (or (try (str (java.nio.file.Files/readSymbolicLink
                         (java.nio.file.Paths/get "/proc/self/exe" (into-array String []))))
@@ -168,7 +183,8 @@
         driver (or (self-exe)
                    (die (if (= seat :jank) "cannot locate the running jank binary"
                             (if (= seat :bb) "cannot locate the running bb binary"
-                                "cannot locate the clojure command"))))
+                                (if (= seat :jolt) "cannot locate the running jolt binary"
+                                    "cannot locate the clojure command")))))
         explicit-repo (:repo argv)
         cwd-repo (let [c (trim (cwd))] (when (file? (path c "src/cohost/cli.cljc")) c))
         default-repo (path (home) ".local/share/cohost/cohost.cljc")
@@ -203,15 +219,20 @@
       (println "cohost install: building the core snapshot"
                (if (= seat :jank) "(jank only; the first build takes minutes)"
                    (if (= seat :bb) "(driven by bb; the first build takes minutes)"
-                       "(driven by clj; the first build takes minutes)")))
+                       (if (= seat :jolt) "(driven by jolt; the first build takes minutes)"
+                           "(driven by clj; the first build takes minutes)"))))
       (checked!
        (if (= seat :jank)
          (str "cd " (q repo) " && " (q driver) " --module-path dev/install/lib run dev/install/jank_build.cljc -- ensure")
          (if (= seat :bb)
            (str "cd " (q repo) " && " (q driver) " -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))
-           (str "cd " (q repo) " && " (q driver) " -Sdeps "
-                (q "{:deps {babashka/process {:mvn/version \"0.5.22\"} babashka/fs {:mvn/version \"0.5.24\"}}}")
-                " -M -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")")))))
+           (if (= seat :jolt)
+             (str "cd " (q repo) " && " (q driver) " -Sdeps "
+                  (q "{:deps {io.github.jolt-lang/crypto {:git/url \"https://github.com/jolt-lang/crypto\" :git/tag \"v0.2.0\" :git/sha \"e6981b853adc543120b785a0c29b6d7d6a10f0fe\"}}}")
+                  " -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))
+             (str "cd " (q repo) " && " (q driver) " -Sdeps "
+                  (q "{:deps {babashka/process {:mvn/version \"0.5.22\"} babashka/fs {:mvn/version \"0.5.24\"}}}")
+                  " -M -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))))))
       ;; 3. the command itself, compiled with jank on every seat
       (checked! (str "cd " (q repo) " && rm -rf target/install/tool && " (q jank)
                      " -O3 --module-path dev/install/lib compile cohost.tool-main --runtime dynamic --name cohost --target-dir target/install/tool"))
@@ -242,6 +263,10 @@
                     (binding [*out* *err*]
                       (println "cohost install failed:" (or (try (ex-message e) (catch :default _ nil)) "stopped")))
                     (cpp/cohost_install_exit_impl 1))]
+           :jolt [(catch Throwable e
+                    (binding [*out* *err*]
+                      (println "cohost install failed:" (or (try (ex-message e) (catch Throwable _ nil)) "stopped")))
+                    (System/exit 1))]
            :bb [(catch Exception e
                   (binding [*out* *err*]
                     (println "cohost install failed:" (or (try (ex-message e) (catch Exception _ nil)) "stopped")))
