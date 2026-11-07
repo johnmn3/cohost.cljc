@@ -434,8 +434,12 @@
 (defn -main [& argv]
   (try (tool-main (vec argv))
        (catch :default e
-         (let [code (:cohost/exit (ex-data e))]
+         ;; ex-data/ex-message are guarded: an exception raised inside
+         ;; a delay's body can arrive here in a shape they reject.
+         (let [data (try (ex-data e) (catch :default _ nil))
+               code (:cohost/exit data)]
            (if code
              (shim/exit! code)
-             (do (binding [*out* *err*] (println "cohost:" (ex-message e)))
+             (do (binding [*out* *err*]
+                   (println "cohost:" (or (try (ex-message e) (catch :default _ nil)) "stopped")))
                  (shim/exit! 1)))))))

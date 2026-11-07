@@ -135,9 +135,10 @@
     "jank_snapshot_key.clj" "jank_snapshot_ensure.clj" "jank_snapshot_run.jank"})
 
 (defn- snapshot-key []
-  (let [files (vec (concat (source-files "resources/cohost/clojure-1.12.0")
-                           (source-files "src/cohost")
-                           (source-files "dev/perf" perf-names)))
+  ;; the original sorts the whole concatenation, not each group
+  (let [files (vec (sort (concat (source-files "resources/cohost/clojure-1.12.0")
+                                 (source-files "src/cohost")
+                                 (source-files "dev/perf" perf-names))))
         sums (shim/sha256sum-listing files)]
     (shim/sha256-hex (str sums "jank " (jank-version) "\n"))))
 
@@ -252,7 +253,34 @@
               ;;     hints); jank's str/index-of has the same 3-arity
               ;;     but answers nil where Java answers -1
               (must-replace "(.indexOf text (first cs) idx)"
-                            "(or (str/index-of text (first cs) idx) -1)")))
+                            "(or (str/index-of text (first cs) idx) -1)")
+              ;; T7: jank's pr-str ignores *print-meta*, and the meta
+              ;;     is load-bearing (jank's own defprotocol expansion
+              ;;     reads the sig forms' meta; a meta-less module set
+              ;;     fails to compile). pr-meta prints a form the way
+              ;;     Clojure's pr-str with *print-meta* does: ^{} spans
+              ;;     restored recursively, leaves via pr-str.
+              (must-replace "(defn pr-src [form]"
+                            (str "(declare pr-meta)\n"
+                                 "(defn pr-meta* [x]\n"
+                                 "  (cond (list? x) (str \"(\" (str/join \" \" (map pr-meta x)) \")\")\n"
+                                 "        (vector? x) (str \"[\" (str/join \" \" (map pr-meta x)) \"]\")\n"
+                                 "        (map? x) (str \"{\" (str/join \", \" (map (fn [[k v]] (str (pr-meta k) \" \" (pr-meta v))) x)) \"}\")\n"
+                                 "        (set? x) (str \"#{\" (str/join \" \" (map pr-meta x)) \"}\")\n"
+                                 "        (seq? x) (str \"(\" (str/join \" \" (map pr-meta x)) \")\")\n"
+                                 "        :else (pr-str x)))\n"
+                                 "(defn pr-meta [x]\n"
+                                 "  (let [m0 (try (meta x) (catch :default _e nil))\n"
+                                 "        m (if (and (map? m0) (= \"user\" (get-in m0 [:jank/source :module])))\n"
+                                 "            (dissoc m0 :jank/source)\n"
+                                 "            m0)]\n"
+                                 "    (if (and m (or (not (map? m)) (seq m)))\n"
+                                 "      (str (if (map? m) (str \"^\" (pr-meta* m)) (str \"^\" (pr-str m)))\n"
+                                 "           \" \" (pr-meta* x))\n"
+                                 "      (pr-meta* x))))\n\n"
+                                 "(defn pr-src [form]"))
+              (must-replace "(pr-str (escape-regexes"
+                            "(pr-meta (escape-regexes")))
     (let [rc (shim/sh! (str (shim/q jank-bin) " --module-path dev/install/shim run target/install/jank_snapshot_emit.clj"
                             " -- --events " (shim/q (str snap-root "/events.edn"))
                             " --out " (shim/q snap-src-dir)))]

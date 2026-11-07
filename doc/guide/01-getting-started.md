@@ -9,24 +9,35 @@ tools.build. The command is `cohost`.
 
 ## Install
 
-You need [Babashka](https://babashka.org) (`bb`), the
-[Clojure CLI](https://clojure.org/guides/install_clojure) (`clojure`) and Java (the Clojure
-CLI resolves dependencies with it, whatever runtime runs your code).
+You need [Jank](https://jank-lang.org). That is the only prerequisite:
+the installer is a Clojure program that runs on Jank, and everything it
+builds is built by Jank — no Babashka, no Clojure CLI.
 
 ```bash
 # not checked: installs
-git clone https://github.com/johnmn3/cohost.cljc ~/cohost
-export PATH="$HOME/cohost/bin:$PATH"
-clojure -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
+curl -fsSL https://raw.githubusercontent.com/johnmn3/cohost.cljc/main/install.cljc -o install.cljc
+jank run install.cljc
+cohost -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
 ```
 
-The `export` lasts for this shell; add it to `~/.zshrc` (or `~/.bashrc`) to keep `cohost` on
-PATH. On Windows, `bin\cohost.cmd` runs `bin/cohost` with `bb`.
+`jank run install.cljc` fetches the checkout if you don't have one,
+builds cohost's compiled core snapshot with Jank alone (minutes, the
+first time), compiles the `cohost` command into `~/.local/bin` and
+records the checkout in `~/.config/cohost/install.edn`. Add
+`~/.local/bin` to your PATH if it isn't there (the installer says so
+when it isn't). From an existing checkout, `jank run install.cljc
+--repo ~/cohost` installs from it instead.
 
-Each runtime other than the JVM is its own install: `dev/install/<runtime>.sh` in the
-checkout, on Linux and macOS (and Windows under Git Bash where the runtime ships for it), or
-`bash dev/install/all.sh` for every one (see [Choosing a runtime](07-choosing-a-runtime.md)).
-`cohost :<target> ...` with the runtime missing names the script that installs it.
+The default target (Jank) — `-M`, `-X`, `-e`, the REPL — and
+`-Ttools install` are native to this install. Other `-T` aliases,
+`-Sdescribe` and the `:jvm` target delegate to the real Clojure CLI
+when one is installed, and stop and say so when there isn't. Each
+runtime other than the JVM is its own install, served by `bin/cohost`
+from a checkout (that route still uses Babashka): `dev/install/<runtime>.sh`,
+on Linux and macOS (and Windows under Git Bash where the runtime ships
+for it), or `bash dev/install/all.sh` for every one (see
+[Choosing a runtime](07-choosing-a-runtime.md)). On Windows,
+`bin\cohost.cmd` runs `bin/cohost` with `bb`.
 
 ## A project
 

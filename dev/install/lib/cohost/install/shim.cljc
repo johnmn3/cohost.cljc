@@ -55,6 +55,7 @@ namespace cohost_shim {
     char buf[4096];
     return getcwd(buf, sizeof buf) ? std::string(buf) : std::string();
   }
+  void exit_process(long long code) { std::exit((int)code); }
 }
 ")
 
@@ -65,6 +66,14 @@ namespace cohost_shim {
   [k]
   (let [v (cpp/cohost_shim.get_env k)]
     (when-not (str/blank? v) v)))
+
+(defn absolute? [p] (str/starts-with? (str p) "/"))
+
+(defn set-env
+  "Set environment variable k to v in this process (children spawned
+   afterwards inherit it)."
+  [k v]
+  (cpp/cohost_shim.set_env k v))
 
 (defn self-exe
   "This process's executable path (the jank that is running us), or nil."
@@ -194,8 +203,7 @@ namespace cohost_shim {
 (defn exit!
   "Leave the process with code (the AOT tool's exit path)."
   [code]
-  (cpp/raw "std::exit(L0_0);"
-           (cpp/int code)))
+  (cpp/cohost_shim.exit_process code))
 
 (defn now-ms [] (parse-long (capture-trim "date +%s%3N")))
 

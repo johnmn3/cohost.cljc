@@ -13,23 +13,43 @@ You write ordinary Clojure, use `deps.edn`, Maven and git dependencies, a REPL, 
 
 ## Install
 
-You need [Babashka](https://babashka.org) and the
-[Clojure CLI](https://clojure.org/guides/install_clojure). Then:
+You need [Jank](https://jank-lang.org). That is the only prerequisite:
+the installer is a Clojure program that runs on Jank, and everything it
+builds is built by Jank — no Babashka, no Clojure CLI. (Getting Jank
+itself: Homebrew on macOS, jank's apt package on Debian/Ubuntu —
+`dev/install/jank.sh` in a checkout runs the right one and says so if
+it needs root.)
 
 ```bash
-# not checked: installs
-git clone https://github.com/johnmn3/cohost.cljc ~/cohost
-export PATH="$HOME/cohost/bin:$PATH"
-clojure -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
-bash ~/cohost/dev/install/jank.sh     # the default runtime, and its core snapshot (once, a few minutes)
+curl -fsSL https://raw.githubusercontent.com/johnmn3/cohost.cljc/main/install.cljc -o install.cljc
+jank run install.cljc
 ```
 
-`jank.sh` installs jank (Homebrew on macOS; jank's apt package on Debian/Ubuntu, which needs
-root: the script says so and stops if it cannot get it) and builds its core snapshot, so the
-first command starts fast. The other runtimes install the same way (`dev/install/<host>.sh`,
-or `dev/install/all.sh` for every one); `cljrs.sh` puts cargo's bin directory on PATH only
-for that shell: add `$HOME/.cargo/bin` to PATH as for `cohost` below. The `export` lasts for this shell; add the same line to `~/.zshrc` (or `~/.bashrc`) to keep
-`cohost` on PATH. On Windows, run `bin\cohost.cmd` (it runs `bin/cohost` with `bb`).
+or, from a checkout, `jank run install.cljc --repo ~/cohost`. The
+installer fetches the checkout if you don't have one
+(`~/.local/share/cohost/cohost.cljc`), builds cohost's compiled core
+snapshot with Jank alone (the first build takes minutes; later runs
+rebuild only when the sources changed), compiles the `cohost` command
+into `~/.local/bin` (`--bin DIR` to choose), and records the checkout
+in `~/.config/cohost/install.edn`, which is how the command finds it
+afterwards. Add `~/.local/bin` to your PATH if it isn't there.
+
+Then install the project tool the way the Clojure CLI would — through
+`cohost` itself:
+
+```bash
+cohost -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
+```
+
+That command is native to this install: it keeps the same gitlibs
+layout and tool records the Clojure CLI writes, so the two can share a
+machine. What runs where, honestly: the default target (Jank) — `-M`,
+`-X`, `-e`, the REPL — and `-Ttools install` never involve another
+tool. Other `-T` aliases, `-Sdescribe` and the `:jvm` target delegate
+to the real Clojure CLI when one is installed, and stop and say so
+when there isn't. The other runtimes in the table below are served by
+`bin/cohost` from a checkout (that route still uses Babashka), as is
+Windows (`bin\cohost.cmd`).
 
 ## A new project
 
