@@ -247,7 +247,9 @@
 ;; ---------------------------------------------------------------------------
 ;; the attempt record: a per-scope local atom, dynamically bound.
 ;; {:id :rp (atom nil-or-long) :touched (atom {seq entry})
-;;  :held-sends (atom [])}
+;;  :held-sends (atom []) :locks-held (atom bool)}
+;; :locks-held is true while commit! holds (or is taking) the attempt's
+;; commit locks -- the one phase whose read waits are bounded.
 ;; entry: {:ref :base-point :base-value :ensured :actions []}
 
 (def ^:dynamic *tx*
@@ -267,13 +269,17 @@
         p)))
 
 (def read-lock-wait-ms
-  "How long a read inside a transaction waits on a ref whose commit
-   lock another attempt holds before giving its attempt up with the
-   plain retry signal (contention: never counted, unbounded). Stock's
-   read lock waits without a bound; the bound here only turns a wait
-   that cannot end -- two committers whose validators each read a ref
-   the other holds locked -- into a retry. A commit holds its locks
-   far shorter than this (STM report, defect F1)."
+  "How long a read performed WHILE ITS ATTEMPT HOLDS COMMIT LOCKS
+   (commit phase: the attempt's :locks-held flag, set by commit!)
+   waits on a ref whose commit lock another attempt holds before
+   giving its attempt up with the plain retry signal (contention:
+   never counted, unbounded). Only there: body-phase reads hold no
+   commit locks, so their waits cannot form a cycle and are
+   UNBOUNDED, as stock's read lock is (the Q-STM-WAIT rule). Under
+   locks the bound turns a wait that cannot end -- two committers
+   whose validators each read a ref the other holds locked -- into a
+   retry. A commit holds its locks far shorter than this (STM report,
+   defect F1)."
   100)
 
 (def ^:private read-lock-spins
@@ -301,15 +307,19 @@
    commit's point read that commit's installed refs new and its
    not-yet-installed refs old: a torn snapshot, which a read-only
    transaction returns (read-only refs are not validated -- stock).
-   Inside a transaction (att) the wait gives up after
-   read-lock-wait-ms with the plain retry signal; outside one (att
-   nil) it waits, as Ref.currentVal's read lock does. The wait spins
+   The wait is UNBOUNDED in body phase and outside a transaction (att
+   nil), as Ref.currentVal's read lock is: those reads hold no commit
+   locks, so they cannot form a cycle (Q-STM-WAIT). Only a read made
+   while its attempt HOLDS its commit locks (the :locks-held flag
+   commit! sets -- a validator that derefs) gives up after
+   read-lock-wait-ms with the plain retry signal. The wait spins
    read-lock-spins checks, then backs off in 1 ms timed waits on a
    fresh doorbell no one rings (the thread layer's wait primitive used
    as a timed park; a host without doorbells keeps spinning)."
   [att r]
   (when (held-by-other att r)
-    (let [deadline (when att (+ (host/current-time-millis) read-lock-wait-ms))
+    (let [deadline (when (and att @(:locks-held att))
+                     (+ (host/current-time-millis) read-lock-wait-ms))
           bell (host/doorbell)]
       (loop [n 0]
         (when (held-by-other att r)
@@ -551,6 +561,10 @@
         ;; 2026-11-05). Validation below then runs under the locks.
         lock-set (filter (fn [e] (or (seq (:actions e)) (:ensured e))) entries)
         locked (atom [])]
+    ;; the commit phase holds locks from here to the finally: reads
+    ;; made under them (a validator that derefs) are the ONLY bounded
+    ;; read waits (Q-STM-WAIT, await-unlocked!)
+    (reset! (:locks-held att) true)
     (try
       ;; (1) lock every ref we will install into or ensured, in
       ;; creation order
@@ -583,7 +597,8 @@
         (mapv (fn [e] (install! att e cp)) installs))
       (finally
         (doseq [r @locked]
-          (unlock! att r))))))
+          (unlock! att r))
+        (reset! (:locks-held att) false)))))
 
 (defn- release-sends! [att]
   (doseq [action @(:held-sends att)]
@@ -616,7 +631,8 @@
       (let [att {:id (swap! attempt-seq inc)
                  :rp (atom nil)
                  :touched (atom {})
-                 :held-sends (atom [])}
+                 :held-sends (atom [])
+                 :locks-held (atom false)}
             outcome (binding [*tx* att]
                       (host/try-all
                        (fn []

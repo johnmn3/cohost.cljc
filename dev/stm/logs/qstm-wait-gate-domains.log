@@ -1,0 +1,23 @@
+=== domains fix start 8:21:27 AM ET
+cmd: clojure -Sdeps {:deps {eve/eve {:local/root "/tmp/claude-0/-home-user-atom-broker/fcd2c088-6a69-5efc-a32d-2f9026fe32a9/scratchpad/f1/eve-6502d37"}}} -M probe_tx_domains.clj
+WARNING: get-validator already refers to: #'clojure.core/get-validator in namespace: cohost.tx, being replaced by: #'cohost.tx/get-validator
+INFO make-ref over Eve domains: 279 ms for 10 refs (28 ms/ref)
+PASS every ref's cell is :eve-own-domain => (:eve-own-domain)
+PASS the factory minted one domain per ref => 10
+PASS the refs' Eve handles sit in 10 distinct domains => 10
+PASS refs hold independent values => [0 1 2 3 4 5 6 7 8 9]
+PASS a two-ref transaction commits across domains => [1 8]
+PASS fn-valued ref residence => :eve-own-domain
+PASS fn-valued ref cell gate is :host => :host
+PASS fn-valued ref transacts => 5
+INFO disjoint stats: {:attempts 800, :retries 0, :commits 800}
+PASS disjoint values all landed => [100 100 100 100 100 100 100 100]
+PASS disjoint transactions: 800 commits => 800
+PASS disjoint transactions: ZERO retries => 0
+INFO scoped contention: victim retries 62, bystander retries 0, P=420 Q=420
+PASS P landed every write => 420
+PASS Q landed every write => 420
+PASS the victim really retried (contention was real) => true
+PASS bystander retries bounded by Q's own conflicts (<= victim's 20 commits) => true
+PROBE-TX-DOMAINS: ALL 15 CHECKS PASS
+exit 0 end 8:21:35 AM ET

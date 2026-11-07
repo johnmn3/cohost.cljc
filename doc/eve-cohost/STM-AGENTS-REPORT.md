@@ -1926,3 +1926,41 @@ The same fix as a patch against Lane M's spike (lane-m/stm-in-eve,
 `docs/stm-eve/eve/stm.cljc`) was handed to the coordinator, not pushed.
 The adapted probe on the spike: unpatched, 10182 of 26064 torn and
 3333 of 11666 outside; patched, 0 of 1438 and 0 of 689.
+
+## STATUS 23 — 2026-11-07 ~8:2x AM ET — the Q-STM-WAIT rule aligned: body-phase read waits UNBOUNDED; the 100 ms bound only under commit locks (cohost Agent 3; same branch)
+
+The rule, as decided by Lane M (operator's word) on Agent 3's
+Q-STM-WAIT answer, matches lane-m/stm-in-eve's eve.stm. A read in a
+transaction's body phase holds no commit locks, so its wait on another
+attempt's lock cannot form a cycle. It now waits without a bound, as
+stock's read lock does. Only a read made while its own attempt HOLDS
+commit locks keeps the 100 ms bound and the plain retry: that is a
+validator that derefs during commit!. That wait is the one that could
+cross with another committer's. This supersedes STATUS 22's "inside a
+transaction the wait gives up after 100 ms" for body-phase reads.
+
+Change, `src/cohost/tx.cljc` only:
+- The attempt record gains `:locks-held (atom false)`.
+- `commit!` sets it before it takes its first lock, and its `finally`
+  clears it after the unlocks.
+- `await-unlocked!` sets a deadline only when `(and att @(:locks-held
+  att))`. Body-phase and outside-transaction waits have none. They keep
+  the same spin-then-1 ms-doorbell back-off.
+- cohost's own `lock!` is unchanged: Lane M asked only for the
+  body-phase bound.
+No gate pinned the body-phase bound, so nothing was retargeted. Every
+F1 gate was re-run on this change, JVM seat, Eve main 6502d37 (logs
+`dev/stm/logs/qstm-wait-gate-*.log`). Results as printed, with STATUS
+22's run (96c66da) in brackets:
+- torn-read, Eve cells: 0 torn of 1097, outside 0 of 652 [0 of 1935,
+  0 of 842]. ALL 7 PASS.
+- torn-read, host cells: 0 of 3337, outside 0 of 26573 [0 of 7028, 0
+  of 16345]. ALL 7 PASS.
+- probe_tx: 23/23 [23/23].
+- probe_tx_retry_bound: 8/8 [8/8]. Faults after 10001 attempts, 40 ms.
+- probe_tx_reclaim: 4/4 [4/4].
+- probe_tx_domains: 15/15 [15/15]. Disjoint {:attempts 800, :retries
+  0, :commits 800}.
+- probe_tx over Eve cells: 23/23 [23/23].
+- eve_cohost_check_stm: 20/22 [20/22], the same 2 pre-existing
+  hinted-interop rows.
