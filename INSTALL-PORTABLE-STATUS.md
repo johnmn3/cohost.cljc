@@ -125,7 +125,56 @@ Design, as built:
   The jank-seat regression proof is unchanged from the completed
   lane (clojure+bb poisoned, never invoked).
 
-NEXT: commit + push; J — claim a heavy-queue slot, stage a git
-checkout of this branch, per-seat reader probes (arm selection,
-*command-line-args*, catch arms), per-seat load checks (bogus
---repo), then the three install proofs, detached with logs.
+## J staging + probes (~15:20–15:45 ET; slot claimed)
+
+- Slot `slot.cohostinstall-portable` claimed under the heavy-queue
+  protocol (CAP=5; active slots at claim time: ds-perf-bench,
+  u22-collate, stm-collate — four further slot.* entries are hours
+  stale; 1-min load 3.44). Checkout: ~/cohost-portable on J, git
+  clone of this branch @ e7c6a696.
+- bb on J is /home/john/.local/bin/bb (v1.3.190), NOT /usr/local/bin.
+  jank + clojure are /usr/local/bin. Root disk 96% full (~4.7G
+  free) — one shared checkout for all proofs, watched.
+- Reader probes (probe.cljc, per-seat arm + *command-line-args* +
+  spliced catch): bb arm PERFECT (rc 0); clj arm PERFECT via
+  `clojure -M probe.cljc` (:clj features, args, catch Throwable);
+  jank arm selected + args correct. Two jank quirks, neither in the
+  installer's shape: throwing an ex-info DIRECTLY in a top-level
+  try body binds a nil-ish catch value (ex-message then faults) —
+  the installer's throws always originate inside defns, and its
+  handler shape (defn call) probed fine (probe2 P3/P4 pass).
+- INSTALLER SEMANTICS FOUND FIRSTHAND (original behavior,
+  preserved): --repo pointing at a non-checkout FALLS BACK to the
+  cwd when the cwd is a checkout (the `(if (file? ...) repo (cwd))`
+  step). A "bogus --repo" check run from inside a checkout
+  therefore does NOT die — it installs from the cwd. My first
+  load-check batch was invalid for exactly this reason (and a bb
+  run from it started a real build in the shared checkout — killed,
+  target/ cleaned). Load checks are rerun from a non-checkout cwd.
+- A first jank-seat proof attempt FAILED in jank's JIT while
+  realizing the install-fail defn (core.jank compile errors,
+  truthy symbol missing). Bisected from the load-check log: the
+  ORIGINAL file's handler, inline in the bottom let's catch,
+  prints "cohost install failed: stopped" cleanly in the same
+  environment; the generalized file's factored install-fail defn
+  fails to JIT-realize deterministically (install.cljc:229,
+  "Failed to find symbol: cohost_install$install_fail_370_1").
+  FIXED: the handler is inline again, in the original's exact
+  shape, with only the catch header and the exit call armed per
+  seat; the install-fail defn and the exit! defn are gone.
+- LATENT BUG FOUND IN THE ORIGINAL (inherited verbatim, now
+  fixed): -main's argv parse filtered args to "--" tokens BEFORE
+  partitioning into pairs, dropping every value — so --repo and
+  --bin never took effect; explicit-repo was always nil and the
+  installer always resolved via COHOST_HOME / cwd / the default
+  clone. Every proof of the jank-only lane ran with cwd == the
+  --repo value, masking it. All of this lane's early confusion
+  (a bogus --repo "installing" the cwd checkout) traces to it.
+  FIXED: pairs are consumed two at a time in a loop; the code
+  comment at the binding tells the story. This lane's proofs run
+  the installer from a neutral cwd so --repo is really exercised.
+
+NEXT: rerun per-seat load checks from a neutral cwd (expect the
+true die: "no cohost checkout at /nonexistent-bogus", rc 1, on
+all three seats); then the proofs in order — jank (regression
+control), bb boundary, bb, battery, clj A, battery, clj B.

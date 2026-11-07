@@ -45,14 +45,15 @@
   #?(:jank :jank :bb :bb :clj :clj))
 
 ;; ------------------------------------------------------------ host shim
-;; Five host services, one arm per seat: capture (a shell command's
-;; stdout), sh! (a shell command's exit code, stdio inherited), env,
-;; exit!, self-exe (the seat executable's path). Everything above
-;; this layer is portable. No regex literals anywhere in this file:
-;; jank reads regex literals verbatim, so a pattern whose escapes
-;; differ per seat would silently change meaning — the two patterns
-;; the portable code needs are escape-free and mean the same thing
-;; on every seat.
+;; The host services with one arm per seat: capture (a shell
+;; command's stdout), sh! (a shell command's exit code, stdio
+;; inherited), env, self-exe (the seat executable's path); the
+;; failure exit at the bottom is armed the same way. Everything
+;; else is portable. Regex discipline: jank reads regex literals
+;; verbatim, so no pattern whose escapes could differ per seat —
+;; the file's only regex literals are the two escape-free patterns
+;; inherited from the jank-only installer (#"/+$" and #":"), which
+;; mean the same thing on every seat.
 
 #?(:jank
    (cpp/raw
@@ -114,9 +115,6 @@
 #?(:jank (defn- env [k] (let [v (cpp/cohost_install_get_env_impl k)] (when-not (empty? v) v)))
    :default (defn- env [k] (let [v (System/getenv k)] (when-not (empty? v) v))))
 
-#?(:jank (defn- exit! [n] (cpp/cohost_install_exit_impl n))
-   :default (defn- exit! [n] (System/exit n)))
-
 (defn- which
   "The absolute path of cmd on the PATH, else nil."
   [cmd]
@@ -152,8 +150,16 @@
 ;; ------------------------------------------------------------ the install
 
 (defn -main [& args]
-  (let [argv (into {} (map (fn [[k v]] [(keyword (subs k 2)) v]))
-                   (partition 2 (filter #(str/starts-with? % "--") (vec args))))
+  (let [argv (loop [xs (seq args) m {}]
+               ;; --flag value pairs, consumed two at a time. (The
+               ;; jank-only installer's parse filtered to "--" tokens
+               ;; before partitioning, which dropped every value:
+               ;; --repo only ever worked from inside the checkout,
+               ;; where cwd-repo found the same directory.)
+               (cond (nil? xs) m
+                     (str/starts-with? (first xs) "--")
+                     (recur (nnext xs) (assoc m (keyword (subs (first xs) 2)) (second xs)))
+                     :else (recur (next xs) m)))
         driver (or (self-exe)
                    (die (case seat
                           :jank "cannot locate the running jank binary"
@@ -190,7 +196,11 @@
                    (die "cohost: the cohost tool is compiled with jank, and no jank is on the path. "
                         "Install jank (bash dev/install/jank.sh in the checkout) and re-run this installer."))]
       ;; 2. the snapshot, driven by the seat that ran this file
-      (println "cohost install: building the core snapshot (driven by" (name seat) "; the first build takes minutes)")
+      (println "cohost install: building the core snapshot"
+               (case seat
+                 :jank "(jank only; the first build takes minutes)"
+                 :bb "(driven by bb; the first build takes minutes)"
+                 "(driven by clj; the first build takes minutes)"))
       (checked!
        (case seat
          :jank (str "cd " (q repo) " && " (q driver) " --module-path dev/install/lib run dev/install/jank_build.cljc -- ensure")
@@ -217,15 +227,22 @@
       (println (str "  export PATH=\"" bin-dir ":$PATH\""))
       (println "Next: cohost -Ttools install-latest :lib io.github.seancorfield/deps-new :as new"))))
 
-(defn- install-fail [e]
-  (binding [*out* *err*]
-    ;; ex-message is guarded: some wrapped exceptions reject it, and
-    ;; the handler must never become the failure.
-    (println "cohost install failed:" (or (try (ex-message e) (catch #?(:jank :default :bb Exception :clj Throwable) _ nil)) "stopped")))
-  (exit! 1))
-
 (let [args *command-line-args*]
   (try (apply -main (remove #{"--"} args))
-       #?@(:jank [(catch :default e (install-fail e))]
-           :bb [(catch Exception e (install-fail e))]
-           :clj [(catch Throwable e (install-fail e))])))
+       ;; The handler stays inline, in the jank-only installer's
+       ;; exact shape: factored into a defn, jank's JIT fails to
+       ;; realize it (INSTALL-PORTABLE-STATUS.md has the receipt).
+       ;; ex-message is guarded: some wrapped exceptions reject it,
+       ;; and the handler must never become the failure.
+       #?@(:jank [(catch :default e
+                    (binding [*out* *err*]
+                      (println "cohost install failed:" (or (try (ex-message e) (catch :default _ nil)) "stopped")))
+                    (cpp/cohost_install_exit_impl 1))]
+           :bb [(catch Exception e
+                  (binding [*out* *err*]
+                    (println "cohost install failed:" (or (try (ex-message e) (catch Exception _ nil)) "stopped")))
+                  (System/exit 1))]
+           :clj [(catch Throwable e
+                   (binding [*out* *err*]
+                     (println "cohost install failed:" (or (try (ex-message e) (catch Throwable _ nil)) "stopped")))
+                   (System/exit 1))])))
