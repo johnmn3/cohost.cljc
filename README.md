@@ -186,6 +186,10 @@ The guide covers each part of using cohost; every command in it runs, as written
 9. [Adding a host](doc/guide/09-adding-a-host.md)
 10. [Limitations and FAQ](doc/guide/10-limitations-and-faq.md)
 11. [Debugging](doc/guide/11-debugging.md): the error report, traces as data, `pst`, REPL vars, exit codes — and the jank pathway's own facilities (codegen/IR printing, profiling, gdb break-on-throw)
+12. [Threading with Eve](doc/guide/12-threading-with-eve.md): futures, promises, agents and pmap where the host has none — one layer over Eve, worker realms on ClojureScript
+13. [Memory with Eve atoms](doc/guide/13-memory-with-eve-atoms.md): cohost's Atom on Eve atoms — what changes, what it costs, and the shared heap across ClojureScript's worker realms
+14. [Tiered atoms](doc/guide/14-tiered-atoms.md): choosing an atom's kind by metadata — memory, disk shared between processes, and network atoms
+15. [Eve coverage and status](doc/guide/15-eve-coverage-and-status.md): per facility and runtime — what is landed, what is proven, what is not yet
 
 Also: [the `cohost` command's reference](doc/CLI.md), [embedding cohost in a host
 program](doc/EMBEDDING.md), [performance](doc/PERF.md), [the measurements and host
