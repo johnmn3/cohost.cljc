@@ -42,3 +42,15 @@ NEXT: set up J run dirs, launch boot:jank detached with log.
   pair sentence is checked against ITEM 1's printed rows when the
   re-run lands, before the manifest update.
 NEXT: commit + push docs; read boot:jank verdict on J.
+- 04:05 ET: ITEM 1 gate verdict IN (build box): bb boot:jank on the
+  merged tree @ e1ec18e code, Eve sibling @ 76fd94c pin — booted as
+  stock 544, errors: 0; battery 219/221; libraries 62/62; verdict
+  lines byte-identical to logs-093/jank-battery.log; red pair =
+  "subs count nth first last butlast" + "Character outside ASCII"
+  (the standing released-bindings pair — ch.15's sentence already
+  names this pair, no chapter correction needed); shim.o produced.
+  Manifest Gates + PENDING-REBIND updated; log committed at
+  logs-release-clear/boot-jank.log. Unit-9 jank leg RUNNING on J
+  (Agent 3's harness files overlaid on a scratch copy of the tree,
+  verdict run only — nothing of Agent 3's branch merges here).
+NEXT: unit-9 seam-8 verdict as printed; final manifest + declaration.

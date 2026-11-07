@@ -116,16 +116,22 @@ Nothing in this lane writes to cohost main.
 - **Eve-in-cohost documentation chapters** (threading with Eve; memory
   with Eve atoms; tiered atoms; seat-by-seat coverage matrix), indexed
   from the README. Owner: cohost Agent 2 (assigned the landing after
-  its heap-grade work; source branch `muse/eve-cohost-docs`). Lands
-  here, not on the impl mainline, once Agent 2 banks its spot-check
-  against the landed units. **Landing chore, recorded 2026-11-07:**
-  when the chapters land, flip unit 8's cell in the coverage matrix
-  from GATE-GREEN to **landed** — the cell lives in
-  `doc/guide/15-eve-coverage-and-status.md` on
-  `agent2/eve-cohost-docs-landing` (unit 8 written GATE-GREEN there
-  per its DOCS-STATUS); neither file is on this branch today, so the
-  2026-11-07 collation could not flip it here and names it instead
-  (see COLLATION-STATUS.md).
+  its heap-grade work; source branch `muse/eve-cohost-docs`).
+  **LANDED on this branch 2026-11-07** (release-clear lane, commit
+  `5c79e7c`): guide chapters 12–15 from
+  `agent2/eve-cohost-docs-landing` + README index entries 12–15,
+  spot-checked against the collated tree at landing — unit 6 was
+  written "in implementation (not landed)" in ch. 15's Not-yet list
+  and "not yet done" in ch. 14; both corrected to the landed state
+  (unit 6 LANDED via the collation; refinement pins 10 tests /
+  108 assertions / 0 / 0), and ch. 13's unit-6 reference updated
+  likewise. **Landing chore DISCHARGED:** unit 8's coverage cell —
+  the worker-realms / shared-heap row of
+  `doc/guide/15-eve-coverage-and-status.md` — reads **LANDED** in
+  the chapter as landed (the GATE-GREEN form lives in Agent 2's
+  DOCS-STATUS / DOCS-DECLARATION on its own branch, not in the
+  guide text). Agent 2's DOCS-STATUS/DOCS-DECLARATION remain on
+  `agent2/eve-cohost-docs-landing` as its lane record.
 
 ### EXCLUDED — with reason
 
@@ -183,6 +189,25 @@ serially on this box (8 GB).
   line's own record meanwhile (`logs-093/jank-battery.log`: boot
   errors 0; battery 219/221; libraries 62/62 — the standing reader
   pair, reproduced verbatim).
+- **Release-clear jank re-run on this branch's merged tree
+  (2026-11-07, operator's order; build box j.slaa.us, load 0.22 at
+  start).** `bb boot:jank` (Babashka 1.13.226) against this branch's
+  tip (code tree of `e1ec18e`; the docs commit `5c79e7c` on top
+  changes no code), Eve sibling `../eve/src` at the released 0.9.3
+  pin `76fd94c3dc`: **booted as stock 544, from host 141, natives
+  28, skipped 108, errors: 0; battery: 219/221 stock behaviors
+  pass; libraries: 62/62 cases pass across 12 clojure.* libraries**
+  — verdict lines byte-identical to the rebase line's
+  `logs-093/jank-battery.log`. The two red rows are the standing
+  released-bindings pair: "FAIL subs count nth first last butlast"
+  (got "ERR Unterminated vector. (outer: Unterminated vector.)")
+  and "FAIL Character outside ASCII" (got "ERR Unexpected end of
+  file. (outer: Unexpected end of file.)"). The AOT build produced
+  `cohost/shim.o` in the run's cache — the unit-9 AOT fix's
+  artifact, verified present. Log: `logs-release-clear/boot-jank.log`
+  (committed with this update; original on the build box at
+  `~/cohost-release-clear/logs/boot-jank.log`). The OWED re-run is
+  DISCHARGED.
 
 ### PENDING-REBIND — jank-seat rows that only gain meaning on the released bindings
 
@@ -203,10 +228,13 @@ followed by the adoption steer.
   plus the cljs Eve-fill rows): the pin has moved (adoption row,
   SATISFIED). The rebase line's own re-runs on the assembled bindings
   are banked in `logs-093/` (jank battery 219/221 + 62/62; cljs
-  219/221 + 62/62, each with its standing pair). The re-run on THIS
-  branch's merged tree is OWED (box load 24.41 at gate time; see the
-  Gates collation block) — the JVM re-run there is this collation's
-  released-bindings verdict: 221/221 + 62/62, errors 0.
+  219/221 + 62/62, each with its standing pair). **DISCHARGED
+  2026-11-07** by the release-clear re-run on THIS branch's merged
+  tree (build box; see the Gates release-clear block): errors 0,
+  battery 219/221, libraries 62/62, verdict lines byte-identical to
+  `logs-093/jank-battery.log`. (The cljs Eve-fill rows were re-run
+  by the rebase line on the assembled bindings, banked in
+  `logs-093/boot-cljs.log`: 219/221 + 62/62, standing pair.)
 - **Unit 6's jank rows** rode with unit 6 itself — LANDED with the
   collation (see the unit 6 row above): refinement pins green on the
   assembled bindings, 10 tests / 108 assertions / 0 / 0.
