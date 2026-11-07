@@ -80,6 +80,17 @@
   and the resolved classpath carries that checkout's src + hosts.edn
   adapter roots (`cljs-fetch.log`). (Gitlibs lives under the exec user's
   home, /root/.gitlibs, on this box.)
+- **cljs seat battery** (`bb boot:cljs` — compile against the 0.9.3
+  checkout's `:cljs` hosts.edn row, then Node run): **boot errors 0;
+  battery: 219/221; libraries: 62/62** (`boot-cljs.log`). The 2
+  non-green rows are `FAIL numeric tower` and `FAIL defmacro &form
+  &env` — the documented pristine-base pair for this seat
+  (CLJS-DEP-REPORT.md: "FAILs exactly the pristine-base pair … verified
+  identical on an unmodified worktree"; LANDING-u2cljs-u5-DECLARATION
+  the same). **Disposition: known-standing on the cljs seat, reproduced
+  identically on the 0.9.3 bindings; NOT new-on-0.9.3 and NOT the jank
+  standing pair** (the jank pair is a different two rows — see the
+  census note in the report).
 
 ## Gates owed (run once, at the end)
 
