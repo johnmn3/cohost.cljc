@@ -452,3 +452,31 @@ with --repo /nonexistent-bogus:
   regression load check runs on J in the proof window instead.
   (Invocation detail: jank's run wants `--` before the
   installer's own flags.)
+
+### J staging + proofs (~17:1x ET; slot claimed)
+
+- J root disk is at 100% (761M free) — ALL staging is on the
+  second disk: S=/home/john/j/cohost-portable2 (checkout @
+  3f358ee; install.cljc sha256 80987a63... matches the worktree
+  file byte-for-byte). TMPDIR points into S in every proof
+  script (the root /tmp is on the full disk).
+- Jolt is not installed on J: the v0.8.23 release tarball was
+  fetched into S/hosts and sha256-verified against the release
+  sidecar (the dev/install/jolt.sh steps, staged locally instead
+  of /usr/local/bin). `jolt --version` -> jolt v0.8.23.
+- Jank regression load check ON J: PERFECT — banner (J's jank
+  prints its target+sha version line), "no cohost checkout at
+  /nonexistent-bogus", "cohost install failed: stopped", rc 1.
+  All four armed seats now have a green load check.
+- Heavy-queue: registered in WAITING, then claimed
+  slot.cohostinstall-portable2 with 4 slots active (CAP 5) and
+  1-min load 0.84. (Names ahead in WAITING are largely lanes
+  whose heavy work already landed today; the claim is recorded
+  here per protocol.)
+- Proof scripts written on J (proof-boundary.sh, proof-a.sh,
+  proof-b.sh under S), mirroring the clj seat's shape: boundary
+  (jank+clojure poisoned, pristine copy, must trip at the first
+  jank touch), stage A (cold build, clojure poisoned, jank+bb
+  as collaborators), stage B (fresh snapshot, bb+clojure
+  poisoned), battery via bb boot:jank against the jolt-built
+  snapshot between A and B.
