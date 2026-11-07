@@ -425,3 +425,30 @@ in-process via java.security.MessageDigest).
 4. Docs: README + getting-started name Jolt once proven;
    ClojureCLR named unproven with the missing facility.
 5. INSTALL-PORTABLE-REPORT-2.md + double declaration.
+
+### Implementation + local load checks (~17:1x ET)
+
+install.cljc edited as planned (commit bc16d8a, pushed,
+verified on the fetched ref). Load checks from a neutral cwd
+with --repo /nonexistent-bogus:
+
+- **jolt seat: PERFECT** — "cohost install: jolt jolt v0.8.23",
+  "no cohost checkout at /nonexistent-bogus", "cohost install
+  failed: install: stopped", rc 1.
+- **bb seat: PERFECT** (regression) — banner "bb babashka
+  v1.3.190", same death, rc 1.
+- **clj seat: PERFECT** (regression) — banner "Clojure CLI
+  version 1.12.6.1673", same death, rc 1. (Needed the seeded
+  local repo via CLJ_CONFIG=~/workspace/eve-env/cljconfig; a
+  bare run dies in the CLI's own Maven resolution through this
+  box's proxy — the known local JVM/Maven limit, not the file.)
+- **jank seat: cannot be checked on this box — pre-existing.**
+  This box's jank lexer rejects the em-dash in the file's first
+  comment line ("lex/invalid-unicode: The Unicode character
+  literal is unfinished", line 1) — and the PRISTINE predecessor
+  file (5952698) fails byte-identically under the same command,
+  so the edit is not the cause; J's jank build reads the file
+  (the predecessor's jank proofs are green there). The jank
+  regression load check runs on J in the proof window instead.
+  (Invocation detail: jank's run wants `--` before the
+  installer's own flags.)
