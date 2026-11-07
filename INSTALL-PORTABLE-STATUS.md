@@ -63,6 +63,69 @@ what is proven.
 
 ## State: OPENED (~14:52 ET) — base verified, branch cut, STATUS banked
 
-NEXT: read install.cljc + dev/install end to end; design the arm
-layout; implement :bb and :clj arms; local reader checks per seat
-where the seat exists; then J proofs under a claimed slot.
+## Implementation (~15:05 ET) — install.cljc generalized in place
+
+Read end to end firsthand: install.cljc (136 lines), jank_build.cljc,
+cohost.tool/tool_main, bin/cohost, bb.edn, dev/perf/
+jank_snapshot_key.clj + jank_snapshot_ensure.clj + jank_aot_ensure.clj.
+
+Design, as built:
+
+- `seat` is a def from a reader conditional, arms ordered :jank,
+  :bb, :clj (jank and bb also read :clj arms; their own features
+  come first — the house reader-order rule, cf. bb.edn's
+  lint:reader-order task).
+- The five shim services (capture, sh!, env, exit!, self-exe) are
+  armed per seat. :jank keeps the cpp/raw layer byte-identical and
+  the same wrapper defns; :bb uses babashka.process/shell over
+  "sh -c" (popen parity: stdout captured, stderr inherited) +
+  System/getenv + /proc/self/exe with a `command -v bb` fallback;
+  :clj uses java.lang.ProcessBuilder ("sh -c", stderr inherited for
+  capture, inheritIO for sh!) + System. env/exit! share a :default
+  arm (System) under the :jank arm.
+- The bottom try/catch is spliced per seat (:default / Exception /
+  Throwable); the ex-message guard is preserved in install-fail.
+- Build dispatch in -main step 2, by seat: :jank ->
+  jank_build.cljc (command byte-identical to the completed lane's);
+  :bb -> `bb -e (load-file "dev/perf/jank_snapshot_ensure.clj")`
+  (the original bb build); :clj -> the same ensure under the
+  Clojure CLI with -Sdeps pinning babashka/process 0.5.22 +
+  babashka/fs 0.5.24 (key.clj's only non-core requires; versions to
+  be confirmed at the clj proof).
+- Step 3 (tool compile) is jank on every seat — the installed
+  command is the same cohost.tool as the completed lane's. Step 1.5
+  (new): on a non-jank seat with no jank on PATH, the installer runs
+  the checkout's dev/install/jank.sh, then re-checks; still absent,
+  it dies naming the gap. install.edn now also records :seat and,
+  on non-jank seats, the driver path under its own key; :repo/:jank/
+  :bin are unchanged, and the tool reads only those three.
+- Dialect: no new regex literals; the file's two existing patterns
+  (#"/+$", #":") are escape-free and mean the same on every seat.
+
+## Findings that shape the proofs (from the tree, firsthand)
+
+- The original snapshot build (jank_snapshot_key.clj rebuild!):
+  step 1 record is a jank run, step 2 emit is a `bb` process
+  (hardcoded in rebuild!), step 3 compile is jank. The bb seat's
+  dispatch therefore uses bb exactly where the original did (driver
+  + emit); the clj driver's emit still rides that hardcoded `bb`
+  call — a wart in dev/perf, NOT fixed by this lane (touching
+  key.clj would break the cross-flow snapshot-key parity). Named
+  here so the clj proof is read correctly: on the clj seat, bb is
+  the build's emit hand, never the driver.
+- Consequence for the poison proofs, stated before running them:
+  jank is invoked by the build's record/compile steps and by step
+  3 on EVERY seat, because the installed tool is a jank-compiled
+  program (scope item 4: the same tool as today's). The bb/clj
+  seats generalize who DRIVES the install, not what compiles the
+  tool. So each non-jank proof runs in two parts: (a) the seat
+  proof — the other Clojure-like driver poisoned, full install +
+  acceptance; (b) a boundary probe with the seat's build
+  collaborators poisoned, logging exactly where the build stops.
+  The jank-seat regression proof is unchanged from the completed
+  lane (clojure+bb poisoned, never invoked).
+
+NEXT: commit + push; J — claim a heavy-queue slot, stage a git
+checkout of this branch, per-seat reader probes (arm selection,
+*command-line-args*, catch arms), per-seat load checks (bogus
+--repo), then the three install proofs, detached with logs.
