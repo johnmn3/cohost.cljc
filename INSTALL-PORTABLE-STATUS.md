@@ -514,3 +514,20 @@ with --repo /nonexistent-bogus:
   three seats' standard: load check, boundary probe, cold
   build at key parity, battery, fresh-snapshot install.
   Docs + REPORT-2 + close remain.
+
+## CLOSE (successor session, Nov 7 2026) — Jolt proven; ClojureCLR verdicted
+
+Jolt is a proven fourth seat: load checks green on all four
+armed seats, boundary probe PASS, stage A cold build at the
+identical snapshot key df88adac… (placement 857/872, deps-new
+parity, -e -> 3, -Spath correct, clojure never invoked),
+battery 219/221 + 62/62 on the Jolt-built snapshot, stage B
+fresh-snapshot PASS with bb + clojure poisoned and never
+invoked. README + getting-started now name Jolt among the
+installer seats. ClojureCLR is NOT armed: no ClojureCLR-loadable
+form of the snapshot build exists (evidence in the successor
+section above and in INSTALL-PORTABLE-REPORT-2.md), and the
+docs name it not-a-seat with the missing facility and the
+unblock condition. The full declaration is
+INSTALL-PORTABLE-REPORT-2.md. Heavy-queue slot released.
+Nothing to main, nothing to release/eve-in-cohost.

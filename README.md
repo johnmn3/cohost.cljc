@@ -14,7 +14,8 @@ You write ordinary Clojure, use `deps.edn`, Maven and git dependencies, a REPL, 
 ## Install
 
 You need one Clojure-like to run the installer — [Jank](https://jank-lang.org),
-Babashka, or the Clojure CLI — plus Jank itself, which compiles the
+Babashka, the Clojure CLI, or [Jolt](https://github.com/jolt-lang/jolt)
+— plus Jank itself, which compiles the
 `cohost` tool: run the installer on Jank and that is the same binary;
 run it on one of the others and the installer uses the Jank on your
 PATH, or installs it from the checkout when there is none. (Getting
@@ -26,6 +27,7 @@ it needs root.)
 curl -fsSL https://raw.githubusercontent.com/johnmn3/cohost.cljc/main/install.cljc -o install.cljc
 jank run install.cljc          # or: bb install.cljc
                                 # or: clojure -M install.cljc
+                                # or: jolt run install.cljc
 ```
 
 or, from a checkout, `jank run install.cljc -- --repo ~/cohost` (the
@@ -38,6 +40,15 @@ the sources changed) — compiles the `cohost` command
 into `~/.local/bin` (`--bin DIR` to choose), and records the checkout
 in `~/.config/cohost/install.edn`, which is how the command finds it
 afterwards. Add `~/.local/bin` to your PATH if it isn't there.
+
+One Clojure-like that is not an installer seat: ClojureCLR. The
+snapshot build the installer drives has no ClojureCLR-loadable form
+— its driver libraries (babashka.fs, babashka.process) ship no
+ClojureCLR reader arms in any release, and the jank-native build's
+foundation library is C++ — so `install.cljc` has no ClojureCLR arm.
+If those libraries gain ClojureCLR arms, the seat is a
+straightforward addition; until then it is named here rather than
+discovered mid-install.
 
 Then install the project tool the way the Clojure CLI would — through
 `cohost` itself:

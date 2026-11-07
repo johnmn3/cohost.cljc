@@ -10,16 +10,21 @@ tools.build. The command is `cohost`.
 ## Install
 
 You need one Clojure-like to run the installer — [Jank](https://jank-lang.org),
-Babashka, or the Clojure CLI — plus Jank itself, which compiles the
+Babashka, the Clojure CLI, or [Jolt](https://github.com/jolt-lang/jolt)
+— plus Jank itself, which compiles the
 `cohost` tool: on the Jank seat that is the same binary; on the
 other seats the installer uses the Jank on your PATH, or installs
-it from the checkout when there is none.
+it from the checkout when there is none. (ClojureCLR is not an
+installer seat: the snapshot build the installer drives has no
+ClojureCLR-loadable form — see the note in the README's Install
+section.)
 
 ```bash
 # not checked: installs
 curl -fsSL https://raw.githubusercontent.com/johnmn3/cohost.cljc/main/install.cljc -o install.cljc
 jank run install.cljc          # or: bb install.cljc
                                 # or: clojure -M install.cljc
+                                # or: jolt run install.cljc
 cohost -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
 ```
 
