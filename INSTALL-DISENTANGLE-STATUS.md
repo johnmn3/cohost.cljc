@@ -198,7 +198,48 @@ E. ClojureCLR attempt: Clojure.Main with the shim dir on
   clj reader 19 forms OK; bb reader (vector wrap) 18 forms OK
   (the count differs by seat feature set, as before).
 
-## State: shim + install.cljc change banked; J proofs next.
+## PROOF E (ClojureCLR, J, staged clone @ 62202e2) -- DONE
 
-NEXT: heavy-queue claim on J, stage the clone under
-/home/john/j, proofs A-E in order.
+E-chain: with dev/perf/shim on CLOJURE_LOAD_PATH, Clojure.Main
+(1.12.6, DOTNET_ROOT=/home/john/ds11/dotnet) loading
+dev/perf/jank_snapshot_ensure.clj from the repo root now gets
+PAST the babashka.fs / babashka.process resolution -- the
+successor lane's blocker -- and stops at:
+
+    Syntax error (TypeNotFoundException) compiling at
+    (dev/perf/sha256.clj:17:18).
+    Unable to find type: java.security.MessageDigest
+
+That is the next blocker, named with evidence: the build's
+in-process hashing names a JVM type at compile time. Two
+constraints shape the follow-on (operator's call, not this
+lane's): sha256.clj is NOT a keyed input (editable without
+moving the key), but it is one .clj file load-filed BY NAME
+from the frozen jank_snapshot_key.clj, and .clj files take no
+reader conditionals -- a CLR digest arm would have to be
+runtime dispatch inside that file (or the operator accepts a
+key.clj edit, which changes the key by design). One further
+blocker is anticipated but NOT verified -- the load never
+reached it: jank_snapshot_key.clj's (System/getenv "JANK_BIN")
+is a JVM-ism with no .NET namesake.
+
+E-shim: the vendored slice itself loads under ClojureCLR and
+its :cljr arms verify functional, counts against the JVM:
+  parent/components/path            correct strings
+  glob "**" over the clojure tree   22 == JVM 22
+  glob brace pattern                exact two paths
+  regular-file?                     true/false correct
+  (source-files "src/cohost")      41 == JVM 41
+    (jank_inputs.clj loads under CLR against the shim)
+  shell {:out :string} echo hi      {:out "hi\n" :exit 0}
+  shell {:continue true} false      {:out nil :exit 1}
+The probe also caught a real defect in the shim as first
+written: shared glob-regex used (.append sb ...) on a
+StringBuilder -- .NET spells the member Append
+(MissingMethodException under CLR). Fixed by building the
+pattern via string accumulation (one implementation, both
+arms); JVM key re-verified df88adac after the fix (62202e25).
+
+## State: E banked. A-D wait on a heavy-queue slot (in WAITING).
+
+NEXT: claim a slot when WAITING reaches the head; proofs A-D.
