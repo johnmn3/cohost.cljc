@@ -233,5 +233,49 @@ Design, as built:
 - run-rest launched: bb boundary probe, bb proof, battery on
   the bb-built snapshot, clj stage A, battery, clj stage B.
 
-NEXT: read the run-rest logs per stage; then the final STATUS
-+ report, docs commit, slot release.
+- BB BOUNDARY PROBE: PASS — with jank poisoned, the bb-driven
+  build tripped at its first jank touch (jank_snapshot_key.clj:45
+  shelling `jank print-binary-version` for the snapshot key),
+  installer rc 1, invocations.log = exactly that one call.
+- BB SEAT PROOF: PASS (~17:59 ET). The original build, driven by
+  bb, produced SNAPSHOT-BUILT df88adacda69c0e2d… — the identical
+  key to the jank flow (build's own timing line: 1,009,571 ms
+  under load) — PLACEMENT 857 of 872; INSTALLER-RC=0;
+  install.edn {:seat :bb, :bb "/home/john/.local/bin/bb",
+  :jank "/usr/local/bin/jank"}; deps-new at the reference
+  record + skipping re-run; -e -> 3; -Spath correct; poison
+  verdict PASS (clojure never invoked). Disk brushed 100%
+  again after this proof (61M free); freed 269M of my scratch
+  JIT caches; the clj stage's own wipe frees its build room.
+
+- Battery on the bb-built snapshot: 219/221 stock behaviors,
+  62/62 library cases, rc 0 — the completed lane's exact
+  numbers on the jank-built snapshot.
+- CLJ STAGE A, ATTEMPT 1: FAILED in the build, installer
+  correct throughout. The -Sdeps resolution worked (fs 0.5.24
+  + process 0.5.22 downloaded from Clojars — the pins are
+  right, and they live on Clojars, not Central). The ensure
+  reached AOT-RECOMPILE; a clang cc1 compiling a stage-1 TU
+  was SIGTERMed ("unable to execute command: Terminated") at
+  peak box contention (load 14+, 16 users, disk at 100%).
+  No oomd/earlyoom on the box; memory is comfortable between
+  peaks; the sender is unidentified — recorded as a transient,
+  not a code path: babashka.process/shell in jank_aot_ensure.clj
+  has no timeout or destroy, and the same TUs compiled clean
+  under the jank- and bb-driven builds. Secondary wart, named
+  for honesty: when the ensure's exception reached
+  clojure.main, its error REPORT crashed in clojure.pprint
+  (simple-dispatch ambiguity on babashka.process.Process,
+  which is both IPersistentMap and IDeref) — the real error
+  was still fully visible in the log, and the installer
+  reported "command failed (1)" + rc 1 correctly.
+  battery(clj) in that sequence is VOID (no snapshot existed).
+  clj stage B, launched by the driver against the wiped tree,
+  is itself running a clj-driven cold build with bb poisoned:
+  if it reaches the emit it trips the poison (the boundary
+  evidence); stage A gets ONE rerun after it (two-attempt
+  rule, diagnosis banked here), then stage B as designed.
+
+NEXT: clj B (boundary) verdict; clj A rerun; battery(clj);
+clj B as designed (fresh snapshot, bb poisoned). Then the
+final STATUS + report, docs commit, slot release.
