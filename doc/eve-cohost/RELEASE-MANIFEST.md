@@ -45,6 +45,17 @@ Nothing in this lane writes to cohost main.
   in the line's own practice (see PENDING-REBIND). Full record:
   `doc/eve-cohost/COLLATION-STATUS.md`; gate log:
   `logs-collation/boot-jvm.log`.
+- 2026-11-07 ~4:20 AM ET — release-clear lane (operator's order):
+  both owed rows DISCHARGED. Jank re-run on the build box against
+  this branch's merged tree, Eve sibling at the 0.9.3 pin: errors 0,
+  battery 219/221 + libraries 62/62, byte-identical to the rebase
+  line's record; unit 9's seam-8 verdict in (load fault cleared;
+  the leg now stops at one named program-side form in the shared
+  gate programs, 0/36 as printed — harness owner's fix). The
+  documentation chapters LANDED (guide 12–15 + README index, unit 6
+  and unit 8 states corrected to the collated tree). Record:
+  `doc/eve-cohost/RELEASE-CLEAR-STATUS.md`, `logs-release-clear/`.
+  The branch now awaits only the operator's word to move to main.
 
 ## Rows
 
@@ -219,11 +230,29 @@ followed by the adoption steer.
 - **Unit 9's jank harness leg** (`dev/eve_http_seats.clj`, 36-check
   shape; owner: cohost Agent 3, `agent3/unit9-jank-seat`): on the
   pre-release bindings it runs up to the seam-8 load fault and can
-  read no further. **Still PENDING after the 2026-11-07 collation:**
-  the pin adoption has landed (above), but the leg itself was not
-  re-run in the collation's verification scope — it rides with the
-  owed jank re-run and still awaits its seam-8 verdict on the
-  released bindings. Not dropped; named here as owed.
+  read no further. **SEAM-8 VERDICT IN, 2026-11-07** (release-clear
+  lane, build box): the leg was re-run on the released bindings —
+  this branch's tree (code of `e1ec18e`) with Agent 3's harness
+  files (`dev/eve_http_seats.clj` seat form, `dev/eve_http_jank.jank`,
+  `src/cohost/http_eve.jank` from `agent3/unit9-jank-seat`) overlaid
+  on a scratch copy, Eve sibling at the 0.9.3 pin. **The seam-8 load
+  fault does NOT recur**: both seat processes built, loaded Eve's
+  jank HTTP adapters and cohost, and reached evaluation of the
+  shared gate programs. Both then died at the same named form —
+  jank analyze error `invalid-cpp-member-call`, "There is no member
+  function `trim` on the type `jank::runtime::oref<object>`" at
+  `dev/eve_http_programs.cljc:187` (`(.trim ^String s)` in the
+  shared programs file, which the JVM and Node seats run as-is).
+  Verdict as printed: **"unit 9 gate (jank seat): 0/36 PASS, 36 not
+  run (FAIL: the client process ended before its work was done,
+  exit 1; FAIL: the serve process ended before its work was done,
+  exit 1); JVM-only client programs not run on this seat: 0"**
+  (log: `logs-release-clear/unit9-jank.log`). So the row's state:
+  the released-bindings load wall is cleared; what stands between
+  the leg and its 36 checks is one program-side JVM member call in
+  the shared gate programs — a harness fix on the leg owner's line
+  (Agent 3), named here with its file and line, not a bindings or
+  release defect.
 - **Full jank-seat gate re-run on the 0.9.3 pin** (`bb boot:jank`,
   plus the cljs Eve-fill rows): the pin has moved (adoption row,
   SATISFIED). The rebase line's own re-runs on the assembled bindings

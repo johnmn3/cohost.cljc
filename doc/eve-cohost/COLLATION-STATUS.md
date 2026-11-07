@@ -121,3 +121,27 @@ same landing. Owed, named, with owners: the jank battery re-run on
 this tree (load; build-box leg) and with it unit 9's seam-8 harness
 verdict; the unit-8 coverage-cell flip, which rides with Agent 2's
 documentation landing. Nothing moved to cohost main.
+
+## Addendum — 2026-11-07, the release-clear lane DISCHARGED the owed rows
+
+Operator's order (~3:45 AM ET): the two owed rows were put on a lane
+with the build box. Outcomes (full record: RELEASE-MANIFEST.md Gates
++ PENDING-REBIND, RELEASE-CLEAR-STATUS.md; logs in
+`logs-release-clear/`):
+
+- **Jank battery re-run on this merged tree — DONE** (j.slaa.us,
+  Eve sibling at the 0.9.3 pin `76fd94c3dc`): errors 0, battery
+  219/221, libraries 62/62, `shim.o` produced; verdict lines
+  byte-identical to `logs-093/jank-battery.log`.
+- **Unit 9's seam-8 verdict — IN**: the load fault does not recur on
+  the released bindings; both seat processes reach program
+  evaluation and stop at one named program-side form
+  (`dev/eve_http_programs.cljc:187`, `(.trim ^String s)`), 0/36 as
+  printed. The remaining fix is the harness owner's (Agent 3).
+- **Documentation chapters — LANDED** (guide 12–15 + README index;
+  commit `5c79e7c`), spot-checked against the collated tree; unit 8's
+  coverage row reads LANDED in the landed chapter — the named flip
+  is discharged.
+
+The branch's remaining gate is the operator's word: it moves to
+cohost main only on that word, which has not been given.

@@ -54,3 +54,39 @@ NEXT: commit + push docs; read boot:jank verdict on J.
   (Agent 3's harness files overlaid on a scratch copy of the tree,
   verdict run only — nothing of Agent 3's branch merges here).
 NEXT: unit-9 seam-8 verdict as printed; final manifest + declaration.
+
+## FINAL — both rows discharged (2026-11-07 ~4:20 AM ET)
+
+ITEM 1 — jank gate re-run on the merged tree (build box j.slaa.us):
+DISCHARGED. bb boot:jank @ release code e1ec18e, Eve sibling at the
+0.9.3 pin 76fd94c3dc: booted as stock 544, errors: 0; battery
+219/221; libraries 62/62; shim.o produced; verdict lines
+byte-identical to logs-093/jank-battery.log. Red pair as printed:
+"FAIL subs count nth first last butlast" (ERR Unterminated vector)
+and "FAIL Character outside ASCII" (ERR Unexpected end of file) —
+the standing released-bindings pair.
+Unit 9's jank harness leg — SEAM-8 VERDICT IN: the load fault does
+NOT recur on the released bindings. Both seat processes (Agent 3's
+harness overlaid on a scratch copy; nothing of that branch merged)
+loaded and reached program evaluation, then died identically at
+dev/eve_http_programs.cljc:187 — jank analyze invalid-cpp-member-call,
+no member `trim` on oref<object>, from (.trim ^String s). Printed
+verdict: "unit 9 gate (jank seat): 0/36 PASS, 36 not run (FAIL: the
+client process ended before its work was done, exit 1; FAIL: the
+serve process ended before its work was done, exit 1); JVM-only
+client programs not run on this seat: 0". Remaining fix = the shared
+gate programs' one JVM member call, on the leg owner's line
+(Agent 3) — named in the manifest with file and line.
+
+ITEM 2 — documentation chapters: LANDED (commit 5c79e7c): guide
+12–15 from agent2/eve-cohost-docs-landing + README index 12–15,
+spot-checked; unit 6 corrected from "in implementation (not
+landed)" to LANDED with its pin numbers (10 tests / 108 assertions
+/ 0 / 0) in ch.15, "not yet done" corrected in ch.14, ch.13
+reference updated. Unit 8's named flip discharged: the
+worker-realms/shared-heap coverage row reads LANDED in the landed
+chapter (the GATE-GREEN form lives only in Agent 2's own
+DOCS-STATUS/DOCS-DECLARATION on its branch).
+
+The branch moves to cohost main ONLY on the operator's word — not
+given, not taken. Nothing in this lane wrote to main.

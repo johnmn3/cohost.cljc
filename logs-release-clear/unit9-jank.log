@@ -1,0 +1,93 @@
+Downloading: ring/ring-jetty-adapter/1.12.2/ring-jetty-adapter-1.12.2.pom from clojars
+Downloading: org/eclipse/jetty/jetty-server/11.0.21/jetty-server-11.0.21.pom from central
+Downloading: ring/ring-core/1.12.2/ring-core-1.12.2.pom from clojars
+Downloading: org/eclipse/jetty/websocket/websocket-jetty-server/11.0.21/websocket-jetty-server-11.0.21.pom from central
+Downloading: org/eclipse/jetty/jetty-project/11.0.21/jetty-project-11.0.21.pom from central
+Downloading: org/eclipse/jetty/websocket/websocket-parent/11.0.21/websocket-parent-11.0.21.pom from central
+Downloading: org/ring-clojure/ring-jakarta-servlet/1.12.2/ring-jakarta-servlet-1.12.2.pom from clojars
+Downloading: org/ring-clojure/ring-core-protocols/1.12.2/ring-core-protocols-1.12.2.pom from clojars
+Downloading: org/ring-clojure/ring-websocket-protocols/1.12.2/ring-websocket-protocols-1.12.2.pom from clojars
+Downloading: commons-io/commons-io/2.16.1/commons-io-2.16.1.pom from central
+Downloading: org/apache/commons/commons-parent/69/commons-parent-69.pom from central
+Downloading: org/ow2/asm/asm-bom/9.7/asm-bom-9.7.pom from central
+Downloading: org/testcontainers/testcontainers-bom/1.19.7/testcontainers-bom-1.19.7.pom from central
+Downloading: org/eclipse/jetty/toolchain/jetty-jakarta-servlet-api/5.0.2/jetty-jakarta-servlet-api-5.0.2.pom from central
+Downloading: org/eclipse/jetty/jetty-io/11.0.21/jetty-io-11.0.21.pom from central
+Downloading: org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.pom from central
+Downloading: org/eclipse/jetty/jetty-http/11.0.21/jetty-http-11.0.21.pom from central
+Downloading: org/slf4j/slf4j-parent/2.0.9/slf4j-parent-2.0.9.pom from central
+Downloading: org/eclipse/jetty/toolchain/jetty-toolchain/1.6/jetty-toolchain-1.6.pom from central
+Downloading: org/eclipse/jetty/jetty-servlet/11.0.21/jetty-servlet-11.0.21.pom from central
+Downloading: org/eclipse/jetty/jetty-webapp/11.0.21/jetty-webapp-11.0.21.pom from central
+Downloading: org/slf4j/slf4j-bom/2.0.9/slf4j-bom-2.0.9.pom from central
+Downloading: org/eclipse/jetty/websocket/websocket-jetty-api/11.0.21/websocket-jetty-api-11.0.21.pom from central
+Downloading: org/eclipse/jetty/websocket/websocket-jetty-common/11.0.21/websocket-jetty-common-11.0.21.pom from central
+Downloading: org/eclipse/jetty/websocket/websocket-servlet/11.0.21/websocket-servlet-11.0.21.pom from central
+Downloading: org/eclipse/jetty/jetty-security/11.0.21/jetty-security-11.0.21.pom from central
+Downloading: org/eclipse/jetty/jetty-util/11.0.21/jetty-util-11.0.21.pom from central
+Downloading: org/eclipse/jetty/jetty-xml/11.0.21/jetty-xml-11.0.21.pom from central
+Downloading: org/eclipse/jetty/websocket/websocket-core-common/11.0.21/websocket-core-common-11.0.21.pom from central
+Downloading: org/eclipse/jetty/websocket/websocket-core-server/11.0.21/websocket-core-server-11.0.21.pom from central
+Downloading: org/eclipse/jetty/websocket/websocket-jetty-api/11.0.21/websocket-jetty-api-11.0.21.jar from central
+Downloading: org/eclipse/jetty/websocket/websocket-jetty-common/11.0.21/websocket-jetty-common-11.0.21.jar from central
+Downloading: org/eclipse/jetty/jetty-xml/11.0.21/jetty-xml-11.0.21.jar from central
+Downloading: org/eclipse/jetty/jetty-servlet/11.0.21/jetty-servlet-11.0.21.jar from central
+Downloading: org/eclipse/jetty/toolchain/jetty-jakarta-servlet-api/5.0.2/jetty-jakarta-servlet-api-5.0.2.jar from central
+Downloading: org/eclipse/jetty/jetty-http/11.0.21/jetty-http-11.0.21.jar from central
+Downloading: org/eclipse/jetty/jetty-util/11.0.21/jetty-util-11.0.21.jar from central
+Downloading: org/eclipse/jetty/websocket/websocket-core-common/11.0.21/websocket-core-common-11.0.21.jar from central
+Downloading: org/eclipse/jetty/websocket/websocket-core-server/11.0.21/websocket-core-server-11.0.21.jar from central
+Downloading: commons-io/commons-io/2.16.1/commons-io-2.16.1.jar from central
+Downloading: org/apache/commons/commons-fileupload2-core/2.0.0-M1/commons-fileupload2-core-2.0.0-M1.jar from central
+Downloading: org/eclipse/jetty/websocket/websocket-servlet/11.0.21/websocket-servlet-11.0.21.jar from central
+Downloading: ring/ring-jetty-adapter/1.12.2/ring-jetty-adapter-1.12.2.jar from clojars
+Downloading: org/eclipse/jetty/websocket/websocket-jetty-server/11.0.21/websocket-jetty-server-11.0.21.jar from central
+Downloading: org/eclipse/jetty/jetty-security/11.0.21/jetty-security-11.0.21.jar from central
+Downloading: org/eclipse/jetty/jetty-webapp/11.0.21/jetty-webapp-11.0.21.jar from central
+Downloading: org/ring-clojure/ring-jakarta-servlet/1.12.2/ring-jakarta-servlet-1.12.2.jar from clojars
+Downloading: org/eclipse/jetty/jetty-io/11.0.21/jetty-io-11.0.21.jar from central
+Downloading: org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar from central
+Downloading: org/eclipse/jetty/jetty-server/11.0.21/jetty-server-11.0.21.jar from central
+Downloading: ring/ring-core/1.12.2/ring-core-1.12.2.jar from clojars
+Downloading: org/ring-clojure/ring-websocket-protocols/1.12.2/ring-websocket-protocols-1.12.2.jar from clojars
+Downloading: org/ring-clojure/ring-core-protocols/1.12.2/ring-core-protocols-1.12.2.jar from clojars
+SLF4J: No SLF4J providers were found.
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See https://www.slf4j.org/codes.html#noProviders for further details.
+jank seat: cohost's AOT objects (dev/perf/jank_aot_ensure.clj; a stale cache recompiles)
+jank seat: AOT-DIR target/jank-aot/_cache/x86_64-unknown-linux-gnu-d41ef4a07a9d4dd9963044192227fbfde2da40c9f817907bab326588f8e7ef94
+FAIL unit 9 gate (jank seat): the client process ended before its work was done, exit 1
+  its protocol lines: 
+  last lines of the client process (whole output: target/eve-http-jank-1-client.log):
+    ─ analyze/invalid-cpp-member-call ──────────────────────────────────────────────
+    error: There is no member function `trim` on the type `jank::runtime::oref<jank::runtime::object>`.
+    
+    ─────┬──────────────────────────────────────────────────────────────────────────
+         │ dev/eve_http_programs.cljc
+    ─────┼──────────────────────────────────────────────────────────────────────────
+     185 │   [v]
+     186 │   (when v
+     187 │     (let [trim (fn [s] (.trim ^String s))
+         │                         ^^^^^ Found here.
+         │                ^ Expanded from this macro.
+    ─────┼──────────────────────────────────────────────────────────────────────────
+      🗎  │ https://book.jank-lang.org/reference/error/analyze/invalid-cpp-member-call.html
+    ─────┴──────────────────────────────────────────────────────────────────────────
+FAIL unit 9 gate (jank seat): the serve process ended before its work was done, exit 1
+  its protocol lines: 
+  last lines of the serve process (whole output: target/eve-http-jank-2-serve.log):
+    ─ analyze/invalid-cpp-member-call ──────────────────────────────────────────────
+    error: There is no member function `trim` on the type `jank::runtime::oref<jank::runtime::object>`.
+    
+    ─────┬──────────────────────────────────────────────────────────────────────────
+         │ dev/eve_http_programs.cljc
+    ─────┼──────────────────────────────────────────────────────────────────────────
+     185 │   [v]
+     186 │   (when v
+     187 │     (let [trim (fn [s] (.trim ^String s))
+         │                         ^^^^^ Found here.
+         │                ^ Expanded from this macro.
+    ─────┼──────────────────────────────────────────────────────────────────────────
+      🗎  │ https://book.jank-lang.org/reference/error/analyze/invalid-cpp-member-call.html
+    ─────┴──────────────────────────────────────────────────────────────────────────
+unit 9 gate (jank seat): 0/36 PASS, 36 not run (FAIL: the client process ended before its work was done, exit 1; FAIL: the serve process ended before its work was done, exit 1); JVM-only client programs not run on this seat: 0
