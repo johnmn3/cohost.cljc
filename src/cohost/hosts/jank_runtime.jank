@@ -621,16 +621,22 @@ namespace cohost_leaf {
   (cpp/cohost_leaf.sorted_seq r m))
 
 (defn nth-with
-  "A4 (d): an nth fn for cohost.core: a string or vector at an in-range integer index in one C++
-   call (cohost_leaf::nth_or); everything else by `stock`."
+  "A4 (d): an nth fn for cohost.core: a vector at an in-range integer index in one C++
+   call (cohost_leaf::nth_or); everything else by `stock`. A string goes by its seq,
+   never nth_or: nth_or indexes the string's UTF-8 bytes (and jank's own nth, its
+   fallback, indexes bytes too, answering 0 past a multibyte character), while
+   stock nth indexes characters -- jank's seq walks them."
   [stock]
-  (fn ([c i] (cpp/cohost_leaf.nth_or c i stock))
-      ([c i nf] (cpp/cohost_leaf.nth_or c i nf stock))))
+  (fn ([c i] (if (string? c) (nth (seq c) i) (cpp/cohost_leaf.nth_or c i stock)))
+      ([c i nf] (if (string? c) (nth (seq c) i nf) (cpp/cohost_leaf.nth_or c i nf stock)))))
 
 (defn count-fast-with
-  "A4 (d): a count fn: a vector, string or nil in one C++ call (cohost_leaf::count_or); else `stock`."
+  "A4 (d): a count fn: a vector or nil in one C++ call (cohost_leaf::count_or); else `stock`.
+   A string is counted by its seq, never count_or: count_or returns the string's UTF-8
+   byte size (cohost_leaf::count_or reads persistent_string's data.size()), and stock
+   counts characters -- jank's seq walks them."
   [stock]
-  (fn [c] (cpp/cohost_leaf.count_or c stock)))
+  (fn [c] (if (string? c) (count (seq c)) (cpp/cohost_leaf.count_or c stock))))
 
 (defn str-with
   "A4 (d): str for cohost.core on jank: fixed arities, one string builder, plain values written

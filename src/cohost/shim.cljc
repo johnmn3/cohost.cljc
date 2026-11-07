@@ -818,14 +818,16 @@
                                     (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
                                   ;; jank's own nth out of range throws a native
                                   ;; error no class catch can take; the JVM's
-                                  ;; answers IndexOutOfBoundsException
-                                  (do (when (and (or (vector? x) (string? x)) (not (< -1 i (count x))))
-                                        (throw (host/ex* 'java.lang.IndexOutOfBoundsException (str "Index " i " out of bounds for length " (count x)))))
-                                      (nth x i))))
+                                  ;; answers IndexOutOfBoundsException. A string
+                                  ;; is nth'd by its seq: jank's nth indexes the
+                                  ;; string's UTF-8 bytes, stock its characters
+                                  (do (when (and (or (vector? x) (string? x)) (not (< -1 i (if (string? x) (count (seq x)) (count x)))))
+                                        (throw (host/ex* 'java.lang.IndexOutOfBoundsException (str "Index " i " out of bounds for length " (if (string? x) (count (seq x)) (count x))))))
+                                      (if (string? x) (nth (seq x) i) (nth x i)))))
                        ([x i nf] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                    (if-let [f (:nth d)] (f x i nf)
                                      (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
-                                   (nth x i nf))))
+                                   (if (string? x) (nth (seq x) i nf) (nth x i nf)))))
                :default (fn ([x i] (cond (transient-value? x) (memory/t-nth x i)
                                          (memory/eve-backed? x) (memory/nth-of x i)
                                          :else (nth x i)))
