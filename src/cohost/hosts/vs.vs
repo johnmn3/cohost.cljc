@@ -198,6 +198,9 @@
    :macroexpand-1 (fn [form] (macroexpand-1 form))
    :mark-macro! mark-macro!
    :alter-var-root! alter-var-root!
+   ;; a direct two-arity call: a core fn VALUE of a name the template core does not carry (alter-meta! is a lib member)
+   ;; serves one arity in compiled code — MEASURED 2026-11-07, `(apply alter-meta! h f args)` threw past two args
+   :alter-var-meta! (fn [h f & args] (alter-meta! h (fn [m] (apply f m args))))
    :var-raw-root (fn [v] (var-get v))
    :var-bound? (fn [v] (adapter/try-all (fn [] (var-get v) true) (fn [_] false)))
    :namespace? (fn [x] (instance? clojure.lang.Namespace x))
