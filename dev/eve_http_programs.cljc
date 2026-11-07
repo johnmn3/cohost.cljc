@@ -1,7 +1,8 @@
 ;; The unit 9 gate's programs (eve_http_check.clj, the JVM seat; dev/eve_http_node.cljs,
 ;; the ClojureScript seat): one source per program, evaluated unchanged on every
 ;; seat. Each client program sees `base`, the server's root URL.
-(ns eve-http-programs)
+(ns eve-http-programs
+  (:require [clojure.string :as str]))
 
 (def handler-src
   "(fn [req]
@@ -184,17 +185,16 @@
    it parsed, not as a raw string."
   [v]
   (when v
-    (let [trim (fn [s] (.trim ^String s))
-          [t & params] (map trim (.split ^String v ";"))]
-      [(.toLowerCase ^String t)
+    (let [[t & params] (map str/trim (str/split v #";"))]
+      [(str/lower-case t)
        (into (sorted-map)
              (keep (fn [p]
-                     (let [i (.indexOf ^String p "=")]
-                       (when (pos? i)
-                         (let [k (.toLowerCase ^String (trim (subs p 0 i)))
-                               raw (trim (subs p (inc i)))
-                               v (if (and (> (count raw) 1) (.startsWith ^String raw "\"") (.endsWith ^String raw "\""))
+                     (let [i (str/index-of p "=")]
+                       (when (and i (pos? i))
+                         (let [k (str/lower-case (str/trim (subs p 0 i)))
+                               raw (str/trim (subs p (inc i)))
+                               v (if (and (> (count raw) 1) (str/starts-with? raw "\"") (str/ends-with? raw "\""))
                                    (subs raw 1 (dec (count raw)))
                                    raw)]
-                           [k (if (= "charset" k) (.toLowerCase ^String v) v)])))))
+                           [k (if (= "charset" k) (str/lower-case v) v)])))))
              params)])))
