@@ -74,10 +74,50 @@ release branch of cohost."
 
 ## Verification
 
-PENDING — JVM battery (`bb boot:jvm`) on the merged tree next; jank
-battery after JVM green and only under low box load, else banked as
-owed with the reason.
+- **JVM battery on the merged tree — GREEN.** `bb boot:jvm`
+  (Babashka 1.13.226, `~/.local/bin` on PATH for the `clojure` CLI;
+  `:eve` sibling `../eve/src` = `~/workspace/wt/eve` at `c7dc390a`,
+  Eve main's shipped 0.9.3 line; its only dirty file is a README.md
+  modification, not on the source paths). As printed (log:
+  `logs-collation/boot-jvm.log`):
+  - `booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0`
+  - `battery: 221/221 stock behaviors pass`
+  - `libraries: 62/62 cases pass across 12 clojure.* libraries`
+  The release gate bar (221/221 + 62/62) is met on the merged tree.
+- **Jank battery — OWED, with reason (not a quiet skip).** Box load
+  average 24.41 / 17.32 / 16.41 on 4 cores / 8 GB at gate time, with
+  the flagship, STM and shootout lanes live; a full jank AOT battery
+  is a heavy compile leg whose home is the build box (j.slaa.us) in
+  this line's own practice. It runs after the load clears or on the
+  build box. Routed owner: this release lane's next gate session.
+  Next action: re-run `bb boot:jank` (and unit 9's harness leg,
+  below) on this merged tree under low load / on the build box and
+  bank the numbers in the manifest's Gates section.
+- **Unit 9's jank harness leg** (`dev/eve_http_seats.clj`, the
+  seam-8 row): not run in this collation's verification scope — it
+  rides with the owed jank re-run; its manifest row stays PENDING,
+  naming that it still awaits its seam-8 verdict on the released
+  bindings.
+- **Manifest updates landed with this collation** (RELEASE-MANIFEST.md):
+  dated STATUS entry for the collation; unit 6 row LANDED with the
+  refinement-pin numbers as printed (10 tests / 108 assertions /
+  0 failures / 0 errors, `logs-093/jank-pins.log`); bindings-adoption
+  row SATISFIED with the pin commit `76fd94c3dc`; Gates collation
+  block recording the JVM released-bindings verdict and the owed
+  jank re-run; PENDING-REBIND rows updated (unit 6's rows rode in;
+  unit 9's leg still PENDING, seam-8 verdict owed); the unit-8
+  GATE-GREEN -> landed flip recorded as a landing chore on the
+  documentation-chapters row (the cell is not on this branch — see
+  above).
 
-NEXT: locate a current Babashka and the `:eve` sibling state
-(`../eve/src` relative to this worktree must sit at the v0.9.3 tag
-76fd94c3dc), then run `bb boot:jvm` on the merged tree, alone.
+## Declaration
+
+The collation is complete: `lane-m/cohost-on-eve-093` is merged into
+`release/eve-in-cohost` whole (merge `e4773ea`), the marker sweep is
+clean of merge-introduced markers, the JVM gate reproduces the
+release bar exactly on the merged tree (221/221 + 62/62, errors 0),
+and the manifest rows this collation satisfies are updated in the
+same landing. Owed, named, with owners: the jank battery re-run on
+this tree (load; build-box leg) and with it unit 9's seam-8 harness
+verdict; the unit-8 coverage-cell flip, which rides with Agent 2's
+documentation landing. Nothing moved to cohost main.

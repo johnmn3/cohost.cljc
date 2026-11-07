@@ -33,6 +33,18 @@ Nothing in this lane writes to cohost main.
   (ls-remote: not yet on the Eve remote at this check), and the
   branch pins to no pre-release Eve state. Awaiting the follow-up
   steer when the Eve branch is verified on its remote.
+- 2026-11-07 ~1:35 AM ET — operator order: "Get the latest collated
+  into the release branch of cohost." `lane-m/cohost-on-eve-093`
+  (tip `5c2c81c`, REBASE-093 COMPLETE) merged in whole: merge commit
+  `e4773ea`, zero conflicts; marker sweep zero new markers. The
+  merged `deps.edn` carries the Eve v0.9.3 released pin (see the
+  adoption row below — SATISFIED). Gates re-run on the merged tree:
+  JVM battery 221/221 + libraries 62/62, errors 0 (the
+  released-bindings verdict); the jank re-run is OWED — box load
+  24.4 on 4 cores at gate time, and the leg's home is the build box
+  in the line's own practice (see PENDING-REBIND). Full record:
+  `doc/eve-cohost/COLLATION-STATUS.md`; gate log:
+  `logs-collation/boot-jvm.log`.
 
 ## Rows
 
@@ -76,19 +88,27 @@ Nothing in this lane writes to cohost main.
   implemented on Agent 3's `agent3/eve-u6-converge` line in the Eve
   tree; its after-arm gates land in Agent 3's ledger. Step 3 follows
   step 2. Lands here by merge when Agent 3 banks it green.
-- **Eve 0.9.3 released-bindings adoption.** PENDING on the pushed
-  `release/eve-0.9.3` branch in SeniorCareMarket/eve, per the
-  operator's sequencing (2026-11-05 ~7:04 PM ET): the Eve release
-  branch is pushed out FIRST; this branch then rebases/adopts its
-  Eve-facing parts against that latest Eve, on a follow-up steer once
-  the Eve branch is verified on its remote. As of this writing the
-  Eve branch is not yet on its remote (checked by ls-remote). This
-  branch does NOT pin to any pre-release Eve state: the `:eve` pin it
-  currently carries in `deps.edn` is the impl mainline's inherited
-  pin (Eve main's 0.9.1 line; the pin's own comment already says it
-  moves at the 0.9.3 release) and stands as a placeholder until the
-  adoption steer lands. Owner: this release lane, on the follow-up
-  steer.
+  **LANDED on this branch 2026-11-07 via the REBASE-093 collation**
+  (merge `e4773ea`): unit 6's landing arrives with the
+  `lane-m/cohost-on-eve-093` line, and its gated shapes were re-run
+  green on the assembled 0.9.3 bindings — the unit-6 refinement pins
+  (`bb test:jank eve.identity-test eve.identity-table-test
+  eve.host-completion-test`, j.slaa.us, 0.9.3 mechanism tree):
+  **Ran 10 tests containing 108 assertions. 0 failures, 0 errors.**
+  (identity 5, identity-table 1, host-completion 4;
+  `logs-093/jank-pins.log`, REBASE-093-STATUS.)
+- **Eve 0.9.3 released-bindings adoption. SATISFIED by the
+  2026-11-07 collation** (merge `e4773ea`). The rebase line
+  (`lane-m/cohost-on-eve-093`, commit `de9dca1`) adopted the released
+  bindings and this collation merged them in: `deps.edn`'s `:cljs`
+  pin now names the Eve v0.9.3 release commit
+  **`76fd94c3dc541a1e915d6759652114c9f6b392a8`** (tag `v0.9.3`,
+  SeniorCareMarket/eve main), replacing d241de3 (the 0.9.1 line).
+  The `:eve` sibling-paths mechanism is unchanged (no version lives
+  in the repo for that seat). History: this row stood PENDING on the
+  operator's 2026-11-05 sequencing (Eve release branch pushed first,
+  adoption on a follow-up steer); Eve 0.9.3 has since shipped and the
+  steer arrived 2026-11-07 ~1:35 AM ET.
 - **Jank-seat gate re-runs on the released bindings** — see
   PENDING-REBIND under Gates. Includes unit 9's jank harness leg
   (owner: cohost Agent 3, `agent3/unit9-jank-seat`), which runs up to
@@ -98,7 +118,14 @@ Nothing in this lane writes to cohost main.
   from the README. Owner: cohost Agent 2 (assigned the landing after
   its heap-grade work; source branch `muse/eve-cohost-docs`). Lands
   here, not on the impl mainline, once Agent 2 banks its spot-check
-  against the landed units.
+  against the landed units. **Landing chore, recorded 2026-11-07:**
+  when the chapters land, flip unit 8's cell in the coverage matrix
+  from GATE-GREEN to **landed** — the cell lives in
+  `doc/guide/15-eve-coverage-and-status.md` on
+  `agent2/eve-cohost-docs-landing` (unit 8 written GATE-GREEN there
+  per its DOCS-STATUS); neither file is on this branch today, so the
+  2026-11-07 collation could not flip it here and names it instead
+  (see COLLATION-STATUS.md).
 
 ### EXCLUDED — with reason
 
@@ -139,6 +166,23 @@ serially on this box (8 GB).
   8195") and "FAIL Character outside ASCII" (got [false false true
   false]). Both are jank-seat character-literal rows; neither is merge
   damage.
+- **Collation re-runs on the released bindings (2026-11-07, merge
+  `e4773ea` — the REBASE-093 collation).** JVM battery + libraries
+  (`bb boot:jvm`, Babashka 1.13.226, Eve sibling `../eve/src` at
+  `c7dc390a`, Eve main's shipped 0.9.3 line): **battery: 221/221
+  stock behaviors pass; libraries: 62/62 cases pass across 12
+  clojure.* libraries; booted as stock 465, errors: 0** — the
+  released-bindings verdict for the JVM rows (log:
+  `logs-collation/boot-jvm.log`). Conflict-marker sweep on the
+  merge's committed tree: zero new markers (the 9 raw-substring hits
+  are the same prose quotations as the pre-merge tip). The jank
+  re-run on this merged tree is OWED, not skipped: box load average
+  24.41 on 4 cores / 8 GB at gate time, with the flagship, STM and
+  shootout lanes live; the leg runs on the build box in the line's
+  own practice. Its released-bindings numbers stand in the rebase
+  line's own record meanwhile (`logs-093/jank-battery.log`: boot
+  errors 0; battery 219/221; libraries 62/62 — the standing reader
+  pair, reproduced verbatim).
 
 ### PENDING-REBIND — jank-seat rows that only gain meaning on the released bindings
 
@@ -150,14 +194,22 @@ followed by the adoption steer.
 - **Unit 9's jank harness leg** (`dev/eve_http_seats.clj`, 36-check
   shape; owner: cohost Agent 3, `agent3/unit9-jank-seat`): on the
   pre-release bindings it runs up to the seam-8 load fault and can
-  read no further; its verdict belongs to the re-run against the Eve
-  0.9.3 released bindings, after the pin adoption above.
+  read no further. **Still PENDING after the 2026-11-07 collation:**
+  the pin adoption has landed (above), but the leg itself was not
+  re-run in the collation's verification scope — it rides with the
+  owed jank re-run and still awaits its seam-8 verdict on the
+  released bindings. Not dropped; named here as owed.
 - **Full jank-seat gate re-run on the 0.9.3 pin** (`bb boot:jank`,
-  plus the cljs Eve-fill rows): the rows above were taken against the
-  pre-release `:eve` pin (Eve main's 0.9.1 line). They stand as this
-  branch's pre-release numbers; the release verdict is the same gates
-  re-run once the pin moves to the 0.9.3 release commit.
-- **Unit 6's jank rows** ride with unit 6 itself (PENDING, Agent 3).
+  plus the cljs Eve-fill rows): the pin has moved (adoption row,
+  SATISFIED). The rebase line's own re-runs on the assembled bindings
+  are banked in `logs-093/` (jank battery 219/221 + 62/62; cljs
+  219/221 + 62/62, each with its standing pair). The re-run on THIS
+  branch's merged tree is OWED (box load 24.41 at gate time; see the
+  Gates collation block) — the JVM re-run there is this collation's
+  released-bindings verdict: 221/221 + 62/62, errors 0.
+- **Unit 6's jank rows** rode with unit 6 itself — LANDED with the
+  collation (see the unit 6 row above): refinement pins green on the
+  assembled bindings, 10 tests / 108 assertions / 0 / 0.
 
 ## FINAL DECLARATION — this lane
 
