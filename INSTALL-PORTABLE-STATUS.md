@@ -480,3 +480,12 @@ with --repo /nonexistent-bogus:
   as collaborators), stage B (fresh snapshot, bb+clojure
   poisoned), battery via bb boot:jank against the jolt-built
   snapshot between A and B.
+- BOUNDARY PROBE: PASS. With jank poisoned, the jolt-driven
+  build tripped at its first jank touch — the snapshot key's
+  (shell "jank" "print-binary-version") at
+  jank_snapshot_key.clj:45, Process error exit 99, through
+  ensure!; the installer reported "command failed (1)" + "cohost
+  install failed: install: stopped", INSTALLER-RC=1;
+  invocations-boundary.log = exactly "INVOKED: jank
+  print-binary-version". The same shape as the bb seat's probe,
+  one seat over.
