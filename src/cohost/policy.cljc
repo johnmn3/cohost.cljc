@@ -307,7 +307,8 @@
            :special (set '[fn defn-])}
    ;; ValueScript's analyzer owns let, loop and fn in every shape (its runtime
    ;; compiler refuses a def of the name: "reserved name: let is a special form")
-   :vs {:special (set '[let loop fn])}})
+   ;; letfn too: the analyzer refuses a defmacro of a special form's name ("reserved name: letfn is a special form")
+   :vs {:special (set '[let loop fn letfn])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."
