@@ -1,0 +1,32 @@
+AOT-RECOMPILE
+AOT-DIR target/jank-aot/_cache/x86_64-unknown-linux-gnu-d41ef4a07a9d4dd9963044192227fbfde2da40c9f817907bab326588f8e7ef94
+LOAD-BEFORE-BOOT-NS 1794012646333017240
+cohost.boot on jank: 821 top-level forms
+  booted as stock: 544   from host: 141   natives: 28   skipped: 108   errors: 0
+battery: 219/221 stock behaviors pass
+   FAIL subs count nth first last butlast
+        got      "ERR Unterminated vector.  (outer: Unterminated vector.)"
+        expected ["el" 5 2 :d \a 3 (1 2)]
+   FAIL Character outside ASCII
+        got      "ERR Unexpected end of file.  (outer: Unexpected end of file.)"
+        expected [true true true false]
+libraries: 62/62 cases pass across 12 clojure.* libraries
+  clojure.walk  7/7
+  clojure.set  5/5
+  clojure.string  10/10
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
+  clojure.zip  7/7
+  clojure.data  5/5
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
+  clojure.edn  4/4
+  clojure.template  2/2
+  clojure.test  4/4
+  clojure.math  7/7
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
+  clojure.stacktrace  2/2
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
+  clojure.repl  3/3
+     not loaded on this host (expected; its cases do not need it): source-fn: The symbol `proxy` could not be resolved.
+     not loaded on this host (expected; its cases do not need it): set-break-handler!: The symbol `sun.misc.Signal/handle` could not be resolved.
+  clojure.spec.alpha  6/6
+     not loaded on this host (expected; its cases do not need it): set!: The symbol `set!` could not be resolved.
