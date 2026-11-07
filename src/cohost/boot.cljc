@@ -617,7 +617,11 @@
 ;; the boot
 
 (defn- record! [report k entry]
-  (swap! report (fn [r] (-> r (update k inc) (update :entries conj (assoc entry :status k))))))
+  ;; a replayed take (snap-take! in a compiled snapshot that never ran snap-begin!) has no report: nothing to record.
+  ;; MEASURED before (atom.broker docs/vs-cohost/STATUS.md 2026-11-07): the swap! on nil threw inside try-all, the take
+  ;; answered false, and on VS the throw under the swap's epoch pin left the pin held for the rest of the run.
+  (when report
+    (swap! report (fn [r] (-> r (update k inc) (update :entries conj (assoc entry :status k)))))))
 
 (defn- stock-ns
   "A namespace name as booted code knows it: clojure.core is cohost.core, a
