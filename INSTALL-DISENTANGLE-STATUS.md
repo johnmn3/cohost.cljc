@@ -189,7 +189,16 @@ E. ClojureCLR attempt: Clojure.Main with the shim dir on
   cold-build proofs on J remain the acceptance bar; this is the
   key-path smoke, banked as such.
 
-## State: shim written + key-path smoke green; install.cljc next.
+- install.cljc changed, clj arm ONLY (named change, per brief):
+  the step-2 -Sdeps argument goes from
+  {:deps {babashka/process 0.5.22, babashka/fs 0.5.24}} to
+  {:paths ["dev/perf/shim"]}; header comment extended to say so.
+  bb/jolt/jank arms byte-unchanged (git diff shows exactly the
+  comment block + the one string). Parse checks after the edit:
+  clj reader 19 forms OK; bb reader (vector wrap) 18 forms OK
+  (the count differs by seat feature set, as before).
 
-NEXT: edit install.cljc's clj arm (pins -> shim path); then the
-J proofs A-E.
+## State: shim + install.cljc change banked; J proofs next.
+
+NEXT: heavy-queue claim on J, stage the clone under
+/home/john/j, proofs A-E in order.

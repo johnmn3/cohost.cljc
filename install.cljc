@@ -24,6 +24,10 @@
 ;;      Jolt, with jolt-lang/crypto pinned in -Sdeps (it declares
 ;;      :jolt/provides for java.security.MessageDigest, which the
 ;;      build's in-process hashing needs and Jolt does not bundle).
+;;      On the clj seat the build's babashka.fs / babashka.process
+;;      slice is vendored in the checkout (dev/perf/shim) and put
+;;      on the ensure process's -Sdeps :paths -- no Maven pins;
+;;      the build files' requires are unchanged.
 ;;      The build's record/compile steps are jank's on every seat,
 ;;      and a snapshot built by any flow is fresh to the others
 ;;      (byte-identical keys);
@@ -231,7 +235,7 @@
                   (q "{:deps {io.github.jolt-lang/crypto {:git/url \"https://github.com/jolt-lang/crypto\" :git/tag \"v0.2.0\" :git/sha \"e6981b853adc543120b785a0c29b6d7d6a10f0fe\"}}}")
                   " -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))
              (str "cd " (q repo) " && " (q driver) " -Sdeps "
-                  (q "{:deps {babashka/process {:mvn/version \"0.5.22\"} babashka/fs {:mvn/version \"0.5.24\"}}}")
+                  (q "{:paths [\"dev/perf/shim\"]}")
                   " -M -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))))))
       ;; 3. the command itself, compiled with jank on every seat
       (checked! (str "cd " (q repo) " && rm -rf target/install/tool && " (q jank)
