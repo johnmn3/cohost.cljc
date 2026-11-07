@@ -27,7 +27,11 @@
    with one CAS on its own cell atom. Commutes are not validated; at
    commit they fold over the ref's CURRENT committed value, in call
    order. Plain read-only refs are not validated at commit -- that is
-   stock's answer, and it is why ensure exists. Transactions touching
+   stock's answer, and it is why ensure exists. A read, in a
+   transaction or out, waits while another attempt holds the ref's
+   commit lock, as stock's Ref read lock does: commit holds its locks
+   from before it claims its point until its last install, so no
+   reader sees part of a commit (defect F1). Transactions touching
    disjoint refs lock, validate and CAS disjoint atoms; the only
    shared write is the commit-point increment, which carries no ref's
    data and can make no attempt retry. Retry is signalled the JVM's
@@ -262,14 +266,69 @@
         (reset! (:rp att) p)
         p)))
 
+(def read-lock-wait-ms
+  "How long a read inside a transaction waits on a ref whose commit
+   lock another attempt holds before giving its attempt up with the
+   plain retry signal (contention: never counted, unbounded). Stock's
+   read lock waits without a bound; the bound here only turns a wait
+   that cannot end -- two committers whose validators each read a ref
+   the other holds locked -- into a retry. A commit holds its locks
+   far shorter than this (STM report, defect F1)."
+  100)
+
+(def ^:private read-lock-spins
+  ;; checks of a held lock before the wait backs off to 1 ms timed
+  ;; waits: a host-cell commit section passes inside the spin; an
+  ;; Eve-cell one (milliseconds) is waited out without starving the
+  ;; committer of the CPU it needs to finish (measured, defect F1)
+  1000)
+
+(defn- held-by-other
+  "The id of the attempt holding r's commit lock when that is not
+   att (att nil: any holder), else nil."
+  [att r]
+  (let [l (:lock @(:state r))]
+    (when (and (some? l) (not= l (:id att))) l)))
+
+(defn- await-unlocked!
+  "Stock's read lock (Ref.lock.readLock, taken by
+   LockingTransaction.doGet and by Ref.currentVal): do not read r's
+   cell while another attempt holds r's commit lock. commit! holds its
+   locks from before it claims its commit point until after its last
+   install, so a read that passes this wait AFTER its read point was
+   fixed sees every install of every commit whose point it can read.
+   Without it (defect F1), an attempt whose read point equals a
+   commit's point read that commit's installed refs new and its
+   not-yet-installed refs old: a torn snapshot, which a read-only
+   transaction returns (read-only refs are not validated -- stock).
+   Inside a transaction (att) the wait gives up after
+   read-lock-wait-ms with the plain retry signal; outside one (att
+   nil) it waits, as Ref.currentVal's read lock does. The wait spins
+   read-lock-spins checks, then backs off in 1 ms timed waits on a
+   fresh doorbell no one rings (the thread layer's wait primitive used
+   as a timed park; a host without doorbells keeps spinning)."
+  [att r]
+  (when (held-by-other att r)
+    (let [deadline (when att (+ (host/current-time-millis) read-lock-wait-ms))
+          bell (host/doorbell)]
+      (loop [n 0]
+        (when (held-by-other att r)
+          (when (and deadline (> (host/current-time-millis) deadline))
+            (throw (retry-ex)))
+          (when (and bell (>= n read-lock-spins))
+            (host/doorbell-wait bell 1))
+          (recur (inc n)))))))
+
 (defn- touch!
   "Enroll ref r in the attempt: read its value as of the attempt's
    read point and record the base it stands at. The attempt's entry
-   for r."
+   for r. The read point is fixed FIRST; then the read waits out
+   another attempt's commit lock on r (await-unlocked!, defect F1)."
   [att r]
   (let [t @(:touched att)]
     (or (get t (:seq r))
         (let [rp (read-point! att)
+              _ (await-unlocked! att r)
               cell (cell-deref r)
               va (value-at cell rp)]
           (when (= ::too-short va)
@@ -312,11 +371,15 @@
 (defn deref-ref
   "deref of a layer ref: inside a transaction, the attempt's view
    (the value as of its read point, folded with its own writes);
-   outside, the latest committed value."
+   outside, the latest committed value, read once no commit holds the
+   ref's lock (Ref.currentVal's read lock: a reader that has seen one
+   ref of a commit cannot then see another ref of that commit older --
+   defect F1, outside a transaction)."
   [r]
   (if *tx*
     (view-of *tx* (touch! *tx* r))
-    (:value (cell-deref r))))
+    (do (await-unlocked! nil r)
+        (:value (cell-deref r)))))
 
 (defn ref-set*
   "ref-set: the attempt's value of r becomes v; the attempt's view of it."

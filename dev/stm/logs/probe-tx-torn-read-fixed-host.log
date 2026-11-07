@@ -1,0 +1,16 @@
+=== torn_host fix start 8:26:31 PM ET
+cmd: clojure -Sdeps {:paths ["src"]} -M dev/stm/probe_tx_torn_read.clj host
+WARNING: get-validator already refers to: #'clojure.core/get-validator in namespace: cohost.tx, being replaced by: #'cohost.tx/get-validator
+INFO mode :host | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :host-atom :host-atom
+INFO section 1: 800 commits, 7028 read-only txs (7054 reader attempts, 26 reader retries), 0 torn, 247 ms; tx/stats {:attempts 7959, :retries 131, :commits 7828}
+PASS every transfer committed => 800
+PASS transfer invariant holds at rest => 2000
+PASS readers really read while commits ran => true
+PASS read-only transactions never see a torn pair (A + B constant) => 0
+INFO section 2: 400 stamped commits, 16345 outside deref pairs, 0 saw D older than C, 48 ms
+PASS stamped commits landed => [400 400]
+PASS outside readers really read while commits ran => true
+PASS outside-tx deref never sees a commit's later install older than its earlier one => 0
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+exit 0 end 8:26:33 PM ET

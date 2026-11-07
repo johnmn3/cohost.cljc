@@ -1,0 +1,16 @@
+=== retry_bound base start 8:27:33 PM ET
+cmd: clojure -Sdeps {:paths ["src"]} -M dev/stm/probe_tx_retry_bound.clj
+WARNING: get-validator already refers to: #'clojure.core/get-validator in namespace: cohost.tx, being replaced by: #'cohost.tx/get-validator
+PASS contention control: transfer invariant holds => 20000
+PASS contention control: all transfers landed => [8000 12000]
+INFO contention control attempts (retries included): 2832 for 2000 transactions -- contention retries unbounded, none faulted
+INFO victim cell residence: :host-atom
+PASS out-of-band basis destruction faults (does not spin) => :faulted
+PASS fault message is stock's => "Transaction failed after reaching retry limit"
+PASS attempts = basis-fault-limit + 1 (bounded, counted) => 10001
+INFO faulted after 42.047806 ms and 10001 attempts (pre-fix runner: never returns -- STATUS 14)
+PASS fault is bounded in wall-clock too => true
+PASS poisoned cell unmoved by the faulted transaction => 9223372036854775807
+PASS honest transaction still commits after the fault => 43
+PROBE-TX-RETRY-BOUND: ALL 8 CHECKS PASS
+exit 0 end 8:27:36 PM ET

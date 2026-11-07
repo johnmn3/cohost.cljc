@@ -1,0 +1,20 @@
+WARNING: get-validator already refers to: #'clojure.core/get-validator in namespace: cohost.tx, being replaced by: #'cohost.tx/get-validator
+INFO mode :host | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :host-atom :host-atom
+INFO section 1: 800 commits, 10447 read-only txs (10453 reader attempts, 6 reader retries), 1981 torn, 250 ms; tx/stats {:attempts 11439, :retries 192, :commits 11247}
+INFO torn samples [order a b]: [[:ba 986 1015] [:ab 979 1014] [:ba 979 1014] [:ba 982 1019] [:ab 976 1027]]
+PASS every transfer committed => 800
+PASS transfer invariant holds at rest => 2000
+PASS readers really read while commits ran => true
+FAIL read-only transactions never see a torn pair (A + B constant) expected 0 got 1981
+INFO section 2: 400 stamped commits, 37027 outside deref pairs, 1024 saw D older than C, 76 ms
+INFO outside samples [c d]: [[1 0] [2 1] [3 2] [4 3] [6 5]]
+PASS stamped commits landed => [400 400]
+PASS outside readers really read while commits ran => true
+FAIL outside-tx deref never sees a commit's later install older than its earlier one expected 0 got 1024
+PROBE-TX-TORN-READ: 2 FAILURES: ["read-only transactions never see a torn pair (A + B constant)" "outside-tx deref never sees a commit's later install older than its earlier one"]
+
+real	0m4.916s
+user	0m8.534s
+sys	0m0.389s
+exit 1

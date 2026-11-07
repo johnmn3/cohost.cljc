@@ -1,0 +1,60 @@
+;; F1 wait-vs-retry measurement, 2026-11-06 ~8:22-8:25 PM ET, JVM seat, Eve main 6502d37 (local/root).
+;; W = wait by pure spin (100 ms bound -> plain retry); R = immediate plain retry; wi = W instrumented;
+;; w2 = the shipped wait (1000 spins, then 1 ms timed doorbell waits; 100 ms bound -> plain retry), instrumented.
+;; SCRATCH-INSTR lines come from scratch-only instrumentation (never committed).
+=== variant W mode eve Fri Nov  6 20:22:30 EST 2026
+INFO mode :eve | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :eve-own-domain :eve-own-domain
+INFO section 1: 800 commits, 2521 read-only txs (2699 reader attempts, 178 reader retries), 0 torn, 13808 ms; tx/stats {:attempts 3795, :retries 474, :commits 3321}
+INFO section 2: 400 stamped commits, 2559 outside deref pairs, 0 saw D older than C, 4561 ms
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+exit 0
+=== variant W mode host Fri Nov  6 20:22:58 EST 2026
+INFO mode :host | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :host-atom :host-atom
+INFO section 1: 800 commits, 5188 read-only txs (5208 reader attempts, 20 reader retries), 0 torn, 389 ms; tx/stats {:attempts 6053, :retries 65, :commits 5988}
+INFO section 2: 400 stamped commits, 48604 outside deref pairs, 0 saw D older than C, 208 ms
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+exit 0
+=== variant R mode eve Fri Nov  6 20:23:02 EST 2026
+INFO mode :eve | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :eve-own-domain :eve-own-domain
+INFO section 1: 800 commits, 2323 read-only txs (7759515 reader attempts, 7757192 reader retries), 0 torn, 12272 ms; tx/stats {:attempts 9075040, :retries 9071917, :commits 3123}
+INFO section 2: 400 stamped commits, 2219 outside deref pairs, 0 saw D older than C, 3916 ms
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+exit 0
+=== variant R mode host Fri Nov  6 20:23:28 EST 2026
+INFO mode :host | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :host-atom :host-atom
+INFO section 1: 800 commits, 6574 read-only txs (29731 reader attempts, 23157 reader retries), 0 torn, 313 ms; tx/stats {:attempts 32202, :retries 24828, :commits 7374}
+INFO section 2: 400 stamped commits, 30992 outside deref pairs, 0 saw D older than C, 59 ms
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+exit 0
+=== variant wi mode eve Fri Nov  6 20:24:08 EST 2026
+INFO mode :eve | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :eve-own-domain :eve-own-domain
+INFO section 1: 800 commits, 3215 read-only txs (3319 reader attempts, 104 reader retries), 0 torn, 11072 ms; tx/stats {:attempts 4487, :retries 472, :commits 4015}
+INFO section 2: 400 stamped commits, 2644 outside deref pairs, 0 saw D older than C, 3137 ms
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+SCRATCH-INSTR waits 2851 deadline-hits 123
+=== variant wi mode host Fri Nov  6 20:24:32 EST 2026
+INFO mode :host | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :host-atom :host-atom
+INFO section 1: 800 commits, 5485 read-only txs (5506 reader attempts, 21 reader retries), 0 torn, 257 ms; tx/stats {:attempts 6497, :retries 212, :commits 6285}
+INFO section 2: 400 stamped commits, 68338 outside deref pairs, 0 saw D older than C, 134 ms
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+SCRATCH-INSTR waits 1108 deadline-hits 0
+=== variant w2 mode eve Fri Nov  6 20:24:35 EST 2026
+INFO mode :eve | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :eve-own-domain :eve-own-domain
+INFO section 1: 800 commits, 1371 read-only txs (1448 reader attempts, 77 reader retries), 0 torn, 4383 ms; tx/stats {:attempts 2464, :retries 293, :commits 2171}
+INFO section 2: 400 stamped commits, 891 outside deref pairs, 0 saw D older than C, 1632 ms
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+SCRATCH-INSTR waits 1523 deadline-hits 6
+=== variant w2 mode host Fri Nov  6 20:24:47 EST 2026
+INFO mode :host | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :host-atom :host-atom
+INFO section 1: 800 commits, 3729 read-only txs (3757 reader attempts, 28 reader retries), 0 torn, 211 ms; tx/stats {:attempts 4652, :retries 123, :commits 4529}
+INFO section 2: 400 stamped commits, 21678 outside deref pairs, 0 saw D older than C, 65 ms
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+SCRATCH-INSTR waits 1178 deadline-hits 0

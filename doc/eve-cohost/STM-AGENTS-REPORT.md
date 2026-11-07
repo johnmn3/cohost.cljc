@@ -1858,3 +1858,71 @@ the fault. Note: probe_throw_jolt.clj's deep-conflict manufacture
 is the out-of-band shape; its first section now faults with the
 retry-limit exception instead of hanging — the disposition
 working. Full record: dev/stm/STATUS-retry-bound.md (FINAL).
+
+## STATUS 22 — 2026-11-06 ~9:3x PM ET — defect F1 (torn read across a commit's installs) PROBED and FIXED (cohost Agent 3; branch agent3/stm-f1-torn-read off muse/stm-retry-bound @ d277ded)
+
+The defect, found by static reading and then probed: `read-point!` fixes
+an attempt's read point lazily at its first touch as `@commit-point`;
+`commit!` claims `cp` and THEN installs its refs one CAS at a time;
+`touch!` never looked at a ref's `:lock`. An attempt whose first touch
+fell between the claim and the last install got `rp = cp` and read the
+installed refs new and the rest old, and a read-only transaction (not
+validated, stock) returned that torn pair. Stock blocks it with Ref's
+read lock: `doGet` and `currentVal` take it, and the committer holds the
+write locks across `getCommitPoint` and the installs.
+
+Probe `dev/stm/probe_tx_torn_read.clj` (JVM; Eve main 6502d37 by
+`:local/root`, because `-M:eve` no longer loads current Eve). Refs
+A+B=2000, 2 committers x 400 transfers, 4 readers in read-only dosyncs.
+Section 2 tests the outside-tx deref: C and D get the same stamp each
+commit, and a reader derefs C then D. No window widening was used
+(F1_WIDEN_MS=0). Results as printed:
+- unfixed, Eve cells: 2823 torn of 11293 read-only txs; outside 865 of
+  5949 pairs saw D older than C. Host cells: 1981 of 10447; 1024 of
+  37027.
+- fixed, Eve cells: 0 torn of 1935; outside 0 of 842. Host cells: 0 of
+  7028; 0 of 16345. ALL 7 CHECKS PASS on both.
+
+Fix, in `cohost.tx` only: `await-unlocked!`. After the read point is
+fixed, a read waits while ANOTHER attempt holds the ref's commit lock;
+an attempt's own lock passes. Both `touch!` and the outside-tx
+`deref-ref` use it, since section 2 showed the outside deref tears
+too. Inside a transaction the wait gives up after `read-lock-wait-ms`
+(100) with the PLAIN retry signal: contention, uncounted, unbounded.
+That bound only turns a validator cross-read deadlock into a retry.
+Outside a transaction it waits, as `currentVal` does. The wait spins
+1000 checks, then backs off in 1 ms timed doorbell waits.
+
+Wait or retry, chosen by measurement (Eve cells, same workload,
+`dev/stm/logs/probe-tx-torn-read-variants.log`):
+- immediate retry: 7,757,192 reader retries for 2,323 reads, 12.3 s.
+- pure-spin wait: 178 retries for 2,521 reads, 13.8 s. Spinning readers
+  starve the committers: 123 of 2851 waits hit the bound.
+- shipped wait (spin, then back off): 77 retries for 1,371 reads,
+  4.4 s, 6 bound hits of 1523 waits.
+
+The decided semantics are unchanged. `ensure`, `commute`, `alter` and
+`ref-set` enter through `touch!`, so their reads are covered; their
+commit paths are untouched. Basis faults are untouched (10,000, stock's
+message), there is no re-basing, and read-only refs stay unvalidated.
+
+Gates, JVM seat, base d277ded against fix, same box, same Eve (logs
+`dev/stm/logs/f1-gate-*-{base,fix}.log`):
+- probe_tx: 23/23 base, 23/23 fix.
+- probe_tx_retry_bound: 8/8 base, 8/8 fix. 10001 attempts on both.
+- probe_tx_reclaim: 4/4 base, 4/4 fix.
+- probe_tx_domains: 15/15 base, 15/15 fix. Disjoint {:attempts 800,
+  :retries 0, :commits 800} on both.
+- run-probe-tx-eve (probe_tx over Eve cells): 23/23 base, 23/23 fix.
+- eve_cohost_check_stm: 20/22 base, 20/22 fix. The 2 failing rows are
+  the same pre-existing hinted-interop rows as STATUS 7.
+Not run here: Node, Jolt, Go and jank. The retry-bound lane gated the
+JVM seat only, and jank was never run for STM (STATUS 18). On Node's
+single-realm seat, commit! never yields with a lock held, so a foreign
+lock cannot be observed there. That is from reading the code, not a
+measurement.
+
+The same fix as a patch against Lane M's spike (lane-m/stm-in-eve,
+`docs/stm-eve/eve/stm.cljc`) was handed to the coordinator, not pushed.
+The adapted probe on the spike: unpatched, 10182 of 26064 torn and
+3333 of 11666 outside; patched, 0 of 1438 and 0 of 689.

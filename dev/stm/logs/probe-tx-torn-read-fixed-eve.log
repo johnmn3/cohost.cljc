@@ -1,0 +1,16 @@
+=== torn_eve fix start 8:26:19 PM ET
+cmd: clojure -Sdeps {:deps {eve/eve {:local/root "/tmp/claude-0/-home-user-atom-broker/fcd2c088-6a69-5efc-a32d-2f9026fe32a9/scratchpad/f1/eve-6502d37"}}} -M dev/stm/probe_tx_torn_read.clj eve
+WARNING: get-validator already refers to: #'clojure.core/get-validator in namespace: cohost.tx, being replaced by: #'cohost.tx/get-validator
+INFO mode :eve | widen-ms 0 (TEST-ONLY, probe-local) | committers 2 x 400 | readers 4
+INFO cell residence A/B: :eve-own-domain :eve-own-domain
+INFO section 1: 800 commits, 1935 read-only txs (1998 reader attempts, 63 reader retries), 0 torn, 4470 ms; tx/stats {:attempts 3006, :retries 271, :commits 2735}
+PASS every transfer committed => 800
+PASS transfer invariant holds at rest => 2000
+PASS readers really read while commits ran => true
+PASS read-only transactions never see a torn pair (A + B constant) => 0
+INFO section 2: 400 stamped commits, 842 outside deref pairs, 0 saw D older than C, 1661 ms
+PASS stamped commits landed => [400 400]
+PASS outside readers really read while commits ran => true
+PASS outside-tx deref never sees a commit's later install older than its earlier one => 0
+PROBE-TX-TORN-READ: ALL 7 CHECKS PASS
+exit 0 end 8:26:31 PM ET
