@@ -174,7 +174,22 @@ Design, as built:
   comment at the binding tells the story. This lane's proofs run
   the installer from a neutral cwd so --repo is really exercised.
 
-NEXT: rerun per-seat load checks from a neutral cwd (expect the
-true die: "no cohost checkout at /nonexistent-bogus", rc 1, on
-all three seats); then the proofs in order — jank (regression
-control), bb boundary, bb, battery, clj A, battery, clj B.
+- Load checks rerun from a neutral cwd (~15:5x ET): bb seat
+  PERFECT (banner, "no cohost checkout at /nonexistent-bogus",
+  "cohost install failed: install: stopped", rc 1); clj seat
+  PERFECT (same, banner "Clojure CLI version 1.12.6.1673"). The
+  parse fix is proven on both.
+- JANK SEAT: still failing at -main realization — and bisected to
+  the construct: my file used `case` on the seat keyword (four
+  sites); the original uses none. The JIT errors point into
+  clojure/core.jank line 4531, which is the `case` macro's own
+  machinery (the case* :identity prep) — this jank build's
+  codegen for case* on keywords is broken. FIXED: all seat
+  dispatch is if-chains on (= seat :jank) / (= seat :bb); a
+  comment at the seat def records the ban. (The bottom handler
+  printed "cohost install failed: stopped" even in the broken
+  runs — the inline-handler fix held throughout.)
+
+NEXT: re-verify the jank load check; then the proofs in order —
+jank (regression control), bb boundary, bb, battery, clj A,
+battery, clj B.

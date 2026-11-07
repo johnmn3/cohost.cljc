@@ -44,6 +44,11 @@
    house reader-order rule)."
   #?(:jank :jank :bb :bb :clj :clj))
 
+;; Seat dispatch below is if-chains, never `case`: this jank
+;; build's JIT codegen for case* on keywords is broken (the errors
+;; point into clojure/core.jank's case machinery, line 4531;
+;; INSTALL-PORTABLE-STATUS.md has the receipt).
+
 ;; ------------------------------------------------------------ host shim
 ;; The host services with one arm per seat: capture (a shell
 ;; command's stdout), sh! (a shell command's exit code, stdio
@@ -161,10 +166,9 @@
                      (recur (nnext xs) (assoc m (keyword (subs (first xs) 2)) (second xs)))
                      :else (recur (next xs) m)))
         driver (or (self-exe)
-                   (die (case seat
-                          :jank "cannot locate the running jank binary"
-                          :bb "cannot locate the running bb binary"
-                          "cannot locate the clojure command")))
+                   (die (if (= seat :jank) "cannot locate the running jank binary"
+                            (if (= seat :bb) "cannot locate the running bb binary"
+                                "cannot locate the clojure command"))))
         explicit-repo (:repo argv)
         cwd-repo (let [c (trim (cwd))] (when (file? (path c "src/cohost/cli.cljc")) c))
         default-repo (path (home) ".local/share/cohost/cohost.cljc")
@@ -174,7 +178,7 @@
                    :else default-repo)
         bin-dir (or (:bin argv) (env "COHOST_BIN") (path (home) ".local/bin"))]
     (println "cohost install:" (name seat)
-             (trim (capture (str (q driver) (case seat :jank " print-binary-version" " --version")))))
+             (trim (capture (str (q driver) (if (= seat :jank) " print-binary-version" " --version")))))
     ;; 1. the checkout
     (when-not (file? (path repo "src/cohost/cli.cljc"))
       (when explicit-repo (die "no cohost checkout at " repo))
@@ -197,17 +201,17 @@
                         "Install jank (bash dev/install/jank.sh in the checkout) and re-run this installer."))]
       ;; 2. the snapshot, driven by the seat that ran this file
       (println "cohost install: building the core snapshot"
-               (case seat
-                 :jank "(jank only; the first build takes minutes)"
-                 :bb "(driven by bb; the first build takes minutes)"
-                 "(driven by clj; the first build takes minutes)"))
+               (if (= seat :jank) "(jank only; the first build takes minutes)"
+                   (if (= seat :bb) "(driven by bb; the first build takes minutes)"
+                       "(driven by clj; the first build takes minutes)")))
       (checked!
-       (case seat
-         :jank (str "cd " (q repo) " && " (q driver) " --module-path dev/install/lib run dev/install/jank_build.cljc -- ensure")
-         :bb (str "cd " (q repo) " && " (q driver) " -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))
-         (str "cd " (q repo) " && " (q driver) " -Sdeps "
-              (q "{:deps {babashka/process {:mvn/version \"0.5.22\"} babashka/fs {:mvn/version \"0.5.24\"}}}")
-              " -M -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))))
+       (if (= seat :jank)
+         (str "cd " (q repo) " && " (q driver) " --module-path dev/install/lib run dev/install/jank_build.cljc -- ensure")
+         (if (= seat :bb)
+           (str "cd " (q repo) " && " (q driver) " -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))
+           (str "cd " (q repo) " && " (q driver) " -Sdeps "
+                (q "{:deps {babashka/process {:mvn/version \"0.5.22\"} babashka/fs {:mvn/version \"0.5.24\"}}}")
+                " -M -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")")))))
       ;; 3. the command itself, compiled with jank on every seat
       (checked! (str "cd " (q repo) " && rm -rf target/install/tool && " (q jank)
                      " -O3 --module-path dev/install/lib compile cohost.tool-main --runtime dynamic --name cohost --target-dir target/install/tool"))
