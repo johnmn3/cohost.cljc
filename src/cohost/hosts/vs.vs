@@ -202,6 +202,8 @@
    :macroexpand-1 (fn [form] (macroexpand-1 form))
    :mark-macro! mark-macro!
    :alter-var-root! alter-var-root!
+   ;; VS's arrays are mutable (to-array, aset) and java.util.Arrays/sort takes a comparator: MEASURED 2026-11-07
+   :sort-array! (fn [arr cmp] (java.util.Arrays/sort arr cmp) arr)
    ;; a direct two-arity call: a core fn VALUE of a name the template core does not carry (alter-meta! is a lib member)
    ;; serves one arity in compiled code — MEASURED 2026-11-07, `(apply alter-meta! h f args)` threw past two args
    :alter-var-meta! (fn [h f & args] (alter-meta! h (fn [m] (apply f m args))))
