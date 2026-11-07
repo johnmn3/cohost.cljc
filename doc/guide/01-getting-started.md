@@ -9,24 +9,29 @@ tools.build. The command is `cohost`.
 
 ## Install
 
-You need [Jank](https://jank-lang.org). That is the only prerequisite:
-the installer is a Clojure program that runs on Jank, and everything it
-builds is built by Jank — no Babashka, no Clojure CLI.
+You need one Clojure-like to run the installer — [Jank](https://jank-lang.org),
+Babashka, or the Clojure CLI — plus Jank itself, which compiles the
+`cohost` tool: on the Jank seat that is the same binary; on the
+other seats the installer uses the Jank on your PATH, or installs
+it from the checkout when there is none.
 
 ```bash
 # not checked: installs
 curl -fsSL https://raw.githubusercontent.com/johnmn3/cohost.cljc/main/install.cljc -o install.cljc
-jank run install.cljc
+jank run install.cljc          # or: bb install.cljc
+                                # or: clojure -M install.cljc
 cohost -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
 ```
 
-`jank run install.cljc` fetches the checkout if you don't have one,
-builds cohost's compiled core snapshot with Jank alone (minutes, the
-first time), compiles the `cohost` command into `~/.local/bin` and
-records the checkout in `~/.config/cohost/install.edn`. Add
+`install.cljc` fetches the checkout if you don't have one, builds
+cohost's compiled core snapshot — driven by the seat you ran,
+compiled by Jank on every seat (minutes, the first time) — compiles
+the `cohost` command into `~/.local/bin` and records the checkout
+and the installing seat in `~/.config/cohost/install.edn`. Add
 `~/.local/bin` to your PATH if it isn't there (the installer says so
 when it isn't). From an existing checkout, `jank run install.cljc
--- --repo ~/cohost` installs from it instead.
+-- --repo ~/cohost` installs from it instead (the other seats take
+`--repo` the same way).
 
 The default target (Jank) — `-Ttools install`, `-M` (with `-e`, `-m`
 and script files), `-X` and `-Spath` — is native to this install, and

@@ -276,6 +276,36 @@ Design, as built:
   evidence); stage A gets ONE rerun after it (two-attempt
   rule, diagnosis banked here), then stage B as designed.
 
-NEXT: clj B (boundary) verdict; clj A rerun; battery(clj);
-clj B as designed (fresh snapshot, bb poisoned). Then the
-final STATUS + report, docs commit, slot release.
+- CLJ BOUNDARY (from stage B running out of order against the
+  wiped tree): the clj-driven build completed AOT + record
+  (AOT-DIR + SNAPSHOT-EVENTS in its log) and tripped exactly at
+  the emit: invocations.log = "INVOKED: bb
+  dev/perf/jank_snapshot_emit.clj --events
+  target/jank-snapshot/events.edn --out
+  target/jank-snapshot/src". Installer rc 1, correctly
+  reported. Attempt 1's SIGTERM did not recur — transient
+  confirmed.
+- CLJ STAGE A: PASS on attempt 3, staged on the box's second
+  disk (/home/john/j, 373G free — the root disk's contention
+  was the whole story of attempts 1–2; attempt 2 died of
+  ENOSPC at 0 bytes mid-record). Attempt 3: SNAPSHOT-BUILT
+  df88adacda69c0e2d… (830,844 ms), PLACEMENT 857 of 872,
+  INSTALLER-RC=0, install.edn {:seat :clj, :clj
+  "/usr/local/bin/clojure"}, deps-new at the reference record
+  + skipping re-run, -e -> 3, -Spath correct. Battery on the
+  clj-built snapshot: 219/221 + 62/62, rc 0.
+- CLJ STAGE B (as designed, fresh snapshot, bb poisoned):
+  PASS — SNAPSHOT-FRESH on the same key, INSTALLER-RC=0,
+  install.edn :seat :clj, -e -> 3, "PASS: bb was never
+  invoked".
+
+## CLOSE (~18:35 ET) — lane complete
+
+Generalized install.cljc is proven on all three seats; every
+seat's installed tool is the same cohost command, and every
+seat-built snapshot is the identical artifact (key
+df88adacda69c0e2d4ac53df68476d9d5b6ea40d7dbac44bb5d9c1bbc87bde39,
+placement 857/872, batteries 219/221 + 62/62 wherever run).
+The full declaration is INSTALL-PORTABLE-REPORT.md at the
+branch tip. Heavy-queue slot released. Nothing to main,
+nothing to release/eve-in-cohost.

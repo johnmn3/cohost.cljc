@@ -13,23 +13,28 @@ You write ordinary Clojure, use `deps.edn`, Maven and git dependencies, a REPL, 
 
 ## Install
 
-You need [Jank](https://jank-lang.org). That is the only prerequisite:
-the installer is a Clojure program that runs on Jank, and everything it
-builds is built by Jank — no Babashka, no Clojure CLI. (Getting Jank
-itself: Homebrew on macOS, jank's apt package on Debian/Ubuntu —
+You need one Clojure-like to run the installer — [Jank](https://jank-lang.org),
+Babashka, or the Clojure CLI — plus Jank itself, which compiles the
+`cohost` tool: run the installer on Jank and that is the same binary;
+run it on one of the others and the installer uses the Jank on your
+PATH, or installs it from the checkout when there is none. (Getting
+Jank itself: Homebrew on macOS, jank's apt package on Debian/Ubuntu —
 `dev/install/jank.sh` in a checkout runs the right one and says so if
 it needs root.)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/johnmn3/cohost.cljc/main/install.cljc -o install.cljc
-jank run install.cljc
+jank run install.cljc          # or: bb install.cljc
+                                # or: clojure -M install.cljc
 ```
 
-or, from a checkout, `jank run install.cljc -- --repo ~/cohost`. The
-installer fetches the checkout if you don't have one
+or, from a checkout, `jank run install.cljc -- --repo ~/cohost` (the
+other seats take `--repo` the same way). The installer fetches the
+checkout if you don't have one
 (`~/.local/share/cohost/cohost.cljc`), builds cohost's compiled core
-snapshot with Jank alone (the first build takes minutes; later runs
-rebuild only when the sources changed), compiles the `cohost` command
+snapshot — driven by the seat you ran, compiled by Jank on every
+seat (the first build takes minutes; later runs rebuild only when
+the sources changed) — compiles the `cohost` command
 into `~/.local/bin` (`--bin DIR` to choose), and records the checkout
 in `~/.config/cohost/install.edn`, which is how the command finds it
 afterwards. Add `~/.local/bin` to your PATH if it isn't there.
