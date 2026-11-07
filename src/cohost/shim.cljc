@@ -2883,7 +2883,10 @@
 (def -withMeta #?(:lg (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m))))
                   ;; a cohost type instance's meta is its own slot, which
                   ;; jank's with-meta cannot reach (it panics on the type)
-                  :jank (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (host/with-meta* x m)))
+                  :jank (fn [x m] (cond (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m)
+                                         ;; unit 6 step 3: an Eve-backed value's meta rides its object (cohost.memory-eve)
+                                         (memory/eve-backed? x) (memory/with-meta* x m)
+                                         :else (host/with-meta* x m)))
                   ;; the collection seam (unit 4): a layer transient
                   ;; keeps its meta in its state atom; an Eve-backed
                   ;; value's meta rides the layer's wrapper (Eve

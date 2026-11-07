@@ -1,0 +1,165 @@
+(ns cohost.memory-eve
+  "Eve-in-cohost unit 6 step 3 (doc/eve-cohost/UNIT6-DESIGN.md §3c, units 3 and 4 on jank): the jank seat's Eve
+   hosting for cohost.memory. The jank twin of src/cohost/memory_eve.clj (the JVM seat's): jank loads this .jank file
+   for the name and never the .clj (measured: a module .jank resolves first and a .clj is not loaded).
+
+   The values are Eve's own collections, built by Eve's own builders (eve.deftype-proto.serialize/convert-to-eve) in
+   the slab Eve's constructors allocate in when given none (eve.deftype-proto.alloc/current-sio: inside a swap!, that
+   attempt's domain; otherwise this process's heap domain). Each is Eve's one object (eve_host::eve_obj, tag
+   eve.vec/EveVector, eve.map/EveHashMap, eve.set/EveHashSet or eve.list/EveList: measured), which jank's core reaches
+   through the completion's identity table and routed names -- so the seam's ops are clojure.core's own calls, and
+   unit 3's = / hasheq contract holds by Eve's own answers across strata (measured: (= eve-vec [1 2 3]) and its
+   converse true, hashes equal).
+
+   Unit 3 on jank: the stand-in stratum is the converged object itself (§3c). No tagged-map stand-in is made on this
+   seat; memory/eve-value? (the stand-in test) stays false for every jank value, and the Eve-backed value answers
+   memory/eve-backed?.
+
+   Residents: a value Eve's codec cannot write (a closure, a var, a cohost type instance, any host object) is stored
+   by Eve's own reference (codec §9, TAG-REF: a handle in this process's table, refused into a shared domain) and read
+   back as the object itself (measured: a fn in an Eve vector reads back as that fn). So :resolve is the identity.
+
+   Meta rides the one object's meta slot -- a new object over the same tag, methods, fields and extmap
+   (cohost.hosts.jank-host/eve-value-with-meta; its :meta reads the slot), never the block (plan SS3).
+
+   Forms: while cohost expands a macro (cohost.adapter/*raw-macro-output*, bound by the jank adapter's expander and the
+   shim's macroexpand-1), the creators answer jank's own collections: forms are the analyzer's, which takes jank's
+   (the JVM seat's analyzer-active? for the same reason)."
+  (:require [cohost.memory :as memory]
+            [cohost.adapter :as host]
+            [cohost.hosts.jank-host :as jank-host]
+            [eve.host-completion :as hc]
+            [eve.deftype-proto.alloc :as alloc]
+            [eve.deftype-proto.serialize :as ser]
+            [eve.vec]
+            [eve.map]
+            [eve.set]
+            [eve.list]))
+
+(def ^:private kinds
+  '{eve.vec/EveVector :vector eve.map/EveHashMap :map eve.set/EveHashSet :set eve.list/EveList :list})
+
+(defn value?*
+  "True when x is an Eve-backed collection: Eve's one object with a collection tag (a cohost type instance is the same
+   object with a map descriptor, never one of these)."
+  [x]
+  (and (hc/object? x) (contains? kinds (hc/object-tag x))))
+
+(defn kind-of [x] (get kinds (hc/object-tag x)))
+
+(defn root-of "The Eve root a value holds: itself (meta rides the object)." [x] x)
+
+(defn- raw? [] host/*raw-macro-output*)
+
+(defn- write [x] (ser/convert-to-eve (alloc/current-sio) x))
+
+(defn- ->eve
+  "x in Eve form: an Eve value itself; a host collection rebuilt as Eve's, its elements first (a seq becomes an Eve
+   list, never a vector); any other value itself (Eve's codec writes it, or holds it by reference)."
+  [x]
+  (cond (value?* x) x
+        (map? x) (write (into {} (map (fn [e] [(->eve (key e)) (->eve (val e))])) x))
+        (vector? x) (write (mapv ->eve x))
+        (set? x) (write (into #{} (map ->eve) x))
+        (seq? x) (write (apply list (map ->eve x)))
+        :else x))
+
+(defn build-vector [coll] (if (raw?) (vec coll) (write (mapv ->eve coll))))
+
+(defn build-map
+  "An Eve hash map from a flat alternating key/value seq; duplicate keys: last wins (assoc'd in order, as stock's
+   create)."
+  [flat-kvs]
+  (when (odd? (count flat-kvs))
+    (throw (host/ex* 'java.lang.IllegalArgumentException (str "No value supplied for key: " (last flat-kvs)))))
+  (if (raw?)
+    (apply hash-map flat-kvs)
+    (write (reduce (fn [m [k v]] (assoc m (->eve k) (->eve v))) {} (partition 2 flat-kvs)))))
+
+(defn build-map-from [m] (build-map (mapcat (fn [e] [(key e) (val e)]) (seq m))))
+
+(defn build-set [coll] (if (raw?) (set coll) (write (into #{} (map ->eve) coll))))
+
+(defn build-list [coll] (if (raw?) (apply list coll) (write (apply list (map ->eve coll)))))
+
+(def empty-vector (write []))
+(def empty-map (write {}))
+(def empty-set (write #{}))
+(def empty-list (write ()))
+
+(defn canonicalize
+  "v's canonical Clojure-level form: Eve collections become jank's of the same kind, recursively; jank's collections
+   are rebuilt with any Eve values inside canonicalized; anything else itself."
+  [v]
+  (cond (value?* v) (case (kind-of v)
+                      :vector (into [] (map canonicalize) (seq v))
+                      :map (into {} (map (fn [e] [(canonicalize (first e)) (canonicalize (second e))])) (seq v))
+                      :set (into #{} (map canonicalize) (seq v))
+                      :list (apply list (map canonicalize (seq v))))
+        (vector? v) (into [] (map canonicalize) v)
+        (map? v) (into {} (map (fn [e] [(canonicalize (key e)) (canonicalize (val e))])) v)
+        (set? v) (into #{} (map canonicalize) v)
+        (seq? v) (apply list (map canonicalize v))
+        :else v))
+
+(defn representable?
+  "True when v is in Eve's codec's value universe (the JVM seat's question, kept): nil, booleans, strings, keywords,
+   symbols, integers, doubles, UUIDs, instants, Eve values, and collections of those. Anything else is a resident,
+   held by Eve's reference."
+  [v]
+  (cond (nil? v) true
+        (boolean? v) true
+        (string? v) true
+        (keyword? v) true
+        (symbol? v) true
+        (integer? v) true
+        (float? v) true
+        (uuid? v) true
+        (inst? v) true
+        (value?* v) true
+        (map? v) (every? (fn [e] (and (representable? (key e)) (representable? (val e)))) (seq v))
+        (coll? v) (every? representable? (seq v))
+        (seq? v) (every? representable? v)
+        :else false))
+
+(defn install-fill!
+  "The shim's EMPTY statics for the filled classes answer Eve's empties while the fill is in force (core.clj reads
+   PersistentArrayMap/EMPTY directly). Resolved lazily: this namespace never requires the shim."
+  []
+  (doseq [[sym v] {'PersistentVector-EMPTY empty-vector
+                   'PersistentArrayMap-EMPTY empty-map}]
+    (when-let [var (try (ns-resolve 'cohost.shim sym) (catch :default _ nil))]
+      (alter-var-root var (constantly v))))
+  true)
+
+(memory/register-hosting!
+ {:value? value?*
+  :kind kind-of
+  :root-of root-of
+  :constructors {:vector build-vector
+                 :map build-map
+                 :map-from build-map-from
+                 :set build-set
+                 :list build-list
+                 :empty-vector empty-vector
+                 :empty-map empty-map
+                 :empty-set empty-set
+                 :empty-list empty-list}
+  :representable? representable?
+  :canonical-form canonicalize
+  :resolve identity
+  :with-meta jank-host/eve-value-with-meta
+  ;; what they store and probe with converts as the constructors' elements do (a stored seq lands as an Eve list,
+  ;; and a seq probe key encodes as the list it was stored as)
+  :ops {:conj (fn [c x] (conj c (->eve x)))
+        :assoc (fn [c k v] (assoc c (->eve k) (->eve v)))
+        :dissoc (fn [c k] (dissoc c (->eve k)))
+        :disj (fn [c k] (disj c (->eve k)))
+        :pop (fn [c] (pop c))
+        :peek (fn [c] (peek c))
+        :nth (fn [c i nf] (nth c i nf))
+        :count (fn [c] (count c))
+        :get (fn [c k nf] (get c (->eve k) nf))
+        :contains (fn [c k] (contains? c (->eve k)))
+        :find (fn [c k] (find c (->eve k)))}
+  :install-fill install-fill!})

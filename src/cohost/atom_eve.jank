@@ -1,0 +1,102 @@
+(ns cohost.atom-eve
+  "Eve-in-cohost unit 6 step 3 (doc/eve-cohost/UNIT6-DESIGN.md §3c, unit 5 on jank): the jank seat's Eve hosting for
+   cohost.atom -- the shim's Atom on jank is an Eve atom in the runtime domain, swap! Eve's CAS on the root pointer,
+   a disk-kind atom an atom in a persistent domain. The jank twin of cohost.atom-eve (src/cohost/atom_eve.clj, the
+   JVM seat's): jank loads this .jank file for the name and never the .clj (jank resolves a module .jank first and
+   does not load .clj: measured, scratch modprobe), so the JVM seat keeps its own.
+
+   Program atoms live in Eve heap domains, sharded: a domain holds at most 255 program atoms (slot 0 is the domain's
+   own registry: eve.deftype-proto.data/MAX_ATOM_SLOTS), so the hosting mints a fresh domain when the current one
+   fills. The registry atom lives in its own domain -- the STARTUP contention domain (plan SS5/SS10): minted once,
+   holding the namespace table while the runtime domains hold program atoms. Eve's atom API is its shared one
+   (src/eve/atom.cljc), the same calls the JVM seat makes.
+
+   Tiers: :disk -- Eve's file-backed domain at :eve/path (eve.atom/persistent-atom-domain, joined when its files
+   exist), the atom registered there as :eve/name. :net -- not on this seat yet: Eve's network atom client is not part
+   of the jank realization cohost loads (a named NOT-YET, thrown)."
+  (:require [cohost.atom :as atom-layer]
+            [eve.atom :as eve-atom]
+            [eve.deftype-proto.data :as eve-data]))
+
+(def ^:private hosting
+  (atom {:domains []        ;; every program domain minted
+         :current nil       ;; the program domain taking atoms
+         :count 0           ;; atoms in :current
+         :counter 0         ;; atom names, unique across domains
+         :startup nil       ;; the startup domain
+         :registry nil}))   ;; the registry Eve atom
+
+(def ^:private slots-per-domain 255)
+
+(defn- mint-program-domain! []
+  (let [d (eve-atom/atom-domain {})]
+    (swap! hosting (fn [s] (-> s
+                               (update :domains conj d)
+                               (assoc :current d :count 0))))
+    d))
+
+;; one thread on this seat (the completion's locking is its body; the thread adapter's lock replaces it): the hosting
+;; atom's updates are made in order as written
+(defn- make-eve-atom [slab-init]
+  (let [s @hosting
+        _ (when (or (nil? (:current s))
+                    (>= (:count s) slots-per-domain))
+            (mint-program-domain!))
+        s @hosting
+        n (inc (:counter s))]
+    (swap! hosting assoc :counter n :count (inc (:count s)))
+    (eve-atom/lookup-or-create-mmap-atom! (:current s)
+                                          (str "cohost.atom/a" n)
+                                          slab-init)))
+
+(defn- registry-eve-atom []
+  (or (:registry @hosting)
+      (let [dom (eve-atom/atom-domain {})
+            ra (eve-atom/lookup-or-create-mmap-atom! dom "cohost.registry/table" {})]
+        (swap! hosting assoc :startup dom :registry ra)
+        ra)))
+
+(defn- disk-handle [m init]
+  (let [d (eve-atom/persistent-atom-domain (:eve/path m))]
+    (eve-atom/lookup-or-create-mmap-atom! d (:eve/name m) init)))
+
+(defn- make-tier-atom [kind m init]
+  (case kind
+    :disk (disk-handle m init)
+    :net (throw (ex-info "cohost.atom-eve: a :net atom is NOT-YET on the jank seat (Eve's network atom client is not loaded here)"
+                         {:type :cohost.atom/tier-not-yet :tier :net}))))
+
+(defn close-disk-domain!
+  "Release this process's slot in the disk domain at path (probes: a process that ends otherwise releases by
+   heartbeat staleness)."
+  [path]
+  (when-let [d (get @@#'eve-atom/domain-cache path)]
+    (eve-atom/close-atom-domain! d)))
+
+(defn root-digests
+  "The two digests of a disk atom's current root, as Eve computes them (cohost.atom-eve's on the JVM): :seal --
+   eve.atom/seal, the stored version; :sha256 -- Eve's content digest of the root, as 8 i32 words."
+  [a]
+  (let [h (atom-layer/eve-handle a)
+        compute @(requiring-resolve 'eve.digest/compute-digest)]
+    {:seal (eve-atom/seal h)
+     :sha256 (compute @h)}))
+
+(defn install!
+  "Register this seat's Eve factory with the portable layer. Returns true."
+  []
+  (atom-layer/install-factory! {:make-atom make-eve-atom
+                                :make-tier-atom make-tier-atom
+                                ;; unit 7 conveyance: the disk atom's Eve meta-atom (coordination state beside it)
+                                :frame-atom (fn [h] (eve-atom/meta-atom h {}))
+                                :registry-atom registry-eve-atom
+                                :eve-value? (fn [v] (satisfies? eve-data/IEveRoot v))})
+  true)
+
+(defn hosting-state
+  "Domain counts for probes and the report."
+  []
+  (let [s @hosting]
+    {:program-domains (count (:domains s))
+     :atoms-minted (:counter s)
+     :startup-domain? (some? (:startup s))}))
