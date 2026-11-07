@@ -1,0 +1,30 @@
+
+Testing eve.identity-test
+test #'eve.identity-test/sets-compare-in-eves-vocabulary
+done #'eve.identity-test/sets-compare-in-eves-vocabulary 30267ms
+test #'eve.identity-test/a-stock-field-read-reads-the-eve-field
+done #'eve.identity-test/a-stock-field-read-reads-the-eve-field 1020ms
+test #'eve.identity-test/an-eve-vector-is-a-map-entry
+done #'eve.identity-test/an-eve-vector-is-a-map-entry 20989ms
+test #'eve.identity-test/stock-predicates-answer-for-eve-values
+done #'eve.identity-test/stock-predicates-answer-for-eve-values 3330ms
+test #'eve.identity-test/compare-reaches-the-types-own
+done #'eve.identity-test/compare-reaches-the-types-own 1390ms
+
+Testing eve.identity-table-test
+test #'eve.identity-table-test/eve-values-answer-jank-core-as-on-the-jvm
+done #'eve.identity-table-test/eve-values-answer-jank-core-as-on-the-jvm 8624ms
+
+Testing eve.host-completion-test
+test #'eve.host-completion-test/equality-and-hash-reach-the-types-own
+done #'eve.host-completion-test/equality-and-hash-reach-the-types-own 861ms
+test #'eve.host-completion-test/an-instance-is-never-a-map-or-a-record
+done #'eve.host-completion-test/an-instance-is-never-a-map-or-a-record 381ms
+test #'eve.host-completion-test/two-deftypes-are-told-apart
+done #'eve.host-completion-test/two-deftypes-are-told-apart 432ms
+test #'eve.host-completion-test/a-mutable-field-and-a-printer
+done #'eve.host-completion-test/a-mutable-field-and-a-printer 319ms
+
+Ran 10 tests containing 108 assertions.
+0 failures, 0 errors.
+:summary {:test 10, :pass 108, :fail 0, :error 0}
