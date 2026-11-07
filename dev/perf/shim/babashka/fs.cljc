@@ -76,29 +76,28 @@
 
 (defn- glob-regex
   "The census patterns: ** (any depth), * (one segment),
-   {a,b,c} (alternation inside a segment), literals otherwise."
+   {a,b,c} (alternation inside a segment), literals otherwise.
+   Built by string accumulation, not a StringBuilder: this code
+   is shared by both arms, and the builder's method spelling
+   differs per host (append on the JVM, Append on .NET)."
   [pattern]
-  (let [sb (StringBuilder.)]
-    (loop [i 0]
-      (if (>= i (count pattern))
-        (re-pattern (str "^" sb "$"))
-        (let [c (nth pattern i)]
-          (cond
-            (and (= c \*) (< (inc i) (count pattern)) (= (nth pattern (inc i)) \*))
-            (if (= (nth pattern (+ i 2) nil) \/)
-              (do (.append sb "(?:.*/)?") (recur (+ i 3)))
-              (do (.append sb ".*") (recur (+ i 2))))
-            (= c \*)
-            (do (.append sb "[^/]*") (recur (inc i)))
-            (= c \{)
-            (let [j (str/index-of pattern "}" i)
-                  alts (str/split (subs pattern (inc i) j) #",")]
-              (.append sb "(?:")
-              (.append sb (str/join "|" (map escape-segment alts)))
-              (.append sb ")")
-              (recur (inc j)))
-            :else
-            (do (.append sb (escape-char c)) (recur (inc i)))))))))
+  (loop [i 0 acc ""]
+    (if (>= i (count pattern))
+      (re-pattern (str "^" acc "$"))
+      (let [c (nth pattern i)]
+        (cond
+          (and (= c \*) (< (inc i) (count pattern)) (= (nth pattern (inc i)) \*))
+          (if (= (nth pattern (+ i 2) nil) \/)
+            (recur (+ i 3) (str acc "(?:.*/)?"))
+            (recur (+ i 2) (str acc ".*")))
+          (= c \*)
+          (recur (inc i) (str acc "[^/]*"))
+          (= c \{)
+          (let [j (str/index-of pattern "}" i)
+                alts (str/split (subs pattern (inc i) j) #",")]
+            (recur (inc j) (str acc "(?:" (str/join "|" (map escape-segment alts)) ")")))
+          :else
+          (recur (inc i) (str acc (escape-char c))))))))
 
 #?(:clj
    (do
