@@ -311,9 +311,19 @@
    ;; :host — names VS's own core serves with Clojure's semantics, taken instead of booting their stock definitions:
    ;; the stock numeric predicates run through the shim's statics (`odd?` = `(not (even? n))` → integer? + zero? →
    ;; Numbers-isZero + bit-and + RT-uncheckedLongCast: 11.6 µs a call MEASURED, atom.broker docs/vs-cohost/STATUS.md
-   ;; 2026-11-07 5:35 PM ET, where the host's is 1.5), and the seq verbs are stock fns wrapping the host's own call
+   ;; 2026-11-07 5:35 PM ET, where the host's is 1.5), and the seq verbs are stock fns wrapping the host's own call.
+   ;; The transducer verbs and the fold heads (map filter remove keep reduce transduce into range take comp conj)
+   ;; are taken for the same reason one level up: VS's U2.2 canonical-form walk recognises a fold site only when
+   ;; its head and step names resolve to VS's OWN clojure.core (analyzer.vs f1-core-head?), so a taken name is
+   ;; worth nothing to the walk unless the codemod also SPELLS it clojure.core/<name> at the twin's call sites —
+   ;; that spelling is the codemod's take-aliases (boot.cljc / rewrite.cljc, patch 0020). Stock's own definitions
+   ;; of these names are its layering over the host's seqs (the twin's measured 4.2x / 7.5x on seq-walk /
+   ;; transducers, STATUS.md 2026-11-07 8:00 PM ET); VS's values are the same semantics with no layering, and
+   ;; the walk's fused loop is written against them. A take lands only with the boot at zero errors on both
+   ;; pins, as every take before it.
    :vs {:special (set '[let loop fn letfn])
-        :host (set '[odd? even? zero? pos? neg? integer? number? seq first rest next cons count nth])}})
+        :host (set '[odd? even? zero? pos? neg? integer? number? seq first rest next cons count nth
+                     map filter remove keep reduce transduce into range take comp conj])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."
