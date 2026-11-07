@@ -722,12 +722,24 @@ namespace cohost_var {
 }
 ")
 
-;; A5: integer + - * correct past 2^31 on unpatched jank. The probe runs jank's
-;; own + at boot: where it wraps (apt 0.1-noble) the shim's Numbers-add /
-;; minus / multiply are these (the C++ above, one call); where it does not (the
-;; series build, 12-21), they stay nil and the shim keeps jank's own fns, which
-;; the codemod then aliases inline.
-(def ^:private int-wraps? (not= 2147483648 (+ (identity 2147483647) 1)))
+;; A5: two facts of the jank build, each probed at boot. One probe of jank's + (2^31 - 1 + 1) used to
+;; stand for both; Eve's completion re-roots + - * before this namespace loads (exact, promoting past
+;; 2^63), so that probe read the series build on apt (Eve-in-cohost unit 6 step 3, measured: battery
+;; rows 194, 207 and 212 FAILed).
+;; (a) i64-unchecked?: jank's + does not throw on i64 overflow. Measured here: apt 0.1-noble wraps
+;;     (Long/MAX + 1 is Long/MIN), with Eve 0.9.3's completion it promotes (9223372036854775808N); the
+;;     series build throws "integer overflow" (12-21, not on this box). Where it does not throw, the
+;;     shim's Numbers-add / minus / multiply are the checked entries below (the C++ above, one call), and
+;;     the codemod's :int-op-aliases and :static-aliases serve them; where it throws, they stay nil and
+;;     the shim keeps jank's own fns, which the codemod then aliases inline.
+(def ^:private i64-unchecked? (try (+ (identity 9223372036854775807) 1) true (catch :default _ false)))
+;; (b) loop-lit-int32?: jank types a literal-initialized loop* local natively, as a C++ int. Probed on
+;;     loop* itself (Eve's completion re-roots loop's macro, not the special form): a boxed 2^31 recurred
+;;     through (loop* [x 0 ...]) comes back wrapped. Measured here, apt 0.1-noble with and without Eve
+;;     0.9.3's completion: -2147483648 (a boxed double recurred there throws; a literal 0.5 comes back 0).
+;;     The series build's literals are 64 bit. :loop-int-init and :native-long-inits key on it, and so do
+;;     the keys that tell unpatched jank from the series (quot / rem, the = inline, :native-self-calls?).
+(def ^:private loop-lit-int32? (not= 2147483648 (loop* [x 0 n 0] (if (< n 1) (recur (identity 2147483648) 1) x))))
 ;; true where jank's own sort result is a native_vector_sequence whose next copies
 ;; its buffer (apt 0.1-noble): (rest (sort [3 1 2])) prints (1 2 3) there.
 ;; pr-str, not =: on apt the broken sequence's = walks right while its print,
@@ -735,14 +747,14 @@ namespace cohost_var {
 (def ^:private sort-walk-broken? (not= "(2 3)" (pr-str (rest (sort [3 1 2])))))
 (defn- int-overflow [] (throw (adapter/ex* 'java.lang.ArithmeticException "integer overflow")))
 (def num-add
-  (when int-wraps?
+  (when i64-unchecked?
     (fn ([x y] (let [r (cpp/cohost_num.add x y)] (if (nil? r) (int-overflow) r))))))
 (def num-minus
-  (when int-wraps?
+  (when i64-unchecked?
     (fn ([x] (let [r (cpp/cohost_num.sub 0 x)] (if (nil? r) (int-overflow) r)))
         ([x y] (let [r (cpp/cohost_num.sub x y)] (if (nil? r) (int-overflow) r))))))
 (def num-multiply
-  (when int-wraps?
+  (when i64-unchecked?
     (fn ([x y] (let [r (cpp/cohost_num.mul x y)] (if (nil? r) (int-overflow) r))))))
 
 ;; U6-9: odd?/even? as values (:core-value-aliases): jank's own on a host long,
@@ -814,16 +826,16 @@ namespace cohost_var {
 ;; divisor on jank.
 (def ^:private quot-wrong? (not (float? (quot (identity 7.5) 2))))
 (def num-quotient
-  (when (or int-wraps? quot-wrong?)
+  (when (or loop-lit-int32? quot-wrong?)
     (fn [x y] (let [r (cpp/cohost_num.quot x y)]
                 (if (nil? r)
                   (let [q (clojure.core/quot x y)] (if (or (float? x) (float? y)) (double q) q))
                   r)))))
 (def num-remainder
-  (when int-wraps?
+  (when loop-lit-int32?
     (fn [x y] (let [r (cpp/cohost_num.rem x y)] (if (nil? r) (clojure.core/rem x y) r)))))
 
-;; A7-3: (= a b) at the call head on apt (int-wraps?: the series' patch 13 inlines = itself,
+;; A7-3: (= a b) at the call head on apt (loop-lit-int32?: the series' patch 13 inlines = itself,
 ;; and its equal overloads make a bare jank::runtime::equal call fail to compile there).
 ;; = on jank is the :host native (A6-1), so a call reaches :core-expansions, not the stock
 ;; :inline's Util/equiv. Against an integer literal a host long compares as a native ==
@@ -841,7 +853,7 @@ namespace cohost_var {
   (when-let [v (resolve 'cohost.boot/snapshot-log)] (some? @@v)))
 
 (defn- eq-expansion [args]
-  (when (and int-wraps? (= 2 (count args)) (not (recording?)))
+  (when (and loop-lit-int32? (= 2 (count args)) (not (recording?)))
     (let [[a b] args
           lit? (fn [x] (and (integer? x) (cpp/jank.runtime.is_integer x)))]
       (cond (and (lit? b) (not (lit? a)))
@@ -2391,10 +2403,10 @@ namespace cohost_err {
    ;; A5: a loop local started from an integer literal is a native long, not the
    ;; C++ int unpatched jank gives it (recur wrapped it at 32 bits); nil on the
    ;; series build, whose literals are already 64 bit
-   :loop-int-init (when int-wraps? (fn [n] (list 'cpp/long n)))
+   :loop-int-init (when loop-lit-int32? (fn [n] (list 'cpp/long n)))
    ;; U6-10: a let* local started from (count x) is a native long (to_int of
    ;; jank's count, always an integer), beside A5's literal-started loop locals
-   :native-long-inits (when int-wraps? '#{count})
+   :native-long-inits (when loop-lit-int32? '#{count})
    ;; A7-1: a vector literal of 1..4 elements is one GC block (jank-rt/vec1..vec4) where jank's
    ;; own literal builds a transient (apt); the series build's own literals are one block already
    :vector-literal (when (not (jank-rt/own-small-vectors?))
@@ -2494,17 +2506,18 @@ namespace cohost_err {
    ;; -remainder keep their wrapper: jank's quot and rem by zero throw without
    ;; the JVM's "Divide by zero"; Numbers-max and -min keep theirs: jank's
    ;; (max 1 ##NaN) is 1.0, the JVM's NaN.
-   ;; (A5: not where jank's - wraps at 32 bits: there Numbers-minus is the
-   ;; checked num-minus, and aliasing it back to jank's - would undo it)
-   :static-aliases (if int-wraps? {} {"Numbers-minus" 'clojure.core/-})
-   ;; A5-3: where jank's + - * wrap (apt), two untyped operands (a local or an
+   ;; (A5 (a): not where jank's - does not throw on i64 overflow (i64-unchecked?):
+   ;; there Numbers-minus is the checked num-minus, and aliasing it back to
+   ;; jank's - would undo it)
+   :static-aliases (if i64-unchecked? {} {"Numbers-minus" 'clojure.core/-})
+   ;; A5-3: where jank's + - * do not throw on i64 overflow (i64-unchecked?), two untyped operands (a local or an
    ;; integer literal; rewrite.cljc's int-op-operand?) take jank's promoting op
    ;; inline -- i64 arithmetic, and reals, ratios and big integers as jank's own
    ;; op gives them -- unless both are integers and one is outside 32 bits: only
    ;; there can the i64 op overflow, and only that case calls the shim's checked
    ;; op (Clojure's ArithmeticException). Before, every such op was a dynamic
    ;; call of the checked op. No let*: the operands are named twice as they are.
-   :int-op-aliases (if int-wraps? (int-op-aliases) {})
+   :int-op-aliases (if i64-unchecked? (int-op-aliases) {})
    ;; U6-8: Math/sqrt at the call head is jank's runtime sqrt on the double,
    ;; inline. A negative argument is the JVM's NaN as a literal: std::sqrt gives
    ;; a negative-signed NaN, and boxing one crashes jank (probe: (let* [r
@@ -2831,9 +2844,9 @@ namespace cohost_err {
    ;; U6-11: the series (patch 20) passes native-tagged arguments natively on a
    ;; self-call; apt 0.1 boxes each at the call and unboxes it at entry
    ;; (codegen of tak-both-dec on apt: convert<long>::into_object / from_object).
-   ;; Keyed on the series, as int-wraps? is: a :rettag probe cannot tell them
+   ;; Keyed on the series, as loop-lit-int32? is: a :rettag probe cannot tell them
    ;; apart (both return 2.5 from (^{:rettag 'long} fn* ([x] x)) 2.5).
-   :native-self-calls? (not int-wraps?)
+   :native-self-calls? (not loop-lit-int32?)
    ;; A7-4: a call to a fn var of the namespace being compiled reads the
    ;; var's root and calls its arity directly (cohost_dcall above)
    :direct-var-calls direct-var-call
