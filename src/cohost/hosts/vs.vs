@@ -191,7 +191,14 @@
    :require-host! require-host!
    :resolve-core resolve-core
    :macro-var? macro-var?
-   :interned-var (fn [ns-sym sym] (when (find-ns ns-sym) (get (ns-interns ns-sym) sym)))
+   ;; one lookup: VS's ns-resolve answers an interned name with one map get on the namespace's own interns (vs.core
+   ;; prog-h-resolve-in); a referred or core name answers a var of another namespace, excluded by its :ns. MEASURED
+   ;; before (atom.broker docs/vs-cohost/perf/probe-boot-cost.repl, 617 interns): (get (ns-interns ns) sym) 79 ms a
+   ;; call, where ns-interns alone is 13 ms — the whole map built and walked for one name.
+   :interned-var (fn [ns-sym sym]
+                   (when (find-ns ns-sym)
+                     (let [v (ns-resolve ns-sym sym)]
+                       (when (and v (var? v) (= (str ns-sym) (str (:ns (meta v))))) v))))
    :ns-interns (fn [ns-sym] (ns-interns ns-sym))
    :ns-public-names (fn [ns-sym] (set (keys (ns-publics ns-sym))))
    :intern! (fn [ns-sym sym v] (intern ns-sym sym v))
