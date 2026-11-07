@@ -190,6 +190,48 @@ Design, as built:
   printed "cohost install failed: stopped" even in the broken
   runs — the inline-handler fix held throughout.)
 
-NEXT: re-verify the jank load check; then the proofs in order —
-jank (regression control), bb boundary, bb, battery, clj A,
-battery, clj B.
+- Jank load check re-verified after the case fix (~16:0x ET):
+  banner, "no cohost checkout at /nonexistent-bogus",
+  "cohost install failed: stopped", rc 1, ~4 s. All three seats
+  now pass their load checks from a neutral cwd.
+- README + doc/guide/01-getting-started.md prerequisite wording
+  rewritten locally (uncommitted until the proofs land): one
+  Clojure-like to run the installer (Jank / Babashka / Clojure
+  CLI) + Jank itself compiling the tool, found on PATH or
+  installed from the checkout on the non-jank seats.
+- Jank-seat proof (regression control, the completed lane's
+  poisoned-HOME shape, strengthened: poisons up for the install
+  too, installer invoked by absolute path from a neutral cwd)
+  RUNNING on J since 20:19Z in the shared checkout; stage-1 AOT
+  compile under heavy box load (load ~9, other lanes). Disk
+  watched: ~2.6–2.8G free.
+
+- Jank proof, first full run (~16:2x ET): the BUILD completed
+  end to end — SNAPSHOT-BUILT df88adacda69c0e2d… (the completed
+  lane's proven snapshot key), PLACEMENT 857 of 872 — then the
+  box disk hit 100% (0 bytes) during step 3's copy: the 71 MB
+  tool binary truncated at 12 MB, installer failed the cp
+  cleanly ("command failed (1): cp …", rc 1). The installer's
+  behavior was correct; the failure is the box's disk (my whole
+  footprint was ~0.5G of the ~3G that vanished to other lanes'
+  concurrent builds). The truncated binary segfaulted when the
+  script's acceptance ran it — a disk artifact, not a tool
+  defect. Freed my scratch HOME's jank caches (161M) and reran:
+  with the snapshot fresh, the rerun skips the build (also
+  proving the fresh path) and redoes step 3 + acceptance.
+
+- JANK SEAT PROOF: PASS (rerun, ~16:41 ET). SNAPSHOT-FRESH on
+  df88adacda69c0e2d4ac53df68476d9d5b6ea40d7dbac44bb5d9c1bbc87bde39;
+  INSTALLER-RC=0; install.edn records :seat :jank; deps-new
+  installed at the reference record {:git/tag "v0.17.0",
+  :git/sha "657fca6"} with the full-sha checkout
+  657fca6c33cd…, re-run prints the skipping line; cohost -e
+  "(+ 1 2)" -> 3; -Spath correct; poison verdict PASS (clojure
+  and bb never invoked, poisons up for install + acceptance).
+  The regression control is green: the generalized file on the
+  jank seat reproduces the completed lane's proof exactly.
+- run-rest launched: bb boundary probe, bb proof, battery on
+  the bb-built snapshot, clj stage A, battery, clj stage B.
+
+NEXT: read the run-rest logs per stage; then the final STATUS
++ report, docs commit, slot release.
