@@ -737,9 +737,21 @@ namespace cohost_var {
 ;;     loop* itself (Eve's completion re-roots loop's macro, not the special form): a boxed 2^31 recurred
 ;;     through (loop* [x 0 ...]) comes back wrapped. Measured here, apt 0.1-noble with and without Eve
 ;;     0.9.3's completion: -2147483648 (a boxed double recurred there throws; a literal 0.5 comes back 0).
-;;     The series build's literals are 64 bit. :loop-int-init and :native-long-inits key on it, and so do
-;;     the keys that tell unpatched jank from the series (quot / rem, the = inline, :native-self-calls?).
+;;     The series build's literals are 64 bit. :loop-int-init and :native-long-inits key on it.
 (def ^:private loop-lit-int32? (not= 2147483648 (loop* [x 0 n 0] (if (< n 1) (recur (identity 2147483648) 1) x))))
+;; apt-unpatched?: this jank is the unpatched apt build (0.1-noble), not the series build (12-21). Three keys need
+;; the build itself, and no fact they need has a direct probe: num-quotient / num-remainder (apt's quot and rem trap on
+;; i32-min by -1, which a probe would have to trap to see), the = inline (the series' patch 13 equal overloads make a
+;; bare jank::runtime::equal call fail to compile, which a probe would have to fail to compile to see), and
+;; :native-self-calls? (the series' patch 20 native self-call entry; a :rettag probe answers the same on both, see the
+;; key). jank exposes no build identity that tells the two apart (measured here, apt 0.1-noble): `jank
+;; print-binary-version` is the binary's hash, which a patch does not move (doc/CLI.md); jank::runtime::jank_version()
+;; is the source tree's JANK_VERSION, "jank-0.1-alpha" (whether a series build carries another: unmeasured, no series
+;; binary on this box); no *jank-version* var, and *clojure-version* does not resolve. So apt-unpatched? is a PROXY,
+;; read from (b): literal-initialized loop* locals typed as a C++ int are unpatched jank (doc/upstream/jank-21; the
+;; series build's literal locals are 64 bit, :loop-int-init's note) and a fact Eve's completion cannot move. If a
+;; series build ever keeps 32-bit literal locals, this proxy is wrong there, and the three keys with it.
+(def ^:private apt-unpatched? loop-lit-int32?)
 ;; true where jank's own sort result is a native_vector_sequence whose next copies
 ;; its buffer (apt 0.1-noble): (rest (sort [3 1 2])) prints (1 2 3) there.
 ;; pr-str, not =: on apt the broken sequence's = walks right while its print,
@@ -826,16 +838,19 @@ namespace cohost_var {
 ;; divisor on jank.
 (def ^:private quot-wrong? (not (float? (quot (identity 7.5) 2))))
 (def num-quotient
-  (when (or loop-lit-int32? quot-wrong?)
+  ;; the i64 entry: apt's own quot traps on i32-min by -1 (apt-unpatched?); jank's quot of a double is an
+  ;; integer on both builds (quot-wrong?)
+  (when (or apt-unpatched? quot-wrong?)
     (fn [x y] (let [r (cpp/cohost_num.quot x y)]
                 (if (nil? r)
                   (let [q (clojure.core/quot x y)] (if (or (float? x) (float? y)) (double q) q))
                   r)))))
 (def num-remainder
-  (when loop-lit-int32?
+  ;; apt's own rem traps on i32-min by -1 (apt-unpatched?)
+  (when apt-unpatched?
     (fn [x y] (let [r (cpp/cohost_num.rem x y)] (if (nil? r) (clojure.core/rem x y) r)))))
 
-;; A7-3: (= a b) at the call head on apt (loop-lit-int32?: the series' patch 13 inlines = itself,
+;; A7-3: (= a b) at the call head on apt (apt-unpatched?: the series' patch 13 inlines = itself,
 ;; and its equal overloads make a bare jank::runtime::equal call fail to compile there).
 ;; = on jank is the :host native (A6-1), so a call reaches :core-expansions, not the stock
 ;; :inline's Util/equiv. Against an integer literal a host long compares as a native ==
@@ -853,7 +868,7 @@ namespace cohost_var {
   (when-let [v (resolve 'cohost.boot/snapshot-log)] (some? @@v)))
 
 (defn- eq-expansion [args]
-  (when (and loop-lit-int32? (= 2 (count args)) (not (recording?)))
+  (when (and apt-unpatched? (= 2 (count args)) (not (recording?)))
     (let [[a b] args
           lit? (fn [x] (and (integer? x) (cpp/jank.runtime.is_integer x)))]
       (cond (and (lit? b) (not (lit? a)))
@@ -1008,6 +1023,14 @@ namespace cohost_obj {
   inline object_ref extmap_of(object_ref x) { return eve_host::extmap_of(x); }
   inline object_ref meta_of(object_ref x) { return eve_host::meta_of(x); }
   inline object_ref field(object_ref x, jank::i64 i) { return eve_host::field(x, i); }
+  /* An Eve value: the same object with an Eve type's tag, a symbol (unit 6 step 3: unit 4's collections on jank). Its
+     meta is the object's meta slot; with-meta is a new object over the same tag, methods, fields and extmap. */
+  inline bool is_eve_value(object_ref x) {
+    return eve_host::is(x) && eve_host::tag(x).get_type() == object_type::symbol;
+  }
+  inline object_ref with_meta(object_ref x, object_ref mt) {
+    return eve_host::make5(eve_host::tag(x), eve_host::methods_of(x), eve_host::fields(x), eve_host::extmap_of(x), mt);
+  }
 
   // protocol method inline caches (doc/research/jank-dispatch.md): a method's cache is a
   // volatile holding [descriptor impl generation]; a hit is the instance's descriptor,
@@ -1061,6 +1084,9 @@ namespace cohost_obj {
 (defn inst-field [x i] (cpp/cohost_obj.field x i))
 (defn inst-extmap [x] (cpp/cohost_obj.extmap_of x))
 (defn inst-meta [x] (cpp/cohost_obj.meta_of x))
+;; unit 6 step 3: an Eve value (an Eve collection on this seat, cohost.memory-eve) and its meta slot
+(defn eve-value-object? [x] (cpp/cohost_obj.is_eve_value x))
+(defn eve-value-with-meta [x m] (cpp/cohost_obj.with_meta x m))
 
 (defn new-instance
   "An instance of the type desc names, with these field values."
@@ -2402,10 +2428,11 @@ namespace cohost_err {
    :multimethod-cache? mm-hit
    ;; A5: a loop local started from an integer literal is a native long, not the
    ;; C++ int unpatched jank gives it (recur wrapped it at 32 bits); nil on the
-   ;; series build, whose literals are already 64 bit
+   ;; series build, whose literals are already 64 bit. Fact: loop-lit-int32? (b), probed
    :loop-int-init (when loop-lit-int32? (fn [n] (list 'cpp/long n)))
    ;; U6-10: a let* local started from (count x) is a native long (to_int of
-   ;; jank's count, always an integer), beside A5's literal-started loop locals
+   ;; jank's count, always an integer), beside A5's literal-started loop locals.
+   ;; Fact: loop-lit-int32? (b), as :loop-int-init (whose native-int machinery it joins)
    :native-long-inits (when loop-lit-int32? '#{count})
    ;; A7-1: a vector literal of 1..4 elements is one GC block (jank-rt/vec1..vec4) where jank's
    ;; own literal builds a transient (apt); the series build's own literals are one block already
@@ -2459,6 +2486,8 @@ namespace cohost_err {
    :var-sym var-sym-of
    :meta (fn [x] (cond (cohost-object? x)
                         (if-let [f (:meta-fn (instance-desc x))] (f x) (inst-meta x))
+                        ;; an Eve value's meta is its object's slot (jank's own meta answers nil for it)
+                        (eve-value-object? x) (inst-meta x)
                         ;; a var's meta on jank has no :ns/:name; supply them
                         (var? x) (let [m (meta x)]
                                    (if (and (:name m) (:ns m)) m
@@ -2844,9 +2873,9 @@ namespace cohost_err {
    ;; U6-11: the series (patch 20) passes native-tagged arguments natively on a
    ;; self-call; apt 0.1 boxes each at the call and unboxes it at entry
    ;; (codegen of tak-both-dec on apt: convert<long>::into_object / from_object).
-   ;; Keyed on the series, as loop-lit-int32? is: a :rettag probe cannot tell them
+   ;; Keyed on the build (apt-unpatched?, a proxy: no direct probe): a :rettag probe cannot tell them
    ;; apart (both return 2.5 from (^{:rettag 'long} fn* ([x] x)) 2.5).
-   :native-self-calls? (not loop-lit-int32?)
+   :native-self-calls? (not apt-unpatched?)
    ;; A7-4: a call to a fn var of the namespace being compiled reads the
    ;; var's root and calls its arity directly (cohost_dcall above)
    :direct-var-calls direct-var-call
