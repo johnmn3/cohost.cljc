@@ -408,6 +408,16 @@
                          (get (:inlines @state) nm))]
             (when (and (fn? f) (or (nil? ar) (ar n))) f)))))))
 
+(defn- seed-special-names!
+  "ctx, with the policy's :special names for this host (the host's own special
+   forms, which no stock form defines: ValueScript's let, loop and fn) counted
+   as referred from the host, so the codemod's restock keeps an explicit
+   clojure.core/let (a stock macro's syntax-quote) the host's — a special form
+   is only one under the host's name for it."
+  [c]
+  (swap! (:host-referred c) into (:special-names (policy/lists (host/host-name))))
+  c)
+
 (defn make-ctx
   "The codemod's context for this host: which shim vars exist, the host's
    catch-all, its compile-style facts, and the per-namespace facts (current
@@ -427,7 +437,8 @@
                                 (filter #(let [s (str %)] (and (= "-" (subs s 0 1)) (> (count s) 1))) names)))
                          (into (shim/install-casts!
                                 (map (fn [c] [(rw/cast-name c) c]) (distinct (vals rw/checked-hints)))))))]
-  (rw/make-ctx {:def-tag? (contains? #{:clj :jolt :cljs} (host/host-name))
+  (seed-special-names!
+   (rw/make-ctx {:def-tag? (contains? #{:clj :jolt :cljs} (host/host-name))
                 :shim-names shim-names
                 :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
                 :instance-fn (if-not @snapshot-log
@@ -483,7 +494,7 @@
                 :protocol-var? host/protocol-var?
                 :interned? (fn [s] (let [n (host/current-ns)]
                                      (boolean (and n (host/try-all (fn [] (some? (host/interned-var n s)))
-                                                                   (fn [_] false))))))})))
+                                                                   (fn [_] false))))))}))))
 
 (defonce ^:private pending-host-forms
   ;; Forms a directive owes the eval loop: evaluated as top-level forms,
