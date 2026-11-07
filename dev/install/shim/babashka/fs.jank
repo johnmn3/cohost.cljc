@@ -1,0 +1,54 @@
+;; babashka.fs, the four functions dev/perf/jank_snapshot_emit.clj uses,
+;; for running that file UNMODIFIED under raw jank (the installer's
+;; bb-free snapshot build puts this directory on jank's module path, so
+;; (require '[babashka.fs :as fs]) resolves here instead of to Babashka).
+;; Path/parent are string operations; create-dirs/delete-tree shell out.
+;; POSIX only, like the installer itself.
+(ns babashka.fs
+  (:require [clojure.string :as str]))
+
+(cpp/raw "
+#include <cstdlib>
+namespace cohost_shim_fs {
+  long long sh(char const *cmd) { return std::system(cmd); }
+}
+")
+
+(defn- sh! [cmd]
+  (let [rc (cpp/cohost_shim_fs.sh cmd)]
+    (when-not (zero? rc)
+      (throw (ex-info (str "babashka.fs shim: command failed (" rc "): " cmd) {:cmd cmd :rc rc})))))
+
+(defn- q
+  "Single-quote a path for /bin/sh."
+  [s]
+  (str "'" (str/replace (str s) "'" "'\\''") "'"))
+
+(defn path
+  "Join path segments with / (babashka.fs/path, string form)."
+  ([a] (str a))
+  ([a b & more]
+   (reduce (fn [acc seg]
+             (let [seg (str seg)]
+               (cond (str/starts-with? seg "/") seg
+                     (str/ends-with? acc "/") (str acc seg)
+                     :else (str acc "/" seg))))
+           (str a) (cons b more))))
+
+(defn parent
+  "The parent directory of p, as a string (nil for a bare name)."
+  [p]
+  (let [p (str p)
+        p (if (and (> (count p) 1) (str/ends-with? p "/")) (subs p 0 (dec (count p))) p)
+        i (.lastIndexOf p "/")]
+    (cond (neg? i) nil
+          (zero? i) "/"
+          :else (subs p 0 i))))
+
+(defn create-dirs [p]
+  (sh! (str "mkdir -p " (q p)))
+  (str p))
+
+(defn delete-tree [p]
+  (sh! (str "rm -rf " (q p)))
+  nil)
