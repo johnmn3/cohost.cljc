@@ -55,6 +55,23 @@
   ClojureScript mvn dep ride the curl-seeded local repo / gitlibs —
   gates below use the sibling route (the impl branch's own discipline).
 
+## Gate results so far (logs in `logs-093/`)
+
+- `eve_cohost_check.clj` (unit 1 seat probe, `-M:eve` sibling @ 0.9.3):
+  **21/21 PASS** (`check.log`). The probe's own summary line is the
+  count; the file carries 22 check forms, one being the closing
+  shutdown-agents row — reported as the probe prints it.
+- `eve_cohost_check_u5.clj` (unit 5, full Eve `:jvm` hosts.edn row from
+  the 0.9.3 sibling, via `dev/u7/clj-eve.sh` with EVE_ROOT = the pair's
+  Eve worktree): **CHECK-U5: 31 checks, 0 failures** (`check-u5.log`).
+  Note: the plain `:eve` sibling alias (src only) is NOT sufficient for
+  u5 — Eve's atom hosting needs the `:jvm` adapter row; that is the
+  sibling's required composition for the hosting probes, recorded here.
+- `eve_cohost_check_u7.clj` (unit 7, same runner, fresh state dir):
+  **CHECK-U7: 17 checks, 0 failures** (`check-u7.log`).
+- First bank of this branch: commit `de9dca1f5e08bb7f391a96e102d9c27ec1c33b6d`,
+  pushed and verified on the fetched remote ref.
+
 ## Gates owed (run once, at the end)
 
 - JVM: `bb boot:jvm` (+ the entry gate) — battery 221/221, libraries
