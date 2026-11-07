@@ -505,3 +505,12 @@ with --repo /nonexistent-bogus:
   staging checkout): 219/221 stock behaviors, 62/62 library
   cases, BATTERY-RC=0 — the proven flows' exact numbers (the 2
   failures are the \u-escape cases that fail on every flow).
+- JOLT STAGE B: PASS. Fresh snapshot (stage A's, in the same
+  checkout), bb AND clojure poisoned: SNAPSHOT-FRESH
+  df88adacda69c0e2d… (full key printed, identical),
+  INSTALLER-RC=0, cohost -e "(+ 1 2)" -> 3, install.edn :seat
+  :jolt, invocations-b.log absent — "PASS: bb was never
+  invoked", clojure likewise. The jolt seat is proven to the
+  three seats' standard: load check, boundary probe, cold
+  build at key parity, battery, fresh-snapshot install.
+  Docs + REPORT-2 + close remain.
