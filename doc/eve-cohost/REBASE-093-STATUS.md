@@ -103,15 +103,20 @@
   identity 5 tests, identity-table 1 test, host-completion 4 tests —
   the gated shapes, green on the assembled bindings.)
 
-## Gates owed (run once, at the end)
+## Gates — ALL RUN. Final table in REBASE-093-REPORT.md
 
-- jank seat battery on j.slaa.us (`bb boot:jank-aot` against the
-  release-line Eve sibling — the `:eve` mechanism there, as above) —
-  RUNNING; the standing pair (`subs count nth first last butlast` —
-  "ERR Unterminated vector."; `Character outside ASCII` — "ERR
-  Unexpected end of file.") gets its disposition vs the new bindings
-  when it lands.
-- Naming note for the gate table: TWO different seats each stand at
-  219/221 with DIFFERENT pairs — jank's pair is the reader pair above;
-  the cljs seat's pair is `numeric tower` + `defmacro &form &env`
-  (pristine-base, dispositioned above). Do not conflate them.
+- **Jank seat battery** (`bb boot:jank-aot`, j.slaa.us, release-line
+  sibling): **boot errors 0; battery 219/221; libraries 62/62**
+  (`jank-battery.log`). Standing-pair disposition: BOTH rows reproduce
+  **verbatim** on the new bindings — `subs count nth first last
+  butlast` → "ERR Unterminated vector. (outer: Unterminated vector.)";
+  `Character outside ASCII` → "ERR Unexpected end of file. (outer:
+  Unexpected end of file.)". **Known-standing (jank reader gap, unit
+  9's family), NOT new-on-0.9.3.**
+- Naming note: TWO seats stand at 219/221 with DIFFERENT pairs —
+  jank's reader pair (above) vs the cljs seat's `numeric tower` +
+  `defmacro &form &env` (pristine-base). Never conflate them.
+
+**Lane state: COMPLETE** — declaration in REBASE-093-REPORT.md.
+This branch's tip is the fleet's rebase base (Agent 3 step 3 next).
+Nothing moved to cohost main.
