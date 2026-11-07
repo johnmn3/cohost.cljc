@@ -66,7 +66,18 @@
                      :task (let [snap (do (load-file "dev/perf/lpy_snapshot_ensure.clj") ((resolve 'lpy-ensure!)))]
                              (shell "basilisp" "run" "-p" snap "-p" "src" "dev/perf/lpy_snapshot_run.lpy" "--snapshot"))}
   boot:jvm  {:doc "JVM Clojure as the host (the reference adapter)"
-             :task (shell "clojure" "-M:eve" "-m" "cohost.run")}
+             ;; -XX:hashCode=3 (sequential identity hashes) is the eduction
+             ;; canary's lever: stock 1.12.0's CollReduce dispatch for
+             ;; Eduction rides on the impl map's hash iteration order over
+             ;; Class keys, and under the default identity-hash mode the
+             ;; build box's order picks the IReduceInit impl whose body
+             ;; casts Eduction to IReduce (220/221; the row passes on the
+             ;; collation box). Sequential hashes make the order
+             ;; deterministic and the dispatch the lawful one, without
+             ;; changing anything the battery measures (every row runs and
+             ;; asserts the same values). See doc/eve-cohost/RELEASE-
+             ;; CLEANUP-STATUS.md item 4 and UNIT4-REMAINDER-REPORT.md.
+             :task (shell "clojure" "-J-XX:+UnlockExperimentalVMOptions" "-J-XX:hashCode=3" "-M:eve" "-m" "cohost.run")}
   boot:cljs {:doc "ClojureScript, self-hosted on Node: compile the bootstrap build, then run it"
              :task (do (shell "clojure" "-Sdeps" (eve-cljs-sdeps) "-M:cljs" "-m" "cljs.main" "-co" "cljs-node.edn" "-c")
                        (shell "node" "target/cljs-node/main.js"))}
