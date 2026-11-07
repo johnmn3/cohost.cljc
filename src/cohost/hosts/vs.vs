@@ -40,7 +40,7 @@
       ;; a macro VS's own defmacro made (the boot's :defmacro style): the analyzer's user-macro table names it, its
       ;; var carries no :macro meta — MEASURED 2026-11-07: stock `when` and `lazy-seq` booted unmarked, never wrapped,
       ;; so their expansions reached the compiler uncodemodded (`(new clojure.lang.LazySeq …)`)
-      (some? (vs.analyzer/mx-lookup (var-qname v)))))
+      (some? (vs.analyzer/mx-lookup (str (:ns (meta v)) "/" (:name (meta v)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; forms: the reader's form values as data (symbol metadata rides along)
