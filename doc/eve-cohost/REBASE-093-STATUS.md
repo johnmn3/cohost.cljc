@@ -92,16 +92,26 @@
   standing pair** (the jank pair is a different two rows — see the
   census note in the report).
 
+- **Unit-6 refinement pins — RE-RUN on the bindings this branch
+  assembles** (j.slaa.us, in the 0.9.3 mechanism tree = release line at
+  the bb-fix commit, one commit past the tag; the completion is
+  byte-identical between the tag and that commit — the tag's own tree
+  predates the mechanism's collation, which landed on the release line
+  the same evening): `bb test:jank eve.identity-test
+  eve.identity-table-test eve.host-completion-test` → **Ran 10 tests
+  containing 108 assertions. 0 failures, 0 errors.** (`jank-pins.log`:
+  identity 5 tests, identity-table 1 test, host-completion 4 tests —
+  the gated shapes, green on the assembled bindings.)
+
 ## Gates owed (run once, at the end)
 
-- JVM: `bb boot:jvm` (+ the entry gate) — battery 221/221, libraries
-  62/62 expected; seat probes `eve_cohost_check.clj` (22),
-  `eve_cohost_check_u5.clj` (27), `eve_cohost_check_u7.clj` (16) via the
-  `:eve` sibling at 0.9.3.
-- cljs seat: pin fetch + cljs-node build/run smoke against the 0.9.3
-  checkout's hosts.edn row.
-- jank seat: battery on j.slaa.us; the standing pair
-  (`subs count nth first last butlast` — "ERR Unterminated vector.";
-  `Character outside ASCII` — "ERR Unexpected end of file.") gets its
-  disposition vs the new bindings; unit-6 refinement pins carried or
-  re-run with evidence.
+- jank seat battery on j.slaa.us (`bb boot:jank-aot` against the
+  release-line Eve sibling — the `:eve` mechanism there, as above) —
+  RUNNING; the standing pair (`subs count nth first last butlast` —
+  "ERR Unterminated vector."; `Character outside ASCII` — "ERR
+  Unexpected end of file.") gets its disposition vs the new bindings
+  when it lands.
+- Naming note for the gate table: TWO different seats each stand at
+  219/221 with DIFFERENT pairs — jank's pair is the reader pair above;
+  the cljs seat's pair is `numeric tower` + `defmacro &form &env`
+  (pristine-base, dispositioned above). Do not conflate them.
