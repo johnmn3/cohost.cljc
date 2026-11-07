@@ -162,9 +162,34 @@ E. ClojureCLR attempt: Clojure.Main with the shim dir on
    CLOJURE_LOAD_PATH loads the ensure chain from the repo root;
    bank exactly where it stops. [P2(d).]
 
-## State: OPENED — analysis + census + design banked; shim next.
+## Progress log
 
-NEXT: write dev/perf/shim/babashka/{fs,process}.cljc; smoke-test
-the :clj arms locally (key computation against the real
-babashka.fs result on this tree); edit install.cljc's clj arm;
-then the J proofs.
+- Shim written: dev/perf/shim/babashka/fs.cljc + process.cljc
+  (:clj + :cljr arms per the design above). One correction made
+  while writing: top-level #?@ splicing is NOT allowed when a
+  .cljc loads as a namespace ("Reader conditional splicing not
+  allowed at the top level." from the clj reader, hit on the
+  first smoke run) -- the arms are single (do ...) forms under
+  #?. The jank-seat fs.jank shim never taught us this because it
+  is a .jank file, not a .cljc namespace.
+- LOCAL PROOF (hatch box, light): the reference key reproduces on
+  this tree under bb + the real libraries:
+      bb -e '(load-file "dev/perf/jank_snapshot_key.clj") (snapshot-key)'
+      => df88adacda69c0e2d4ac53df68476d9d5b6ea40d7dbac44bb5d9c1bbc87bde39
+  (so this box's `jank print-binary-version` matches J's -- the
+  key is checkable locally at full strength), AND under the
+  Clojure CLI with ONLY the vendored slice on the path:
+      clojure -Sdeps '{:paths ["dev/perf/shim"]}' -M -e
+        '(load-file "dev/perf/jank_snapshot_key.clj") (snapshot-key)'
+      => df88adacda69c0e2d4ac53df68476d9d5b6ea40d7dbac44bb5d9c1bbc87bde39
+  Identical. That one run exercises the shim's path/absolutize/
+  parent (key.clj's load path), glob over both source trees +
+  the brace-glob named scripts (the listing is the key), and
+  shell {:out :string} (jank print-binary-version). The full
+  cold-build proofs on J remain the acceptance bar; this is the
+  key-path smoke, banked as such.
+
+## State: shim written + key-path smoke green; install.cljc next.
+
+NEXT: edit install.cljc's clj arm (pins -> shim path); then the
+J proofs A-E.
