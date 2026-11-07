@@ -71,6 +71,15 @@
   **CHECK-U7: 17 checks, 0 failures** (`check-u7.log`).
 - First bank of this branch: commit `de9dca1f5e08bb7f391a96e102d9c27ec1c33b6d`,
   pushed and verified on the fetched remote ref.
+- **JVM battery** (`bb boot:jvm`, i.e. `clojure -M:eve -m cohost.run`,
+  sibling @ 0.9.3): **boot errors 0; battery: 221/221 stock behaviors
+  pass; libraries: 62/62 cases pass across 12 clojure.* libraries**
+  (`boot-jvm.log`).
+- **cljs pin fetch**: `clojure -Spath -X:cljs` materialized the pinned
+  checkout at `~/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8`
+  and the resolved classpath carries that checkout's src + hosts.edn
+  adapter roots (`cljs-fetch.log`). (Gitlibs lives under the exec user's
+  home, /root/.gitlibs, on this box.)
 
 ## Gates owed (run once, at the end)
 
