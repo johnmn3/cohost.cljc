@@ -489,3 +489,15 @@ with --repo /nonexistent-bogus:
   invocations-boundary.log = exactly "INVOKED: jank
   print-binary-version". The same shape as the bb seat's probe,
   one seat over.
+
+- JOLT STAGE A: PASS (~17:3x ET). Cold build driven by jolt in
+  the claimed slot: banner "cohost install: jolt jolt v0.8.23",
+  SNAPSHOT-BUILT df88adacda69c0e2d… (the build's own timing
+  line: 1,067,528 ms) — the identical snapshot key to the
+  jank/bb/clj flows; PLACEMENT 857 of 872; INSTALLER-RC=0;
+  install.edn {:seat :jolt, :jolt "<staging>/jolt"}.
+  Acceptance: deps-new at the reference record {:git/tag
+  "v0.17.0", :git/sha "657fca6"} with the full-sha checkout and
+  the skipping re-run; cohost -e "(+ 1 2)" -> 3; -Spath
+  correct; poison verdict PASS (clojure never invoked,
+  invocations-a.log absent). Battery + stage B next.
