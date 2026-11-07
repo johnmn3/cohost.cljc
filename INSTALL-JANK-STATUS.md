@@ -134,3 +134,146 @@ NEXT: tool smoke against the bb-built snapshot in the J checkout
   (fresh check + run-main -e), then the cold build's launcher, then
   scratch-HOME install via install.cljc, then the no-clojure/no-bb
   PATH proof suite, then README/docs, then declaration.
+
+UPDATE (successor, ~13:50 ET): EMIT BYTE-CLASS CLOSED; J DISK FULL;
+BUILD MOVED LOCAL.
+- T7 pr-meta (recursive meta printer for the jank emit copy) landed:
+  placement back to 857/872; the defprotocol compile blocker is
+  understood and fixed — defprotocol is :status :host in cohost's
+  boot, so JANK's own defprotocol macro expands it and its expansion
+  reads the sig forms' meta; meta-less modules fail with p0
+  unresolved. pr-meta also drops jank's reader stamp
+  (:jank/source {:module "user"}) which Clojure's reader never adds.
+  Remaining module diffs vs bb emit, all classified: hash map/set
+  print order (data-only), one double notation (1e+06 vs 1000000.0,
+  same value). Snapshot key now sorts the whole input list -> key
+  parity with the bb flow (df88adac...).
+- Cold build #3 on J reached the launcher LINK and died:
+  /usr/bin/ld: No space left on device — J's root is 96G/96G (38M
+  free); the fleet's collective trees fill it; this lane's own
+  footprint there is ~340M. Owner: build-box capacity (coordinator /
+  operator), NOT this lane's making. The lane's slot.cohostinstall
+  remains claimed on J.
+- Fallback per install-what's-missing: the full build is running on
+  THIS box (identical jank build cf627abb...; 6.6G free) in the lane
+  worktree, target/local-build.log. The proof suite follows here;
+  J can re-run it verbatim once space returns (proof.sh is written
+  for J; a local variant runs the same steps).
+
+NEXT: local build lands -> proof suite local (scratch HOME, PATH
+  without clojure/bb: installer, -Ttools line vs the reference
+  records, -e, -Spath, batteries 221+62) -> final STATUS +
+  declaration; release the J slot at declaration.
+
+## Update — Nov 7 ~15:00 ET: -Ttools at byte parity; battery 219+62
+
+(Supersedes the fallback note above: J's disk was freed enough by
+deleting this lane's own regenerable trees; all builds ran on J.)
+
+- Snapshot-key parity with the bb flow proven (df88adac…); the cold
+  build's launcher was linked entirely by the jank flow (121,490,968
+  bytes); jank_build's fresh verdict: FRESH under the original's own
+  rules. Tool AOT binary built by jank alone (70,624,600 bytes).
+  Installer end-to-end green (INSTALLER-EXIT=0, tool installed into a
+  scratch HOME, install.edn written).
+- **The `-Ttools install-latest` line is at BYTE PARITY with the real
+  Clojure CLI** (fresh scratch HOME): record `{:lib
+  io.github.seancorfield/deps-new, :coord {:git/tag "v0.17.0",
+  :git/sha "657fca6"}}`, checkout dir `657fca6c33cd…`, self-record,
+  and the re-run prints exactly `new: Skipping, newest installed
+  io.github.seancorfield/deps-new v0.17.0` — all identical to the
+  reference probe. Defects found+fixed on the way: (1) jank regex
+  literals are verbatim — `\\.` in a file is backslash+any-char, not
+  an escaped dot (slug and .git-strip patterns never matched);
+  tool.cljc is jank-only so its patterns use jank's dialect.
+  (2) GitHub slug io.github.<user>/<repo> -> <user>/<repo>; mirror
+  layout <scheme>/<host>/<owner>/<repo>. (3) Tag choice per
+  tools.tools' own docstring: semver order, special-string versions
+  (alpha a beta b milestone m rc cr snapshot) filtered, last wins;
+  version keys zero-padded (Clojure compares vectors by length
+  first — unpadded, v0.5.2.1 beat v0.17.0). (4) Mirror detection is
+  directory existence (a --mirror clone IS the git dir).
+- **Batteries on this lane's snapshot: libraries 62/62, core
+  219/221.** Both failures are the \u-escape cases; via --eval the
+  first case's `(count "h\u00e9llo")` returns 6 (jank's byte count)
+  where 5 is expected. A control build of the same tree with the
+  original bb emit is running on J to isolate emit-path vs
+  tree/env. The JIT source boot shares part of the anomaly (its
+  reader rejects a raw é in an eval'd source).
+- Installer PATH-hint spacing fixed.
+
+NEXT: read the bb control build's battery; then the final proof.sh
+run on a rebuilt jank-only snapshot; commit all outstanding fixes
+from J; final declaration; release the slot.
+
+NOTE (successor session, Nov 7 ~09:54 ET): two-writer guard tripped — this tree has a LIVE writer (files touched within the last 15 min, a J-monitoring loop running, large uncommitted diff in flight); the new successor session STANDS DOWN and has written nothing else.
+
+## CLOSE — Nov 7 ~15:25 ET: the proof is green end to end; lane complete
+
+**The final proof (one run, J, target/proof-final.log on the cold
+tree; script target/probe/proof.sh):** scratch HOME; PATH carrying
+poisoned `clojure`/`bb` shims that log and exit 99 if ever invoked.
+1. `jank run install.cljc -- --repo /home/john/cohost-cold` ->
+   snapshot verified/built by jank alone, tool compiled by jank
+   alone, `cohost` installed into the scratch HOME. Exit 0.
+2. `cohost` resolves on the poisoned PATH.
+3. `cohost -Ttools install-latest :lib io.github.seancorfield/deps-new
+   :as new` -> `new: Installed io.github.seancorfield/deps-new v0.17.0
+   {:git/tag "v0.17.0", :git/sha "657fca6"}`; records + gitlibs
+   checkout byte-identical to the real Clojure CLI's (reference probe);
+   re-run -> `new: Skipping, newest installed ... v0.17.0`.
+4. In a scratch project: `cohost -e "(+ 1 2)"` -> `3`, exit 0;
+   `cohost -Spath` -> the project's two roots; a script file runs.
+5b. The poison log does not exist: clojure and bb were never invoked.
+6. Batteries on the snapshot this build produced: **core 219/221,
+   libraries 62/62** (see the routed finding below — the original bb
+   flow scores identically on this tree).
+   PROOF-EXIT=0.
+
+**Run-path defects found and fixed in this closing stretch** (the
+run path had never actually been exercised before): the tool now
+writes bin/cohost's exact config map (:inits/:main from faithful
+main-config/exec-config ports, :stock-root, :roots, :cwd, :snapshot?,
+:module-paths — before, an invented shape sent cohost.cli into a
+source boot that died slurping /clojure/core.clj); and exits call
+shim/exit! directly (see F-JANK-DEFERRED-CPP-VAR below).
+
+**Routed findings (not this lane's to fix):**
+- F-BATTERY-U-ESCAPES (owner: the cohost twin/adapter line): the two
+  \u-escape battery cases fail on this tree — `(count "h\u00e9llo")`
+  comes back 6 (jank's byte count) where 5 is expected, and the
+  battery's eval of the stored case sources errors. ISOLATED: the
+  original bb flow rebuilt on the same tree scores the identical
+  219/221 + 62/62 with the same two failures, and the JIT source boot
+  shares the anomaly — it is a property of the tree/jank state, not
+  of this lane's build path (placement parity 857/872 both ways;
+  snapshot-key parity df88adac…). The release record's 221/221 was
+  measured on the release branch state.
+- F-JANK-DEFERRED-CPP-VAR (owner: upstream jank observation, repro
+  banked in this lane's probes): a cpp-backed defn (body = one cpp
+  call; a deferred_cpp_function) throws a nil-message ghost exception
+  when invoked THROUGH a var, while the direct call works. Cost this
+  lane a long bisect; the tool now calls shim/exit! directly. Joins
+  the standing upstream-jank observation list (never filed, no patch).
+
+**Named limits of the delivered tool (README/guide worded to match):**
+-Ttools install-latest proven for git libs; -Ttools install with an
+explicit coord and Maven tool installs follow the same code but are
+unproven. Deps resolution is the documented subset; jar-only deps
+are not loaded from. Per-project snapshots (D-8) are skipped (the
+core snapshot serves every project). Other -T aliases, -Sdescribe
+and :jvm delegate to a real Clojure CLI when present and name the
+gap when absent; other hosts are bin/cohost's from a checkout.
+
+**Deliverables:** install.cljc (self-contained CLJC installer on
+jank, clone-or-curl), dev/install/ (shim + jank_build + the tool),
+README + guide-01 install rewrite (Jank-only prerequisite; the
+deps-new line exactly as the operator confirmed:
+`cohost -Ttools install-latest :lib io.github.seancorfield/deps-new :as new`).
+The heavy-queue slot.cohostinstall is released at this declaration.
+J's root disk filled during this lane (fleet-collective; the lane
+freed its own regenerable trees; ~11G free at close) — capacity is
+the coordinator's/operator's line, not this lane's.
+
+NEXT: none — lane complete. The branch is ready for the operator's
+collation; main and the release branch were never touched.

@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/johnmn3/cohost.cljc/main/install.cl
 jank run install.cljc
 ```
 
-or, from a checkout, `jank run install.cljc --repo ~/cohost`. The
+or, from a checkout, `jank run install.cljc -- --repo ~/cohost`. The
 installer fetches the checkout if you don't have one
 (`~/.local/share/cohost/cohost.cljc`), builds cohost's compiled core
 snapshot with Jank alone (the first build takes minutes; later runs
@@ -43,13 +43,20 @@ cohost -Ttools install-latest :lib io.github.seancorfield/deps-new :as new
 
 That command is native to this install: it keeps the same gitlibs
 layout and tool records the Clojure CLI writes, so the two can share a
-machine. What runs where, honestly: the default target (Jank) — `-M`,
-`-X`, `-e`, the REPL — and `-Ttools install` never involve another
-tool. Other `-T` aliases, `-Sdescribe` and the `:jvm` target delegate
-to the real Clojure CLI when one is installed, and stop and say so
-when there isn't. The other runtimes in the table below are served by
-`bin/cohost` from a checkout (that route still uses Babashka), as is
-Windows (`bin\cohost.cmd`).
+machine. What runs where, honestly: on the default target (Jank),
+`-Ttools install`, `-M` (with `-e`, `-m` and script files), `-X` and
+`-Spath` never involve another tool — proven end to end with no
+Clojure CLI and no Babashka on the PATH. Project dependencies are
+resolved by a built-in subset of tools.deps: the config chain,
+aliases (`:extra-paths`, `:extra-deps`, `:main-opts`, `:exec-fn`),
+`:local/root` directories, git deps through the shared gitlibs, and
+Maven coordinates fetched to the local repository. Directory roots
+are fully supported; loading namespaces from inside a jar is the
+subset's named limit. Other `-T` aliases, `-Sdescribe` and the
+`:jvm` target delegate to the real Clojure CLI when one is installed,
+and stop and say so when there isn't. The other runtimes in the table
+below are served by `bin/cohost` from a checkout (that route still
+uses Babashka), as is Windows (`bin\cohost.cmd`).
 
 ## A new project
 

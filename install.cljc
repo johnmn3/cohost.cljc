@@ -33,6 +33,11 @@
     pclose(p);
     return out;
   }
+  void cohost_install_exit_impl(int code) { std::exit(code); }
+  std::string cohost_install_get_env_impl(char const *k) {
+    char const *v = std::getenv(k);
+    return v ? std::string(v) : std::string();
+  }
   long cohost_install_run_impl(std::string const &cmd) {
     int rc = std::system(cmd.c_str());
     if(rc == -1) { return -1; }
@@ -54,10 +59,10 @@
   #endif
   }")
 
-(defn- capture [cmd] (cpp/cohost-install-capture-impl cmd))
-(defn- sh! [cmd] (cpp/cohost-install-run-impl cmd))
-(defn- self-exe [] (let [s (cpp/cohost-install-self-exe-impl)] (when-not (empty? s) s)))
-(defn- env [k] (let [v (cpp/std.getenv (cpp/c-string k))] (when-not (nil? v) (cpp/to-string v))))
+(defn- capture [cmd] (cpp/cohost_install_capture_impl cmd))
+(defn- sh! [cmd] (cpp/cohost_install_run_impl cmd))
+(defn- self-exe [] (let [s (cpp/cohost_install_self_exe_impl)] (when-not (empty? s) s)))
+(defn- env [k] (let [v (cpp/cohost_install_get_env_impl k)] (when-not (empty? v) v)))
 
 (defn- q [s] (str "'" (str/replace (str s) "'" "'\\''") "'"))
 (defn- path [a b] (str (str/replace (str a) #"/+$" "") "/" b))
@@ -117,12 +122,15 @@
           (str "{:repo \"" repo "\", :jank \"" jank "\", :bin \"" bin-dir "\"}\n"))
     (println "cohost install: installed" (path bin-dir "cohost"))
     (when-not (some #{bin-dir} (str/split (or (env "PATH") "") #":"))
-      (println "cohost install: note —" bin-dir "is not on your PATH; add it:"))
-    (println "  export PATH=\"" bin-dir ":$PATH\"")
+      (println (str "cohost install: note — " bin-dir " is not on your PATH; add it:")))
+    (println (str "  export PATH=\"" bin-dir ":$PATH\""))
     (println "Next: cohost -Ttools install-latest :lib io.github.seancorfield/deps-new :as new")))
 
 (let [args *command-line-args*]
   (try (apply -main (remove #{"--"} args))
        (catch :default e
-         (binding [*out* *err*] (println "cohost install failed:" (ex-message e)))
-         (cpp/raw "std::exit(1);"))))
+         ;; ex-message is guarded: some wrapped exceptions reject it,
+         ;; and the handler must never become the failure.
+         (binding [*out* *err*]
+           (println "cohost install failed:" (or (try (ex-message e) (catch :default _ nil)) "stopped")))
+         (cpp/cohost_install_exit_impl 1))))

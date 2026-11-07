@@ -26,10 +26,13 @@ first time), compiles the `cohost` command into `~/.local/bin` and
 records the checkout in `~/.config/cohost/install.edn`. Add
 `~/.local/bin` to your PATH if it isn't there (the installer says so
 when it isn't). From an existing checkout, `jank run install.cljc
---repo ~/cohost` installs from it instead.
+-- --repo ~/cohost` installs from it instead.
 
-The default target (Jank) — `-M`, `-X`, `-e`, the REPL — and
-`-Ttools install` are native to this install. Other `-T` aliases,
+The default target (Jank) — `-Ttools install`, `-M` (with `-e`, `-m`
+and script files), `-X` and `-Spath` — is native to this install, and
+project deps resolve through its built-in tools.deps subset (config
+chain, aliases, `:local/root`, git deps, Maven coordinates; directory
+roots fully supported, jar-only deps the named limit). Other `-T` aliases,
 `-Sdescribe` and the `:jvm` target delegate to the real Clojure CLI
 when one is installed, and stop and say so when there isn't. Each
 runtime other than the JVM is its own install, served by `bin/cohost`

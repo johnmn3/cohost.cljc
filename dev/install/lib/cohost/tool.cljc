@@ -28,11 +28,19 @@
 
 ;; ------------------------------------------------------------ die / io
 
-(defn die [& parts]
+(defn die
+  "Print the message to stderr and exit 1. (No exception-based exit:
+   jank's AOT codegen mishandles the rich catch bodies it would need,
+   and a front-end's die is a process exit anyway.)"
+  [& parts]
   (binding [*out* *err*] (println (apply str parts)))
-  (throw (ex-info "cohost: stopped" {:cohost/exit 1})))
+  (shim/exit! 1))
 
-(def ^:dynamic *exit* (fn [code] (throw (ex-info "cohost: exit" {:cohost/exit code}))))
+;; NOTE: no exit indirection var: on jank, a cpp-backed fn (a defn whose
+;; body is one cpp call — a deferred_cpp_function) THROWS a nil-message
+;; ghost when invoked through a var, though the direct call works
+;; (found by probe, Nov 7: run-child! and -Spath did their work, then
+;; exited 1 via main-fail). All exits call shim/exit! directly.
 
 (defn run-child!
   "Run cmd inheriting stdio (the shim's spawns all inherit; env additions
@@ -40,7 +48,7 @@
   [env-map cmd]
   (doseq [[k v] env-map] (shim/set-env k v))
   (let [rc (shim/sh! cmd)]
-    ((*exit*) rc)))
+    (shim/exit! rc)))
 
 ;; ------------------------------------------------------------ install record
 
@@ -191,23 +199,61 @@
 
 (defn gitlibs-lib-dir [lib coord]
   (let [url (:git/url coord)
-        host-path (str/replace (str/replace url #"^https?://" "") #"\\.git$" "")
+        host-path (str/replace (str/replace url #"^https?://" "") #"\.git$" "")
         sha (or (:git/sha coord) "")]
     (shim/path @gitlibs-dir "libs" (str lib) sha)))
 
 ;; ------------------------------------------------------------ -Ttools
 
+(def ^:private special-strings ["alpha" "a" "beta" "b" "milestone" "m" "rc" "cr" "snapshot"])
+
+(defn- version-parts
+  "The numeric parts of a version/tag, padded to 4: v0.17.0 ->
+   [0 17 0 0]. (Padding matters: Clojure compares vectors by length
+   first, and semver parts compare by position with missing = 0.)"
+  [v]
+  (let [core (first (str/split (str v) #"-"))
+        parts (mapv (fn [p] (let [n (re-find #"^\d+" p)] (if n (parse-long n) 0)))
+                    (str/split (str/replace core #"^v" "") #"\."))]
+    (vec (take 4 (concat parts (repeat 0))))))
+
+(defn- prerelease?
+  "tools.tools' rule: a version with a special string (alpha, beta,
+   rc, snapshot, ...) is not a latest candidate."
+  [v]
+  (let [q (second (str/split (str v) #"-" 2))]
+    (boolean (and q (some #(str/includes? (str/lower-case q) %) special-strings)))))
+
 (defn newest-git-tag
-  "The newest version tag of the mirror at dir, as [tag full-sha]."
-  [dir]
-  (let [tag (shim/capture-trim (str "git -C " (shim/q dir) " tag --sort=-v:refname | head -1"))]
-    (when (str/blank? tag) (die "cohost: no version tags found in " dir))
-    [tag (shim/capture-trim (str "git -C " (shim/q dir) " rev-parse " (shim/q (str tag "^{commit}"))))]))
+  "The latest release tag of the mirror at dir, tools.tools' rule:
+   versions in semver order, special-string versions filtered out,
+   the last one. [tag full-sha]"
+  [dir lib]
+  (let [tags (remove str/blank? (str/split-lines (shim/capture (str "git -C " (shim/q dir) " tag --list"))))
+        releases (remove prerelease? tags)]
+    (when (empty? releases) (die "cohost: Did not find versions for " lib))
+    (let [tag (last (sort-by version-parts releases))]
+      [tag (shim/capture-trim (str "git -C " (shim/q dir) " rev-parse " (shim/q (str tag "^{commit}"))))])))
 
 (defn short-sha [sha] (subs sha 0 (min 7 (count sha))))
 
-(defn git-host-path [url]
-  (-> url (str/replace #"^https?://" "") (str/replace #"\\.git$" "") (str/replace #":.*$" "")))
+(defn git-host-path
+  "The mirror's directory under _repos for a clone URL, in the
+   reference layout: <scheme>/<host>/<owner>/<repo>, no .git suffix."
+  [url]
+  (-> url
+      (str/replace #"^(https?)://" "$1/")
+      (str/replace #"\.git$" "")
+      (str/replace #":.*$" "")))
+
+(defn github-slug
+  "io.github.<user>/<repo> (or com.github.*) names the GitHub repo
+   <user>/<repo>: the prefix is the lib's group, not part of the URL."
+  [lib]
+  (let [ns (namespace lib)]
+    (if (re-find #"(io|com)\.github\..+" ns)
+      (str (last (str/split ns #"\.")) "/" (name lib))
+      (str ns "/" (name lib)))))
 
 (defn tool-record-path [as] (shim/path @clj-config-dir "tools" (str (name as) ".edn")))
 
@@ -239,15 +285,15 @@
    recorded it: mirror-clone into $GITLIBS/_repos, check the newest
    tag out into $GITLIBS/libs/<lib>/<full-sha>, write the tool record."
   [lib as latest?]
-  (let [slug (str (namespace lib) "/" (name lib))
+  (let [slug (github-slug lib)
         url (str "https://github.com/" slug ".git")
         mirror (shim/path @gitlibs-dir "_repos" (git-host-path url))]
     (when-not (shim/which "git") (die "cohost: -Ttools install needs git on the path."))
-    (if (shim/directory? (shim/path mirror ".git"))
-      (shim/sh-checked! (str "git -C " (shim/q mirror) " fetch --tags --quiet origin"))
+    (if (shim/directory? mirror)
+      (shim/sh-checked! (str "GIT_TERMINAL_PROMPT=0 git -C " (shim/q mirror) " fetch --tags --quiet origin"))
       (do (shim/mkdir-p (shim/parent mirror))
-          (shim/sh-checked! (str "git clone --quiet --mirror " (shim/q url) " " (shim/q mirror)))))
-    (let [[tag sha] (newest-git-tag mirror)
+          (shim/sh-checked! (str "GIT_TERMINAL_PROMPT=0 git clone --quiet --mirror " (shim/q url) " " (shim/q mirror)))))
+    (let [[tag sha] (newest-git-tag mirror lib)
           current (existing-tool-tag as lib)]
       (if (and latest? (= tag current))
         (println (str (name as) ": Skipping, newest installed " lib " " tag))
@@ -258,7 +304,8 @@
           (write-tool-record! as lib tag sha)
           (ensure-tools-self-record!)
           (ensure-user-deps!)
-          (println (str (name as) ": Installed " lib " " tag " as " as)))))))
+          (println (str (name as) ": Installed " lib " " tag
+                        " {:git/tag \"" tag "\", :git/sha \"" (short-sha sha) "\"}")))))))
 
 (defn install-maven-tool! [lib as]
   (let [meta (shim/capture (str "curl -fsSL https://repo1.maven.org/maven2/"
@@ -271,7 +318,8 @@
           (str "{:lib " lib ", :coord {:mvn/version \"" version "\"}}\n"))
     (ensure-tools-self-record!)
     (ensure-user-deps!)
-    (println (str (name as) ": Installed " lib " " version " as " as))))
+    (println (str (name as) ": Installed " lib " " version
+                  " {:mvn/version \"" version "\"}"))))
 
 (defn tools-command!
   "cohost -Ttools install|install-latest :lib <lib> :as <name> — native."
@@ -304,23 +352,62 @@
      :proj proj}))
 
 (defn parse-main-args
-  "bin/cohost's parse-main-args, subset: -Sdeps, -M/-X alias lists, -m,
-   file loads, -Spath. Everything else passes through to the booted
-   cohost.cli as :args."
+  "The front-end parse: strip -Sdeps / -M<aliases> / -X<aliases> /
+   -Spath (the launcher-level options); everything else is the main
+   args, in order, for main-config/exec-config below."
   [args]
-  (loop [args (seq args) r {:remaining [] :loads [] :aliases []}]
+  (loop [args (seq args) r {:main-args [] :aliases []}]
     (if-let [a (first args)]
       (cond (= a "-Sdeps") (recur (nnext args) (assoc r :sdeps (read-string (second args))))
             (= a "-Spath") (recur (next args) (assoc r :spath true))
             (or (str/starts-with? a "-M") (str/starts-with? a "-X"))
             (recur (next args) (-> r (assoc :mode (if (str/starts-with? a "-X") :exec :main))
                                      (update :aliases into (map alias-kw (remove str/blank? (str/split (subs a 2) #":"))))))
-            (= a "-m") (recur (nnext args) (assoc r :main-ns (second args)))
-            (and (or (str/ends-with? a ".clj") (str/ends-with? a ".cljc"))
-                 (shim/regular-file? a))
-            (recur (next args) (update r :loads conj (shim/absolutize a)))
-            :else (recur (next args) (update r :remaining conj a)))
+            :else (recur (next args) (update r :main-args conj a)))
       r)))
+
+(declare main-fail-msg)
+
+(defn- abs-under [cwd f] (if (shim/absolute? f) f (shim/path cwd f)))
+
+(defn main-config
+  "bin/cohost's main-config, ported: clojure.main's arguments -> {:inits
+   [...] :main {...}|nil}."
+  [cwd args]
+  (loop [[a b & more :as args] args inits []]
+    (cond
+      (nil? a) {:inits inits :main (when (empty? inits) {:type :repl})}
+      (#{"-i" "--init"} a) (recur more (conj inits [:i (abs-under cwd b)]))
+      (#{"-e" "--eval"} a) (recur more (conj inits [:e b]))
+      (#{"-m" "--main"} a) {:inits inits :main {:type :main :ns b :args (vec more)}}
+      (#{"-r" "--repl"} a) {:inits inits :main {:type :repl}}
+      (= "-" a) {:inits inits :main {:type :stdin :args (vec (rest args))}}
+      (#{"-h" "--help" "-?"} a) (die "cohost: see README for usage")
+      (str/starts-with? a "-") (die "cohost: unknown option " a)
+      :else {:inits inits :main {:type :script :path (abs-under cwd a) :args (vec (rest args))}})))
+
+(defn exec-config
+  "bin/cohost's exec-config, ported: clojure.run.exec's arguments ->
+   the :exec main."
+  [args argmap]
+  (let [vals (mapv (fn [s] (try (read-string s)
+                                (catch :default e (main-fail-msg (str "cohost: unreadable -X argument " s)))))
+                   args)
+        [f kvs] (if (symbol? (first vals)) [(first vals) (rest vals)] [nil vals])
+        f (or f (:exec-fn argmap)
+              (die "cohost: No function found on command line or in :exec-fn"))
+        f (cond (namespace f) (let [ns (symbol (namespace f))]
+                                (symbol (str (get (:ns-aliases argmap) ns ns)) (name f)))
+                (:ns-default argmap) (symbol (str (:ns-default argmap)) (name f))
+                :else (die "cohost: unqualified function " f " and no :ns-default"))
+        [pairs trailing] (if (odd? (count kvs)) [(butlast kvs) (last kvs)] [kvs nil])
+        exec-args (merge (reduce (fn [m [k v]] (if (vector? k) (assoc-in m k v) (assoc m k v)))
+                                 (or (:exec-args argmap) {})
+                                 (partition 2 pairs))
+                         trailing)]
+    {:type :exec :ns (namespace f) :fn (name f) :args-edn (pr-str exec-args)}))
+
+(defn- main-fail-msg [msg] (binding [*out* *err*] (println msg)) (shim/exit! 2))
 
 (defn ns->path [ns-name] (str/replace (str/replace (str ns-name) "-" "_") "." "/"))
 
@@ -344,34 +431,50 @@
     (shim/mkdir-p dir)
     (shim/path dir (str (subs (shim/sha256-hex (pr-str roots)) 0 40) ".edn"))))
 
+(defn- alias-argmap
+  "The merged alias argmap (:main-opts, :exec-fn, :exec-args,
+   :ns-default, :ns-aliases) for the selected aliases, from the
+   config chain — bin/cohost reads it from the CLI's basis file; the
+   subset merges the alias maps directly."
+  [chain alias-names]
+  (let [aliases (:aliases chain)]
+    (reduce (fn [m al] (merge m (select-keys (get aliases al)
+                                             [:main-opts :exec-fn :exec-args :ns-default :ns-aliases])))
+            {} alias-names)))
+
 (defn run-snapshot!
-  "Boot the snapshot for a project invocation (bin/cohost's jank path,
-   with the build ensured first)."
+  "Boot the snapshot for a project invocation: bin/cohost's jank path
+   (same config map, same launch), with the build ensured first."
   [args]
   (let [parsed (parse-main-args args)
         projdir (shim/cwd)
         chain (config-chain projdir (:sdeps parsed))
-        aliases (:aliases chain)
-        exec-fn (some (fn [al] (:exec-fn (get aliases al))) (:aliases parsed))
-        load (vec (concat (:loads parsed)
-                          (when (:main-ns parsed) [(ns->path (:main-ns parsed))])
-                          (when exec-fn [(ns->path (namespace exec-fn))])))
-        cp (project-classpath projdir chain (:aliases parsed))
-        roots (default-roots)]
+        argmap (alias-argmap chain (:aliases parsed))
+        roots (project-classpath projdir chain (:aliases parsed))]
     (if (:spath parsed)
-      (do (println (str/join ":" (concat [(shim/path @repo "src") (shim/path @repo "resources")] cp)))
-          ((*exit*) 0))
+      (do (println (str/join ":" roots))
+          (shim/exit! 0))
       (let [fresh (fresh-build)]
         (when-not fresh (ensure-build!))
         (let [fresh (or fresh (fresh-build))
-              cfg {:roots roots :paths cp :load load :args (:remaining parsed)}
+              run (if (= :exec (:mode parsed))
+                    {:inits [] :main (exec-config (:main-args parsed) argmap)}
+                    (main-config projdir (concat (:main-opts argmap) (:main-args parsed))))
+              cfg (merge run {:stock-root (shim/path @repo "resources/cohost/clojure-1.12.0")
+                              :roots roots
+                              :cwd projdir
+                              :report-dir (or (shim/env "TMPDIR") "/tmp")
+                              :report (or (shim/env "COHOST_MAIN_REPORT") "file")
+                              :verbose (boolean (shim/env "COHOST_VERBOSE"))
+                              :snapshot? true
+                              :module-paths (str/split (:path fresh) #":")})
               cfg-file (cache-file roots)]
           (spit cfg-file (pr-str cfg))
           (let [env (merge (gc-env) {"COHOST_HOME" @repo})]
             (if (:launcher fresh)
               (run-child! env (str (shim/q (:launcher fresh)) " " (shim/q (shim/absolutize cfg-file))))
-              (run-child! env (str (shim/q @jank-bin) " --module-path " (shim/q (:path fresh))
-                                   " run-main cohost.cli -- " (shim/q (shim/absolutize cfg-file)))))))))))
+              (run-child! env (str (shim/q @jank-bin) " -O3 --module-path " (shim/q (:path fresh))
+                                   " run-main cohost.cli " (shim/q (shim/absolutize cfg-file)))))))))))
 
 ;; ------------------------------------------------------------ delegation
 
@@ -431,15 +534,14 @@
            " (this install's tool is the jank seat). Run: bb bin/cohost " (name target) " ...")
       :else (run-snapshot! args))))
 
+(defn- message-of [e] (try (ex-message e) (catch :default _ nil)))
+
+(defn- main-fail [e]
+  (binding [*out* *err*] (println "cohost:" (or (message-of e) "stopped")))
+  (shim/exit! 1))
+
 (defn -main [& argv]
+  ;; the catch body stays a single call: jank's AOT codegen
+  ;; mishandles richer catch bodies in this position
   (try (tool-main (vec argv))
-       (catch :default e
-         ;; ex-data/ex-message are guarded: an exception raised inside
-         ;; a delay's body can arrive here in a shape they reject.
-         (let [data (try (ex-data e) (catch :default _ nil))
-               code (:cohost/exit data)]
-           (if code
-             (shim/exit! code)
-             (do (binding [*out* *err*]
-                   (println "cohost:" (or (try (ex-message e) (catch :default _ nil)) "stopped")))
-                 (shim/exit! 1)))))))
+       (catch :default e (main-fail e))))
