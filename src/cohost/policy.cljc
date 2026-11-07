@@ -308,7 +308,12 @@
    ;; ValueScript's analyzer owns let, loop and fn in every shape (its runtime
    ;; compiler refuses a def of the name: "reserved name: let is a special form")
    ;; letfn too: the analyzer refuses a defmacro of a special form's name ("reserved name: letfn is a special form")
-   :vs {:special (set '[let loop fn letfn])}})
+   ;; :host — names VS's own core serves with Clojure's semantics, taken instead of booting their stock definitions:
+   ;; the stock numeric predicates run through the shim's statics (`odd?` = `(not (even? n))` → integer? + zero? →
+   ;; Numbers-isZero + bit-and + RT-uncheckedLongCast: 11.6 µs a call MEASURED, atom.broker docs/vs-cohost/STATUS.md
+   ;; 2026-11-07 5:35 PM ET, where the host's is 1.5), and the seq verbs are stock fns wrapping the host's own call
+   :vs {:special (set '[let loop fn letfn])
+        :host (set '[odd? even? zero? pos? neg? integer? number? seq first rest next cons count nth])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."
