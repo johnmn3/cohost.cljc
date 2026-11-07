@@ -125,13 +125,13 @@ namespace cohost_shim {
 (defn parent [p]
   (let [p (str p)
         p (if (and (> (count p) 1) (str/ends-with? p "/")) (subs p 0 (dec (count p))) p)
-        i (.lastIndexOf p "/")]
+        i (str/last-index-of p "/")]
     (cond (neg? i) nil
           (zero? i) "/"
           :else (subs p 0 i))))
 
 (defn file-name [p]
-  (let [p (str p) i (.lastIndexOf p "/")]
+  (let [p (str p) i (str/last-index-of p "/")]
     (if (neg? i) p (subs p (inc i)))))
 
 (defn absolutize
@@ -199,5 +199,5 @@ namespace cohost_shim {
   [f]
   (when (regular-file? f)
     (try (read-string (slurp f))
-         (catch Exception e
+         (catch :default e
            (throw (ex-info (str "cohost: cannot read " f ": " (ex-message e)) {:file f}))))))

@@ -40,7 +40,7 @@ namespace cohost_shim_fs {
   [p]
   (let [p (str p)
         p (if (and (> (count p) 1) (str/ends-with? p "/")) (subs p 0 (dec (count p))) p)
-        i (.lastIndexOf p "/")]
+        i (str/last-index-of p "/")]
     (cond (neg? i) nil
           (zero? i) "/"
           :else (subs p 0 i))))
