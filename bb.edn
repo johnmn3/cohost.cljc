@@ -163,9 +163,10 @@
   ;; jank-FAST Step 6 stage 2: from the AOT snapshot when it is fresh (it is
   ;; never loaded stale); else cohost's AOT modules booting core.clj.
   boot:jank {:doc "jank (C++/LLVM): the AOT snapshot when fresh (bb boot:jank-snapshot builds it), else cohost's AOT modules, recompiled when src/cohost or the jank binary is stale. Source path: boot:jank-jit."
+             ;; arguments reach cohost.run (e.g. unit 6's --eve-atoms --eve-collections: the fills forced)
              :task (if-let [p (jank-snapshot-path)]
-                     (jank! "--module-path" p "run" "dev/perf/jank_snapshot_run.jank")
-                     (jank! "--module-path" (str (jank-aot-dir) ":" (jank-src)) "run-main" "cohost.run"))}
+                     (apply jank! "--module-path" p "run" "dev/perf/jank_snapshot_run.jank" "--" *command-line-args*)
+                     (apply jank! "--module-path" (str (jank-aot-dir) ":" (jank-src)) "run-main" "cohost.run" "--" *command-line-args*))}
   ;; jank-FAST Step 2. Phase timers inside boot! ({:profile? true} only) plus
   ;; the twelve libraries. One run. Median of three: dev/perf/jank_boot_profile.sh
   boot:jank-profile {:doc "jank boot with phase timers (doc/perf/jank.md, Boot profile). One run."

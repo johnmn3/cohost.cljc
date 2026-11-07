@@ -36,9 +36,31 @@
 (def ^:private src-dir (str root "/src"))
 (def ^:private aot-dir (str root "/aot"))
 
+;; Eve-in-cohost unit 6 step 3: cohost.hosts.jank-host requires Eve's completion (option 3), so every jank step of the
+;; snapshot reads Eve's jank realization from EVE_JANK_PATH (module path) and the completion's header dir
+;; (CPLUS_INCLUDE_PATH), and the key covers the completion's sources -- as dev/perf/jank_aot_ensure.clj does for the
+;; AOT objects. Unset is an error, not a fallback.
+(defn- eve-jank-path []
+  (let [p (System/getenv "EVE_JANK_PATH")]
+    (when (str/blank? p)
+      (throw (ex-info "EVE_JANK_PATH is unset: cohost's jank seat needs Eve's completion" {})))
+    p))
+
+(defn- eve-completion-dirs []
+  (->> (str/split (eve-jank-path) #":")
+       (filter #(str/ends-with? % "adapters/completion/jank/src"))))
+
+;; the completion's header dir (eve/eve_obj.hpp): its src root, include for src
+(defn- eve-include-dirs []
+  (map #(str (subs % 0 (- (count %) 3)) "include") (eve-completion-dirs)))
+
+(defn- eve-env [] {:extra-env {"CPLUS_INCLUDE_PATH" (str/join ":" (eve-include-dirs))}})
+
 (defn- input-files []
   (vec (sort (concat (source-files "resources/cohost/clojure-1.12.0")
                      (source-files "src/cohost")
+                     (mapcat source-files (eve-completion-dirs))
+                     (mapcat source-files (filter fs/directory? (eve-include-dirs)))
                      (source-files "dev/perf" "jank_{inputs.clj,snapshot_record.jank,snapshot_emit.clj,snapshot_key.clj,snapshot_ensure.clj,snapshot_run.jank}")))))
 
 (defn- jank-version []
@@ -74,7 +96,7 @@
         (not (objects-present? (cache-dir))) "objects missing"
         :else nil))
 
-(defn- module-path [cache] (str cache ":" src-dir ":src"))
+(defn- module-path [cache] (str cache ":" src-dir ":src:" (eve-jank-path)))
 
 ;; The launcher: cohost.cli compiled with the snapshot into one jank program
 ;; (--runtime dynamic keeps eval, so -e and a project's namespaces work; the
@@ -109,7 +131,7 @@
     (fs/delete-tree root)
     (fs/create-dirs aot-dir)
     ;; 1. record: a boot with record mode on, and the twelve libraries
-    (shell snap-bin "--module-path" (str stage1 ":src") "run" "dev/perf/jank_snapshot_record.jank"
+    (shell (eve-env) snap-bin "--module-path" (str stage1 ":src:" (eve-jank-path)) "run" "dev/perf/jank_snapshot_record.jank"
            "--" "--out" (str root "/events.edn"))
     ;; 2. emit one module per namespace
     (shell "bb" "dev/perf/jank_snapshot_emit.clj" "--events" (str root "/events.edn") "--out" src-dir)
@@ -117,12 +139,12 @@
     ;;    objects land in aot/_cache); when that fails, the modules alone as before
     (fs/create-dirs (str launcher-dir "/cohost"))
     (spit (str launcher-dir "/cohost/app_main.jank") launcher-entry)
-    (let [r (shell {:continue true} snap-bin "-O3" "--module-path" (str launcher-dir ":src:" aot-dir ":" src-dir)
+    (let [r (shell (assoc (eve-env) :continue true) snap-bin "-O3" "--module-path" (str launcher-dir ":src:" aot-dir ":" src-dir ":" (eve-jank-path))
                    "compile" "cohost.app-main" "--runtime" "dynamic" "--name" "cohost-jank" "--target-dir" aot-dir)]
       (when-not (and (zero? (:exit r)) (launcher-path))
         (println "SNAPSHOT-LAUNCHER not built (exit" (:exit r) "); compiling the modules alone")
         (fs/delete-if-exists launcher-bin)
-        (shell snap-bin "--module-path" (str src-dir ":src") "compile-module" "cohost.snapshot"
+        (shell (eve-env) snap-bin "--module-path" (str src-dir ":src:" (eve-jank-path)) "compile-module" "cohost.snapshot"
                "-O3" "--target-dir" aot-dir)))
     (let [cache (cache-dir)]
       (when-not (objects-present? cache)
