@@ -39,8 +39,45 @@ release branch of cohost."
 
 ## Merge result
 
-PENDING — merge not yet performed at this bank.
+- Pre-merge note banked as `447065696d8cd1a0095276f75ba78c786c8ddbe5`.
+- **Merge commit `e4773eafd999742cd92fb584e1cac2949a37f637`** (parents:
+  4470656 + 5c2c81c), made by the ort strategy with **zero conflicts** —
+  no textual or semantic conflict arose. 22 files changed: `deps.edn`
+  (the 0.9.3 :cljs pin), `src/cohost/shim.cljc` (unit-9 fix), the
+  REBASE-093 REPORT/STATUS, the unit-9 doc, and the gate logs.
+- **Conflict-marker sweep on the committed merge tree** (`git grep`
+  over the whole tree, no extension filter): `=======` (line-anchored)
+  zero. Raw `<<<<<<<` / `>>>>>>>` substring hits: 9 files, all
+  `doc/eve-cohost/` landing records whose prose quotes the sweep
+  markers themselves (e.g. RELEASE-MANIFEST.md:128 quoting the sweep
+  command). The hit set is **identical to the pre-merge release tip**
+  (18496c4) — the merge introduced zero markers.
 
-NEXT: perform the merge of origin/lane-m/cohost-on-eve-093 into
-release/eve-in-cohost; on textual conflicts resolve preserving both sides'
-intent; on semantic conflicts STOP and bank the conflict list verbatim.
+## Manifest dispositions (addendum rows)
+
+- **Unit-8 matrix cell "gate-green" -> "landed": CANNOT be flipped on
+  this branch — named, not dropped.** The cell lives in the coverage
+  chapter `doc/guide/15-eve-coverage-and-status.md` (status vocabulary
+  at line 13; unit 8 written GATE-GREEN per
+  `doc/eve-cohost/DOCS-STATUS.md` lines 4–5) on
+  `origin/agent2/eve-cohost-docs-landing`. Neither file exists on
+  `release/eve-in-cohost` (the documentation chapters are still the
+  manifest's PENDING row, owner Agent 2). The flip rides with the docs
+  landing, or with a steer to edit that branch; this lane's brief
+  confines it to the release worktree.
+- **"Eve 0.9.3 released-bindings adoption" row:** satisfied by this
+  collation — the merged `deps.edn` carries the v0.9.3 release pin
+  `76fd94c3dc541a1e915d6759652114c9f6b392a8` in `:cljs` (was d241de3,
+  the 0.9.1 line); the `:eve` sibling mechanism is unchanged.
+- **Unit 6 row / PENDING-REBIND rows:** disposition after the gate
+  re-runs on the merged tree (below).
+
+## Verification
+
+PENDING — JVM battery (`bb boot:jvm`) on the merged tree next; jank
+battery after JVM green and only under low box load, else banked as
+owed with the reason.
+
+NEXT: locate a current Babashka and the `:eve` sibling state
+(`../eve/src` relative to this worktree must sit at the v0.9.3 tag
+76fd94c3dc), then run `bb boot:jvm` on the merged tree, alone.
