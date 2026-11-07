@@ -36,7 +36,11 @@
 
 (defn- macro-var? [v]
   (or (true? (:macro (meta v)))
-      (and (= 'clojure.core (:ns (meta v))) (core-macro? (:name (meta v))))))
+      (and (= 'clojure.core (:ns (meta v))) (core-macro? (:name (meta v))))
+      ;; a macro VS's own defmacro made (the boot's :defmacro style): the analyzer's user-macro table names it, its
+      ;; var carries no :macro meta — MEASURED 2026-11-07: stock `when` and `lazy-seq` booted unmarked, never wrapped,
+      ;; so their expansions reached the compiler uncodemodded (`(new clojure.lang.LazySeq …)`)
+      (some? (vs.analyzer/mx-lookup (var-qname v)))))
 
 ;; ---------------------------------------------------------------------------
 ;; forms: the reader's form values as data (symbol metadata rides along)
