@@ -38,13 +38,17 @@
       x)))
 
 (defn- line-starts
-  "The offset at which each line of src begins: [0, one past each newline]."
-  [src]
-  (let [n (count src)]
+  "The offset at which each line of the text begins: [0, one past each
+   newline]. cs is the text's characters (a vector): jank's own count/nth
+   on a string are byte-based (its string is UTF-8 bytes; seq is the
+   char-true view), so offsets here are character offsets, as the scan's
+   are."
+  [cs]
+  (let [n (count cs)]
     (loop [i 0 out [0]]
       (if (>= i n)
         out
-        (recur (inc i) (if (= \newline (nth src i)) (conj out (inc i)) out))))))
+        (recur (inc i) (if (= \newline (nth cs i)) (conj out (inc i)) out))))))
 
 (defn- line-of
   "The 1-based line of offset i, given line-starts: the line whose start
@@ -85,7 +89,7 @@
 
 (defn- read-forms [src cb]
   (let [cs (vec src) n (count cs)
-        starts (line-starts src)
+        starts (line-starts cs)
         file (scan/source-path)
         ;; padding banks: a form's text is read after as many newlines and
         ;; spaces as its place in the whole text, so the reader's own
@@ -101,7 +105,15 @@
                              line (line-of starts i)
                              col (inc (- i (nth starts (dec line))))
                              pad (str (subs nls 0 (dec line)) (subs sps 0 (dec col)))]
-                         (cb (fix-source (fix-tags (read-string (str pad (subs src i j))))
+                         ;; the form's text is sliced from the character
+                        ;; vector, never (subs src i j): jank's subs is
+                        ;; byte-indexed (its count/nth/subs walk UTF-8
+                        ;; bytes while seq walks characters), so a char
+                        ;; index into subs lands mid-character or short
+                        ;; whenever a multibyte character precedes the
+                        ;; slice -- the reader then reports the mangled
+                        ;; slice unterminated.
+                        (cb (fix-source (fix-tags (read-string (str pad (apply str (subvec cs i j)))))
                                          file (- i (count pad))))
                          (recur (scan/skip-ws cs j))))))]
     (binding [*read-eval* true]

@@ -24,6 +24,7 @@
             [cohost.memory :as memory]
             [cohost.thread :as thread]
             [cohost.http :as http]
+            [cohost.unicode-ranges :as unicode]
             [cohost.hosts.auto]
             #?(:cljs [goog.object :as gobj]))
   #?(:cljs (:require-macros [cohost.shim-names]))
@@ -807,7 +808,10 @@
 (def RT-count #?(:jank (fn [x] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                  (if-let [f (:count d)] (f x)
                                    (throw (host/ex* 'java.lang.UnsupportedOperationException (str "count not supported on this type: " (:name d)))))
-                                 (count x)))
+                                 ;; jank's count of a string is its UTF-8 byte
+                                 ;; count; stock counts characters (jank's seq
+                                 ;; walks them), so a string counts by its seq
+                                 (if (string? x) (count (seq x)) (count x))))
                  :default (fn [x] (if (transient-value? x) (memory/t-count x) (count x)))))
 (def RT-nth #?(:jank (fn ([x i] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                   (if-let [f (:nth d)] (f x i)
@@ -2351,12 +2355,17 @@
                                   (<= 0x2008 n 0x200A) (== n 0x2028) (== n 0x2029) (== n 0x205F)
                                   (== n 0x3000)))))))
 (defn- cased [f c] (let [s (char-str c) r (f s)] (if (= 1 (count r)) (first r) (first s))))
-(def Character-isDigit (jstatic 'Character/isDigit (fn [c] (<= 48 (code-of c) 57))))
-(def Character-isLetter (jstatic 'Character/isLetter (fn [c] (let [s (char-str c)] (not= (h-upper-case s) (h-lower-case s))))))
+;; the classification defaults are the JVM's own categories, from the
+;; generated tables (cohost.unicode-ranges): the ASCII-only digit test and
+;; the case-difference letter heuristic these replace called a caseless
+;; letter (e.g. U+65E5) not a letter and an Nd digit outside 0-9 (e.g.
+;; U+0663) not a digit, where the JVM's Character says both are.
+(def Character-isDigit (jstatic 'Character/isDigit (fn [c] (unicode/in-ranges? unicode/digit-ranges (code-of c)))))
+(def Character-isLetter (jstatic 'Character/isLetter (fn [c] (unicode/in-ranges? unicode/letter-ranges (code-of c)))))
 (def Character-isLetterOrDigit (jstatic 'Character/isLetterOrDigit (fn [c] (or (Character-isLetter c) (Character-isDigit c)))))
-(def Character-isAlphabetic (jstatic 'Character/isAlphabetic Character-isLetter))
-(def Character-isUpperCase (jstatic 'Character/isUpperCase (fn [c] (let [s (char-str c)] (and (= s (h-upper-case s)) (not= s (h-lower-case s)))))))
-(def Character-isLowerCase (jstatic 'Character/isLowerCase (fn [c] (let [s (char-str c)] (and (= s (h-lower-case s)) (not= s (h-upper-case s)))))))
+(def Character-isAlphabetic (jstatic 'Character/isAlphabetic (fn [c] (unicode/in-ranges? unicode/alphabetic-ranges (code-of c)))))
+(def Character-isUpperCase (jstatic 'Character/isUpperCase (fn [c] (unicode/in-ranges? unicode/upper-ranges (code-of c)))))
+(def Character-isLowerCase (jstatic 'Character/isLowerCase (fn [c] (unicode/in-ranges? unicode/lower-ranges (code-of c)))))
 (def Character-toUpperCase (jstatic 'Character/toUpperCase (fn [c] (let [r (cased host/upper-case c)] (if (number? c) (h-char-code r) r)))))
 (def Character-toLowerCase (jstatic 'Character/toLowerCase (fn [c] (let [r (cased host/lower-case c)] (if (number? c) (h-char-code r) r)))))
 (def Character-digit (jstatic 'Character/digit (fn [c radix] (or (digit-of (if (number? c) (RT-charCast c) c) radix) -1))))
