@@ -501,3 +501,7 @@ with --repo /nonexistent-bogus:
   the skipping re-run; cohost -e "(+ 1 2)" -> 3; -Spath
   correct; poison verdict PASS (clojure never invoked,
   invocations-a.log absent). Battery + stage B next.
+- Battery on the jolt-built snapshot (bb boot:jank in the
+  staging checkout): 219/221 stock behaviors, 62/62 library
+  cases, BATTERY-RC=0 — the proven flows' exact numbers (the 2
+  failures are the \u-escape cases that fail on every flow).
