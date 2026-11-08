@@ -87,3 +87,20 @@ single job agent (~/workspace/job-agent/inbox/); DISPATCH #8 predates the
 change and finishes where it is.
 REMAINING: lpy row fill-in when Grok banks bench-lpy-grok.edn; the CLJS
 swap! calm re-run; post-pin-bump CLJS re-run (release lane owns the bump).
+
+## Bank 5 — 2026-11-08 ~1:57 PM ET — job-agent routing adopted
+
+Per John's one-door rule (~/workspace/job-agent/README.md), this lane no
+longer submits to any venue directly. State of this lane's queue work
+under the new protocol:
+- DISPATCH #8 (bench:lpy on Grok) predates the protocol; per its adoption
+  clause it finishes where it is — NOT resubmitted (the job agent owns
+  the double-run guard now, and a resubmission would be the double-run).
+- The two unrun follow-up legs are submitted as job-agent tasks:
+  inbox/cohost-perf-refresh-cljs-calm-rerun.json (the anomalous CLJS
+  swap! cell; start gate load1 < 3 written into needs) and
+  inbox/cohost-perf-refresh-cljs-postbump.json (CLJS seat on the shipped
+  Eve; its run self-verifies the pin bump and exits PIN_NOT_BUMPED if the
+  release lane has not bumped yet).
+- Workstream 2's verification legs were executed and banked (banks 1-2)
+  before the protocol existed; completed work is not resubmitted.
