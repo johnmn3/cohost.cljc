@@ -14,7 +14,8 @@ You write ordinary Clojure, use `deps.edn`, Maven and git dependencies, a REPL, 
 ## Install
 
 You need one Clojure-like to run the installer — [Jank](https://jank-lang.org),
-Babashka, the Clojure CLI, or [Jolt](https://github.com/jolt-lang/jolt)
+Babashka, the Clojure CLI, [Jolt](https://github.com/jolt-lang/jolt),
+or ClojureCLR
 — plus Jank itself, which compiles the
 `cohost` tool: run the installer on Jank and that is the same binary;
 run it on one of the others and the installer uses the Jank on your
@@ -28,6 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/johnmn3/cohost.cljc/main/install.cl
 jank run install.cljc          # or: bb install.cljc
                                 # or: clojure -M install.cljc
                                 # or: jolt run install.cljc
+                                # or: Clojure.Main install.cljc
 ```
 
 or, from a checkout, `jank run install.cljc -- --repo ~/cohost` (the
@@ -41,14 +43,17 @@ into `~/.local/bin` (`--bin DIR` to choose), and records the checkout
 in `~/.config/cohost/install.edn`, which is how the command finds it
 afterwards. Add `~/.local/bin` to your PATH if it isn't there.
 
-One Clojure-like that is not an installer seat: ClojureCLR. The
-snapshot build the installer drives has no ClojureCLR-loadable form
-— its driver libraries (babashka.fs, babashka.process) ship no
-ClojureCLR reader arms in any release, and the jank-native build's
-foundation library is C++ — so `install.cljc` has no ClojureCLR arm.
-If those libraries gain ClojureCLR arms, the seat is a
-straightforward addition; until then it is named here rather than
-discovered mid-install.
+The ClojureCLR seat drives the same build through a small
+vendored slice of the driver's libraries (babashka.fs /
+babashka.process, carried in the checkout with ClojureCLR reader
+arms of their own) plus a host adapter (`dev/perf/clr_compat.clj`)
+that supplies the few JVM-isms the frozen build scripts name —
+environment access, a nanosecond clock, and ordinal (not
+culture-sensitive) string ordering, so the snapshot it builds
+hashes to the same key as every other seat's. Jank still compiles
+the snapshot and the tool on that seat, as on the others; the
+jank-native build route (`dev/install/jank_build.cljc`, whose
+foundation library is C++) is not the ClojureCLR path.
 
 Then install the project tool the way the Clojure CLI would — through
 `cohost` itself:

@@ -421,3 +421,44 @@ bb/clojure/jolt poisoned; proof B re-run with the correct
 jank invocation (`jank run install.cljc -- --repo DIR` -
 install.cljc strips a leading "--"; the chain's proof-b.sh
 omitted it); then (f) README/guide wording.
+
+## CLR SEAT — COMPLETE (~8:33–9:45 PM ET, proofs2/3/4 on J)
+
+Two more walls after the section above, both mine or the
+harness's, neither a host wall: (5) the :cljr shell arms
+wrapped the sh -c payload with the shell single-quote quoter;
+.NET's ProcessStartInfo.Arguments parser groups on DOUBLE
+quotes only, so sh received fragments ("Unterminated quoted
+string"). Fixed (edcb823): a dq wrapper (escape \ and ")
+probed byte-exact on 8 command shapes before banking.
+(6) proofs3 forgot to put bb on the CLR run's PATH; rebuild!
+shells the literal "bb" for emit - the same established
+coupling every non-jank seat has - and the CLR driver died
+with Win32Exception "trying to start process 'bb'". Harness
+fix, not a product change (proofs4 exports the standard PATH).
+
+Proof verdicts (logs/proofs2.log, proofs4.log on J):
+- **B re-run: PASS.** jank seat, `jank run install.cljc --
+  --repo`, RC=0, stamp df88adac… . Events byte-IDENTICAL to
+  A's after checkout-path normalization; emitted src
+  equivalent modulo reader-metadata / map print order (14
+  files, ~20 lines, all carrying :jank/source or map order).
+- **(a) PASS.** Banner "cohost install: cljr 1.12.6";
+  install.edn {:seat :cljr, :cljr "…/Clojure.Main", …}.
+- **(b) PASS.** CLR-driven cold build: SNAPSHOT-BUILT
+  df88adacda69c0e2d4… in 935 s, RC=0. Emitted tree and events
+  byte-IDENTICAL to A's reference after checkout-path
+  normalization (the CLR build emits through bb, like clj's).
+- **(c) PASS.** Run 1: "new: Installed
+  io.github.seancorfield/deps-new v0.17.0 {:git/tag
+  \"v0.17.0\", :git/sha \"657fca6\"}"; run 2: "new: Skipping,
+  newest installed io.github.seancorfield/deps-new v0.17.0".
+- **(d) PASS.** cohost -e "(+ 1 2)" -> 3; battery against the
+  CLR-built snapshot (SNAPSHOT-FRESH): 219/221 + 62/62, RC=0.
+- **(e) PASS.** bb/clojure/jolt poisoned off PATH (jank only
+  via a symlink dir): SNAPSHOT-FRESH df88adac…, RC=0, -e -> 3.
+- **(f) DONE.** README names ClojureCLR as the fifth seat
+  (list, invocation block, and the seat paragraph rewritten -
+  the old "not an installer seat" text is gone).
+
+Full write-up: INSTALL-DISENTANGLE-REPORT.md (this commit).
