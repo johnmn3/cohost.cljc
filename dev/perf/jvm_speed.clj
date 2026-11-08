@@ -17,9 +17,12 @@
 
 (defn- now-ms [] (/ (double (System/nanoTime)) 1000000.0))
 
+(def ^:private load-fallback (atom -1.0))
+
 (defn- load1 []
-  (try (Double/parseDouble (first (str/split (slurp "/proc/loadavg") #" ")))
-       (catch Throwable _ -1.0)))
+  (let [v (try (Double/parseDouble (first (str/split (slurp "/proc/loadavg") #" ")))
+               (catch Throwable _ -1.0))]
+    (if (neg? v) @load-fallback v)))
 
 (defn- subst-n
   "bench.cljc's subst-n, copied: s with each %N replaced by n."
@@ -60,7 +63,9 @@
       (spit out (str (pr-str r) "\n") :append true)
       (println (str "  " (name id) " -> " (if (:error r) (str "ERROR " (:error r)) "ok"))))))
 
-(defn -main [& [side cases-csv out]]
+(defn -main [& [side cases-csv out load-arg]]
+  (when load-arg
+    (try (reset! load-fallback (Double/parseDouble load-arg)) (catch Throwable _ nil)))
   (let [wanted (set (map keyword (str/split cases-csv #",")))
         _ (require 'cohost.bench)
         cases (filter (fn [[id]] (contains? wanted id)) @(resolve 'cohost.bench/cases))]

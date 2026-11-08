@@ -20,8 +20,9 @@ wait_calm() {
 
 run_side() { # side idx
   wait_calm
-  echo "RUN side=$1 idx=$2 load1=$(awk '{print $1}' /proc/loadavg) $(date -Is)" >> "$OUT/runs.log"
-  clojure -Sdeps '{:paths ["src" "resources" "dev"]}' -M -m perf.jvm-speed "$1" "$CASES" "$OUT/$1-$2.edn" >> "$OUT/driver.log" 2>&1
+  L=$(awk '{print $1}' /proc/loadavg)
+  echo "RUN side=$1 idx=$2 load1=$L $(date -Is)" >> "$OUT/runs.log"
+  clojure -Sdeps '{:paths ["src" "resources" "dev"]}' -M -m perf.jvm-speed "$1" "$CASES" "$OUT/$1-$2.edn" "$L" >> "$OUT/driver.log" 2>&1
   echo "EXIT side=$1 idx=$2 rc=$?" >> "$OUT/runs.log"
 }
 

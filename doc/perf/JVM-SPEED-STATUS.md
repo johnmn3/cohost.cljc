@@ -32,7 +32,23 @@ Bench legs through the job agent only. Landing is not this lane's act.
   process, full rep distributions) + dev/perf/jvm_speed_run.sh (ABBA,
   load1 < 3.0 gate per process). Cases: fn-call, partition, string-join,
   hinted-loop, multimethod, pr-str, loop-arith, transduce.
-- Environment note: the hatch box has no `clojure` CLI on PATH; driver
-  smoke test runs on J inside the bench job itself (the job's driver.log
-  is the first check). No local measurement was attempted or claimed.
+- Environment note (corrected in bank 1): the hatch box DOES have
+  `clojure` — at ~/.local/bin (the first probe's PATH lacked it), and
+  its resolver needs CLJ_CONFIG=~/workspace/eve-env/cljconfig (the
+  curl-seeded /home/hatch/m2repo; direct Maven TLS is intercepted).
 - Next: push branch, submit calm job via job agent, collect, bank §4.
+
+## Bank 1 — 2026-11-08 ~14:35 ET — driver smoke-tested both sides; load-stamp fix
+
+- Host side smoke (fn-call only): runs end-to-end, EDN shape correct,
+  value "100000" as the refresh's. Stock side smoke (fn-call only):
+  boot! + make-user-ns! + load-libs! + eval-str path all run, value
+  "100000" correct. Both under hatch load ~6.6 — validation only, no
+  numbers recorded as evidence (the stock reps spread 0.41–8.65 ms on
+  the same case, which is itself the calm-gate argument in miniature).
+- Fix found by the smoke: a JVM here cannot read /proc/loadavg through
+  slurp (IOException "Invalid argument"; bash reads it fine), so the
+  driver now takes the load from the runner as an argument (the runner
+  reads it with awk, which works) and only falls back to slurp.
+- Calm job (cohost-jvm-speed-calm1.json) is in the job-agent inbox and
+  clones this branch at run time, so it picks up bank 1 automatically.
