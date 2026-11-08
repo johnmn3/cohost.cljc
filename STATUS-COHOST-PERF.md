@@ -14,3 +14,27 @@
 **Workstream 1 — bench refresh submitted to the J gatekeeper** (job ids 20261108T182834-cohostperf-bench-{jvm,jolt,jank,cljs,lpy}, CLASS=heavy, per-host tree copies under cohost-perf-ws/): the PERF.md lineage (bb bench:<host> -> target/bench-*.edn -> bench:report). Lineup = PERF.md's hosts (JVM, jolt, basilisp/lpy, CLJS node) + jank. Chromium: availability check owed; labeled unrun if absent.
 
 NEXT: collect bench results as the gatekeeper runs them -> bench:report tables -> PERF.md fresh section (every row labeled Eve pairing / host / date / load). Then doc/LANE-M-VALIDATION.md (M-1..M-12 audit + migration audit + watch verdicts).
+
+## Bank 2 — 2026-11-08 ~1:47 PM ET — JVM bench packaged for Grok: READY-TO-DISPATCH
+
+**Package:** tools/grok-bench-jvm.sh (this branch, syntax-checked). Self-contained
+on the runner box: installs JDK 21 / Clojure CLI / Babashka 1.13.226 only if
+missing (a failed install exits 3 with an INSTALL_FAILED marker in the log),
+clones cohost @ lane-m/cohost-perf-refresh + atom.broker @
+lane-m/eve-release-0931 as siblings (eve -> ab/eve, tip e727a05837 = the NEW
+Eve), preps deps, runs bb bench:jvm, banks the deliverable.
+**Deliverable (named):** doc/perf/refresh-2026-11-08/bench-clj-grok.edn +
+bench-clj-grok.log, committed on lane-m/cohost-perf-refresh. If the runner
+box cannot push to the cohost repo, the script prints PUSH_FAILED + the
+clone path and still exits with the bench rc — coordinator retrieves.
+
+**DOUBLE-RUN GUARD (binding):** this package and J gatekeeper job
+20261108T182834-cohostperf-bench-jvm are TWINS for one cell. Exactly one
+runs. Protocol for whoever fires the Grok dispatch:
+1. FIRST confirm the J twin still sits in ~/j-queue/inbox (queued, not
+   started) AND withdraw that inbox file in the same action.
+2. If the J twin has left the inbox (running or done), DO NOT dispatch.
+3. Only then fire the mailbox dispatch naming tools/grok-bench-jvm.sh.
+The J submission stays in place until that moment — coverage has no gap.
+Directive order for the remaining packages (same pattern): jolt next, then
+lpy; they are packaged on the coordinator's word, not preemptively.
