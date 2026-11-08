@@ -52,3 +52,55 @@ Bench legs through the job agent only. Landing is not this lane's act.
   reads it with awk, which works) and only falls back to slurp.
 - Calm job (cohost-jvm-speed-calm1.json) is in the job-agent inbox and
   clones this branch at run time, so it picks up bank 1 automatically.
+
+## Bank 2 — 2026-11-08 ~16:05 ET — calm1 collected; §4 verdicts banked; toggles + calm2 filed; CLJS verdict discharged
+
+- calm1 collected firsthand (job `20261108T193500-jobagent-jvmspeed-calm1`,
+  EXIT=0, 19:36:50→19:50:56 UTC; EDNs on J at
+  /home/john/j/cohost-jvm-speed-results/calm1/). All four processes
+  started at load1 2.80–2.99 — the gate held. Values equal on all
+  8 cases × 4 processes.
+- ATTRIBUTION.md §4 now carries the results. Verdicts (ratios are
+  booted ÷ plain; "stock" side = the booted core, "host" side =
+  plain JVM Clojure — the driver source settles the naming):
+  fn-call ×0.19 RETRACTED (parity, ×0.91 at median; the catalog's
+  prediction), partition ×0.63 RETRACTED (direction flips between
+  windows; the case is bimodal inside single processes),
+  string/join ×0.81 RETRACTED (parity, as C8 predicts), hinted-loop
+  min-gap ×2.86 RETRACTED (booted min 0.065 ≈ plain 0.069; a ×1.31
+  median tendency remains, unseparated). **multimethod CONFIRMED —
+  the one real cell: ×4.32 at median, ×5.93 at min, fully separated
+  (booted min 9.261 > plain max 2.570); carrier by elimination is
+  C7, the shim MultiFn.** Controls behaved (pr-str: same-fn process
+  pairs disagree ×2.1 — the calm noise floor; loop-arith: parity).
+  transduce is an UNCONFIRMED loss candidate (×2.44 at median,
+  direction consistent in both ABBA pairings, not separated).
+  The ×1.1 geomean is not re-derived from 8 of ~30 cases; its
+  checked cells were mostly artifacts, and its one real cell is a
+  loss it understated.
+- §5 toggles filed with the job agent (scratch seds on the job's own
+  clone of this branch; each run carries its control):
+  `cohost-jvm-speed-t1` (:multimethod-cache? true→false in
+  hosts/cljw.clj; cases multimethod,pr-str — prices how much of the
+  ×4.3 the one-entry cache already buys back),
+  `cohost-jvm-speed-t3` (:inline-meta :keep→:strip in adapter.cljc
+  defaults; cases hinted-loop,loop-arith,fn-call — the C10
+  sensitivity control), `cohost-jvm-speed-t2` (:host-aliases?
+  true→false; cases partition,transduce,string-join — prices C5's
+  aggregate inside booted bodies, transduce's toggle).
+  T4 (real MultiFn via policy take) is a patch, not a sed — designed
+  in §5, filed when T1's number says how much room is left.
+- calm2 filed (`cohost-jvm-speed-calm2`): transduce,hinted-loop,pr-str
+  on the unmodified branch — settles transduce's candidacy by
+  repetition and re-checks hinted-loop's median tendency.
+- CLJS swap! verdict DISCHARGED — the calm re-run the refresh owed
+  had in fact run and banked (job …191202, first run EXIT=0;
+  bench-cljs-grok.edn on lane-m/cohost-perf-refresh). Verdict:
+  the anomaly is real, ~2.2× overstated hot: booted-core swap! on
+  CLJS = 5,164 ms calm median vs own core 10.51 ms (×491), values
+  equal. Full note: doc/perf/CLJS-SWAP-VERDICT.md, for the perf line
+  to lift into PERF.md. (The J .result file for that job reads
+  EXIT=128 — seat 5's accidental duplicate overwrote it; the first
+  run stands, per the job agent's done record.)
+- Next: collect t1/t2/t3 + calm2 → bank §5 verdicts → T4 patch if
+  priced in → O1–O5 prototypes for the survivors → legality gate.

@@ -220,7 +220,7 @@ attribution target.
   (inlined by the compiler on both sides, C10). The catalog predicts
   parity; its mins agree. §4 tests that prediction calm.
 
-## 4. Calm re-measurement (protocol; results appended when the job lands)
+## 4. Calm re-measurement — protocol, and calm1 results (2026-11-08)
 
 Driver `dev/perf/jvm_speed.clj`, runner `dev/perf/jvm_speed_run.sh`:
 one side per process (no shared JIT/GC window), ABBA order, every
@@ -232,6 +232,94 @@ wins (fn-call, partition, string-join), the two min-gap losses
 (hinted-loop, multimethod), two controls (loop-arith — pure loop, no
 callees; pr-str — same fn both sides), and transduce. Value equality is
 checked per case from the recorded `:value`s.
+
+**Side names, once, unambiguously** (the refresh's table and this lane's
+driver share them, and they have already been misread once): side
+**"stock"** is the stock core *booted through cohost* — the product;
+side **"host"** is the host JVM Clojure's *own* core, plain. Below,
+"booted" = stock side, "plain" = host side, and every ratio is
+**booted ÷ plain** (> 1: the booted core is slower). Times are ms per
+case run (the case's own n), pooled over both processes per side
+(18 reps/side). Job `20261108T193500-jobagent-jvmspeed-calm1` on J,
+EXIT=0; every process started at load1 2.80–2.99 (the < 3.0 gate held);
+values equal on all 8 cases in all 4 processes. Raw:
+`/home/john/j/cohost-jvm-speed-results/calm1/{stock,host}-{1,2}.edn`.
+
+| case | booted min | booted med | plain min | plain med | ratio @min | ratio @med | refresh @med | verdict |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| fn-call | 0.341 | 0.355 | 0.198 | 0.389 | 1.72 | 0.91 | 0.19 | **retracted — parity** |
+| partition 3 | 7.234 | 13.887 | 6.877 | 9.870 | 1.05 | 1.41 | 0.63 | **retracted — unstable case** |
+| string/join | 0.739 | 1.172 | 0.716 | 1.280 | 1.03 | 0.92 | 0.81 | **retracted — parity** |
+| hinted-loop | 0.065 | 0.097 | 0.069 | 0.074 | 0.94 | 1.31 | 2.75 (min 2.86) | **min-gap retracted** |
+| multimethod | 9.261 | 10.837 | 1.561 | 2.510 | 5.93 | 4.32 | 1.83 (min 2.27) | **CONFIRMED — real loss, larger calm** |
+| pr-str (control) | 3.401 | 6.846 | 2.863 | 4.191 | 1.19 | 1.63 | 2.15 | control: noise, as designed |
+| loop-arith (control) | 0.102 | 0.105 | 0.069 | 0.101 | 1.47 | 1.04 | 0.98 | control: parity |
+| transduce | 1.698 | 2.794 | 0.545 | 1.146 | 3.12 | 2.44 | — | **unconfirmed loss candidate** |
+
+Per cell:
+
+- **fn-call ×0.19 — RETRACTED.** Calm medians are at parity (×0.91);
+  the booted side's two processes are the tightest in the run
+  (0.341–0.375 at batch 640 in both), while the plain side spreads
+  0.198–0.508 across its two processes (its low reps ride the
+  batch-2560 process). The refresh's ×0.19 was its plain side's hot
+  window, not a booted-core property. The catalog's prediction (§3:
+  no carrier, parity) is confirmed.
+- **partition ×0.63 — RETRACTED.** The direction flips between windows
+  (refresh: booted faster at median; calm: ×1.41 slower) and the reps
+  overlap in both. Worse, the case is unstable *within* single
+  processes — bimodal rep sets on both sides (one booted process:
+  7.2–8.8 and 15.1–15.6 in the same 9 reps) — so neither window's
+  median is a measurement of code. No claim either way until an
+  allocation-controlled instrument exists for this case.
+- **string/join ×0.81 — RETRACTED as a gap; parity.** Mins ×1.03,
+  medians ×0.92. What C8 predicts (the booted `join` is the host's own
+  fn — parity by construction) is what calm measures.
+- **hinted-loop min-gap (×2.86 at min) — RETRACTED.** The booted min
+  calm is 0.065, at parity with plain's 0.069; the refresh's 0.266
+  booted min does not reproduce. A median tendency (×1.31) remains but
+  the distributions overlap, one booted process is bimodal, and the
+  batch calibration differs across processes (10240 vs 2560) — under
+  this section's discipline that is not a real cell. C10's canary does
+  not fire. T3 (§5) still runs, as the sensitivity control that prices
+  what a lost `:inline` *would* cost.
+- **multimethod — CONFIRMED, and larger calm: ×4.32 at median,
+  ×5.93 at min, fully separated** (the booted side's fastest rep,
+  9.261, is slower than the plain side's slowest, 2.570). This is the
+  one cell in the set that survives the protocol, and by catalog
+  elimination its carrier is C7: the case's own code compiles
+  identically (§0.1), so the only differing component on the path is
+  the dispatch machinery — the shim MultiFn the booted `defmulti`
+  builds, vs `clojure.lang.MultiFn` on the plain side. T1 (cache off)
+  prices how much of the ×4.3 the one-entry cache is already buying
+  back; T4 (real MultiFn) prices the absolute remainder (§5).
+- **pr-str (control) — behaves as a control must.** Same fn object on
+  both sides (C1), yet batch-matched process pairs disagree by ×2.1
+  (batch 160: booted 7.18 vs plain 3.42) and ×1.04 (batch 40) in
+  opposite proportions to the pooled read. That disagreement *is*
+  the calm window's noise floor for this case family, and it is why
+  no non-separated cell above is evidence of anything.
+- **loop-arith (control) — parity** at median (×1.04), as a pure loop
+  with no callees must be; its min spread is tail luck in both
+  directions.
+- **transduce — UNCONFIRMED loss candidate, ×2.44 at median.** The
+  direction (booted slower) is consistent in both ABBA pairings
+  (3.22 vs 1.91; 1.77 vs 1.00) but the distributions touch (booted
+  min 1.698 < plain max 1.950), so the protocol does not call it
+  real yet. It has plausible catalog carriers (C5/C6 Var hops inside
+  the booted reduce/transducer machinery; C4 chunk paths). A repeat
+  calm run (calm2) is filed to settle it, and T2 (host-aliases off)
+  is its attribution toggle.
+
+**The ×1.1 geomean** is not re-derived here (calm1 covers 8 of the
+refresh's ~30 cases, and no corrected geomean is quotable from a
+subset). What calm1 does to it: of the cells checked, the three
+loudest median gaps were hot-window artifacts, the one real cell is
+a *loss* the refresh understated (×1.83 → ×4.32), and the controls
+sit at parity. The refresh's per-cell medians should be treated as
+unproven wherever this section has checked them; the geomean's rough
+shape (booted modestly slower overall) is not contradicted, but it
+is not evidence either — it is a sum of mostly unmeasured cells.
 
 ## 5. Attribution toggles (planned; scratch patches on the bench tree only)
 
