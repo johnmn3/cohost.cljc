@@ -1,13 +1,15 @@
 ;; install.cljc — install the cohost tool. The prerequisite is any
 ;; one Clojure-like to run this file — Jank, Babashka, the Clojure
-;; CLI, or Jolt — plus Jank itself, which compiles the tool on every
-;; seat (when the seat is not Jank and no jank is on the path, step
-;; 1.5 below installs it via the checkout's dev/install/jank.sh).
+;; CLI, Jolt, or ClojureCLR — plus Jank itself, which compiles the
+;; tool on every seat (when the seat is not Jank and no jank is on
+;; the path, step 1.5 below installs it via the checkout's
+;; dev/install/jank.sh).
 ;;
 ;;   jank run install.cljc [--bin DIR] [--repo DIR]
 ;;   bb install.cljc [--bin DIR] [--repo DIR]
 ;;   clojure -M install.cljc [--bin DIR] [--repo DIR]
 ;;   jolt run install.cljc [--bin DIR] [--repo DIR]
+;;   Clojure.Main install.cljc [--bin DIR] [--repo DIR]
 ;;   — or from a checkout with any of the three; a curl'd copy runs
 ;;   the same way, since this file requires nothing from the repo it
 ;;   is about to fetch.
@@ -27,7 +29,13 @@
 ;;      On the clj seat the build's babashka.fs / babashka.process
 ;;      slice is vendored in the checkout (dev/perf/shim) and put
 ;;      on the ensure process's -Sdeps :paths -- no Maven pins;
-;;      the build files' requires are unchanged.
+;;      the build files' requires are unchanged. ClojureCLR ->
+;;      the same original build under Clojure.Main, the vendored
+;;      slice on CLOJURE_LOAD_PATH, with dev/perf/clr_compat.clj
+;;      loaded first (it arms the System namespace the frozen
+;;      key chain's (System/getenv ...) / (System/nanoTime) calls
+;;      compile to on that seat) and the build's hashing resolved
+;;      to System.Security.Cryptography inside dev/perf/sha256.clj.
 ;;      The build's record/compile steps are jank's on every seat,
 ;;      and a snapshot built by any flow is fresh to the others
 ;;      (byte-identical keys);
@@ -51,8 +59,8 @@
 (def ^:private seat
   "The Clojure-like running this file. Arm order matters: jank, bb
    and jolt also read :clj arms, so their own features come first
-   (the house reader-order rule)."
-  #?(:jank :jank :jolt :jolt :bb :bb :clj :clj))
+   (the house reader-order rule). ClojureCLR reads :cljr only."
+  #?(:cljr :cljr :jank :jank :jolt :jolt :bb :bb :clj :clj))
 
 ;; Seat dispatch below is if-chains, never `case`: this jank
 ;; build's JIT codegen for case* on keywords is broken (the errors
@@ -111,6 +119,16 @@
 (defn- q [s] (str "'" (str/replace (str s) "'" "'\\''") "'"))
 
 #?(:jank (defn- capture [cmd] (cpp/cohost_install_capture_impl cmd))
+   :cljr (defn- capture [cmd]
+           (let [psi (System.Diagnostics.ProcessStartInfo.)]
+             (set! (.FileName psi) "sh")
+             (set! (.Arguments psi) (str "-c " (q cmd)))
+             (set! (.UseShellExecute psi) false)
+             (set! (.RedirectStandardOutput psi) true)
+             (let [p (System.Diagnostics.Process/Start psi)
+                   out (.ReadToEnd (.StandardOutput p))]
+               (.WaitForExit p)
+               out)))
    :jolt (defn- capture [cmd]
            (:out (bp/shell {:out :string :err :inherit :continue true} "sh" "-c" cmd)))
    :bb (defn- capture [cmd]
@@ -124,6 +142,14 @@
             out)))
 
 #?(:jank (defn- sh! [cmd] (cpp/cohost_install_run_impl cmd))
+   :cljr (defn- sh! [cmd]
+           (let [psi (System.Diagnostics.ProcessStartInfo.)]
+             (set! (.FileName psi) "sh")
+             (set! (.Arguments psi) (str "-c " (q cmd)))
+             (set! (.UseShellExecute psi) false)
+             (let [p (System.Diagnostics.Process/Start psi)]
+               (.WaitForExit p)
+               (.ExitCode p))))
    :jolt (defn- sh! [cmd]
            (:exit (bp/shell {:in :inherit :out :inherit :err :inherit :continue true} "sh" "-c" cmd)))
    :bb (defn- sh! [cmd]
@@ -132,6 +158,7 @@
           (.waitFor (.start (.inheritIO (java.lang.ProcessBuilder. ["sh" "-c" cmd]))))))
 
 #?(:jank (defn- env [k] (let [v (cpp/cohost_install_get_env_impl k)] (when-not (empty? v) v)))
+   :cljr (defn- env [k] (let [v (System.Environment/GetEnvironmentVariable k)] (when-not (empty? v) v)))
    :default (defn- env [k] (let [v (System/getenv k)] (when-not (empty? v) v))))
 
 (defn- which
@@ -141,6 +168,7 @@
     (when-not (empty? s) s)))
 
 #?(:jank (defn- self-exe [] (let [s (cpp/cohost_install_self_exe_impl)] (when-not (empty? s) s)))
+   :cljr (defn- self-exe [] (System.Environment/ProcessPath))
    :jolt (defn- self-exe []
            (or (try (str (java.nio.file.Files/readSymbolicLink
                           (java.nio.file.Paths/get "/proc/self/exe" (into-array String []))))
@@ -188,7 +216,8 @@
                    (die (if (= seat :jank) "cannot locate the running jank binary"
                             (if (= seat :bb) "cannot locate the running bb binary"
                                 (if (= seat :jolt) "cannot locate the running jolt binary"
-                                    "cannot locate the clojure command")))))
+                                    (if (= seat :cljr) "cannot locate the running ClojureCLR (Clojure.Main)"
+                                        "cannot locate the clojure command"))))))
         explicit-repo (:repo argv)
         cwd-repo (let [c (trim (cwd))] (when (file? (path c "src/cohost/cli.cljc")) c))
         default-repo (path (home) ".local/share/cohost/cohost.cljc")
@@ -198,7 +227,9 @@
                    :else default-repo)
         bin-dir (or (:bin argv) (env "COHOST_BIN") (path (home) ".local/bin"))]
     (println "cohost install:" (name seat)
-             (trim (capture (str (q driver) (if (= seat :jank) " print-binary-version" " --version")))))
+             (trim (capture (str (q driver) (if (= seat :jank) " print-binary-version"
+                                                (if (= seat :cljr) (str " -e " (q "(print (clojure-version))"))
+                                                    " --version"))))))
     ;; 1. the checkout
     (when-not (file? (path repo "src/cohost/cli.cljc"))
       (when explicit-repo (die "no cohost checkout at " repo))
@@ -224,7 +255,8 @@
                (if (= seat :jank) "(jank only; the first build takes minutes)"
                    (if (= seat :bb) "(driven by bb; the first build takes minutes)"
                        (if (= seat :jolt) "(driven by jolt; the first build takes minutes)"
-                           "(driven by clj; the first build takes minutes)"))))
+                           (if (= seat :cljr) "(driven by ClojureCLR; the first build takes minutes)"
+                               "(driven by clj; the first build takes minutes)")))))
       (checked!
        (if (= seat :jank)
          (str "cd " (q repo) " && " (q driver) " --module-path dev/install/lib run dev/install/jank_build.cljc -- ensure")
@@ -234,9 +266,13 @@
              (str "cd " (q repo) " && " (q driver) " -Sdeps "
                   (q "{:deps {io.github.jolt-lang/crypto {:git/url \"https://github.com/jolt-lang/crypto\" :git/tag \"v0.2.0\" :git/sha \"e6981b853adc543120b785a0c29b6d7d6a10f0fe\"}}}")
                   " -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))
-             (str "cd " (q repo) " && " (q driver) " -Sdeps "
-                  (q "{:paths [\"dev/perf/shim\"]}")
-                  " -M -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")"))))))
+             (if (= seat :cljr)
+               (str "cd " (q repo) " && CLOJURE_LOAD_PATH=" (q "dev/perf/shim")
+                    " " (q driver) " -e "
+                    (q "(do (load-file \"dev/perf/clr_compat.clj\") (load-file \"dev/perf/jank_snapshot_ensure.clj\"))"))
+               (str "cd " (q repo) " && " (q driver) " -Sdeps "
+                    (q "{:paths [\"dev/perf/shim\"]}")
+                    " -M -e " (q "(load-file \"dev/perf/jank_snapshot_ensure.clj\")")))))))
       ;; 3. the command itself, compiled with jank on every seat
       (checked! (str "cd " (q repo) " && rm -rf target/install/tool && " (q jank)
                      " -O3 --module-path dev/install/lib compile cohost.tool-main --runtime dynamic --name cohost --target-dir target/install/tool"))
@@ -271,6 +307,10 @@
                     (binding [*out* *err*]
                       (println "cohost install failed:" (or (try (ex-message e) (catch Throwable _ nil)) "stopped")))
                     (System/exit 1))]
+           :cljr [(catch Exception e
+                    (binding [*out* *err*]
+                      (println "cohost install failed:" (or (try (ex-message e) (catch Exception _ nil)) "stopped")))
+                    (System.Environment/Exit 1))]
            :bb [(catch Exception e
                   (binding [*out* *err*]
                     (println "cohost install failed:" (or (try (ex-message e) (catch Exception _ nil)) "stopped")))

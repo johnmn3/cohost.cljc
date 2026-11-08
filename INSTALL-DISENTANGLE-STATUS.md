@@ -353,3 +353,71 @@ verify first whether the default CLR path even reaches it
 The four proven seats' behavior and the key do not move: any
 fix in shared code re-verifies df88adac on a proven seat
 before banking.
+
+## CLR SEAT — successor progress (~8:00–8:35 PM ET, Nov 7)
+
+Code written (this commit): dev/perf/sha256.clj rewritten with
+runtime digest dispatch; NEW dev/perf/clr_compat.clj (CLR host
+adapter, loaded only by the CLR driver); install.cljc :cljr
+arms. Walls hit and fixed in load order, each on J probes:
+
+1. **sha256.clj MessageDigest (banked proof E's wall).** The
+   file now dispatches at load by try-eval of each host's digest
+   form string: JVM arm = the original MessageDigest streaming
+   code; CLR arm = SHA256/Create + Encoding/UTF8 (`(System…/UTF8
+   .GetBytes)` chained spelling mis-parses; two-step member form
+   used). hex via string accumulation (no StringBuilder - the
+   P2 precedent; .NET spells it Append). Unit: sha256-hex "abc"
+   = ba7816bf… under bb AND under Clojure.Main. sha256.clj is
+   not keyed; the key does not move (bb smoke df88adac… after).
+2. **(catch Throwable …) in try-eval itself.** ClojureCLR
+   resolves no Throwable classname ("Unable to resolve
+   classname: Throwable" at sha256.clj compile). Changed to
+   Exception - every guarded failure (read/compile/missing
+   type) is an Exception on both hosts.
+3. **(System/getenv "JANK_BIN") in key.clj - VERIFIED a real
+   wall, worse than anticipated.** Bare System is not a type
+   under CLR ("No such namespace: System" at compile); the form
+   is a TOP-LEVEL def in the keyed key.clj (and again in
+   aot_ensure's top-level) plus (System/nanoTime) in rebuild!.
+   Keyed files cannot change. Fix in the adapter:
+   clr_compat.clj creates the System namespace and interns
+   getenv (-> System.Environment/GetEnvironmentVariable) and
+   nanoTime (Stopwatch ticks scaled to ns) BEFORE the chain
+   loads. Dotted type forms (System.Environment/…, 
+   System.Diagnostics.Process/Start) still resolve as types
+   with the shim ns present - probed. JANK_BIN will still be
+   unset in the CLR seat env, so only the compile shape mattered.
+4. **Comparator divergence (the key itself).** With 1-3 fixed
+   the CLR driver computed key d8f072c3…, not df88adac… .
+   Listing diff (clj vs clr dumps): identical (hex, path)
+   pairs, different ORDER - ClojureCLR's string compare is
+   System.String.CompareTo, CULTURE-sensitive (orders letters
+   case-insensitively first: (compare "LICENSE" "clojure") => 1
+   under CLR, -1 on the JVM seats), and the keyed input-files
+   sorts by path string. Adapter fix: clr_compat rebinds
+   clojure.core/compare for the build process - strings via
+   System.String/CompareOrdinal, all else delegates to stock.
+   After: **CLR (snapshot-key) = df88adacda69c0e2d4…** in the J
+   staging checkout. JVM-seat re-verification after all edits:
+   bb df88adac…, clj (vendored shim) df88adac….
+5. **install.cljc :cljr arms** (if-chain seat dispatch, no
+   case*): capture/sh! via ProcessStartInfo (FileName "sh",
+   Arguments "-c "+quoted; stdout redirected only for capture;
+   set! property spellings probed); env via
+   GetEnvironmentVariable; self-exe via Environment/ProcessPath
+   (Clojure.Main --version loads a file named "--version", so
+   the banner's cljr branch uses -e "(print (clojure-version))"
+   -> "1.12.6"); step 2 shells the ensure chain with the
+   vendored shim on CLOJURE_LOAD_PATH, compat loaded first;
+   the bottom catch splice gains a :cljr (System.Environment/
+   Exit 1) arm. Reader parses: bb 19 forms (same as HEAD).
+
+REMAINING (next claim): CLR install.cljc end-to-end fresh
+(banner cljr 1.12.6, install.edn :seat :cljr); proof (b) CLR
+cold build in a fresh checkout; (c) deps-new parity; (d) -e +
+battery on the CLR-built snapshot; (e) fresh-snapshot with
+bb/clojure/jolt poisoned; proof B re-run with the correct
+jank invocation (`jank run install.cljc -- --repo DIR` -
+install.cljc strips a leading "--"; the chain's proof-b.sh
+omitted it); then (f) README/guide wording.
