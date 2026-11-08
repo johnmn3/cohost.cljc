@@ -240,6 +240,42 @@ StringBuilder -- .NET spells the member Append
 pattern via string accumulation (one implementation, both
 arms); JVM key re-verified df88adac after the fix (62202e25).
 
-## State: E banked. A-D wait on a heavy-queue slot (in WAITING).
+## QUEUE RECONCILIATION (coordinator request, Nov 7 ~7:31 PM ET;
+## checked firsthand 7:32 PM ET / 00:32 UTC)
 
-NEXT: claim a slot when WAITING reaches the head; proofs A-D.
+The ants packaging lane's watch never saw this lane in WAITING
+while it holds a slot; coordinator's likely story was a WAITING
+write lost in the disk-full window. Firsthand reconciliation:
+
+- My WAITING write DID land, verified by read-back at write
+  time: the append command (23:47 UTC) printed tail -3 of
+  WAITING showing cohost-disentangle present (after
+  cleanup-sweep / ants-demo-package). Root was not at 0 free
+  then: df in the same sweep showed 9.7G avail (the parent's
+  cleanup had already landed). So on this lane's evidence the
+  entry was not a disk-full casualty.
+- The entry lived ~15 minutes. My waiter polled from 23:53 UTC
+  (slots=5 cap=5), and at 00:01:45 UTC, when slots fell to 4
+  with 1-min load 8 (< 10), it claimed slot.cohost-disentangle
+  and removed my WAITING entry -- the README claim protocol is
+  exactly "mkdir slot.<lane-id> and remove yourself from
+  WAITING." A WAITING watch that sampled after 00:01 UTC would
+  never have seen the entry; that, not a lost write, is the
+  gap the ants lane observed.
+- State at the check (00:32 UTC): WAITING has no
+  cohost-disentangle entry (removed on claim, as above);
+  slot.cohost-disentangle is mine (created 00:01 UTC); the
+  proof chain is RUNNING under it (proof A: snapshot emitted,
+  PLACEMENT 857 of 872, AOT compile in progress). Per the
+  coordinator's ruling the run finishes; the slot is not
+  released mid-proofs. run-chain.sh releases it at chain end.
+- Standing discipline adopted, per the coordinator: any
+  FURTHER claim from this lane requires a read-back-verified
+  WAITING entry first (write, read back, only then poll).
+  (The current waiter is one-shot: it exits when the chain
+  returns, so no further claim can come from it.)
+
+## State: E banked; A-D running under slot.cohost-disentangle.
+
+NEXT: chain A -> battery -> C -> B -> battery -> D -> battery;
+bank results per proof as they land.
