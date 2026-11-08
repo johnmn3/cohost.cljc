@@ -38,3 +38,31 @@ runs. Protocol for whoever fires the Grok dispatch:
 The J submission stays in place until that moment — coverage has no gap.
 Directive order for the remaining packages (same pattern): jolt next, then
 lpy; they are packaged on the coordinator's word, not preemptively.
+
+## Bank 3 — 2026-11-08 ~1:51 PM ET — redistribution executed (John's standing rule)
+
+Final J states of the five bench cells (gatekeeper done/ + results/, firsthand):
+jvm EXIT=0 (bench-clj.edn), jolt EXIT=0 (bench-jolt.edn), cljs EXIT=0
+(bench-cljs.edn), lpy EXIT=1 — FAILED on J: "Cannot run program basilisp"
+(no basilisp on J; nothing else wrong), jank RUNNING (elapsed ~13 min at
+last check — a running twin is never withdrawn or duplicated; left alone).
+By execution time NO twin was still queued (the gatekeeper had drained the
+inbox), so the withdrawal step was vacuous for every cell — recorded, not
+assumed. The bank-2 Grok twin for JVM never fired; the guard held trivially.
+
+Packages: tools/grok-bench.sh (jolt|jank|cljs|lpy) banked beside
+grok-bench-jvm.sh, same staging/guard/deliverable pattern. Dispatch fired
+for the ONE cell lacking a result: **DISPATCH #8** in the Grok mailbox
+(tip 3a245186) — bench:lpy rerun, J twin's failure + the no-other-cells
+instruction stated in the dispatch. Cells with J results keep them; their
+Grok packages stand banked unused (rerun capacity, not duplicate work).
+
+LABEL CORRECTION (matters for PERF.md): the CLJS seat's Eve is the PINNED
+v0.9.3 git dep — dev/eve-cljs/eve_paths.clj resolves the pinned checkout
+in ~/.gitlibs, NOT the sibling tree. The sibling @ e727a05837 serves the
+:eve hosting alias (cohost.memory-eve). Bank-1/board wording that paired
+the cljs bench with the sibling is superseded by this bank.
+
+NEXT: bench:report over the three banked J edns (rows for jvm/jolt/cljs);
+jank row when its J run lands; lpy row on Grok RESULT #8; then the PERF.md
+fresh section with per-seat Eve labels (cljs = v0.9.3 pinned; others as run).
