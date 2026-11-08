@@ -279,3 +279,77 @@ write lost in the disk-full window. Firsthand reconciliation:
 
 NEXT: chain A -> battery -> C -> B -> battery -> D -> battery;
 bank results per proof as they land.
+
+## PICKUP — successor lane (Nov 7, ~7:45 PM ET)
+
+Predecessor session ended after the queue reconciliation bank
+(7791857). The proof chain it left running under
+slot.cohost-disentangle RAN TO COMPLETION at 00:42 UTC and
+released the slot (slot dir gone; no run-chain process alive).
+Verdicts read firsthand from /home/john/j/cohost-disentangle/
+logs/chain.log — NOT re-run, no duplicate chain started:
+
+- **A (bb-seat reference cold build): PASS.** SNAPSHOT-BUILT
+  df88adacda69c0e2d4… in 882 s, stamp = df88adac…, `cohost -e
+  "(+ 1 2)"` printed 3 (E-RC=0), INSTALLER-RC=0. Battery on the
+  A snapshot (fresh scratch HOME): SNAPSHOT-FRESH df88adac…,
+  **219/221 + 62/62**, BATTERY-RC=0. (The 2 stock fails are the
+  standing \u-escape cases that fail identically under the
+  original bb flow — the lane's established exact bar.)
+- **D (clj-seat cold build, vendored shim, pins dropped): PASS.**
+  SNAPSHOT-BUILT df88adac… in 841 s, stamp = df88adac…,
+  INSTALLER-RC=0; emitted src tree **byte-IDENTICAL** to A's
+  (emit-diff-d.txt empty). Battery: SNAPSHOT-FRESH df88adac…,
+  **219/221 + 62/62**, BATTERY-RC=0. So P2(c) holds at full
+  strength: the changed seat reproduces the key AND the emitted
+  bytes; A is the second seat.
+- **C (standalone emit determinism on A's events.edn): bb
+  IDENTICAL, clj IDENTICAL, jolt DIFFERS — divergence
+  characterized.** Under jolt the emitter prints reader-attached
+  source metadata on :arglists vectors inside snap-native!
+  metadata maps: `:arglists ^{:line 1, :column N} ([x] …)` where
+  bb/clj print the bare vector (79 KB diff, every hunk the same
+  shape: only the arglists meta differs). Mechanism: events.edn
+  is effectively one line, so jolt's reader attaches absolute
+  columns; *print-meta* true then prints them. The JVM/bb read
+  path attaches nothing printable here. Content-equivalence is
+  unaffected (key never covered emitted bytes; the jolt seat's
+  proven builds always emitted through bb under the hood — see
+  coupling (a)), but byte-parity across emitters holds only for
+  bb/clj/jank today. This is a P1 finding, banked as such; any
+  fix must live OUTSIDE the keyed files (emitter is keyed) or be
+  an accepted, documented divergence.
+- **B (jank-seat cold build): NOT PROVEN — proof-script
+  invocation error, no product verdict.** proof-b.sh ran
+  `jank run install.cljc --repo <dir>` from a neutral cwd; jank's
+  CLI rejected it instantly ("error: Extra positional args:
+  --repo …", INSTALLER-RC=1, 0.017 s) — the installer's args
+  never reached install.cljc. The battery that followed under
+  home-b is NOT B evidence: it found no stamp and rebuilt via
+  bb's boot:jank-snapshot path (219/221 + 62/62 against a
+  bb-built snapshot). B's re-run (correct jank-seat invocation)
+  is an unproven remainder, to ride the next slot claim.
+
+## NEW MAIN CHARTER (operator order, Nov 7 ~7:42 PM ET)
+
+"Close the gap to making clj/clr a first class installer."
+ClojureCLR is a first-class seat when, at the same bar as
+jank/bb/clj/jolt: (a) install.cljc loads under ClojureCLR with
+its own :cljr arm (if-chain dispatch; the case* ban stands);
+(b) a CLR-driven COLD BUILD produces df88adac…; (c) deps-new
+parity (-Ttools line at v0.17.0/657fca6, re-run prints exactly
+the skipping message); (d) -e "(+ 1 2)" → 3 and the battery at
+219/221 + 62/62 on the CLR-built snapshot; (e) a fresh-snapshot
+proof with the other seats poisoned; (f) README + guide name
+ClojureCLR as a seat — wording only after proofs land.
+Walls in load order: (1) sha256.clj's MessageDigest (give the
+build a :cljr hashing arm via runtime dispatch inside the
+.clj file — .clj takes no reader conditionals, and sha256.clj
+is NOT keyed so the key does not move); (2) the anticipated
+(System/getenv "JANK_BIN") JVM-ism in key.clj — KEYED file:
+verify first whether the default CLR path even reaches it
+(the JANK_BIN branch fires only when JANK_BIN is set);
+(3) whatever the load finds next — loop: load, name, arm, reload.
+The four proven seats' behavior and the key do not move: any
+fix in shared code re-verifies df88adac on a proven seat
+before banking.
