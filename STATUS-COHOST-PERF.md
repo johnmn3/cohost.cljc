@@ -66,3 +66,24 @@ the cljs bench with the sibling is superseded by this bank.
 NEXT: bench:report over the three banked J edns (rows for jvm/jolt/cljs);
 jank row when its J run lands; lpy row on Grok RESULT #8; then the PERF.md
 fresh section with per-seat Eve labels (cljs = v0.9.3 pinned; others as run).
+
+## Bank 4 — 2026-11-08 ~1:56 PM ET — refresh tables banked
+
+All five J cells final: jvm/jolt/cljs/jank EXIT=0 (bench-jank.edn landed
+after bank 3 — the running twin completed on J); lpy EXIT=1 (no basilisp
+on J), rerun live as Grok DISPATCH #8. doc/PERF.md now carries the
+"Refresh — 2026-11-08" section: both bench:report tables for the four
+measured seats + boot table, every row under the section's labels (J,
+2026-11-08, hot window load ~5-6, Eve pairing stated: pin v0.9.3 / CLJS
+seat Eve v0.9.3-paired / sibling 0931 for hosting surfaces only).
+Geomeans vs JVM: JVM x1.1, jank x3.1 (new seat), CLJS x7.2, jolt x9.9.
+Flagged in the section, not laundered: the CLJS swap! cell (11,563 ms,
+x6193.8) is anomalous — calm re-run owed before citing; jank own-core
+32-bit-wrapped answers on four arithmetic cases (excluded cells, named);
+Chromium UNRUN (no playwright/chromium on J, checked). Raw edns banked
+in doc/perf/refresh-2026-11-08/ (bench-{clj,jolt,jank,cljs}-j.edn).
+NOTE (routing change, John Nov 8): queue submissions now go through the
+single job agent (~/workspace/job-agent/inbox/); DISPATCH #8 predates the
+change and finishes where it is.
+REMAINING: lpy row fill-in when Grok banks bench-lpy-grok.edn; the CLJS
+swap! calm re-run; post-pin-bump CLJS re-run (release lane owns the bump).

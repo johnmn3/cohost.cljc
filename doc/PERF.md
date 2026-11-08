@@ -490,3 +490,109 @@ when each column started). The macOS records (`doc/perf/macos/`) are the complet
    them with the doc on a branch and push it.
 
 The history of how these numbers came to be is in [`doc/perf/HISTORY.md`](perf/HISTORY.md).
+
+---
+
+## Refresh — 2026-11-08 (J, shared box, hot window)
+
+Measured 2026-11-08 on j.slaa.us through the J gatekeeper (per-host tree copies of this branch; cohost @ main a956f215). The box was under fleet load throughout (5/5 job slots busy, load ~5–6): **absolute ms are hot-window upper bounds; the ratios and geomeans are the comparable read.** The 2026-10-30 tables above were measured on a quieter box.
+
+**Eve pairing.** Cohost's Eve pin is **v0.9.3** (`76fd94c3`, deps.edn `:cljs` git dep). The new Eve (release branch 0931 @ `e727a05837`) was staged as the sibling tree for the `:eve` hosting alias, but the core bench seats do not load Eve; the CLJS seat's build carries Eve at the **pin** (`dev/eve-cljs/eve_paths.clj` resolves the pinned checkout) — its rows are Eve v0.9.3-paired. The pin bump to the new Eve is the release lane's act at ship; a post-bump CLJS re-run is the named follow-up.
+
+**Geomeans, stock core vs JVM Clojure:** cohost on JVM **×1.1** · jank **×3.1** (first appearance in this table) · CLJS Node **×7.2** · jolt **×9.9**. **Own-core ratios** (stock ÷ the host's own core): JVM ×1.1 · jank ×1.1 · jolt ×2.2 · CLJS ×2.3.
+
+### Against JVM Clojure: the stock core on each host
+
+Median ms per call; × is the stock core's time over JVM Clojure's own at the same size.
+
+| case | JVM Clojure | cohost on JVM Clojure 1.12.0 | cohost on jolt v0.8.23 | cohost on ClojureScript, Node | cohost on jank |
+|---|---:|---:|---:|---:|---:|
+| a defn called in a loop | 1.82 | 0.34 ×0.19 | 4.89 ×2.7 | 1.15 ×0.63 | 1.07 ×0.59 |
+| loop/recur arithmetic | 0.10 | 0.10 ×1.0 | 0.69 ×6.8 | 0.17 ×1.7 | 0.06 ×0.56 |
+| a ^long fn whose loop compares against the parameter | 0.11 | 0.30 ×2.7 | 0.89 ×8.3 | 0.19 ×1.7 | 0.11 ×1.1 |
+| reduce + over a range | 1.15 | 1.31 ×1.1 | 29.7 ×25.8 | 5.16 ×4.5 | 9.73 ×8.5 |
+| count, filter, map over a range | 11.6 | 14.3 ×1.2 | 114 ×9.8 | 69.4 ×6.0 | 19.7 ×1.7 |
+| transduce (comp (map inc) (filter odd?)) | 7.00 | 9.80 ×1.4 | 109 ×15.6 | 44.5 ×6.4 | 5.88 ×0.84 |
+| into [] with a map transducer | 6.06 | 6.19 ×1.0 | 225 ×37.1 | 7.63 ×1.3 | 16.0 ×2.6 |
+| reduce conj [] (persistent vector) | 10.7 | 11.9 ×1.1 | 217 ×20.2 | 101 ×9.4 | 19.5 ×1.8 |
+| conj! into a transient vector | 4.66 | 18.0 ×3.9 | 204 ×43.8 | 223 ×47.8 | 51.7 ×11.1 |
+| assoc into a map | 35.6 | 35.4 ×0.99 | 121 ×3.4 | 147 ×4.1 | 28.1 ×0.79 |
+| get from a 1,000-key map | 13.3 | 15.7 ×1.2 | 385 ×28.9 | 187 ×14.0 | 9.89 ×0.74 |
+| keyword lookup on small maps | 6.51 | 6.55 ×1.0 | 26.2 ×4.0 | 28.3 ×4.3 | 7.00 ×1.1 |
+| map destructuring in fn args | 7.83 | 10.7 ×1.4 | 376 ×48.1 | 234 ×29.8 | 28.1 ×3.6 |
+| frequencies | 30.2 | 28.6 ×0.95 | 285 ×9.5 | 216 ×7.2 | 29.1 ×0.96 |
+| group-by into 31 groups | 28.1 | 30.5 ×1.1 | 253 ×9.0 | 134 ×4.8 | 41.2 ×1.5 |
+| sort numbers | 40.7 | 42.3 ×1.0 | 168 ×4.1 | 156 ×3.8 | 20.9 ×0.51 |
+| sort-by a key of maps | 17.6 | 17.6 ×1.0 | 86.8 ×4.9 | 141 ×8.0 | 15.7 ×0.89 |
+| build a set | 22.3 | 20.3 ×0.91 | 422 ×18.9 | 86.4 ×3.9 | 19.2 ×0.86 |
+| distinct over mapcat | 76.9 | 97.3 ×1.3 | 246 ×5.3 | 405 ×5.3 | 302 ×3.9 |
+| partition 3 | 24.1 | 15.1 ×0.63 | 34.8 ×1.4 | 127 ×5.3 | 271 ×11.2 |
+| nth of a lazy iterate | 0.73 | 0.81 ×1.1 | 83.9 ×114.2 | 54.6 ×74.4 | 5.13 ×7.0 |
+| swap! an atom | 1.87 | 1.84 ×0.98 | 19.5 ×10.4 | 11563 ×6193.8 ⚠ | 12.5 ×6.7 |
+| protocol call on a record | 0.81 | 0.80 ×0.99 | 27.2 ×33.4 | 5.66 ×6.9 | 44.2 ×54.3 |
+| multimethod call | 2.58 | 4.72 ×1.8 | 189 ×73.4 | 146 ×56.5 | 11.3 ×4.4 |
+| = of two equal vectors | 3.38 | 3.67 ×1.1 | 1.09 ×0.32 | 1.80 ×0.53 | 1.84 ×0.55 |
+| apply str over numbers | 1.97 | 1.93 ×0.98 | 9.79 ×5.0 | 5.79 ×2.9 | 9.91 ×5.0 |
+| clojure.string/join | 1.29 | 1.05 ×0.81 | 10.8 ×8.4 | 3.44 ×2.7 | 46.4 ×35.9 |
+| re-seq over a string of numbers | 0.72 | 0.66 ×0.91 | 5.58 ×7.8 | 1.36 ×1.9 | 427 ×593.5 |
+| format | 4.90 | 4.99 ×1.0 | 21.1 ×4.3 | 130 ×26.5 | 477 ×97.4 |
+| pr-str of small maps | 3.04 | 6.54 ×2.2 | 27.0 ×8.9 | 32.4 ×10.7 | 2.31 ×0.76 |
+| **geometric mean** | | ×1.1 | ×9.9 | ×7.2 | ×3.1 |
+
+⚠ **Anomalous cell — do not cite:** CLJS `swap! an atom` at 11,563 ms median (own-core ×1056.5) is not a plausible steady state and is inconsistent with the rest of the CLJS column (×0.5–48). It is recorded as measured and flagged: a calm-window re-run of that cell is owed before the number is used for anything.
+
+### Each host's own core against the stock core booted on it
+
+Median ms per call: the host's own core / the stock core, and the stock core's time over the own core's.
+
+| case | JVM Clojure 1.12.0 | jolt v0.8.23 | ClojureScript, Node | jank |
+|---|---:|---:|---:|---:|
+| a defn called in a loop | 1.82 / 0.34 ×0.19 | 5.66 / 4.89 ×0.86 | 2.46 / 1.15 ×0.47 | 1.10 / 1.07 ×0.98 |
+| loop/recur arithmetic | 0.10 / 0.10 ×1.0 | 0.70 / 0.69 ×0.99 | 0.17 / 0.17 ×1.0 | - / - - |
+| a ^long fn whose loop compares against the parameter | 0.11 / 0.30 ×2.7 | 0.52 / 0.89 ×1.7 | 0.19 / 0.19 ×1.0 | - / - - |
+| reduce + over a range | 1.15 / 1.31 ×1.1 | 19.7 / 29.7 ×1.5 | 8.98 / 5.16 ×0.57 | - / - - |
+| count, filter, map over a range | 11.6 / 14.3 ×1.2 | 30.7 / 114 ×3.7 | 15.1 / 69.4 ×4.6 | 192 / 19.7 ×0.10 |
+| transduce (comp (map inc) (filter odd?)) | 7.00 / 9.80 ×1.4 | 25.6 / 109 ×4.2 | 8.69 / 44.5 ×5.1 | - / - - |
+| into [] with a map transducer | 6.06 / 6.19 ×1.0 | 67.9 / 225 ×3.3 | 7.65 / 7.63 ×1.0 | 8.87 / 16.0 ×1.8 |
+| reduce conj [] (persistent vector) | 10.7 / 11.9 ×1.1 | 54.5 / 217 ×4.0 | 40.9 / 101 ×2.5 | 20.9 / 19.5 ×0.93 |
+| conj! into a transient vector | 4.66 / 18.0 ×3.9 | 24.0 / 204 ×8.5 | 10.8 / 223 ×20.7 | 7.03 / 51.7 ×7.4 |
+| assoc into a map | 35.6 / 35.4 ×0.99 | 103 / 121 ×1.2 | 64.3 / 147 ×2.3 | 27.7 / 28.1 ×1.0 |
+| get from a 1,000-key map | 13.3 / 15.7 ×1.2 | 34.7 / 385 ×11.1 | 30.3 / 187 ×6.2 | 17.1 / 9.89 ×0.58 |
+| keyword lookup on small maps | 6.51 / 6.55 ×1.0 | 17.3 / 26.2 ×1.5 | 17.9 / 28.3 ×1.6 | 16.3 / 7.00 ×0.43 |
+| map destructuring in fn args | 7.83 / 10.7 ×1.4 | 29.2 / 376 ×12.9 | 50.2 / 234 ×4.7 | 11.5 / 28.1 ×2.5 |
+| frequencies | 30.2 / 28.6 ×0.95 | 89.9 / 285 ×3.2 | 92.7 / 216 ×2.3 | 59.5 / 29.1 ×0.49 |
+| group-by into 31 groups | 28.1 / 30.5 ×1.1 | 91.5 / 253 ×2.8 | 69.5 / 134 ×1.9 | 33.9 / 41.2 ×1.2 |
+| sort numbers | 40.7 / 42.3 ×1.0 | 92.5 / 168 ×1.8 | 48.7 / 156 ×3.2 | 27.1 / 20.9 ×0.77 |
+| sort-by a key of maps | 17.6 / 17.6 ×1.0 | 87.9 / 86.8 ×0.99 | 61.3 / 141 ×2.3 | 16.1 / 15.7 ×0.98 |
+| build a set | 22.3 / 20.3 ×0.91 | 41.5 / 422 ×10.2 | 26.2 / 86.4 ×3.3 | 19.6 / 19.2 ×0.98 |
+| distinct over mapcat | 76.9 / 97.3 ×1.3 | 200 / 246 ×1.2 | 423 / 405 ×0.96 | 256 / 302 ×1.2 |
+| partition 3 | 24.1 / 15.1 ×0.63 | 34.6 / 34.8 ×1.0 | 104 / 127 ×1.2 | 68.6 / 271 ×3.9 |
+| nth of a lazy iterate | 0.73 / 0.81 ×1.1 | 6.93 / 83.9 ×12.1 | 11.6 / 54.6 ×4.7 | 6.32 / 5.13 ×0.81 |
+| swap! an atom | 1.87 / 1.84 ×0.98 | 18.1 / 19.5 ×1.1 | 10.9 / 11563 ×1056.5 ⚠ | - / - - |
+| protocol call on a record | 0.81 / 0.80 ×0.99 | 29.2 / 27.2 ×0.93 | 7.42 / 5.66 ×0.76 | - / - - |
+| multimethod call | 2.58 / 4.72 ×1.8 | 40.6 / 189 ×4.7 | 35.8 / 146 ×4.1 | 55.8 / 11.3 ×0.20 |
+| = of two equal vectors | 3.38 / 3.67 ×1.1 | 1.06 / 1.09 ×1.0 | 1.97 / 1.80 ×0.92 | 1.79 / 1.84 ×1.0 |
+| apply str over numbers | 1.97 / 1.93 ×0.98 | 9.85 / 9.79 ×0.99 | 5.80 / 5.79 ×1.0 | 14.9 / 9.91 ×0.67 |
+| clojure.string/join | 1.29 / 1.05 ×0.81 | 11.4 / 10.8 ×0.95 | 6.43 / 3.44 ×0.53 | 2677 / 46.4 ×0.02 |
+| re-seq over a string of numbers | 0.72 / 0.66 ×0.91 | 5.60 / 5.58 ×1.0 | 1.36 / 1.36 ×1.0 | 5.65 / 427 ×75.6 |
+| format | 4.90 / 4.99 ×1.0 | 21.9 / 21.1 ×0.97 | - / - - | 5.47 / 477 ×87.1 |
+| pr-str of small maps | 3.04 / 6.54 ×2.2 | 24.8 / 27.0 ×1.1 | 36.0 / 32.4 ×0.90 | 2.82 / 2.31 ×0.82 |
+| **geometric mean** | ×1.1 | ×2.2 | ×2.3 | ×1.1 |
+| own core vs JVM Clojure (geo. mean) | ×1.0 | ×4.6 | ×3.0 | ×2.7 |
+
+Missing sides, as reported by the bench: on **jank**, the host's own core answers several arithmetic cases with 32-bit-wrapped values where the stock core answers full longs (loop/recur 1345094336 vs 39999800000; reduce + −1474936480 vs 19999900000; transduce −1794967296 vs 2500000000; swap! 704982704 vs 4999950000) and throws on protocol call on a record — those own-core cells are excluded above. On **CLJS**, the host's own core throws on `format` ("Cannot read properties of undefined (reading 'call')").
+
+### Boot (hot window — compare the October quiet-box boots with care)
+
+| host | core.clj boot (791 forms) | the twelve libraries |
+|---|---:|---:|
+| JVM Clojure 1.12.0 | 4.2 s | 4.7 s |
+| jolt v0.8.23 | 10.7 s | 7.2 s |
+| ClojureScript, Node | 12.2 s | 16.8 s |
+| jank | 56.6 s | 22.4 s |
+
+### Gaps in this refresh
+
+- **basilisp:** the J run failed before benchmarking — no `basilisp` binary on J. The rerun is executing on the Grok runner (fleet mailbox DISPATCH #8, self-contained package `tools/grok-bench.sh lpy`, installs basilisp==0.5.1); its row lands in `doc/perf/refresh-2026-11-08/bench-lpy-grok.edn` and gets folded into this section when it banks.
+- **Chromium:** UNRUN — no playwright/chromium on J (checked 2026-11-08).
+- **Raw data:** `doc/perf/refresh-2026-11-08/bench-{clj,jolt,jank,cljs}-j.edn` (this section's source, via `bb bench:report`).
