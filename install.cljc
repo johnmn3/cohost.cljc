@@ -118,11 +118,18 @@
 
 (defn- q [s] (str "'" (str/replace (str s) "'" "'\\''") "'"))
 
+;; Double-quote wrap for .NET ProcessStartInfo.Arguments (the
+;; :cljr shell arms): .NET's argument parser groups on double
+;; quotes only - single quotes are ordinary characters to it -
+;; so the sh -c payload must arrive as ONE double-quoted
+;; argument with backslashes and double quotes escaped.
+(defn- dq [s] (str "\"" (-> (str s) (str/replace "\\" "\\\\") (str/replace "\"" "\\\"")) "\""))
+
 #?(:jank (defn- capture [cmd] (cpp/cohost_install_capture_impl cmd))
    :cljr (defn- capture [cmd]
            (let [psi (System.Diagnostics.ProcessStartInfo.)]
              (set! (.FileName psi) "sh")
-             (set! (.Arguments psi) (str "-c " (q cmd)))
+             (set! (.Arguments psi) (str "-c " (dq cmd)))
              (set! (.UseShellExecute psi) false)
              (set! (.RedirectStandardOutput psi) true)
              (let [p (System.Diagnostics.Process/Start psi)
@@ -145,7 +152,7 @@
    :cljr (defn- sh! [cmd]
            (let [psi (System.Diagnostics.ProcessStartInfo.)]
              (set! (.FileName psi) "sh")
-             (set! (.Arguments psi) (str "-c " (q cmd)))
+             (set! (.Arguments psi) (str "-c " (dq cmd)))
              (set! (.UseShellExecute psi) false)
              (let [p (System.Diagnostics.Process/Start psi)]
                (.WaitForExit p)
