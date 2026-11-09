@@ -228,6 +228,38 @@
 ;; the booted core's own resolution (the battery's list ops case).
 (intern (the-ns 'basilisp.core) 'list* list-star)
 
+(defn- host-sorted-map
+  "Stock sorted-map, approximated for a host with no sorted collections:
+   entries are sorted by key at construction, then built into a plain
+   map. Construction, assoc/update, lookup and content equality behave
+   as stock; the result's iteration order is the host map's own, and a
+   later assoc does not re-sort. The consumers reached on this host --
+   http.cljc's header maps (built once, read by key) and the shim's
+   PersistentTreeMap-create (which binds the host's sorted-map at load)
+   -- build once and read by key."
+  [& kvs]
+  (when (odd? (count kvs))
+    (throw (adapter/ex* 'IllegalArgumentException "sorted-map: no value supplied for key")))
+  (into {} (sort-by first (partition 2 kvs))))
+
+(defn- host-sorted-map-by
+  [cmp & kvs]
+  (when (odd? (count kvs))
+    (throw (adapter/ex* 'IllegalArgumentException "sorted-map-by: no value supplied for key")))
+  (into {} (sort-by first cmp (partition 2 kvs))))
+
+(defn- host-sorted-set [& xs] (into #{} (sort xs)))
+(defn- host-sorted-set-by [cmp & xs] (into #{} (sort cmp xs)))
+
+;; the sorted family, interned with list*: http.cljc (compiled by the
+;; host compiler) calls (sorted-map), and the shim's
+;; PersistentTreeMap/PersistentTreeSet-create bind the host core's
+;; sorted-map/sorted-map-by/sorted-set/sorted-set-by at shim load.
+(intern (the-ns 'basilisp.core) 'sorted-map host-sorted-map)
+(intern (the-ns 'basilisp.core) 'sorted-map-by host-sorted-map-by)
+(intern (the-ns 'basilisp.core) 'sorted-set host-sorted-set)
+(intern (the-ns 'basilisp.core) 'sorted-set-by host-sorted-set-by)
+
 (def adapter
   {:name :lpy
    :core-ns 'basilisp.core
