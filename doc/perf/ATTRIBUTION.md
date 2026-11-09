@@ -321,7 +321,7 @@ unproven wherever this section has checked them; the geomean's rough
 shape (booted modestly slower overall) is not contradicted, but it
 is not evidence either — it is a sum of mostly unmeasured cells.
 
-## 5. Attribution toggles (planned; scratch patches on the bench tree only)
+## 5. Attribution toggles — results (2026-11-08)
 
 - **T1** `:multimethod-cache?` true→false on the JVM adapter (isolates
   C7's cache against the uncached shim MultiFn, calm; X3-1's hot-window
@@ -336,6 +336,104 @@ is not evidence either — it is a sum of mostly unmeasured cells.
 - **T4** multimethod against the host's real MultiFn (policy: take
   `defmulti`'s machinery from the host where possible) — prices C7
   absolutely, not just its cache.
+
+### §5 results — collected 2026-11-08 (successor seat)
+
+Collection note: T1/T2/T3 and calm2 all ran on J on 2026-11-08 (jobs
+20261108T210608–T210611, EXIT=0; every process load-gated, load1
+2.76–2.97) and sat uncollected ~7 h; the successor seat read the raw
+EDNs firsthand. Values equal on every case in every run. calm2, T1 and
+T2 ran interleaved in one window (21:17–21:26 UTC) and T3 just after
+(21:22–21:49) — comparisons inside that set share a window; calm1
+(19:41–19:50 UTC) is the earlier window. Ratios are booted ÷ plain,
+pooled over both processes per side (18 reps/side).
+
+**calm2 — transduce CONFIRMED; hinted-loop stays unconfirmed.**
+transduce: med ×4.35, min ×3.74, fully separated (booted min 2.027 >
+plain max 0.990). With calm1 (med ×2.44, min ×3.12, distributions
+touching at the edges), two calm windows put booted transduce at
+×2.4–4.4 median / ×3.1–3.7 min. **Verdict: a real loss — the lane's
+second confirmed cell.** hinted-loop: calm2's booted side is slow in
+both its processes (med 0.320/0.372) where calm1's was at parity
+(pooled med 0.097), while the plain side is steady (med 0.073/0.111)
+across both windows — the *booted* side flips between windows, not
+the window. Under this lane's discipline the cell stays
+**unconfirmed**, now with a named shape: boot-to-boot variance of the
+treated side on the hinted loop (and T3 bounds what it is not: an
+:inline loss costs ×16, not ×3.3). pr-str control behaved: min parity
+(×1.00), median ×2.11 — the calm noise floor, as designed.
+
+**T1 — the one-entry cache buys back nothing; on this pattern it
+costs.** (cache off; multimethod + pr-str.) Booted absolutes: calm1
+cache-on pooled med 10.837 (processes 10.677/10.837); T1 cache-off
+pooled med 5.775 (5.168/7.379). Within-window ratios: ×4.32 at median
+(on) → ×1.71 (off); ×5.93 → ×3.75 at min. The bench's dispatch is
+cyclic — `(mod x 3)` over a 50k reduce — so the (state, hierarchy)
+generation cell pays its derefs and identity checks on every call,
+while the per-dispatch-value method cache underneath (present in
+both arms: mf-method / mf-fast-method) does the actual remembering.
+**Reading: the cache is not the ×4.3's explanation and not its
+remedy; turning it off recovers roughly half the median gap.** The
+remainder — cache-off booted still ×1.6–2.3 per-process at median —
+is the shim MultiFn's dispatch machinery itself (a CLJC closure over
+a state atom, a find walk) against clojure.lang.MultiFn's, and is
+what T4 prices. T1 **contradicts X3-1's bench:jvm read** (cache on:
+8.49 → 7.24 ms; the comment in hosts/jvm.clj) taken under a
+different instrument; both cannot be the last word, and §7's
+legality gate must re-run the cache A/B under bench:jvm before any
+default is proposed from either. For attribution the question is
+settled: the cache does not explain the confirmed loss.
+
+**T2 — null; C5 exonerated; transduce's carrier narrows.** (aliases
+off; same window as calm2.) transduce ×4.28 med / ×4.36 min with
+aliases off vs ×4.35 / ×3.74 on: no movement. partition mins at
+parity both ways (×1.04 off, ×1.05 on); string-join mins at parity
+both ways (×0.94 off, ×1.03 on). **Verdict: C5's aggregate Var-hop
+cost is not measurable on any of its three cases; host aliases are
+not a loss carrier.** transduce's carrier is therefore inside what
+T2 does not touch: the booted reduce/transduce bodies' per-step path
+— C6 shim statics inside booted bodies, C4 chunk/reduce plumbing,
+and the xform's value-position callees (`inc`, `odd?` reached as
+booted fns per element). The deciding instrument is a case
+decomposition (identity / map-only / filter-only against the
+existing reduce-range and full transduce cases) plus the O1/O3
+toggles; the decomposition is filed as job `cohost-jvm-speed-t5`
+(patch: dev/perf/t5-transduce-decomp.patch, scratch-clone only).
+
+**T3 — :inline survival is load-bearing (C10 is a first-order
+mechanism).** (strip; the sensitivity control.) Booted medians
+collapse exactly where C10 predicts: loop-arith ×26.6 (2.796 vs
+plain 0.105), hinted-loop ×16.6 (1.725 vs 0.104), fn-call ×2.86
+(1.012 vs 0.354). The control's positive is the verdict: **any
+booted var that loses its :inline pays this class of tax on every
+loop through it**, and the production boot's `:inline-meta :keep`
+is doing first-order work. Corollary: production calm numbers for
+these cases (medians ~0.1) show no wholesale inline loss in the
+real boot — but the per-var audit (O5, §6) is now the cheapest
+high-leverage probe in the lane: a static enumeration, and a single
+lost var is a pure-loss bug.
+
+**T4 — priced in; patch authored and smoke-verified.** T1 leaves a
+×1.6–2.3 median remainder that only the dispatch machinery
+explains, so T4 runs as an authored patch, not a sed:
+dev/perf/t4-real-multifn.patch adds an adapter capability
+`:multifn-ctor` (doc + nil default in adapter.cljc); where a host
+provides it, `cohost.shim/new-MultiFn` returns the host's own
+multimethod, and the shim's MultiFn members (addMethod /
+removeMethod / getMethod / method & prefer tables / preferMethod)
+reach it through the existing host-mf? delegation via a JVM
+`:multifn-op` (hosts/jvm.clj builds a real clojure.lang.MultiFn).
+Hosts without the capability are untouched. Smoke (hatch,
+correctness only, loaded box — no numbers): full boot + the twelve
+libraries on the treated tree; the bench multimethod value exact
+(1250008333); `(instance? clojure.lang.MultiFn …)` true of a booted
+defmulti; methods / get-method / prefers correct; remove-method,
+re-add and prefer-method live; a defmethod on the host-taken
+print-method (an object this boot did not construct) dispatches.
+The patched files are byte-identical to the smoke-tested tree
+(sha256-verified). Calm measurement filed as job
+`cohost-jvm-speed-t4` (multimethod, pr-str control, fn-call as a
+boot-sanity cell); this section closes with its number.
 
 ## 6. New-opportunity hunt (planned; ranked after §4–§5 land)
 

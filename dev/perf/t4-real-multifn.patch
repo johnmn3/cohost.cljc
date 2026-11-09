@@ -1,0 +1,83 @@
+diff --git a/src/cohost/adapter.cljc b/src/cohost/adapter.cljc
+index 1eaf873..79b58e8 100644
+--- a/src/cohost/adapter.cljc
++++ b/src/cohost/adapter.cljc
+@@ -235,6 +235,7 @@
+    :sorted-comparator [['x] "the comparator a sorted collection was built with (default: compare)"]
+    :multifn?        [['x] "is x the host's own multimethod?"]
+    :multifn-op      [['mf 'op 'args] "a member operation (op :add :remove :get :table :prefer :prefers; args a vector) on a HOST multifn whose methods live in the host's own registry (jolt's): the shim's MultiFn members delegate here for such a multifn; nil where the host has none"]
++   :multifn-ctor    [['name 'dispatch-fn 'default 'hierarchy] "construct the HOST's own multimethod (the JVM's clojure.lang.MultiFn): where provided, cohost.shim/new-MultiFn returns the host object instead of the shim's own MultiFn, and the shim's members reach it via :multifn-op; nil where the host has none"]
+    ;; hooks
+    :after-eval      [['form 'ns-sym] "called after each form the boot evals (optional)"]])
+ 
+@@ -550,6 +551,7 @@ namespace cohost_err {
+     :sorted-comparator (fn [_] compare)
+     :multifn? (fn [_] false)
+     :multifn-op nil
++    :multifn-ctor nil
+     :after-eval (fn [_ _] nil)}))
+ 
+ (def required
+diff --git a/src/cohost/hosts/jvm.clj b/src/cohost/hosts/jvm.clj
+index cc7536c..c1f08db 100644
+--- a/src/cohost/hosts/jvm.clj
++++ b/src/cohost/hosts/jvm.clj
+@@ -176,6 +176,21 @@
+    :sorted-comparator (fn [x] (let [c (.comparator ^clojure.lang.Sorted x)]
+                                 (if (ifn? c) c (fn [a b] (.compare ^java.util.Comparator c a b)))))
+    :multifn? (fn [x] (instance? clojure.lang.MultiFn x))
++   ;; T4 (cohost-jvm-speed lane): the booted core's defmulti builds the
++   ;; host's own MultiFn, not the shim's — the shim's members delegate
++   ;; through :multifn-op below (its host-mf? path), and the object is
++   ;; called as the IFn it is.
++   :multifn-ctor (fn [name dispatch-fn default hierarchy]
++                   (clojure.lang.MultiFn. name dispatch-fn default hierarchy))
++   :multifn-op (fn [mf op args]
++                 (let [mf ^clojure.lang.MultiFn mf]
++                   (case op
++                     :add (do (.addMethod mf (nth args 0) (nth args 1)) mf)
++                     :remove (do (.removeMethod mf (nth args 0)) mf)
++                     :get (.getMethod mf (nth args 0))
++                     :table (.getMethodTable mf)
++                     :prefers (.getPreferTable mf)
++                     :prefer (do (.preferMethod mf (nth args 0) (nth args 1)) mf))))
+    ;; a member by name: a no-arg call is a field or a no-arg method; the
+    ;; existence check (cached per class) keeps a method's own
+    ;; IllegalArgumentException apart from "no such member"
+diff --git a/src/cohost/shim.cljc b/src/cohost/shim.cljc
+index 0e36010..2132877 100644
+--- a/src/cohost/shim.cljc
++++ b/src/cohost/shim.cljc
+@@ -67,6 +67,7 @@
+ ;; is one C++ call); nil from it, or no fn, means mf-fast-method decides
+ (def ^:private h-mm-hit (when (fn? h-mm-cache?) h-mm-cache?))
+ (def ^:private h-multifn-op (host/capability :multifn-op))
++(def ^:private h-multifn-ctor (host/capability :multifn-ctor))
+ (def ^:private h-delay? (host/capability :delay?))
+ (def ^:private h-decimal? (host/capability :decimal?))
+ (def ^:private h-uuid? (host/capability :uuid?))
+@@ -1666,7 +1667,7 @@
+         (reset! mc [st href h (if m {dv m} {})])
+         m))))
+ 
+-(def new-MultiFn
++(def new-MultiFn-shim
+   (fn [name dispatch-fn default hierarchy]
+     (let [state (atom {:name name :dispatch-fn dispatch-fn :default default :hierarchy hierarchy :methods {} :prefers {}})
+           no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))
+@@ -1700,6 +1701,15 @@
+             ([a b c] (let [dv (dispatch-fn a b c) m (mf-method state dv)] (if m (m a b c) (no-method dv))))
+             ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
+                               (if m (apply m a b c more) (no-method dv))))))))))
++;; where the host has its own multimethod (adapter :multifn-ctor; the JVM's
++;; clojure.lang.MultiFn), construction returns the host object: the shim's
++;; MultiFn members delegate to it via :multifn-op (host-mf?), and it is
++;; called as the fn it is. Other hosts build the shim's own MultiFn above.
++(def new-MultiFn
++  (fn [name dispatch-fn default hierarchy]
++    (if h-multifn-ctor
++      (h-multifn-ctor name dispatch-fn default hierarchy)
++      (new-MultiFn-shim name dispatch-fn default hierarchy))))
+ (def new-Object (fn [] (atom ::object)))
+ (def new-ExceptionInfo host/ex-info*)
+ ;; (Exception.) (Exception. msg) (Exception. cause) (Exception. msg cause)

@@ -1,0 +1,17 @@
+diff --git a/src/cohost/bench.cljc b/src/cohost/bench.cljc
+index a1349fe..bd9b10a 100644
+--- a/src/cohost/bench.cljc
++++ b/src/cohost/bench.cljc
+@@ -27,6 +27,12 @@
+     "(count (filter odd? (map inc (range %N))))"]
+    [:transduce "transduce (comp (map inc) (filter odd?))" 100000 nil
+     "(transduce (comp (map inc) (filter odd?)) + (range %N))"]
++   [:transduce-id "transduce identity xform (decomposition)" 100000 nil
++    "(transduce identity + (range %N))"]
++   [:transduce-map "transduce (map inc) only (decomposition)" 100000 nil
++    "(transduce (map inc) + (range %N))"]
++   [:transduce-filter "transduce (filter odd?) only (decomposition)" 100000 nil
++    "(transduce (filter odd?) + (range %N))"]
+    [:into-vector "into [] with a map transducer" 100000 nil
+     "(count (into [] (map inc) (range %N)))"]
+    [:conj-vector "reduce conj [] (persistent vector)" 100000 nil

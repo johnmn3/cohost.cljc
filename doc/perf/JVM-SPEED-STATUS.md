@@ -104,3 +104,36 @@ Bench legs through the job agent only. Landing is not this lane's act.
   run stands, per the job agent's done record.)
 - Next: collect t1/t2/t3 + calm2 → bank §5 verdicts → T4 patch if
   priced in → O1–O5 prototypes for the survivors → legality gate.
+
+## Bank 3 — 2026-11-08 ~23:25 ET — successor seat: collection, §5 verdicts, T4 authored + filed
+
+- Successor pickup: the previous seat went quiet after bank 2 with
+  the four filed jobs run but uncollected. All four (calm2, T1, T2,
+  T3 — jobs 20261108T210608–T210611, EXIT=0 on J) collected
+  firsthand from /home/john/j/cohost-jvm-speed-results/{calm2,t1,t2,t3}/
+  (EDNs + runs.logs; values equal on every case; load gates held,
+  load1 2.76–2.97).
+- §5 verdicts banked (ATTRIBUTION.md): **transduce CONFIRMED real
+  loss** (calm2 med ×4.35, fully separated; calm1 ×2.44) — the
+  lane's second confirmed cell. T1: the one-entry cache buys back
+  nothing (off beats on, ×4.32 → ×1.71 at median; cyclic (mod x 3)
+  dispatch; contradicts X3-1's bench:jvm read — reconciliation owed
+  at the §7 gate, not hidden). T2 null: C5 exonerated on all three
+  cases; transduce's carrier narrows to the booted reduce path
+  (C6/C4/value-position callees). T3 positive: :inline survival is
+  load-bearing (strip → loop-arith ×26.6); O5's per-var audit is
+  the cheapest high-leverage probe left. hinted-loop stays
+  unconfirmed (the booted side itself flips between windows).
+- T4 authored: dev/perf/t4-real-multifn.patch (:multifn-ctor
+  capability + JVM :multifn-op; booted defmulti builds
+  clojure.lang.MultiFn). Hatch smoke passed (boot + libraries,
+  bench value exact, every member op live incl. a defmethod on the
+  host-taken print-method); the patch was generated on J from files
+  sha256-identical to the smoke tree. Calm job filed:
+  cohost-jvm-speed-t4. Decomposition job filed alongside:
+  cohost-jvm-speed-t5 (dev/perf/t5-transduce-decomp.patch adds
+  transduce-id/-map/-filter cases on the job's clone only).
+- Next: collect t4 → close §5 with the real-MultiFn price → collect
+  t5 → §6 (O1/O3 toggles for the transduce remainder, O5 audit) →
+  legality gate (§7) incl. the cache A/B reconciliation under
+  bench:jvm.
