@@ -61,11 +61,33 @@ calm-box price.
   outage, RUNNING on J (j.slaa.us) as of 2026-11-09 ~04:00 ET.
   Column written from its result when it lands.
 
-## cc-vm / vm / vm-b columns — PENDING
+## vm column — PARTIAL (RESULT collected; EDN pull filed)
 
-- Original legs filed Wave 1 (bare-`bb` commands; VM provisioning
-  puts bb on PATH, unproven for these scripts): vm's S6 leg posted
-  as vm DISPATCH #5 (awaiting ACK at last read 2026-11-09 ~04:05
-  ET); cc-vm / vm-b legs still router-pending behind full venue
-  caps. Columns written from their RESULTs; any exit=127 names its
+- Venue + box: vm (fleet VM, root runner). Tree @ a956f21.
+- Date: 2026-11-09 ~04:12 ET (vm mailbox RESULT #5; ACK load1
+  0.00, run load ~1.03). Toolchain: bb 1.13.226 (fleet), JDK
+  21.0.12.1, node v22.23.4, jolt v0.8.23 (no jank installed).
+- Form: the original filing's bench loop; per-bench exit codes +
+  EDN verdict counts read from the RESULT. The full EDNs are
+  banked on the box only ($HOME/pm-cohost-out — the dispatch
+  named no lane branch); a read-only pull (pm3-s6vm-pull) is
+  filed, and this column's boot/libs/geomean figures are written
+  when it lands.
+- bench:jvm exit=0 — bench-clj.edn: 30 cases, 30/30 :same? true.
+- bench:cljs exit=0 — bench-cljs.edn: 29/30 :same? true; the one
+  divergence is `:format` (host :error "Cannot read properties of
+  undefined (reading 'call')") — the same format-case host error
+  as the Mac cljs column: a cohost-cljs finding, not a box fluke.
+- bench:jolt exit=1 — entry-point lookup: "Could not locate
+  cohost/run.jolt (or .clj/.cljc) on the source roots" at this
+  pin, per the runner's diagnosis (jolt v0.8.23 is installed;
+  the lookup, not the install, failed). Recorded as measured.
+- bench:jank exit=1 — jank not installed on this box (expected
+  absent-host failure, recorded as such).
+
+## cc-vm / vm-b columns — PENDING
+
+- Original legs filed Wave 1: cc-vm / vm-b legs still
+  router-pending behind full venue caps at last read.
+  Columns written from their RESULTs; any exit=127 names its
   executable and the filings are corrected from that evidence.
