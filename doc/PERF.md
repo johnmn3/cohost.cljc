@@ -1577,6 +1577,15 @@ Against the cited apt rows (X1-13 / X1-14 on their boxes), xJVM moved by more th
 gate: the slower rows are named, not established; the faster rows match the units that landed between those tips and
 `1bb5f78` (A7-1 on binary-trees, U6-12 on the hinted fib/tak, B1 on nbody's cold compile).
 
+The slower rows were then A/B'd (3 interleaved rounds, apt, the same box, load 0.6-1.1, 2026-11-08 10:19-10:48 PM ET;
+a = `7aa4e7a`, RC-2 minus B1; b = `1bb5f78`; round medians, ms, every RESULT SAME): dispatch 1250.0/1260.9/1263.5 ->
+1184.5/1199.2/1219.9; fannkuch 853.3/876.2/918.4 -> 788.3/828.5/831.5; k-nucleotide 572.7/597.9/608.1 ->
+561.1/573.5/581.4; keyword-map 405.2/412.0/423.4 -> 402.7/412.2/416.3; lazy-pipeline 131.2/133.3/136.9 ->
+135.2/145.0/170.4 (ranges overlap); nsieve 696.2/722.4/735.2 -> 707.4/729.8/738.0. RC-2 is equal or faster on all six:
+B1 is not a regression. The gap against the cited rows is the box: its JVM runs these programs 1.4-1.8x faster than
+int-a's did (nsieve 138.7 vs 253.1 ms) while jank on it runs about 1.5x slower (722 vs 461.7), so xJVM does not compare
+across boxes. The one-round figures above are this box's.
+
 ### Summary for the release (tip `e357cec`)
 
 Every number here is copied from a table below in this section, and each one names its table. The summary describes
