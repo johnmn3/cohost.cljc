@@ -469,6 +469,20 @@ currently leaves on the table:
   that lost its `:inline` between core.clj's definline and the compiled
   core is a pure-loss bug, fixable in the boot, winning on every host
   that compiles through it — the highest-leverage item if it exists.
+  **Audit run 2026-11-08 — null result, O5 closes.**
+  `dev/perf/o5_inline_audit.clj` enumerates every name core.clj
+  defines with inlining (definline forms + defn forms carrying an
+  `:inline` attr map: 93 names), boots stock core + the twelve
+  libraries, and checks each booted var's meta: **all 93 retain
+  `:inline`; none lost.** First run firsthand on hatch against the
+  T4-treated tree (the T4 patch touches MultiFn construction only,
+  not the boot's inline path); pristine-tree confirmation filed as
+  job `cohost-jvm-speed-o5`. Coverage caveat: a var whose `:inline`
+  arrives other than by definline / defn attr map (a later
+  alter-var-root, symbol-carried meta) is outside the enumeration.
+  Verdict: there is no lost-:inline bug in the booted core to
+  harvest — C10's `:keep` is intact in production, and the T3 tax
+  stands as a fragility price, not a present loss.
 
 ## 7. Legality gate + proposed landing set (appended at the end of the lane)
 

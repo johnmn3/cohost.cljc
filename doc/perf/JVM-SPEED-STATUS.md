@@ -137,3 +137,18 @@ Bench legs through the job agent only. Landing is not this lane's act.
   t5 → §6 (O1/O3 toggles for the transduce remainder, O5 audit) →
   legality gate (§7) incl. the cache A/B reconciliation under
   bench:jvm.
+
+## Bank 4 — 2026-11-08 ~23:45 ET — O5 audit: no :inline lost; O5 closes
+
+- O5 (§6) run: dev/perf/o5_inline_audit.clj (banked with this
+  entry) enumerates core.clj's 93 inline-carrying names (definline
+  + defn :inline attr maps) and checks the booted vars' meta after
+  a full boot + library load: **93 checked, :missing []** — every
+  booted var retains :inline. Firsthand run on hatch (T4-treated
+  tree; T4 does not touch the inline path); pristine-tree
+  confirmation filed as job cohost-jvm-speed-o5. §6 updated in
+  ATTRIBUTION.md: O5 closes as a null result.
+- In flight: cohost-jvm-speed-t4 (real-MultiFn price) and
+  cohost-jvm-speed-t5 (transduce decomposition), filed last bank.
+- Next: collect t4/t5/o5 -> close §5 -> §6 remainder (O1/O3 toggles
+  aimed by the t5 decomposition) -> legality gate (§7).
