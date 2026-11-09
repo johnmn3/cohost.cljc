@@ -3,8 +3,9 @@
 ## Release 2 (jank-MAX): what ships for jank
 
 This section is the docs pass of the release (D1, RELEASE-2.md). The numbers live in doc/PERF.md:
-"Summary for the release (RC-2 <sha>)" at the top of "cohost-max: unpatched and patched". This section has none of
-its own; a table below waits on the RC-2 sha.
+"Summary for the release (RC-2 `1bb5f78`)" at the top of "cohost-max: unpatched and patched": cohost on UNPATCHED apt
+jank 4.006x the JVM (geomean over the 27 timed programs, one round on RC-2 itself); the series column 1.777x / 2.341x
+over its two 15-row 3-round tables (X1-13, X1-14), not re-measured on RC-2. This section has no numbers of its own.
 
 ### Two columns and how to build each
 
@@ -46,9 +47,8 @@ sees UNPATCHED jank's 32-bit wrap; "both" means set on both binaries.
 |---|---|---|---|
 | `:cpp-twins?` | nil | true (both) | A self-recursive arity with all-`^long` parameters and a numeric body gets a C++ twin (checked `+ - *`), called under the long guard. An overflow or a non-long argument runs the arity as written (U6-12). |
 | `:native-self-calls?` | nil | PATCHED only | Typed parameters pass natively on a self-call and `:rettag` is honored (patch 20). On apt a hinted fn recurses through an untagged inner fn* instead (U6-11). |
-| `:direct-var-calls` | nil | (if A7-4 is in at the cut; this row is deleted if it is not in RC-2) | Direct same-unit calls (A7-4). |
-| `:vector-literal` | nil | off | Small vector literals emitted as one-block vectors (A7-1). The emission is off until its two battery FAILs clear. |
-| `:multimethod-invoke` | nil | (if A7-5 is in at the cut; this row is deleted if it is not in RC-2) | The multimethod hit path (A7-5). |
+| `:direct-var-calls` | nil | set (both) | A call from one defn to another defn of the same unit (not `^:dynamic` / `^:redef`, not a macro) reads the var's root and calls its fixed arity through a C++ entry instead of a var deref plus a dynamic call. The root is read at every call, so redefinition, `with-redefs` and `alter-var-root` are seen with nothing to invalidate; a thread-bound var, a variadic arity, a multimethod or an unbound var take jank's own call (A7-4; a var call 7.9-9.8 -> 6.1-6.7 ms per 1e6). |
+| `:vector-literal` | nil | apt | A data vector literal of one to four elements (with a call or an atom inside; never a parameter or destructuring vector) is built as one GC block through the extension (A7-1; jank's own literal there is three allocations: binary-trees 2623 -> 1109 ms, binary-trees-14 102 -> 36). The series keeps jank's own one-block literal. |
 | `:double-str` | nil | both | `str` / `.toString` / `Double/toString` of a double as the JVM writes it (`3.0E10`, `1.0E-4`; A5-5). |
 | `:native-long-inits` | nil | apt: `#{count}` | A `let*` local started from `count` (or from arithmetic over native longs) is a native long (U6-10). |
 | `:static-types` | nil | `:sound` (both) | The codemod infers numeric types it is certain of (U6-7). `:unit` (opt-in, `COHOST_STATIC_TYPES=unit` for the bench) also types a defn's parameters from its call sites in one unit, and is unsound outside that unit (see the key's doc). |
@@ -68,7 +68,7 @@ the adapter's keys (`:chunks`, `:natives`); stock code never names it.
 
 | block | what it makes native | binary |
 |---|---|---|
-| `cohost_rt` | Chunked seqs on jank's chunk types (`chunk_cons`, the chunked `map` and `filter`, `chunk_reduce`); the JVM's double printer (`jvm_double_into`, `double_str`); the one-block small vector (A7-1, emission off). | both. The chunk code reads the chunk through `buf()` on both builds (jank_runtime.jank:60). It compiles and boots on the series: the PATCHED boots of X1-7 and A1-2 load it. |
+| `cohost_rt` | Chunked seqs on jank's chunk types (`chunk_cons`, the chunked `map` and `filter`, `chunk_reduce`); the JVM's double printer (`jvm_double_into`, `double_str`); the one-block small vector (A7-1, on apt). | both. The chunk code reads the chunk through `buf()` on both builds (jank_runtime.jank:60). It compiles and boots on the series: the PATCHED boots of X1-7 and A1-2 load it. |
 | `cohost_leaf` | The leaves: a sort result walked linearly (`sorted_seq`; apt's `native_vector_sequence` restarts at index 0 and walks quadratically), and `nth`, `count`, `get`, `conj` and a vector's `assoc` in one C++ call each (A4, A6-3). | the sort fix on apt only (the series' patch 11 makes it unneeded, and the block chooses at compile time from the header's shape, per its comment at jank_runtime.jank:294-300; not probed separately); the rest on both |
 | `cohost_num` | `+ - *` of two integers in i64, checked, with nil on overflow so the shim throws `ArithmeticException` (A5). | apt (when the boot probe sees the 32-bit wrap) |
 | `cohost_assoc` | `assoc` of keys and values on a vector, with one bounds check (`oob`). | both |
@@ -77,7 +77,7 @@ the adapter's keys (`:chunks`, `:natives`); stock code never names it.
 | `cohost_sort` | `sort` with the host's compare when the comparator is the stock `compare` (X4-1). | both |
 | `cohost_json` (A6-2) | `map?` / `vector?` through a guarded jank op, `(int c)` of a char and `nil?` inline: the json program's per-operation costs. | both |
 | A6-4 | `get-in` / `assoc-in` / `update-in` in one walk over cohost's own `get` and `assoc`. | both |
-| A7-3 | (if it is in at the cut; this row is deleted if it is not in RC-2) | |
+| A7-3 (`=` at the call head; an expansion in `jank_host.jank`, not a `cpp/raw` block) | The 2-arity `=` with an integer-literal side compares a host long by native `==`; any other operand pair calls `jank::runtime::equal` inline (no var deref, no dynamic call), so `(= 3.0 3)` stays false; a collection-literal operand keeps the call; `=` as a value and the 1- and 3+-arities are unchanged. k-nucleotide -5.6%, dispatch -5.9%, `bb bench:jank` equality x1.65 -> x1.46. | apt only (the series' patch 13 inlines `=` itself, and the bare `equal` call does not compile there) |
 
 ### Known gaps (the board's list)
 
@@ -93,11 +93,13 @@ the adapter's keys (`:chunks`, `:natives`); stock code never names it.
 - **The twins' limits:** `^long` only, no `let`, no calls of other vars.
 - **`GC_INITIAL_HEAP_SIZE` of 2G or more:** clamped (above). The limit lies between 1.5G and 2G.
 
-### Numbers (wait on RC-2)
+### Numbers (RC-2 `1bb5f78`)
 
-The release's tables are doc/PERF.md's summary on the RC-2 sha: the 28-row geomeans on one tip, startup on each
-binary's snapshot, and the per-program table. When the coordinator names the sha, this line becomes a pointer to that
-summary with its headline figures.
+The release's tables are doc/PERF.md "Summary for the release (RC-2 `1bb5f78`)": cohost on UNPATCHED apt jank
+**4.006x the JVM** (geomean over the 27 timed programs, one round on RC-2 itself, every RESULT SAME; 4.343 over all 28
+with first-output); the PATCHED column is cited from X1-13 (1.777x over 15 rows on `ec07bac`) and X1-14 (2.341x over 15
+rows on `22b2b88`), not re-measured on RC-2 (the series lane was spun down before the cut). Startup, apt, RC-2:
+first-output 25127 ms on the coordinator's box.
 
 ## Type hints (H0)
 

@@ -1522,6 +1522,61 @@ The jank-MAX fleet's scoreboard in two columns: UNPATCHED is apt jank 0.1-noble 
 (`JANK_BIN=/home/user/int-a/jank-inst/bin/jank`; the launcher's 512M applies there too). x1 writes the programs
 table under this heading (X1-5); the `bb bench:jank` table is below (X1-5b).
 
+### Summary for the release (RC-2 `1bb5f78`)
+
+RC-2 is max/main `1bb5f78`, the tree cohost `main` took for release 2 (2026-11-03). Its gates: JVM boot 216/216 +
+62/62; jank on UNPATCHED apt 0.1-noble 514 stock / 171 host / 28 natives / 78 skipped / 0 errors, battery 214/216 (the
+two pre-existing non-ASCII rows) + 62/62; cljs 214/216 + 62/62; the arithmetic probe pair 2.9 / 2.3 ms. The table
+below is the ONE apt round the coordinator ran on `1bb5f78` itself (the coordinator's cloud box, shared, no load gate,
+2026-11-03 9:48-10:12 AM ET; the JVM once, first; every row RESULT SAME). The PATCHED column is NOT re-measured on
+`1bb5f78`: the series lane (int-b) was spun down at 9:12 AM ET, before the cut, and the coordinator's box has no series
+build. Its cells are cited from the 3-round tables below on earlier tips of the same lineage and name their run: [13]
+X1-13 on `ec07bac` (int-b's box), [13sn] the post-A5-7 spectral-norm cell on `f9b77a1` (int-b's box), [14] X1-14 on
+`22b2b88` (int-a's box). Each PATCHED xJVM is against its own run's JVM. Units merged after those tips (U6-12 twins,
+A7-1 small vectors, A7-3 `=`, A7-4 direct calls, B1, B2) are in the apt column only.
+
+**Headline.** cohost on UNPATCHED apt jank, RC-2 `1bb5f78`, one round: geomean xJVM **4.006** over the 27 timed
+programs (4.343 over all 28 with first-output). The series column's last 3-round figures: **1.777** over X1-13's 15
+rows (`ec07bac`) and **2.341** over X1-14's 15 rows (`22b2b88`); no 28-row series geomean exists on one tip.
+
+**Startup.** first-output on `1bb5f78`, apt, this box: 25127 ms (22837-26582); the JVM's 656 ms. (X1-14 measured
+13096.5 ms apt / 18205.6 PATCHED on int-a's box; this box is slower on every row, so compare ratios, not ms.)
+
+| program | jvm (this run) | UNPATCHED ms (min-max), `1bb5f78`, 1 round | xJVM | PATCHED ms (xJVM) cited, 3 rounds |
+|---|---:|---:|---:|---:|
+| fib | 139.7 | 241.1 (220.4-267.4) | x1.73 | 64.0 (x0.65) [13] |
+| fib-hinted | 104.9 | 94.8 (92.1-101.8) | x0.90 | 65.5 (x1.02) [13] |
+| tak | 322.4 | 761.5 (715.9-803.4) | x2.36 | 110.9 (x0.51) [13] |
+| tak-hinted | 214.7 | 222.3 (211.4-230.6) | x1.04 | 113.4 (x0.94) [13] |
+| nbody | 213.1 | 1069.6 (1013.4-1159.6) | x5.02 | 578.9 (x3.91) [13] |
+| nbody-hinted | 202.6 | 1006.9 (953.5-1071.8) | x4.97 | not in X1-13 / X1-14 |
+| spectral-norm | 223.7 | 837.5 (806.8-979.0) | x3.74 | 339.2 (x2.05) [13sn] |
+| spectral-norm-hinted | 140.4 | 1236.9 (1188.3-1300.2) | x8.81 | 412.9 (x3.89) [13sn] |
+| mandelbrot | 219.2 | 480.7 (454.3-496.6) | x2.19 | 238.1 (x1.60) [13] |
+| mandelbrot-hinted | 222.5 | 515.4 (494.5-537.9) | x2.32 | 224.9 (x1.55) [13] |
+| binary-trees | 288.2 | 1366.5 (1255.9-1487.0) | x4.74 | 609.1 (x2.33) [14] |
+| binary-trees-hinted | 273.1 | 1410.8 (1292.0-1489.6) | x5.17 | 774.0 (x2.47) [14] |
+| binary-trees-14 | 10.8 | 47.7 (46.6-83.6) | x4.42 | 20.0 (x2.41) [14] |
+| binary-trees-14-hinted | 11.7 | 49.2 (46.7-93.3) | x4.20 | 21.1 (x3.58) [14] |
+| sum-overflow | 16.8 | 30.9 (29.9-65.0) | x1.84 | 5.2 (x0.51) [13] |
+| sum-overflow-hinted | 0.6 | 8.4 (6.0-8.8) | x14.07 | 2.5 (x4.17) [13] |
+| sort | 37.2 | 45.7 (36.7-78.7) | x1.23 | 28.1 (x0.92) [13] |
+| lazy-pipeline | 28.7 | 181.5 (126.7-325.0) | x6.32 | 36.8 (x1.35) [13] |
+| keyword-map | 96.0 | 469.2 (416.2-556.7) | x4.89 | 289.3 (x2.40) [14] |
+| fannkuch | 150.2 | 1011.1 (863.4-1101.0) | x6.73 | 525.6 (x2.61) [14] |
+| fannkuch-hinted | 166.1 | 950.8 (810.2-1150.2) | x5.72 | 514.3 (x2.20) [14] |
+| nsieve | 152.1 | 894.0 (804.2-1166.0) | x5.88 | 297.4 (x1.18) [14] |
+| nsieve-hinted | 170.2 | 734.2 (661.7-978.1) | x4.31 | 295.7 (x1.49) [14] |
+| k-nucleotide | 130.5 | 657.3 (563.9-815.1) | x5.04 | 420.5 (x2.14) [14] |
+| pipeline | 153.1 | 1101.8 (944.7-1270.5) | x7.20 | 540.5 (x5.56) [13] |
+| dispatch | 138.7 | 1457.6 (1264.2-1748.2) | x10.51 | 352.4 (x1.85) [14] |
+| json | 243.6 | 1718.6 (1500.3-2177.0) | x7.06 | 748.5 (x4.58) [13] |
+| first-output | 656.2 | 25126.9 (22836.5-26581.8) | x38.29 | 18205.6 (x12.85) [14] |
+
+Against the cited apt rows (X1-13 / X1-14 on their boxes), xJVM moved by more than 20% on: faster — fib-hinted x4.48 -> x0.90; tak-hinted x8.51 -> x1.04; spectral-norm x4.91 -> x3.74; mandelbrot x4.03 -> x2.19; mandelbrot-hinted x3.94 -> x2.32; binary-trees x18.16 -> x4.74; binary-trees-hinted x12.88 -> x5.17; binary-trees-14 x18.01 -> x4.42; binary-trees-14-hinted x23.54 -> x4.20; slower — sort x0.97 -> x1.23; lazy-pipeline x4.14 -> x6.32; keyword-map x2.83 -> x4.89; fannkuch x4.89 -> x6.73; fannkuch-hinted x3.91 -> x5.72; nsieve x1.82 -> x5.88; nsieve-hinted x2.38 -> x4.31; k-nucleotide x2.31 -> x5.04; dispatch x6.05 -> x10.51. One round on a different, shared box without the load
+gate: the slower rows are named, not established; the faster rows match the units that landed between those tips and
+`1bb5f78` (A7-1 on binary-trees, U6-12 on the hinted fib/tak, B1 on nbody's cold compile).
+
 ### Summary for the release (tip `e357cec`)
 
 Every number here is copied from a table below in this section, and each one names its table. The summary describes
