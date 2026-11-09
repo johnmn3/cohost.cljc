@@ -152,3 +152,33 @@ Bench legs through the job agent only. Landing is not this lane's act.
   cohost-jvm-speed-t5 (transduce decomposition), filed last bank.
 - Next: collect t4/t5/o5 -> close §5 -> §6 remainder (O1/O3 toggles
   aimed by the t5 decomposition) -> legality gate (§7).
+
+## Bank 5 — 2026-11-09 ~00:35 ET — t4/t5/o5 queue-blocked on J; collection instructions
+
+- State: jobs cohost-jvm-speed-t4 (20261109T041522), -t5
+  (20261109T041524), -o5 (20261109T041725) were routed to J and
+  sha-verified into ~/j-queue/inbox; they were claimed once and
+  returned to the inbox unstarted, and at this bank they have sat
+  ~55 min behind the fleet-wide restaffing storm (J load1 > 4,
+  inbox ~24 deep, slots held by long jobs). No result dirs exist
+  yet (/home/john/j/cohost-jvm-speed-results/{t4,t5,o5}/ absent —
+  checked, not assumed). The filings are valid; this is congestion,
+  not a defect. They stay filed.
+- COLLECTION (whoever picks this up): when the jobs land in
+  ~/workspace/job-agent/done/, read the EDNs at
+  /home/john/j/cohost-jvm-speed-results/{t4,t5}/ (medians + mins,
+  pooled per side, values equal per case — the parser used for
+  banks 3-4 is a ~30-line EDN-lite regex over :per-call-ms/:case)
+  and o5/audit.log (summary line must read :checked 93,
+  :missing []). Then: t4's multimethod ratio closes §5 (the
+  real-MultiFn price; compare calm1 ×4.32 / T1-off ×1.71);
+  t5's decomposition aims §6 (whichever of transduce-id/-map/
+  -filter carries the ×4 names the O1/O3 target — :core-value-
+  aliases for the xform callees if map/filter arms carry it,
+  direct-statics/C6 if the identity arm carries it); o5 closes
+  its confirmation line in bank 4. Then §7: JVM battery + library
+  suite on the T4-treated tree, the cache A/B re-run under
+  bench:jvm (the T1/X3-1 instrument conflict), and the ranked
+  landing set.
+- Banks this seat: 3 (§5 verdicts + T4/T5 patches), 4 (O5 audit +
+  verdict), 5 (this note). Branch tip at this bank = this commit.
