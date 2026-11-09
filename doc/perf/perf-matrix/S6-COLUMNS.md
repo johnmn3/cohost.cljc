@@ -85,6 +85,25 @@ calm-box price.
 - bench:jank exit=1 — jank not installed on this box (expected
   absent-host failure, recorded as such).
 
+## S6-lpy cell (list-star tip 6754b40a) — Grok run collected (tail-verified)
+
+- Venue + box: Grok runner box. Tree: cohost.cljc @ 6754b40a
+  (the list-star fix tip — the S6-lpy pin, not a956f21).
+- Date: 2026-11-09 04:19:56 ET (Grok mailbox RESULT #69, rc=0).
+- bench:lpy EDN (tail quoted in the RESULT; full log on the box
+  at /workspace/jobs/vol/runner/d69/out.log): boot-ms 51,225;
+  the 19 complete cases in the quoted tail are all :same? true,
+  geomean host÷stock 0.38 over those 19. The EDN head
+  (fn-call..map-lookup, libs-ms, the bench exit line) is cut off
+  in the RESULT; a read-only pull (pm3-s6lpy-grok-pull) is
+  filed and this cell is completed from it. The map-lookup
+  case's host entry ends in "…exceeded" at the cut — recorded
+  as cut, not interpreted.
+- Other S6-lpy venues: vm leg posted (vm DISPATCH #6);
+  cc-vm / vm-b legs router-pending; J BLOCKED (no basilisk
+  binary on J — standing record); Mac = the lpy lane's own
+  record at this tip lineage.
+
 ## cc-vm / vm-b columns — PENDING
 
 - Original legs filed Wave 1: cc-vm / vm-b legs still
