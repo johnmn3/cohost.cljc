@@ -1,5 +1,104 @@
 # jank
 
+## Release 2 (jank-MAX): what ships for jank
+
+This section is the docs pass of the release (D1, RELEASE-2.md). The numbers live in doc/PERF.md:
+"Summary for the release (RC-2 <sha>)" at the top of "cohost-max: unpatched and patched". This section has none of
+its own; a table below waits on the RC-2 sha.
+
+### Two columns and how to build each
+
+- **UNPATCHED** is jank 0.1-noble from jank's apt repository, as it ships: `bash dev/install/jank.sh`. cohost runs
+  it by default (`jank` on PATH).
+- **PATCHED** is jank `f3d82d65` plus cohost's patch series (`upstream/jank/patches/series`, the drafts in
+  `doc/upstream/`). Build it from cohost's root with `bash dev/install/jank-src.sh` (once: dependencies, the LLVM
+  prefix, the clone, configure, build, install into `/usr/local/lib/jank-dev`). After the series changes, rebuild
+  with `bash dev/install/jank-src.sh --patches`; that rebuilds only what changed, and starts phase 1 fresh when any
+  file changed. Select it with `JANK_BIN=/usr/local/lib/jank-dev/bin/jank`.
+- **What follows JANK_BIN:** every jank task (`bb boot:jank`, `bb boot:jank-snapshot`, `bb bench:jank`,
+  `bb bench:programs jank`). `bin/cohost` does not: it always runs the `jank` on PATH (bin/cohost:257).
+- **Per-binary caches:** a JANK_BIN binary has its own AOT objects under `target/jank-aot-<sha256 of the
+  binary's real path, 12 hex>`, whose stamp also records the binary's version, size and mtime
+  (dev/perf/jank_aot_ensure.clj). Its snapshot is under `target/jank-snapshot-<the same hash>`, keyed by the
+  binary's version, path, size and mtime (dev/perf/jank_snapshot_key.clj). With no JANK_BIN, the roots are the
+  plain `target/jank-aot` and `target/jank-snapshot`. Build a binary's snapshot once with `bb boot:jank-snapshot`;
+  after that, its boots and benches load it.
+- **Locale:** run jank and its build under `LC_ALL=C.UTF-8`. Under the C locale jank's lexer rejects non-ASCII
+  string literals.
+
+### The collector environment (A1, A1-3)
+
+- **The default:** cohost's launcher (`dev/perf/jank_gc_env.clj`) gives every jank process it starts
+  `GC_INITIAL_HEAP_SIZE=512M`. That covers `bb.edn`'s jank tasks, `bench:programs`' cohost-on-jank target and
+  `bin/cohost`.
+- **Overrides:** a `GC_*` variable the user sets wins, key by key, and `COHOST_JANK_GC=none` sets nothing.
+- **The 2G clamp:** an initial heap of 2G or more breaks every cohost program on both binaries; jank's JIT cannot
+  link `cohost/hosts/jank_host.o` ("relocation ... out of range of Delta32 fixup"). So a user's value at or above 2G
+  (`2G`, `2048M`, `4g`, bytes) is clamped to `1G`, with one line on stderr. `COHOST_JANK_GC=none` passes it through.
+- **The measurements:** the A1 and A1-2 sections of doc/PERF.md.
+
+### The adapter keys this release adds
+
+Each key is in `src/cohost/adapter.cljc`'s key table with its full contract. "apt" means set only when the boot probe
+sees UNPATCHED jank's 32-bit wrap; "both" means set on both binaries.
+
+| key | default | jank | what it does |
+|---|---|---|---|
+| `:cpp-twins?` | nil | true (both) | A self-recursive arity with all-`^long` parameters and a numeric body gets a C++ twin (checked `+ - *`), called under the long guard. An overflow or a non-long argument runs the arity as written (U6-12). |
+| `:native-self-calls?` | nil | PATCHED only | Typed parameters pass natively on a self-call and `:rettag` is honored (patch 20). On apt a hinted fn recurses through an untagged inner fn* instead (U6-11). |
+| `:direct-var-calls` | nil | (if A7-4 is in at the cut; this row is deleted if it is not in RC-2) | Direct same-unit calls (A7-4). |
+| `:vector-literal` | nil | off | Small vector literals emitted as one-block vectors (A7-1). The emission is off until its two battery FAILs clear. |
+| `:multimethod-invoke` | nil | (if A7-5 is in at the cut; this row is deleted if it is not in RC-2) | The multimethod hit path (A7-5). |
+| `:double-str` | nil | both | `str` / `.toString` / `Double/toString` of a double as the JVM writes it (`3.0E10`, `1.0E-4`; A5-5). |
+| `:native-long-inits` | nil | apt: `#{count}` | A `let*` local started from `count` (or from arithmetic over native longs) is a native long (U6-10). |
+| `:static-types` | nil | `:sound` (both) | The codemod infers numeric types it is certain of (U6-7). `:unit` (opt-in, `COHOST_STATIC_TYPES=unit` for the bench) also types a defn's parameters from its call sites in one unit, and is unsound outside that unit (see the key's doc). |
+| `:core-value-aliases` | {} | both | A stock core fn used as a value (`(map inc xs)`) is emitted as jank's own where its semantics are the stock fn's (probe per name). |
+| `:core-expansions` | {} | both | A call of a stock core fn becomes a guarded host form (`mod`, `odd?`/`even?`, `map?`/`vector?` for json). |
+| `:int-op-aliases` | {} | apt | `+ - *` of two untyped operands is jank's promoting op inline, with the shim's checked call only when two integers overflow (A5-3). |
+| `:exception-class` | (fn) | both | Native overflow messages map to `ArithmeticException`, so `(catch ArithmeticException ...)` sees them (A5-4). |
+
+`:multimethod-cache?` (the shim's MultiFn with a one-entry cache; jank sets a `cpp/raw` hit check) is older: it
+came with X2-1 (`465f2b6`), which is already in the previous cut (`6bd1472`), so it is not in this release's table.
+
+### The extension's blocks
+
+C++ in `cpp/raw` blocks that unpatched jank compiles through its own interop when cohost boots
+(`src/cohost/hosts/jank_runtime.jank`, `jank_host.jank`). jank's tree is untouched, and everything is reached behind
+the adapter's keys (`:chunks`, `:natives`); stock code never names it.
+
+| block | what it makes native | binary |
+|---|---|---|
+| `cohost_rt` | Chunked seqs on jank's chunk types (`chunk_cons`, the chunked `map` and `filter`, `chunk_reduce`); the JVM's double printer (`jvm_double_into`, `double_str`); the one-block small vector (A7-1, emission off). | both. The chunk code reads the chunk through `buf()` on both builds (jank_runtime.jank:60). It compiles and boots on the series: the PATCHED boots of X1-7 and A1-2 load it. |
+| `cohost_leaf` | The leaves: a sort result walked linearly (`sorted_seq`; apt's `native_vector_sequence` restarts at index 0 and walks quadratically), and `nth`, `count`, `get`, `conj` and a vector's `assoc` in one C++ call each (A4, A6-3). | the sort fix on apt only (the series' patch 11 makes it unneeded, and the block chooses at compile time from the header's shape, per its comment at jank_runtime.jank:294-300; not probed separately); the rest on both |
+| `cohost_num` | `+ - *` of two integers in i64, checked, with nil on overflow so the shim throws `ArithmeticException` (A5). | apt (when the boot probe sees the 32-bit wrap) |
+| `cohost_assoc` | `assoc` of keys and values on a vector, with one bounds check (`oob`). | both |
+| `cohost_obj` | cohost instances (records, deftypes) as jank objects with a descriptor: `count`, `conj`, `assoc`, `dissoc`, `nth`, `meta` and protocol dispatch through it. | both |
+| `cohost_reduce` | `reduce` with an init over a range or a vector without jank's per-element seq step; `into`, `transduce`, `frequencies` and `group-by` over it (X4-1, A7-2). | both (apt's walk, or jank's own on the series) |
+| `cohost_sort` | `sort` with the host's compare when the comparator is the stock `compare` (X4-1). | both |
+| `cohost_json` (A6-2) | `map?` / `vector?` through a guarded jank op, `(int c)` of a char and `nil?` inline: the json program's per-operation costs. | both |
+| A6-4 | `get-in` / `assoc-in` / `update-in` in one walk over cohost's own `get` and `assoc`. | both |
+| A7-3 | (if it is in at the cut; this row is deleted if it is not in RC-2) | |
+
+### Known gaps (the board's list)
+
+- **pr/print of doubles inside collections:** jank's printer. `str` of a double is the JVM's (A5-5).
+- **The reader's Long/MIN literal.**
+- **The chunked filter:** it realizes its first chunk one element short (15 against 16) while its source continues.
+  The chunked map is exact.
+- **Two non-ASCII battery rows** ("subs count nth first last butlast", "Character outside ASCII") fail on both
+  binaries. jank's strings are byte-based under the C locale.
+- **binary-trees:** the remaining cost is jank's own allocator.
+- **dispatch on apt:** the checked arithmetic.
+- **The hinted twins' remaining PATCHED gap.**
+- **The twins' limits:** `^long` only, no `let`, no calls of other vars.
+- **`GC_INITIAL_HEAP_SIZE` of 2G or more:** clamped (above). The limit lies between 1.5G and 2G.
+
+### Numbers (wait on RC-2)
+
+The release's tables are doc/PERF.md's summary on the RC-2 sha: the 28-row geomeans on one tip, startup on each
+binary's snapshot, and the per-program table. When the coordinator names the sha, this line becomes a pointer to that
+summary with its headline figures.
+
 ## Type hints (H0)
 
 Measured 2026-11-01 ET on jank `0.1-noble` (`jank compiler jank-0.1-alpha`). Raw jank, no cohost code.
