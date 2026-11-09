@@ -104,3 +104,50 @@ under the new protocol:
   release lane has not bumped yet).
 - Workstream 2's verification legs were executed and banked (banks 1-2)
   before the protocol existed; completed work is not resubmitted.
+
+## Bank 6 — 2026-11-08 ~11:15 PM ET — SUCCESSOR CLOSE-OUT (lane closed)
+
+The two legs left hanging at bank 5 are collected and verdicted
+firsthand; the lane closes with this bank as its committed half of the
+double declaration.
+
+- DISPATCH #8 (bench:lpy on Grok) COLLECTED from the mailbox on its
+  fetched tip (atom.broker lane-m/grok-mailbox @ d0af17f, RESULT #31
+  tip): ACK #8 2026-11-08 14:36:06 EST; RESULT #8 14:37:01 superseded
+  by RESULT #8 (final) 14:38:30 EST — STOP: failed twice the same way,
+  basilisp 0.5.1 cannot resolve 'list*' (src/cohost/thread.cljc:738,
+  future-form macro), no bench edn. Diagnosis banked on this branch
+  @ 4a9a9e62 as doc/perf/refresh-2026-11-08/bench-lpy-grok.log (read
+  firsthand: CompilerException at macroexpansion; bb bench:lpy rc=1).
+- Mac re-run FILED via the job agent and COLLECTED: first filing
+  (inbox/cohost-perf-refresh-lpy-mac-rerun.json) was held unrun by the
+  router — its run string led with `export`, which the router's
+  exact-command check rejects; it never dispatched anywhere. Corrected
+  filing (…-rerun2.json, run led by `git clone … && env PATH=… bash
+  tools/grok-bench.sh lpy`) routed to the Mac and was couriered as Mac
+  mailbox DISPATCH #4: ACK #4 23:07 ET (load1 1.59), RESULT #4 23:08 ET
+  — STOPPED, verbatim: CompilerException: unable to resolve symbol
+  'list*' {:file src/cohost/thread.cljc, :line 738, :phase :analyzing}
+  / macroexpansion :line 732; bench end rc=1; NO_DELIVERABLE; EXIT=4;
+  no installs attempted. Second venue, identical mode.
+- VERDICT (the lpy row): no basilisp number exists on basilisp 0.5.1.
+  doc/PERF.md's refresh-section basilisp entry now carries this verdict
+  with the mechanism and both RESULT pointers instead of the stale
+  "rerun is executing" text. The defect is cohost-on-basilisp (0.5.1
+  does not resolve `list*`), owned by the basilisp/lpy line's walls —
+  not a bench defect and not a venue defect. J (no binary), Grok, and
+  the Mac each failed for their own first reason and the same second
+  one; there is no fourth venue with a different basilisp to try.
+- CLJS calm re-run: DONE in the job-agent store (done record
+  20261108T191202-jobagent-cohost-cljs-calm, routed to J, state
+  "done — EXIT=0"); its products bench-cljs-grok.edn/.log are banked in
+  doc/perf/refresh-2026-11-08/ on this branch.
+- CLJS post-pin-bump re-run: VERIFIED PARKED, not forced. Job-agent
+  store holds it at jobs/held-cohost-perf-refresh-cljs-postbump.json,
+  routing state "held — awaits Eve pin bump" (routed 2026-11-08
+  14:12 ET). The pin was verified unchanged at close-out on this
+  branch's own deps.edn (:cljs eve/eve :git/sha
+  76fd94c3dc541a1e915d6759652114c9f6b392a8). It fires only when the
+  release lane bumps the pin at the Eve ship; its run self-exits
+  PIN_NOT_BUMPED until then, by design.
+- Ops card closed in step with this bank. LANE CLOSED.
