@@ -218,6 +218,16 @@
   ([x y] (cons x y))
   ([x y & more] (cons x (apply list-star y more))))
 
+;; basilisp.core has no list* at all, and basilisp's own compiler needs
+;; the name before the booted core exists: cohost.thread is compiled by
+;; the host compiler (cohost.shim requires it), and its future-macro's
+;; body calls list*. Intern ours into basilisp.core at adapter load --
+;; cohost.run requires hosts.auto (this file) before cohost.boot loads
+;; the shim, so the var is in place before cohost.thread compiles. The
+;; :core-extras entry below is the same fn through the boot's door, for
+;; the booted core's own resolution (the battery's list ops case).
+(intern (the-ns 'basilisp.core) 'list* list-star)
+
 (def adapter
   {:name :lpy
    :core-ns 'basilisp.core
