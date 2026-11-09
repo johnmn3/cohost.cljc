@@ -1,0 +1,33 @@
+cohost.boot on jolt: 791 top-level forms
+  booted as stock: 466   from host: 199   natives: 63   skipped: 63   errors: 0
+bench on jolt: median ms per call, the host's own core vs the stock core
+  fn-call  host 0.66  stock 0.58  x0.87
+  loop-arith  host 0.21  stock 0.21  x1.0
+  hinted-loop  host 0.16  stock 0.24  x1.46
+  reduce-range  host 1.72  stock 1.91  x1.1
+  lazy-pipeline  host 2.2  stock 8.89  x4.04
+  transduce  host 2.59  stock 9.04  x3.48
+  into-vector  host 5.09  stock 14.16  x2.77
+  conj-vector  host 4.44  stock 14.11  x3.17
+  transient-vector  host 2.07  stock 12.74  x6.15
+  assoc-map  host 9.56  stock 15.38  x1.6
+  map-lookup  host 4.93  stock 30.92  x6.26
+  keyword-lookup  host 2.17  stock 2.13  x0.98
+  destructure  host 3.1  stock 27.09  x8.72
+  frequencies  host 11.85  stock 26.17  x2.2
+  group-by  host 9.03  stock 23.42  x2.59
+  sort  host 11.73  stock 19.48  x1.66
+  sort-by  host 10.8  stock 10.83  x1.0
+  set-build  host 5.68  stock 33.97  x5.97
+  distinct  host 25.66  stock 25.69  x1.0
+  partition  host 4.01  stock 4.03  x1.0
+  lazy-iterate  host 0.8  stock 7.59  x9.37
+  atom-swap  host 2.1  stock 1.94  x0.92
+  protocol  host 2.69  stock 2.7  x1.0
+  multimethod  host 4.29  stock 10.3  x2.4
+  equality  host 0.28  stock 0.28  x0.99
+  str-build  host 1.07  stock 1.08  x1.0
+  string-join  host 1.27  stock 1.25  x0.98
+  regex  host 0.64  stock 0.64  x0.99
+  format  host 1.99  stock 1.99  x0.99
+  pr-str  host 2.42  stock 2.41  x0.99

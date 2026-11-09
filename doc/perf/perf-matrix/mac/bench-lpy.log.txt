@@ -1,0 +1,518 @@
+Traceback (most recent call last):
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 427, in exec_module
+    self._exec_cached_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 325, in _exec_cached_module
+    cache_data = self.get_data(cache_filename)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 218, in get_data
+    with open(path, mode="r+b") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/__pycache__/run.cpython-312.lpyc'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 427, in exec_module
+    self._exec_cached_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 325, in _exec_cached_module
+    cache_data = self.get_data(cache_filename)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 218, in get_data
+    with open(path, mode="r+b") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/__pycache__/boot.cpython-312.lpyc'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 427, in exec_module
+    self._exec_cached_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 325, in _exec_cached_module
+    cache_data = self.get_data(cache_filename)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 218, in get_data
+    with open(path, mode="r+b") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/__pycache__/shim.cpython-312.lpyc'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 427, in exec_module
+    self._exec_cached_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 325, in _exec_cached_module
+    cache_data = self.get_data(cache_filename)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 218, in get_data
+    with open(path, mode="r+b") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/__pycache__/atom.cpython-312.lpyc'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 427, in exec_module
+    self._exec_cached_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 325, in _exec_cached_module
+    cache_data = self.get_data(cache_filename)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 218, in get_data
+    with open(path, mode="r+b") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/__pycache__/thread.cpython-312.lpyc'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexpanded_ast(form, expanded, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2713, in __handle_macroexpanded_ast
+    expanded_ast = _analyze_form(expanded, ctx)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 738, in _analyze_form
+    return cast(T_node, f(form, ctx).fix_missing_locations(form_loc))
+                        ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3546, in _list_node
+    return handle_special_form(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2854, in _let_ast
+    stmts, ret = _body_ast(let_body, ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 776, in _body_ast
+    body_expr = _analyze_form(ret_form, ctx)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 738, in _analyze_form
+    return cast(T_node, f(form, ctx).fix_missing_locations(form_loc))
+                        ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3554, in _list_node
+    return _invoke_ast(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2806, in _invoke_ast
+    args, kwargs = _call_args_ast(form.rest, ctx)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 842, in _call_args_ast
+    args = vec.vector(map(lambda form: _analyze_form(form, ctx), form))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/vector.py", line 322, in vector
+    return PersistentVector(pvector(members), meta=meta)
+                            ^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 842, in <lambda>
+    args = vec.vector(map(lambda form: _analyze_form(form, ctx), form))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 738, in _analyze_form
+    return cast(T_node, f(form, ctx).fix_missing_locations(form_loc))
+                        ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3554, in _list_node
+    return _invoke_ast(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2759, in _invoke_ast
+    fn = _analyze_form(form.first, ctx)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 738, in _analyze_form
+    return cast(T_node, f(form, ctx).fix_missing_locations(form_loc))
+                        ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3905, in _symbol_node
+    return _resolve_sym(ctx, form)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3883, in _resolve_sym
+    return __resolve_bare_symbol(ctx, form)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3856, in __resolve_bare_symbol
+    raise ctx.AnalyzerException(
+basilisp.lang.compiler.exception.CompilerException: unable to resolve symbol 'list*' in this context {:line 738, :file "/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/thread.cljc", :end-col 18, :col 13, :form list*, :phase :analyzing, :end-line 738}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/john/.local/bin/basilisp", line 10, in <module>
+    sys.exit(invoke_cli())
+             ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/cli.py", line 873, in invoke_cli
+    parsed_args.handler(parser, parsed_args)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/cli.py", line 663, in run
+    eval_str(target, ctx, ns, eof)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/cli.py", line 54, in eval_str
+    last = compiler.compile_and_exec_form(form, ctx, ns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 194, in compile_and_exec_form
+    last = getattr(ns.module, final_wrapped_name)()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<CLI Input>", line 1, in __lisp_expr___92
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5328, in require
+    (doseq [libspec (map require-libspec libspecs)]
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2611, in dorun
+    (defn dorun
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2620, in dorun__arity1
+    (when (seq ptr)
+          ^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 285, in _to_seq_lazyseq
+    return o.seq()
+           ^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 173, in seq
+    self._compute_seq()
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 168, in _compute_seq
+    self._obj = gen()
+                ^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5334, in ____require__for_3389_3404__lisp_fn_3405
+    (require-lib current-ns libspec flags)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5222, in require_lib
+    (eval (list 'require*
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4728, in eval_
+    (defn eval
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4737, in eval___arity2
+    (basilisp.lang.compiler/compile-and-exec-form form
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 192, in compile_and_exec_form
+    exec(bytecode, ns.module.__dict__)  # pylint: disable=exec-used  # nosec 6102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<Eval Input>", line 1, in <module>
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/runtime.py", line 730, in require
+    ns_module = importlib.import_module(munge(ns_name))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 432, in exec_module
+    self._exec_module(fullname, spec.loader_state, path_stats, module)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 367, in _exec_module
+    compiler.compile_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 267, in compile_module
+    _incremental_compile_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 228, in _incremental_compile_module
+    exec(bytecode, module.__dict__)  # pylint: disable=exec-used  # nosec 6102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/run.cljc", line 11, in <module>
+    [cohost.hosts.cljs-realm :as cljs-realm]])))
+                                           ^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5328, in require
+    (doseq [libspec (map require-libspec libspecs)]
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2611, in dorun
+    (defn dorun
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2620, in dorun__arity1
+    (when (seq ptr)
+          ^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 285, in _to_seq_lazyseq
+    return o.seq()
+           ^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 173, in seq
+    self._compute_seq()
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 168, in _compute_seq
+    self._obj = gen()
+                ^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5334, in ____require__for_3389_3404__lisp_fn_3405
+    (require-lib current-ns libspec flags)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5222, in require_lib
+    (eval (list 'require*
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4728, in eval_
+    (defn eval
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4737, in eval___arity2
+    (basilisp.lang.compiler/compile-and-exec-form form
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 192, in compile_and_exec_form
+    exec(bytecode, ns.module.__dict__)  # pylint: disable=exec-used  # nosec 6102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<Eval Input>", line 1, in <module>
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/runtime.py", line 730, in require
+    ns_module = importlib.import_module(munge(ns_name))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 432, in exec_module
+    self._exec_module(fullname, spec.loader_state, path_stats, module)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 367, in _exec_module
+    compiler.compile_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 267, in compile_module
+    _incremental_compile_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 228, in _incremental_compile_module
+    exec(bytecode, module.__dict__)  # pylint: disable=exec-used  # nosec 6102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/boot.cljc", line 22, in <module>
+    [cohost.scan :as scan]))
+                       ^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5328, in require
+    (doseq [libspec (map require-libspec libspecs)]
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2611, in dorun
+    (defn dorun
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2620, in dorun__arity1
+    (when (seq ptr)
+          ^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 285, in _to_seq_lazyseq
+    return o.seq()
+           ^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 173, in seq
+    self._compute_seq()
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 168, in _compute_seq
+    self._obj = gen()
+                ^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5334, in ____require__for_3389_3404__lisp_fn_3405
+    (require-lib current-ns libspec flags)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5222, in require_lib
+    (eval (list 'require*
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4728, in eval_
+    (defn eval
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4737, in eval___arity2
+    (basilisp.lang.compiler/compile-and-exec-form form
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 192, in compile_and_exec_form
+    exec(bytecode, ns.module.__dict__)  # pylint: disable=exec-used  # nosec 6102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<Eval Input>", line 1, in <module>
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/runtime.py", line 730, in require
+    ns_module = importlib.import_module(munge(ns_name))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 432, in exec_module
+    self._exec_module(fullname, spec.loader_state, path_stats, module)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 367, in _exec_module
+    compiler.compile_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 267, in compile_module
+    _incremental_compile_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 228, in _incremental_compile_module
+    exec(bytecode, module.__dict__)  # pylint: disable=exec-used  # nosec 6102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/shim.cljc", line 35, in <module>
+    :lg (:refer-clojure :exclude [-deref -invoke monitor-enter monitor-exit])))
+                                                                          ^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5328, in require
+    (doseq [libspec (map require-libspec libspecs)]
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2611, in dorun
+    (defn dorun
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2620, in dorun__arity1
+    (when (seq ptr)
+          ^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 285, in _to_seq_lazyseq
+    return o.seq()
+           ^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 173, in seq
+    self._compute_seq()
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 168, in _compute_seq
+    self._obj = gen()
+                ^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5334, in ____require__for_3389_3404__lisp_fn_3405
+    (require-lib current-ns libspec flags)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5222, in require_lib
+    (eval (list 'require*
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4728, in eval_
+    (defn eval
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4737, in eval___arity2
+    (basilisp.lang.compiler/compile-and-exec-form form
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 192, in compile_and_exec_form
+    exec(bytecode, ns.module.__dict__)  # pylint: disable=exec-used  # nosec 6102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<Eval Input>", line 1, in <module>
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/runtime.py", line 730, in require
+    ns_module = importlib.import_module(munge(ns_name))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 432, in exec_module
+    self._exec_module(fullname, spec.loader_state, path_stats, module)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 367, in _exec_module
+    compiler.compile_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 267, in compile_module
+    _incremental_compile_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 228, in _incremental_compile_module
+    exec(bytecode, module.__dict__)  # pylint: disable=exec-used  # nosec 6102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/atom.cljc", line 55, in <module>
+    [cohost.thread :as thread]))
+                           ^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5328, in require
+    (doseq [libspec (map require-libspec libspecs)]
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2611, in dorun
+    (defn dorun
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 2620, in dorun__arity1
+    (when (seq ptr)
+          ^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 285, in _to_seq_lazyseq
+    return o.seq()
+           ^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 173, in seq
+    self._compute_seq()
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/seq.py", line 168, in _compute_seq
+    self._obj = gen()
+                ^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5334, in ____require__for_3389_3404__lisp_fn_3405
+    (require-lib current-ns libspec flags)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 5222, in require_lib
+    (eval (list 'require*
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4728, in eval_
+    (defn eval
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/core.lpy", line 4737, in eval___arity2
+    (basilisp.lang.compiler/compile-and-exec-form form
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 192, in compile_and_exec_form
+    exec(bytecode, ns.module.__dict__)  # pylint: disable=exec-used  # nosec 6102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<Eval Input>", line 1, in <module>
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/runtime.py", line 730, in require
+    ns_module = importlib.import_module(munge(ns_name))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 432, in exec_module
+    self._exec_module(fullname, spec.loader_state, path_stats, module)
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/importer.py", line 367, in _exec_module
+    compiler.compile_module(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/__init__.py", line 265, in compile_module
+    ctx.generator_context, analyze_form(ctx.analyzer_context, form)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 4173, in analyze_form
+    return _analyze_form(form, ctx).assoc(top_level=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 738, in _analyze_form
+    return cast(T_node, f(form, ctx).fix_missing_locations(form_loc))
+                        ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3554, in _list_node
+    return _invoke_ast(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexpanded_ast(form, expanded, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2713, in __handle_macroexpanded_ast
+    expanded_ast = _analyze_form(expanded, ctx)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 738, in _analyze_form
+    return cast(T_node, f(form, ctx).fix_missing_locations(form_loc))
+                        ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3554, in _list_node
+    return _invoke_ast(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexpanded_ast(form, expanded, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2713, in __handle_macroexpanded_ast
+    expanded_ast = _analyze_form(expanded, ctx)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 738, in _analyze_form
+    return cast(T_node, f(form, ctx).fix_missing_locations(form_loc))
+                        ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3546, in _list_node
+    return handle_special_form(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 1064, in _def_ast
+    init = _analyze_form(runtime.nth(form, init_idx), ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 736, in _analyze_form
+    return f(form, ctx)
+           ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3554, in _list_node
+    return _invoke_ast(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2766, in _invoke_ast
+    return __handle_macroexpanded_ast(form, expanded, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2713, in __handle_macroexpanded_ast
+    expanded_ast = _analyze_form(expanded, ctx)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 736, in _analyze_form
+    return f(form, ctx)
+           ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3546, in _list_node
+    return handle_special_form(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 865, in with_meta
+    descriptor = gen_node(form, ctx)
+                 ^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2287, in _fn_ast
+    __fn_method_ast(
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2116, in __fn_method_ast
+    stmts, ret = _body_ast(form.rest, ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 776, in _body_ast
+    body_expr = _analyze_form(ret_form, ctx)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 738, in _analyze_form
+    return cast(T_node, f(form, ctx).fix_missing_locations(form_loc))
+                        ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3546, in _list_node
+    return handle_special_form(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2509, in _if_ast
+    then_node = _analyze_form(runtime.nth(form, 2), ctx)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/functools.py", line 912, in wrapper
+    return dispatch(args[0].__class__)(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 738, in _analyze_form
+    return cast(T_node, f(form, ctx).fix_missing_locations(form_loc))
+                        ^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 3554, in _list_node
+    return _invoke_ast(form, ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/john/.local/share/uv/tools/basilisp/lib/python3.12/site-packages/basilisp/lang/compiler/analyzer.py", line 2774, in _invoke_ast
+    raise CompilerException(
+basilisp.lang.compiler.exception.CompilerException: error occurred during macroexpansion {:line 732, :file "/private/tmp/claude-501/-Users-john-src/db4a65ed-c283-46c8-9666-99d00ec5eef8/scratchpad/jobs/j23/cohost/src/cohost/thread.cljc", :end-col 33, :col 4, :form (let [ls (free-locals env body) ns-sym (or (when (map? (:ns env)) (:name (:ns env))) (quote user))] (list (quote cohost.realm/future-form-call) (list (quote quote) ns-sym) (list (quote quote) (list (quote fn) ls (cons (quote do) body))) ls (list* (quote fn) [] body))), :phase :macroexpansion, :end-line 738}
+Error while executing task: bench:lpy
