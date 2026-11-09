@@ -2271,8 +2271,9 @@
 (def Integer-signum Long-signum)
 (def Double-toString (fn [x] (if (and h-double-str (float? x)) (h-double-str x) (str x))))
 (def String-join (fn [sep coll] (apply str (interpose sep coll))))
-(def Double-POSITIVE_INFINITY (/ 1.0 0.0))
-(def Double-NEGATIVE_INFINITY (/ -1.0 0.0))
+;; bb's / throws on a double zero divisor
+(def Double-POSITIVE_INFINITY #?(:bb Double/POSITIVE_INFINITY :default (/ 1.0 0.0)))
+(def Double-NEGATIVE_INFINITY #?(:bb Double/NEGATIVE_INFINITY :default (/ -1.0 0.0)))
 ;; the JVM's number grammars: a host's parser is looser (parseInt "12abc" -> 12,
 ;; float("abc") raises ValueError), so the string is checked here first
 (defn- nfe

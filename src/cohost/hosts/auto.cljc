@@ -10,4 +10,5 @@
                :lg [cohost.hosts.lg]
                :cljrs [cohost.hosts.cljrs]
                :jank [cohost.hosts.jank-host]
+               :bb [cohost.hosts.bb]
                :clj [cohost.hosts.jvm])))

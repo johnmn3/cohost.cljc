@@ -9,7 +9,7 @@
          '[babashka.fs :as fs]
          '[clojure.walk :as walk])
 
-(def known #{:clj :cljs :jolt :lpy :cljw :phel :lg :cljrs :jank :default})
+(def known #{:clj :cljs :jolt :lpy :cljw :phel :lg :cljrs :jank :bb :default})
 (def read-clj #{:jolt :cljw})
 
 (defn conditionals [path]
