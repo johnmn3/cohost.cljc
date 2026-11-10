@@ -1,0 +1,19 @@
+;; DataScript on Eve — the DataScript port as a library.
+;;
+;; This directory IS the library: datascript/* and data_readers.cljc at
+;; its root. Home repo: johnmn3/datascript.cljc — ONE codebase spanning
+;; both host sets: every Clojure-like Eve supports (directly on Eve)
+;; and every Clojure-like cohost supports (through cohost bodies over
+;; the Eve backend).
+;;
+;; Eve is a git dependency on the Eve repository (SeniorCareMarket/eve),
+;; pinned to the shipped 0.9.3.1 tree. Never a path into an Eve checkout.
+;; The sibling libraries (persistent-sorted-set port, extend-clj) are
+;; :local/root deps inside this repository, exactly as they were inside
+;; the Eve tree this set was seeded from.
+{:paths ["."]
+ :deps {org.clojure/clojure {:mvn/version "1.12.0"}
+        eve/eve {:git/url "https://github.com/SeniorCareMarket/eve"
+                 :git/sha "4a921298168080c2af9f57fcfcdee2db570dec4c"}
+        me.tonsky/persistent-sorted-set {:local/root "../lib"}
+        extend-clj/extend-clj {:local/root "../lib-ds-deps"}}}

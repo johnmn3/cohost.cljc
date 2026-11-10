@@ -1,0 +1,8 @@
+;; The lib's own proof workspace: the shipped contract drivers plus this
+;; repo's harness (contract check, people-1k perf, shootout drivers).
+;; Eve resolves through lib-ds' git pin; for offline/local runs the
+;; harness scripts override eve/eve with -Sdeps {:local/root <eve-tree>}.
+{:paths ["drivers" "../harness"]
+ :deps {datascript-on-eve/datascript-on-eve {:local/root "../lib-ds"}
+        org.clojure/clojure {:mvn/version "1.12.0"}
+        org.clojure/test.check {:mvn/version "1.1.1"}}}

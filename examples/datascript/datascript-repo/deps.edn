@@ -1,0 +1,7 @@
+;; datascript.cljc — the whole library in one dep.
+;; Consume this repository's root and the DataScript port (lib-ds/),
+;; the persistent-sorted-set port (lib/) and extend-clj (lib-ds-deps/)
+;; resolve transitively. The pieces can also be consumed separately:
+;; point :deps/root at "lib-ds" for exactly the arrangement the Eve
+;; example shipped.
+{:deps {datascript-on-eve/datascript-on-eve {:local/root "lib-ds"}}}
