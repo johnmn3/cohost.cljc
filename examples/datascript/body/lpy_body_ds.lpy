@@ -1,0 +1,56 @@
+(ns ds-example.lpy-body
+  "DataScript-on-cohost example, the basilisk (:lpy) body: the server.
+   Installs the :lpy file-domain hosting over MB_DIR, opens the shared
+   DataScript atom on the domain at MB_DIR/dsdb (the same atom the JVM
+   body writes through the datascript.cljc repo's contract driver),
+   exposes it as this namespace's db* var, then serves the mailbox
+   slot named by the first argument — evaluating each caller's form
+   with basilisk's own eval, in this namespace — until two requests
+   are answered. Finally prints what THIS body reads back from the
+   shared database: names, datom count, seal.
+
+   Usage: basilisk run ... -n ds-example.lpy-body serve <slot> <caller>"
+  (:require [cohost.hosts.basilisk]
+            [cohost.atom-eve-file :as hosting]
+            [cohost.atom :as atom-layer]
+            [cohost.bodies :as bodies]
+            [eve.atom :as eve-atom]
+            [eve.host :as eve-host]
+            [eve.core :as e]
+            [datascript.core :as d])
+  (:import os time))
+
+(defn- say [& xs] (apply println xs) (flush))
+
+(def db* nil)
+
+(defn -main [& [cmd slot caller]]
+  (let [dir (os/getenv "MB_DIR")]
+    (hosting/install! {:dir dir})
+    (case cmd
+      "serve"
+      (let [me (keyword slot)
+            peer (keyword caller)
+            domain (eve-atom/persistent-atom-domain (str dir "/dsdb"))
+            a (eve-atom/lookup-or-create-mmap-atom! domain "ds-harness/contract-db" nil)]
+        (alter-var-root (var db*) (fn [_] a))
+        (when (nil? @a)
+          (eve-host/swap! a (fn [_] (d/empty-db {:friend {:db/valueType :db.type/ref
+                                                          :db/cardinality :db.cardinality/many}}))))
+        (let [mb (bodies/mailbox-atoms dir [peer me])
+              state (atom {:processed #{}})]
+          (say "LPY READY")
+          (let [served (loop [n 0 polls 0]
+                         (let [n (+ n (bodies/serve-once! mb me state))]
+                           (if (or (>= n 2) (> polls 6000))
+                             n
+                             (do (time/sleep 0.1) (recur n (inc polls))))))]
+            (say "LPY SERVED=" served))
+          (say "LPY NAMES=" (pr-str (vec (sort (d/q (quote [:find [?n ...] :where [?e :name ?n]]) @a)))))
+          (say "LPY DATOMS=" (e/count (d/datoms @a :eavt)))
+          (say "LPY SEAL=" (pr-str (eve-atom/seal a)))
+          (hosting/close-hosting!)
+          (say "LPY DONE"))))))
+
+(when (= *main-ns* 'ds-example.lpy-body)
+  (apply -main *command-line-args*))

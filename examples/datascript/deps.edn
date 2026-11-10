@@ -1,0 +1,9 @@
+;; DataScript on cohost — the example. Thin consumer: this repo's
+;; cohost (the bodies' runtime) + the datascript.cljc library repo.
+;; The library is a git dep; while that repo's creation is pending,
+;; runs override it with -Sdeps {:deps {datascript/datascript
+;; {:local/root "<checkout>"}}} — the gate script (run-gate.sh) takes
+;; the checkouts as arguments and composes classpaths directly.
+{:paths ["src"]
+ :deps {datascript/datascript {:git/url "https://github.com/johnmn3/datascript.cljc"
+                               :git/sha "PENDING-FIRST-PIN"}}}
