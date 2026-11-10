@@ -195,3 +195,27 @@ by other lanes faster than it drains.
   and D1 closure wait on Mac delivery (router-held, git
   transport); the staged tree is push-ready with the D1 fix in
   tree and Eve pinned as a git dep.
+
+---
+
+# CORRECTION NOTE — bb shootout row — 2026-11-10 ~18:15 ET (append-only)
+
+The Babashka shootout row above (and in datascript-repo/RESULTS.md) —
+median **60,197 ms** (runs 89,482 / 82,986 / 59,590 / 49,702 / 60,197;
+loadavg 7-17 on the hatch box, bb at ~12% CPU) — was a contended-box
+measurement and is REPLACED by the clean row below. It remains in the
+history above as the tainted reading; it does not stand as the bb result.
+
+CLEAN ROW (vm box, quiet 4-core; DISPATCH #27 / RESULT #27 on
+lane-m/vm-mailbox, job vm-27-20261110T2302Z, 2026-11-10 23:00 UTC
+= 18:00 ET by vm's clock): bb v1.13.226, cohost.cljc @ 6b453b16, Eve @
+4a921298, `harness/run-bb.sh one`, cold process, fresh empty DB dir
+per run, load1 gate < 1.0 before each run.
+- Runs: 3,479 / 3,554 / 3,632 / 3,352 / 3,354 ms, load1 at start
+  0.03 / 0.11 / 0.18 / 0.18 / 0.24 (0.30 after). All rc=0, readback
+  `{:mark :ONE-DONE, :datoms 2}` every run.
+- Median (verified here from the quoted log: sorted 3352, 3354, 3479,
+  3554, 3632): **3,479 ms**.
+- Protocol verdict: **clears the 10 s cap** (all five runs and the
+  median are under 10,000 ms; the earlier "10s+" verdict was the load).
+- Log banked at results/shootout/bb-clean-2026-11-10.txt.

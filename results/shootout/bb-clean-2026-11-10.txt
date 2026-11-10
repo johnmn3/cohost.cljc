@@ -1,0 +1,14 @@
+# bb one-datum shootout, clean re-run. vm seat, mailbox lane-m/vm-mailbox DISPATCH #27 / RESULT #27
+# (job vm-27-20261110T2302Z). Log quoted verbatim from RESULT #27 (/root/ds-bb-clean/ds-bb-clean.log on vm).
+ENV 2026-11-10T23:00:17Z host=vm
+BB babashka v1.13.226
+COHOST 6b453b16b27141a7c3939a0d0b7df2f111e628c0
+EVE 4a921298168080c2af9f57fcfcdee2db570dec4c
+RUN 1 load1=0.03 ms=3479 rc=0 readback={:mark :ONE-DONE, :datoms 2}
+RUN 2 load1=0.11 ms=3554 rc=0 readback={:mark :ONE-DONE, :datoms 2}
+RUN 3 load1=0.18 ms=3632 rc=0 readback={:mark :ONE-DONE, :datoms 2}
+RUN 4 load1=0.18 ms=3352 rc=0 readback={:mark :ONE-DONE, :datoms 2}
+RUN 5 load1=0.24 ms=3354 rc=0 readback={:mark :ONE-DONE, :datoms 2}
+LOAD-AFTER 0.30 0.08 0.02
+DS-BB-CLEAN-DONE
+# Verified by ds-cohost from the quoted log: sorted 3352 3354 3479 3554 3632 -> median 3479 ms.
