@@ -8,10 +8,9 @@
   ;; :cljs -- the ClojureScript seat. Eve is a dependency of this seat:
   ;; eve.shared-atom (the SAB-backed shared atom) and its transitive Eve
   ;; namespaces come from the Eve repo as a tools.deps git dep, pinned to
-  ;; the Eve 0.9.3 release commit (tag v0.9.3, SeniorCareMarket/eve main,
-  ;; landed by the lane-m/cohost-on-eve-093 rebase; the previous pin was
-  ;; d241de3, the 0.9.1 release line). See
+  ;; the Eve 0.9.3.2 release tip (SeniorCareMarket/eve branch
+  ;; release/eve-0.9.3.2 @ 2b1e86f4; the previous pin was 76fd94c3, v0.9.3). See
   ;; doc/eve-cohost/CLJS-DEP-STATUS.md.
   :cljs {:extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}
                       eve/eve {:git/url "https://github.com/SeniorCareMarket/eve"
-                               :git/sha "76fd94c3dc541a1e915d6759652114c9f6b392a8"}}}}}
+                               :git/sha "2b1e86f4645d59214c86264d339a097487f9ff6a"}}}}}

@@ -735,8 +735,8 @@
             (list 'quote ns-sym)
             (list 'quote (list 'fn ls (cons 'do body)))
             ls
-            (list* 'fn [] body)))
-    (list 'cohost.core/future-call (list* 'fn [] body))))
+            (cons 'fn (cons [] body))))
+    (list 'cohost.core/future-call (cons 'fn (cons [] body)))))
 
 (defn- pvalues-macro [_form _env & exprs]
   (cons 'cohost.core/pcalls (map (fn [e] (list 'fn [] e)) exprs)))
