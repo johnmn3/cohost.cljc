@@ -135,3 +135,38 @@ datascript-example. Open, in order: (1) repo creation (operator
 act), then the push is mechanical; (2) Mac delivery of the
 basilisk gate (router/git restoration), closing plane B + D1;
 (3) the detached bb perf leg's readback.
+
+---
+
+# SEAT 5 ADDENDUM — 2026-11-10 ~14:25 ET
+
+Seat 5 (successor; seat 4 ended with work open). Recovery verified
+firsthand this seat:
+
+- **Repo: still 404.** Creation re-tested once via PAT
+  POST /user/repos → 403 "Resource not accessible by personal
+  access token" (fourth recorded failure; MCP route also 403 in
+  earlier seats). Blocker is operator-side and unchanged: create
+  the empty johnmn3/datascript.cljc repo or widen the token/App.
+  The staged tree stays push-ready.
+- **Staged tree re-verified:** lib-ds/deps.edn pins Eve as a git
+  dep on SeniorCareMarket/eve @ 4a921298 — no repo-relative Eve
+  path. D1 fix present at lib-ds/datascript/db.cljc:2484 — the
+  :lpy arm carries the portable `=` body, `^Boolean` dropped.
+- **Detached bb people-1k perf leg (pid 9779): still running** at
+  recovery (~33 min wall, CPU-starved, started under load ~23);
+  log holds only the BB PERF header. This seat monitors and
+  harvests its PERF-OK EDN into RESULTS.md when it lands; no
+  duplicate started.
+- **Load at recovery: load1 ~22.** Under the operator's load
+  discipline no heavy local run starts above load1 8, and only
+  one heavy leg runs at a time (the detached perf leg is it).
+  The clean bb shootout re-run — which must replace the
+  contention-tainted 60,197 ms banked row — waits for a calm
+  window AND the perf leg's completion. If no calm window comes
+  this seat, the tainted row stands labelled as such; it is never
+  replaced by an estimate.
+- **Router Mac filings: both still HELD** (read in
+  ~/workspace/job-agent/jobs/ this seat). Plane-B basilisk gate
+  and D1 closure remain venue-blocked on git-transport
+  restoration; the one-door rule stands.
