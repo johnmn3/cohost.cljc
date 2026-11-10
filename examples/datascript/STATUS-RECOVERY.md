@@ -170,3 +170,28 @@ firsthand this seat:
   ~/workspace/job-agent/jobs/ this seat). Plane-B basilisk gate
   and D1 closure remain venue-blocked on git-transport
   restoration; the one-door rule stands.
+
+# SEAT 5 OUTCOME — 2026-11-10 ~15:10 ET (partial declaration)
+
+Seat 5 waited ~25 minutes across three windows for the conditions
+the clean bb shootout re-run requires — load1 under 8 sustained,
+and the detached perf leg finished (one heavy leg at a time).
+Neither arrived: load1 read 22 → 29 → 7.9 (one brief dip, with
+the perf leg still running) → 19 → 26. The box is being loaded
+by other lanes faster than it drains.
+
+- **bb shootout clean re-run: NOT RUN this seat.** The banked
+  60,197 ms row stands, labelled a loaded-box row in RESULTS.md.
+  It is contention-tainted and must still be replaced by a calm-
+  box median-of-5 (run-bb.sh one) at the first real window; it is
+  not replaced by anything estimated.
+- **bb people-1k perf leg (pid 9779): STILL RUNNING** at this
+  declaration — 49m50s wall, 6m01s CPU (~12% of one core). It
+  continues detached under init; its PERF-OK EDN lands in
+  ~/workspace/ds-cohost/bb-rerun-seat4.log and the RESULTS.md row
+  stays _running_ until a seat reads it back and checks the keys.
+- Everything else in the seat-5 addendum above stands as banked:
+  repo creation is the operator act; the basilisk plane-B gate
+  and D1 closure wait on Mac delivery (router-held, git
+  transport); the staged tree is push-ready with the D1 fix in
+  tree and Eve pinned as a git dep.
