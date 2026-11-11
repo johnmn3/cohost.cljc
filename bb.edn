@@ -63,7 +63,7 @@
                 :task (load-file "dev/cli-demo/readme_check.clj")}
   cli:check {:doc "the cohost CLI against the Clojure CLI on the demo (dev/cli-demo): bb cli:check [target ...]; one line per target x case: SAME, ABSENT or DIFF"
              :task (load-file "dev/cli-demo/check.clj")}
-  clj-body:test {:doc "the :clj leg: stub clojure and jolt present or absent on PATH: bb clj-body:test"
+  clj-body:test {:doc "the :clj leg: stub clojure/jolt on PATH and a stub champaca bundle: bb clj-body:test"
                  :task (load-file "dev/clj_body_test.clj")}
   debug-seam:check {:doc "the debug-seam checklist (doc/debug-seam-research.md (c), checks #1-#14) through the seam on one target: bb debug-seam:check [jvm|jank]; one PASS/FAIL/SKIP line per check"
                     :task (load-file "dev/debug_seam_check.clj")}

@@ -1,8 +1,7 @@
 (ns cohost.clj-body-test
   "The :clj leg: `clojure` on PATH keeps the existing launch; otherwise jolt
-   on PATH is the champaca backup. Each case runs bin/cohost with PATH
-   limited to a temp directory of stub binaries, so a real clojure or jolt
-   on the machine is not visible.
+   on PATH runs lib/champaca. Each case runs bin/cohost with PATH limited to
+   a temp directory of stub binaries.
 
    bb dev/clj_body_test.clj
    bb clj-body:test"
@@ -17,6 +16,8 @@
            (let [p (fs/file (System/getenv "HOME") ".local/bin/bb")]
              (when (fs/exists? p) p)))))
 (def cohost (str (fs/file root "bin/cohost")))
+(def path-sep java.io.File/pathSeparator)
+(def fake-cp "/proj/src:/m2/clojure-1.12.0.jar")
 
 (defn- spit-exe [path text]
   (spit (str path) text)
@@ -31,28 +32,57 @@
 (def jolt-stub
   (str "#!/bin/sh\n"
        "printf '%s\\n' \"$*\" >> \"$JOLT_STUB_LOG\"\n"
-       "echo \"jolt stub should not be executed: $*\" >&2\n"
+       "if [ \"$1\" = \"-Srepro\" ] && [ \"$2\" = \"-Spath\" ]; then\n"
+       "  printf '%s\\n' \"${JOLT_STUB_CP:-" fake-cp "}\"\n"
+       "  exit 0\n"
+       "fi\n"
+       "echo \"unexpected jolt: $*\" >&2\n"
        "exit 9\n"))
+
+(def champaca-stub
+  (str "#!/bin/sh\n"
+       "printf '%s\\n' \"$@\" > \"$CHAMPACA_ARGV\"\n"
+       "printf '%s\\n' \"$JAVA_HOME\" > \"$CHAMPACA_JAVA_HOME\"\n"
+       "printf '%s\\n' \"$CHAMPACA_BUNDLE\" > \"$CHAMPACA_BUNDLE_FILE\"\n"
+       "printf '%s\\n' \"$CHAMPACA_CACHE_DIR\" > \"$CHAMPACA_CACHE_FILE\"\n"
+       "exit \"${CHAMPACA_STUB_EXIT:-0}\"\n"))
 
 (defn- slurp-lines [f]
   (when (fs/exists? f) (str/split-lines (slurp (str f)))))
 
-(defn- child-env [bin logs c]
+(defn- slurp-1 [f]
+  (when (fs/exists? f) (str/trim (slurp (str f)))))
+
+(defn- child-env [dir bin logs c bundle]
   (let [base (-> (into {} (System/getenv))
-                 (dissoc "COHOST_CLJ_BODY"))]
+                 (dissoc "COHOST_CLJ_BODY" "COHOST_CLJ_BUNDLE" "JOLT_STUB_CP" "CHAMPACA_STUB_EXIT"))]
     (cond-> (merge base
                    {"PATH" (str bin)
-                    "HOME" (or (System/getenv "HOME") (str bin))
+                    "HOME" (str dir)
                     "CLOJURE_STUB_LOG" (str (:clojure logs))
                     "CLOJURE_STUB_ARGV" (str (:argv logs))
-                    "JOLT_STUB_LOG" (str (:jolt logs))})
-      (:body c) (assoc "COHOST_CLJ_BODY" (:body c)))))
+                    "JOLT_STUB_LOG" (str (:jolt logs))
+                    "JOLT_STUB_CP" fake-cp
+                    "CHAMPACA_ARGV" (str (:champaca-argv logs))
+                    "CHAMPACA_JAVA_HOME" (str (:java-home logs))
+                    "CHAMPACA_BUNDLE_FILE" (str (:bundle-file logs))
+                    "CHAMPACA_CACHE_FILE" (str (:cache-file logs))})
+      (:body c) (assoc "COHOST_CLJ_BODY" (:body c))
+      bundle (assoc "COHOST_CLJ_BUNDLE" (str bundle))
+      (:missing-bundle c) (assoc "COHOST_CLJ_BUNDLE" (str (fs/file dir "missing-bundle")))
+      (:exit-code c) (assoc "CHAMPACA_STUB_EXIT" (str (:exit-code c))))))
 
 (defn- invoke [dir env args]
   @(p/process (into [bb-bin cohost] args)
               {:dir (str dir) :env env :out :string :err :string}))
 
-(defn- check [c r logs dir]
+(defn- expected-champaca-argv [bundle main-args]
+  (into ["-cp"
+         (str (fs/file bundle "app") "/*" path-sep fake-cp)
+         "clojure.main"]
+        main-args))
+
+(defn- check [c r logs dir bundle]
   (let [name (:name c)
         err (str (:err r))
         msg (fn [extra] (str name "\n" extra "\n--- stdout ---\n" (:out r) "\n--- stderr ---\n" err))
@@ -60,39 +90,61 @@
     (case (:expect c)
       :clojure
       (do (t/is (= 42 (:exit r)) (msg "exit"))
-          (t/is (not (str/includes? err ":boot :stub")) (msg "clojure path must stay off the champaca stub"))
           (when-let [exact (:argv c)]
             (t/is (= exact argv) (msg "argv")))
           (doseq [piece (:argv-includes c)]
             (t/is (some #(str/includes? % piece) argv) (msg (str "argv includes " piece))))
-          (t/is (fs/exists? (:clojure logs)) (msg "clojure was not launched")))
-      :stub
-      (do (t/is (= 1 (:exit r)) (msg "exit"))
-          (t/is (str/includes? err "jolt's :clj handler on the champaca path") (msg "stub banner"))
-          (t/is (str/includes? err ":boot :stub") (msg "plan boot"))
-          (t/is (str/includes? err ":runtime :champaca") (msg "plan runtime"))
-          (t/is (str/includes? err (pr-str (:plan-args c))) (msg "plan args"))
-          (t/is (str/includes? err (str (fs/canonicalize dir))) (msg "plan cwd"))
-          (t/is (not (fs/exists? (:clojure logs))) (msg "clojure launched on the stub path")))
+          (t/is (fs/exists? (:clojure logs)) (msg "clojure was not launched"))
+          (t/is (not (fs/exists? (:jolt logs))) (msg "jolt ran on the clojure path"))
+          (t/is (not (fs/exists? (:champaca-argv logs))) (msg "champaca ran on the clojure path")))
+      :champaca
+      (do (t/is (= (or (:exit-code c) 0) (:exit r)) (msg "exit"))
+          (t/is (= (expected-champaca-argv bundle (:main-args c))
+                   (slurp-lines (:champaca-argv logs)))
+                (msg "champaca argv"))
+          (t/is (= (str (fs/file bundle "runtime")) (slurp-1 (:java-home logs))) (msg "JAVA_HOME"))
+          (t/is (= (str bundle) (slurp-1 (:bundle-file logs))) (msg "CHAMPACA_BUNDLE"))
+          (t/is (= (str (fs/file dir ".cache/cohost/champaca")) (slurp-1 (:cache-file logs)))
+                (msg "CHAMPACA_CACHE_DIR"))
+          (t/is (fs/exists? (fs/file dir ".cache/cohost/champaca")) (msg "cache dir created"))
+          (t/is (= ["-Srepro -Spath"] (slurp-lines (:jolt logs))) (msg "jolt -Srepro -Spath"))
+          (t/is (not (fs/exists? (:clojure logs))) (msg "clojure launched on the champaca path")))
       :error
       (do (t/is (= 1 (:exit r)) (msg "exit"))
-          (t/is (not (str/includes? err ":boot :stub")) (msg "error must not select the stub"))
           (t/is (not (fs/exists? (:clojure logs))) (msg "clojure launched"))
+          (t/is (not (fs/exists? (:champaca-argv logs))) (msg "champaca launched"))
           (doseq [piece (:stderr-includes c)]
-            (t/is (str/includes? err piece) (msg (str "stderr includes " piece))))))
-    (t/is (not (fs/exists? (:jolt logs))) (msg "jolt was executed; the backup only checks PATH"))))
+            (t/is (str/includes? err piece) (msg (str "stderr includes " piece))))
+          (when-not (:jolt-ran c)
+            (t/is (not (fs/exists? (:jolt logs))) (msg "jolt ran")))
+          (when (:default-bundle c)
+            (t/is (str/includes? err (str (fs/file dir ".cache/cohost/cohost-clj")))
+                  (msg "default bundle path")))))
+    (when (:jolt-ran c)
+      (t/is (fs/exists? (:jolt logs)) (msg "jolt did not run")))))
+
+(defn- install-bundle [dir]
+  (let [b (fs/file dir "bundle")]
+    (fs/create-dirs (fs/file b "lib"))
+    (spit-exe (fs/file b "lib/champaca") champaca-stub)
+    b))
 
 (defn- run-case! [c]
   (let [dir (fs/create-temp-dir {:prefix "cohost-clj-body-"})
         bin (fs/file dir "bin")
         logs {:clojure (fs/file dir "clojure.log")
               :argv (fs/file dir "clojure.argv")
-              :jolt (fs/file dir "jolt.log")}]
+              :jolt (fs/file dir "jolt.log")
+              :champaca-argv (fs/file dir "champaca.argv")
+              :java-home (fs/file dir "champaca.java-home")
+              :bundle-file (fs/file dir "champaca.bundle")
+              :cache-file (fs/file dir "champaca.cache")}
+        bundle (when (:bundle c) (install-bundle dir))]
     (try
       (fs/create-dirs bin)
       (when (:clojure c) (spit-exe (fs/file bin "clojure") clojure-stub))
       (when (:jolt c) (spit-exe (fs/file bin "jolt") jolt-stub))
-      (check c (invoke dir (child-env bin logs c) (:args c)) logs dir)
+      (check c (invoke dir (child-env dir bin logs c bundle) (:args c)) logs dir bundle)
       (finally (fs/delete-tree dir)))))
 
 (def cases
@@ -130,50 +182,91 @@
     :args [":jvm" "-e" "1"]
     :clojure true
     :jolt true
+    :bundle true
     :expect :clojure
     :argv ["-M" "-e" "1"]}
-   {:name "no clojure, jolt present, selects the champaca stub"
+   {:name "-T stays on clojure even when the override asks for jolt"
+    :args [":jvm" "-Tnew" "create"]
+    :clojure true
+    :jolt true
+    :bundle true
+    :body "jolt"
+    :expect :clojure
+    :argv-includes ["-Tnew" "templates/cohost-app"]}
+   {:name "no clojure and jolt present runs champaca with args after -M"
     :args [":jvm" "-e" "(+ 1 2)"]
     :jolt true
-    :expect :stub
-    :plan-args ["-e" "(+ 1 2)"]}
-   {:name "-T with no clojure uses the champaca stub"
+    :bundle true
+    :expect :champaca
+    :main-args ["-e" "(+ 1 2)"]}
+   {:name "-m args pass through after the inserted -M"
+    :args [":jvm" "-m" "demo.main" "a" "b"]
+    :jolt true
+    :bundle true
+    :expect :champaca
+    :main-args ["-m" "demo.main" "a" "b"]}
+   {:name "an explicit -M:alias token is dropped and the rest is passed"
+    :args [":jvm" "-M:dev" "-m" "demo.main" "a"]
+    :jolt true
+    :bundle true
+    :expect :champaca
+    :main-args ["-m" "demo.main" "a"]}
+   {:name "override jolt runs champaca even when clojure is on PATH"
+    :args [":jvm" "-e" "1"]
+    :clojure true
+    :jolt true
+    :bundle true
+    :body "jolt"
+    :expect :champaca
+    :main-args ["-e" "1"]}
+   {:name "override Jolt is case-insensitive"
+    :args [":jvm" "-m" "demo.main"]
+    :clojure true
+    :jolt true
+    :bundle true
+    :body " Jolt "
+    :expect :champaca
+    :main-args ["-m" "demo.main"]}
+   {:name "a missing bundle is a build instruction"
+    :args [":jvm" "-e" "1"]
+    :jolt true
+    :missing-bundle true
+    :expect :error
+    :stderr-includes ["missing lib/champaca" "build-clj-bundle.sh" "COHOST_CLJ_BUNDLE" "CHAMPACA_SRC"]}
+   {:name "the default bundle path is under the cohost cache"
+    :args [":jvm" "-e" "1"]
+    :jolt true
+    :default-bundle true
+    :expect :error
+    :stderr-includes ["build-clj-bundle.sh"]}
+   {:name "-T with no clojure stays clojure-only"
     :args [":cljs" "-Tnew"]
     :jolt true
-    :expect :stub
-    :plan-args ["-Tnew"]}
-   {:name "-Sdescribe with no clojure uses the champaca stub"
+    :bundle true
+    :expect :error
+    :stderr-includes ["-T runs on the `clojure` CLI only" "champaca :clj leg does not run this command"]}
+   {:name "-Sdescribe with no clojure stays clojure-only"
     :args [":jolt" "-Sdescribe"]
     :jolt true
-    :expect :stub
-    :plan-args ["-Sdescribe"]}
-   {:name ":jvm -Spath with no clojure is the champaca stub"
-    :args [":jvm" "-Spath"]
+    :bundle true
+    :expect :error
+    :stderr-includes ["-Sdescribe runs on the `clojure` CLI only"]}
+   {:name "-T with override jolt and no clojure is still clojure-only"
+    :args [":jvm" "-Tnew"]
     :jolt true
-    :expect :stub
-    :plan-args ["-Spath"]}
+    :bundle true
+    :body "jolt"
+    :expect :error
+    :stderr-includes ["-T runs on the `clojure` CLI only"]}
    {:name "neither clojure nor jolt is a clear error"
     :args [":jvm" "-e" "1"]
     :expect :error
     :stderr-includes ["`clojure`, which is not on PATH" "champaca backup is unavailable"]}
-   {:name "override jolt selects the stub even when clojure is on PATH"
-    :args [":jvm" "-e" "1"]
-    :clojure true
-    :jolt true
-    :body "jolt"
-    :expect :stub
-    :plan-args ["-e" "1"]}
-   {:name "override Jolt is case-insensitive"
-    :args [":jvm" "-e" "1"]
-    :clojure true
-    :jolt true
-    :body " Jolt "
-    :expect :stub
-    :plan-args ["-e" "1"]}
    {:name "override clojure keeps the existing launch"
     :args [":jvm" "-e" "1"]
     :clojure true
     :jolt true
+    :bundle true
     :body "clojure"
     :expect :clojure
     :argv ["-M" "-e" "1"]}
@@ -187,6 +280,7 @@
    {:name "override clojure with no clojure is an error"
     :args [":jvm" "-e" "1"]
     :jolt true
+    :bundle true
     :body "clojure"
     :expect :error
     :stderr-includes ["COHOST_CLJ_BODY=clojure" "`clojure` is not on PATH"]}
@@ -206,6 +300,7 @@
     :args [":jank" "-e" "1"]
     :clojure true
     :jolt true
+    :bundle true
     :expect :error
     :stderr-includes ["jank" "not on PATH"]}
    {:name "the default host stays jank"
@@ -213,7 +308,14 @@
     :clojure true
     :jolt true
     :expect :error
-    :stderr-includes ["jank" "not on PATH"]}])
+    :stderr-includes ["jank" "not on PATH"]}
+   {:name "champaca's exit code is the cohost exit code"
+    :args [":jvm" "-e" "1"]
+    :jolt true
+    :bundle true
+    :expect :champaca
+    :main-args ["-e" "1"]
+    :exit-code 7}])
 
 (t/deftest detection-matrix
   (t/is (fs/exists? bb-bin) (str "babashka not found at " bb-bin))
@@ -226,12 +328,16 @@
         bin (fs/file dir "bin")
         logs {:clojure (fs/file dir "clojure.log")
               :argv (fs/file dir "clojure.argv")
-              :jolt (fs/file dir "jolt.log")}]
+              :jolt (fs/file dir "jolt.log")
+              :champaca-argv (fs/file dir "champaca.argv")
+              :java-home (fs/file dir "champaca.java-home")
+              :bundle-file (fs/file dir "champaca.bundle")
+              :cache-file (fs/file dir "champaca.cache")}]
     (try
       (fs/create-dirs bin)
       (spit-exe (fs/file bin "clojure") clojure-stub)
       (spit-exe (fs/file bin "jolt") jolt-stub)
-      (let [r (invoke dir (child-env bin logs {}) ["-h"])
+      (let [r (invoke dir (child-env dir bin logs {} nil) ["-h"])
             err (str (:err r))]
         (t/is (= 2 (:exit r)) err)
         (t/is (str/includes? err "usage: cohost") err)

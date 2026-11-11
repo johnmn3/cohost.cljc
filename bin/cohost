@@ -12,8 +12,8 @@
 ;; jars extracted under ~/.cache/cohost/deps — so booted code's `require`
 ;; finds dependency namespaces through cohost's ordinary loader. :jvm is the
 ;; :clj leg: `clojure` on PATH runs the real Clojure CLI, unchanged. Without
-;; that command, jolt's champaca path is the backup (bin/cohost_clj_body.clj);
-;; the champaca boot is still a stub.
+;; that command, jolt resolves the classpath and lib/champaca runs clojure.main
+;; (bin/cohost_clj_body.clj). -T and -Sdescribe stay on `clojure`.
 ;;
 ;; Design, what's supported and what isn't: doc/CLI.md.
 (require '[babashka.fs :as fs]
@@ -328,13 +328,12 @@
                 (finally (fs/delete-if-exists lock)))))))))
 
 (defn launch-jolt-clj!
-  "The :clj leg on jolt's champaca path, used when `clojure` is not on PATH.
+  "The :clj leg on champaca, used when `clojure` is not on PATH.
    Sibling of launch!, not a branch of it: the \"jolt\" branch below boots
-   cohost.cli on jolt's native adapter, which is not champaca. This arm
-   takes the CLI arguments the clojure launch would have received. The boot
-   is a stub (it does not start jolt)."
-  [cwd args]
-  (cohost.clj-body/launch-jolt-clj! cwd args))
+   cohost.cli on jolt's native adapter, which is not champaca. main-args are
+   the clojure CLI's arguments after the -M token."
+  [cwd main-args]
+  (cohost.clj-body/launch-jolt-clj! cwd main-args {:repo repo}))
 
 (defn launch! [host cwd config & [jank]]
   (let [cfg (str config)
@@ -404,6 +403,16 @@
                              (implicit-main? o) (with-explicit-M rest-args o)
                              :else rest-args))))
 
+(defn clj-main-args
+  "clojure.main's arguments: clojure-cli-command without the leading
+   `clojure`, and without the -M token and anything before it."
+  [rest-args o]
+  (let [tail (subvec (clojure-cli-command rest-args o) 1)
+        i (first (keep-indexed (fn [idx a]
+                                 (when (and (string? a) (str/starts-with? a "-M")) idx))
+                               tail))]
+    (if i (subvec tail (inc i)) tail)))
+
 (defn default-target
   "The project's target: :cohost/target in ./deps.edn (a keyword, e.g.
    :lpy), else :jank. :jvm is the reference: the real Clojure CLI, as `clj` runs it."
@@ -427,15 +436,23 @@
       (die 2 (str "cohost: unknown host :" host " (hosts: "
                   (str/join " " (map #(str ":" %) (sort hosts))) ")")))
     (cond
-      ;; :jvm, -T, and -Sdescribe are the :clj leg. Its runtime is `clojure`
-      ;; on PATH, and that launch is unchanged. Otherwise jolt's champaca
-      ;; :clj handler is the backup (a stub).
+      ;; :jvm is the :clj leg. `clojure` on PATH keeps this launch.
+      ;; Otherwise jolt's champaca path runs clojure.main. -T and
+      ;; -Sdescribe stay on `clojure` and say so when it is absent.
       (or (= host "jvm") (= mode :T) (:describe? o))
-      (let [d (cohost.clj-body/select-clj-body)]
-        (case (:body d)
-          :clojure (System/exit (run-inherit cwd (clojure-cli-command rest-args o)))
-          :jolt (System/exit (launch-jolt-clj! cwd rest-args))
-          (apply die (or (:code d) 1) (:lines d))))
+      (let [only (cond (= mode :T) :tool (:describe? o) :describe :else nil)]
+        (if only
+          (if (fs/which "clojure")
+            (System/exit (run-inherit cwd (clojure-cli-command rest-args o)))
+            (apply die 1 (cohost.clj-body/clojure-only-lines only)))
+          (let [d (cohost.clj-body/select-clj-body)]
+            (case (:body d)
+              :clojure (System/exit (run-inherit cwd (clojure-cli-command rest-args o)))
+              :jolt (let [{:keys [code lines]} (launch-jolt-clj! cwd (clj-main-args rest-args o))]
+                      (if lines
+                        (apply die code lines)
+                        (System/exit code)))
+              (apply die (or (:code d) 1) (:lines d))))))
 
       (not (some #{host} wired))
       (die 2 (str "cohost: :" host " is not wired into the CLI yet: its boot is still in flight (doc/hosts/PLAN.md)"))

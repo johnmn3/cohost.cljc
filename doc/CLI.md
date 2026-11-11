@@ -12,8 +12,8 @@ cohost :cljs -Spath                  # the source roots, in tools.deps order
 ```
 
 Wired: `:cljs :jolt :lpy :cljw :phel :lg :jank`. `:jvm` is the `:clj` leg: the stock
-`clojure` CLI when that command is on PATH, otherwise jolt's champaca path (a stub
-until that boot is proven). `:cljrs` is wired when its boot lands (doc/hosts/PLAN.md).
+`clojure` CLI when that command is on PATH, otherwise jolt plus a champaca bundle
+of Clojure 1.12. `:cljrs` is wired when its boot lands (doc/hosts/PLAN.md).
 
 ## The target
 
@@ -103,24 +103,52 @@ source root:
 
 ## The :clj body
 
-`:jvm`, and `-T` / `-Sdescribe` on every host, are the `:clj` leg. cohost does not
-inspect a JVM. `bin/cohost_clj_body.clj` looks only at PATH:
+`:jvm` is the `:clj` leg. cohost does not inspect a JVM. `bin/cohost_clj_body.clj`
+looks only at PATH:
 
 - `clojure` resolves: the existing Clojure CLI launch, same arguments as before.
   Resolving dependencies through that CLI is how cohost works.
-- `clojure` does not resolve, and `jolt` does: jolt's `:clj` handler on the champaca path.
+- `clojure` does not resolve, and `jolt` does: jolt resolves the project
+  classpath (`jolt -Srepro -Spath` in the project directory) and
+  `$BUNDLE/lib/champaca` runs `clojure.main`. The arguments are the ones the
+  clojure launch would have received after the `-M` token (`-m ns args`, `-e`,
+  and the same). `-M:alias`'s `:main-opts` are not expanded here; that stays
+  the Clojure CLI's job.
 - neither resolves: a diagnostic, exit 1.
 
 `COHOST_CLJ_BODY=clojure` or `=jolt` forces that choice. Unset follows the rule above.
+`-T` and `-Sdescribe` stay on the `clojure` CLI on every host. Without `clojure`
+on PATH they say so and exit 1, including when the override is `jolt`.
 
-The champaca launch is a stub. It prints a plan (`:handler :jolt-clj`, `:runtime :champaca`,
-`:boot :stub`, the project directory, and the CLI arguments) and exits 1. It does not
-start jolt. The native `:jolt` adapter (`launch!`'s `"jolt"` branch, `jolt -Scp src -m cohost.cli`)
-is a different runtime and is not this path.
+The bundle is `COHOST_CLJ_BUNDLE`, or `$HOME/.cache/cohost/cohost-clj`. It is built
+with JDK 25 and jolt 0.8.26, and run with neither:
 
-Champaca's guest-private JVM/Chez internals are outside this launcher (memory law waived
-there, John 00:50 ET). This cohost side retains nothing and adds no scanner, header
-counter, journal, or arena.
+```bash
+CHAMPACA_SRC=/path/to/patched/champaca bash dev/build-clj-bundle.sh
+```
+
+`CHAMPACA_SRC` is a champaca checkout with the per-loader class identity patch
+applied (johnmn3/atom.broker `lane-m/jolt-clj-body` @ ee947a3fdd,
+`docs/clojure-runtime/multi-bodied/jolt-spike/per-loader-identity.experimental.diff`).
+Upstream champaca does not have that fix yet. The script pins Clojure 1.12.0,
+spec.alpha 0.5.238 and core.specs.alpha 0.4.74, and names the launcher
+`cohost-clj`. The bundle's own `bin/` launcher cannot take a runtime classpath,
+so cohost calls `lib/champaca` directly:
+
+```bash
+JAVA_HOME=$BUNDLE/runtime \
+CHAMPACA_BUNDLE=$BUNDLE \
+CHAMPACA_CACHE_DIR=$HOME/.cache/cohost/champaca \
+  $BUNDLE/lib/champaca -cp "$BUNDLE/app/*:$CP" clojure.main <args after -M>
+```
+
+`$CP` is the `jolt -Srepro -Spath` output. The native `:jolt` adapter
+(`launch!`'s `"jolt"` branch, `jolt -Scp src -m cohost.cli`) is a different
+runtime and is not this path.
+
+Champaca's guest-private JVM/Chez internals are outside this launcher (memory law
+waived there, John 00:50 ET). This cohost side retains nothing and adds no
+scanner, header counter, journal, or arena.
 
 ## What runs, as `clojure.main` runs it
 
@@ -151,9 +179,10 @@ counter, journal, or arena.
   `COHOST_MAIN_REPORT=stderr|none` chooses the target instead. The run ends
   with exit code 1; `-X` of a missing fn prints tools.deps'
   `Namespace x loaded but function not found: f`. Exit codes propagate.
-- `-J` options are dropped; `-Sdescribe` and `-T` are the `:clj` leg (the Clojure
-  CLI when `clojure` is on PATH, the champaca stub otherwise); `-Spath` prints
-  the source roots on a native host (on `:jvm` it is the CLI's `-Spath`); `-P`
+- `-J` options are dropped; `-Sdescribe` and `-T` run the Clojure CLI only
+  (a missing `clojure` is a diagnostic, including on the champaca leg);
+  `-Spath` prints the source roots on a native host (on `:jvm` it is the CLI's
+  `-Spath`, or `clojure.main`'s arguments when that leg is champaca); `-P`
   resolves and extracts only.
 
 Per-host launches: `:jolt`, `:cljw` take `-m cohost.cli <config>`; `:lpy` runs it
