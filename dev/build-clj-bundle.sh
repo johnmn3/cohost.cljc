@@ -102,4 +102,31 @@ echo "build-clj-bundle: jolt bundle -o $out -m clojure.main --name cohost-clj"
 (cd "$CHAMPACA_SRC" && jolt bundle -o "$out" -cp "$abs" -m clojure.main \
   --add-modules java.desktop,java.sql,jdk.unsupported --name cohost-clj)
 [ -x "$out/lib/champaca" ] || die "bundle finished but $out/lib/champaca is missing"
-echo "build-clj-bundle: $out"
+
+# jolt loads champaca.api from source roots, and init! reads the Scheme
+# runtime from those same roots (io/resource "champaca/runtime.ss" and the
+# rest of champaca.cachedir/runtime-files, plus interop.ss and dynamic.ss).
+# The bundle's lib/ and app/ do not carry that source. One directory holds
+# both trees, so one -Scp entry finds champaca/api.clj and champaca/*.ss.
+src_root="$out/champaca-src"
+rm -rf "$src_root"
+mkdir -p "$src_root"
+[ -d "$CHAMPACA_SRC/src/champaca" ] \
+  || die "CHAMPACA_SRC ($CHAMPACA_SRC) has no src/champaca; champaca.api would not load under jolt."
+[ -d "$CHAMPACA_SRC/resources/champaca" ] \
+  || die "CHAMPACA_SRC ($CHAMPACA_SRC) has no resources/champaca; init! reads runtime.ss and natives.ss from the source root."
+cp -a "$CHAMPACA_SRC/src/." "$src_root/"
+cp -a "$CHAMPACA_SRC/resources/." "$src_root/"
+for rel in \
+  champaca/api.clj champaca/boot.clj \
+  champaca/runtime.ss champaca/natives.ss champaca/interop.ss champaca/dynamic.ss \
+  champaca/reflect.ss champaca/handles.ss champaca/files.ss champaca/net.ss \
+  champaca/spawn.ss champaca/foreign.ss champaca/archive.ss
+do
+  [ -f "$src_root/$rel" ] || die "copied champaca sources are missing $rel"
+done
+cat > "$out/manifest.edn" <<'EOF'
+{:name "cohost-clj"
+ :champaca-src "champaca-src"}
+EOF
+echo "build-clj-bundle: $out (champaca-src recorded in manifest.edn)"

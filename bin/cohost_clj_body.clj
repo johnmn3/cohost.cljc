@@ -21,6 +21,7 @@
    counter, or arena."
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (def ^:private path-sep java.io.File/pathSeparator)
@@ -95,6 +96,60 @@
   "Where champaca keeps its startup cache. Created on launch."
   []
   (str (fs/file (cohost-cache-root) "champaca")))
+
+(defn- bundle-manifest
+  "The bundle's manifest.edn, or nil when it is absent or unreadable.
+   build-clj-bundle.sh writes {:champaca-src \"champaca-src\"}."
+  [b]
+  (let [f (fs/file b "manifest.edn")]
+    (when (fs/exists? f)
+      (try (edn/read-string (slurp (str f)))
+           (catch Exception _ nil)))))
+
+(defn- champaca-api-file?
+  "True when dir is a jolt source root with champaca.api and the Scheme
+   files init! reads from that same root (runtime.ss, natives.ss)."
+  [dir]
+  (and (some #(fs/exists? (fs/file dir "champaca" (str "api." %))) ["jolt" "clj" "cljc"])
+       (fs/exists? (fs/file dir "champaca" "runtime.ss"))
+       (fs/exists? (fs/file dir "champaca" "natives.ss"))))
+
+(defn- missing-champaca-src-lines
+  [bundle override dir]
+  (let [rebuild ["  rebuild it: bash dev/build-clj-bundle.sh copies CHAMPACA_SRC's src and resources into the bundle's champaca-src and records that directory in manifest.edn."
+                 "  or set COHOST_CHAMPACA_SRC to a directory that contains champaca/api.clj, champaca/runtime.ss and champaca/natives.ss."]]
+    (cond
+      override
+      (into [(str "cohost: COHOST_CHAMPACA_SRC is " override
+                  ", and it is not champaca's jolt source root (need champaca/api.clj, champaca/runtime.ss, champaca/natives.ss).")]
+            rebuild)
+      dir
+      (into [(str "cohost: the bundle at " bundle " records champaca sources at " dir
+                  ", and champaca/api.clj is not there.")]
+            rebuild)
+      :else
+      (into [(str "cohost: this jolt process's :clj leg is champaca, and the bundle at " bundle
+                  " has no champaca jolt sources.")
+             "  manifest.edn has no :champaca-src, and COHOST_CHAMPACA_SRC is unset."
+             "  jolt -Scp needs that directory: (require 'champaca.api) looks on the source roots, and init! reads runtime.ss and natives.ss from them."]
+            rebuild))))
+
+(defn resolve-champaca-src
+  "The jolt source root for an in-process champaca :clj leg.
+   COHOST_CHAMPACA_SRC wins. Otherwise manifest.edn's :champaca-src,
+   relative to the bundle unless it is already absolute.
+   -> {:dir path} or {:error [lines]}."
+  []
+  (let [override (some-> (System/getenv "COHOST_CHAMPACA_SRC") str/trim not-empty)
+        b (bundle-dir)
+        recorded (when-not override
+                   (let [rel (:champaca-src (bundle-manifest b))]
+                     (when (and (string? rel) (not (str/blank? rel)))
+                       (str (if (fs/absolute? rel) (fs/file rel) (fs/file b rel))))))
+        dir (or override recorded)]
+    (if (and dir (champaca-api-file? dir))
+      {:dir (str dir)}
+      {:error (missing-champaca-src-lines b override recorded)})))
 
 (defn- read-override
   "COHOST_CLJ_BODY -> nil, :clojure, :jolt, or an error map.

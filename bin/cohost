@@ -62,7 +62,8 @@
        "       cohost :cljs -Spath"
        "  :jvm is the :clj leg: `clojure` on PATH, else jolt's champaca backup."
        "  :jolt:lpy names several hosts; :clj in that string is the official clojure CLI."
-       "  COHOST_CLJ_BODY=clojure|jolt."))
+       "  COHOST_CLJ_BODY=clojure|jolt."
+       "  COHOST_CHAMPACA_SRC is champaca's jolt sources when this process's :clj leg is champaca."))
 
 (defn run-inherit
   "Run cmd with inherited stdio in dir; -> its exit code. Every child sees
@@ -419,16 +420,22 @@
                         deref :exit)
                     (finally (fs/delete-tree tmp))))
       ;; native jolt adapter. When this process's :clj leg is champaca,
-      ;; the bundle's runtime is JAVA_HOME for champaca inside this same
-      ;; process. A missing bundle does not block the host from starting.
-      "jolt" (let [b (cohost.clj-body/bundle-dir)
+      ;; jolt -Scp also gets champaca's sources (COHOST_CHAMPACA_SRC, or the
+      ;; bundle's champaca-src) and the bundle runtime is JAVA_HOME.
+      ;; :jvm's whole-process champaca launch does not come through here.
+      "jolt" (let [champaca? (= :champaca (:provider @cohost.clj-body/clj-leg))
+                   srcs (if-not champaca?
+                          src
+                          (let [{:keys [dir error]} (cohost.clj-body/resolve-champaca-src)]
+                            (when error (apply die 1 error))
+                            (str src path-sep dir)))
+                   b (cohost.clj-body/bundle-dir)
                    rt (fs/file b "runtime")
-                   extra (when (and (= :champaca (:provider @cohost.clj-body/clj-leg))
-                                    (fs/exists? rt))
+                   extra (when (and champaca? (fs/exists? rt))
                            {"JAVA_HOME" (str rt)
                             "CHAMPACA_BUNDLE" b
                             "CHAMPACA_CACHE_DIR" (cohost.clj-body/champaca-cache-dir)})]
-               (run-inherit cwd ["jolt" "-Scp" src "-m" "cohost.cli" cfg] extra))
+               (run-inherit cwd ["jolt" "-Scp" srcs "-m" "cohost.cli" cfg] extra))
       "cljw" (run-inherit cwd ["cljw" "-cp" src "-m" "cohost.cli" cfg])
       "lpy" (run-inherit cwd (vec (concat ["basilisp" "run"]
                                           (when-let [d (:lpy-src jank)] ["-p" d])

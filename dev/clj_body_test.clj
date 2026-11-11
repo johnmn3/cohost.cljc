@@ -44,6 +44,7 @@
        "  exit 0\n"
        "fi\n"
        "if [ \"$1\" = \"-Scp\" ]; then\n"
+       "  printf '%s\\n' \"$2\" > \"$JOLT_STUB_SCP\"\n"
        "  exit 0\n"
        "fi\n"
        "echo \"unexpected jolt: $*\" >&2\n"
@@ -65,13 +66,15 @@
 
 (defn- child-env [dir bin logs c bundle]
   (let [base (-> (into {} (System/getenv))
-                 (dissoc "COHOST_CLJ_BODY" "COHOST_CLJ_BUNDLE" "JOLT_STUB_CP" "CHAMPACA_STUB_EXIT"))]
+                 (dissoc "COHOST_CLJ_BODY" "COHOST_CLJ_BUNDLE" "COHOST_CHAMPACA_SRC"
+                         "JOLT_STUB_CP" "CHAMPACA_STUB_EXIT"))]
     (cond-> (merge base
                    {"PATH" (str bin)
                     "HOME" (str dir)
                     "CLOJURE_STUB_LOG" (str (:clojure logs))
                     "CLOJURE_STUB_ARGV" (str (:argv logs))
                     "JOLT_STUB_LOG" (str (:jolt logs))
+                    "JOLT_STUB_SCP" (str (:jolt-scp logs))
                     "JOLT_STUB_CP" fake-cp
                     "CHAMPACA_ARGV" (str (:champaca-argv logs))
                     "CHAMPACA_JAVA_HOME" (str (:java-home logs))
@@ -79,6 +82,7 @@
                     "CHAMPACA_CACHE_FILE" (str (:cache-file logs))})
       (:body c) (assoc "COHOST_CLJ_BODY" (:body c))
       bundle (assoc "COHOST_CLJ_BUNDLE" (str bundle))
+      (:override-dir c) (assoc "COHOST_CHAMPACA_SRC" (str (:override-dir c)))
       (:missing-bundle c) (assoc "COHOST_CLJ_BUNDLE" (str (fs/file dir "missing-bundle")))
       (:exit-code c) (assoc "CHAMPACA_STUB_EXIT" (str (:exit-code c)))
       (:clojure-resolves c) (assoc "CLOJURE_STUB_RESOLVE" "1"))))
@@ -126,6 +130,13 @@
         (t/is (zero? (:exit r)) (msg "exit"))
         (t/is (some #(str/includes? % "-Scp") lines) (msg "native -Scp"))
         (t/is (some #(str/includes? % "cohost.cli") lines) (msg "cohost.cli"))
+        (let [cohost-src (str (fs/file root "src"))
+              scp (slurp-1 (:jolt-scp logs))
+              want (case (:scp c)
+                     :plain cohost-src
+                     :override (str cohost-src path-sep (:override-dir c))
+                     (str cohost-src path-sep (fs/file bundle "champaca-src")))]
+          (t/is (= want scp) (msg "jolt -Scp roots")))
         (when (:spath c)
           (t/is (some #(str/includes? % "-Srepro -Spath") lines) (msg "jolt -Spath")))
         (t/is (not (fs/exists? (:champaca-argv logs))) (msg "champaca replaced the host"))
@@ -142,14 +153,23 @@
             (t/is (not (fs/exists? (:jolt logs))) (msg "jolt ran")))
           (when (:default-bundle c)
             (t/is (str/includes? err (str (fs/file dir ".cache/cohost/cohost-clj")))
-                  (msg "default bundle path")))))
+                  (msg "default bundle path")))
+          (when (:no-scp c)
+            (t/is (not (fs/exists? (:jolt-scp logs))) (msg "-Scp did not run")))))
     (when (:jolt-ran c)
       (t/is (fs/exists? (:jolt logs)) (msg "jolt did not run")))))
 
-(defn- install-bundle [dir]
+(defn- install-bundle [dir {:keys [bundle-src] :or {bundle-src true}}]
   (let [b (fs/file dir "bundle")]
     (fs/create-dirs (fs/file b "lib"))
     (spit-exe (fs/file b "lib/champaca") champaca-stub)
+    (when bundle-src
+      (let [src (fs/file b "champaca-src" "champaca")]
+        (fs/create-dirs src)
+        (spit (str (fs/file src "api.clj")) ";; stub champaca.api\n")
+        (spit (str (fs/file src "runtime.ss")) ";; stub runtime\n")
+        (spit (str (fs/file src "natives.ss")) ";; stub natives\n"))
+      (spit (str (fs/file b "manifest.edn")) (pr-str {:champaca-src "champaca-src"})))
     b))
 
 (defn- run-case! [c]
@@ -158,11 +178,20 @@
         logs {:clojure (fs/file dir "clojure.log")
               :argv (fs/file dir "clojure.argv")
               :jolt (fs/file dir "jolt.log")
+              :jolt-scp (fs/file dir "jolt.scp")
               :champaca-argv (fs/file dir "champaca.argv")
               :java-home (fs/file dir "champaca.java-home")
               :bundle-file (fs/file dir "champaca.bundle")
               :cache-file (fs/file dir "champaca.cache")}
-        bundle (when (:bundle c) (install-bundle dir))]
+        bundle (when (:bundle c) (install-bundle dir c))
+        override (when (:champaca-src-override c)
+                   (let [d (fs/file dir "champaca-override")]
+                     (fs/create-dirs (fs/file d "champaca"))
+                     (spit (str (fs/file d "champaca" "api.clj")) ";; override\n")
+                     (spit (str (fs/file d "champaca" "runtime.ss")) ";; override\n")
+                     (spit (str (fs/file d "champaca" "natives.ss")) ";; override\n")
+                     (str d)))
+        c (cond-> c override (assoc :override-dir override))]
     (try
       (when (:deps c) (spit (str (fs/file dir "deps.edn")) (pr-str (:deps c))))
       (fs/create-dirs bin)
@@ -395,12 +424,45 @@
     :bundle true
     :expect :clojure
     :argv ["-M" "-e" "1"]}
-   {:name ":jolt:clj keeps jolt as the process"
+   {:name ":jolt:clj keeps jolt as the process and does not add champaca sources"
     :args [":jolt:clj" "-e" "1"]
     :jolt true
     :bundle true
     :spath true
+    :scp :plain
     :expect :native-jolt}
+   {:name "native :jolt adds the bundle's champaca-src to jolt -Scp"
+    :args [":jolt" "-e" "1"]
+    :clojure true
+    :clojure-resolves true
+    :jolt true
+    :bundle true
+    :expect :native-jolt}
+   {:name "COHOST_CHAMPACA_SRC replaces the bundle's champaca-src on -Scp"
+    :args [":jolt:lpy" "-e" "1"]
+    :jolt true
+    :bundle true
+    :bundle-src false
+    :spath true
+    :champaca-src-override true
+    :scp :override
+    :expect :native-jolt}
+   {:name "native :jolt with no champaca sources dies before -Scp"
+    :args [":jolt" "-e" "1"]
+    :jolt true
+    :bundle true
+    :bundle-src false
+    :expect :error
+    :jolt-ran true
+    :no-scp true
+    :stderr-includes ["champaca/api.clj" "manifest.edn" "COHOST_CHAMPACA_SRC"]}
+   {:name ":jvm's champaca process does not require champaca-src"
+    :args [":jvm" "-e" "1"]
+    :jolt true
+    :bundle true
+    :bundle-src false
+    :expect :champaca
+    :main-args ["-e" "1"]}
    {:name ":lpy:clj boots basilisp; :clj is recorded, not launched"
     :args [":lpy:clj" "-e" "1"]
     :jolt true

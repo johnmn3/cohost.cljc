@@ -147,10 +147,16 @@ Who owns the `:clj` leg (`resolve-clj-leg!`, stored in the `clj-leg` atom):
 3. Otherwise the first host keeps the launch it has today.
 
 The first host is always the process. `:jolt` and `:jolt:lpy` boot the native
-jolt adapter (`jolt -Scp src -m cohost.cli`). Their `:clj` leg is champaca
-inside that process: the launcher sets `JAVA_HOME` to the bundle runtime and
+jolt adapter (`jolt -Scp src:champaca-src -m cohost.cli`). Their `:clj` leg is
+champaca inside that process. `champaca-src` is the bundle directory the build
+records in `manifest.edn` (`:champaca-src`), or `COHOST_CHAMPACA_SRC` when that
+is set. It holds champaca's Clojure sources and the Scheme files `init!`
+reads (`runtime.ss`, `natives.ss`, and the rest of `resources/champaca`).
+Without it the launch stops: `(require 'champaca.api)` only searches jolt's
+source roots. The launcher also sets `JAVA_HOME` to the bundle runtime and
 `CHAMPACA_CACHE_DIR`, and `cohost.cli` routes a `:clj` reader arm to
-`champaca.api/init!` on first use. `:lpy:jolt` and `:jank:jolt` boot basilisp
+`champaca.api/init!` on first use. A `:clj` provider that is not champaca
+(`:jolt:clj`) does not add that directory. `:lpy:jolt` and `:jank:jolt` boot basilisp
 and jank. The `:clj` leg is still jolt's champaca, recorded in `clj-leg` as a
 sibling body. This process does not start that sibling. A cross-process router
 would have to launch the jolt/champaca body separately and ship the arm source
@@ -192,9 +198,12 @@ CHAMPACA_CACHE_DIR=$HOME/.cache/cohost/champaca \
 one). `app/*` supplies Clojure, so `$CP` omitting it is what this leg expects.
 The build script downloads `clojure-1.12.0.jar` into the Maven repo jolt
 names (`mvn_local_repo`, or `~/.m2/repository`) because `jolt -Spath` omits
-that jar. The native `:jolt` adapter
-(`launch!`'s `"jolt"` branch, `jolt -Scp src -m cohost.cli`) is a different
-runtime and is not this path.
+that jar. The same build copies champaca's `src` and `resources` into
+`$BUNDLE/champaca-src` (one jolt source root: `champaca/api.clj` beside
+`champaca/runtime.ss`) and writes that relative path into `$BUNDLE/manifest.edn`.
+The native `:jolt` adapter (`launch!`'s `"jolt"` branch) puts that directory
+on `jolt -Scp` when this process's `:clj` provider is champaca. The `:jvm`
+whole-process path above does not: it still execs `lib/champaca`.
 
 Champaca's guest-private JVM/Chez internals are outside this launcher (memory law
 waived there, John 00:50 ET). This cohost side retains nothing and adds no
