@@ -8,7 +8,7 @@
 set -u
 HOST="${1:?usage: hatch-release-bench.sh <battery|jvm|jolt|jank|cljs|lpy|browser> [workdir]}"
 WORK="${2:-$HOME/cohost-0932-$HOST}"
-EVE_SHA=cae5db96914be9ccddfb2fc322c114ba70d7900b
+EVE_SHA=a11a1820ed61a7a69f73d6630e2d6ee111e4e7ad
 mkdir -p "$WORK"; exec > >(tee "$WORK/run-$HOST.log") 2>&1
 echo "== release-bench $HOST start $(date -Is) box=$(hostname) cores=$(nproc) load1_at_start=$(cut -d' ' -f1 /proc/loadavg) (full: $(cat /proc/loadavg))"
 cd "$WORK"
