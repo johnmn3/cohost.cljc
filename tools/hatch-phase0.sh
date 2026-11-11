@@ -1,10 +1,10 @@
 #!/bin/bash
 # hatch-phase0.sh [workdir] — Phase-0 hosting probe + two-body gate (JVM + basilisp) at the 0932 pin.
 # Probes: atom.broker lane-m/cohost-on-eve-0931 (multi-bodied/probe); its eve/ subtree is REPLACED by
-# SeniorCareMarket/eve @ 231e565d (the probes read $REPO/eve); cohost = release/cohost-on-eve-0932
+# SeniorCareMarket/eve @ 73a64110 (the probes read $REPO/eve); cohost = release/cohost-on-eve-0932
 # (carries the list* one-liner, so no scratch patching).
 set -u
-WORK="${1:-$HOME/cohost-0932-phase0}"; EVE_SHA=231e565db5157673e89fb9072349664b31074896
+WORK="${1:-$HOME/cohost-0932-phase0}"; EVE_SHA=73a641108e52fc9b42b8a4d591a2776f6611a99e
 mkdir -p "$WORK"; exec > >(tee "$WORK/phase0.log") 2>&1
 echo "== phase0 start $(date -Is) box=$(hostname) load1_at_start=$(cut -d' ' -f1 /proc/loadavg)"
 cd "$WORK"

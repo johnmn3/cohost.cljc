@@ -9,8 +9,8 @@
   ;; eve.shared-atom (the SAB-backed shared atom) and its transitive Eve
   ;; namespaces come from the Eve repo as a tools.deps git dep, pinned to
   ;; the Eve 0.9.3.2 release tip (SeniorCareMarket/eve branch
-  ;; release/eve-0.9.3.2 @ 231e565d; the previous pin was 76fd94c3, v0.9.3). See
+  ;; release/eve-0.9.3.2 @ 73a64110; the previous pin was 76fd94c3, v0.9.3). See
   ;; doc/eve-cohost/CLJS-DEP-STATUS.md.
   :cljs {:extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}
                       eve/eve {:git/url "https://github.com/SeniorCareMarket/eve"
-                               :git/sha "231e565db5157673e89fb9072349664b31074896"}}}}}
+                               :git/sha "73a641108e52fc9b42b8a4d591a2776f6611a99e"}}}}}
