@@ -17,7 +17,11 @@
 # which is where bin/cohost looks when COHOST_CLJ_BUNDLE is unset.
 #
 # Versions pinned into the bundle: Clojure 1.12.0, spec.alpha 0.5.238,
-# core.specs.alpha 0.4.74. The bundle's launcher is named cohost-clj.
+# core.specs.alpha 0.4.74. jolt -Spath omits org.clojure/clojure (it is a
+# terminal dependency), so this script finds the local Maven repo and
+# downloads clojure-1.12.0.jar when it is not already there, then prepends
+# it. At run time the bundle's app/* already supplies that jar, so a
+# project's jolt -Spath is fine without it. The launcher is named cohost-clj.
 # lib/champaca is what cohost execs; bin/cohost-clj cannot take a runtime -cp.
 set -eu
 
@@ -60,9 +64,11 @@ cat > "$work/deps.edn" <<'EOF'
                  org.clojure/core.specs.alpha {:mvn/version "0.4.74"}}}
 EOF
 
-raw="$(cd "$work" && jolt -Srepro -Spath)"
-cp="$(printf '%s\n' "$raw" | sed '/^[[:space:]]*$/d' | tail -1)"
-[ -n "$cp" ] || die "jolt -Srepro -Spath printed an empty classpath"
+raw="$(cd "$work" && jolt -Srepro -Sverbose -Spath 2>&1)"
+repo="$(printf '%s\n' "$raw" | sed -n 's/^mvn_local_repo *= *//p' | head -1)"
+[ -n "$repo" ] || repo="${HOME}/.m2/repository"
+cp="$(printf '%s\n' "$raw" | sed -n '/^mvn_local_repo *=/d; /^[[:space:]]*$/d; p' | tail -1)"
+[ -n "$cp" ] || die "jolt -Srepro -Sverbose -Spath printed an empty classpath"
 abs=""
 set -f
 IFS=':'
@@ -75,6 +81,16 @@ for e in $cp; do
   abs="${abs:+$abs:}$one"
 done
 unset IFS
+set +f
+clojure_jar="$repo/org/clojure/clojure/1.12.0/clojure-1.12.0.jar"
+if [ ! -f "$clojure_jar" ]; then
+  echo "build-clj-bundle: fetching clojure-1.12.0.jar into $clojure_jar"
+  mkdir -p "$(dirname "$clojure_jar")"
+  curl -fsSL -o "$clojure_jar.partial" \
+    "https://repo1.maven.org/maven2/org/clojure/clojure/1.12.0/clojure-1.12.0.jar"
+  mv "$clojure_jar.partial" "$clojure_jar"
+fi
+abs="$clojure_jar:$abs"
 for needle in clojure-1.12.0 spec.alpha-0.5.238 core.specs.alpha-0.4.74; do
   case "$abs" in
     *"$needle"*) ;;

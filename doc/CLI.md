@@ -109,11 +109,19 @@ looks only at PATH:
 - `clojure` resolves: the existing Clojure CLI launch, same arguments as before.
   Resolving dependencies through that CLI is how cohost works.
 - `clojure` does not resolve, and `jolt` does: jolt resolves the project
-  classpath (`jolt -Srepro -Spath` in the project directory) and
-  `$BUNDLE/lib/champaca` runs `clojure.main`. The arguments are the ones the
-  clojure launch would have received after the `-M` token (`-m ns args`, `-e`,
-  and the same). `-M:alias`'s `:main-opts` are not expanded here; that stays
-  the Clojure CLI's job.
+  classpath and `$BUNDLE/lib/champaca` runs `clojure.main`. The classpath
+  command is `jolt -Srepro -Spath`, plus any `-Sdeps`, `-A`, and `-M:`/`-X:`
+  tokens from the command (`jolt -Srepro -Spath -M:main`). jolt leaves
+  `org.clojure/clojure` off that path on purpose. The bundle's `app/*` already
+  holds Clojure 1.12, spec.alpha, and core.specs.alpha, and that directory is
+  the front of `-cp`, so the project classpath does not need the Clojure jar.
+  `-M:alias` prepends the alias's `:main-opts` (aliases combined left to
+  right, `:main-opts` concatenated, from `./deps.edn` and `-Sdeps`; user
+  deps.edn is skipped because the resolve is `-Srepro`) and then the user's
+  arguments. `-X:alias` is `clojure.main -e` of a `requiring-resolve` call:
+  Clojure 1.12's jar has no `clojure.run.exec`. The argument map is the
+  alias's `:exec-args` merged with the command line, the same merge the other
+  hosts use.
 - neither resolves: a diagnostic, exit 1.
 
 `COHOST_CLJ_BODY=clojure` or `=jolt` forces that choice. Unset follows the rule above.
@@ -139,10 +147,14 @@ so cohost calls `lib/champaca` directly:
 JAVA_HOME=$BUNDLE/runtime \
 CHAMPACA_BUNDLE=$BUNDLE \
 CHAMPACA_CACHE_DIR=$HOME/.cache/cohost/champaca \
-  $BUNDLE/lib/champaca -cp "$BUNDLE/app/*:$CP" clojure.main <args after -M>
+  $BUNDLE/lib/champaca -cp "$BUNDLE/app/*:$CP" clojure.main <main-opts then user args>
 ```
 
-`$CP` is the `jolt -Srepro -Spath` output. The native `:jolt` adapter
+`$CP` is the `jolt -Srepro -Spath` output (with the alias flag when there is
+one). `app/*` supplies Clojure, so `$CP` omitting it is what this leg expects.
+The build script downloads `clojure-1.12.0.jar` into the Maven repo jolt
+names (`mvn_local_repo`, or `~/.m2/repository`) because `jolt -Spath` omits
+that jar. The native `:jolt` adapter
 (`launch!`'s `"jolt"` branch, `jolt -Scp src -m cohost.cli`) is a different
 runtime and is not this path.
 

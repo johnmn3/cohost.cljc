@@ -107,7 +107,8 @@
           (t/is (= (str (fs/file dir ".cache/cohost/champaca")) (slurp-1 (:cache-file logs)))
                 (msg "CHAMPACA_CACHE_DIR"))
           (t/is (fs/exists? (fs/file dir ".cache/cohost/champaca")) (msg "cache dir created"))
-          (t/is (= ["-Srepro -Spath"] (slurp-lines (:jolt logs))) (msg "jolt -Srepro -Spath"))
+          (t/is (= [(or (:jolt-args c) "-Srepro -Spath")] (slurp-lines (:jolt logs)))
+                (msg "jolt -Spath args"))
           (t/is (not (fs/exists? (:clojure logs))) (msg "clojure launched on the champaca path")))
       :error
       (do (t/is (= 1 (:exit r)) (msg "exit"))
@@ -141,6 +142,7 @@
               :cache-file (fs/file dir "champaca.cache")}
         bundle (when (:bundle c) (install-bundle dir))]
     (try
+      (when (:deps c) (spit (str (fs/file dir "deps.edn")) (pr-str (:deps c))))
       (fs/create-dirs bin)
       (when (:clojure c) (spit-exe (fs/file bin "clojure") clojure-stub))
       (when (:jolt c) (spit-exe (fs/file bin "jolt") jolt-stub))
@@ -205,12 +207,41 @@
     :bundle true
     :expect :champaca
     :main-args ["-m" "demo.main" "a" "b"]}
-   {:name "an explicit -M:alias token is dropped and the rest is passed"
-    :args [":jvm" "-M:dev" "-m" "demo.main" "a"]
+   {:name "-M:alias prepends :main-opts and passes the alias to jolt"
+    :args [":jvm" "-M:main" "-g" "hi" "-n" "2" "jolt-user"]
+    :deps {:aliases {:main {:main-opts ["-m" "demo.main"]}}}
     :jolt true
     :bundle true
     :expect :champaca
-    :main-args ["-m" "demo.main" "a"]}
+    :jolt-args "-Srepro -Spath -M:main"
+    :main-args ["-m" "demo.main" "-g" "hi" "-n" "2" "jolt-user"]}
+   {:name "-M:a:b concatenates :main-opts left to right"
+    :args [":jvm" "-M:a:b" "-m" "user.main"]
+    :deps {:aliases {:a {:main-opts ["-e" "1"]}
+                     :b {:main-opts ["-e" "2"]}}}
+    :jolt true
+    :bundle true
+    :expect :champaca
+    :jolt-args "-Srepro -Spath -M:a:b"
+    :main-args ["-e" "1" "-e" "2" "-m" "user.main"]}
+   {:name "-A then -M keeps both aliases on the jolt classpath and in :main-opts"
+    :args [":jvm" "-A:extra" "-M:main" "arg"]
+    :deps {:aliases {:extra {:main-opts ["-e" ":extra"]}
+                     :main {:main-opts ["-m" "demo.main"]}}}
+    :jolt true
+    :bundle true
+    :expect :champaca
+    :jolt-args "-Srepro -Spath -A:extra -M:main"
+    :main-args ["-e" ":extra" "-m" "demo.main" "arg"]}
+   {:name "-X:alias invokes the exec fn with merged args"
+    :args [":jvm" "-X:run" ":user" "\"jolt-user\""]
+    :deps {:aliases {:run {:exec-fn 'demo.core/run
+                           :exec-args {:user "default"}}}}
+    :jolt true
+    :bundle true
+    :expect :champaca
+    :jolt-args "-Srepro -Spath -X:run"
+    :main-args ["-e" "(do ((requiring-resolve 'demo.core/run) {:user \"jolt-user\"}) nil)"]}
    {:name "override jolt runs champaca even when clojure is on PATH"
     :args [":jvm" "-e" "1"]
     :clojure true

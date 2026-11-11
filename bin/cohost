@@ -331,9 +331,9 @@
   "The :clj leg on champaca, used when `clojure` is not on PATH.
    Sibling of launch!, not a branch of it: the \"jolt\" branch below boots
    cohost.cli on jolt's native adapter, which is not champaca. main-args are
-   the clojure CLI's arguments after the -M token."
-  [cwd main-args]
-  (cohost.clj-body/launch-jolt-clj! cwd main-args {:repo repo}))
+   clojure.main's arguments. jolt-args follow `jolt -Srepro -Spath`."
+  [cwd main-args jolt-args]
+  (cohost.clj-body/launch-jolt-clj! cwd main-args {:repo repo :jolt-args jolt-args}))
 
 (defn launch! [host cwd config & [jank]]
   (let [cfg (str config)
@@ -403,15 +403,86 @@
                              (implicit-main? o) (with-explicit-M rest-args o)
                              :else rest-args))))
 
-(defn clj-main-args
-  "clojure.main's arguments: clojure-cli-command without the leading
-   `clojure`, and without the -M token and anything before it."
-  [rest-args o]
-  (let [tail (subvec (clojure-cli-command rest-args o) 1)
-        i (first (keep-indexed (fn [idx a]
-                                 (when (and (string? a) (str/starts-with? a "-M")) idx))
-                               tail))]
-    (if i (subvec tail (inc i)) tail)))
+(defn- alias-keywords
+  "`:main` from `-M:main`, or `[:a :b]` from `-M:a:b`. A bare `-M` has none."
+  [token]
+  (when (and (string? token) (str/includes? token ":"))
+    (mapv #(keyword (subs % 1)) (re-seq #":[^:]+" token))))
+
+(defn jolt-alias-args
+  "Flags after `jolt -Srepro -Spath`: `-Sdeps`, `-A`, and `-M:`/`-X:`."
+  [o]
+  (vec (concat (mapcat (fn [d] ["-Sdeps" d]) (:sdeps o))
+               (:aliases o)
+               (when (seq (alias-keywords (:alias o))) [(:alias o)]))))
+
+(defn- read-edn-file [path]
+  (when (fs/exists? path)
+    (try (edn/read-string {:default tagged-literal} (slurp path))
+         (catch Exception e
+           (die 1 (str "cohost: cannot read " path ": " (.getMessage e)))))))
+
+(defn- read-edn-string [label s]
+  (try (edn/read-string {:default tagged-literal} s)
+       (catch Exception e
+         (die 2 (str "cohost: unreadable " label ": " (.getMessage e))))))
+
+(defn merged-aliases
+  "Project deps.edn aliases, then each `-Sdeps` map. `-Srepro` is in effect
+   for this leg, so ~/.clojure/deps.edn is not read."
+  [cwd sdeps]
+  (let [project (read-edn-file (fs/file cwd "deps.edn"))
+        extras (map #(read-edn-string "-Sdeps" %) sdeps)]
+    (reduce (fn [aliases deps]
+              (merge-with merge aliases (or (:aliases deps) {})))
+            (or (:aliases project) {})
+            extras)))
+
+(defn selected-alias-kws
+  "-A aliases in command order, then the aliases inside `-M`/`-X`."
+  [o]
+  (vec (concat (mapcat alias-keywords (:aliases o))
+               (alias-keywords (:alias o)))))
+
+(defn combine-aliases
+  "Clojure CLI alias merge for the keys this leg uses. :main-opts concatenate
+   left to right. :exec-fn and :ns-default are the last alias that sets them.
+   :exec-args and :ns-aliases merge, later keys winning."
+  [aliases kws]
+  (reduce (fn [acc kw]
+            (if-let [a (get aliases kw)]
+              {:main-opts (into (or (:main-opts acc) []) (or (:main-opts a) []))
+               :exec-fn (or (:exec-fn a) (:exec-fn acc))
+               :exec-args (merge (:exec-args acc) (:exec-args a))
+               :ns-default (or (:ns-default a) (:ns-default acc))
+               :ns-aliases (merge (:ns-aliases acc) (:ns-aliases a))}
+              (do (binding [*out* *err*]
+                    (println (str "WARNING: Specified aliases are undeclared and are not being used: " kw)))
+                  acc)))
+          {}
+          kws))
+
+(defn alias-argmap
+  [cwd o]
+  (combine-aliases (merged-aliases cwd (:sdeps o)) (selected-alias-kws o)))
+
+(defn exec-invoke-args
+  "clojure.main arguments for `-X`. Clojure 1.12's jar has no clojure.run.exec,
+   so this is that invocation: require the fn, call it with the merged arg
+   map, and yield nil so `-e` does not print the return value."
+  [cfg]
+  ["-e" (str "(do ((requiring-resolve '" (:ns cfg) "/" (:fn cfg) ") "
+             (:args-edn cfg) ") nil)")])
+
+(defn champaca-main-args
+  "clojure.main arguments for the champaca leg.
+   `-M` prepends the selected aliases' :main-opts to the user's arguments.
+   `-X` invokes the alias's :exec-fn. Anything else is the raw tail."
+  [cwd rest-args o]
+  (case (:mode o)
+    :X (exec-invoke-args (exec-config (:main o) (alias-argmap cwd o)))
+    :M (into (or (:main-opts (alias-argmap cwd o)) []) (:main o))
+    (vec rest-args)))
 
 (defn default-target
   "The project's target: :cohost/target in ./deps.edn (a keyword, e.g.
@@ -448,7 +519,8 @@
           (let [d (cohost.clj-body/select-clj-body)]
             (case (:body d)
               :clojure (System/exit (run-inherit cwd (clojure-cli-command rest-args o)))
-              :jolt (let [{:keys [code lines]} (launch-jolt-clj! cwd (clj-main-args rest-args o))]
+              :jolt (let [{:keys [code lines]} (launch-jolt-clj! cwd (champaca-main-args cwd rest-args o)
+                                                                          (jolt-alias-args o))]
                       (if lines
                         (apply die code lines)
                         (System/exit code)))

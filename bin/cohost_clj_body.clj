@@ -112,17 +112,24 @@
     (catch Exception e
       {:exit 127 :out "" :err (or (.getMessage e) "failed to run")})))
 
+(defn- classpath-text
+  "The classpath is the last non-blank line of jolt's stdout."
+  [out]
+  (str/trim (or (last (remove str/blank? (str/split-lines (or out "")))) "")))
+
 (defn- jolt-spath
-  "The project classpath from `jolt -Srepro -Spath`, run in cwd."
-  [cwd jolt-bin]
-  (let [{:keys [exit out err]} (run-captured [jolt-bin "-Srepro" "-Spath"] cwd)
-        cp (str/trim (or out ""))]
+  "Project classpath from `jolt -Srepro -Spath`, plus alias flags (`-A`, `-M:`, `-X:`)."
+  [cwd jolt-bin extra]
+  (let [args (into ["-Srepro" "-Spath"] extra)
+        shown (str/join " " (cons "jolt" args))
+        {:keys [exit out err]} (run-captured (into [jolt-bin] args) cwd)
+        cp (classpath-text out)]
     (cond
       (not (zero? (or exit 1)))
-      {:error (into [(str "cohost: jolt -Srepro -Spath failed (exit " exit ").")]
+      {:error (into [(str "cohost: " shown " failed (exit " exit ").")]
                     (remove str/blank? [(str/trim (or err ""))]))}
       (str/blank? cp)
-      {:error ["cohost: jolt -Srepro -Spath printed an empty classpath."]}
+      {:error [(str "cohost: " shown " printed an empty classpath.")]}
       :else {:cp cp})))
 
 (defn champaca-command
@@ -137,13 +144,13 @@
 
 (defn launch-jolt-clj!
   "Run the :clj leg on the champaca bundle. -> {:code n} or {:code 1 :lines [...]}."
-  [cwd main-args {:keys [repo]}]
+  [cwd main-args {:keys [repo jolt-args]}]
   (let [b (bundle-dir)
         champaca (fs/file b "lib/champaca")]
     (if-not (fs/exists? champaca)
       {:code 1 :lines (missing-bundle-lines b repo)}
       (let [jolt-bin (str (fs/which "jolt"))
-            resolved (jolt-spath cwd jolt-bin)]
+            resolved (jolt-spath cwd jolt-bin jolt-args)]
         (if-let [err (:error resolved)]
           {:code 1 :lines err}
           (let [cache (champaca-cache-dir)
