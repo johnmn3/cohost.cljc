@@ -8,7 +8,7 @@
 set -u
 HOST="${1:?usage: hatch-release-bench.sh <battery|jvm|jolt|jank|cljs|lpy|browser> [workdir]}"
 WORK="${2:-$HOME/cohost-0932-$HOST}"
-EVE_SHA="${EVE_SHA:-a11a1820ed61a7a69f73d6630e2d6ee111e4e7ad}"   # override for a baseline run (e.g. 0.9.3.1 = 12d37edf)
+EVE_SHA="${EVE_SHA:-9c9fef4acf6a30087480548f66d2d68ec61ae7f9}"   # override for a baseline run (e.g. 0.9.3.1 = 12d37edf)
 COHOST_REF="${COHOST_REF:-}"   # empty = release/cohost-on-eve-0932 tip; a sha checks that commit out (baseline runs)
 BOX="${BOX:-$(hostname -s)}"   # label for banked file names (was hard-coded "hatch" even on other boxes)
 mkdir -p "$WORK"; exec > >(tee "$WORK/run-$HOST.log") 2>&1
