@@ -61,6 +61,7 @@
        "       cohost :jolt -X demo.core/run :x 1"
        "       cohost :cljs -Spath"
        "  :jvm is the :clj leg: `clojure` on PATH, else jolt's champaca backup."
+       "  :jolt:lpy names several hosts; :clj in that string is the official clojure CLI."
        "  COHOST_CLJ_BODY=clojure|jolt."))
 
 (defn run-inherit
@@ -499,32 +500,55 @@
   (when (#{"-h" "--help" "help"} (first args)) (usage))
   ;; `cohost :<host> ...` names the target; `cohost ...` takes the project's
   (let [explicit? (some-> (first args) (str/starts-with? ":"))
-        host (if explicit? (str/replace (first args) #"^:" "") (default-target))
+        raw-host (if explicit? (str/replace (first args) #"^:" "") (default-target))
+        host-list (cohost.clj-body/parse-host-string raw-host)
+        _ (when (empty? host-list) (die 2 "cohost: empty host string"))
+        _ (doseq [h host-list]
+            (when-not (or (= h "clj") (contains? hosts h))
+              (die 2 (str "cohost: unknown host :" h " (hosts: "
+                          (str/join " " (map #(str ":" %) (sort hosts)))
+                          ", :clj)"))))
+        plan (cohost.clj-body/resolve-clj-leg! host-list)
+        host (first host-list)
         rest-args (vec (if explicit? (rest args) args))
         cwd (str (fs/canonicalize "."))
         {:keys [mode] :as o} (parse-args rest-args)]
-    (when-not (hosts host)
-      (die 2 (str "cohost: unknown host :" host " (hosts: "
-                  (str/join " " (map #(str ":" %) (sort hosts))) ")")))
-    (cond
-      ;; :jvm is the :clj leg. `clojure` on PATH keeps this launch.
-      ;; Otherwise jolt's champaca path runs clojure.main. -T and
-      ;; -Sdescribe stay on `clojure` and say so when it is absent.
-      (or (= host "jvm") (= mode :T) (:describe? o))
-      (let [only (cond (= mode :T) :tool (:describe? o) :describe :else nil)]
-        (if only
+    (letfn [(exit-clojure []
+              (System/exit (run-inherit cwd (clojure-cli-command rest-args o))))
+            (exit-champaca []
+              (let [{:keys [code lines]} (launch-jolt-clj! cwd (champaca-main-args cwd rest-args o)
+                                                           (jolt-alias-args o))]
+                (if lines (apply die code lines) (System/exit code))))
+            (exit-jvm []
+              (let [d (cohost.clj-body/select-clj-body)]
+                (case (:body d)
+                  :clojure (exit-clojure)
+                  :jolt (exit-champaca)
+                  (apply die (or (:code d) 1) (:lines d)))))]
+      (cond
+        ;; -T and -Sdescribe stay on `clojure` for every host string.
+        (or (= mode :T) (:describe? o))
+        (let [only (if (= mode :T) :tool :describe)]
           (if (fs/which "clojure")
-            (System/exit (run-inherit cwd (clojure-cli-command rest-args o)))
-            (apply die 1 (cohost.clj-body/clojure-only-lines only)))
-          (let [d (cohost.clj-body/select-clj-body)]
-            (case (:body d)
-              :clojure (System/exit (run-inherit cwd (clojure-cli-command rest-args o)))
-              :jolt (let [{:keys [code lines]} (launch-jolt-clj! cwd (champaca-main-args cwd rest-args o)
-                                                                          (jolt-alias-args o))]
-                      (if lines
-                        (apply die code lines)
-                        (System/exit code)))
-              (apply die (or (:code d) 1) (:lines d))))))
+            (exit-clojure)
+            (apply die 1 (cohost.clj-body/clojure-only-lines only))))
+
+        ;; Several hosts, or an explicit :clj, launch the resolved provider.
+        ;; A single :jolt / :lpy / :jank / :jvm keeps the launch it has today.
+        ;; Lone :jolt still boots the native adapter; its :clj provider
+        ;; (champaca) is recorded in clj-leg for a later router.
+        (and (cohost.clj-body/launch-resolved-leg? host-list) (:provider plan))
+        (case (:provider plan)
+          :clojure-cli (if (fs/which "clojure")
+                         (exit-clojure)
+                         (die 1 "cohost: :clj is the official `clojure` CLI, which is not on PATH."
+                              "  a host string that names :clj does not fall back to another :clj leg."))
+          :champaca (exit-champaca)
+          :jvm (exit-jvm))
+
+        ;; Single :jvm, or :cohost/target :jvm. `clojure` on PATH, else champaca.
+        (= host "jvm")
+        (exit-jvm)
 
       (not (some #{host} wired))
       (die 2 (str "cohost: :" host " is not wired into the CLI yet: its boot is still in flight (doc/hosts/PLAN.md)"))
@@ -554,4 +578,4 @@
                                           (when jank (select-keys jank [:snapshot? :project-snapshot :module-paths])))))
             ;; System/exit skips finally: the config goes before it
             (let [code (try (launch! host cwd cfg-file jank) (finally (fs/delete-if-exists cfg-file)))]
-              (System/exit code))))))))
+              (System/exit code)))))))))

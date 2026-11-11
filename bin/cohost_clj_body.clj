@@ -11,15 +11,66 @@
    The bundle is COHOST_CLJ_BUNDLE, or $HOME/.cache/cohost/cohost-clj.
    Champaca's startup cache is $HOME/.cache/cohost/champaca.
 
+   A host string such as :jolt:lpy names several hosts. Which of them owns
+   the :clj leg is resolve-clj-leg!, stored in the clj-leg atom for a later
+   cross-body router. This process launches that provider only.
+
    Champaca's guest-private JVM/Chez internals are waived from the memory
-   law (John, 00:50 ET). This side retains nothing: no scanner, header
-   counter, journal, or arena. A value that outlives the call would be
-   an atom."
+   law (John, 00:50 ET). Cohost-side state for this decision is the
+   clj-providers table and the clj-leg atom. No journal, scanner, header
+   counter, or arena."
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
             [clojure.string :as str]))
 
 (def ^:private path-sep java.io.File/pathSeparator)
+
+(def clj-providers
+  "Host token -> :clj provider. Missing tokens have no :clj leg.
+   :champaca is jolt's bundle launch. :jvm is the :jvm selector
+   (`clojure` on PATH, otherwise champaca). :clojure-cli is the official
+   JVM `clojure` CLI, with no champaca fallback. A later host registers
+   with swap!."
+  (atom {"jolt" :champaca
+         "jvm" :jvm
+         "clj" :clojure-cli}))
+
+(def clj-absolute
+  "Tokens that own :clj from any position, ahead of list order."
+  #{"clj"})
+
+(def clj-leg
+  "Last resolution: {:hosts [...] :provider keyword-or-nil :owner name}.
+   A later router reads this. Launch uses the same map."
+  (atom {:hosts [] :provider nil :owner nil}))
+
+(defn parse-host-string
+  "\"jolt:lpy\" -> [\"jolt\" \"lpy\"]. Blank segments are dropped."
+  [s]
+  (vec (remove str/blank? (str/split (or s "") #":"))))
+
+(defn launch-resolved-leg?
+  "Multi-host strings, and any string that names :clj, launch the resolved
+   :clj provider. A single existing host keeps the launch it has today."
+  [hosts]
+  (or (> (count hosts) 1) (some clj-absolute hosts)))
+
+(defn resolve-clj-leg!
+  "John, 09:28 ET. :clj anywhere means the official clojure CLI. Otherwise
+   the first listed host that has a :clj provider owns the leg. Otherwise
+   there is no provider and :owner is the first host (its own launch)."
+  [hosts]
+  (let [hosts (vec hosts)
+        table @clj-providers
+        absolute (first (filter clj-absolute hosts))
+        owner (or absolute
+                  (first (filter #(contains? table %) hosts))
+                  (first hosts))
+        provider (when (and owner (contains? table owner))
+                   (get table owner))
+        plan {:hosts hosts :provider provider :owner owner}]
+    (reset! clj-leg plan)
+    plan))
 
 (defn- on-path?
   "True when `name` resolves as a command. Does not run it."

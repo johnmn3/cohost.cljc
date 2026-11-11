@@ -124,9 +124,34 @@ looks only at PATH:
   hosts use.
 - neither resolves: a diagnostic, exit 1.
 
-`COHOST_CLJ_BODY=clojure` or `=jolt` forces that choice. Unset follows the rule above.
-`-T` and `-Sdescribe` stay on the `clojure` CLI on every host. Without `clojure`
-on PATH they say so and exit 1, including when the override is `jolt`.
+`COHOST_CLJ_BODY=clojure` or `=jolt` forces that choice on a lone `:jvm`
+(and on `:cohost/target :jvm`). Unset follows PATH. A host string that names
+several hosts, or names `:clj`, does not consult the override.
+`-T` and `-Sdescribe` stay on the `clojure` CLI on every host string. Without
+`clojure` on PATH they say so and exit 1.
+
+### Host strings
+
+`cohost :jolt:lpy ...` lists hosts in order. The string used to be one host
+name, so `:jolt:lpy` was unknown. It is now a list. `:clj` is not a runtime
+host (the CLI's name for that runtime is `:jvm`). In a host string `:clj`
+means the official `clojure` CLI only, with no champaca fallback. `:jvm`
+keeps the PATH rule above.
+
+Who owns the `:clj` leg (`resolve-clj-leg!`, stored in the `clj-leg` atom):
+
+1. `:clj` anywhere in the string: the official `clojure` CLI.
+2. Otherwise the first listed host that has a `:clj` provider. The table is
+   `jolt -> champaca`, `jvm ->` the PATH selector. Hosts not in the table
+   have none. Another host registers with `swap!` on `clj-providers`.
+3. Otherwise the first host keeps the launch it has today.
+
+A string of several hosts, or one that names `:clj`, launches that provider
+and does not start the other hosts. A later step routes `:clj` forms to that
+provider and other hosts' forms to them; this process does not. A lone
+`:jolt` still boots the native jolt adapter (`jolt -Scp -m cohost.cli`). Its
+resolved `:clj` provider is champaca, recorded in the atom, and is not what
+that single-host command execs.
 
 The bundle is `COHOST_CLJ_BUNDLE`, or `$HOME/.cache/cohost/cohost-clj`. It is built
 with JDK 25 and jolt 0.8.26, and run with neither:

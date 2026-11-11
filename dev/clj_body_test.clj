@@ -11,6 +11,7 @@
             [clojure.test :as t]))
 
 (def root (str (fs/parent (fs/parent (fs/canonicalize *file*)))))
+(load-file (str (fs/file root "bin/cohost_clj_body.clj")))
 (def bb-bin
   (str (or (fs/which "bb")
            (let [p (fs/file (System/getenv "HOME") ".local/bin/bb")]
@@ -334,6 +335,52 @@
     :bundle true
     :expect :error
     :stderr-includes ["jank" "not on PATH"]}
+   {:name ":jolt:lpy launches champaca even when clojure is on PATH"
+    :args [":jolt:lpy" "-e" "1"]
+    :clojure true
+    :jolt true
+    :bundle true
+    :expect :champaca
+    :main-args ["-e" "1"]}
+   {:name ":lpy:jolt launches champaca, the next host that has a :clj leg"
+    :args [":lpy:jolt" "-e" "1"]
+    :jolt true
+    :bundle true
+    :expect :champaca
+    :main-args ["-e" "1"]}
+   {:name ":jank:jolt launches champaca"
+    :args [":jank:jolt" "-m" "demo.main" "a"]
+    :jolt true
+    :bundle true
+    :expect :champaca
+    :main-args ["-m" "demo.main" "a"]}
+   {:name ":clj:jolt is the official clojure CLI"
+    :args [":clj:jolt" "-e" "1"]
+    :clojure true
+    :jolt true
+    :bundle true
+    :expect :clojure
+    :argv ["-M" "-e" "1"]}
+   {:name ":jolt:clj is the official clojure CLI from any position"
+    :args [":jolt:clj" "-e" "1"]
+    :clojure true
+    :jolt true
+    :bundle true
+    :expect :clojure
+    :argv ["-M" "-e" "1"]}
+   {:name ":clj with no clojure does not fall back to champaca"
+    :args [":lpy:clj" "-e" "1"]
+    :jolt true
+    :bundle true
+    :expect :error
+    :stderr-includes ["official `clojure` CLI" "does not fall back"]}
+   {:name "a lone :lpy keeps basilisp and does not take champaca"
+    :args [":lpy" "-e" "1"]
+    :clojure true
+    :jolt true
+    :bundle true
+    :expect :error
+    :stderr-includes ["basilisp" "not on PATH"]}
    {:name "the default host stays jank"
     :args []
     :clojure true
@@ -347,6 +394,37 @@
     :expect :champaca
     :main-args ["-e" "1"]
     :exit-code 7}])
+
+(def clj-leg-rows
+  [{:name ":jolt" :hosts ["jolt"] :provider :champaca :owner "jolt"}
+   {:name ":jolt:lpy" :hosts ["jolt" "lpy"] :provider :champaca :owner "jolt"}
+   {:name ":lpy:jolt" :hosts ["lpy" "jolt"] :provider :champaca :owner "jolt"}
+   {:name ":lpy" :hosts ["lpy"] :provider nil :owner "lpy"}
+   {:name ":clj:jolt" :hosts ["clj" "jolt"] :provider :clojure-cli :owner "clj"}
+   {:name ":jolt:clj" :hosts ["jolt" "clj"] :provider :clojure-cli :owner "clj"}
+   {:name ":lpy:clj" :hosts ["lpy" "clj"] :provider :clojure-cli :owner "clj"}
+   {:name ":jank:jolt" :hosts ["jank" "jolt"] :provider :champaca :owner "jolt"}
+   {:name ":jvm" :hosts ["jvm"] :provider :jvm :owner "jvm"}
+   {:name ":jank" :hosts ["jank"] :provider nil :owner "jank"}])
+
+(t/deftest clj-leg-resolution
+  (doseq [{:keys [name hosts provider owner]} clj-leg-rows]
+    (t/testing name
+      (let [plan (cohost.clj-body/resolve-clj-leg! hosts)]
+        (t/is (= provider (:provider plan)) name)
+        (t/is (= owner (:owner plan)) name)
+        (t/is (= hosts (:hosts plan)) name)
+        (t/is (= plan @cohost.clj-body/clj-leg) name)))))
+
+(t/deftest a-later-host-can-declare-a-clj-leg
+  (let [before @cohost.clj-body/clj-providers]
+    (try
+      (swap! cohost.clj-body/clj-providers assoc "lpy" :lpy-clj)
+      (t/is (= :lpy-clj (:provider (cohost.clj-body/resolve-clj-leg! ["lpy" "jolt"]))))
+      (t/is (= :clojure-cli (:provider (cohost.clj-body/resolve-clj-leg! ["lpy" "clj"]))))
+      (finally
+        (reset! cohost.clj-body/clj-providers before)
+        (cohost.clj-body/resolve-clj-leg! [])))))
 
 (t/deftest detection-matrix
   (t/is (fs/exists? bb-bin) (str "babashka not found at " bb-bin))
