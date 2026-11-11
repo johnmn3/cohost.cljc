@@ -146,12 +146,25 @@ Who owns the `:clj` leg (`resolve-clj-leg!`, stored in the `clj-leg` atom):
    have none. Another host registers with `swap!` on `clj-providers`.
 3. Otherwise the first host keeps the launch it has today.
 
-A string of several hosts, or one that names `:clj`, launches that provider
-and does not start the other hosts. A later step routes `:clj` forms to that
-provider and other hosts' forms to them; this process does not. A lone
-`:jolt` still boots the native jolt adapter (`jolt -Scp -m cohost.cli`). Its
-resolved `:clj` provider is champaca, recorded in the atom, and is not what
-that single-host command execs.
+The first host is always the process. `:jolt` and `:jolt:lpy` boot the native
+jolt adapter (`jolt -Scp src -m cohost.cli`). Their `:clj` leg is champaca
+inside that process: the launcher sets `JAVA_HOME` to the bundle runtime and
+`CHAMPACA_CACHE_DIR`, and `cohost.cli` routes a `:clj` reader arm to
+`champaca.api/init!` on first use. `:lpy:jolt` and `:jank:jolt` boot basilisp
+and jank. The `:clj` leg is still jolt's champaca, recorded in `clj-leg` as a
+sibling body. This process does not start that sibling. A cross-process router
+would have to launch the jolt/champaca body separately and ship the arm source
+and a return value back. That protocol is not here.
+
+`:clj` as the first token is the official `clojure` CLI, which is that token's
+process. `:clj` later in the string (`:jolt:clj`) still names the official CLI
+as the `:clj` leg, and the first host stays the process.
+
+A jolt host with no `clojure` on PATH resolves the classpath with
+`jolt -Srepro -Spath` and the same alias flags. With `clojure` on PATH it
+keeps the Clojure CLI's basis, which is the argmap this adapter has used.
+Every other host still resolves with `clojure`. A missing binary is
+`cohost: \`clojure\` failed to start`, not an uncaught `IOException`.
 
 The bundle is `COHOST_CLJ_BUNDLE`, or `$HOME/.cache/cohost/cohost-clj`. It is built
 with JDK 25 and jolt 0.8.26, and run with neither:

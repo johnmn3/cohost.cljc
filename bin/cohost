@@ -67,9 +67,11 @@
 (defn run-inherit
   "Run cmd with inherited stdio in dir; -> its exit code. Every child sees
    COHOST_HOME, the checkout this script runs from (the cohost/app template
-   reads it)."
-  [dir cmd]
-  (-> (p/process cmd {:dir dir :inherit true :extra-env {"COHOST_HOME" repo}}) deref :exit))
+   reads it). extra is merged over that."
+  [dir cmd & [extra]]
+  (-> (p/process cmd {:dir dir :inherit true
+                      :extra-env (merge {"COHOST_HOME" repo} extra)})
+      deref :exit))
 
 (defn with-templates
   "The Clojure CLI's arguments for a tool (-T): cohost's deps-new templates
@@ -130,6 +132,53 @@
       (spit (fs/file dir ".cohost-done") ""))
     (str dir)))
 
+(defn- program-start-failed?
+  [e]
+  (loop [x e]
+    (cond (nil? x) false
+          (instance? java.io.IOException x) true
+          :else (recur (try (.getCause ^Throwable x) (catch Throwable _ nil))))))
+
+(defn- run-resolver
+  "Run a classpath command. A missing binary is a die, not an uncaught
+   IOException from p/process."
+  [cmd cwd]
+  (try
+    @(p/process cmd {:dir cwd :out :string :err :string})
+    (catch Exception e
+      (if (program-start-failed? e)
+        (die 1
+             (str "cohost: `" (first cmd) "` failed to start: " (.getMessage e))
+             (str "  `" (first cmd) "` is not on PATH."))
+        (throw e)))))
+
+(defn- cp-entries
+  "The last non-blank line of a -Spath stdout, split into absolute entries."
+  [cwd out]
+  (let [line (str/trim (or (last (remove str/blank? (str/split-lines (or out "")))) ""))]
+    (mapv (fn [entry]
+            (when-not (str/blank? entry)
+              (str (fs/absolutize (under cwd entry)))))
+          (str/split line (re-pattern (java.util.regex.Pattern/quote path-sep))))))
+
+(defn- roots-of
+  "Directories as they are, jars extracted. org.clojure/clojure's jar is
+   left out: on a cohost host the runtime is the language."
+  [entries]
+  (vec (keep (fn [abs]
+               (cond
+                 (nil? abs) nil
+                 (fs/directory? abs) abs
+                 (and abs (str/ends-with? abs ".jar") (fs/exists? abs))
+                 (when-not (re-find #"[/\\]org[/\\]clojure[/\\]clojure[/\\][^/\\]+[/\\]clojure-[^/\\]+\.jar$" abs)
+                   (extract-jar! abs))
+                 (and abs (fs/exists? abs))
+                 (do (binding [*out* *err*]
+                       (println (str "cohost: skipping classpath entry " abs)))
+                     nil)
+                 :else nil))
+             entries)))
+
 (defn resolve-deps
   "tools.deps resolution of the current directory's deps.edn, through the
    Clojure CLI (tools.deps' front end, so -Sdeps, aliases and the
@@ -143,7 +192,7 @@
   [cwd {:keys [sdeps resolve aliases alias]}]
   (let [cmd (vec (concat ["clojure" "-Sverbose" "-Spath"] (mapcat (fn [d] ["-Sdeps" d]) sdeps)
                          resolve aliases (when alias [alias])))
-        out (-> (p/process cmd {:dir cwd :out :string :err :string}) deref)]
+        out (run-resolver cmd cwd)]
     (when-not (zero? (:exit out))
       (binding [*out* *err*] (print (:err out)) (flush))
       (die 1 (str "cohost: tools.deps resolution failed (" (str/join " " cmd) ")")))
@@ -151,22 +200,35 @@
           cp-file (some #(second (re-matches #"cp_file\s*=\s*(.*)" %)) lines)
           basis (when cp-file (fs/file (under cwd (str/replace cp-file #"\.cp$" ".basis"))))
           argmap (when (and basis (fs/exists? basis))
-                   (:argmap (edn/read-string {:default tagged-literal} (slurp basis))))]
+                   (:argmap (edn/read-string {:default tagged-literal} (slurp basis))))
+          entries (cp-entries cwd (:out out))]
       {:argmap argmap
-       :roots (vec (keep (fn [entry]
-                           (let [abs (str (fs/absolutize (under cwd entry)))]
-                             (cond
-                               (str/blank? entry) nil
-                               (fs/directory? abs) abs
-                               (str/ends-with? abs ".jar")
-                               (when-not (re-find #"[/\\]org[/\\]clojure[/\\]clojure[/\\][^/\\]+[/\\]clojure-[^/\\]+\.jar$" abs)
-                                 (extract-jar! abs))
-                               (fs/exists? abs) (do (binding [*out* *err*]
-                                                      (println (str "cohost: skipping classpath entry " abs)))
-                                                    nil)
-                               ;; a :paths entry that does not exist: as for clj, nothing
-                               :else nil)))
-                         (str/split (str/trim (last lines)) (re-pattern (java.util.regex.Pattern/quote path-sep)))))})))
+       :entries (vec (remove nil? entries))
+       :roots (roots-of entries)})))
+
+(declare jolt-alias-args alias-argmap)
+
+(defn resolve-deps-jolt
+  "Classpath for the native jolt adapter when `clojure` is not on PATH.
+   jolt -Srepro -Spath (plus the command's alias flags) is the no-JVM
+   resolver the champaca leg already uses. jolt does not write the CLI's
+   .basis, so :argmap comes from deps.edn the same way that leg reads
+   aliases. Roots are still directories and extracted jars: cohost.cli
+   loads source from those roots. The clojure jar stays out of :roots;
+   champaca's classpath keeps every entry, and the bundle's app jars
+   supply Clojure."
+  [cwd o]
+  (let [bin (or (fs/which "jolt")
+                (die 1 "cohost: :jolt resolves its classpath with `jolt`, which is not on PATH."))
+        cmd (into [(str bin) "-Srepro" "-Spath"] (jolt-alias-args o))
+        out (run-resolver cmd cwd)]
+    (when-not (zero? (:exit out))
+      (binding [*out* *err*] (print (:err out)) (flush))
+      (die 1 (str "cohost: jolt classpath resolution failed (" (str/join " " cmd) ")")))
+    (let [entries (cp-entries cwd (:out out))]
+      {:argmap (alias-argmap cwd o)
+       :entries (vec (remove nil? entries))
+       :roots (roots-of entries)})))
 
 ;; --------------------------------------------------------------------------
 ;; clojure.main's arguments, and clojure.run.exec's
@@ -356,8 +418,17 @@
                                    {:dir repo :inherit true :extra-env {"COHOST_HOME" repo "TMPDIR" tmp}})
                         deref :exit)
                     (finally (fs/delete-tree tmp))))
-      ;; native :jolt adapter, not the champaca :clj body (launch-jolt-clj!)
-      "jolt" (run-inherit cwd ["jolt" "-Scp" src "-m" "cohost.cli" cfg])
+      ;; native jolt adapter. When this process's :clj leg is champaca,
+      ;; the bundle's runtime is JAVA_HOME for champaca inside this same
+      ;; process. A missing bundle does not block the host from starting.
+      "jolt" (let [b (cohost.clj-body/bundle-dir)
+                   rt (fs/file b "runtime")
+                   extra (when (and (= :champaca (:provider @cohost.clj-body/clj-leg))
+                                    (fs/exists? rt))
+                           {"JAVA_HOME" (str rt)
+                            "CHAMPACA_BUNDLE" b
+                            "CHAMPACA_CACHE_DIR" (cohost.clj-body/champaca-cache-dir)})]
+               (run-inherit cwd ["jolt" "-Scp" src "-m" "cohost.cli" cfg] extra))
       "cljw" (run-inherit cwd ["cljw" "-cp" src "-m" "cohost.cli" cfg])
       "lpy" (run-inherit cwd (vec (concat ["basilisp" "run"]
                                           (when-let [d (:lpy-src jank)] ["-p" d])
@@ -533,20 +604,17 @@
             (exit-clojure)
             (apply die 1 (cohost.clj-body/clojure-only-lines only))))
 
-        ;; Several hosts, or an explicit :clj, launch the resolved provider.
-        ;; A single :jolt / :lpy / :jank / :jvm keeps the launch it has today.
-        ;; Lone :jolt still boots the native adapter; its :clj provider
-        ;; (champaca) is recorded in clj-leg for a later router.
-        (and (cohost.clj-body/launch-resolved-leg? host-list) (:provider plan))
-        (case (:provider plan)
-          :clojure-cli (if (fs/which "clojure")
-                         (exit-clojure)
-                         (die 1 "cohost: :clj is the official `clojure` CLI, which is not on PATH."
-                              "  a host string that names :clj does not fall back to another :clj leg."))
-          :champaca (exit-champaca)
-          :jvm (exit-jvm))
+        ;; The first host is the process. :clj as that first token is the
+        ;; official CLI. :jvm is the PATH selector. :jolt, :lpy, :jank, ...
+        ;; boot their native adapters below, including :jolt:lpy and
+        ;; :lpy:jolt. The :clj provider is already in clj-leg; it does not
+        ;; replace this process.
+        (= host "clj")
+        (if (fs/which "clojure")
+          (exit-clojure)
+          (die 1 "cohost: :clj is the official `clojure` CLI, which is not on PATH."
+               "  a host string that names :clj does not fall back to another :clj leg."))
 
-        ;; Single :jvm, or :cohost/target :jvm. `clojure` on PATH, else champaca.
         (= host "jvm")
         (exit-jvm)
 
@@ -559,7 +627,20 @@
              (str "  install it: " (if (str/starts-with? how "bash ") (str "bash " repo "/" (subs how 5)) how))))
 
       :else
-      (let [{:keys [roots argmap]} (resolve-deps cwd o)]
+      (let [;; The jolt adapter loads source from :roots. With `clojure` on
+            ;; PATH that resolution stays the CLI's (basis argmap, the
+            ;; contract this adapter has had). Without it, jolt -Srepro
+            ;; -Spath is the resolver, because this host must start with
+            ;; no JVM. Other hosts still use the CLI, and a missing binary
+            ;; dies instead of throwing.
+            resolved (if (and (= host "jolt") (not (fs/which "clojure")))
+                       (resolve-deps-jolt cwd o)
+                       (resolve-deps cwd o))
+            {:keys [roots argmap]} resolved
+            champaca? (and (= host "jolt") (= :champaca (:provider plan)))
+            bundle (when champaca? (cohost.clj-body/bundle-dir))
+            app (when (and bundle (fs/exists? (fs/file bundle "app")))
+                  (mapv str (fs/list-dir (fs/file bundle "app"))))]
         (cond
           (:spath? o) (println (str/join path-sep roots))
           (:prepare? o) (binding [*out* *err*]
@@ -574,7 +655,14 @@
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
                                                :report-dir (System/getProperty "java.io.tmpdir")
                                                :report (or (System/getenv "COHOST_MAIN_REPORT") "file")
-                                               :verbose (boolean (System/getenv "COHOST_VERBOSE"))}
+                                               :verbose (boolean (System/getenv "COHOST_VERBOSE"))
+                                               :clj-provider (:provider plan)
+                                               :clj-owner (:owner plan)
+                                               :hosts (:hosts plan)}
+                                          (when champaca?
+                                            {:champaca-bundle bundle
+                                             :champaca-cache (cohost.clj-body/champaca-cache-dir)
+                                             :champaca-classpath (vec (concat app (:entries resolved)))})
                                           (when jank (select-keys jank [:snapshot? :project-snapshot :module-paths])))))
             ;; System/exit skips finally: the config goes before it
             (let [code (try (launch! host cwd cfg-file jank) (finally (fs/delete-if-exists cfg-file)))]

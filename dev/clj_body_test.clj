@@ -12,6 +12,7 @@
 
 (def root (str (fs/parent (fs/parent (fs/canonicalize *file*)))))
 (load-file (str (fs/file root "bin/cohost_clj_body.clj")))
+(load-file (str (fs/file root "src/cohost/scan.cljc")))
 (def bb-bin
   (str (or (fs/which "bb")
            (let [p (fs/file (System/getenv "HOME") ".local/bin/bb")]
@@ -28,6 +29,11 @@
   (str "#!/bin/sh\n"
        "printf '%s\\n' \"$*\" >> \"$CLOJURE_STUB_LOG\"\n"
        "printf '%s\\n' \"$@\" > \"$CLOJURE_STUB_ARGV\"\n"
+       "if [ \"${CLOJURE_STUB_RESOLVE:-}\" = 1 ]; then\n"
+       "  echo \"cp_file = /tmp/none.cp\"\n"
+       "  printf '%s\\n' \"${CLOJURE_STUB_CP:-" fake-cp "}\"\n"
+       "  exit 0\n"
+       "fi\n"
        "exit 42\n"))
 
 (def jolt-stub
@@ -35,6 +41,9 @@
        "printf '%s\\n' \"$*\" >> \"$JOLT_STUB_LOG\"\n"
        "if [ \"$1\" = \"-Srepro\" ] && [ \"$2\" = \"-Spath\" ]; then\n"
        "  printf '%s\\n' \"${JOLT_STUB_CP:-" fake-cp "}\"\n"
+       "  exit 0\n"
+       "fi\n"
+       "if [ \"$1\" = \"-Scp\" ]; then\n"
        "  exit 0\n"
        "fi\n"
        "echo \"unexpected jolt: $*\" >&2\n"
@@ -71,7 +80,8 @@
       (:body c) (assoc "COHOST_CLJ_BODY" (:body c))
       bundle (assoc "COHOST_CLJ_BUNDLE" (str bundle))
       (:missing-bundle c) (assoc "COHOST_CLJ_BUNDLE" (str (fs/file dir "missing-bundle")))
-      (:exit-code c) (assoc "CHAMPACA_STUB_EXIT" (str (:exit-code c))))))
+      (:exit-code c) (assoc "CHAMPACA_STUB_EXIT" (str (:exit-code c)))
+      (:clojure-resolves c) (assoc "CLOJURE_STUB_RESOLVE" "1"))))
 
 (defn- invoke [dir env args]
   @(p/process (into [bb-bin cohost] args)
@@ -111,6 +121,17 @@
           (t/is (= [(or (:jolt-args c) "-Srepro -Spath")] (slurp-lines (:jolt logs)))
                 (msg "jolt -Spath args"))
           (t/is (not (fs/exists? (:clojure logs))) (msg "clojure launched on the champaca path")))
+      :native-jolt
+      (let [lines (or (slurp-lines (:jolt logs)) [])]
+        (t/is (zero? (:exit r)) (msg "exit"))
+        (t/is (some #(str/includes? % "-Scp") lines) (msg "native -Scp"))
+        (t/is (some #(str/includes? % "cohost.cli") lines) (msg "cohost.cli"))
+        (when (:spath c)
+          (t/is (some #(str/includes? % "-Srepro -Spath") lines) (msg "jolt -Spath")))
+        (t/is (not (fs/exists? (:champaca-argv logs))) (msg "champaca replaced the host"))
+        (if (:clojure c)
+          (t/is (fs/exists? (:clojure logs)) (msg "clojure resolver"))
+          (t/is (not (fs/exists? (:clojure logs))) (msg "clojure was launched"))))
       :error
       (do (t/is (= 1 (:exit r)) (msg "exit"))
           (t/is (not (fs/exists? (:clojure logs))) (msg "clojure launched"))
@@ -146,6 +167,7 @@
       (when (:deps c) (spit (str (fs/file dir "deps.edn")) (pr-str (:deps c))))
       (fs/create-dirs bin)
       (when (:clojure c) (spit-exe (fs/file bin "clojure") clojure-stub))
+      (when (:node c) (spit-exe (fs/file bin "node") "#!/bin/sh\nexit 0\n"))
       (when (:jolt c) (spit-exe (fs/file bin "jolt") jolt-stub))
       (check c (invoke dir (child-env dir bin logs c bundle) (:args c)) logs dir bundle)
       (finally (fs/delete-tree dir)))))
@@ -335,45 +357,61 @@
     :bundle true
     :expect :error
     :stderr-includes ["jank" "not on PATH"]}
-   {:name ":jolt:lpy launches champaca even when clojure is on PATH"
-    :args [":jolt:lpy" "-e" "1"]
-    :clojure true
+   {:name "lone :jolt with no clojure boots the native adapter via jolt -Spath"
+    :args [":jolt" "-e" "1"]
     :jolt true
     :bundle true
-    :expect :champaca
-    :main-args ["-e" "1"]}
-   {:name ":lpy:jolt launches champaca, the next host that has a :clj leg"
+    :spath true
+    :expect :native-jolt}
+   {:name ":jolt:lpy boots the native jolt adapter, not a champaca process"
+    :args [":jolt:lpy" "-e" "1"]
+    :jolt true
+    :bundle true
+    :spath true
+    :expect :native-jolt}
+   {:name ":jolt:lpy uses the clojure resolver when clojure is on PATH"
+    :args [":jolt:lpy" "-e" "1"]
+    :clojure true
+    :clojure-resolves true
+    :jolt true
+    :bundle true
+    :expect :native-jolt}
+   {:name ":lpy:jolt boots basilisp; champaca stays a recorded sibling"
     :args [":lpy:jolt" "-e" "1"]
     :jolt true
     :bundle true
-    :expect :champaca
-    :main-args ["-e" "1"]}
-   {:name ":jank:jolt launches champaca"
-    :args [":jank:jolt" "-m" "demo.main" "a"]
+    :expect :error
+    :stderr-includes ["basilisp" "not on PATH"]}
+   {:name ":jank:jolt boots jank, not champaca"
+    :args [":jank:jolt" "-e" "1"]
     :jolt true
     :bundle true
-    :expect :champaca
-    :main-args ["-m" "demo.main" "a"]}
-   {:name ":clj:jolt is the official clojure CLI"
+    :expect :error
+    :stderr-includes ["jank" "not on PATH"]}
+   {:name ":clj:jolt is the official clojure CLI because :clj is first"
     :args [":clj:jolt" "-e" "1"]
     :clojure true
     :jolt true
     :bundle true
     :expect :clojure
     :argv ["-M" "-e" "1"]}
-   {:name ":jolt:clj is the official clojure CLI from any position"
+   {:name ":jolt:clj keeps jolt as the process"
     :args [":jolt:clj" "-e" "1"]
-    :clojure true
     :jolt true
     :bundle true
-    :expect :clojure
-    :argv ["-M" "-e" "1"]}
-   {:name ":clj with no clojure does not fall back to champaca"
+    :spath true
+    :expect :native-jolt}
+   {:name ":lpy:clj boots basilisp; :clj is recorded, not launched"
     :args [":lpy:clj" "-e" "1"]
     :jolt true
     :bundle true
     :expect :error
-    :stderr-includes ["official `clojure` CLI" "does not fall back"]}
+    :stderr-includes ["basilisp" "not on PATH"]}
+   {:name "a missing clojure on a non-jolt host is a clear die"
+    :args [":cljs" "-e" "1"]
+    :node true
+    :expect :error
+    :stderr-includes ["`clojure` failed to start" "not on PATH"]}
    {:name "a lone :lpy keeps basilisp and does not take champaca"
     :args [":lpy" "-e" "1"]
     :clojure true
@@ -406,6 +444,18 @@
    {:name ":jank:jolt" :hosts ["jank" "jolt"] :provider :champaca :owner "jolt"}
    {:name ":jvm" :hosts ["jvm"] :provider :jvm :owner "jvm"}
    {:name ":jank" :hosts ["jank"] :provider nil :owner "jank"}])
+
+(t/deftest clj-arm-route
+  (let [src "#?(:clj (+ 1 2) :jolt :no)"]
+    (t/is (str/includes? (cohost.scan/resolve-conditionals src [:clj :default]) "(+ 1 2)"))
+    (reset! cohost.scan/clj-arm-route
+            (fn [body] (pr-str (list 'cohost.clj-champaca/eval-arm! body))))
+    (try
+      (let [out (cohost.scan/resolve-conditionals src [:clj :default])]
+        (t/is (str/includes? out "cohost.clj-champaca/eval-arm!"))
+        (t/is (str/includes? out "(+ 1 2)"))
+        (t/is (not (str/includes? out ":no"))))
+      (finally (reset! cohost.scan/clj-arm-route nil)))))
 
 (t/deftest clj-leg-resolution
   (doseq [{:keys [name hosts provider owner]} clj-leg-rows]

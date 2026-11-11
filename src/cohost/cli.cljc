@@ -33,7 +33,8 @@
             [cohost.boot :as boot]
             [cohost.shim :as shim]
             #?@(:cljs [[cohost.hosts.cljs-eve :as cljs-eve]
-                       [cohost.hosts.cljs-realm :as cljs-realm]])))
+                       [cohost.hosts.cljs-realm :as cljs-realm]])
+            #?@(:jolt [[cohost.clj-champaca :as clj-champaca]])))
 
 (defn- err-println [s]
   #?(:cljs (binding [*print-fn* *print-err-fn*] (println s))
@@ -473,6 +474,12 @@ namespace cohost_io {
   (when-not #?(:cljs (cljs-eve/run-thread!) :default false)
   (let [cfg (host/read-string* (host/slurp-file (first args)))]
     (reset! cli-config cfg)
+    ;; jolt hosting, champaca owning :clj: route :clj arms into this
+    ;; process before user code is read. A sibling owner (basilisp or
+    ;; jank hosting, jolt's champaca recorded as the leg) does not start
+    ;; another process here.
+    #?(:jolt (when (= :champaca (:clj-provider cfg))
+               (clj-champaca/install! cfg)))
     ;; ClojureScript's and Phel's launches start in the repo (the cljs build
     ;; finds its files from the process's directory, Phel its config): the
     ;; project directory travels in the config
