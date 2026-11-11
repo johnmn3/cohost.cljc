@@ -8,12 +8,14 @@
 set -u
 HOST="${1:?usage: hatch-release-bench.sh <battery|jvm|jolt|jank|cljs|lpy|browser> [workdir]}"
 WORK="${2:-$HOME/cohost-0932-$HOST}"
-EVE_SHA=a11a1820ed61a7a69f73d6630e2d6ee111e4e7ad
+EVE_SHA="${EVE_SHA:-a11a1820ed61a7a69f73d6630e2d6ee111e4e7ad}"   # override for a baseline run (e.g. 0.9.3.1 = 12d37edf)
+COHOST_REF="${COHOST_REF:-}"   # empty = release/cohost-on-eve-0932 tip; a sha checks that commit out (baseline runs)
 BOX="${BOX:-$(hostname -s)}"   # label for banked file names (was hard-coded "hatch" even on other boxes)
 mkdir -p "$WORK"; exec > >(tee "$WORK/run-$HOST.log") 2>&1
 echo "== release-bench $HOST start $(date -Is) box=$(hostname) cores=$(nproc) load1_at_start=$(cut -d' ' -f1 /proc/loadavg) (full: $(cat /proc/loadavg))"
 cd "$WORK"
 [ -d cohost/.git ] || git clone -q -b release/cohost-on-eve-0932 https://github.com/johnmn3/cohost.cljc cohost || { echo "CLONE_FAILED cohost"; exit 3; }
+[ -n "$COHOST_REF" ] && { (cd cohost && git checkout -q "$COHOST_REF") || { echo "CHECKOUT_FAILED cohost $COHOST_REF"; exit 3; }; echo "-- BASELINE run: cohost $COHOST_REF (not the release tip)"; }
 if [ ! -d eve/.git ]; then git clone -q https://github.com/SeniorCareMarket/eve eve && (cd eve && git checkout -q $EVE_SHA) || { echo "CLONE_FAILED eve"; exit 3; }; fi
 echo "-- cohost sha: $(cd cohost && git rev-parse HEAD)  eve sha: $(cd eve && git rev-parse HEAD)  (want $EVE_SHA)"
 echo "-- tools: $(java -version 2>&1|head -1) | $(clojure --version 2>&1|head -1) | bb $(bb --version 2>&1) | node $(node --version 2>&1) | $(basilisp --version 2>&1|head -1) | jolt $(jolt --version 2>&1|head -1) | jank $(jank --version 2>&1|head -1)"
