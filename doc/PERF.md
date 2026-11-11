@@ -508,3 +508,27 @@ These are the in-process core microbenchmarks (`bb bench:*`), not the built-app 
 | lpy | 23.448 | 30/30 | #436 |
 
 Gaps: #427 `bb bench:browser` failed rc=1 after 10s and produced no EDN because `dev/browser_boot.py:10` raised `ModuleNotFoundError: No module named 'playwright'` (retained `queue-427/home-427/cohost-0932-browser/run-browser.log`); no install attempted. CLJS `format` has unequal answers/error; jank has unequal answers/errors in loop-arith, hinted-loop, reduce-range, transduce, atom-swap and protocol. Exclude those from speed ratios. muse #22 on J has no ACK/RESULT yet (latest routing CORRECTION 3, latest pin CORRECTION 5). Next: matched old/new stock-core tables and labelled per-case ratios; no causal performance improvement claimed here.
+
+## Release 0.9.3.2: matched old vs new, jvm and cljs (grok #445 vs #427, 2026-11-11)
+
+This is the matched comparison owed by the section above. The same box ran both sides, **grok-bot-vm-524857728**, with the same `bb bench:*` harness at scale 1 and 30 cases per host. The ratio is new stock median over old stock median, so below 1.00 means the new release is faster. `stock` is cohost's booted core, which is what the release changes; `host` is the runtime's own core and only serves as a control.
+
+**About the "hatch" file names.** Every `bench-*-hatch.{edn,log}` in `doc/perf/release-0932/` came from grok, not hatch: #427 produced the jvm, cljs, jolt and jank files, and #436 produced the lpy files. Their own logs say `box=grok-bot-vm-524857728`. The files keep those names because the release notes cite them, so read "hatch" in those file names as grok. The fixed harness (a985099, release/cohost-on-eve-0932) names files by `$BOX`, which is why the newer files say `grok`.
+
+- Old: grok #445 (2026-11-11 00:45–00:49 ET), cohost main `a956f21`, Eve v0.9.3 `76fd94c3`, files `bench-{jvm,cljs}-grok-base-a956f21.edn`. load1 2.20 / 3.10 at start, but the 15-minute load average was still 26–29 from an earlier box spike, and there were 7 cores.
+- New: grok #427 (2026-11-10 20:52–20:56 ET), cohost `8233562c`, Eve `73a64110` (cljs took the `cae5db96` git dep), files `bench-{jvm,cljs}-hatch.edn`. load1 2.52 / 3.00, 8 cores.
+- Neither run had the box to itself. Treat a single-case ratio within ±10% as noise. The new release side is not yet re-measured at the current release tip (cohost `2be13796`, Eve `9c9fef4a`); grok #456 re-gates that tip and banks a fresh cljs row.
+
+| host | cases compared | geomean stock new/old | core boot old → new (ms) | excluded |
+|---|---:|---:|---:|---|
+| jvm | 30/30 | 0.98 | 761 → 718 | none |
+| cljs | 29/30 | 0.97 | 3919 → 3658 | `format` (no host-side value on ClojureScript: cljs.core has no `format`) |
+
+Single cases outside ±10%, stock new/old:
+- jvm: `assoc-map` 0.88 (10.52 → 9.24 ms). Its host control moved by the same amount (9.11 → 7.94 ms), so this is box variance, not cohost.
+- cljs: `reduce-range` 0.60 (3.04 → 1.84 ms); its host control is flat (1.80 → 1.74).
+- cljs: `assoc-map` 1.21 (25.90 → 31.43 ms); its host control is flat (14.57 → 14.55).
+- cljs: `multimethod` 0.87 (25.78 → 22.38 ms).
+- cljs: `distinct` 0.89 (92.23 → 81.85 ms). Its host control went the other way (87.23 → 100.26), so it is noisy.
+
+In short, on this box the new release's stock core is at parity with v0.9.3 on jvm and cljs: geomeans 0.98 and 0.97, and boot is a few percent faster. There is one real-looking cljs regression to watch, `assoc-map` +21%, and one real-looking win, `reduce-range` −40%. Both stand out against a flat host control, but each comes from a single run, so neither is claimed as caused by the release until a quiet-box repeat confirms it.
