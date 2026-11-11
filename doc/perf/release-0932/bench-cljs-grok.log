@@ -1,11 +1,11 @@
-== release-bench cljs start 2026-11-11T02:33:23-05:00 box=grok-bot-vm-524857728 cores=7 load1_at_start=3.64 (full: 3.64 3.38 3.72 2/1433 3335109)
--- cohost sha: 50b86e5f07535aeab805a36d5104814f2daa0009  eve sha: a8a5cff9669b63834504265f1a5e14d6bda5e8fa  (want a8a5cff9669b63834504265f1a5e14d6bda5e8fa)
--- tools: Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-466/tmp | Clojure CLI version 1.12.6.1673 | bb babashka v1.13.226 | node v24.22.1 | usage: basilisp [-h] {bootstrap,nrepl-server,repl,run,test,version} ... | jolt jolt v0.8.23 | jank error: Invalid command '--version'.
-Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-466/tmp
-Checking out: https://github.com/SeniorCareMarket/eve at a8a5cff9669b63834504265f1a5e14d6bda5e8fa
+== release-bench cljs start 2026-11-11T03:02:13-05:00 box=grok-bot-vm-524857728 cores=7 load1_at_start=3.20 (full: 3.20 3.21 3.22 2/1422 3364305)
+-- cohost sha: 78ca47fc457870139f3768e78fd4f5cbf3222d25  eve sha: a8a5cff9669b63834504265f1a5e14d6bda5e8fa  (want a8a5cff9669b63834504265f1a5e14d6bda5e8fa)
+-- tools: Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-470/tmp | Clojure CLI version 1.12.6.1673 | bb babashka v1.13.226 | node v24.22.1 | usage: basilisp [-h] {bootstrap,nrepl-server,repl,run,test,version} ... | jolt jolt v0.8.23 | jank error: Invalid command '--version'.
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-470/tmp
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-470/tmp
 -- cljs Eve checkout (eve_paths): pinned git dep
--- bench start 2026-11-11T02:33:26-05:00 load1=3.50
-Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-466/tmp
+-- bench start 2026-11-11T03:02:18-05:00 load1=3.51
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-470/tmp
 WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/a8a5cff9669b63834504265f1a5e14d6bda5e8fa/adapters/slab-io/protocol/src
 WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/a8a5cff9669b63834504265f1a5e14d6bda5e8fa/adapters/slab-io/cljs-compiler/src
 WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/a8a5cff9669b63834504265f1a5e14d6bda5e8fa/adapters/http/node/src
@@ -35,16 +35,16 @@ WARNING: Use of :paths external to the project has been deprecated, please remov
 WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/a8a5cff9669b63834504265f1a5e14d6bda5e8fa/adapters/thread/jvm/src
 WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/a8a5cff9669b63834504265f1a5e14d6bda5e8fa/adapters/types/jvm/src
 WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/a8a5cff9669b63834504265f1a5e14d6bda5e8fa/adapters/types/js/src
-Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-466/tmp
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-470/tmp
 WARNING: array-chunk already refers to: cljs.core/array-chunk being replaced by: eve.core/array-chunk at line 70 /home/box/.gitlibs/libs/eve/eve/a8a5cff9669b63834504265f1a5e14d6bda5e8fa/adapters/coll/cljs/src/eve/core.cljs
 WARNING: hash-long already refers to: cljs.core/hash-long being replaced by: eve.net.xxh3/hash-long at line 145 /home/box/.gitlibs/libs/eve/eve/a8a5cff9669b63834504265f1a5e14d6bda5e8fa/src/eve/net/xxh3.cljc
-WARNING: -write already refers to: cljs.core/-write being replaced by: cohost.shim/-write at line 2171 /workspace/jobs/vol/home-466/cohost-0932-cljs/cohost/src/cohost/shim.cljc
-WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-466/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
-WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-466/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
-WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-466/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
-WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-466/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
-WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1581 /workspace/jobs/vol/home-466/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
-WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1581 /workspace/jobs/vol/home-466/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: -write already refers to: cljs.core/-write being replaced by: cohost.shim/-write at line 2171 /workspace/jobs/vol/home-470/cohost-0932-cljs/cohost/src/cohost/shim.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-470/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-470/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-470/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-470/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1581 /workspace/jobs/vol/home-470/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1581 /workspace/jobs/vol/home-470/cohost-0932-cljs/cohost/src/cohost/rewrite.cljc
 cohost.boot on cljs: 822 top-level forms
   booted as stock: 554   from host: 87   natives: 41   skipped: 140   errors: 0
 WARNING: Use of undeclared Var cohost.repl/proxy
@@ -58,37 +58,35 @@ WARNING: Use of undeclared Var cohost.repl/proxy
 WARNING: Use of undeclared Var cohost.repl/handle
 WARNING: Use of undeclared Var cohost.repl/signal
 WARNING: Use of undeclared Var cohost.repl/signal
-WARNING: Use of undeclared Var cohost.bench-host/format
 bench on cljs: median ms per call, the host's own core vs the stock core
-  fn-call  host 0.92  stock 0.35  x0.37
-  loop-arith  host 0.1  stock 0.1  x0.99
-  hinted-loop  host 0.1  stock 0.1  x1
-  reduce-range  host 1.94  stock 1.9  x0.98
-  lazy-pipeline  host 6.1  stock 14.17  x2.32
-  transduce  host 2.96  stock 11.34  x3.82
-  into-vector  host 2.87  stock 2.87  x1
-  conj-vector  host 13.74  stock 25.09  x1.82
-  transient-vector  host 1.75  stock 33.78  x19.29
-  assoc-map  host 15.52  stock 27.84  x1.79
-  map-lookup  host 9.01  stock 52.32  x5.8
-  keyword-lookup  host 4.73  stock 4.61  x0.97
-  destructure  host 8  stock 49.19  x6.14
-  frequencies  host 20.85  stock 40.72  x1.95
-  group-by  host 27.27  stock 53.52  x1.96
-  sort  host 17.35  stock 27.08  x1.56
-  sort-by  host 25.66  stock 27.89  x1.08
-  set-build  host 9.51  stock 30.02  x3.15
-  distinct  host 99.99  stock 94.34  x0.94
-  partition  host 19.14  stock 23.42  x1.22
-  lazy-iterate  host 2.36  stock 12.28  x5.19
-  atom-swap  host 3.8  stock 2224.05  x583.91
-  protocol  host 1.77  stock 1.02  x0.58
-  multimethod  host 6.82  stock 29.22  x4.28
-  equality  host 0.71  stock 0.71  x1
-  str-build  host 2.13  stock 2.14  x1
-  string-join  host 1.14  stock 1.13  x0.98
-  regex  host 0.47  stock 0.48  x1
-WARNING: Use of undeclared Var cohost.bench-host/format
-  format  host -  stock 44.5  [Cannot read properties of undefined (reading 'call')]
-  pr-str  host 5.37  stock 5.43  x1
--- bench end rc=0 wall=131s load1=3.74
+  fn-call  host 0.67  stock 0.35  x0.51
+  loop-arith  host 0.1  stock 0.1  x1
+  hinted-loop  host 0.1  stock 0.11  x1.18
+  reduce-range  host 1.77  stock 1.85  x1.04
+  lazy-pipeline  host 5.29  stock 13.02  x2.46
+  transduce  host 2.96  stock 10.82  x3.65
+  into-vector  host 2.84  stock 2.86  x1
+  conj-vector  host 11.98  stock 24.29  x2.02
+  transient-vector  host 1.8  stock 32.51  x17.97
+  assoc-map  host 14.25  stock 24.6  x1.72
+  map-lookup  host 8.49  stock 46.64  x5.49
+  keyword-lookup  host 4.44  stock 4.45  x1
+  destructure  host 7.74  stock 46.23  x5.96
+  frequencies  host 19.52  stock 40.48  x2.07
+  group-by  host 26.76  stock 52.06  x1.94
+  sort  host 17.12  stock 27.28  x1.59
+  sort-by  host 26.83  stock 26.57  x0.99
+  set-build  host 9.48  stock 30.79  x3.24
+  distinct  host 87.93  stock 88.58  x1
+  partition  host 18.58  stock 18.94  x1.01
+  lazy-iterate  host 1.95  stock 12.54  x6.41
+  atom-swap  host 3.56  stock 2019.4  x566.39
+  protocol  host 1.4  stock 0.89  x0.63
+  multimethod  host 5.91  stock 22.37  x3.78
+  equality  host 0.65  stock 0.68  x1.04
+  str-build  host 2.06  stock 2.11  x1.02
+  string-join  host 1.11  stock 1.13  x1.01
+  regex  host 0.47  stock 0.47  x1
+  format  host -  stock 43.43  [host not applicable: cljs.core has no format]
+  pr-str  host 5.12  stock 5.05  x0.98
+-- bench end rc=0 wall=130s load1=3.96
