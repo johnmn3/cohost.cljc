@@ -1,0 +1,39 @@
+== release-bench jolt start 2026-11-10T20:57:11-05:00 box=grok-bot-vm-524857728 cores=8 load1_at_start=2.46 (full: 2.46 2.62 2.66 1/645 2924036)
+-- cohost sha: 8233562c0df19563606504d093e57f1914e36080  eve sha: 73a641108e52fc9b42b8a4d591a2776f6611a99e  (want 73a641108e52fc9b42b8a4d591a2776f6611a99e)
+-- tools: Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-427/tmp | Clojure CLI version 1.12.6.1673 | bb babashka v1.13.226 | node v24.22.1 | usage: basilisp [-h] {bootstrap,nrepl-server,repl,run,test,version} ... | jolt jolt v0.8.23 | jank error: Invalid command '--version'.
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-427/tmp
+-- bench start 2026-11-10T20:57:14-05:00 load1=2.43
+cohost.boot on jolt: 791 top-level forms
+  booted as stock: 466   from host: 199   natives: 63   skipped: 63   errors: 0
+bench on jolt: median ms per call, the host's own core vs the stock core
+  fn-call  host 1.13  stock 0.93  x0.82
+  loop-arith  host 0.35  stock 0.35  x0.99
+  hinted-loop  host 0.25  stock 0.45  x1.78
+  reduce-range  host 2.66  stock 3.05  x1.14
+  lazy-pipeline  host 3.65  stock 14.5  x3.96
+  transduce  host 4.45  stock 14.59  x3.27
+  into-vector  host 6.92  stock 21.61  x3.12
+  conj-vector  host 5.81  stock 21.27  x3.65
+  transient-vector  host 3.03  stock 20.45  x6.73
+  assoc-map  host 11.31  stock 22.69  x2.0
+  map-lookup  host 6.91  stock 52.35  x7.56
+  keyword-lookup  host 2.99  stock 2.97  x0.99
+  destructure  host 4.48  stock 46.17  x10.29
+  frequencies  host 16.88  stock 41.59  x2.46
+  group-by  host 14.01  stock 41.31  x2.94
+  sort  host 19.59  stock 31.8  x1.62
+  sort-by  host 16.44  stock 16.45  x1.0
+  set-build  host 8.04  stock 56.82  x7.06
+  distinct  host 34.66  stock 34.65  x0.99
+  partition  host 5.83  stock 5.81  x0.99
+  lazy-iterate  host 1.18  stock 13.07  x11.0
+  atom-swap  host 3.38  stock 3.12  x0.92
+  protocol  host 4.38  stock 4.41  x1.0
+  multimethod  host 6.59  stock 18.29  x2.77
+  equality  host 0.45  stock 0.45  x1.0
+  str-build  host 1.79  stock 1.81  x1.01
+  string-join  host 1.98  stock 2.01  x1.01
+  regex  host 0.95  stock 0.95  x1.0
+  format  host 3.32  stock 3.37  x1.01
+  pr-str  host 3.76  stock 3.76  x0.99
+-- bench end rc=0 wall=114s load1=1.46
