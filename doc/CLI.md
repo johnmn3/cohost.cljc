@@ -11,15 +11,18 @@ cohost :lg -X:run :n 2               # an alias's :exec-fn, its :exec-args merge
 cohost :cljs -Spath                  # the source roots, in tools.deps order
 ```
 
-Wired: `:cljs :jolt :lpy :cljw :phel :lg :jank`. `:jvm` runs the real Clojure CLI.
-`:cljrs` is wired when its boot lands (doc/hosts/PLAN.md).
+Wired: `:cljs :jolt :lpy :cljw :phel :lg :jank`. `:jvm` is the `:clj` body: the real
+Clojure CLI when a JVM is usable, otherwise jolt's champaca path (a stub until that
+boot is proven). `:cljrs` is wired when its boot lands (doc/hosts/PLAN.md).
 
 ## The target
 
 `cohost :<target> ...` names the runtime for one command. Without it, the target is
 `:cohost/target` in `./deps.edn` (a keyword, e.g. `:lpy`), and without that `:jank`. `:jvm` is the
-reference: the real Clojure CLI runs the command whole, as with `clj`.
-tools.deps ignores the key. `cohost` with no arguments is the REPL.
+reference: when a usable JVM is present the real Clojure CLI runs the command whole, as with `clj`.
+With no usable JVM, `:jvm` is jolt's champaca `:clj` body when that runtime is available
+(`COHOST_CLJ_BODY`, below). A broken or unsupported JVM is reported; it is not treated as
+"no JVM". tools.deps ignores the key. `cohost` with no arguments is the REPL.
 
 ## New projects
 
@@ -97,6 +100,37 @@ source root:
   `clojure.*` libraries (`clojure.string`, …) load from those sources too: the
   stock root comes first.
 
+That shell-out is a JVM, including for every native host. The `:clj` body's jolt arm does
+not call `resolve-deps` (same shape as the JVM arm: the runtime receives the original CLI
+arguments). The gap, and a no-JVM proposal that is not implemented, are under
+[The :clj body](#the-clj-body).
+
+## The :clj body
+
+`:jvm` is the public `:clj` leg. `bin/cohost_clj_body.clj` chooses the body before anything
+is launched:
+
+| situation | body |
+|---|---|
+| `COHOST_CLJ_BODY=auto` (the default; unset or blank counts) and `java -version` shows Java 8 or newer, via `JAVA_HOME/bin/java` when `JAVA_HOME` is set, otherwise `java` on `PATH` | the real Clojure CLI, same arguments as before |
+| `auto`, no JVM at all, `jolt --version` is `>= 0.8.24`, and `jolt -e` in the project directory can `(require 'champaca.api)` | jolt's `:clj` handler on the champaca path |
+| `auto`, and a JVM is present but `java -version` fails, prints no version, or is older than 8 | diagnostic on stderr, exit 1. No jolt. |
+| `COHOST_CLJ_BODY=jvm` | the real CLI when the JVM is usable, otherwise a diagnostic. Jolt is not considered. |
+| `COHOST_CLJ_BODY=jolt` | the champaca path when jolt qualifies, even if a JVM is present or broken. Otherwise a diagnostic. The override does not apply to `-T` or `-Sdescribe`. |
+
+`JAVA_HOME` set to a directory with no `bin/java` is a broken JVM. The `java` on `PATH` is not consulted in its place.
+
+The champaca launch is a stub. It prints a plan (`:handler :jolt-clj`, `:runtime :champaca`, `:boot :stub`, the project directory, and the CLI arguments) and exits 1. It does not start jolt. The native `:jolt` adapter (`launch!`'s `"jolt"` branch, `jolt -Scp src -m cohost.cli`) is a different runtime and is not this path. `dev/install/jolt.sh` still pins v0.8.23 for that native adapter; 0.8.23 is below the champaca floor.
+
+`-T` (tools are JVM programs) and `-Sdescribe` stay on the JVM on every host, including `:jvm` and including `COHOST_CLJ_BODY=jolt`. With no usable JVM they say so and exit 1.
+
+**Dependency resolution still needs a JVM.** `resolve-deps` runs `clojure -Sverbose -Spath` and reads the `cp_file` line plus the `.basis` beside it. Two consequences, neither fixed here:
+
+1. A native host (`:jank`, `:cljs`, `:jolt`, ...) cannot resolve dependencies on a machine with no JVM, even when its own runtime is installed.
+2. If the champaca spike boots `cohost.cli` (the native-host shape) instead of a Clojure CLI front end, it will need a resolver. The candidate is to run jolt's own tools.deps-compatible commands in that one place (`jolt -Sverbose -Spath`, and the basis file it writes) and keep the classpath-to-roots translation. That is worth doing only after checking that jolt's `cp_file` line and `.basis` `:argmap` match what `resolve-deps` already parses. This change does not do that check and does not call jolt from `resolve-deps`.
+
+John, 00:50 ET: the memory law is waived for champaca's guest-private JVM/Chez internals (its weak and phantom ref scans, per-object monitor header counts, malloc/Unsafe scratch buffers, FFM arenas). That waiver is not a license for the cohost side. This launcher keeps the decision in locals and retains nothing. A value that outlives the call on the cohost/Eve side would be an atom, and a temporary that outlives its `let` would be that scope's local atom. A scanner, a header counter, a journal, or an arena on the cohost/Eve side is still forbidden (doc/eve-cohost/MEMORY-PLAN.md). The stub does not add one.
+
 ## What runs, as `clojure.main` runs it
 
 - **Init options** `-e`/`--eval` and `-i`/`--init`, in the order given; each
@@ -127,7 +161,10 @@ source root:
   with exit code 1; `-X` of a missing fn prints tools.deps'
   `Namespace x loaded but function not found: f`. Exit codes propagate.
 - `-J` options are dropped; `-Sdescribe` and `-T` (tools, JVM programs) run the
-  real CLI; `-Spath` prints the source roots; `-P` resolves and extracts only.
+  real CLI and stay on the JVM even when the `:clj` body would otherwise be
+  champaca; `-Spath` prints the source roots on a native host (on `:jvm` it is
+  the real CLI's `-Spath`, or the champaca stub when that body is selected);
+  `-P` resolves and extracts only.
 
 Per-host launches: `:jolt`, `:cljw` take `-m cohost.cli <config>`; `:lpy` runs it
 through `basilisp run -c`; `:lg` runs `dev/lg_cli.lg` (it has no `-m`); `:phel`

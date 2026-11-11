@@ -10,8 +10,10 @@
 ;; tools.deps (through the Clojure CLI, the resolver `clj` uses); every
 ;; classpath entry becomes a cohost source root — directories as they are,
 ;; jars extracted under ~/.cache/cohost/deps — so booted code's `require`
-;; finds dependency namespaces through cohost's ordinary loader. :jvm runs
-;; the real Clojure CLI; -T (tools) does too, on every host.
+;; finds dependency namespaces through cohost's ordinary loader. :jvm is the
+;; :clj body: a usable JVM runs the real Clojure CLI, unchanged. With no JVM,
+;; jolt >= 0.8.24 with champaca is that body (bin/cohost_clj_body.clj); the
+;; champaca boot is still a stub. -T and -Sdescribe stay on the JVM, on every host.
 ;;
 ;; Design, what's supported and what isn't: doc/CLI.md.
 (require '[babashka.fs :as fs]
@@ -25,6 +27,7 @@
 (defn under [dir p] (if (fs/absolute? p) (fs/path p) (fs/path dir p)))
 
 (def script-file (fs/canonicalize *file*))
+(load-file (str (fs/parent script-file) "/cohost_clj_body.clj"))
 (def repo (str (fs/parent (fs/parent script-file))))
 (def stock-root (str repo "/resources/cohost/clojure-1.12.0"))
 (def cache-dir (str (fs/home) "/.cache/cohost"))
@@ -51,12 +54,14 @@
 (defn usage []
   (die 2
        "usage: cohost [:<target>] <clojure CLI args...>"
-       "  the target: :<target> first, else :cohost/target in ./deps.edn, else :jvm (the real CLI)"
+       "  the target: :<target> first, else :cohost/target in ./deps.edn, else :jank"
        (str "  hosts: :jvm " (str/join " " (map #(str ":" %) wired)) "   (:cljrs not wired yet)")
        "  e.g. cohost :cljs -e \"(+ 1 2)\""
        "       cohost :cljs -M -m demo.main arg1"
        "       cohost :jolt -X demo.core/run :x 1"
-       "       cohost :cljs -Spath"))
+       "       cohost :cljs -Spath"
+       "  :jvm is the :clj body. COHOST_CLJ_BODY=jvm|jolt|auto (doc/CLI.md)."
+       "  -T and -Sdescribe stay on the JVM."))
 
 (defn run-inherit
   "Run cmd with inherited stdio in dir; -> its exit code. Every child sees
@@ -133,7 +138,12 @@
    left out, since the host runtime IS the language, booted from cohost's
    pinned stock sources — and the aliases' argmap (:main-opts, :exec-fn,
    :exec-args, :ns-default, :ns-aliases), read from the basis the CLI
-   writes beside the classpath."
+   writes beside the classpath.
+
+   This shells out to the Clojure CLI, so it needs a JVM. The :clj body's
+   jolt arm does not call it (that arm hands the CLI arguments to the
+   runtime, as the JVM arm does). A no-JVM resolver is not implemented;
+   doc/CLI.md records the gap and the jolt -Spath proposal."
   [cwd {:keys [sdeps resolve aliases alias]}]
   (let [cmd (vec (concat ["clojure" "-Sverbose" "-Spath"] (mapcat (fn [d] ["-Sdeps" d]) sdeps)
                          resolve aliases (when alias [alias])))
@@ -322,6 +332,15 @@
                     (do (println "cohost: the cached boot build failed (target/lpy-snapshot.log); this run boots from source") nil)))
                 (finally (fs/delete-if-exists lock)))))))))
 
+(defn launch-jolt-clj!
+  "The :clj body on jolt's champaca path. Sibling of launch!, not a branch
+   of it: the \"jolt\" branch below boots cohost.cli on jolt's native
+   adapter, which is not champaca. This arm takes the CLI arguments the
+   JVM path would have given `clojure`. The boot is a stub (it does not
+   start jolt) until the champaca spike fills it in."
+  [cwd args]
+  (cohost.clj-body/launch-jolt-clj! cwd args))
+
 (defn launch! [host cwd config & [jank]]
   (let [cfg (str config)
         src (str repo "/src")]
@@ -342,6 +361,7 @@
                                    {:dir repo :inherit true :extra-env {"COHOST_HOME" repo "TMPDIR" tmp}})
                         deref :exit)
                     (finally (fs/delete-tree tmp))))
+      ;; native :jolt adapter, not the champaca :clj body (launch-jolt-clj!)
       "jolt" (run-inherit cwd ["jolt" "-Scp" src "-m" "cohost.cli" cfg])
       "cljw" (run-inherit cwd ["cljw" "-cp" src "-m" "cohost.cli" cfg])
       "lpy" (run-inherit cwd (vec (concat ["basilisp" "run"]
@@ -381,6 +401,14 @@
   (let [i (- (count args) (count (:main o)))]
     (vec (concat (take i args) ["-M"] (drop i args)))))
 
+(defn clojure-cli-command
+  "The real Clojure CLI invocation for a usable JVM. Same argument
+   construction the :jvm launch has always used."
+  [rest-args o]
+  (vec (cons "clojure" (cond (= (:mode o) :T) (with-templates rest-args)
+                             (implicit-main? o) (with-explicit-M rest-args o)
+                             :else rest-args))))
+
 (defn default-target
   "The project's target: :cohost/target in ./deps.edn (a keyword, e.g.
    :lpy), else :jank. :jvm is the reference: the real Clojure CLI, as `clj` runs it."
@@ -404,11 +432,23 @@
       (die 2 (str "cohost: unknown host :" host " (hosts: "
                   (str/join " " (map #(str ":" %) (sort hosts))) ")")))
     (cond
-      ;; the JVM runs the real CLI, whole; tools are JVM programs, on every host
-      (or (= host "jvm") (= mode :T) (:describe? o))
-      (System/exit (run-inherit cwd (vec (cons "clojure" (cond (= mode :T) (with-templates rest-args)
-                                                               (implicit-main? o) (with-explicit-M rest-args o)
-                                                               :else rest-args)))))
+      ;; -T and -Sdescribe are JVM programs on every host. They never take
+      ;; jolt's champaca :clj body. A missing or broken JVM is a diagnostic.
+      (or (= mode :T) (:describe? o))
+      (let [d (cohost.clj-body/select-clj-body {:cwd cwd :jvm-only (if (= mode :T) :tool :describe)})]
+        (if (= :jvm (:body d))
+          (System/exit (run-inherit cwd (clojure-cli-command rest-args o)))
+          (apply die (or (:code d) 1) (:lines d))))
+
+      ;; :jvm is the :clj body. A usable JVM keeps the real CLI, argument for
+      ;; argument. No JVM: jolt >= 0.8.24 with champaca, or a diagnostic.
+      ;; A broken or unsupported JVM does not fall through to jolt.
+      (= host "jvm")
+      (let [d (cohost.clj-body/select-clj-body {:cwd cwd})]
+        (case (:body d)
+          :jvm (System/exit (run-inherit cwd (clojure-cli-command rest-args o)))
+          :jolt (System/exit (launch-jolt-clj! cwd rest-args))
+          (apply die (or (:code d) 1) (:lines d))))
 
       (not (some #{host} wired))
       (die 2 (str "cohost: :" host " is not wired into the CLI yet: its boot is still in flight (doc/hosts/PLAN.md)"))
