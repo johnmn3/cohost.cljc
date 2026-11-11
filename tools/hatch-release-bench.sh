@@ -48,8 +48,14 @@ echo "-- bench end rc=$rc wall=$((t1-t0))s load1=$(cut -d' ' -f1 /proc/loadavg)"
 edn=$(ls target/bench-*.edn 2>/dev/null | head -1)
 [ -n "$edn" ] || { echo "NO_DELIVERABLE: no target/bench-*.edn (rc=$rc); last log lines above are the evidence"; exit 4; }
 D=doc/perf/release-0932; mkdir -p $D; cp "$edn" "$D/bench-$HOST-$BOX.edn"; cp "$WORK/run-$HOST.log" "$D/bench-$HOST-$BOX.log"
-git checkout -q -B release/cohost-on-eve-0932-bench && git add $D \
- && git -c user.name=hatch-runner -c user.email=hatch@fleet commit -q -m "release perf 0932: bench-$HOST on $BOX (cohost $(git rev-parse --short HEAD), Eve $EVE_SHA)" \
- && { git push -q origin release/cohost-on-eve-0932-bench || { git pull -q --rebase origin release/cohost-on-eve-0932-bench && git push -q origin release/cohost-on-eve-0932-bench; }; } \
- && echo "BANKED $D/bench-$HOST-$BOX.edn on release/cohost-on-eve-0932-bench" || echo "PUSH_FAILED: files in $WORK/cohost/$D"
+# Bank onto a fresh checkout of the bench branch tip (not a rebase of a commit made on the
+# release tree): re-banking the same file overwrites it instead of conflicting. One retry.
+CSHA=$(git rev-parse --short HEAD); BW=$WORK/bench-bank; bank_ok=
+for try in 1 2; do
+  rm -rf "$BW"; git clone -q --depth 1 -b release/cohost-on-eve-0932-bench "$(git remote get-url origin)" "$BW" || continue
+  mkdir -p "$BW/$D"; cp "$D/bench-$HOST-$BOX.edn" "$D/bench-$HOST-$BOX.log" "$BW/$D/"
+  (cd "$BW" && git add $D && { git diff --cached --quiet || git -c user.name=hatch-runner -c user.email=hatch@fleet commit -q -m "release perf 0932: bench-$HOST on $BOX (cohost $CSHA, Eve $EVE_SHA)"; } \
+     && git push -q origin HEAD:release/cohost-on-eve-0932-bench) && { bank_ok=1; break; }
+done
+[ -n "$bank_ok" ] && echo "BANKED $D/bench-$HOST-$BOX.edn on release/cohost-on-eve-0932-bench @ $(cd "$BW" && git rev-parse --short=12 HEAD)" || echo "PUSH_FAILED: files in $WORK/cohost/$D"
 exit $rc
