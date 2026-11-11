@@ -1,0 +1,39 @@
+== release-bench lpy start 2026-11-10T21:50:33-05:00 box=grok-bot-vm-524857728 cores=8 load1_at_start=3.08 (full: 3.08 3.62 3.52 3/711 2965895)
+-- cohost sha: d64fe778b243231f1b73892b0792d1a337dba313  eve sha: a11a1820ed61a7a69f73d6630e2d6ee111e4e7ad  (want a11a1820ed61a7a69f73d6630e2d6ee111e4e7ad)
+-- tools: Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-436/tmp | Clojure CLI version 1.12.6.1673 | bb babashka v1.13.226 | node v24.22.1 | usage: basilisp [-h] {bootstrap,nrepl-server,repl,run,test,version} ... | jolt jolt v0.8.23 | jank error: Invalid command '--version'.
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-436/tmp
+-- bench start 2026-11-10T21:50:36-05:00 load1=2.99
+cohost.boot on lpy: 791 top-level forms
+  booted as stock: 529   from host: 132   natives: 36   skipped: 94   errors: 0
+bench on lpy: median ms per call, the host's own core vs the stock core
+  fn-call  host 168.54  stock 1630.85  x9.67
+  loop-arith  host 504.4  stock 3422.61  x6.78
+  hinted-loop  host 348.47  stock 2774.05  x7.96
+  reduce-range  host 2440.86  stock 3118.04  x1.27
+  lazy-pipeline  host 4459.22  stock 7002.13  x1.57
+  transduce  host 2006.26  stock 4482.76  x2.23
+  into-vector  host 1824.85  stock 2254.39  x1.23
+  conj-vector  host 1401.16  stock 2323.74  x1.65
+  transient-vector  host 1105.39  stock 2312.11  x2.09
+  assoc-map  host 890.51  stock 1705.51  x1.91
+  map-lookup  host 1325.27  stock 5393.21  x4.06
+  keyword-lookup  host 3392.14  stock 1990.4  x0.58
+  destructure  host 3792.59  stock 4598.03  x1.21
+  frequencies  host 6930.1  stock 10732.41  x1.54
+  group-by  host 7042.25  stock 10056.27  x1.42
+  sort  host 1447.46  stock 7635.43  x5.27
+  sort-by  host 245.62  stock 3194.39  x13.0
+  set-build  host 1436.93  stock 4111.26  x2.86
+  distinct  host 6948.81  stock 6092.11  x0.87
+  partition  host 4914.81  stock 4926.37  x1.0
+  lazy-iterate  host 352.52  stock 1298.03  x3.68
+  atom-swap  host 3678.49  stock 5368.34  x1.45
+  protocol  host 810.58  stock 1076.05  x1.32
+  multimethod  host 757.77  stock 2890.92  x3.81
+  equality  host 7.4  stock 7.03  x0.95
+  str-build  host 645.94  stock 718.3  x1.11
+  string-join  host 523.67  stock 624.56  x1.19
+  regex  host 69.51  stock 2338.42  x33.63
+  format  host 256.41  stock 5944.7  x23.18
+  pr-str  host 50.79  stock 51.67  x1.01
+-- bench end rc=0 wall=1082s load1=3.43
