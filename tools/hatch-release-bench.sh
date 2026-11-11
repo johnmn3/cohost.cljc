@@ -9,6 +9,7 @@ set -u
 HOST="${1:?usage: hatch-release-bench.sh <battery|jvm|jolt|jank|cljs|lpy|browser> [workdir]}"
 WORK="${2:-$HOME/cohost-0932-$HOST}"
 EVE_SHA=a11a1820ed61a7a69f73d6630e2d6ee111e4e7ad
+BOX="${BOX:-$(hostname -s)}"   # label for banked file names (was hard-coded "hatch" even on other boxes)
 mkdir -p "$WORK"; exec > >(tee "$WORK/run-$HOST.log") 2>&1
 echo "== release-bench $HOST start $(date -Is) box=$(hostname) cores=$(nproc) load1_at_start=$(cut -d' ' -f1 /proc/loadavg) (full: $(cat /proc/loadavg))"
 cd "$WORK"
@@ -21,7 +22,20 @@ need() { command -v "$1" >/dev/null || { echo "GAP $HOST: no '$1' on PATH on thi
 case "$HOST" in
   battery) need clojure; echo "-- bb boot:jvm start $(date -Is)"; bb boot:jvm; echo "-- battery end rc=$?"; exit 0;;
   jvm) need clojure; need bb;; jolt) need jolt; need bb;; jank) need jank; need bb;;
-  cljs) need node; need bb; need clojure;; lpy) need basilisp; need bb;; browser) need bb;;
+  cljs) need node; need bb; need clojure;; lpy) need basilisp; need bb;;
+  browser) need bb; need clojure; need python3
+    # dev/browser_boot.py imports playwright (grok #427: ModuleNotFoundError -> NO_DELIVERABLE).
+    # Job-local venv under $WORK (no system install); the Python package only, Chromium is the box's own.
+    CHROME="${CLOJURE_HOST_CHROMIUM:-$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)}"
+    [ -n "$CHROME" ] && [ -x "$CHROME" ] || { echo "GAP browser: no Chromium/Chrome binary on this box (set CLOJURE_HOST_CHROMIUM)"; exit 5; }
+    export CLOJURE_HOST_CHROMIUM="$CHROME"
+    if ! python3 -I -c 'import playwright.sync_api' 2>/dev/null; then
+      [ -x "$WORK/pyenv/bin/python3" ] || python3 -m venv "$WORK/pyenv" || { echo "GAP browser: python3 -m venv failed"; exit 5; }
+      "$WORK/pyenv/bin/python3" -I -c 'import playwright.sync_api' 2>/dev/null \
+        || "$WORK/pyenv/bin/pip" install -q playwright || { echo "GAP browser: pip install playwright into job-local venv failed"; exit 5; }
+      export PATH="$WORK/pyenv/bin:$PATH"
+    fi
+    echo "-- browser: python3=$(command -v python3) playwright=$(python3 -I -c 'import importlib.metadata as m;print(m.version("playwright"))') chromium=$CHROME ($("$CHROME" --version 2>&1|head -1))";;
   *) echo "BAD HOST"; exit 2;;
 esac
 clojure -P -M 2>&1 | tail -1
@@ -31,9 +45,9 @@ t0=$(date +%s); bb "bench:$HOST"; rc=$?; t1=$(date +%s)
 echo "-- bench end rc=$rc wall=$((t1-t0))s load1=$(cut -d' ' -f1 /proc/loadavg)"
 edn=$(ls target/bench-*.edn 2>/dev/null | head -1)
 [ -n "$edn" ] || { echo "NO_DELIVERABLE: no target/bench-*.edn (rc=$rc); last log lines above are the evidence"; exit 4; }
-D=doc/perf/release-0932; mkdir -p $D; cp "$edn" "$D/bench-$HOST-hatch.edn"; cp "$WORK/run-$HOST.log" "$D/bench-$HOST-hatch.log"
+D=doc/perf/release-0932; mkdir -p $D; cp "$edn" "$D/bench-$HOST-$BOX.edn"; cp "$WORK/run-$HOST.log" "$D/bench-$HOST-$BOX.log"
 git checkout -q -B release/cohost-on-eve-0932-bench && git add $D \
- && git -c user.name=hatch-runner -c user.email=hatch@fleet commit -q -m "release perf 0932: bench-$HOST on hatch (cohost $(git rev-parse --short HEAD), Eve $EVE_SHA)" \
+ && git -c user.name=hatch-runner -c user.email=hatch@fleet commit -q -m "release perf 0932: bench-$HOST on $BOX (cohost $(git rev-parse --short HEAD), Eve $EVE_SHA)" \
  && { git push -q origin release/cohost-on-eve-0932-bench || { git pull -q --rebase origin release/cohost-on-eve-0932-bench && git push -q origin release/cohost-on-eve-0932-bench; }; } \
- && echo "BANKED $D/bench-$HOST-hatch.edn on release/cohost-on-eve-0932-bench" || echo "PUSH_FAILED: files in $WORK/cohost/$D"
+ && echo "BANKED $D/bench-$HOST-$BOX.edn on release/cohost-on-eve-0932-bench" || echo "PUSH_FAILED: files in $WORK/cohost/$D"
 exit $rc
