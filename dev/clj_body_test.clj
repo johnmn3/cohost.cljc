@@ -168,7 +168,9 @@
         (fs/create-dirs src)
         (spit (str (fs/file src "api.clj")) ";; stub champaca.api\n")
         (spit (str (fs/file src "runtime.ss")) ";; stub runtime\n")
-        (spit (str (fs/file src "natives.ss")) ";; stub natives\n"))
+        (spit (str (fs/file src "natives.ss")) ";; stub natives\n")
+        (spit (str (fs/file src "cachedir.clj"))
+              "(def runtime-files\n  [\"champaca/runtime.ss\" \"champaca/natives.ss\"])\n"))
       (spit (str (fs/file b "manifest.edn")) (pr-str {:champaca-src "champaca-src"})))
     b))
 
@@ -190,6 +192,8 @@
                      (spit (str (fs/file d "champaca" "api.clj")) ";; override\n")
                      (spit (str (fs/file d "champaca" "runtime.ss")) ";; override\n")
                      (spit (str (fs/file d "champaca" "natives.ss")) ";; override\n")
+                     (spit (str (fs/file d "champaca" "cachedir.clj"))
+                           "(def runtime-files\n  [\"champaca/runtime.ss\" \"champaca/natives.ss\"])\n")
                      (str d)))
         c (cond-> c override (assoc :override-dir override))]
     (try
@@ -579,6 +583,38 @@
                          "(require 'cohost.clj-champaca) (require 'cohost.cli) (println :jolt-loaded)"]
                         {:dir root :out :string :err :string})]
       (t/is (zero? (:exit r)) (str (:err r) (:out r))))))
+
+(defn- write-champaca-root!
+  "A merged source root. runtime-files is the list init! loads; files not
+   named there are not created, including archive.ss."
+  [dir {:keys [runtime resources api-resource omit]}]
+  (let [c (fs/file dir "champaca")
+        runtime (or runtime ["champaca/runtime.ss" "champaca/natives.ss"])]
+    (fs/create-dirs c)
+    (spit (str (fs/file c "api.clj"))
+          (str "(ns champaca.api)\n"
+               (when api-resource
+                 (str "(slurp (io/resource \"" api-resource "\"))\n"))))
+    (spit (str (fs/file c "cachedir.clj"))
+          (str "(def runtime-files\n  " (pr-str (vec runtime)) ")\n"
+               "(def ^:private translator-sources\n  [\"champaca/cachedir.clj\"])\n"))
+    (doseq [rel (concat runtime (when api-resource [api-resource]))
+            :when (not (contains? (set omit) rel))]
+      (spit (str (fs/file dir rel)) ";; fixture\n"))))
+
+(t/deftest champaca-loaded-files-come-from-the-checkout
+  (let [dir (fs/create-temp-dir {:prefix "cohost-champaca-src-"})]
+    (try
+      (write-champaca-root! dir {:api-resource "champaca/interop.ss"})
+      (t/is (nil? (cohost.clj-body/champaca-source-gap (str dir))))
+      (t/is (some #{"champaca/interop.ss"} (cohost.clj-body/champaca-loaded-rels (str dir))))
+      (t/is (not (some #(str/includes? % "archive.ss")
+                       (cohost.clj-body/champaca-loaded-rels (str dir)))))
+      (fs/delete (fs/file dir "champaca/natives.ss"))
+      (let [gap (cohost.clj-body/champaca-source-gap (str dir))]
+        (t/is (str/includes? gap "champaca/natives.ss"))
+        (t/is (not (str/includes? gap "archive.ss"))))
+      (finally (fs/delete-tree dir)))))
 
 (t/deftest clj-arm-route
   (let [src "#?(:clj (+ 1 2) :jolt :no)"]

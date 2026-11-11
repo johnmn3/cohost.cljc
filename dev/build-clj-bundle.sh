@@ -103,28 +103,66 @@ echo "build-clj-bundle: jolt bundle -o $out -m clojure.main --name cohost-clj"
   --add-modules java.desktop,java.sql,jdk.unsupported --name cohost-clj)
 [ -x "$out/lib/champaca" ] || die "bundle finished but $out/lib/champaca is missing"
 
-# jolt loads champaca.api from source roots, and init! reads the Scheme
-# runtime from those same roots (io/resource "champaca/runtime.ss" and the
-# rest of champaca.cachedir/runtime-files, plus interop.ss and dynamic.ss).
-# The bundle's lib/ and app/ do not carry that source. One directory holds
-# both trees, so one -Scp entry finds champaca/api.clj and champaca/*.ss.
+# jolt loads champaca.api from source roots. init! then loads whatever this
+# checkout's own sources name: cachedir.clj's runtime-files and
+# translator-sources, and every (io/resource "...") literal. That list is
+# read from CHAMPACA_SRC. It is not a fixed set of filenames (44ad7c4 has
+# no archive.ss; a later checkout that adds one names it in runtime-files).
+# lib/ and app/ do not carry those files. One directory holds both trees,
+# so one -Scp entry finds champaca/api.clj and champaca/*.ss.
 src_root="$out/champaca-src"
 rm -rf "$src_root"
 mkdir -p "$src_root"
 [ -d "$CHAMPACA_SRC/src/champaca" ] \
   || die "CHAMPACA_SRC ($CHAMPACA_SRC) has no src/champaca; champaca.api would not load under jolt."
 [ -d "$CHAMPACA_SRC/resources/champaca" ] \
-  || die "CHAMPACA_SRC ($CHAMPACA_SRC) has no resources/champaca; init! reads runtime.ss and natives.ss from the source root."
+  || die "CHAMPACA_SRC ($CHAMPACA_SRC) has no resources/champaca; init! reads the Scheme runtime from the source root."
 cp -a "$CHAMPACA_SRC/src/." "$src_root/"
 cp -a "$CHAMPACA_SRC/resources/." "$src_root/"
-for rel in \
-  champaca/api.clj champaca/boot.clj \
-  champaca/runtime.ss champaca/natives.ss champaca/interop.ss champaca/dynamic.ss \
-  champaca/reflect.ss champaca/handles.ss champaca/files.ss champaca/net.ss \
-  champaca/spawn.ss champaca/foreign.ss champaca/archive.ss
-do
-  [ -f "$src_root/$rel" ] || die "copied champaca sources are missing $rel"
+
+# Strings in the first vector of (def name) or (def ^:private name).
+# mawk has no word-boundary atom; the name is matched as its own token.
+champaca_def_strings() {
+  awk -v name="$2" '
+    {
+      if (!grab && ($0 ~ ("\\(def[[:space:]]+" name "([[:space:]]|$)") ||
+                    $0 ~ ("\\(def[[:space:]]+\\^:[^[:space:]]+[[:space:]]+" name "([[:space:]]|$)")))
+        grab = 1
+      if (grab) {
+        line = $0
+        while (match(line, /"[^"]+"/)) {
+          s = substr(line, RSTART + 1, RLENGTH - 2)
+          if (s ~ /\.(ss|clj|cljc|jolt)$/) print s
+          line = substr(line, RSTART + RLENGTH)
+        }
+        if (index($0, "]")) exit
+      }
+    }
+  ' "$1"
+}
+
+api_rel=""
+for ext in jolt clj cljc; do
+  if [ -f "$src_root/champaca/api.$ext" ]; then api_rel="champaca/api.$ext"; break; fi
 done
+[ -n "$api_rel" ] || die "copied champaca sources have no champaca/api.clj (or .cljc/.jolt)"
+[ -f "$src_root/champaca/cachedir.clj" ] \
+  || die "copied champaca sources have no champaca/cachedir.clj; its runtime-files vector is what init! loads from the source root"
+rt="$(champaca_def_strings "$src_root/champaca/cachedir.clj" runtime-files)"
+[ -n "$rt" ] || die "could not read runtime-files from $src_root/champaca/cachedir.clj"
+lits="$(grep -hEo 'io/resource[[:space:]]+"[^"]+"' "$src_root"/champaca/*.clj 2>/dev/null || true)"
+lits="$(printf '%s\n' "$lits" | sed -E 's/.*"([^"]+)".*/\1/')"
+req="$(printf '%s\n' "$api_rel" "$rt" \
+  "$(champaca_def_strings "$src_root/champaca/cachedir.clj" translator-sources)" \
+  "$lits" | awk 'NF && !seen[$0]++')"
+miss=""
+while IFS= read -r rel; do
+  [ -n "$rel" ] || continue
+  [ -f "$src_root/$rel" ] || miss="${miss:+$miss$'\n'}$rel"
+done <<EOF
+$req
+EOF
+[ -z "$miss" ] || die "copied champaca sources are missing files this checkout loads from the source root:"$'\n'"$miss"
 cat > "$out/manifest.edn" <<'EOF'
 {:name "cohost-clj"
  :champaca-src "champaca-src"}

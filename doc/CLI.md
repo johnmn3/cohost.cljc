@@ -150,8 +150,11 @@ The first host is always the process. `:jolt` and `:jolt:lpy` boot the native
 jolt adapter (`jolt -Scp src:champaca-src -m cohost.cli`). Their `:clj` leg is
 champaca inside that process. `champaca-src` is the bundle directory the build
 records in `manifest.edn` (`:champaca-src`), or `COHOST_CHAMPACA_SRC` when that
-is set. It holds champaca's Clojure sources and the Scheme files `init!`
-reads (`runtime.ss`, `natives.ss`, and the rest of `resources/champaca`).
+is set. It holds champaca's Clojure sources and the Scheme files that checkout
+loads. Those names are read from `cachedir.clj` (`runtime-files`,
+`translator-sources`) and from `(io/resource "...")` in the sources.
+`44ad7c4` has no `archive.ss`; a later checkout that adds the file names
+it itself.
 Without it the launch stops: `(require 'champaca.api)` only searches jolt's
 source roots. The launcher also sets `JAVA_HOME` to the bundle runtime and
 `CHAMPACA_CACHE_DIR`, and `cohost.cli` routes a `:clj` reader arm to

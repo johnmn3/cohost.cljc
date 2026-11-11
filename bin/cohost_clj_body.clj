@@ -106,32 +106,78 @@
       (try (edn/read-string (slurp (str f)))
            (catch Exception _ nil)))))
 
-(defn- champaca-api-file?
-  "True when dir is a jolt source root with champaca.api and the Scheme
-   files init! reads from that same root (runtime.ss, natives.ss)."
+(defn- def-vector-strings
+  "Strings in the first vector of (def name) or (def ^:meta name).
+   A docstring before the vector is not part of it. Only source paths."
+  [text def-name]
+  (when-let [[_ body] (re-find (re-pattern (str "(?s)\\(def(?:\\s+\\^:\\S+)?\\s+"
+                                           def-name "\\b.*?\\[(.*?)\\]"))
+                               (or text ""))]
+    (->> (re-seq #"\"([^\"]+)\"" body)
+         (map second)
+         (filter #(re-find #"\.(?:ss|clj|cljc|jolt)$" %)))))
+
+(defn- resource-literals
+  "Paths passed as (io/resource \"...\") in text."
+  [text]
+  (->> (re-seq #"\(io/resource\s+\"([^\"]+)\"" (or text ""))
+       (map second)))
+
+(defn champaca-loaded-rels
+  "Relative paths this tree loads from a jolt source root, read from the
+   tree itself. champaca/api, cachedir.clj's runtime-files and
+   translator-sources, and every (io/resource \"...\") literal. nil when
+   champaca/api is not in dir. Does not add filenames the sources do not name."
   [dir]
-  (and (some #(fs/exists? (fs/file dir "champaca" (str "api." %))) ["jolt" "clj" "cljc"])
-       (fs/exists? (fs/file dir "champaca" "runtime.ss"))
-       (fs/exists? (fs/file dir "champaca" "natives.ss"))))
+  (let [api (first (filter #(fs/exists? (fs/file dir %))
+                           ["champaca/api.jolt" "champaca/api.clj" "champaca/api.cljc"]))
+        cachedir (fs/file dir "champaca/cachedir.clj")
+        clj-files (when (fs/exists? (fs/file dir "champaca"))
+                    (filter #(and (fs/regular-file? %)
+                                  (re-find #"\.(?:clj|cljc|jolt)$" (str %)))
+                            (fs/list-dir (fs/file dir "champaca"))))]
+    (when api
+      (vec (distinct
+            (concat [api]
+                    (when (fs/exists? cachedir)
+                      (let [text (slurp (str cachedir))]
+                        (concat (def-vector-strings text "runtime-files")
+                                (def-vector-strings text "translator-sources"))))
+                    (mapcat #(resource-literals (slurp (str %))) clj-files)))))))
+
+(defn champaca-source-gap
+  "nil when dir is a jolt source root whose own sources' loads are all
+   present. Otherwise the missing relative paths, comma-separated.
+   cachedir.clj is required because that is where runtime-files is read."
+  [dir]
+  (let [api (first (filter #(fs/exists? (fs/file dir %))
+                           ["champaca/api.jolt" "champaca/api.clj" "champaca/api.cljc"]))]
+    (cond
+      (nil? api) "champaca/api.clj"
+      (not (fs/exists? (fs/file dir "champaca/cachedir.clj"))) "champaca/cachedir.clj"
+      :else (let [missing (remove #(fs/exists? (fs/file dir %)) (champaca-loaded-rels dir))]
+              (when (seq missing) (str/join ", " missing))))))
 
 (defn- missing-champaca-src-lines
   [bundle override dir]
-  (let [rebuild ["  rebuild it: bash dev/build-clj-bundle.sh copies CHAMPACA_SRC's src and resources into the bundle's champaca-src and records that directory in manifest.edn."
-                 "  or set COHOST_CHAMPACA_SRC to a directory that contains champaca/api.clj, champaca/runtime.ss and champaca/natives.ss."]]
+  (let [gap (when dir (champaca-source-gap dir))
+        rebuild ["  rebuild it: bash dev/build-clj-bundle.sh copies CHAMPACA_SRC's src and resources into the bundle's champaca-src and records that directory in manifest.edn."
+                 "  or set COHOST_CHAMPACA_SRC to a directory that contains champaca/api.clj and champaca/cachedir.clj. The files init! loads are the ones that checkout names, not a fixed list."]]
     (cond
       override
       (into [(str "cohost: COHOST_CHAMPACA_SRC is " override
-                  ", and it is not champaca's jolt source root (need champaca/api.clj, champaca/runtime.ss, champaca/natives.ss).")]
+                  ", and it is not champaca's jolt source root"
+                  (if gap (str " (missing " gap ")") "") ".")]
             rebuild)
       dir
       (into [(str "cohost: the bundle at " bundle " records champaca sources at " dir
-                  ", and champaca/api.clj is not there.")]
+                  (if gap (str ", and it is missing " gap) ", and champaca/api.clj is not there") ".")]
             rebuild)
       :else
       (into [(str "cohost: this jolt process's :clj leg is champaca, and the bundle at " bundle
                   " has no champaca jolt sources.")
              "  manifest.edn has no :champaca-src, and COHOST_CHAMPACA_SRC is unset."
-             "  jolt -Scp needs that directory: (require 'champaca.api) looks on the source roots, and init! reads runtime.ss and natives.ss from them."]
+             "  jolt -Scp needs that directory: (require 'champaca.api) looks on the source roots, and init! loads the files named by champaca/cachedir.clj."]
             rebuild))))
 
 (defn resolve-champaca-src
@@ -147,9 +193,9 @@
                      (when (and (string? rel) (not (str/blank? rel)))
                        (str (if (fs/absolute? rel) (fs/file rel) (fs/file b rel))))))
         dir (or override recorded)]
-    (if (and dir (champaca-api-file? dir))
+    (if (and dir (nil? (champaca-source-gap dir)))
       {:dir (str dir)}
-      {:error (missing-champaca-src-lines b override recorded)})))
+      {:error (missing-champaca-src-lines b override dir)})))
 
 (defn- read-override
   "COHOST_CLJ_BODY -> nil, :clojure, :jolt, or an error map.
