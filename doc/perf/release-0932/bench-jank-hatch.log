@@ -1,0 +1,44 @@
+== release-bench jank start 2026-11-10T20:59:10-05:00 box=grok-bot-vm-524857728 cores=8 load1_at_start=1.46 (full: 1.46 2.17 2.49 3/653 2925936)
+-- cohost sha: 8233562c0df19563606504d093e57f1914e36080  eve sha: 73a641108e52fc9b42b8a4d591a2776f6611a99e  (want 73a641108e52fc9b42b8a4d591a2776f6611a99e)
+-- tools: Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-427/tmp | Clojure CLI version 1.12.6.1673 | bb babashka v1.13.226 | node v24.22.1 | usage: basilisp [-h] {bootstrap,nrepl-server,repl,run,test,version} ... | jolt jolt v0.8.23 | jank error: Invalid command '--version'.
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-427/tmp
+-- bench start 2026-11-10T20:59:13-05:00 load1=1.51
+SNAPSHOT-STALE no stamp (bb boot:jank-snapshot builds it)
+AOT-RECOMPILE
+Note: Looks like your first run with these flags. Building pre-compiled header… done!
+AOT-DIR target/jank-aot/_cache/x86_64-unknown-linux-gnu-d41ef4a07a9d4dd9963044192227fbfde2da40c9f817907bab326588f8e7ef94
+cohost.boot on jank: 821 top-level forms
+  booted as stock: 544   from host: 141   natives: 28   skipped: 108   errors: 0
+bench on jank: median ms per call, the host's own core vs the stock core
+  fn-call  host 0.62  stock 0.72  x1.15
+  loop-arith  host 0.0  stock 0.05  x456.52  [differ: 1345094336 vs 39999800000]
+  hinted-loop  host 0.01  stock 0.1  x7.92  [differ: -1474936480 vs 19999900000]
+  reduce-range  host 7.13  stock 4.15  x0.58  [differ: -1474936480 vs 19999900000]
+  lazy-pipeline  host 39.25  stock 8.05  x0.2
+  transduce  host 4.7  stock 2.52  x0.53  [differ: -1794967296 vs 2500000000]
+  into-vector  host 4.57  stock 3.44  x0.75
+  conj-vector  host 12.95  stock 9.79  x0.75
+  transient-vector  host 3.89  stock 22.64  x5.8
+  assoc-map  host 22.21  stock 19.24  x0.86
+  map-lookup  host 8.28  stock 6.94  x0.83
+  keyword-lookup  host 9.21  stock 5.34  x0.57
+  destructure  host 9.58  stock 11.87  x1.23
+  frequencies  host 26.77  stock 11.67  x0.43
+  group-by  host 18.88  stock 21.9  x1.15
+  sort  host 13.98  stock 11.06  x0.79
+  sort-by  host 7.1  stock 7.36  x1.03
+  set-build  host 8.67  stock 8.09  x0.93
+  distinct  host 121.14  stock 149.57  x1.23
+  partition  host 37.46  stock 96.78  x2.58
+  lazy-iterate  host 3.53  stock 2.53  x0.71
+  atom-swap  host 4.65  stock 5.29  x1.13  [differ: 704982704 vs 4999950000]
+  protocol  host -  stock 12.35  [#error {
+ :cause "(((cohost.hosts.jank-runtime/vec2 cohost_bench_host$cache_598 (cohost.hosts.jank-host/method-cache)) (fn ([p0] (let (cohost.hosts.jank-runtime/vec2 cohost_bench_host$impl_599 (cohost ...]
+  multimethod  host 17.52  stock 4.31  x0.24
+  equality  host 0.8  stock 1.02  x1.27
+  str-build  host 6.99  stock 5.5  x0.78
+  string-join  host 677.38  stock 15.88  x0.02
+  regex  host 2.28  stock 174.74  x76.3
+  format  host 2.88  stock 213.64  x73.95
+  pr-str  host 0.96  stock 1.1  x1.14
+-- bench end rc=0 wall=291s load1=3.58
