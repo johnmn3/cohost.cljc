@@ -1,0 +1,95 @@
+== release-bench cljs start 2026-11-11T00:47:31-05:00 box=grok-bot-vm-524857728 cores=7 load1_at_start=3.10 (full: 3.10 20.94 26.52 6/1551 3191300)
+-- BASELINE run: cohost a956f21 (not the release tip)
+-- cohost sha: a956f21565da7916a878731aab5f04b8331b2b2a  eve sha: 76fd94c3dc541a1e915d6759652114c9f6b392a8  (want 76fd94c3dc541a1e915d6759652114c9f6b392a8)
+-- tools: Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-445/tmp | Clojure CLI version 1.12.6.1673 | bb babashka v1.13.226 | node v24.22.1 | usage: basilisp [-h] {bootstrap,nrepl-server,repl,run,test,version} ... | jolt jolt v0.8.23 | jank error: Invalid command '--version'.
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-445/tmp
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-445/tmp
+-- cljs Eve checkout (eve_paths): pinned git dep
+-- bench start 2026-11-11T00:47:34-05:00 load1=2.93
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-445/tmp
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/slab-io/protocol/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/slab-io/cljs-compiler/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/http/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/http-server/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/crypto/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/crypto/js-bigint/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/core/clojure/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/completion/clojure/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/core/cljs-compiler/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/coll/cljs/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/slab/module/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/typed-view/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/region/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/encoding/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/int32/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/codec/js/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/process/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/thread/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/journal-file/node/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/coll/jvm/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/slab/heap/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/region/jvm-varhandle/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/encoding/java/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/int32/jvm/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/codec/byte-array/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/process/java/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/thread/jvm/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/types/jvm/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/types/js/src
+Picked up JAVA_TOOL_OPTIONS:  -Djava.io.tmpdir=/workspace/jobs/vol/w-preflight/tmp -Djava.io.tmpdir=/workspace/jobs/vol/w-445/tmp
+WARNING: array-chunk already refers to: cljs.core/array-chunk being replaced by: eve.core/array-chunk at line 70 /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/adapters/coll/cljs/src/eve/core.cljs
+WARNING: hash-long already refers to: cljs.core/hash-long being replaced by: eve.net.xxh3/hash-long at line 145 /home/box/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8/src/eve/net/xxh3.cljc
+WARNING: -write already refers to: cljs.core/-write being replaced by: cohost.shim/-write at line 2171 /workspace/jobs/vol/home-445/cohost-base445-cljs/cohost/src/cohost/shim.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-445/cohost-base445-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-445/cohost-base445-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-445/cohost-base445-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1580 /workspace/jobs/vol/home-445/cohost-base445-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1581 /workspace/jobs/vol/home-445/cohost-base445-cljs/cohost/src/cohost/rewrite.cljc
+WARNING: cljs.core/bit-or, all arguments must be numbers, got [string number] instead at line 1581 /workspace/jobs/vol/home-445/cohost-base445-cljs/cohost/src/cohost/rewrite.cljc
+cohost.boot on cljs: 822 top-level forms
+  booted as stock: 554   from host: 87   natives: 41   skipped: 140   errors: 0
+WARNING: Use of undeclared Var cohost.repl/proxy
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: Use of undeclared Var cohost.repl/proxy-super
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: Use of undeclared Var cohost.repl/read
+WARNING: No such namespace: sun.misc.Signal, could not locate sun/misc/Signal.cljs, sun/misc/Signal.cljc, or JavaScript source providing "sun.misc.Signal"
+WARNING: Use of undeclared Var sun.misc.Signal/handle
+WARNING: Use of undeclared Var cohost.repl/proxy
+WARNING: Use of undeclared Var cohost.repl/handle
+WARNING: Use of undeclared Var cohost.repl/signal
+WARNING: Use of undeclared Var cohost.repl/signal
+WARNING: Use of undeclared Var cohost.bench-host/format
+bench on cljs: median ms per call, the host's own core vs the stock core
+  fn-call  host 0.7  stock 0.35  x0.5
+  loop-arith  host 0.1  stock 0.1  x0.99
+  hinted-loop  host 0.1  stock 0.1  x1
+  reduce-range  host 1.8  stock 3.04  x1.68
+  lazy-pipeline  host 5.72  stock 12.86  x2.24
+  transduce  host 2.97  stock 11  x3.69
+  into-vector  host 2.87  stock 2.86  x0.99
+  conj-vector  host 12.95  stock 24.79  x1.91
+  transient-vector  host 1.74  stock 32.31  x18.55
+  assoc-map  host 14.57  stock 25.89  x1.77
+  map-lookup  host 7.7  stock 51.05  x6.62
+  keyword-lookup  host 4.48  stock 4.37  x0.97
+  destructure  host 14.76  stock 45.52  x3.08
+  frequencies  host 18.58  stock 39.31  x2.11
+  group-by  host 25.73  stock 50.54  x1.96
+  sort  host 17.48  stock 27.21  x1.55
+  sort-by  host 25.91  stock 26.29  x1.01
+  set-build  host 9.04  stock 30.21  x3.34
+  distinct  host 87.23  stock 92.23  x1.05
+  partition  host 19.36  stock 19.03  x0.98
+  lazy-iterate  host 2.01  stock 11.08  x5.5
+  atom-swap  host 3.64  stock 2105.98  x578.09
+  protocol  host 1.47  stock 0.91  x0.61
+  multimethod  host 6.32  stock 25.78  x4.07
+  equality  host 0.68  stock 0.69  x1
+  str-build  host 2.52  stock 2.41  x0.95
+  string-join  host 1.14  stock 1.16  x1.01
+  regex  host 0.47  stock 0.47  x1.01
+WARNING: Use of undeclared Var cohost.bench-host/format
+  format  host -  stock 48.29  [Cannot read properties of undefined (reading 'call')]
+  pr-str  host 5.36  stock 5.49  x1.02
+-- bench end rc=0 wall=130s load1=3.39
