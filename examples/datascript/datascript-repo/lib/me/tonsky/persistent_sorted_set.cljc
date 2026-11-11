@@ -543,7 +543,12 @@
 
   ;; what a deref of an atom holding it answers: a Clojure sorted set
   d/IPlain
-  (-plain [this] (into (clojure.core/sorted-set) (map d/eve->clj) (e/seq this)))
+  ;; F-BTSET-PLAIN-CMP: rebuild with the set's OWN comparator (cmp-of: nil
+  ;; -> compare, registered keyword -> its fn). A bare (sorted-set) used the
+  ;; default comparator, which throws "Default comparator requires nil,
+  ;; Number, or Comparable" on a DataScript Datom and mis-orders a reversed set.
+  (-plain [this] (into (clojure.core/sorted-set-by (or (cmp-of this) compare))
+                       (map d/eve->clj) (e/seq this)))
 
   IPrintWithWriter
   (-pr-writer [this w _] (e/-write w (print-btset this)))
