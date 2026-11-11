@@ -29,17 +29,6 @@
   "The champaca body handle: :cold, :booted, or :missing with :error."
   (atom {:status :cold :cfg nil :error nil}))
 
-(defn- arm-form [src]
-  (pr-str (list 'cohost.clj-champaca/eval-arm! src)))
-
-(defn install!
-  "Point the scanner at this body and remember the launcher's config."
-  [cfg]
-  (swap! state assoc :cfg cfg :status :cold :error nil)
-  (reset! scan/clj-arm-eval eval-arm!)
-  (reset! scan/clj-arm-route arm-form)
-  nil)
-
 (defn- classpath [cfg]
   (vec (concat (or (:champaca-classpath cfg) [])
                (or (:roots cfg) []))))
@@ -77,3 +66,14 @@
     ;; eval; this is invoke-static (api.clj:170). The result is discarded.
     (call "clojure.lang.Compiler" "load" pushback)
     nil))
+
+(defn- arm-form [src]
+  (pr-str (list 'cohost.clj-champaca/eval-arm! src)))
+
+(defn install!
+  "Point the scanner at this body and remember the launcher's config."
+  [cfg]
+  (swap! state assoc :cfg cfg :status :cold :error nil)
+  (reset! scan/clj-arm-eval eval-arm!)
+  (reset! scan/clj-arm-route arm-form)
+  nil)

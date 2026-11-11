@@ -445,6 +445,79 @@
    {:name ":jvm" :hosts ["jvm"] :provider :jvm :owner "jvm"}
    {:name ":jank" :hosts ["jank"] :provider nil :owner "jank"}])
 
+(defn- defn-entries
+  "Top-level defn/defn- forms in source order: {:name :body :index}."
+  [forms]
+  (keep-indexed
+   (fn [i form]
+     (when (and (seq? form) (#{'defn 'defn-} (first form)) (symbol? (second form)))
+       (let [tail (drop 2 form)
+             tail (cond-> tail (string? (first tail)) rest)
+             tail (cond-> tail (map? (first tail)) rest)]
+         {:index i :name (second form) :body (vec tail)})))
+   forms))
+
+(defn- declared-before
+  "Names introduced by declare before form index i."
+  [forms i]
+  (set (mapcat (fn [form]
+                 (when (and (seq? form) (= 'declare (first form)))
+                   (filter symbol? (rest form))))
+               (take i forms))))
+
+(defn- unquoted-syms
+  "Symbols a jolt analyzer resolves. quote and syntax-quote are skipped;
+   unquote is walked."
+  [form]
+  (cond
+    (symbol? form) [form]
+    (and (seq? form) (= 'quote (first form))) []
+    (and (seq? form) (#{'clojure.core/quote} (first form))) []
+    (map? form) (mapcat unquoted-syms (concat (keys form) (vals form)))
+    (coll? form) (mapcat unquoted-syms form)
+    :else []))
+
+(defn forward-refs
+  "Same-namespace defn names used before their defn, which jolt's analyzer
+   rejects (error[analyze/unresolved-symbol]). declare counts as a definition."
+  [path]
+  (let [src (slurp path)
+        ns-sym (symbol (or (second (re-find #"\(ns\s+([^\s\(\);]+)" src)) "user"))
+        forms (edamame.core/parse-string-all
+               src
+               {:all true
+                :read-cond :allow
+                :features #{:jolt :clj :default}
+                :auto-resolve {:current ns-sym}})
+        defs (vec (defn-entries forms))
+        by-name (into {} (map (fn [d] [(:name d) (:index d)]) defs))]
+    (vec (for [d defs
+               sym (unquoted-syms (:body d))
+               :let [simple (symbol (name sym))
+                     at (get by-name simple)]
+               :when (and at (> at (:index d))
+                          (not (contains? (declared-before forms (inc (:index d))) simple)))]
+           {:file path :in (:name d) :symbol simple}))))
+
+(def jolt-loaded-new-sources
+  ["src/cohost/clj_champaca.clj"
+   "src/cohost/scan.cljc"
+   "src/cohost/boot.cljc"
+   "src/cohost/cli.cljc"])
+
+(t/deftest no-jolt-forward-refs
+  (require 'edamame.core)
+  (let [hits (mapcat #(forward-refs (str (fs/file root %))) jolt-loaded-new-sources)]
+    (t/is (empty? hits) (pr-str hits))))
+
+(t/deftest jolt-loads-champaca-when-present
+  (if-not (fs/which "jolt")
+    (t/is true "jolt is not on PATH; bb clj-body:jolt-load runs the same load when it is")
+    (let [r @(p/process ["jolt" "-Scp" "src" "-e"
+                         "(require 'cohost.clj-champaca) (require 'cohost.cli) (println :jolt-loaded)"]
+                        {:dir root :out :string :err :string})]
+      (t/is (zero? (:exit r)) (str (:err r) (:out r))))))
+
 (t/deftest clj-arm-route
   (let [src "#?(:clj (+ 1 2) :jolt :no)"]
     (t/is (str/includes? (cohost.scan/resolve-conditionals src [:clj :default]) "(+ 1 2)"))
