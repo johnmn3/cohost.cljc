@@ -158,8 +158,11 @@ it itself.
 Without it the launch stops: `(require 'champaca.api)` only searches jolt's
 source roots. The launcher also sets `JAVA_HOME` to the bundle runtime and
 `CHAMPACA_CACHE_DIR`, and `cohost.cli` routes a `:clj` reader arm to
-`champaca.api/init!` on first use, then `clojure.lang.RT/init` through
-`champaca.api/invoke-static`, before any `Compiler` call. A `:clj` provider that is not champaca
+`champaca.api/init!` on first use, then `champaca.api/save-cache!` (so the
+JIT keeps a generation), then `clojure.lang.RT/init` through
+`champaca.api/invoke-static`, then `save-cache!` again, before any
+`Compiler` call. Each arm calls `save-cache!` after `Compiler/load`.
+A call that finds nothing new does not write. A `:clj` provider that is not champaca
 (`:jolt:clj`) does not add that directory. `:lpy:jolt` and `:jank:jolt` boot basilisp
 and jank. The `:clj` leg is still jolt's champaca, recorded in `clj-leg` as a
 sibling body. This process does not start that sibling. A cross-process router

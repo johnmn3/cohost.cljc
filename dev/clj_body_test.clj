@@ -624,6 +624,8 @@
     (create-ns 'champaca.api)
     (intern 'champaca.api 'init!
             (fn [opts] (note :init! {:opts opts})))
+    (intern 'champaca.api 'save-cache!
+            (fn [] (note :save-cache! {})))
     (intern 'champaca.api 'invoke-static
             (fn [cls mname & args]
               (note :invoke-static {:cls cls :mname mname :args (vec args)})
@@ -654,7 +656,27 @@
         (t/is (< (first rt) (first compiler)) "RT.init precedes every Compiler call")
         (t/is (not= :booted (:status (second rt))) "RT.init runs before :booted")
         (t/is (= :booted (:status (second compiler))))
-        (t/is (= "load" (:mname (second compiler)))))
+        (t/is (= "load" (:mname (second compiler))))
+        (let [saves (vec (keep-indexed (fn [i c] (when (= :save-cache! (:op c)) i)) ops))
+              rt-i (first rt)
+              compiler-i (first compiler)]
+          (t/is (= 3 (count saves)) "init!, then RT.init, then the arm, each followed by save-cache!")
+          (t/is (< 0 (saves 0) rt-i (saves 1) compiler-i (saves 2))
+                "save-cache! after init!, after RT.init, and after Compiler/load")
+          (t/is (not= :booted (:status (nth ops (saves 0)))))
+          (t/is (not= :booted (:status (nth ops (saves 1)))))
+          (t/is (= :booted (:status (nth ops (saves 2))))))
+        (cohost.clj-champaca/eval-arm! "(+ 1 2)")
+        (let [ops2 @calls
+              saves (vec (keep-indexed (fn [i c] (when (= :save-cache! (:op c)) i)) ops2))
+              compilers (vec (keep-indexed (fn [i c]
+                                             (when (and (= :invoke-static (:op c))
+                                                        (= "clojure.lang.Compiler" (:cls c)))
+                                               i))
+                                           ops2))]
+          (t/is (= 4 (count saves)) "a later arm saves again; an empty recording writes nothing")
+          (t/is (= 2 (count compilers)))
+          (t/is (< (peek compilers) (peek saves)))))
       (finally
         (reset! cohost.clj-champaca/state {:status :cold :cfg nil :error nil})
         (reset! cohost.scan/clj-arm-eval nil)

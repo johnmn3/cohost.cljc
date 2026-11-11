@@ -33,6 +33,18 @@
   (vec (concat (or (:champaca-classpath cfg) [])
                (or (:roots cfg) []))))
 
+(defn- save-cache!
+  "champaca.api/save-cache! (api.clj:130). The first call arms generation
+   saves (saves-generation!, api.clj:137) so later JDK methods compile
+   straight to object code (cachedir.clj compile-to-cache?, line 281).
+   save-generation! writes nothing when the recording is empty
+   (libcache.clj:423), so a later call that finds no new code does no IO.
+   Two processes saving one cache dir are not serialized: extra-<millis>.so
+   and state.img are rename-over writes (libcache.clj:425-437), and the
+   gil (api.clj:28) is per process. This does not add a lock."
+  []
+  ((requiring-resolve 'champaca.api/save-cache!)))
+
 (defn- ensure!
   []
   (let [{:keys [status cfg]} @state]
@@ -52,12 +64,18 @@
               call (requiring-resolve 'champaca.api/invoke-static)
               cp (classpath cfg)]
           (init! {:classpath cp})
+          ;; Arm saving before RT.init. init! does not (api.clj:79); without
+          ;; saves-generation!, clojure.core is compiled as text and the next
+          ;; process pays it again. The call after RT.init writes that
+          ;; generation (extra-*.so and the library images).
+          (save-cache!)
           ;; Compiler.load is not a legal first touch. Compiler.<clinit>
           ;; starts RT.<clinit>, and RT.baseLoader NPEs while Compiler/LOADER
           ;; is still null (assigned later in Compiler.<clinit>). clojure.main
           ;; calls RT.init first. This is champaca's invoke-static, so the RT
           ;; is champaca's, not jolt's. RT/init is idempotent.
           (call "clojure.lang.RT" "init")
+          (save-cache!)
           (swap! state assoc :status :booted :error nil))))))
 
 (defn eval-arm!
@@ -72,6 +90,9 @@
     ;; Compiler/load(Reader) reads every form. There is no champaca.api
     ;; eval; this is invoke-static (api.clj:170). The result is discarded.
     (call "clojure.lang.Compiler" "load" pushback)
+    ;; An arm that compiled nothing leaves the recording empty, and
+    ;; save-cache! then returns without writing (libcache.clj:423).
+    (save-cache!)
     nil))
 
 (defn- arm-form [src]
