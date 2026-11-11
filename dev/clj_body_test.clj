@@ -13,6 +13,7 @@
 (def root (str (fs/parent (fs/parent (fs/canonicalize *file*)))))
 (load-file (str (fs/file root "bin/cohost_clj_body.clj")))
 (load-file (str (fs/file root "src/cohost/scan.cljc")))
+(load-file (str (fs/file root "src/cohost/clj_champaca.clj")))
 (def bb-bin
   (str (or (fs/which "bb")
            (let [p (fs/file (System/getenv "HOME") ".local/bin/bb")]
@@ -615,6 +616,49 @@
         (t/is (str/includes? gap "champaca/natives.ss"))
         (t/is (not (str/includes? gap "archive.ss"))))
       (finally (fs/delete-tree dir)))))
+
+(t/deftest ensure-inits-rt-before-compiler
+  (let [calls (atom [])
+        note (fn [op extra]
+               (swap! calls conj (merge {:op op :status (:status @cohost.clj-champaca/state)} extra)))]
+    (create-ns 'champaca.api)
+    (intern 'champaca.api 'init!
+            (fn [opts] (note :init! {:opts opts})))
+    (intern 'champaca.api 'invoke-static
+            (fn [cls mname & args]
+              (note :invoke-static {:cls cls :mname mname :args (vec args)})
+              nil))
+    (intern 'champaca.api 'construct
+            (fn [cls & args] (note :construct {:cls cls}) {:cls cls :args args}))
+    (try
+      (cohost.clj-champaca/install! {:champaca-classpath ["/bundle/app/clojure.jar"]
+                                     :roots ["/proj/src"]})
+      (t/is (nil? (cohost.clj-champaca/eval-arm! "(println \"CLJ-ARM\")")))
+      (let [ops @calls
+            rt (first (keep-indexed (fn [i c]
+                                      (when (and (= :invoke-static (:op c))
+                                                 (= "clojure.lang.RT" (:cls c))
+                                                 (= "init" (:mname c)))
+                                        [i c]))
+                                    ops))
+            compiler (first (keep-indexed (fn [i c]
+                                            (when (and (= :invoke-static (:op c))
+                                                       (= "clojure.lang.Compiler" (:cls c)))
+                                              [i c]))
+                                          ops))]
+        (t/is (= :init! (:op (first ops))))
+        (t/is (= {:classpath ["/bundle/app/clojure.jar" "/proj/src"]} (:opts (first ops))))
+        (t/is rt "RT.init was issued through champaca.api/invoke-static")
+        (t/is (empty? (:args (second rt))) "RT.init takes no arguments")
+        (t/is compiler "a Compiler call follows")
+        (t/is (< (first rt) (first compiler)) "RT.init precedes every Compiler call")
+        (t/is (not= :booted (:status (second rt))) "RT.init runs before :booted")
+        (t/is (= :booted (:status (second compiler))))
+        (t/is (= "load" (:mname (second compiler)))))
+      (finally
+        (reset! cohost.clj-champaca/state {:status :cold :cfg nil :error nil})
+        (reset! cohost.scan/clj-arm-eval nil)
+        (reset! cohost.scan/clj-arm-route nil)))))
 
 (t/deftest clj-arm-route
   (let [src "#?(:clj (+ 1 2) :jolt :no)"]

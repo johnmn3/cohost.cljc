@@ -49,8 +49,15 @@
                      false))
         (throw (ex-info (:error @state) {:cohost/clj-body :champaca}))
         (let [init! (requiring-resolve 'champaca.api/init!)
+              call (requiring-resolve 'champaca.api/invoke-static)
               cp (classpath cfg)]
           (init! {:classpath cp})
+          ;; Compiler.load is not a legal first touch. Compiler.<clinit>
+          ;; starts RT.<clinit>, and RT.baseLoader NPEs while Compiler/LOADER
+          ;; is still null (assigned later in Compiler.<clinit>). clojure.main
+          ;; calls RT.init first. This is champaca's invoke-static, so the RT
+          ;; is champaca's, not jolt's. RT/init is idempotent.
+          (call "clojure.lang.RT" "init")
           (swap! state assoc :status :booted :error nil))))))
 
 (defn eval-arm!
