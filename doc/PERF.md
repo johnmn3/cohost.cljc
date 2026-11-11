@@ -490,3 +490,21 @@ when each column started). The macOS records (`doc/perf/macos/`) are the complet
    them with the doc on a branch and push it.
 
 The history of how these numbers came to be is in [`doc/perf/HISTORY.md`](perf/HISTORY.md).
+
+## Release 0.9.3.2: old vs new (first banked pass, 2026-11-10)
+
+These are the in-process core microbenchmarks (`bb bench:*`), not the built-app tables above. `host` means the runtime's own core; `stock` means cohost's booted core. All five new EDNs parse, each has 30 cases at scale 1, on branch `release/cohost-on-eve-0932-bench` at `a00651b36007b375387d9e0c1ad2416b1a308925`, under `doc/perf/release-0932/`. Files say `hatch`; the actual box was **grok-bot-vm-524857728**, 8 cores, not hatch or J.
+
+- Old: `doc/perf/before/` is the historical `4ce56eb` perf baseline, not a measured 0.9.3.1 release baseline. It has 29 cases and basilisp scale 0.05; the new basilisp row is scale 1. Do not infer a release speed-up or compare raw basilisp milliseconds across those scales/boxes. A matched old-release/new-release run is still owed.
+- New #427: cohost `8233562c`, Eve sibling `73a64110`; cljs actually used the `cae5db96` git dependency. Runs were not an exclusive quiet-box comparison (load1 1.51-4.01 in the later legs).
+- New #436: cohost `d64fe778`, Eve `a11a1820`; basilisp began at load1 2.99 (wrapper 3.08), ended at 3.43, rc=0, wall 1082s, boot errors 0. Functional proof, not a quiet-box performance claim.
+
+| new row | core boot (s) | equal host/stock answers | receipt |
+|---|---:|---:|---|
+| jvm | 0.718 | 30/30 | #427 |
+| cljs | 3.658 | 29/30 | #427 |
+| jolt | 1.731 | 30/30 | #427 |
+| jank | 12.731 | 24/30 | #427 |
+| lpy | 23.448 | 30/30 | #436 |
+
+Gaps: #427 `bb bench:browser` failed rc=1 after 10s and produced no EDN because `dev/browser_boot.py:10` raised `ModuleNotFoundError: No module named 'playwright'` (retained `queue-427/home-427/cohost-0932-browser/run-browser.log`); no install attempted. CLJS `format` has unequal answers/error; jank has unequal answers/errors in loop-arith, hinted-loop, reduce-range, transduce, atom-swap and protocol. Exclude those from speed ratios. muse #22 on J has no ACK/RESULT yet (latest routing CORRECTION 3, latest pin CORRECTION 5). Next: matched old/new stock-core tables and labelled per-case ratios; no causal performance improvement claimed here.
