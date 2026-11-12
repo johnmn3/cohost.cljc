@@ -104,6 +104,18 @@
 
 (def default-ranking [:clj :default])
 
+(def clj-arm-route
+  "When set, a fn of the raw :clj arm source. It returns text the host
+   reader keeps in place of that arm. Nil leaves the arm as source, which
+   is every host's behavior except a jolt process whose :clj leg is
+   champaca. The fn is installed from the config's clj-leg resolution."
+  (atom nil))
+
+(def clj-arm-eval
+  "Host-side fn of the arm source. eval-top calls it instead of the
+   booted core when the reader sees the route's marker form."
+  (atom nil))
+
 (defn ranking "target (the adapter's :name) -> its ranking." [target]
   (get rankings target default-ranking))
 
@@ -157,10 +169,16 @@
     (if best
       (let [[_ k b be] best
             [s e] (if splice? [(inc b) (dec be)] [b be])
-            [text spans] (resolve* (subs src s e) ranking)]
-        [(str (blank (subs src i s)) text (blank (subs src e end)))
-         end
-         (conj (mapv (fn [[a z k']] [(+ a s) (+ z s) k']) spans) [s e (keyword (subs k 1))])])
+            raw (subs src s e)
+            route (when (= k ":clj") @clj-arm-route)]
+        (if route
+          [(str (blank (subs src i s)) (route raw) (blank (subs src e end)))
+           end
+           [[s e :clj]]]
+          (let [[text spans] (resolve* raw ranking)]
+            [(str (blank (subs src i s)) text (blank (subs src e end)))
+             end
+             (conj (mapv (fn [[a z k']] [(+ a s) (+ z s) k']) spans) [s e (keyword (subs k 1))])])))
       [(blank (subs src i end)) end []])))
 
 (defn- resolve*

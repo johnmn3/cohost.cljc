@@ -553,7 +553,13 @@
      (let [before (when (and (host/def-meta) (seq? form) (symbol? (first form))
                              (contains? host-def-heads (name (first form))))
                     (set (keys (host/ns-interns-map ns-sym))))
-           r (eval-in* c ns-sym form lib?)]
+           ;; A :clj arm routed to an in-process body is a marker the
+           ;; scanner wrote. The host calls that body; the booted core
+           ;; never sees the arm.
+           r (if (and (seq? form) (= 'cohost.clj-champaca/eval-arm! (first form))
+                      (string? (second form)) @scan/clj-arm-eval)
+               [(@scan/clj-arm-eval (second form)) ns-sym]
+               (eval-in* c ns-sym form lib?))]
        (when before (mark-host-defs! ns-sym before))
        r))))
 
