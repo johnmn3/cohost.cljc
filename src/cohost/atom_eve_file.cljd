@@ -1,0 +1,141 @@
+(ns cohost.atom-eve-file
+  "Multi-bodied cohost, Lane E4: the ClojureDart seat's Eve hosting
+   over a shared FILE domain — the same shape as the JVM seat's
+   atom_eve_file.clj and this lane's other seat files, with the
+   differences the Dart seat forces:
+
+   - no locking: cljd.core has none and needs none — an isolate
+     runs synchronous code uninterrupted, and every hosting
+     mutation here is a synchronous sequence.
+   - shard names are padded by hand (cljd.core has no format).
+   - root digests resolve eve.digest statically (a compiled
+     program has no requiring-resolve).
+   - an Eve handle here is not a cljd.core Atom: its swap/reset
+     are eve.host's dispatch, so the factory carries the layer's
+     :swap-eve!/:reset-eve! entries (the BEAM seat's shape).
+   - the :net tier is not seated: it throws a named ex-info, as
+     on the .lpy and .clje seats.
+
+   Layout under the root directory given to install!:
+     <dir>/registry   the startup domain; holds the registry atom
+     <dir>/prog-0001  program shard 1 (255 atom slots), and so on.
+   An atom's name is the minting body's own mint ordinal
+   (cohost.atom/<shard>-<slot>), so the nth atom of a program is
+   the same shared atom on every body."
+  (:require [cohost.atom :as atom-layer]
+            [eve.atom :as eve-atom]
+            [eve.host :as eve-host]
+            [eve.digest :as eve-digest]
+            [eve.deftype-proto.data :as eve-data]))
+
+(defonce ^:private hosting
+  (atom {:dir nil :registry nil :registry-domain nil
+         :minted 0 :shards []}))
+
+(def ^:private slots-per-domain 255)
+
+(defn- pad4 [n]
+  (let [s (str n)]
+    (str (apply str (repeat (- 4 (count s)) \0)) s)))
+
+(defn- shard-path [dir index]
+  (str dir "/prog-" (pad4 index)))
+
+(defn- open-shard! [dir index]
+  (let [path (shard-path dir index)
+        d (eve-atom/persistent-atom-domain path)]
+    {:index index :path path :domain d :minted 0}))
+
+(defn- shard! [index]
+  ;; the already-open shard, or open it now; joining is Eve's call
+  (or (some (fn [s] (when (= index (:index s)) s)) (:shards @hosting))
+      (let [s (open-shard! (:dir @hosting) index)]
+        (swap! hosting update :shards conj s)
+        s)))
+
+(defn- make-eve-atom [slab-init]
+  ;; The name is this BODY's mint ordinal, never a shared count
+  ;; (see the file docstring of the JVM seat's file for the
+  ;; measured reason). No lock: synchronous in one isolate.
+  (let [n (:minted @hosting)
+        index (inc (quot n slots-per-domain))
+        s (shard! index)]
+    (swap! hosting (fn [h]
+                     (-> h
+                         (update :minted inc)
+                         (update :shards
+                                 (fn [ss] (mapv (fn [x] (if (= index (:index x)) (update x :minted inc) x)) ss))))))
+    (eve-atom/lookup-or-create-mmap-atom!
+     (:domain s)
+     (str "cohost.atom/" index "-" (rem n slots-per-domain))
+     slab-init)))
+
+(defn- registry-eve-atom []
+  (or (:registry @hosting)
+      (let [dir (:dir @hosting)
+            dom (eve-atom/persistent-atom-domain (str dir "/registry"))
+            ra (eve-atom/lookup-or-create-mmap-atom!
+                dom "cohost.registry/table" {})]
+        (swap! hosting assoc :registry-domain dom :registry ra)
+        ra)))
+
+(defn- disk-handle [m init]
+  (let [d (eve-atom/persistent-atom-domain (:eve/path m))]
+    (eve-atom/lookup-or-create-mmap-atom! d (:eve/name m) init)))
+
+(defn- make-tier-atom [kind m init]
+  (case kind
+    :disk (disk-handle m init)
+    :net (throw (ex-info "cohost.atom-eve-file: the :net tier is not seated on :cljd"
+                         {:tier :net :seat :cljd}))))
+
+(defn install!
+  "Register this seat's file-domain Eve factory with the portable
+   layer. Takes the root directory: (install! {:dir \"/path/base\"}).
+   Returns true."
+  [{:keys [dir]}]
+  (assert (string? dir) "cohost.atom-eve-file/install! needs {:dir <string>}")
+  (swap! hosting assoc :dir dir)
+  (atom-layer/install-factory! {:make-atom make-eve-atom
+                                :make-tier-atom make-tier-atom
+                                :frame-atom (fn [h] (eve-atom/meta-atom h {}))
+                                :registry-atom registry-eve-atom
+                                ;; an Eve handle here is not a
+                                ;; cljd.core Atom: its swap/reset
+                                ;; are eve.host's dispatch
+                                :swap-eve! (fn [h f & args] (apply eve-host/swap! h f args))
+                                :reset-eve! (fn [h v] (eve-host/reset! h v))
+                                :eve-value? (fn [v]
+                                              (satisfies? eve-data/IEveRoot v))})
+  true)
+
+(defn close-hosting!
+  "Release every domain this hosting opened in this process.
+   Files stay; this process's atoms are invalid afterwards."
+  []
+  (let [s @hosting]
+    (doseq [sh (:shards s)]
+      (eve-atom/close-atom-domain! (:domain sh)))
+    (when-let [d (:registry-domain s)]
+      (eve-atom/close-atom-domain! d))
+    (reset! hosting {:dir (:dir s) :registry nil :registry-domain nil :minted 0 :shards []})
+    true))
+
+(defn root-digests
+  "The two digests of a layer atom's current Eve root: :seal and
+   :sha256 (SHA-256 over the root's canonical codec bytes)."
+  [a]
+  (let [h (atom-layer/eve-handle a)]
+    {:seal (eve-atom/seal h)
+     :sha256 (eve-digest/compute-digest @h)}))
+
+(defn hosting-state
+  "Domain counts for probes and the report."
+  []
+  (let [s @hosting]
+    {:dir (:dir s)
+     :registry? (some? (:registry s))
+     :shards (mapv (fn [sh] {:index (:index sh)
+                             :path (:path sh)
+                             :atoms (:minted sh)})
+                   (:shards s))}))

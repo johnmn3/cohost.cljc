@@ -270,7 +270,12 @@
 
 (defn seqable?* [x] (or (nil? x) (coll? x) (string? x) (seq? x)))
 
-(def ^:private +inf (* 1e308 10.0))
+(def ^:private +inf
+  ;; (* 1e308 10.0) is Infinity where floats have one. On :clje the
+  ;; BEAM raises badarith on float overflow and no float is ever
+  ;; infinite, so the largest finite double stands in.
+  #?(:clje 1.7976931348623157e308
+     :default (* 1e308 10.0)))
 
 (defn- generic-index-of [s sub from]
   (let [n (count sub) m (count s)]
@@ -323,7 +328,7 @@ namespace cohost_err {
           r))
       :default
       (try (thunk)
-           (catch #?(:cljs :default :lpy Exception :default Throwable) e
+           (catch #?(:cljs :default :lpy Exception :cljr Exception :cljd dynamic :default Throwable) e
              (handler e))))))
 
 (defn- unsupported [k]
@@ -337,37 +342,38 @@ namespace cohost_err {
       (throw (ex-info (str "class " (type x) " cannot be cast to class java.util.Iterator") {:cohost/class 'java.lang.ClassCastException}))
       r)))
 
-(def defaults
+(defn- build-defaults
   "Generic implementations, in plain Clojure where the dialect has the pieces."
+  []
   (merge
-   {:slurp #?(:cljs (unsupported :slurp) :default (fn [path] (slurp path)))
-    :spit #?(:cljs (unsupported :spit) :default (fn [path s] (spit path s)))
-    :read-string #?(:cljs (unsupported :read-string) :phel (unsupported :read-string) :default (fn ([s] (read-string s)) ([s opts] (read-string opts s))))
-    :with-ns #?(:cljs (unsupported :with-ns) :phel (unsupported :with-ns) :default (fn [ns-sym thunk] (binding [*ns* (the-ns ns-sym)] (thunk))))
+   {:slurp #?(:cljs (unsupported :slurp) :cljd (unsupported :slurp) :default (fn [path] (slurp path)))
+    :spit #?(:cljs (unsupported :spit) :cljd (unsupported :spit) :default (fn [path s] (spit path s)))
+    :read-string #?(:cljs (unsupported :read-string) :phel (unsupported :read-string) :cljd (fn ([s] (read-string s)) ([s _opts] (read-string s))) :default (fn ([s] (read-string s)) ([s opts] (read-string opts s))))
+    :with-ns #?(:cljs (unsupported :with-ns) :phel (unsupported :with-ns) :cljd (unsupported :with-ns) :default (fn [ns-sym thunk] (binding [*ns* (the-ns ns-sym)] (thunk))))
     :eval #?(:cljs (unsupported :eval) :default (fn [form] (eval form)))
     :error-message generic-error-message
-    :ns-interns #?(:cljs (unsupported :ns-interns) :default (fn [ns-sym] (ns-interns ns-sym)))
+    :ns-interns #?(:cljs (unsupported :ns-interns) :cljd (unsupported :ns-interns) :default (fn [ns-sym] (ns-interns ns-sym)))
     :interned-var (fn [ns-sym sym] (get ((cap :ns-interns) ns-sym) sym))
-    :ns-public-names #?(:cljs (unsupported :ns-public-names) :default (fn [ns-sym] (set (keys (ns-publics ns-sym)))))
-    :intern! #?(:cljs (unsupported :intern!) :default (fn [ns-sym sym val] (intern ns-sym sym val)))
-    :refer-all! #?(:cljs (unsupported :refer-all!) :phel (unsupported :refer-all!) :default (fn [into-ns from-ns] (binding [*ns* (the-ns into-ns)] (refer from-ns))))
-    :var-get #?(:cljs (fn [h] (deref h)) :default (fn [h] (var-get h)))
-    :var-raw-root #?(:cljs (fn [h] (deref h)) :default (fn [h] (var-get h)))
+    :ns-public-names #?(:cljs (unsupported :ns-public-names) :cljd (unsupported :ns-public-names) :default (fn [ns-sym] (set (keys (ns-publics ns-sym)))))
+    :intern! #?(:cljs (unsupported :intern!) :cljd (unsupported :intern!) :default (fn [ns-sym sym val] (intern ns-sym sym val)))
+    :refer-all! #?(:cljs (unsupported :refer-all!) :phel (unsupported :refer-all!) :cljd (unsupported :refer-all!) :default (fn [into-ns from-ns] (binding [*ns* (the-ns into-ns)] (refer from-ns))))
+    :var-get #?(:cljs (fn [h] (deref h)) :cljd (fn [h] (deref h)) :default (fn [h] (var-get h)))
+    :var-raw-root #?(:cljs (fn [h] (deref h)) :cljd (fn [h] (deref h)) :default (fn [h] (var-get h)))
     :var-meta (fn [h] (meta h))
-    :alter-var-meta! #?(:cljs (unsupported :alter-var-meta!) :default (fn [h f & args] (apply alter-meta! h f args)))
+    :alter-var-meta! #?(:cljs (unsupported :alter-var-meta!) :cljd (unsupported :alter-var-meta!) :default (fn [h f & args] (apply alter-meta! h f args)))
     :alter-var-root! #?(:cljs (unsupported :alter-var-root!) :default (fn [h f] (alter-var-root h f)))
     :macro-var? (fn [h] (true? (:macro (meta h))))
-    :mark-macro! #?(:cljs (unsupported :mark-macro!) :default (fn [h] (alter-meta! h assoc :macro true) h))
+    :mark-macro! #?(:cljs (unsupported :mark-macro!) :cljd (unsupported :mark-macro!) :default (fn [h] (alter-meta! h assoc :macro true) h))
     :var-ns (fn [h] (:ns (meta h)))
     :var-sym (fn [h] (:name (meta h)))
-    :var? (fn [x] (var? x))
+    :var? #?(:cljd (fn [_] false) :default (fn [x] (var? x)))
     :namespace? (fn [_] false)
     :dynamic-var? (fn [h] (true? (:dynamic (meta h))))
-    :set-dynamic! #?(:cljs (unsupported :set-dynamic!) :default (fn [h] (alter-meta! h assoc :dynamic true) h))
-    :var-bound? #?(:cljs (fn [_] true) :default (fn [h] (try-all (fn [] (var-get h) true) (fn [_] false))))
+    :set-dynamic! #?(:cljs (unsupported :set-dynamic!) :cljd (unsupported :set-dynamic!) :default (fn [h] (alter-meta! h assoc :dynamic true) h))
+    :var-bound? #?(:cljs (fn [_] true) :cljd (fn [h] (try-all (fn [] ((cap :var-get) h) true) (fn [_] false))) :default (fn [h] (try-all (fn [] (var-get h) true) (fn [_] false))))
     :var-thread-bound? (fn [_] false)
-    :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :phel (unsupported :push-thread-bindings!) :lg (unsupported :push-thread-bindings!) :cljrs (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
-    :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :phel (unsupported :pop-thread-bindings!) :lg (unsupported :pop-thread-bindings!) :cljrs (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
+    :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :phel (unsupported :push-thread-bindings!) :lg (unsupported :push-thread-bindings!) :cljrs (unsupported :push-thread-bindings!) :cljd (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
+    :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :phel (unsupported :pop-thread-bindings!) :lg (unsupported :pop-thread-bindings!) :cljrs (unsupported :pop-thread-bindings!) :cljd (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
     :binding-style :push-pop
     :with-thread-bindings! (fn [m thunk]
                              ((cap :push-thread-bindings!) m)
@@ -388,22 +394,22 @@ namespace cohost_err {
     :native-static nil
     :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
     :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
-    :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
-    :refer! #?(:cljs (unsupported :refer!) :phel (unsupported :refer!)
+    :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :cljd (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
+    :refer! #?(:cljs (unsupported :refer!) :phel (unsupported :refer!) :cljd (unsupported :refer!)
                :default (fn [into-ns from-ns {:keys [only exclude rename]}]
                           (binding [*ns* (the-ns into-ns)]
                             (apply refer from-ns (concat (when only [:only only]) (when exclude [:exclude exclude])
                                                          (when rename [:rename rename]))))))
     ;; resolved, not named: a host may have no alias fn (basilisp adds aliases on the namespace)
-    :alias! #?(:cljs (unsupported :alias!) :phel (unsupported :alias!) :default (fn [into-ns a target] (binding [*ns* (the-ns into-ns)] ((resolve 'alias) a target))))
+    :alias! #?(:cljs (unsupported :alias!) :phel (unsupported :alias!) :cljd (unsupported :alias!) :default (fn [into-ns a target] (binding [*ns* (the-ns into-ns)] ((resolve 'alias) a target))))
     :set-current-ns! #?(:jolt (fn [ns-sym]
                                 ;; `jolt build` loads namespaces with *ns* unbound
                                 ;; (a snapshot's replayed ns directive): its root then
                                 (if (thread-bound? #'*ns*)
                                   (set! *ns* (the-ns ns-sym))
                                   (alter-var-root #'*ns* (constantly (the-ns ns-sym)))))
-                         :cljs (unsupported :set-current-ns!) :phel (unsupported :set-current-ns!) :jank (fn [ns-sym] (in-ns ns-sym)) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
-    :require-host! #?(:cljs (unsupported :require-host!) :phel (unsupported :require-host!) :default (fn [lib] (require lib)))
+                         :cljs (unsupported :set-current-ns!) :phel (unsupported :set-current-ns!) :cljd (unsupported :set-current-ns!) :jank (fn [ns-sym] (in-ns ns-sym)) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
+    :require-host! #?(:cljs (unsupported :require-host!) :phel (unsupported :require-host!) :cljd (unsupported :require-host!) :default (fn [lib] (require lib)))
     :add-module-path! (fn [_path] nil)
     :core-extras {}
     :host-type nil
@@ -441,7 +447,7 @@ namespace cohost_err {
                 (when (every? fn? (vals fs)) fs)))
     :invoke-member (fn [_ _ _ absent] absent)
     :interop-passthrough? false
-    :class-instance? (fn [c x] (instance? c x))
+    :class-instance? #?(:cljd (fn [_c _x] false) :default (fn [c x] (instance? c x)))
     :plain-symbol (fn [x] x)
     :protocol-var? (fn [ns-sym name-sym]
                      (let [h (try-all (fn [] (get ((cap :ns-interns) ns-sym) name-sym)))
@@ -498,6 +504,8 @@ namespace cohost_err {
                :lg (os/exit code)
                ;; jank 0.1's flush throws "TODO: port flesh"; std::exit flushes stdout
                :jank (cpp/std.exit code)
+               :cljr (do (flush) (System.Environment/Exit (int code)))
+               :cljd (unsupported :exit)
                :default (do (flush) (System/exit code))))
     :math-ceil (unsupported :math-ceil)
     :math-floor (unsupported :math-floor)
@@ -523,7 +531,8 @@ namespace cohost_err {
     :exception-message (fn [e] (ex-message e))
     :exception-cause (fn [e] (ex-cause e))
     :ex-trace (fn [_e] [])
-    :to-array (fn [coll] (to-array coll))
+    :to-array (fn [coll] #?(:clje (throw (ex-info "cohost: this host provides no :to-array" {:capability :to-array}))
+                            :default (to-array coll)))
     :sort-array! (unsupported :sort-array!)
     :array? nil
     :close! (fn [_] nil)
@@ -551,6 +560,16 @@ namespace cohost_err {
     :multifn? (fn [_] false)
     :multifn-op nil
     :after-eval (fn [_ _] nil)}))
+
+;; The defaults table as a var root. On :clje a top-level def's
+;; value is embedded as a literal by the loader, and a map of fns
+;; is not one — nor may a load-time form set a var root
+;; (alter-var-root is refused while loading). So on :clje the
+;; var stays nil and install! — the table's only consumer —
+;; builds it in its merge (below); every other host roots it
+;; here, from the same build.
+#?(:clje (def defaults nil)
+   :default (def defaults (build-defaults)))
 
 (def required
   "Capabilities every host must provide (no sensible generic default)."
@@ -586,7 +605,7 @@ namespace cohost_err {
     (when (seq unknown)
       (throw (ex-info (str "cohost: adapter " (:name m) " names capabilities the contract does not: " (pr-str unknown))
                       {:unknown unknown})))
-    (reset! installed (merge defaults m))
+    (reset! installed (merge #?(:clje (build-defaults) :default defaults) m))
     @installed))
 
 (defn current [] @installed)
@@ -615,7 +634,7 @@ namespace cohost_err {
 (defn ns-name* [n] #?(:phel (symbol (str n)) :default (ns-name n)))
 ;; (clojurust's the-ns calls a find-ns its IR does not intercept: a fn holding
 ;; a `.` form is never lowered)
-(defn the-ns* [x] #?(:phel x :cljs (find-ns x) :cljrs (if false (. nil tree-walked) (the-ns x)) :default (the-ns x)))
+(defn the-ns* [x] #?(:phel x :cljs (find-ns x) :cljd (find-ns x) :cljrs (if false (. nil tree-walked) (the-ns x)) :default (the-ns x)))
 
 (defn host-name [] (cap :name))
 (defn core-ns-sym [] (cap :core-ns))
@@ -665,7 +684,7 @@ namespace cohost_err {
               (let [k (try-all (fn [] (host-class token)))]
                 (swap! host-classes assoc token k)
                 k))]
-      (when k (instance? k x)))))
+      (when k #?(:cljd nil :default (instance? k x))))))
 (defn core-extras [] (get @installed :core-extras {}))
 (defn refer! [into-ns from-ns opts] ((cap :refer!) into-ns from-ns opts))
 (defn alias! [into-ns a target] ((cap :alias!) into-ns a target))

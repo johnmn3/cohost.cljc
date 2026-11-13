@@ -1,0 +1,123 @@
+(ns cohost.cljd-completion
+  "The cohost build's completion of cljd.core for the :cljd seat,
+   in eve.host-completion's pattern: a program's build resolves an
+   unqualified symbol no namespace defines to the one here (this
+   build's driver checks this namespace BEFORE eve.host-completion,
+   whose eval is a named throw — Eve never evaluates at runtime;
+   a cohost body must).
+
+   - read-string: cljd.reader's reader over the source with its
+     reader conditionals already resolved by cohost.scan's ranking
+     for :cljd — the platform normalization the other bodies get
+     from adapter/read-forms, here on the seat's core read path
+     itself (bodies reads request forms with it).
+   - eval: a compiled ClojureDart program has no evaluator. This
+     is a bounded interpreter for the forms a mailbox request
+     carries: self-evaluating literals, quote, if, do, collection
+     literals (elements evaluated), and calls whose head names a
+     function in the core table below. Anything else throws a
+     named ex-info, which the layer's try-all turns into an
+     {:error ...} reply — the body answers honestly instead of
+     crashing. It is a v0 answer for an AOT host, not a Clojure
+     evaluator: no let/fn/def, no namespace vars, no macros.
+   - find-ns: nil. A compiled program's namespaces are static;
+     bodies' eval-request turns nil into its own named
+     \"no such namespace in this body\" error.
+   - compare-and-set!: cljd.core has none. Dart code in one
+     isolate runs synchronously between awaits, and the layer's
+     CAS sites are synchronous check-and-set sequences, so
+     deref-compare-reset is exact here."
+  (:require [cljd.reader :as reader]
+            [cohost.scan :as scan]))
+
+(defn read-string [s]
+  (reader/read-string (scan/resolve-conditionals (str s) (scan/ranking :cljd))))
+
+(defn find-ns [_] nil)
+
+(defn resolve [_sym] nil)
+
+(defn type [x] (or (get (meta x) :type) (.-runtimeType ^Object x)))
+
+(defn ns-name [ns]
+  (cond (symbol? ns) ns
+        (nil? ns) nil
+        :else (symbol (str ns))))
+
+(defn alter-var-root [_var & _args] nil)
+
+(defn array-map
+  "cljd.core has hash-map only; an ordered build by assoc, as in
+   eve.host-completion's array-map."
+  [& keyvals]
+  (reduce (fn [m [k v]] (assoc m k v)) {} (partition 2 keyvals)))
+
+(def ^:dynamic *ns* nil)
+
+(defn compare-and-set! [a oldv newv]
+  (if (= @a oldv)
+    (do (reset! a newv) true)
+    false))
+
+(def ^:private core-fns
+  {'+ + '- - '* * '/ / 'quot quot 'rem rem 'mod mod 'inc inc 'dec dec
+   '== == '= = 'not= not= '< < '> > '<= <= '>= >= 'zero? zero?
+   'pos? pos? 'neg? neg? 'even? even? 'odd? odd? 'min min 'max max
+   'str str 'pr-str pr-str 'name name 'namespace namespace
+   'keyword keyword 'symbol symbol 'hash hash
+   'vector vector 'vec vec 'list list 'set set 'hash-set hash-set
+   'hash-map hash-map 'array-map array-map
+   'count count 'empty? empty? 'seq seq 'first first 'rest rest
+   'next next 'second second 'nth nth 'last last 'peek peek 'pop pop
+   'get get 'get-in get-in 'assoc assoc 'assoc-in assoc-in
+   'dissoc dissoc 'update update 'update-in update-in
+   'conj conj 'cons cons 'concat concat 'reverse reverse
+   'map map 'filter filter 'remove remove 'reduce reduce
+   'into into 'apply apply 'partial partial 'comp comp
+   'identity identity 'constantly constantly 'not not
+   'nil? nil? 'some? some? 'number? number? 'integer? integer?
+   'string? string? 'keyword? keyword? 'symbol? symbol?
+   'map? map? 'vector? vector? 'set? set? 'list? list? 'seq? seq?
+   'boolean? boolean? 'true? true? 'false? false?
+   'keys keys 'vals vals 'contains? contains? 'find find
+   'sort sort 'sort-by sort-by 'take take 'drop drop
+   'int int 'double double 'boolean boolean 'abs abs})
+
+(declare eval-form)
+
+(defn- eval-call [form]
+  (let [head (first form)]
+    (cond
+      (= 'quote head) (second form)
+      (= 'if head) (if (eval-form (nth form 1))
+                     (eval-form (nth form 2))
+                     (when (> (count form) 3) (eval-form (nth form 3))))
+      (= 'do head) (last (map eval-form (rest form)))
+      (= 'when head) (when (eval-form (nth form 1))
+                       (last (map eval-form (nnext form))))
+      (symbol? head)
+      (if-let [f (get core-fns head)]
+        (apply f (map eval-form (rest form)))
+        (throw (ex-info (str "cljd body: no such core fn in the AOT interpreter: " head)
+                        {:cohost/unsupported head :form form})))
+      :else
+      (throw (ex-info (str "cljd body: form not evaluable by the AOT interpreter: " (pr-str form))
+                      {:cohost/unsupported :form :form form})))))
+
+(defn- eval-form [form]
+  (cond
+    (or (number? form) (string? form) (keyword? form)
+        (boolean? form) (nil? form) (char? form))
+    form
+    (symbol? form)
+    (if-let [f (get core-fns form)]
+      f
+      (throw (ex-info (str "cljd body: unbound symbol in the AOT interpreter: " form)
+                      {:cohost/unsupported form})))
+    (vector? form) (mapv eval-form form)
+    (map? form) (into {} (map (fn [[k v]] [(eval-form k) (eval-form v)])) form)
+    (set? form) (into #{} (map eval-form) form)
+    (seq? form) (if (empty? form) form (eval-call form))
+    :else form))
+
+(defn eval [form] (eval-form form))

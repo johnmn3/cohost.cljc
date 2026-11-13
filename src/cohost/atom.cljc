@@ -54,6 +54,18 @@
             [cohost.memory :as memory]
             [cohost.thread :as thread]))
 
+;; On :clje the core spells vreset!/vswap! but has no volatile to
+;; make — no volatile! constructor and no Volatile type (measured
+;; on clojerl b0cbe4e: vreset! of an atom errors). The cells below
+;; are single-attempt locals (a released flag, a surviving pair, a
+;; grouping map), so an atom stands in: same deref/reset/swap
+;; surface, stronger thread semantics than a volatile's, in code
+;; that never shares the cell across threads.
+#?(:clje
+   (do (defn- volatile! [v] (atom v))
+       (defn- vreset! [cell v] (reset! cell v))
+       (defn- vswap! [cell f & args] (apply swap! cell f args))))
+
 ;; ----------------------------------------------------------------
 ;; Seat hosting + the fill switch
 
@@ -68,6 +80,26 @@
   [f]
   (reset! factory f)
   nil)
+
+(defn- handle-swap!
+  "Swap an Eve handle with f: the factory's :swap-eve! where the
+   seat provides one, else the host core's swap!. On most seats
+   an Eve handle is a host atom and core swap! is its swap; on
+   :clje the handle is an Eve deftype whose swap is eve.host's
+   -swap dispatch, and core swap! refuses it (function_clause,
+   measured on clojerl b0cbe4e)."
+  [h f & args]
+  (if-let [sf (:swap-eve! @factory)]
+    (apply sf h f args)
+    (apply swap! h f args)))
+
+(defn- handle-reset!
+  "Reset an Eve handle: the factory's :reset-eve! where the seat
+   provides one, else the host core's reset!."
+  [h v]
+  (if-let [rf (:reset-eve! @factory)]
+    (rf h v)
+    (reset! h v)))
 
 (defn available? [] (some? @factory))
 
@@ -432,7 +464,7 @@
     ;; representable yet refused by Eve: still no host seat
     (throw (kind-error "cohost.atom: Eve refused the publish into a shared-tier atom"
                        {:cohost.atom/error :publish-refused :kind (:kind s)})))
-  (reset! (:eve s) host-held)
+  (handle-reset! (:eve s) host-held)
   {:gate :host :root new})
 
 (defn- publish-claimed!
@@ -442,7 +474,7 @@
    release outcome."
   [s new]
   (if (root-representable? new)
-    (host/try-all (fn [] (reset! (:eve s) new) {:gate :open :root nil})
+    (host/try-all (fn [] (handle-reset! (:eve s) new) {:gate :open :root nil})
                   (fn [e] (if (publish-refused-error? e)
                             (host-outcome s new)
                             (throw e))))
@@ -526,7 +558,7 @@
                          (validate! vf new)
                          new))
              (fn [old] (apply f old args)))]
-    (host/try-all (fn [] (swap! (:eve s) f'))
+    (host/try-all (fn [] (handle-swap! (:eve s) f'))
                   (fn [e] (if (publish-refused-error? e)
                             ::transition
                             (throw e))))))
@@ -548,7 +580,7 @@
         k (:kind s)
         vf (:validator s)
         pair (volatile! nil)]
-    (swap! (:eve s) (fn [old]
+    (handle-swap! (:eve s) (fn [old]
                       (let [new (apply f old args)]
                         (check-tier-value! k new)
                         (validate! vf new)
@@ -563,7 +595,7 @@
         k (:kind s)
         hit (volatile! nil)]
     (check-tier-value! k newv)
-    (swap! (:eve s) (fn [cur]
+    (handle-swap! (:eve s) (fn [cur]
                       (if (memory/equiv cur oldv)
                         (do (validate! (:validator s) newv)
                             (vreset! hit [cur newv])
@@ -601,7 +633,7 @@
                   (let [r (try
                             (validate! (:validator @(:state a)) v)
                             (if (root-representable? v)
-                              (host/try-all (fn [] (reset! (:eve @(:state a)) v) v)
+                              (host/try-all (fn [] (handle-reset! (:eve @(:state a)) v) v)
                                             (fn [e] (if (publish-refused-error? e)
                                                       ::transition
                                                       (throw e))))

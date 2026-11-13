@@ -1,0 +1,153 @@
+(ns cohost.atom-eve-file
+  "Multi-bodied cohost: the clojerl (:clje) seat's Eve hosting over
+   a shared FILE domain — the same seat file as the JVM's and
+   basilisp's cohost.atom-eve-file (same ns, per-seat source),
+   re-seated on eve.atom/persistent-atom-domain so every body
+   installing it over the same directory shares the registry atom
+   and the program atoms across processes. Layout, mint/join rules
+   and the named terms are the JVM file's; see its docstring.
+
+   Seat differences from the .lpy file: clojerl core has no
+   locking, so the hosting lock is the BEAM's own global lock
+   (global:set_lock over this process); no requiring-resolve, so
+   the digest fn is required and resolved directly; the :net tier
+   is NOT seated here yet (same state as the .lpy seat — Eve's
+   remote-atom is a plain map handle; wrapping it is a follow-up);
+   :net throws a named ex-info instead of guessing. Digests:
+   root-digests mirrors the other seats (eve.atom/seal +
+   eve.digest/compute-digest)."
+  (:require [cohost.atom :as atom-layer]
+            [eve.atom :as eve-atom]
+            [eve.host :as eve-host]
+            [eve.deftype-proto.data :as eve-data]))
+
+(defonce ^:private hosting
+  (atom {:dir nil
+         :registry nil
+         :registry-domain nil
+         :minted 0 :shards []}))
+
+(def ^:private slots-per-domain 255)
+
+;; The hosting lock: the .lpy seat's `locking hosting` over the
+;; BEAM's node-global lock for this process. Held only for the
+;; check-then-act over the hosting atom (open-shard!, minting).
+;; The lock id is an Erlang tuple {resource, requester} — a list
+;; there is a function_clause (measured: probe/lock1.clje).
+(defmacro ^:private with-hosting-lock [& body]
+  `(let [id# #erl[:cohost.atom-eve-file (erlang/self)]]
+     (global/set_lock id#)
+     (try (do ~@body)
+          (finally (global/del_lock id#)))))
+
+(defn- shard-path [dir index]
+  (let [s (str index)]
+    (str dir "/prog-" (subs "0000" 0 (max 0 (- 4 (count s)))) s)))
+
+(defn- open-shard! [dir index]
+  (let [path (shard-path dir index)
+        d (eve-atom/persistent-atom-domain path)]
+    {:index index :path path :domain d :minted 0}))
+
+(defn- shard! [index]
+  ;; the already-open shard, or open it now; joining is Eve's call —
+  ;; the shard may already exist, minted by another body.
+  (or (some (fn [s] (when (= index (:index s)) s)) (:shards @hosting))
+      (let [s (open-shard! (:dir @hosting) index)]
+        (swap! hosting update :shards conj s)
+        s)))
+
+(defn- make-eve-atom [slab-init]
+  (with-hosting-lock
+    ;; The name is this BODY's mint ordinal, never a shared count: the
+    ;; nth atom a body mints is cohost.atom/<shard>-<slot> on every
+    ;; body, so bodies running the same program in the same order bind
+    ;; the same shared atoms, and lookup-or-create resolves who
+    ;; creates. (A shared counter gave each body its own name for the
+    ;; same mint — measured 2026-11-09, STATUS bank 13.)
+    (let [n (:minted @hosting)
+          index (inc (quot n slots-per-domain))
+          s (shard! index)]
+      (swap! hosting (fn [h]
+                       (-> h
+                           (update :minted inc)
+                           (update :shards
+                                   (fn [ss] (mapv (fn [x] (if (= index (:index x)) (update x :minted inc) x)) ss))))))
+      (eve-atom/lookup-or-create-mmap-atom!
+       (:domain s)
+       (str "cohost.atom/" index "-" (rem n slots-per-domain))
+       slab-init))))
+
+(defn- registry-eve-atom []
+  (with-hosting-lock
+    (or (:registry @hosting)
+        (let [dir (:dir @hosting)
+              dom (eve-atom/persistent-atom-domain (str dir "/registry"))
+              ra (eve-atom/lookup-or-create-mmap-atom!
+                  dom "cohost.registry/table" {})]
+          (swap! hosting assoc :registry-domain dom :registry ra)
+          ra))))
+
+(defn- disk-handle [m init]
+  (let [d (eve-atom/persistent-atom-domain (:eve/path m))]
+    (eve-atom/lookup-or-create-mmap-atom! d (:eve/name m) init)))
+
+(defn- net-handle [m init]
+  (throw (ex-info "cohost.atom-eve-file (:clje): the :net tier is not seated on this seat yet"
+                  {:tier :net :seat :clje})))
+
+(defn- make-tier-atom [kind m init]
+  (case kind
+    :disk (disk-handle m init)
+    :net (net-handle m init)))
+
+(defn install!
+  "Register this seat's file-domain Eve factory with the portable
+   layer. Takes the root directory: (install! {:dir \"/path/base\"}).
+   Returns true."
+  [{:keys [dir]}]
+  (assert (string? dir) "cohost.atom-eve-file/install! needs {:dir <string>}")
+  (swap! hosting assoc :dir dir)
+  (atom-layer/install-factory! {:make-atom make-eve-atom
+                                :make-tier-atom make-tier-atom
+                                :frame-atom (fn [h] (eve-atom/meta-atom h {}))
+                                :registry-atom registry-eve-atom
+                                ;; an Eve handle here is not a clojerl.Atom:
+                                ;; its swap/reset are eve.host's dispatch
+                                :swap-eve! (fn [h f & args] (apply eve-host/swap! h f args))
+                                :reset-eve! (fn [h v] (eve-host/reset! h v))
+                                :eve-value? (fn [v]
+                                              (satisfies? eve-data/IEveRoot v))})
+  true)
+
+(defn close-hosting!
+  "Release every domain this hosting opened in this process.
+   Files stay; this process's atoms are invalid afterwards."
+  []
+  (with-hosting-lock
+    (let [s @hosting]
+      (doseq [sh (:shards s)]
+        (eve-atom/close-atom-domain! (:domain sh)))
+      (when-let [d (:registry-domain s)]
+        (eve-atom/close-atom-domain! d))
+      (reset! hosting {:dir (:dir s) :registry nil :registry-domain nil :minted 0 :shards []})
+      true)))
+
+(defn root-digests
+  "The two digests of a layer atom's current Eve root: :seal and
+   :sha256 (8 i32 words over the root's canonical codec bytes)."
+  [a]
+  (let [h (atom-layer/eve-handle a)
+        compute (do (require 'eve.digest)
+                    (resolve 'eve.digest/compute-digest))]
+    {:seal (eve-atom/seal h)
+     :sha256 (@compute @h)}))
+
+(defn hosting-state []
+  (let [s @hosting]
+    {:dir (:dir s)
+     :registry? (some? (:registry s))
+     :shards (mapv (fn [sh] {:index (:index sh)
+                             :path (:path sh)
+                             :atoms (:minted sh)})
+                   (:shards s))}))

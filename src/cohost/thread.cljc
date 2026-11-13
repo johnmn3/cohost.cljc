@@ -24,6 +24,14 @@
                             error-mode set-error-handler! error-handler pmap])
   (:require [cohost.adapter :as host]))
 
+(defn- long-ms
+  "x as the host's long count of milliseconds (or a latch count):
+   the (long ...) cast where the host core spells one. On :clje
+   there is no long cast — numbers are exact there (integers are
+   bignums; a float deadline still compares correctly) — so x
+   passes through."
+  [x] #?(:clje x :default (long x)))
+
 ;; ---------------------------------------------------------------------------
 ;; leaves and registry
 
@@ -410,7 +418,7 @@
   ([fut timeout-ms timeout-val]
    (deref-future fut timeout-ms timeout-val true))
   ([fut timeout-ms timeout-val timed?]
-   (let [deadline (when timed? (+ (now-ms) (long timeout-ms)))]
+   (let [deadline (when timed? (+ (now-ms) (long-ms timeout-ms)))]
      (loop []
        (let [s @(:state fut)]
          (case (:status s)
@@ -456,7 +464,7 @@
 ;; CountDownLatch
 
 (defn new-latch [n]
-  {:cohost/kind ::latch :count (atom (max 0 (long n))) :bell (host/doorbell)})
+  {:cohost/kind ::latch :count (atom (max 0 (long-ms n))) :bell (host/doorbell)})
 
 (defn latch-count [l] @(:count l))
 
@@ -472,7 +480,7 @@
    deadline passes first."
   ([l] (await-latch l nil) true)
   ([l timeout-ms]
-   (let [deadline (when (some? timeout-ms) (+ (now-ms) (long timeout-ms)))]
+   (let [deadline (when (some? timeout-ms) (+ (now-ms) (long-ms timeout-ms)))]
      (loop []
        (cond (zero? @(:count l)) true
              (and deadline (>= (now-ms) deadline)) false
@@ -741,7 +749,12 @@
 (defn- pvalues-macro [_form _env & exprs]
   (cons 'cohost.core/pcalls (map (fn [e] (list 'fn [] e)) exprs)))
 
-(def core-impls
+(defn build-core-impls
+  "The thread fills, name -> impl fn; boot interns them into cohost.core.
+   Built by a call: on :clje a top-level def's value is embedded as a
+   literal by the loader, and a map holding anonymous fns is not one
+   (the same rule as cohost.adapter's defaults table)."
+  []
   {'promise new-promise
    'deliver deliver-promise
    'future-call future-call
@@ -780,6 +793,12 @@
    'await1 await1
    'pmap pmap*
    'pcalls pcalls*})
+
+;; On :clje the var root cannot be the table (see build-core-impls);
+;; it stays nil there and boot's interning doseq is the call site
+;; that must build it instead — boot on :clje is its own rung.
+#?(:clje (def core-impls nil)
+   :default (def core-impls (build-core-impls)))
 
 (def core-macros
   "The fill's macros, name -> macro fn; boot marks them after interning."

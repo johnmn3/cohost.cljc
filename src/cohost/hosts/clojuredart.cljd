@@ -1,0 +1,75 @@
+(ns cohost.hosts.clojuredart
+  "The ClojureDart adapter: cohost on ClojureDart 0.9 (Dart 3.14).
+   ClojureDart is compiled ahead of time: no eval, no runtime
+   namespace registry, no read-string in cljd.core (the reader is
+   cljd.reader's). What the stock adapter shape assumes from a
+   runtime, this seat answers as follows:
+
+   - reading goes through cohost.scan's ranking + cljd.reader,
+     the same text-level resolution as the other seats (wired in
+     cohost.cljd-completion, which this namespace requires first
+     so the build's symbol fallback finds it).
+   - the boot-only caps (ensure-bare-ns!, refer-from-core!,
+     resolve-core) have no runtime meaning in a compiled program;
+     they throw the layer's named unsupported error. The body path
+     never calls them.
+   - install is a defn the entry calls: a compiled ClojureDart
+     program runs no bare top-level forms (the platform fact
+     Bucket B measured for Eve), so a top-level (install! ...) in
+     this file would never execute."
+  (:require [cohost.adapter :as adapter]
+            [cohost.scan :as scan]
+            [cohost.cljd-completion]
+            ["dart:io" :as io]
+            ["dart:math" :as math]))
+
+(defn- unsupported [k]
+  (fn [& _]
+    (throw (ex-info (str "cohost: no " k " in a compiled ClojureDart program")
+                    {:cohost/unsupported k}))))
+
+(defn- read-forms [src cb]
+  (let [cs (vec src) n (count cs)]
+    (loop [i (scan/skip-ws cs 0)]
+      (when (< i n)
+        (let [j (scan/form-end cs i)
+              f (cohost.cljd-completion/read-string (subs src i j))]
+          (when (some? f) (cb f))
+          (recur (scan/skip-ws cs j)))))))
+
+(def ^:private stopwatch (doto (Stopwatch.) (.start)))
+
+(def adapter
+  {:name :cljd
+   :core-ns 'cljd.core
+   :catch-all 'dynamic
+   :read-forms read-forms
+   :ensure-bare-ns! (unsupported :ensure-bare-ns!)
+   :refer-from-core! (unsupported :refer-from-core!)
+   :resolve-core (unsupported :resolve-core)
+   :lazy-seq (fn [f] (lazy-seq (f)))
+   :delay (fn [f] (delay (f)))
+   :exception? (fn [x] (or (instance? Exception x) (instance? Error x) (some? (ex-data x))))
+   :transient? (fn [x] (satisfies? ITransientCollection x))
+   :lazy-seq? (fn [x] (let [t (str (.-runtimeType x))] (or (= "LazySeq" t) (.startsWith t "LazySeq<"))))
+   :atom? (fn [x] (satisfies? IAtom x))
+   ;; measured/idiomatic overrides (optional caps)
+   :volatile? (fn [x] (volatile? x))
+   :delay? (fn [x] (delay? x))
+   :reduced? (fn [x] (reduced? x))
+   :exit (fn [code] (io/exit code))
+   :nano-time (fn [] (* 1000 (.-elapsedMicroseconds stopwatch)))
+   :current-time-millis (fn [] (.-millisecondsSinceEpoch (DateTime.now)))
+   :math-ceil (fn [x] (.ceil (double x)))
+   :math-floor (fn [x] (.floor (double x)))
+   :math-sqrt (fn [x] (math/sqrt (double x)))
+   :parse-long (fn [s] (int/tryParse s))
+   :parse-double (fn [s] (double/tryParse s))
+   :nan? (fn [x] (and (number? x) (.-isNaN (double x))))
+   :infinite? (fn [x] (and (number? x) (.-isInfinite (double x))))
+   :index-of (fn [s sub from] (.indexOf s sub from))
+   :thread-self (fn [] :main-isolate)})
+
+(defn install! []
+  (adapter/install! adapter)
+  true)

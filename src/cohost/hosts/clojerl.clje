@@ -1,0 +1,143 @@
+(ns cohost.hosts.clojerl
+  "The clojerl adapter (Clojure on the BEAM, OTP). Clojerl is a real
+   Clojure — vars, namespaces, protocols, multimethods — so most of
+   the contract's generic defaults are already its own core. What
+   differs from the JVM dialect, measured on this seat (clojerl
+   b0cbe4e, Clojure 0.9.0-2198, OTP 27):
+
+   - host types are named clojerl.* (clojerl.Atom, clojerl.LazySeq,
+     clojerl.Delay, clojerl.Namespace, clojerl.ExceptionInfo);
+     clojure.lang.* symbols do not resolve.
+   - there are no transients, no volatiles, no ratios, no decimals,
+     no uuids, no arrays and no PersistentQueue in its core; its
+     integers are Erlang bignums and its floats are always finite
+     (a BEAM float is never NaN or infinite).
+   - chars are integers; strings are UTF-8 binaries.
+   - (catch Throwable e) is the catch-all: Throwable does not
+     resolve as a type, and clojerl compiles the clause to catch
+     every class. A raw BEAM error arrives as a keyword-classed
+     term (badarg, badarith, ...), not an exception object.
+   - read-string refuses reader conditionals without
+     {:read-cond :allow :features #{...}}; source files read #?
+     natively with the :clje feature.
+   - there is no locking, no requiring-resolve, no volatile! in
+     core; the seat files use BEAM natives where they need them."
+  (:require [cohost.adapter :as adapter]
+            [cohost.scan :as scan]))
+
+;; ---------------------------------------------------------------------------
+;; reading: each top-level form's extent by a scan (cohost.scan), then
+;; read-string of that text alone — the cljw adapter's shape. The
+;; features name both dialects: stock core.clj's #? arms are keyed
+;; :clj, and this host's own sources are keyed :clje; the arm a form
+;; lists first wins, as everywhere.
+
+(defn- read-forms [src cb]
+  (let [cs (vec src) n (count cs)]
+    (loop [i (scan/skip-ws cs 0)]
+      (when (< i n)
+        (let [j (scan/form-end cs i)
+              f (read-string {:eof ::none :read-cond :allow :features #{:clj :clje}}
+                             (subs src i j))]
+          (when-not (= f ::none) (cb f))
+          (recur (scan/skip-ws cs j)))))))
+
+(defn- index-of [s sub from]
+  ;; strings are binaries; seq of a string is its chars (integers)
+  (let [a (vec (drop (max 0 from) (seq s)))
+        b (vec (seq sub))
+        n (count b) m (count a)]
+    (if (zero? n)
+      (max 0 from)
+      (loop [i 0]
+        (cond (> (+ i n) m) -1
+              (= b (subvec a i (+ i n))) (+ (max 0 from) i)
+              :else (recur (inc i)))))))
+
+(defn- adapter-map
+  "The capability map, built by a call: a top-level def whose
+   value is a map of fns cannot load on this host (the loader
+   embeds def values as literals; a fn nested in a map is not
+   one), so the map goes straight from here to install!."
+  []
+  {:name :clje
+   :core-ns 'clojure.core
+   :catch-all 'Throwable
+   :read-forms read-forms
+   :read-string (fn ([s] (read-string s))
+                  ([s opts] (read-string (if (and (= :allow (:read-cond opts))
+                                                  (not (contains? opts :features)))
+                                           (assoc opts :features #{:clj :clje})
+                                           opts)
+                                         s)))
+   :ensure-bare-ns! (fn [ns-sym]
+                      (binding [*ns* *ns*]
+                        (eval (list 'ns ns-sym '(:refer-clojure :only [])))
+                        (the-ns ns-sym)))
+   :refer-from-core! (fn [into-ns sym]
+                       (binding [*ns* (the-ns into-ns)]
+                         (ns-unmap into-ns sym)
+                         (refer 'clojure.core :only [sym])))
+   :resolve-core (fn [sym] (get (ns-publics 'clojure.core) sym))
+   :var-thread-bound? (fn [v] (thread-bound? v))
+   ;; no PersistentQueue in clojerl's core; nil is the contract's
+   ;; answer for a host with none
+   :empty-queue (fn [] nil)
+   :namespace? (fn [x] (instance? clojerl.Namespace x))
+   :lazy-seq (fn [f] (lazy-seq (f)))
+   :delay (fn [f] (delay (f)))
+   ;; raw BEAM errors are keyword-classed terms, not exception
+   ;; objects; only clojerl's own ExceptionInfo is one here
+   :exception? (fn [x] (instance? clojerl.ExceptionInfo x))
+   :exception-class (fn [e] (cond (instance? clojerl.ExceptionInfo e) 'clojure.lang.ExceptionInfo
+                                  (keyword? e) 'RuntimeException
+                                  :else 'RuntimeException))
+   :nano-time (fn [] (erlang/monotonic_time :nanosecond))
+   :current-time-millis (fn [] (erlang/system_time :millisecond))
+   :math-ceil (fn [x] (math/ceil x))
+   :math-floor (fn [x] (math/floor x))
+   :math-sqrt (fn [x] (math/sqrt x))
+   :parse-long (fn [s] (try (erlang/binary_to_integer s) (catch Throwable _ nil)))
+   :parse-double (fn [s] (try (erlang/binary_to_float s)
+                          (catch Throwable _
+                            (try (float (erlang/binary_to_integer s))
+                                 (catch Throwable _ nil)))))
+   ;; a BEAM float is always finite
+   :nan? (fn [_] false)
+   :infinite? (fn [_] false)
+   :index-of index-of
+   ;; no transients and no volatiles in clojerl's core
+   :transient? (fn [_] false)
+   :volatile? (fn [_] false)
+   :lazy-seq? (fn [x] (instance? clojerl.LazySeq x))
+   :atom? (fn [x] (instance? clojerl.Atom x))
+   :delay? (fn [x] (instance? clojerl.Delay x))
+   :reduced? (fn [x] (reduced? x))
+   :deref? (fn [x] (or (instance? clojerl.Atom x) (instance? clojerl.Delay x)
+                       (instance? clojerl.Namespace x)))
+   :pending? (fn [x] (or (instance? clojerl.Delay x) (instance? clojerl.LazySeq x)))
+   ;; a char is an integer (its code point) on the BEAM
+   :char? (fn [x] (and (integer? x) (<= 0 x) (<= x 1114111)))
+   :char-code (fn [c] c)
+   ;; no regex or uuid values in clojerl's core
+   :regex? (fn [_] false)
+   :uuid? (fn [_] false)
+   ;; Erlang integers are bignums: a BigInt is an int a long cannot hold
+   :bigint? (fn [x] (and (integer? x) (not (boolean? x))
+                         (or (< x -9223372036854775808) (> x 9223372036854775807))))
+   ;; no ratios and no decimals: / of two ints is a float here
+   :ratio? (fn [_] false)
+   :decimal? (fn [_] false)
+   :indexed? (fn [x] (indexed? x))
+   :counted? (fn [x] (counted? x))
+   :reversible? (fn [x] (reversible? x))
+   :sorted? (fn [x] (sorted? x))
+   ;; a multimethod is a Var whose meta carries :multi-method true;
+   ;; there is no MultiFn type on this host
+   :multifn? (fn [x] (boolean (and (instance? clojerl.Var x)
+                                   (:multi-method (meta x)))))
+   ;; a BEAM process per thread: cohost.thread's leaves exist here
+   :thread-spawn (fn [thunk] (erlang/spawn thunk))
+   :thread-self (fn [] (erlang/self))})
+
+(adapter/install! (adapter-map))

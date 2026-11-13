@@ -98,6 +98,9 @@
    :phel [:clj :default]
    :cljs [:clj :default]
    :cljw [:clj :default]
+   :clje [:clj :default]
+   :cljr [:clj :default]
+   :cljd [:clj :default]
    :lg [:clj :default]
    :jank [:jank :clj :default]
    :cljrs [:clj :default]})
@@ -121,12 +124,12 @@
 
 (def key-hosts
   "The host a key's code was written for: the provenance of a branch's forms."
-  {:clj :java :bb :java :cljs :js :cljr :clr :lpy :python :jank :cpp})
+  {:clj :java :bb :java :cljs :js :cljr :clr :cljd :dart :lpy :python :jank :cpp})
 
 (def key-exts
   "The source file extension each key names: a namespace with several files
    (foo.clj, foo.cljc, ...) loads the one whose key ranks first."
-  {:clj ".clj" :cljs ".cljs" :cljr ".cljr" :lpy ".lpy" :jank ".jank" :bb ".bb" :default ".cljc"})
+  {:clj ".clj" :cljs ".cljs" :cljr ".cljr" :cljd ".cljd" :lpy ".lpy" :jank ".jank" :bb ".bb" :default ".cljc"})
 
 (defn source-exts "ranking -> the extensions to look for, best first." [ranking]
   (vec (keep key-exts ranking)))
