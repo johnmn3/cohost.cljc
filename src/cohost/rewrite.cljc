@@ -17,7 +17,7 @@
   (:require [cohost.adapter :as host]
             [cohost.policy :as policy])
   ;; names defined here that let-go's core also has (it warns of each)
-  #?(:lg (:refer-clojure :exclude [starts-with? ends-with?])))
+  #?@(:lg [(:refer-clojure :exclude [starts-with? ends-with?])]))
 
 ;; A5-6: whether the form being rewritten is an argument of a self-call of
 ;; the def being rewritten (*def-name*): there a let* does not compile on apt

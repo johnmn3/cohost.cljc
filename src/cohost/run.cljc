@@ -60,4 +60,4 @@
        :cljs (cljs-eve/shutdown!))
     nil)))
 
-#?(:cljs (set! *main-cli-fn* -main))
+#?(:squint nil :cljs (set! *main-cli-fn* -main))

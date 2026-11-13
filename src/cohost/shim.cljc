@@ -475,7 +475,7 @@
     (fn? x) 'clojure.lang.AFunction
     (host/iter? x) 'java.util.Iterator
     ;; a host class (a deftype instance, a JS or Python object): the host's own
-    :else (or (type-of x) 'java.lang.Object)))
+    :else (or (type-of x) (symbol "java.lang.Object"))))
 
 (defn class-supers [c] (get token-ancestors (canon c) #{}))
 (defn class-bases [c]
@@ -914,7 +914,7 @@
 ;; (int \\a) is the char's code; where chars are one-character strings the
 ;; host's int would parse the string instead
 (defn- char-aware [f] (fn [x] (if (h-char? x) (h-char-code x) (f x))))
-(def RT-intCast #?(:jank (let [c (char-aware (host-fn 'int int))]
+(def RT-intCast #?(:jank (let [c (char-aware (host-fn 'int (fn [x] (int x))))]
                            ;; A5-2: jank's int keeps a long past i32 ((int 2147483648) is
                            ;; 2147483648); RT.intCast throws, as the JVM's does: a long is
                            ;; Math.toIntExact's ArithmeticException, a double the range check's
@@ -924,7 +924,7 @@
                                                 (host/ex* 'java.lang.ArithmeticException "integer overflow")
                                                 (host/ex* 'java.lang.IllegalArgumentException (str "Value out of range for int: " (if (and h-double-str (float? x)) (h-double-str x) x)))))
                                        r))))
-                  :default (char-aware (host-fn 'int int))))
+                  :default (char-aware (host-fn 'int (fn [x] (int x))))))
 (def RT-longCast (char-aware (host-fn 'long (host-fn 'int identity))))
 (def RT-doubleCast (host-fn 'double (host-fn 'float identity)))
 (def RT-floatCast (host-fn 'float identity))
@@ -1027,7 +1027,11 @@
 (def Numbers-lte <=)
 (def Numbers-gt >)
 (def Numbers-gte >=)
-(def Numbers-equiv ==)
+(def Numbers-equiv
+  (fn ([] true)
+      ([x] true)
+      ([x y] (== x y))
+      ([x y & more] (and (== x y) (apply Numbers-equiv y more)))))
 (def Numbers-isZero zero?)
 (def Numbers-isPos pos?)
 (def Numbers-isNeg neg?)
@@ -1043,14 +1047,14 @@
 (def Numbers-min (fn [x y] (cond (h-nan? x) x (h-nan? y) y (< x y) x :else y)))
 (def Numbers-abs (host-fn 'abs (fn [x] (if (neg? x) (- x) x))))
 (def Numbers-num (fn [x] (if (number? x) x (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.Number x))))))
-(def Numbers-and bit-and)
-(def Numbers-or bit-or)
-(def Numbers-xor bit-xor)
-(def Numbers-not bit-not)
+(def Numbers-and (fn [x y] (bit-and x y)))
+(def Numbers-or (fn [x y] (bit-or x y)))
+(def Numbers-xor (fn [x y] (bit-xor x y)))
+(def Numbers-not (fn [x] (bit-not x)))
 (def Numbers-andNot (host-fn 'bit-and-not (fn [x y] (bit-and x (bit-not y)))))
-(def Numbers-shiftLeft bit-shift-left)
-(def Numbers-shiftRight bit-shift-right)
-(def Numbers-unsignedShiftRight (host-fn 'unsigned-bit-shift-right bit-shift-right))
+(def Numbers-shiftLeft (fn [x y] (bit-shift-left x y)))
+(def Numbers-shiftRight (fn [x y] (bit-shift-right x y)))
+(def Numbers-unsignedShiftRight (host-fn 'unsigned-bit-shift-right (fn [x y] (bit-shift-right x y))))
 (def Numbers-clearBit (host-fn 'bit-clear (fn [x n] (bit-and x (bit-not (bit-shift-left 1 n))))))
 (def Numbers-setBit (host-fn 'bit-set (fn [x n] (bit-or x (bit-shift-left 1 n)))))
 (def Numbers-flipBit (host-fn 'bit-flip (fn [x n] (bit-xor x (bit-shift-left 1 n)))))

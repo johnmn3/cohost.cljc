@@ -104,7 +104,8 @@
    :teavm [:clj :default]
    :lg [:clj :default]
    :jank [:jank :clj :default]
-   :cljrs [:clj :default]})
+   :cljrs [:clj :default]
+   :squint [:clj :default]})
 
 (def default-ranking [:clj :default])
 
@@ -125,7 +126,7 @@
 
 (def key-hosts
   "The host a key's code was written for: the provenance of a branch's forms."
-  {:clj :java :bb :java :cljs :js :cljr :clr :cljd :dart :lpy :python :jank :cpp})
+  {:clj :java :bb :java :cljs :js :cljr :clr :cljd :dart :lpy :python :jank :cpp :squint :js})
 
 (def key-exts
   "The source file extension each key names: a namespace with several files

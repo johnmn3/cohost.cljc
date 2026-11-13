@@ -32,7 +32,7 @@
 (def stock-root (str repo "/resources/cohost/clojure-1.12.0"))
 (def cache-dir (str (fs/home) "/.cache/cohost"))
 
-(def wired ["cljs" "jolt" "lpy" "cljw" "phel" "lg" "jank"])
+(def wired ["cljs" "jolt" "lpy" "cljw" "phel" "lg" "jank" "squint"])
 
 ;; the program each wired host runs, and how to get it
 (def host-bins
@@ -42,7 +42,8 @@
    "cljw" ["cljw" "bash dev/install/cljw.sh"]
    "phel" ["phel" "bash dev/install/phel.sh"]
    "lg" ["lg" "bash dev/install/lg.sh"]
-   "jank" ["jank" "bash dev/install/jank.sh"]})
+   "jank" ["jank" "bash dev/install/jank.sh"]
+   "squint" ["node" "node 18+ (https://nodejs.org, or: brew install node)"]})
 
 (def path-sep java.io.File/pathSeparator)
 (def hosts (set (concat ["jvm" "cljrs"] wired)))
@@ -302,6 +303,39 @@
         (when-not (zero? (run-inherit repo cmd))
           (die 1 "cohost: cljs build failed"))))))
 
+(defn ensure-squint-build! []
+  ;; The squint body is a compiled body like cljs: the whole
+  ;; cohost + Eve graph is staged and compiled by squint ahead of
+  ;; time (dev/build_squint.clj) into target/squint-cli; node runs
+  ;; its main.mjs with the cfg. Eve comes from the same pinned git
+  ;; dep the cljs build uses; its hosts.edn :squint row names the
+  ;; adapter roots. Rebuilds when any source under src/ or the
+  ;; Eve checkout's squint roots is newer than the build stamp.
+  (let [work (fs/file repo "target/squint-cli")
+        main (fs/file work "main.mjs")
+        _ (load-file (str repo "/dev/eve-cljs/eve_paths.clj"))
+        eve-dir ((resolve 'eve-paths/eve-checkout-dir) repo)]
+    (when-not (fs/exists? eve-dir)
+      (run-inherit repo ["clojure" "-P" "-M:cljs"]))
+    (let [hosts-edn (fs/file eve-dir "hosts.edn")
+          row (when (fs/exists? hosts-edn)
+                (get (clojure.edn/read-string (slurp hosts-edn)) :squint))]
+      (when-not row
+        (die 1 (str "cohost: the pinned Eve checkout has no :squint row in hosts.edn"
+                    " — the squint seat is not in this Eve pin yet")))
+      (let [roots (into [(str repo "/src") (str eve-dir "/src")]
+                        (map #(str eve-dir "/" %) row))
+            lm (fn [f] (try (.toMillis (fs/last-modified-time f)) (catch Exception _ 0)))
+            stale? (or (not (fs/exists? main))
+                       (boolean (some (fn [f] (> (lm f) (lm main)))
+                                      (mapcat #(fs/glob % "**.{cljc,cljs}") roots))))]
+        (when stale?
+          (binding [*out* *err*] (println "cohost: compiling the squint host build (target/squint-cli) ..."))
+          (when-not (zero? (run-inherit repo (vec (concat ["bb" "dev/build_squint.clj"
+                                                           (str work) "cohost.squint-main" (str eve-dir)]
+                                                          roots))))
+            (die 1 "cohost: squint build failed")))))))
+
 (defn jank-aot-dir!
   "cohost's own namespaces compiled -O3 (jank-FAST Step 6 stage 1), rebuilt
    when src/cohost or the jank binary changed: dev/perf/jank_aot_ensure.clj,
@@ -407,6 +441,10 @@
       ;; source directories); cohost.cli moves to the project directory
       "cljs" (do (ensure-cljs-build!)
                  (run-inherit repo ["node" (str repo "/target/cljs-cli/main.js") cfg]))
+      ;; squint: the compiled body runs its `cli` entry with the cfg,
+      ;; the same contract as the cljs body's main
+      "squint" (do (ensure-squint-build!)
+                   (run-inherit repo ["node" (str repo "/target/squint-cli/main.mjs") "cli" cfg]))
       ;; Phel compiles to PHP files under $TMPDIR/phel and never removes them: give
       ;; each run its own TMPDIR and remove it after
       "phel" (let [tmp (str (fs/create-temp-dir {:prefix "cohost-phel-"}))]

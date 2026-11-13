@@ -511,4 +511,4 @@ namespace cohost_io {
     (boot/eval-str "(in-ns 'user)")
     (exit! (run-cli! cfg)))))
 
-#?(:cljs (set! *main-cli-fn* -main))
+#?(:squint nil :cljs (set! *main-cli-fn* -main))

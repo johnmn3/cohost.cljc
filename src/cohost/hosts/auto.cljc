@@ -2,7 +2,8 @@
 ;; :cljw are listed before :clj on purpose: both read :clj arms too, and the
 ;; first matching arm wins; `bb lint:reader-order` checks the order.)
 (ns cohost.hosts.auto
-  (:require #?(:lpy [cohost.hosts.basilisp]
+  (:require #?(:squint [cohost.hosts.squint]
+               :lpy [cohost.hosts.basilisp]
                :jolt [cohost.hosts.jolt]
                :cljs [cohost.hosts.cljs]
                :cljw [cohost.hosts.cljw]

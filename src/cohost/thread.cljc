@@ -738,7 +738,7 @@
   (if (host/capability :realm-submit)
     ;; unit 8: the form travels with the closure (future-form-call)
     (let [ls (free-locals env body)
-          ns-sym (or (when (map? (:ns env)) (:name (:ns env))) 'user)]
+          ns-sym (or (when (map? (:ns env)) (:name (:ns env))) (symbol "user"))]
       (list 'cohost.realm/future-form-call
             (list 'quote ns-sym)
             (list 'quote (list 'fn ls (cons 'do body)))

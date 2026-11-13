@@ -260,7 +260,7 @@
   "The namespace of the snapshot module an event belongs to: the library
    being loaded, else the core."
   []
-  (or (:loading @state) 'clojure.core))
+  (or (:loading @state) (symbol "clojure.core")))
 
 (defn- snap! [event]
   (when @snapshot-log
@@ -889,7 +889,7 @@
         report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
     (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks))))
     (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
-           :libs {'clojure.core {:ns core-ns :status :loaded}})
+           :libs {(symbol "clojure.core") {:ns core-ns :status :loaded}})
     ;; (eval form) evaluates in the namespace the caller runs in, as on the JVM
     (reset! shim/eval-hook (fn [form] (eval-in (host/current-ns) form)))
     (reset! shim/load-hook (fn [path] (boot-file! ctx report (str root "/clojure/" path ".clj"))))
@@ -1075,7 +1075,7 @@
        (fn []
          (doseq [[sym dflt] policy/runtime-vars]
            (when-not (take-from-host! report sym)
-             (eval-form! ctx report (list 'def (with-meta sym {:dynamic true}) dflt) sym :replaced)))))
+             (eval-form! ctx report (list 'def #?(:squint sym :default (with-meta sym {:dynamic true})) dflt) sym :replaced)))))
      (doseq [f files]
        (boot-file! ctx report (str root "/" f)))
      ;; the companion files' names: the stock definition where it is plain
@@ -1432,7 +1432,7 @@
       refer-clojure (do (refer-core! cur (apply hash-map args)) [nil cur])
       ;; (alias 'c 'clojure.core): the target as the loader booted it
       alias (let [[a t] args
-                  t (cond (= t 'clojure.core) core-ns
+                  t (cond (= t (symbol "clojure.core")) core-ns
                           (get-in @state [:libs t :ns]) (get-in @state [:libs t :ns])
                           :else (if-let [m (get @(:renames (ctx)) (str t))] (symbol m) t))]
               (host/alias! cur a t)
@@ -1594,7 +1594,7 @@
 (defn lib-report
   "{lib {:ns :status :ok :error :skipped :entries}} of every library loaded."
   []
-  (dissoc (:libs @state) 'clojure.core))
+  (dissoc (:libs @state) (symbol "clojure.core")))
 
 (defn print-lib-report [lib]
   (let [{:keys [ns status ok error skipped native entries]} (get (:libs @state) (symbol (str lib)))]

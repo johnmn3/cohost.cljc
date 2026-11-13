@@ -17,9 +17,9 @@
      program runs no bare top-level forms (the platform fact
      Bucket B measured for Eve), so a top-level (install! ...) in
      this file would never execute."
-  (:require [cohost.adapter :as adapter]
+  (:require [cohost.cljd-completion]
+            [cohost.adapter :as adapter]
             [cohost.scan :as scan]
-            [cohost.cljd-completion]
             ["dart:io" :as io]
             ["dart:math" :as math]))
 
