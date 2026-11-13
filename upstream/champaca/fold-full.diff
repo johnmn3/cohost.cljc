@@ -1,0 +1,2372 @@
+diff --git a/bb.edn b/bb.edn
+index a1f1629..f22a063 100644
+--- a/bb.edn
++++ b/bb.edn
+@@ -199,6 +199,7 @@
+                     _ (apply shell "javac -parameters -Xlint:-removal -cp target/lib.jar:target/lib2.jar -d target/classes" srcs)
+                     ;; IndyCheck calls bootstraps of its own, which javac can't emit
+                     _ (shell "java test/gen/IndyCheckGen.java target/classes")
++                    _ (shell "java test/gen/LoaderErrorGen.java target/classes")
+                     ;; DefaultConflictCheck's classes conflict only at run time, which javac refuses
+                     _ (shell "java test/gen/DefaultConflictGen.java target/classes")
+                     ;; ModuleCheck's Truncated.class: present but unloadable
+@@ -756,7 +757,16 @@
+                                                "the same with CHAMPACA_CACHE=off")
+                                           (row "stackcheck-lines-off" {"CHAMPACA_LINES" "off"} ["target/classes:target/lib.jar:target/lib2.jar" "StackCheck"]
+                                                (if (System/getenv "CHAMPACA_BT") ["test/libcache/StackCheck-lines-off-bt.expected"] ["test/libcache/StackCheck-lines-off.expected"])
+-                                               "StackCheck's own frames have no line numbers with CHAMPACA_LINES=off")]
++                                               "StackCheck's own frames have no line numbers with CHAMPACA_LINES=off")
++                                          (row "loader-constraint-prime" {"CHAMPACA_CACHE_DIR" (str lc "/identity-cache")}
++                                               ["target/classes" "LoaderBoundaryCheck" "prime"] "test/libcache/loader-constraint-prime.expected"
++                                               "a valid loader constraint primes the definition cache")
++                                          (row "loader-identity-cached-definition" {"CHAMPACA_CACHE_DIR" (str lc "/identity-cache")}
++                                               ["target/classes" "LoaderBoundaryCheck"] "test/java/LoaderBoundaryCheck.expected"
++                                               "loader-qualified references after a cached definition")
++                                          (row "loader-identity-warm" {"CHAMPACA_CACHE_DIR" (str lc "/identity-cache")}
++                                               ["target/classes" "LoaderBoundaryCheck"] "test/java/LoaderBoundaryCheck.expected"
++                                               "loader-qualified references on a second run")]
+                                          (remove nil?)
+                                          vec))
+                     ;; a lambda over a jar's interface that gains a default method
+@@ -914,7 +924,7 @@
+                                     (when-not ok (print out) (flush) n))))
+                     fails (remove nil? (concat fails jar-fails opt-fails mainsel-fails srclaunch-fails modopts-fails modpath-fails boot-fails save-fails bundle-fails libcache-fails nolines-fails lam-fails edit-fails def-fails fix-fails aaa-fails ex-fails))
+                     mains (concat mains ["-jar" "-D -jar" "bad option" "ignored options" "-cp" "-cp star dir" "-cp missing" "-cp -jar" "accepted options" "boot generation" "cache save"] (map (fn [i] (str "libcache-" i)) (range 1 15))
+-                                  ["libcache-nolines" "libcache-nolines-cache-off" "stackcheck-lines-off"] (map (fn [i] (str "libcache-lam-" i)) (range 1 9))
++                                  ["libcache-nolines" "libcache-nolines-cache-off" "stackcheck-lines-off" "loader-constraint-prime" "loader-identity-cached-definition" "loader-identity-warm"] (map (fn [i] (str "libcache-lam-" i)) (range 1 9))
+                                   (map (fn [i] (str "libcache-edit-" i)) (range 1 4))
+                                   (map (fn [i] (str "libcache-def-" i)) (range 1 13))
+                                   (map (fn [i] (str "libcache-fix-" i)) (range 1 4)) aaa-mains (map first examples))]
+diff --git a/docs/guide/contributing.md b/docs/guide/contributing.md
+index 0853041..b77bdec 100644
+--- a/docs/guide/contributing.md
++++ b/docs/guide/contributing.md
+@@ -26,7 +26,7 @@ jolt test      # every test program against the JVM, plus the examples
+ ## Before a pull request
+ 
+ - `jolt test` passes.
+-- The battery passes on your final commit: `jolt battery <ref>` runs the suite cold, warm, with the cache off and with `CHAMPACA_BT=1`, then the eight libraries. It takes half an hour or more, and only one may run at a time.
++- The battery passes on your final commit: `jolt battery <ref>` runs the suite cold, warm, with the cache off and with `CHAMPACA_BT=1`, then the library probes. It takes half an hour or more, and only one may run at a time.
+ - If you can run Docker, `jolt linux` passes too.
+ - Docs ship with the change: a new behavior goes in the guide page that covers its area, and a new gap in [limitations](limitations.md).
+ - The pull request says what changed and how it was checked: which tests, which comparison, which numbers.
+diff --git a/docs/guide/development.md b/docs/guide/development.md
+index fdac314..7243c69 100644
+--- a/docs/guide/development.md
++++ b/docs/guide/development.md
+@@ -9,7 +9,7 @@ jolt jolt                                               # build the pinned jolt
+ jolt test                                               # every test/java and test/aaa program vs the JVM, plus the examples/*.clj tests
+                                                       # (a failing program's output goes to target/fails/, and the start of its diff is printed)
+ JOLT=jolt jolt test                                     # the same suite on the jolt from your PATH
+-jolt libs:fetch && jolt libs                              # the eight real libraries vs the JVM (jars into ~/.m2)
++jolt libs:fetch && jolt libs                              # the library probes vs the JVM (jars into ~/.m2)
+ jolt battery [ref]                                      # before a merge: jolt test cold, warm, cache off and CHAMPACA_BT=1, then jolt libs (after jolt libs:fetch), on a worktree of HEAD
+                                                       # with its own cache (kept until the next run of another ref), logs under target/battery/; about 30 min, more under load; BATTERY_MODES=cold,libs for a subset
+ jolt linux                                              # jolt test and jolt libs on Linux, in Docker (jolt linux amd64 for x86_64)
+@@ -41,7 +41,7 @@ CHAMPACA_CALL_CACHE=off ...  # choose the overload again on every invoke, invoke
+ 
+ ## Before a merge
+ 
+-A change merges once `jolt test`, the battery and the Linux run all pass. The battery runs the whole suite four ways on a worktree of the ref: cold, warm, with the cache off and with `CHAMPACA_BT=1`. Then it runs the eight libraries. It deletes every battery worktree and cache under `target/battery` when it starts, so each run starts cold, and a second battery started while one runs (even a `BATTERY_MODES` subset) pulls the first one's tree out from under it. `jolt linux` needs Docker: it builds the `ci/linux` image, fetches the library jars into `~/.m2` on this machine (`jolt libs:fetch`, which needs the network), then runs `jolt jolt`, `jolt test` and `jolt libs` in a container that mounts them read-only.
++A change merges once `jolt test`, the battery and the Linux run all pass. The battery runs the whole suite four ways on a worktree of the ref: cold, warm, with the cache off and with `CHAMPACA_BT=1`. Then it runs the library probes. It deletes every battery worktree and cache under `target/battery` when it starts, so each run starts cold, and a second battery started while one runs (even a `BATTERY_MODES` subset) pulls the first one's tree out from under it. `jolt linux` needs Docker: it builds the `ci/linux` image, fetches the library jars into `~/.m2` on this machine (`jolt libs:fetch`, which needs the network), then runs `jolt jolt`, `jolt test` and `jolt libs` in a container that mounts them read-only.
+ 
+ ```sh
+ jolt battery <ref>
+diff --git a/docs/guide/jars-and-modules.md b/docs/guide/jars-and-modules.md
+index a101ecb..4ab09c3 100644
+--- a/docs/guide/jars-and-modules.md
++++ b/docs/guide/jars-and-modules.md
+@@ -34,7 +34,9 @@ Eight libraries have been run this way and checked against the JVM, with identic
+ | SLF4J 2.0.16 with `slf4j-simple` | logging through the provider `ServiceLoader` finds in `slf4j-simple`'s jar |
+ | SnakeYAML 2.3 | loading and dumping maps, beans with generic `List` and `Map` properties, public fields and enums, anchors and merge keys, multi-document streams, block style, timestamps, error messages with their line and column marks |
+ 
+-`jolt libs` reruns all eight, from the probe programs in `test/libs`. Each one runs on the JVM and through champaca, from a fresh cache, and the outputs and exit codes have to match (stderr too, for SLF4J, whose logging goes there). The jars come from `$HOME/.m2/repository`, and each one's SHA-1 is checked against the pin in `test/libs/libs.edn` before it's used. A library whose jars are missing is skipped and named, and a skip fails the run unless you pass `--allow-skip`. A run that compares nothing fails either way. `jolt libs:fetch` downloads the missing jars from Maven Central and keeps a jar only when its SHA-1 matches its pin. `jolt libs Gua Yml` runs just those two, and an unknown name is an error. None of this is part of `jolt test`, which needs no network.
++Clojure 1.12.0 also has a focused compiler regression: eval the same `deftype` three times and keep the constructed classes distinct across its DynamicClassLoaders (`jolt libs ClojureDeftype`). This does not claim general Clojure library conformance.
++
++`jolt libs` reruns the library probes, from the probe programs in `test/libs`. Each one runs on the JVM and through champaca, from a fresh cache, and the outputs and exit codes have to match (stderr too, for SLF4J, whose logging goes there). The jars come from `$HOME/.m2/repository`, and each one's SHA-1 is checked against the pin in `test/libs/libs.edn` before it's used. A library whose jars are missing is skipped and named, and a skip fails the run unless you pass `--allow-skip`. A run that compares nothing fails either way. `jolt libs:fetch` downloads the missing jars from Maven Central and keeps a jar only when its SHA-1 matches its pin. `jolt libs Gua Yml` runs just those two, and an unknown name is an error. None of this is part of `jolt test`, which needs no network.
+ 
+ To call one of them from jolt, with the jars in `~/.m2`:
+ 
+diff --git a/docs/guide/limitations.md b/docs/guide/limitations.md
+index d7d8e9c..168ff35 100644
+--- a/docs/guide/limitations.md
++++ b/docs/guide/limitations.md
+@@ -1,6 +1,6 @@
+ # Limitations
+ 
+-Champaca is a spike. It runs the JDK's own code, but only along the paths its tests and the eight checked libraries (commons-lang3, gson, jsoup, Jackson, Caffeine, Guava, SLF4J, SnakeYAML) have exercised. Code outside those paths can hit a missing native or one of the shortcuts below. This page lists the ones known so far, roughly in the order a real program meets them.
++Champaca is a spike. It runs the JDK's own code, but only along the paths its tests and the checked libraries (commons-lang3, gson, jsoup, Jackson, Caffeine, Guava, SLF4J, SnakeYAML and a focused Clojure compiler regression) have exercised. Code outside those paths can hit a missing native or one of the shortcuts below. This page lists the ones known so far, roughly in the order a real program meets them.
+ 
+ ## Threads take turns
+ 
+@@ -30,7 +30,7 @@ A JDK library load (`zip`, `net`, `management` and so on) is a no-op, because th
+ - Child processes start through `posix_spawn` whatever `jdk.lang.Process.launchMechanism` says, so the JDK's `jspawnhelper` never runs; what a program can see matches the JVM ([how-it-works](how-it-works.md#natives)). `ProcessHandle.Info` is empty: its command, arguments, user, start time and CPU time are all unknown. With no start times, a `ProcessHandle` can't tell its process from a later one that reused the pid, so `destroy` on a handle from `ProcessHandle.of` whose process is gone signals whatever runs under that pid now, where the JVM refuses; a `Process` is safe, since it stops signalling once it has seen its child exit. `ProcessHandle.children()` and `descendants()` stop at a missing native. Under Docker's x86_64 emulation on an arm64 Mac, a script without `#!` exits 127 instead of running through `/bin/sh`, because the emulated `posix_spawn` doesn't report that `exec` failed; natively it runs.
+ - A stack trace lists translated methods only: a native champaca wrote in Scheme has no frame, where the JVM prints one as `Native Method`. JDK frames carry no line numbers, only the file, since the startup cache keeps no inspector information for JDK code ([performance](performance.md#exception-handlers)), and by default neither do the frames of classes from jars or of classes a loader of the program's own defines, which `CHAMPACA_LINES=all` gives lines at about the memory their code takes ([performance](performance.md#memory)). One more thing goes with the lines: a method of such a class that calls nothing and throws from one of champaca's own checks (a division by zero, an array index, a cast, an array's size) while inlined into its caller shows the caller's frame where the JVM shows its own, since without the information Chez folds the inlined code into the caller's; `test/libcache/StackCheck-lines-off.expected` has the shape, and `CHAMPACA_LINES=all` restores the frame along with the lines, as does `CHAMPACA_BT=1`, whose wrappers keep the inlined code apart. Reflection's own frames differ in name (`DirectMethodHandleAccessor$NativeAccessor.invoke` here, `DirectMethodHandleAccessor.invoke` on the JVM). `Thread.getStackTrace()` on another thread stops at a missing native, `Thread.getAllStackTraces()` gives every live thread but only the current one's frames (the others' are empty arrays, which its contract allows), and `StackWalker`'s `SHOW_HIDDEN_FRAMES` option doesn't bring the hidden frames back.
+ - `java.management`: the Runtime, Memory, OperatingSystem and ClassLoading beans answer, and `ThreadMXBean` counts and lists threads. Its CPU times are measured for any live thread the way HotSpot measures them (`thread_info` on macOS, the thread's CPU clock and `/proc` on Linux). The thread lists hold the threads Java started and `main`: a jolt thread that called in isn't listed, and there are no JVM system threads such as `Reference Handler`. `ThreadInfo` stops at `getThreadInfo1` and thread dumps at `dumpThreads0`; `findDeadlockedThreads` says it's unsupported, as the JDK does when the VM reports no support, while `findMonitorDeadlockedThreads` stops at its native; the garbage collector and memory pool lists are empty. Memory figures are Chez's own heap counters, the same ones `Runtime.totalMemory()` and `freeMemory()` report. The operating system bean is `jdk.management`'s, as on the JVM: its host CPU counts and process CPU time are real, and its memory and swap sizes, CPU loads and file descriptor counts are -1, which its contract allows for what isn't measured.
+-- Classes defined at run time (`ClassLoader.defineClass`, `Lookup.defineClass` and `defineHiddenClass`, `java.lang.reflect.Proxy`) join the one class table, so a name can be defined once: a second loader defining a class of the same name gets `LinkageError` where the JVM gives each loader its own, and the application loader never loads the classpath's copy of a name another loader defined.
++- Classes defined at run time have separate identities in separate defining loaders, including `defineClass` with a null name. Repeating a definition in the same loader throws `LinkageError`. An internal name isolates a colliding definition's methods, statics, mirror and array types; Java's `Class.getName` retains the binary name. Declared member queries resolve types through the declaring class's loader, and method/field handles compare resolved descriptors while method-global keys keep the binary descriptors. Parent delegation and shared bootstrap classes still use the loader's `loadClass`. Aliased definitions are not persisted in the library cache. The application loader independently loads an uncached classpath copy when a custom loader occupied the process-wide name first. Successful and failed symbolic resolutions are keyed by initiating loader and binary name; a delegated initiation also prevents a conflicting later definition. Overrides reject already-resolved conflicting descriptor identities. This is not full JVM loader isolation: deferred constraints whose types have not resolved in both loaders require a persistent initiating-loader constraint graph. The host linker still checks classpath bytes before an arbitrary custom loader for a symbolic type that has not yet been defined or registered anywhere; custom child-first loaders overriding such classpath types and cyclic loader dependencies remain unsupported. Those are separate linker changes rather than claims of this runtime-definition fix.
+ 
+ ## The calling API
+ 
+diff --git a/docs/guide/performance.md b/docs/guide/performance.md
+index 894ea37..fb46195 100644
+--- a/docs/guide/performance.md
++++ b/docs/guide/performance.md
+@@ -73,7 +73,7 @@ Class registrations turned out to be most of a generation's code: 9.4 MB of the
+ 
+ A class from a jar goes in its jar's file under `lib/` in the key directory, one file per jar (by its canonical path), and a class from a directory in that directory's file the same way. Its compiled code goes in the same generations as JDK code. The JDK can't change under a cache, since the key covers it, but a jar or a directory can, so each entry records what it was built from. A class's own fingerprint is the CRC-32 and size of its class file. For a jar's class those come from the zip's directory without inflating anything. A directory's class file is read for it, and the class is parsed from those same bytes; when a class loads from other bytes (a load retried after a failure, say), the fingerprint recorded for it is taken from those, so an entry can't pair one version's fingerprint with another's code. A directory's class keeps the bytes it was loaded or restored from for the rest of the run, about what its class file weighs, so a method a restored class's entry didn't have compiles from the version the class was restored as, and stack frames read their line numbers from the version that's running, even when the file has changed or gone since, as the JVM keeps running the class it loaded. Reading a loaded class's bytes this way never changes what the cache records. A jar's class is read from the jar again and checked against its fingerprint, and if the bytes it gets back differ, the run stops with an error naming the class. `test/libcache/edit` checks the directory case in three runs: the second replaces a restored class's file, then reads one of its stack frames and calls a method the cache lacks. A class file written into an earlier classpath directory while the program runs may go unseen: a class the cache restores comes from where the run first found it, where the JVM would load the new file. A class that compiles from its file instead records the fingerprint of the bytes it was parsed from. The entry also records the fingerprint of every other classpath class that its link or its compiled methods read, along with everything those classes inherit from: a field's slot is decided by the superclasses, so a class whose own bytes didn't change still moves its fields when a superclass gains one.
+ 
+-When a run needs a class, it finds it on the classpath as before and uses the cached entry only when its fingerprint and every one it recorded still match. Otherwise the class compiles as if there were no cache, and the next save replaces the entry. A classpath class that depends on one a class loader defined isn't kept, and neither is a method whose code reads one, since on the JVM the application loader couldn't see it. Nor is a method holding an instruction that throws because a class isn't there, a class file doesn't parse or a method is missing, so the run after the file is added or fixed sees it (`test/libcache/fix` checks a class file cut short, then whole). A class a loader of the program's own defines (`ClassLoader.defineClass` from a loader that isn't one of the JDK's: Spring Boot's fat-jar launcher, Quarkus's fast-jar RunnerClassLoader, a plugin's `URLClassLoader`) is kept the same way, by the fingerprint of the bytes the loader handed over, in one file per class path, since the bytes have no path of their own. The next time a loader defines a class of that name from the same bytes, the entry is restored instead of parsed. Its dependencies are checked in two steps, because the loader decides what the names mean: the classes it inherits from when it's defined, and the classes its cached methods read when the first of them is called, which is when translating it would have loaded them, each asked of the defining loader; a dependency whose bytes changed makes the cached methods compile again (`test/libcache/def`). A hidden class, one defined without a name, or one a JDK loader defines isn't kept. Checking a class's dependencies through its loader means the loader is asked for every class the cached methods read, at the first call, where the JVM would ask for each when the code that names it first runs, so a loader that logs or counts its loads sees them earlier and together. Frameworks that define their classes this way are the fat jar's launcher and the fast-jar's RunnerClassLoader ([running Java programs](running-java-programs.md#frameworks)). A lambda's class can't be made again from its name alone, so an entry whose code names one is used only while that class is in the class table. That class takes its interfaces' default methods into its vtable, and it goes in `state.img` like a JDK class, so its name carries the fingerprints of the classpath and loader-defined interfaces it implements: before, a jar's interface that gained a default method between runs left the next run with the earlier class, and calling the new method threw `AbstractMethodError`. `test/libcache/lam` checks it, eight more runs: the interface from jars, then from directories, then from one directory holding v1's interface and then v2's.
++When a run needs a class, it finds it on the classpath as before and uses the cached entry only when its fingerprint and every one it recorded still match. Otherwise the class compiles as if there were no cache, and the next save replaces the entry. A classpath class that depends on one a class loader defined isn't kept, and neither is a method whose code reads one, since on the JVM the application loader couldn't see it. Nor is a method holding an instruction that throws because a class isn't there, a class file doesn't parse or a method is missing, so the run after the file is added or fixed sees it (`test/libcache/fix` checks a class file cut short, then whole). A class a loader of the program's own defines (`ClassLoader.defineClass` from a loader that isn't one of the JDK's: Spring Boot's fat-jar launcher, Quarkus's fast-jar RunnerClassLoader, a plugin's `URLClassLoader`) is kept the same way, by the fingerprint of the bytes the loader handed over, in one file per class path, since the bytes have no path of their own. The next time a loader defines a class of that name from the same bytes, the entry is restored instead of parsed. Its dependencies are checked in two steps, because the loader decides what the names mean: the classes it inherits from when it's defined, and the classes its cached methods read when the first of them is called, which is when translating it would have loaded them, each asked of the defining loader; a dependency whose bytes changed makes the cached methods compile again (`test/libcache/def`). A hidden class, one defined without a name, one a JDK loader defines, or one assigned an internal alias for a name collision isn't kept. Checking a class's dependencies through its loader means the loader is asked for every class the cached methods read, at the first call, where the JVM would ask for each when the code that names it first runs, so a loader that logs or counts its loads sees them earlier and together. Frameworks that define their classes this way are the fat jar's launcher and the fast-jar's RunnerClassLoader ([running Java programs](running-java-programs.md#frameworks)). A lambda's class can't be made again from its name alone, so an entry whose code names one is used only while that class is in the class table. That class takes its interfaces' default methods into its vtable, and it goes in `state.img` like a JDK class, so its name carries the fingerprints of the classpath and loader-defined interfaces it implements: before, a jar's interface that gained a default method between runs left the next run with the earlier class, and calling the new method threw `AbstractMethodError`. `test/libcache/lam` checks it, eight more runs: the interface from jars, then from directories, then from one directory holding v1's interface and then v2's.
+ 
+ Jackson's probe in `test/libs` compiled about 2,170 methods of classpath classes on every run before this. A warm run took 5.22 s and now takes 1.34 s (medians of five interleaved runs; the JVM takes 0.28 s). Of what's left, boot is about 0.23 s and loading some 4,700 cached units about 0.25 s, and the class entries cost something to parse: all 584 of Jackson's take about 150 ms. A class from a classpath directory is cached with Chez's inspector information, which JDK code goes without and a jar's class by default too, because a stack trace reads its line numbers from it ([how it works](how-it-works.md#stack-traces)) and it costs about as much memory as the code itself ([memory](#memory)); with `CHAMPACA_LINES=all`, which gives jar classes lines too, it costs Jackson 3.3 MB of generations (20.1 MB against 16.8) and about 0.1 s a warm run (1.34 s against 1.24). The 19 methods it still compiled were the probe's own, from the directory `target/libs/Jack`, which is cached now too.
+ 
+diff --git a/resources/champaca/handles.ss b/resources/champaca/handles.ss
+index f7ba1af..bd0a930 100644
+--- a/resources/champaca/handles.ss
++++ b/resources/champaca/handles.ss
+@@ -198,7 +198,7 @@
+ (define (find-method c name desc)
+   (let loop ([c c])
+     (and c
+-         (let ([m (find (lambda (m) (and (string=? (car m) name) (string=? (cadr m) desc))) (meta-methods c))])
++         (let ([m (find (lambda (m) (and (string=? (car m) name) (string=? (class-descriptor c (cadr m)) desc))) (meta-methods c))])
+            (if m
+                (cons c m)
+                (or (and (jclass-super c) (loop (find-class (jclass-super c))))
+@@ -210,8 +210,25 @@
+ (define (method-sym cname key) (string->symbol (string-append cname "." key)))
+ 
+ (define (no-such-method c name desc how)
+-  (jthrow "java/lang/NoSuchMethodException"
+-          (string-append "no such method: " (slashes->dots (jclass-cname c)) "." name desc "/" how)))
++  (let* ([binary (binary-descriptor desc)]
++         [alias (let loop ([c c])
++                  (and c
++                       (or (find (lambda (m)
++                                   (and (string=? (car m) name) (string=? (cadr m) binary)
++                                        (not (string=? (class-descriptor c (cadr m)) desc))))
++                                 (meta-methods c))
++                           (and (jclass-super c) (loop (find-class (jclass-super c)))))))]
++         [type (and alias (method-type-text (desc-args desc) (desc-ret desc)))]
++         [msg (string-append "no such method: " (slashes->dots (definition-binary-name (jclass-cname c)))
++                             "." name (or type desc) "/" how)])
++    (if alias
++        (let ([e (construct "java/lang/IllegalAccessException" "(Ljava/lang/String;)V" (jstring msg))]
++              [cause (construct "java/lang/LinkageError" "(Ljava/lang/String;)V"
++                                (jstring (string-append "bad method type alias: " type " not visible from class "
++                                                       (slashes->dots (definition-binary-name (jclass-cname c))))))])
++          ((method-proc "java/lang/Throwable" "initCause(Ljava/lang/Throwable;)Ljava/lang/Throwable;") e cause)
++          (raise e))
++        (jthrow "java/lang/NoSuchMethodException" msg))))
+ 
+ (define (varargs-flag? meta) (fxpositive? (fxlogand (caddr meta) #x80)))
+ 
+@@ -224,7 +241,7 @@
+ (define (static-mh c name desc)
+   (let ([hit (find-method c name desc)])
+     (unless (and hit (static-flag? (caddr (cdr hit)))) (no-such-method c name desc "invokeStatic"))
+-    (let* ([dc (jclass-cname (car hit))] [key (string-append name desc)])
++    (let* ([dc (jclass-cname (car hit))] [key (string-append name (cadr (cdr hit)))])
+       (let ([sym (method-sym dc key)])
+         (member-mh (make-mh desc (lambda xs (jinit dc) (apply (top-level-value sym) xs)) #f (varargs-flag? (cdr hit)))
+                    hit)))))
+@@ -232,7 +249,7 @@
+ (define (virtual-mh c name desc)
+   (let ([hit (find-method c name desc)])
+     (unless (and hit (not (static-flag? (caddr (cdr hit))))) (no-such-method c name desc "invokeVirtual"))
+-    (let ([key (string-append name desc)] [dc (jclass-cname (car hit))] [flags (caddr (cdr hit))])
++    (let ([key (string-append name (cadr (cdr hit)))] [dc (jclass-cname (car hit))] [flags (caddr (cdr hit))])
+       (member-mh
+        (make-mh (string-append "(" (cname->desc (jclass-cname c)) (substring desc 1 (string-length desc)))
+                 ;; findVirtual on a private method is its own, as on the JVM,
+@@ -243,7 +260,7 @@
+ (define (special-mh c name desc caller)
+   (let ([hit (find-method c name desc)])
+     (unless hit (no-such-method c name desc "invokeSpecial"))
+-    (let ([dc (jclass-cname (car hit))] [key (string-append name desc)])
++    (let ([dc (jclass-cname (car hit))] [key (string-append name (cadr (cdr hit)))])
+       (member-mh
+        (make-mh (string-append "(" (cname->desc (jclass-cname caller)) (substring desc 1 (string-length desc)))
+                 (let ([sym (method-sym dc key)]) (lambda xs (apply (top-level-value sym) xs)))
+@@ -252,9 +269,9 @@
+ 
+ (define (constructor-mh c desc)
+   (let* ([cname (jclass-cname c)]
+-         [m (find (lambda (m) (and (string=? (car m) "<init>") (string=? (cadr m) desc))) (meta-methods c))])
++         [m (find (lambda (m) (and (string=? (car m) "<init>") (string=? (class-descriptor c (cadr m)) desc))) (meta-methods c))])
+     (unless m (no-such-method c "<init>" desc "newInvokeSpecial"))
+-    (let ([sym (method-sym cname (string-append "<init>" desc))])
++    (let ([sym (method-sym cname (string-append "<init>" (cadr m)))])
+       (member-mh
+        (make-mh (args->desc (desc-args desc) (cname->desc cname))
+                 (lambda xs (jinit cname) (let ([o (jnew cname)]) (apply (top-level-value sym) o xs) o))
+@@ -268,7 +285,7 @@
+   (member-mh (field-mh* c fname type static? setter? lookup) 'field))
+ (define (field-mh* c fname type static? setter? lookup)
+   (let ([hit (resolve-field c fname type static? setter? (pair? lookup) (and (pair? lookup) (car lookup)))])
+-    (let* ([dc (jclass-cname (car hit))] [desc (cadr (cdr hit))]
++    (let* ([dc (jclass-cname (car hit))] [desc (class-descriptor (car hit) (cadr (cdr hit)))]
+            [recv (cname->desc (jclass-cname c))])
+       (if static?
+           (let ([sym (string->symbol (string-append dc ":" fname))])
+@@ -318,23 +335,23 @@
+   (lambda (this m)
+     (let-values ([(c meta) (reflected-member "java/lang/reflect/Method" (nn m))])
+       (if (static-flag? (caddr meta))
+-          (static-mh c (car meta) (cadr meta))
+-          (virtual-mh c (car meta) (cadr meta))))))
++          (static-mh c (car meta) (class-descriptor c (cadr meta)))
++          (virtual-mh c (car meta) (class-descriptor c (cadr meta)))))))
+ (def-lookup "unreflectSpecial" (string-append "(Ljava/lang/reflect/Method;Ljava/lang/Class;)" mh-ret)
+   (lambda (this m caller)
+     (let-values ([(c meta) (reflected-member "java/lang/reflect/Method" (nn m))])
+-      (special-mh c (car meta) (cadr meta) (mirror-class (nn caller))))))
++      (special-mh c (car meta) (class-descriptor c (cadr meta)) (mirror-class (nn caller))))))
+ (def-lookup "unreflectConstructor" (string-append "(Ljava/lang/reflect/Constructor;)" mh-ret)
+   (lambda (this k)
+     (let-values ([(c meta) (reflected-member "java/lang/reflect/Constructor" (nn k))])
+-      (constructor-mh c (cadr meta)))))
++      (constructor-mh c (class-descriptor c (cadr meta))))))
+ (for-each
+  (lambda (spec)
+    (def-lookup (car spec) (string-append "(Ljava/lang/reflect/Field;)" mh-ret)
+      (lambda (this f)
+        (let* ([c (mirror-class (jslot (nn f) (jfield-index "java/lang/reflect/Field" "clazz")))]
+               [meta (list-ref (meta-fields c) (jslot f (jfield-index "java/lang/reflect/Field" "slot")))])
+-         (field-mh c (car meta) (desc->mirror (cadr meta)) (static-flag? (caddr meta)) (cadr spec))))))
++         (field-mh c (car meta) (jmirror-of (desc->class-name (class-descriptor c (cadr meta)))) (static-flag? (caddr meta)) (cadr spec))))))
+  '(("unreflectGetter" #f) ("unreflectSetter" #t)))
+ 
+ ;; --- MethodHandle's own methods ------------------------------------------------------
+diff --git a/resources/champaca/natives.ss b/resources/champaca/natives.ss
+index 3e7ae85..d80fcf9 100644
+--- a/resources/champaca/natives.ss
++++ b/resources/champaca/natives.ss
+@@ -417,7 +417,7 @@
+   (let ([c (mirror-class this)])
+     (and (jclass-super c) (not (eq? (jclass-kind c) 'interface)) (jmirror-of (jclass-super c)))))
+ (defnative "java/lang/Class.initClassName()Ljava/lang/String;" (this)
+-  (let* ([n (jclass-cname (mirror-class this))]
++  (let* ([n (definition-binary-name (jclass-cname (mirror-class this)))]
+          [s (jstring (if (hidden-class? n)
+                          ;; pkg/Name/0x1 prints as pkg.Name/0x1, as HotSpot prints a hidden class
+                          (let ([i (let loop ([i (fx- (string-length n) 1)]) (if (char=? (string-ref n i) #\/) i (loop (fx- i 1))))])
+@@ -560,9 +560,11 @@
+          [resolve (lambda (bn)
+                     (if own?
+                         (let ([m ((jvirt loader "loadClass(Ljava/lang/String;)Ljava/lang/Class;") loader (jstring bn))])
+-                          (and m (mirror-class m)))
+-                        (let ([c (try-class (slashes bn))])
+-                          (and c (builtin-loader-sees? loader c) c))))]
++                          (and m (begin
++                            (hashtable-set! (loader-table loader-resolutions loader) (slashes bn) (jclass-cname (mirror-class m)))
++                            (mirror-class m))))
++                        (let ([m (class-mirror-for-loader loader (slashes bn))])
++                          (and m (mirror-class m)))))]
+          [_ (cond
+               ;; Class.c: a name with a slash is not found as given; one whose
+               ;; slashed form isn't a class name or descriptor (an empty name,
+@@ -576,7 +578,10 @@
+          ;; through the loader (its pseudo-class would be made for any name,
+          ;; and mirrored, it loads its element)
+          [c (cond [(and array? (not element)) #f]
+-                  [(and array? (not (eq? element 'prim))) (and (resolve element) (try-class n))]
++                  [(and array? (not (eq? element 'prim))) (let ([ec (resolve element)])
++                     (and ec (try-class
++                       (string-append (substring n 0 (fx- (string-length n) (fx+ (string-length (slashes element)) 1)))
++                                      (jclass-cname ec) ";"))))]
+                   [array? (try-class n)]
+                   [else (resolve s)])])
+     ;; HotSpot's texts: the boot loader names the slashed name, a loader
+@@ -1808,24 +1813,49 @@
+ 
+ (define threads-started 0)   ; for the management beans; main isn't counted
+ (define threads-peak 1)
++;; pthread_create's EAGAIN, as Chez/jolt reports it from fork-thread
++(define (fork-thread-resource-error? e)
++  (and (not (jobj? e))
++       (let ([text (guard (c [#t #f]) (condition-text e))])
++         (and text (or (string-search "fork-thread" text)
++                       (string-search "Resource temporarily unavailable" text)
++                       (string-search "EAGAIN" text))))))
++;; Undo start0's bookkeeping if fork-thread fails, so the thread is not
++;; left listed or marked alive, and the started-count is not left high.
++(define (start0-rollback! t)
++  (eq-hashtable-delete! jthread-states t)
++  (thread-alive! t #f)
++  (set! java-live-threads (remq t java-live-threads))
++  (when (fx> threads-started 0)
++    (set! threads-started (fx- threads-started 1))))
+ (defnative "java/lang/Thread.start0()V" (this)
+   (let ([s (make-jthread-state this '() #f #f 0 #f 0)])
++    ;; Mark live first, as before, so a child that finishes quickly is
++    ;; already on java-live-threads when thread-terminated! unlists it.
+     (eq-hashtable-set! jthread-states this s)
+     (thread-alive! this #t)
+     (set! java-live-threads (cons this java-live-threads))
+     (set! threads-started (fx+ threads-started 1))
+     (set! threads-peak (fxmax threads-peak (fx+ 1 (length java-live-threads))))
+     ;; jolt's fork-thread/daemon, so jolt's own exit waits for the thread
+-    ;; exactly when a JVM would: a daemon thread doesn't hold the process open
+-    (fork-thread/daemon
+-     (thread-daemon? this)
+-     (lambda ()
+-       (jthread-state-tid-set! s (get-thread-id))
+-       (self s)
+-       (gil-enter!)
+-       (note-native-thread! this)   ; the table is shared: under the GIL
+-       (thread-body this)
+-       (gil-leave!)))
++    ;; exactly when a JVM would: a daemon thread doesn't hold the process open.
++    ;; On EAGAIN, roll the listing back and throw HotSpot's OOME instead of
++    ;; leaving a Scheme error and a live slot a CyclicBarrier can hang on.
++    (guard (e [else
++               (start0-rollback! this)
++               (if (or (fork-thread-resource-error? e) (not (jobj? e)))
++                   (jthrow "java/lang/OutOfMemoryError"
++                           "unable to create native thread: possibly out of memory or process/resource limits reached")
++                   (raise e))])
++      (fork-thread/daemon
++       (thread-daemon? this)
++       (lambda ()
++         (jthread-state-tid-set! s (get-thread-id))
++         (self s)
++         (gil-enter!)
++         (note-native-thread! this)   ; the table is shared: under the GIL
++         (thread-body this)
++         (gil-leave!))))
+     (void)))
+ 
+ ;; A java.lang.Thread for a Chez thread that calls in from jolt, named
+@@ -2507,12 +2537,13 @@
+ ;; (below); any other loader has defined none, and finds what its parents
+ ;; have by delegating, as ClassLoader.loadClass does next
+ (defnative "java/lang/ClassLoader.findLoadedClass0(Ljava/lang/String;)Ljava/lang/Class;" (this name)
+-  (let ([c (hashtable-ref classes (slashes (jstring->scheme name)) #f)])
++  (let* ([n (slashes (jstring->scheme name))]
++         [loaded (or (loader-definition this n) (loader-table-ref loader-resolutions this n #f))]
++         [c (hashtable-ref classes (or loaded n) #f)])
+     (and c
+-         (let ([dl (hashtable-ref class-loaders (jclass-cname c) #f)])
+-           (if dl
+-               (eq? dl this)   ; a class it defined
+-               (and (jinstance? this "jdk/internal/loader/BuiltinClassLoader") (builtin-loader-sees? this c))))
++         (or loaded
++             (and (jinstance? this "jdk/internal/loader/BuiltinClassLoader")
++                  (builtin-loader-sees? this c)))
+          (jmirror c))))
+ 
+ ;; The built-in loaders (boot, platform, app) are this runtime's one class
+@@ -2635,6 +2666,25 @@
+                                                       (string-append (slashes->dots p) ": champaca could not load it: " msg)))]
+             [else (error 'champaca "classpath-class-hook answered" r)]))
+     #f))
++(define classpath-copy-hook #f)
++(define (set-classpath-copy-hook! f) (set! classpath-copy-hook f))
++;; The application loader's fallback is keyed by its loader and binary name,
++;; not whichever custom loader happened to occupy the process-wide slot.
++(define (class-mirror-for-loader loader name)
++  (or (let ([n (loader-definition loader name)])
++        (and n (jmirror (find-class n))))
++      (let* ([c (hashtable-ref classes name #f)]
++             [app? (let ([a (app-loader)]) (and a (eq? loader a)))])
++        (if (and app? c (hashtable-ref class-loaders name #f)
++                 (not (eq? loader (class-loader-of c))))
++            (let ([answer (parameterize ([resolving-loader loader])
++                            (call-unbounded (lambda () (classpath-copy-hook name))))])
++              (and answer (definition-result loader name answer #f #f #f)))
++            (and (or c (jdk-package? name) app?
++                     (and loader (hashtable-contains? package-modules (package-dir name))))
++                 (let ([c (parameterize ([resolving-loader loader]) (try-class name))])
++                   (and c (builtin-loader-sees? loader c) (jmirror c))))))))
++
+ (define (class-or-null this name)
+   ;; loadClass takes a binary name: one with slashes or an array descriptor is
+   ;; not found. A loader other than the application one never loads a
+@@ -2647,9 +2697,7 @@
+          (if (memv #\/ (string->list s))
+              (and app? (misnamed-classpath-class s))
+              (let ([n (slashes s)])
+-               (or (and (or (hashtable-ref classes n #f) (jdk-package? n) app?)
+-                        (let ([c (try-class n)])
+-                          (and c (builtin-loader-sees? this c) (jmirror c))))
++               (or (class-mirror-for-loader this n)
+                    ;; only a path the resource hook refuses (an empty
+                    ;; segment inside it) can have a file class-exists?
+                    ;; didn't see
+@@ -2686,24 +2734,90 @@
+ (define (ask-resolving-loader name)
+   (let ([l (resolving-loader)])
+     (and l (not (jinstance? l "jdk/internal/loader/BuiltinClassLoader"))
+-         (not (member name (asking-loader)))
++         (not (exists (lambda (p) (and (eq? l (car p)) (string=? name (cdr p)))) (asking-loader)))
+          ;; the loader's own code resolves nothing through it
+-         (parameterize ([asking-loader (cons name (asking-loader))] [resolving-loader #f])
++         (parameterize ([asking-loader (cons (cons l name) (asking-loader))] [resolving-loader #f])
+            ;; only ClassNotFoundException means not there. Any other error
+            ;; the loader throws (ClassFormatError, LinkageError) is the
+            ;; resolution's, as on the JVM: it is kept for the name, and the
+            ;; instruction that names the class throws it (jthrow-missing)
+            (guard (e [(and (jobj? e) (jinstance? e "java/lang/ClassNotFoundException")) #f]
+-                     [(jobj? e) (hashtable-set! resolution-errors name e)
++                     [(jobj? e) (hashtable-set! (loader-table resolution-errors l) name e)
+                                 (set! resolution-error-count (fx+ resolution-error-count 1))
+-                                (hashtable-set! resolution-error-stamps name resolution-error-count)
++                                (hashtable-set! (loader-table resolution-error-stamps l) name resolution-error-count)
+                                 #f])
+              ((jvirt l "loadClass(Ljava/lang/String;)Ljava/lang/Class;") l (jstring (slashes->dots name)))
+              (and (hashtable-ref classes name #f) #t))))))
++;; A named reference is resolved by the referring class's loader. Arrays
++;; inherit their element's identity. Internal names are already resolved.
++(define (resolve-defined-reference name)
++  (let ([l (resolving-loader)])
++    (cond
++      [(not name) #f]
++      [(and (fxpositive? (string-length name)) (char=? (string-ref name 0) #\[))
++       (let ([e (array-element-binary-name (slashes->dots name))])
++         (if (string? e)
++             (let* ([binary (slashes e)] [internal (resolve-defined-reference binary)])
++               (string-append (substring name 0 (fx- (string-length name) (fx+ (string-length binary) 1))) internal ";"))
++             name))]
++      [(and l (string=? name (definition-binary-name name))
++            (hashtable-contains? definition-names name))
++       (or (loader-table-ref loader-resolutions l name #f)
++           (let* ([m ((jvirt l "loadClass(Ljava/lang/String;)Ljava/lang/Class;")
++                       l (jstring (slashes->dots name)))]
++                  [internal (jclass-cname (mirror-class m))])
++             (hashtable-set! (loader-table loader-resolutions l) name internal)
++             internal))]
++      [else name])))
++(define (resolve-defined-descriptor desc)
++  (let loop ([i 0] [start 0] [parts '()])
++    (cond [(fx= i (string-length desc))
++           (apply string-append (reverse (cons (substring desc start i) parts)))]
++          [(char=? (string-ref desc i) #\L)
++           (let ([end (let find ([j (fx+ i 1)])
++                        (if (char=? (string-ref desc j) #\;) j (find (fx+ j 1))))])
++             (loop (fx+ end 1) end
++                   (cons (resolve-defined-reference (substring desc (fx+ i 1) end))
++                         (cons (substring desc start (fx+ i 1)) parts))))]
++          [else (loop (fx+ i 1) start parts)])))
++;; Member metadata retains binary descriptors (also the method-global keys).
++;; MethodType and handle signatures instead compare the resolved type identities.
++(define (class-descriptor c desc)
++  (parameterize ([resolving-loader (class-loader-of c)])
++    (resolve-defined-descriptor desc)))
++(define (binary-descriptor desc)
++  (let loop ([i 0] [start 0] [parts '()])
++    (cond [(fx= i (string-length desc))
++           (apply string-append (reverse (cons (substring desc start i) parts)))]
++          [(char=? (string-ref desc i) #\L)
++           (let ([end (let find ([j (fx+ i 1)])
++                        (if (char=? (string-ref desc j) #\;) j (find (fx+ j 1))))])
++             (loop (fx+ end 1) end
++                   (cons (definition-binary-name (substring desc (fx+ i 1) end))
++                         (cons (substring desc start (fx+ i 1)) parts))))]
++          [else (loop (fx+ i 1) start parts)])))
++;; Definition-time override constraints for identities already resolved in both
++;; loaders. Deferred constraints need the linker's initiating-loader graph.
++(define (override-constraint-refusal super desc)
++  (let ([a (resolving-loader)] [b (class-loader-of (find-class super))])
++    (and (not (eq? a b))
++         (exists
++           (lambda (d)
++             (let ([name (desc->class-name d)])
++               (and (not (prim-name? name))
++                    (let* ([element (if (char=? (string-ref name 0) #\[)
++                                        (array-element-binary-name (slashes->dots name))
++                                        (slashes->dots name))]
++                           [n (and (string? element) (slashes element))]
++                           [x (and n (loader-definition a n))]
++                           [y (and n (loader-definition b n))])
++                      (and x y (not (string=? x y))
++                           (string-append "loader constraint violation for " (slashes->dots n)))))))
++           (append (desc-args desc) (list (desc-ret desc)))))))
+ ;; when each name's resolution error was recorded: defineClass rethrows one
+ ;; for a missing supertype only if this definition's own lookup recorded it
+ (define resolution-error-count 0)
+-(define resolution-error-stamps (make-hashtable string-hash string=?))
++(define resolution-error-stamps (make-eq-hashtable))
+ ;; define-class-hook*'s answer for the bytes, "<kind> <arg>". What fails past
+ ;; parsing (a superclass that isn't there, a link error) is a
+ ;; NoClassDefFoundError naming the cause, as a class the JVM can't define is
+@@ -2714,10 +2828,9 @@
+ (define (definition-answer loader name v off len hidden? stamp)
+   (guard (e [(and (not (jobj? e))
+                   (let ([m (class-not-found-in e)])
+-                    (and m (fx> (hashtable-ref resolution-error-stamps m 0) stamp)
+-                         (hashtable-ref resolution-errors m #f))))
+-             => raise]
+-            ;; a supertype that's nowhere: the JVM's message is its slashed name
++                    (and m (fx> (loader-table-ref resolution-error-stamps loader m 0) stamp)
++                         (loader-table-ref resolution-errors loader m #f))))
++             => (lambda (e) (raise e))]
+             [(and (not (jobj? e)) (class-not-found-in e)) => (lambda (m) (jthrow "java/lang/NoClassDefFoundError" m))]
+             [(not (jobj? e)) (jthrow "java/lang/NoClassDefFoundError" (condition-text e))])
+     (parameterize ([resolving-loader loader])
+@@ -2736,14 +2849,30 @@
+          (jthrow "java/lang/NoClassDefFoundError" (string-append name " (wrong name: " arg ")"))]
+         [(string=? kind "dup")
+          (jthrow "java/lang/LinkageError"
+-                 (string-append "loader attempted duplicate class definition for " (slashes->dots arg)
+-                                " (one class table here, whatever the loader)"))]))
++                 (string-append "loader attempted duplicate class definition for " (slashes->dots arg)))]))
+ ;; the class named cname just defined: noted hidden and with its loader, its
+ ;; mirror given the class data and the domain it was defined with (its
+ ;; getProtectionDomain)
+-(define (defined-mirror cname loader hidden? classdata pd)
++(define (defined-mirror cname loader hidden? classdata pd binary)
++  (unless hidden? (record-loader-definition! loader (or binary (definition-binary-name cname)) cname))
+   (when hidden? (hashtable-set! hidden-classes cname #t))
+   (when loader (hashtable-set! class-loaders cname loader))
++  ;; The derivation of this class resolved its superclass and interfaces
++  ;; through its defining loader: record those resolutions (binary name ->
++  ;; identity) as this loader's initiated definitions, the record
++  ;; definition-duplicate? reads. Without it, a loader that first defined
++  ;; a class implementing a classpath interface could later define its own
++  ;; class of that interface's name, where HotSpot throws LinkageError
++  ;; (an initiated definition counts as the loader's own). First
++  ;; resolution wins; built-in loaders are exempt, as in Class.forName.
++  (when (and loader (not (jinstance? loader "jdk/internal/loader/BuiltinClassLoader")))
++    (let ([c (find-class cname)])
++      (for-each (lambda (s)
++                  (when s
++                    (let ([binary (definition-binary-name s)])
++                      (unless (loader-table-ref loader-resolutions loader binary #f)
++                        (hashtable-set! (loader-table loader-resolutions loader) binary s)))))
++                (cons (jclass-super c) (jclass-interfaces c)))))
+   (let ([m (jmirror (find-class cname))])
+     (when classdata (jslot-set! m (jfield-index "java/lang/Class" "classData") classdata))
+     (when pd (jslot-set! m (jfield-index "java/lang/Class" "protectionDomain") pd))
+@@ -2754,13 +2883,15 @@
+             (format "Array region ~a..~a out of bounds for length ~a" off (+ off len) (vector-length v))))
+   (let* ([stamp resolution-error-count]
+          [name (and given (slashes (jstring->scheme given)))]
+-         [r (definition-answer loader name v off len hidden? stamp)]
+-         [sp (let loop ([i 0]) (if (char=? (string-ref r i) #\space) i (loop (fx+ i 1))))]
++         [r (definition-answer loader name v off len hidden? stamp)])
++    (definition-result loader name r hidden? classdata pd)))
++(define (definition-result loader name r hidden? classdata pd)
++  (let* ([sp (let loop ([i 0]) (if (char=? (string-ref r i) #\space) i (loop (fx+ i 1))))]
+          [kind (substring r 0 sp)]
+          [arg (substring r (fx+ sp 1) (string-length r))])
+     (if (member kind '("bad" "link" "wrong" "dup"))
+         (throw-definition-refusal kind arg name)
+-        (defined-mirror arg loader hidden? classdata pd))))
++        (defined-mirror arg loader hidden? classdata pd name))))
+ (defnative "java/lang/ClassLoader.defineClass1(Ljava/lang/ClassLoader;Ljava/lang/String;[BIILjava/security/ProtectionDomain;Ljava/lang/String;)Ljava/lang/Class;"
+   (loader name b off len pd source)
+   (define-class! loader name (jarr-vec (nn b)) off len #f #f pd))
+@@ -3149,7 +3280,7 @@
+ (define (find-field c fname desc)
+   (let loop ([c c])
+     (and c
+-         (let ([m (find (lambda (f) (and (string=? (car f) fname) (string=? (cadr f) desc)))
++         (let ([m (find (lambda (f) (and (string=? (car f) fname) (string=? (class-descriptor c (cadr f)) desc)))
+                         (cadr (jclass-meta c)))])
+            (cond [m (cons c m)]
+                  [(exists (lambda (i) (loop (find-class i))) (jclass-interfaces c))]
+diff --git a/resources/champaca/reflect.ss b/resources/champaca/reflect.ss
+index ab3bcda..2a2b428 100644
+--- a/resources/champaca/reflect.ss
++++ b/resources/champaca/reflect.ss
+@@ -490,7 +490,7 @@
+   (let ([i (string-search "/0x" n)])
+     (if i
+         (string-append (slashes->dots (substring n 0 i)) (substring n i (string-length n)))
+-        (slashes->dots n))))
++        (slashes->dots (definition-binary-name n)))))
+ 
+ (define (reflect-arg-list ptypes args . ctor?)
+   (let ([argv (if args (vector->list (jarr-vec args)) '())])
+@@ -544,7 +544,7 @@
+          [(let ([w (assoc (car e) prim-widenings)]) (and w (member t (cdr w))))
+           (widen (car e) t (junbox (car e) v))]
+          [else (mismatch)]))]
+-    [(or (not v) (jinstance? v (desc->class-name t))) v]
++    [(or (not v) (jinstance? v (resolve-defined-reference (desc->class-name t)))) v]
+     [else (mismatch)]))
+ 
+ ;; Method.invoke's receiver: as DirectMethodHandleAccessor.checkReceiver.
+@@ -620,7 +620,8 @@
+     (let* ([cname (jclass-cname c)] [desc (cadr meta)] [key (string-append (car meta) desc)]
+            [static? (static-flag? (caddr meta))]
+            [argv (begin (unless static? (reflect-receiver obj cname))
+-                        (reflect-arg-list (desc-args desc) args))]
++                        (parameterize ([resolving-loader (class-loader-of c)])
++                          (reflect-arg-list (desc-args desc) args)))]
+            [ret (desc-ret desc)])
+       (when static? (jinit cname))
+       (let ([r (invoke-wrapped
+@@ -643,7 +644,8 @@
+       ;; the class first, then the arguments: the JVM initializes the class
+       ;; even when an argument doesn't fit
+       (jinit alloc)
+-      (let ([argv (reflect-arg-list (desc-args desc) args 'ctor)])
++      (let ([argv (parameterize ([resolving-loader (class-loader-of c)])
++                    (reflect-arg-list (desc-args desc) args 'ctor))])
+         (invoke-wrapped
+          (lambda ()
+            (when serial (check-allocatable alloc))
+@@ -807,7 +809,7 @@
+                 (if (and e (prim-widens? (car e) desc))
+                     (widen (car e) desc (junbox (car e) v))
+                     (refuse "java/lang/IllegalArgumentException")))]
+-             [(or (not v) (jinstance? v (desc->class-name desc))) v]
++             [(or (not v) (jinstance? v (jclass-cname (mirror-class (jslot this (jfield-index "java/lang/reflect/Field" "type")))))) v]
+              [else (refuse "java/lang/IllegalArgumentException")])))))
+ 
+ ;; getInt and friends: a primitive field whose type widens to the getter's;
+diff --git a/resources/champaca/runtime.ss b/resources/champaca/runtime.ss
+index 1864ebd..0b16451 100644
+--- a/resources/champaca/runtime.ss
++++ b/resources/champaca/runtime.ss
+@@ -25,11 +25,11 @@
+ ;; ask-resolving-loader), as the JVM resolves a reference through the
+ ;; referring class's loader (JVMS 5.3)
+ (define resolving-loader (make-thread-parameter #f))
+-;; set for every compile, #f for a class no loader of the program's own
+-;; defined, since compiling one method can compile another (a loader's
+-;; findClass runs Java code)
++;; Set for every compile, including the application loader for a classpath
++;; class: compiling one method can compile another (a loader's findClass
++;; runs Java code). Bootstrap classes keep #f.
+ (define (jit! c m d)
+-  (parameterize ([resolving-loader (hashtable-ref class-loaders c #f)]) (call-unbounded (lambda () (jit-hook c m d)))))
++  (parameterize ([resolving-loader (or (hashtable-ref class-loaders c #f) (and (user-class? c) (app-loader)))]) (call-unbounded (lambda () (jit-hook c m d)))))
+ 
+ ;; --- numbers ---------------------------------------------------------------
+ 
+@@ -615,17 +615,29 @@
+ ;; ClassNotFoundException with the dotted one; or the error the class's
+ ;; loader threw resolving it, every time, as JVMS 5.4.3 has a failed
+ ;; resolution fail the same way again (natives.ss ask-resolving-loader)
+-(define resolution-errors (make-hashtable string-hash string=?))
++;; Per-initiating-loader name tables: an error in one loader must not poison
++;; another loader's reference to the same binary name.
++(define (loader-table tables loader)
++  (or (eq-hashtable-ref tables loader #f)
++      (let ([t (make-hashtable string-hash string=?)])
++        (eq-hashtable-set! tables loader t) t)))
++(define (loader-table-ref tables loader name default)
++  (let ([t (eq-hashtable-ref tables loader #f)])
++    (if t (hashtable-ref t name default) default)))
++(define resolution-errors (make-eq-hashtable))
+ ;; An array of a missing class is the array's NoClassDefFoundError with the
+ ;; element's cause, and the element's loader error if one was kept
+-(define (jthrow-missing name)
++(define (jthrow-missing name . from)
+   (define elem
+     (let loop ([i 0])
+       (cond [(fx= i (string-length name)) name]
+             [(char=? (string-ref name i) #\[) (loop (fx+ i 1))]
+             [(and (fx> i 0) (char=? (string-ref name i) #\L)) (substring name (fx+ i 1) (fx- (string-length name) 1))]
+             [else name])))
+-  (let ([le (hashtable-ref resolution-errors elem #f)])
++  (let* ([loader (if (pair? from)
++                     (let ([c (find-class (car from))]) (class-loader-of c))
++                     (resolving-loader))]
++         [le (loader-table-ref resolution-errors loader elem #f)])
+     (when le (raise le)))
+   (let ([e (construct "java/lang/NoClassDefFoundError" "(Ljava/lang/String;)V" (jstring name))]
+         [cnfe (construct "java/lang/ClassNotFoundException" "(Ljava/lang/String;)V" (jstring (slashes->dots elem)))])
+@@ -1491,6 +1503,43 @@
+ ;; and the hidden ones (Lookup.defineHiddenClass), named <class>/0x<n> as
+ ;; HotSpot names them, which no lookup by name finds
+ (define class-loaders (make-hashtable string-hash string=?))
++;; Runtime definitions are identified by (defining loader, binary name).
++;; An internal alias gives colliding definitions independent method/static keys.
++(define loader-definitions (make-eq-hashtable))
++(define loader-resolutions (make-eq-hashtable))
++(define definition-names (make-hashtable string-hash string=?))
++(define (loader-definition loader name)
++  (let ([t (eq-hashtable-ref loader-definitions loader #f)])
++    (and t (hashtable-ref t name #f))))
++(define (record-loader-definition! loader name internal)
++  (let ([t (or (eq-hashtable-ref loader-definitions loader #f)
++               (let ([t (make-hashtable string-hash string=?)])
++                 (eq-hashtable-set! loader-definitions loader t) t))])
++    (hashtable-set! t name internal)
++    (hashtable-set! definition-names internal name)
++    (hashtable-set! definition-names name name)))
++(define (definition-binary-name internal)
++  (if (and (fxpositive? (string-length internal)) (char=? (string-ref internal 0) #\[))
++      (let loop ([i 0])
++        (cond [(char=? (string-ref internal i) #\[) (loop (fx+ i 1))]
++              [(char=? (string-ref internal i) #\L)
++               (string-append (substring internal 0 (fx+ i 1))
++                              (definition-binary-name (substring internal (fx+ i 1) (fx- (string-length internal) 1))) ";")]
++              [else internal]))
++      (hashtable-ref definition-names internal internal)))
++;; Called after parsing, so defineClass(null, ...) uses the bytes' name too.
++;; Reserve no loader entry until linking and registration have succeeded.
++(define (definition-duplicate? name)
++  (or (loader-definition (resolving-loader) name)
++      (loader-table-ref loader-resolutions (resolving-loader) name #f)
++      (let ([c (hashtable-ref classes name #f)])
++        (and c (eq? (class-loader-of c) (resolving-loader))))))
++(define (definition-identity name)
++  (if (hashtable-contains? classes name)
++      (string-append name "$$champaca$" (gensym->unique-string (gensym "loader")))
++      name))
++(define (record-definition-name! internal binary)
++  (hashtable-set! definition-names internal binary))
+ (define hidden-classes (make-hashtable string-hash string=?))
+ (define (hidden-class? n) (hashtable-contains? hidden-classes n))
+ (define (package-dir cname)
+@@ -1613,7 +1662,7 @@
+       (if (char=? (string-ref n i) #\/)
+           (string-append (slashes->dots (substring n 0 i)) (substring n i (string-length n)))
+           (loop (fx- i 1))))]
+-   [else (slashes->dots n)]))
++   [else (slashes->dots (definition-binary-name n))]))
+ ;; a class name with dots, a hidden class keeping the slash before /0x<n>
+ ;; (it isn't marked hidden until its definition ends)
+ (define (sealed-dotted-name n)
+@@ -1683,15 +1732,32 @@
+                             (hashtable-ref package-mirrors d '()))))
+               package-names)))
+ 
+-(define (jmirror-of name) (jmirror (find-class name)))
++(define (jmirror-of name) (jmirror (find-class (resolve-defined-reference name))))
+ ;; ldc of a class: its mirror, the class resolved when the ldc runs (a class
+ ;; defined after the method was translated is found; one that fails to load
+ ;; fails there) and through the defining loader of the class whose code it
+ ;; is, which alone may see it (Quarkus's RunnerClassLoader)
+ (define (jldc-class name from)
+-  (if (hashtable-contains? classes name)
+-      (jmirror-of name)
+-      (parameterize ([resolving-loader (hashtable-ref class-loaders from #f)]) (jmirror-of name))))
++  (parameterize ([resolving-loader (or (hashtable-ref class-loaders from #f)
++                                      (and (user-class? from) (app-loader)))])
++    (jmirror-of name)))
++;; ldc of a class through a compiled unit's constant cell (codegen's cc!,
++;; CHAMPACA_CLASS_CONSTS): the cell is a pair whose car is #f until the
++;; literal first runs, then holds jldc-class's resolution of it — the same
++;; resolution, through the same defining loader — and every later execution
++;; of the unit reads the cell instead. The laziness is the semantics: a
++;; class defined after the unit was translated is found when the literal
++;; first runs, and one that fails to load fails there — and stores nothing,
++;; so the next execution resolves and throws again, exactly as a per-
++;; execution jldc-class does. A resolution never yields #f (a mirror is a
++;; heap object), so #f is a safe unfilled mark; two threads racing the
++;; first run both store the one canonical mirror (jmirror), so the race
++;; is benign.
++(define (jldc-const cell name from)
++  (or (car cell)
++      (let ([m (jldc-class name from)])
++        (set-car! cell m)
++        m)))
+ (define (mirror-class m) (or (eq-hashtable-ref mirror->class (nn m) #f) (error 'champaca "not a mirror" m)))
+ 
+ ;; --- identity hash ------------------------------------------------------------
+diff --git a/src/champaca/boot.clj b/src/champaca/boot.clj
+index 9e7328a..03d006c 100644
+--- a/src/champaca/boot.clj
++++ b/src/champaca/boot.clj
+@@ -22,7 +22,7 @@
+             [champaca.jit :refer [classpath-class-answer constant-value frame-info jit! npe-message]]
+             [champaca.launcher :refer [module-properties]]
+             [champaca.libcache :refer [load-cache! write-cache!]]
+-            [champaca.loader :refer [define-class! ensure-loaded! lambda-class]]
++            [champaca.loader :refer [define-class! define-classpath-copy! ensure-loaded! lambda-class]]
+             [champaca.state :refer [state env timed scheme! ensure-loaded-fn]]))
+ 
+ (defn- check-lines-env!
+@@ -119,6 +119,7 @@
+   ;; the JDK's resources alone, for the platform loader
+   (s/call "set-jdk-resource-hook!" (fn [path] (or (when (plain-resource-path? path) (jdk-resource-bytes path)) false)))
+   (s/call "set-classpath-class-hook!" classpath-class-answer)
++  (s/call "set-classpath-copy-hook!" define-classpath-copy!)
+   ;; a classpath class's code source: its entry's URL, or false
+   (s/call "set-code-source-hook!" (fn [cname] (if-let [e (get-in @state [:class-entries cname])] (entry-url e) false)))
+   (s/call "set-cp-hook!" constant-value)
+diff --git a/src/champaca/classfile.clj b/src/champaca/classfile.clj
+index ad2d8e8..85c251d 100644
+--- a/src/champaca/classfile.clj
++++ b/src/champaca/classfile.clj
+@@ -391,6 +391,24 @@
+ (defn native? [m] (pos? (bit-and (:flags m) ACC-NATIVE)))
+ (defn interface? [c] (pos? (bit-and (:flags c) ACC-INTERFACE)))
+ 
++(defn- dotted-name [slashed]
++  (.replace ^String slashed "/" "."))
++
++(defn- reject-duplicate-methods
++  "HotSpot ClassFileParser: two methods with the same name and descriptor
++  are a ClassFormatError. The message uses the class's external (dotted)
++  name, as as_klass_external_name does."
++  [this methods]
++  (let [seen (volatile! #{})]
++    (doseq [m methods]
++      (let [k [(:name m) (:desc m)]]
++        (when (contains? @seen k)
++          (throw (format-error (str "Duplicate method name \"" (:name m)
++                                    "\" with signature \"" (:desc m)
++                                    "\" in class file " (dotted-name this)))))
++        (vswap! seen conj k))))
++  methods)
++
+ (declare parse*)
+ 
+ (defn parse
+@@ -426,7 +444,7 @@
+         super (let [i (u2 r)] (when (pos? i) (:name (cp i))))
+         interfaces (vec (repeatedly (u2 r) #(:name (cp (u2 r)))))
+         fields (vec (repeatedly (u2 r) #(read-member r cp)))
+-        methods (vec (repeatedly (u2 r) #(read-member r cp)))
++        methods (reject-duplicate-methods this (vec (repeatedly (u2 r) #(read-member r cp))))
+         attrs (read-attributes r cp)
+         rec (record-components attrs cp)]
+     {:name this :flags flags :super super :interfaces interfaces :preview (= minor 0xFFFF)
+diff --git a/src/champaca/codegen.clj b/src/champaca/codegen.clj
+index 92f6d3e..bda3dff 100644
+--- a/src/champaca/codegen.clj
++++ b/src/champaca/codegen.clj
+@@ -61,6 +61,16 @@
+     (Double/isInfinite x) (if (pos? x) "+inf.0" "-inf.0")
+     :else (str x)))
+ 
++(def class-consts?
++  "Whether unit-level class-literal constants are on (CHAMPACA_CLASS_CONSTS):
++  an ldc class literal resolves once per compiled unit, into a cell the
++  unit's let binds next to its inline-cache cells (cc!), instead of on every
++  execution (runtime.ss jldc-const over jldc-class). The cell is lazy: a
++  class defined after translation is still found when the literal first
++  runs, and one that fails to load fails there. Off, the emission is
++  exactly what it was. Defined here, before emit-ldc, its first use."
++  (boolean (System/getenv "CHAMPACA_CLASS_CONSTS")))
++
+ (defn method-global [cls mname desc] (sym (str cls "." mname desc)))
+ (defn static-global [cls fname] (sym (str cls ":" fname)))
+ 
+@@ -274,6 +284,14 @@
+   so the walk shows the callee as a frame of its own above the caller's
+   line, as HotSpot does for an inlined method."
+   nil)
++
++(def ^:dynamic *devirt*
++  "Set by emit-invoke around one call: how the guarded Ops devirtualization
++  (devirt-ops?, with the numeric-tower section) rewrites this call in
++  dispatch-call — :combine or :ops-call — else nil."
++  nil)
++
++(declare devirt-ops? devirt-ops-call record-devirt-reads!)
+ (defn- jpc [pc]
+   (if-let [[spc] *inline-site*]
+     (str "'(jpc " spc " " (sym *method-tag*) " . " pc ")")
+@@ -708,6 +726,7 @@
+            :cp (:cp cls) :this-class (:name cls) :start-pc (:pc (first blk))
+            :st (volatile! entry) :stmts (volatile! (transient [])) :succ (volatile! {})
+            :consts (volatile! {}) :origins (volatile! {}) :used (volatile! #{})
++           :prov (volatile! {}) :lprov (volatile! {})
+            :terminal (volatile! nil) :fused (volatile! false))))
+ 
+ (defn- step! [e step] (vswap! (:stmts e) conj! step))
+@@ -722,7 +741,21 @@
+   "Drop what is known about stack index i: its literal value, its origin."
+   [e i]
+   (vswap! (:consts e) dissoc i)
+-  (vswap! (:origins e) dissoc i))
++  (vswap! (:origins e) dissoc i)
++  (vswap! (:prov e) dissoc i))
++
++(defn- stack-prov
++  "The provenance note on the stack value at index i, if any: :ops for a
++  value clojure.lang.Numbers.ops returned, :combined for an Ops.combine of
++  such values. Compile-time only — it names nothing in the output — and
++  only the guarded Ops devirtualization reads it."
++  [e i]
++  (@(:prov e) i))
++
++(defn- note-prov!
++  "Note the provenance of the value just pushed (the top stack slot)."
++  [e prov]
++  (when prov (vswap! (:prov e) assoc (dec (stack-depth e)) prov)))
+ 
+ (defn- push! [e expr t]
+   (let [i (stack-depth e)]
+@@ -829,6 +862,7 @@
+         below (fn [m] (into {} (remove (fn [[i _]] (>= i base))) m))]
+     (vswap! (:consts e) below)
+     (vswap! (:origins e) below)
++    (vswap! (:prov e) below)
+     (when (seq moves) (step! e [:pbind moves]))
+     (vreset! (:st e) (into (subvec st 0 base) (map items order)))))
+ 
+@@ -858,8 +892,14 @@
+       :double (push! e (num-lit (:value c)) "D")
+       :string (push! e (jstring-lit-form (:value c)) "A")
+       ;; resolved when it runs, as the JVM resolves it, through this class's
+-      ;; defining loader (runtime.ss jldc-class)
+-      :class (push! e (sx "jldc-class" (str-lit (:name c)) (str-lit this-class)) "A")
++      ;; defining loader (runtime.ss jldc-class); with class-consts? the
++      ;; unit's cell for this (name, from) pair resolves it once instead
++      ;; (runtime.ss jldc-const)
++      :class (push! e (if class-consts?
++                        (sx "jldc-const" ((:cc! e) (:name c) this-class)
++                            (str-lit (:name c)) (str-lit this-class))
++                        (sx "jldc-class" (str-lit (:name c)) (str-lit this-class)))
++                    "A")
+       (:methodtype :methodhandle :dynamic)
+       (let [d (if (= :dynamic (:tag c)) (:desc c) "Ljava/lang/Object;")]
+         ;; resolved once per constant-pool entry (const-datum's entry)
+@@ -873,6 +913,7 @@
+   (let [a0 (first args)]
+     (cond (load-types op) (push! e (str "l" a0) (load-types op))
+           (= op :aload) (do (push! e (str "l" a0) "A")
++                            (note-prov! e (@(:lprov e) a0))
+                             (when (get (:hoist e) a0)
+                               (vswap! (:origins e) assoc (dec (stack-depth e)) a0)))
+           ((:split e) a0) (push-halves! e (str "l" a0 "h") (str "l" a0 "l"))
+@@ -883,7 +924,12 @@
+     (if (and (= op :lstore) ((:split e) a0))
+       (let [[vh vl] (pop-halves! e)]
+         (step! e [:pbind [[(str "l" a0 "h") vh] [(str "l" a0 "l") vl]]]))
+-      (store! e a0 (pop! e)))))
++      (let [prov (when (= op :astore) (stack-prov e (dec (stack-depth e))))]
++        (store! e a0 (pop! e))
++        (when (= op :astore)
++          (if prov
++            (vswap! (:lprov e) assoc a0 prov)
++            (vswap! (:lprov e) dissoc a0)))))))
+ 
+ (defn- emit-iinc [e {:keys [args]} _]
+   (let [a0 (first args)]
+@@ -1143,11 +1189,21 @@
+     (when-not (str/starts-with? class "[") ((:ensure-loaded resolve) class))
+     ((:check-virtual resolve) class name desc)
+     ((:check-kind resolve) (if (= op :invokeinterface) :interface :virtual) class name desc)
+-    (if-let [decl ((:direct-target resolve) class name desc)]
+-      (apply sx (at pc (callee e pc decl name desc)) (sx "nn-at" recv (site pc)) argv)
+-      (if-let [pp (and (= op :invokevirtual) ((:package-private-decl resolve) class name desc))]
+-        (apply sx (at pc (sx "jvirt-pp-ic" ((:ic! e)) recv (key) (str "'" (sym pp)) (site pc))) recv argv)
+-        (apply sx (at pc (sx "jvirt-ic" ((:ic! e)) recv (key) (site pc))) recv argv)))))
++    (let [orig (if-let [decl ((:direct-target resolve) class name desc)]
++                 (apply sx (at pc (callee e pc decl name desc)) (sx "nn-at" recv (site pc)) argv)
++                 (if-let [pp (and (= op :invokevirtual) ((:package-private-decl resolve) class name desc))]
++                   (apply sx (at pc (sx "jvirt-pp-ic" ((:ic! e)) recv (key) (str "'" (sym pp)) (site pc))) recv argv)
++                   (apply sx (at pc (sx "jvirt-ic" ((:ic! e)) recv (key) (site pc))) recv argv)))]
++      ;; the guarded Ops devirtualization (emit-invoke sets *devirt* when it
++      ;; saw this call's receiver come from the tower chain): combine(o, o)
++      ;; is o, so an identical argument skips the dispatch; any other Ops
++      ;; call on such a receiver goes through devirt-ops-call's branches.
++      ;; Either way the plain dispatch above is the fallback, evaluated
++      ;; only on the path that takes it.
++      (case *devirt*
++        :combine (sx "if" (sx "eq?" recv (first argv)) recv orig)
++        :ops-call (devirt-ops-call e pc name desc recv argv orig)
++        orig))))
+ 
+ (defn- virtual-call
+   "invokevirtual or invokeinterface. A VarHandle access mode and
+@@ -1169,24 +1225,46 @@
+   (let [{:keys [class name desc] :as ref} ((:cp e) (first args))
+         resolve (:resolve e)
+         {params :args ret :ret} (parse-desc desc)
++        ;; the receiver's provenance, read before the pops forget it; only
++        ;; the guarded Ops devirtualization (the tower section) asks
++        n (count params)
++        depth (stack-depth e)
++        recv-prov (when (and (not= op :invokestatic) (<= (inc n) depth))
++                    (stack-prov e (- depth n 1)))
++        ops-call? (and devirt-ops? (= op :invokeinterface)
++                       (= class "clojure/lang/Numbers$Ops")
++                       (#{:ops :combined} recv-prov))
++        kind (and ops-call?
++                  (cond (= name "combine") (when (= :ops recv-prov) :combine)
++                        (= name "opsWith") nil
++                        :else :ops-call))
+         argv (popn! e (count params))
+         recv (when-not (= op :invokestatic) (pop! e))
+-        call (case op
+-               (:invokevirtual :invokeinterface) (virtual-call e op pc ref recv argv)
+-               :invokespecial
+-               (let [decl ((:resolve-method resolve) class name desc)]
+-                 ((:check-kind resolve) :special class name desc)
+-                 ;; Object's constructor does nothing
+-                 (when-not (and (= decl "java/lang/Object") (= name "<init>"))
+-                   (apply sx (at pc (callee e pc decl name desc)) recv argv)))
+-               :invokestatic
+-               (let [decl ((:resolve-method resolve) class name desc)]
+-                 ((:check-kind resolve) :static class name desc)
+-                 (init-class! e decl pc)
+-                 (apply sx (at pc (callee e pc decl name desc)) argv)))]
++        call (binding [*devirt* kind]
++               (case op
++                 (:invokevirtual :invokeinterface) (virtual-call e op pc ref recv argv)
++                 :invokespecial
++                 (let [decl ((:resolve-method resolve) class name desc)]
++                   ((:check-kind resolve) :special class name desc)
++                   ;; Object's constructor does nothing
++                   (when-not (and (= decl "java/lang/Object") (= name "<init>"))
++                     (apply sx (at pc (callee e pc decl name desc)) recv argv)))
++                 :invokestatic
++                 (let [decl ((:resolve-method resolve) class name desc)]
++                   ((:check-kind resolve) :static class name desc)
++                   (init-class! e decl pc)
++                   (apply sx (at pc (callee e pc decl name desc)) argv))))
++        result-prov (cond (and ops-call? (= name "combine")) :combined
++                          (and devirt-ops? (= op :invokestatic)
++                               (= class "clojure/lang/Numbers")
++                               (= name "ops")
++                               (= desc "(Ljava/lang/Object;)Lclojure/lang/Numbers$Ops;"))
++                          :ops)]
++    (when kind (record-devirt-reads! resolve))
+     (cond (nil? call) nil
+           (= ret "V") (stmt! e call)
+-          :else (push! e call (desc->t ret)))))
++          :else (do (push! e call (desc->t ret))
++                    (note-prov! e result-prov)))))
+ 
+ ;; --- invokedynamic -------------------------------------------------------------------
+ 
+@@ -1357,7 +1435,7 @@
+ (defn- failure-throw
+   "The throw an instruction becomes when translating it failed to resolve
+   something, or nil when the failure isn't one of those."
+-  [ex]
++  [ex from]
+   (let [c (missing-class ex)
+         k (wrong-kind ex)
+         r (refused-class ex)
+@@ -1368,7 +1446,7 @@
+              r (apply sx "jthrow-linkage" (map str-lit r))
+              m (apply sx "jthrow-no-method" (map str-lit m))
+              bad (apply sx "jthrow-class-format" (map str-lit bad))
+-             :else (sx "jthrow-missing" (str-lit c)))
++             :else (sx "jthrow-missing" (str-lit c) (str-lit from)))
+        m])))
+ 
+ (defn- emit-failure!
+@@ -1380,7 +1458,7 @@
+   instanceof is false; only an object throws. Returns true when the block
+   ends here."
+   [e op ex]
+-  (let [[thrown method?] (or (failure-throw ex) (throw ex))]
++  (let [[thrown method?] (or (failure-throw ex (:this-class e)) (throw ex))]
+     (case (when-not method? op)
+       :checkcast (let [v (sv (dec (stack-depth e)))]
+                    (bind! e v (sx "if" v thrown v))
+@@ -1456,12 +1534,147 @@
+                :when (assigned l)]
+            l))))
+ 
+-(declare compile-method*)
++(declare compile-method* inliner)
+ 
+ (def leaf-limit
+   "Bytecode bytes in the largest method inlined into its callers."
+   40)
+ 
++;; --- the numeric-tower inliner (prototype, CHAMPACA_INLINE_TOWER) ---------------
++;; The leaf inliner above never reaches clojure.lang's numeric tower, where
++;; unhinted arithmetic spends its time (the perf spike measured 91.5% of
++;; unhinted fib's self time in clojure.lang.Numbers.ops): the tower's classes
++;; are classpath classes, not the caller's own or the JDK's, so
++;; jit/inline-candidate refuses them, and its methods call (ops calls
++;; getClass; add calls ops), so leaf? refuses them too. With
++;; CHAMPACA_INLINE_TOWER set, the tower's classes are candidates as well and
++;; a tower method passes tower-leaf? instead of leaf?: it may call, and a
++;; call inside its copy compiles as it would in the method itself — a tower
++;; call nests, depth-limited, any other stays a plain call — so the copy is
++;; the method, not an approximation of it. Off (the default), every gate
++;; below is closed and translation is unchanged.
++
++(def tower-inline?
++  "Whether the numeric-tower inliner prototype is on."
++  (boolean (System/getenv "CHAMPACA_INLINE_TOWER")))
++
++(def tower-classes
++  "The bootstrap numeric tower, matched against the declaring class as link
++  resolved it in the caller's context — the loader-qualified internal
++  identity, never a bare binary name: a loader-defined class of the same
++  binary name has a different identity (and :defined origin, which
++  jit/inline-candidate also refuses), so it never matches."
++  #{"clojure/lang/Numbers"
++    "clojure/lang/Numbers$LongOps"
++    "clojure/lang/Numbers$DoubleOps"
++    "clojure/lang/Numbers$BigIntOps"
++    "clojure/lang/Numbers$RatioOps"
++    "clojure/lang/Numbers$BigDecimalOps"})
++
++(defn tower-class?
++  "Whether decl names a numeric-tower class while the prototype is on."
++  [decl]
++  (and tower-inline? (contains? tower-classes decl)))
++
++(def tower-limit
++  "Bytecode bytes in the largest tower method inlined into its callers
++  (Numbers.ops is 89; the leaf limit is 40)."
++  160)
++
++(def tower-depth
++  "How deep tower inlining nests: caller's method -> Numbers.add ->
++  Numbers.ops is two copies."
++  3)
++
++(defn- tower-leaf?
++  "Whether a tower method may be inlined: no exception handlers (a copy
++  keeps no handler table of its own), not synchronized or native, no
++  backward branches, not a constructor or class initializer, within
++  tower-limit. Calls and field accesses are otherwise as in the method."
++  [cls method]
++  (let [{:keys [code handlers]} (:code method)]
++    (and code (empty? handlers) (<= (count code) tower-limit)
++         (zero? (bit-and (:flags method) 0x0120))
++         (not (#{"<init>" "<clinit>"} (:name method)))
++         (every? (fn [{:keys [op pc] :as i}]
++                   (and (not (#{:invokedynamic :monitorenter :monitorexit :jsr :ret} op))
++                        (every? #(> % pc) (successors i))))
++                 (decode code)))))
++
++;; --- guarded Ops devirtualization (prototype, CHAMPACA_DEVIRT_OPS) -------------
++;; With the tower inliner on, Numbers.add's copy holds ops(x), ops(y), then
++;; Ops.combine and an Ops call on its result — still two interface
++;; dispatches per operation, which no bytecode inliner can remove (the
++;; target depends on the receiver's class). But the translator can see
++;; where the receiver came from: emit-invoke notes a stack value's
++;; provenance (:ops for a Numbers.ops result, :combined for a combine of
++;; such values, carried through this block's locals), and a dispatch on
++;; such a receiver compiles to a guarded form instead:
++;;   combine, when the argument is the very same singleton: the receiver
++;;     itself, since each impl's combine is y.opsWith(this) and its
++;;     own-type opsWith returns this (javap, clojure 1.12.0);
++;;   any other Ops call: one branch per singleton naming that impl's own
++;;     method directly — the impl methods are final, and a receiver
++;;     identical to the singleton is an instance of exactly that class,
++;;     so a branch does what dispatch would do — with the plain dispatch
++;;     as the last branch, for a receiver that is none of the five.
++;; The guards test values, not types the translator inferred, so a
++;; provenance note can at worst spend five eq? on a call that then takes
++;; the dispatch it would have taken; it cannot change what a call does.
++;; Off (the default, or without the tower inliner), no guarded form is
++;; emitted and translation is unchanged: provenance is compile-time only.
++
++(def devirt-ops?
++  "Whether guarded Ops devirtualization is on: CHAMPACA_DEVIRT_OPS, and
++  the tower inliner, whose fused bodies are where the pattern lives."
++  (boolean (and tower-inline? (System/getenv "CHAMPACA_DEVIRT_OPS"))))
++
++(def ops-singletons
++  "The Ops implementations Numbers.ops can return, as [impl-class
++  Numbers static field]: ops's chain returns exactly these five
++  singletons (its fallthrough is LONG_OPS), and every opsWith returns
++  one of them or its receiver, so an Ops.combine of chain values is
++  always one of the five too."
++  [["clojure/lang/Numbers$LongOps" "LONG_OPS"]
++   ["clojure/lang/Numbers$DoubleOps" "DOUBLE_OPS"]
++   ["clojure/lang/Numbers$BigIntOps" "BIGINT_OPS"]
++   ["clojure/lang/Numbers$RatioOps" "RATIO_OPS"]
++   ["clojure/lang/Numbers$BigDecimalOps" "BIGDECIMAL_OPS"]])
++
++(defn record-devirt-reads!
++  "Note in the compilation's reads every class a guarded Ops form names,
++  so a cached unit carrying one is fingerprinted against the tower like
++  any other class the compile read. jit supplies :record-read!; a
++  resolver without it (a test's) makes this a no-op."
++  [resolve]
++  (when-let [record! (:record-read! resolve)]
++    (doseq [c (into ["clojure/lang/Numbers" "clojure/lang/Numbers$Ops"]
++                    (map first ops-singletons))]
++      (record! c))))
++
++(defn devirt-ops-call
++  "The guarded form of an Ops dispatch on a tower-chain receiver
++  (dispatch-call, *devirt* :ops-call): a branch per singleton, calling
++  that implementation's method by its top-level definition (method-global)
++  — never through callee, whose inline copy would drag the impl body and
++  its own callees into this unit once per branch (the folded build's one
++  fix: mode C's fib unit was 8.2x mode B's for exactly this) — and orig,
++  the plain dispatch, as the last branch. The receiver is a stack
++  variable, already bound, so the tests re-read a value in hand."
++  [e pc name desc recv argv orig]
++  (let [resolve (:resolve e)
++        singleton (fn [field]
++                    (static-global ((:resolve-static-field resolve)
++                                    "clojure/lang/Numbers" field)
++                                   field))]
++    (apply sx "cond"
++           (concat
++            (for [[impl field] ops-singletons]
++              (sx (sx "eq?" recv (singleton field))
++                  (apply sx (at pc (method-global impl name desc))
++                         (sx "nn-at" recv (site pc)) argv)))
++            [(sx "else" orig)]))))
++
+ (def ic-vector-limit
+   "Bytecode bytes above which a method's inline-cache cells live in one vector
+   rather than one variable each (compile-method)."
+@@ -1497,18 +1710,50 @@
+     ([init] (let [i (dec (count (vswap! ics conj init)))]
+               (if vector-ics? (str "(vector-ref ics " i ")") (str "ic" i))))))
+ 
++(defn- cc-allocator
++  "cc! for one method (class-consts?): the inline-cache cell holding the
++  resolution of the class literal (name, from) — the literal's name and the
++  class whose code it is, whose defining loader resolves it — allocated
++  once per pair per compiled unit and shared with the methods inlined into
++  it, so two copies of a callee in one unit share its literals' cells and
++  two units never share one. The cell is an ordinary ic! pair; its car is
++  #f until the literal first runs (runtime.ss jldc-const)."
++  [ic!]
++  (let [seen (volatile! {})]
++    (fn [name from]
++      (let [k [name from]]
++        (or (get @seen k)
++            (let [cell (ic!)]
++              (vswap! seen assoc k cell)
++              cell))))))
++
+ (defn- inline-label
+   "The label of a copy of decl.name desc (ctag) translated for the call site
+   *inline-site* of the method tag, its definition added to defs, or nil when
+   the callee isn't a leaf. A callee that fails to translate (a class missing
+-  at run time, say) stays a plain call, so it fails only if called."
+-  [cls resolve ic! tag defs decl name desc ctag]
+-  (let [{c :cls m :method} ((:inline-candidate resolve) (:name cls) decl name desc)]
+-    (when (and m (leaf? c m))
+-      (when-let [text (try (binding [*method-tag* ctag]
+-                             (compile-method* c m resolve ic! (constantly nil)))
+-                           (catch Exception _ nil))]
+-        (let [l (sym (str tag "#I:" ctag "@" (first *inline-site*)))]
++  at run time, say) stays a plain call, so it fails only if called. A tower
++  callee (tower-class?) passes tower-leaf? instead and its copy is compiled
++  with a depth-limited inliner of its own, so a tower call inside it nests;
++  the copy's label names its parent copy's label, which keeps two copies of
++  the same callee reached through different parents apart in the let's
++  bindings."
++  [cls resolve ic! cc! tag defs decl name desc ctag depth parent-label]
++  (let [{c :cls m :method} ((:inline-candidate resolve) (:name cls) decl name desc)
++        tower? (tower-class? decl)]
++    (when (and m (if tower? (tower-leaf? c m) (leaf? c m)))
++      ;; the label's name is built first and bar-quoted once, by sym: a
++      ;; nested copy chains its parent's NAME, never the parent's quoted
++      ;; literal — embedding the literal would reopen the quoting mid-name
++      ;; and leave the parent's ; and ( bare for the Scheme reader
++      (let [lname (str tag "#I:" ctag "@" (first *inline-site*)
++                       (when parent-label (str "/" parent-label)))
++            l (sym lname)]
++        (when-let [text (try (binding [*method-tag* ctag]
++                               (compile-method* c m resolve ic! cc!
++                                                (if (and tower? (< depth tower-depth))
++                                                  (inliner c resolve ic! cc! tag defs (inc depth) lname)
++                                                  (constantly nil))))
++                             (catch Exception _ nil))]
+           (vswap! defs conj [l text])
+           l)))))
+ 
+@@ -1516,7 +1761,7 @@
+   "inline! for the method tag: a callee's label, or nil to call it plainly;
+   one copy per call site (*inline-site*), since the copy's markers name the
+   site for stack traces, and none under CHAMPACA_BT."
+-  [cls resolve ic! tag defs]
++  [cls resolve ic! cc! tag defs depth parent-label]
+   (let [inlined (volatile! {})          ; [callee tag, site] -> label, or false
+         bt? (System/getenv "CHAMPACA_BT")]
+     (fn [decl name desc]
+@@ -1525,7 +1770,7 @@
+               key [ctag (first *inline-site*)]]
+           (if (contains? @inlined key)
+             (get @inlined key)
+-            (let [lbl (inline-label cls resolve ic! tag defs decl name desc ctag)]
++            (let [lbl (inline-label cls resolve ic! cc! tag defs decl name desc ctag depth parent-label)]
+               (vswap! inlined assoc key (or lbl false))
+               lbl)))))))
+ 
+@@ -1554,10 +1799,18 @@
+         ;; site is nothing in code that runs once.
+         vector-ics? (> (count (:code (:code method))) ic-vector-limit)
+         ic! (ic-allocator ics vector-ics?)
++        ;; the unit's class-literal cells, on the same ics as its inline
++        ;; caches; created whether or not class-consts? — it allocates
++        ;; nothing unless emit-ldc asks, and off it never does
++        cc! (cc-allocator ic!)
+         defs (volatile! [])             ; [label lambda-text], in order
+-        inline! (inliner cls resolve ic! tag defs)
+-        f (binding [*method-tag* tag] (compile-method* cls method resolve ic! inline!))
+-        f (if (seq @defs) (sx "let" (apply sx (map (fn [[l t]] (sx l t)) @defs)) f) f)]
++        inline! (inliner cls resolve ic! cc! tag defs 0 nil)
++        f (binding [*method-tag* tag] (compile-method* cls method resolve ic! cc! inline!))
++        ;; a tower copy's lambda calls its own nested copies by their labels,
++        ;; which a plain let's bindings don't scope over each other's values;
++        ;; letrec's do. Only the prototype's units change: with it off, or
++        ;; with no copies at all, the text is as it was.
++        f (if (seq @defs) (sx (if tower-inline? "letrec" "let") (apply sx (map (fn [[l t]] (sx l t)) @defs)) f) f)]
+     ;; set-top-level-value!, not define: a top-level define compiled to a
+     ;; cached unit carries the expander's record of the binding ($sc-put-cte,
+     ;; a syntax object with its ribcage), 15% of a unit's bytes and a fifth
+@@ -1702,7 +1955,7 @@
+   its blocks, the handler regions covering each, the locals boxed, split
+   and carried, the array loops to version. :entered collects the covered
+   blocks a jump enters from outside their region."
+-  [cls method resolve ic! inline!]
++  [cls method resolve ic! cc! inline!]
+   (let [{:keys [code handlers]} (:code method)
+         insns (decode code)
+         blks (blocks insns handlers)
+@@ -1712,7 +1965,7 @@
+         param-set (set params)
+         cover (into {} (map (fn [pc] [pc (covering handlers pc)]) (keys blks)))
+         boxed (if (seq handlers) (boxed-locals blks handlers cover) #{})]
+-    {:cls cls :resolve resolve :ic! ic! :inline! inline!
++    {:cls cls :resolve resolve :ic! ic! :cc! cc! :inline! inline!
+      ;; a giant method's array accesses are calls (runtime.ss big-array-ref),
+      ;; but not inside a loop: every backward jump's [target jump] range
+      ;; keeps the inline form, so a lexer's scanning loop in a giant method
+@@ -1761,9 +2014,9 @@
+ 
+ (defn- block-ctx
+   "emit-block's context for the block at pc, jumping through jump."
+-  [{:keys [cls resolve next-pc live boxed split ic! inline! big? loop-ranges]} pc jump]
++  [{:keys [cls resolve next-pc live boxed split ic! cc! inline! big? loop-ranges]} pc jump]
+   {:cls cls :resolve resolve :next-pc (next-pc pc) :big? big? :loop-ranges loop-ranges
+-   :live live :boxed boxed :split split :jump jump :ic! ic! :inline! inline!})
++   :live live :boxed boxed :split split :jump jump :ic! ic! :cc! cc! :inline! inline!})
+ 
+ (defn- emit-blocks
+   "Worklist over blocks: each is emitted once, at the stack depth its first
+@@ -1902,13 +2155,14 @@
+             (sx "lambda" "()" (sx "jmonitor-exit" "lock"))))))
+ 
+ (defn- compile-method*
+-  "The method as a lambda. ic! names a fresh inline-cache cell, inline! the
+-  inlined procedure for a direct callee or nil."
+-  [cls method resolve ic! inline!]
++  "The method as a lambda. ic! names a fresh inline-cache cell, cc! the
++  unit's cell for a class literal, inline! the inlined procedure for a
++  direct callee or nil."
++  [cls method resolve ic! cc! inline!]
+   ;; the order matters: ic! cells are numbered as they're asked for, and
+   ;; the guarded entries are known only once the blocks and the start are
+   ;; emitted. version-defs is lazy and emits its copies inside blocks-body.
+-  (let [plan (method-plan cls method resolve ic! inline!)
++  (let [plan (method-plan cls method resolve ic! cc! inline!)
+         emitted (emit-blocks plan)
+         block-fns (block-defs plan emitted)
+         versions (version-defs plan emitted)
+diff --git a/src/champaca/jit.clj b/src/champaca/jit.clj
+index c7201a5..cfb0da4 100644
+--- a/src/champaca/jit.clj
++++ b/src/champaca/jit.clj
+@@ -28,29 +28,44 @@
+ 
+ ;; --- resolution ----------------------------------------------------------------------
+ 
++(declare loader-references)
++
+ (defn- inline-candidate
+   "The parsed class and method decl.mname(desc), for codegen to inline into a
+   method of caller-cname, or nil. Only a method in the caller's own class or
+   in the JDK qualifies: a compiled method is cached with its own class, and a
+   copy of another user class's code would outlive a change to that class.
+   The JDK can't change under a cache, which is keyed by it. A method the
+-  runtime overrides never qualifies."
++  runtime overrides never qualifies.
++  The one exception is the numeric-tower prototype (cg/tower-class?,
++  CHAMPACA_INLINE_TOWER): a tower class qualifies from the classpath like a
++  JDK one, and the copy can't outlive a change to it, because the callee is
++  recorded in the compilation's reads, so the caller's cache entry is
++  fingerprinted against the tower class like any other class the compile
++  read (user-deps). A loader-defined tower class never qualifies: its
++  identity is its loader's, not the classpath's."
+   [caller-cname decl mname desc]
+-  (let [info (class-info decl)]
++  (let [info (class-info decl)
++        tower? (cg/tower-class? decl)]
+     ;; only a class already parsed in this run: reading one again from the
+     ;; image costs a warm start more than the inlining saves; decided first,
+     ;; so a restored class's methods aren't thawed for an inlining that
+     ;; can't happen
+-    (when (or (= decl caller-cname) (and (= :jdk (:origin info)) (:parsed info)))
++    (when (or (= decl caller-cname) (and (= :jdk (:origin info)) (:parsed info))
++              (and tower? (:parsed info) (not= :defined (:origin info))))
+       (let [im (first (filter #(and (= mname (:name %)) (= desc (:desc %))) (methods-of info)))]
+         ;; the class map answers most of it without reading the class file again
+-        (when (and im (:code im) (<= (or (:code-len im) 0) cg/leaf-limit)
++        (when (and im (:code im) (<= (or (:code-len im) 0) (if tower? cg/tower-limit cg/leaf-limit))
+                    (not (overridden? decl im)))
++          (when (and tower? *reads* (not= decl caller-cname))
++            (vswap! *reads* conj decl))
+           (when-let [p (if (= decl caller-cname) (parsed decl) (:parsed info))]
+-            {:cls p :method (first (filter #(and (= mname (:name %)) (= desc (:desc %))) (:methods p)))}))))))
++            (let [p (cond-> p (and (= decl caller-cname) (#{:defined :user} (:origin info))) loader-references)]
++              {:cls p :method (first (filter #(and (= mname (:name %)) (= desc (:desc %))) (:methods p)))})))))))
+ 
+ (def ^:private resolver
+   {:ensure-loaded #(ensure-loaded! %)
++   :record-read! #(when *reads* (vswap! *reads* conj %))
+    :package-private-decl package-private-decl
+    :inline-candidate inline-candidate
+    :direct-target direct-target
+@@ -83,15 +98,54 @@
+       :defined (boolean (:source-mode @state))
+       false)))
+ 
++(defn- loader-references
++  "Resolve named constant-pool class references through this method's loader.
++  Internal identities stay in the compiled code; Java still sees binary names."
++  [p]
++  (let [resolve-name (fn [name]
++                       (when name
++                         (let [resolved (s/call "resolve-defined-reference" name)]
++                           ;; A literal or inlined reference can embed an alias
++                           ;; without asking codegen's resolver. It is a read too:
++                           ;; process-local identities must not enter cached code.
++                           (when (and *reads* (not= name resolved))
++                             (vswap! *reads* into (if (str/starts-with? resolved "[")
++                                                   (map second (re-seq #"L([^;]+);" resolved))
++                                                   [resolved])))
++                           resolved)))
++        resolve-desc (fn [desc]
++                       (let [resolved (s/call "resolve-defined-descriptor" desc)]
++                         (when (and *reads* (not= desc resolved))
++                           (vswap! *reads* into (map second (re-seq #"L([^;]+);" resolved))))
++                         resolved))]
++    (-> p
++        (update :cp (fn [cp]
++                      (into {} (map (fn [[i e]]
++                                      [i (cond
++                                           (= :class (:tag e)) (update e :name resolve-name)
++                                           (contains? e :class)
++                                           (cond-> (update e :class resolve-name)
++                                             (#{"java/lang/invoke/MethodHandle" "java/lang/invoke/VarHandle"} (:class e))
++                                             (update :desc resolve-desc))
++                                           (= :methodtype (:tag e)) (update e :desc resolve-desc)
++                                           :else e)])) cp)))
++        (update :methods (fn [ms]
++                           (mapv (fn [m]
++                                   (cond-> m (:code m)
++                                     (update-in [:code :handlers]
++                                                (fn [hs] (mapv #(update % :type resolve-name) hs))))) ms))))))
++
+ (defn- compile-method! [cname mname desc]
+-  (let [p (parsed cname)
++  (let [base (class-info cname)
++        reads (when (:src-fp base) (volatile! #{}))
++        p (binding [*reads* reads]
++            (cond-> (parsed cname) (#{:defined :user} (:origin base)) loader-references))
+         m (first (filter #(and (= mname (:name %)) (= desc (:desc %))) (:methods p)))
+-        info (assoc (class-info cname) :parsed p)]
++        info (assoc base :parsed p)]
+     (swap! state update :jitted inc)
+     (when (= :user (:origin info)) (swap! state update :jitted-user (fnil inc 0)))
+     (when (trace?) (binding [*out* *err*] (println "jit" (str cname "." mname desc))))
+-    (let [reads (when (:src-fp info) (volatile! #{}))
+-          text (binding [*reads* reads] (timed :codegen #(cg/compile-method (:parsed info) m resolver)))
++    (let [text (binding [*reads* reads] (timed :codegen #(cg/compile-method (:parsed info) m resolver)))
+           ;; a library cache entry's dependencies grow with each method
+           ;; compiled; a method reading one that can't be checked isn't kept
+           origin (if reads
+diff --git a/src/champaca/libcache.clj b/src/champaca/libcache.clj
+index 34eaeab..c91af03 100644
+--- a/src/champaca/libcache.clj
++++ b/src/champaca/libcache.clj
+@@ -17,7 +17,7 @@
+             [champaca.cachedir :refer [cache-origin cache-read-only? cache-unusable! delete-tree! load-unit!
+                                        prune-cache-root! record! runtime-files stale-ms write-units!]]
+             [champaca.classpath :refer [class-source layer-module note-class-entry! outside-boot-layer?]]
+-            [champaca.link :refer [ancestry ancestry-of-unlinked registration-text sealed-refused?]]
++            [champaca.link :refer [ancestry ancestry-of-unlinked loader-override-refusal registration-text sealed-refused?]]
+             [champaca.state :refer [state trace? timed scheme! ensure-loaded!* packed? packed= thaw-entry
+                                     packed-entry strip-for-cache]]
+             [jolt.image :as img]))
+@@ -214,8 +214,8 @@
+   they were, \"ok <name>\"; else nil, the stale entry dropped so the save
+   rewrites it, and the class parses as usual. What its methods read is
+   checked when one is first called (deps-still-hold!). A class a sealed
+-  supertype refuses where it's defined now isn't restored, and its entry
+-  stays: the definition then parses and fails as the JVM's."
++  supertype or a resolved loader constraint refuses now isn't restored,
++  and its entry stays: the definition then parses and fails as the JVM's."
+   [n bs fp dj]
+   (if-let [packed (get (library-cache dj) n)]
+     (let [refused (volatile! false)
+@@ -230,7 +230,7 @@
+                        (when (trace?) (binding [*out* *err*] (println "define" n "changed since its entry")))
+                        false))
+                (do (doseq [dep (remove nil? (cons (:super info) (:interfaces info)))] (ensure-loaded!* dep)) true)
+-               (not (and (sealed-refused? info) (vreset! refused true)))
++               (not (and (or (sealed-refused? info) (loader-override-refusal info)) (vreset! refused true)))
+                (every? (fn [d] (or (dep-matches? d (get (:deps info) d))
+                                    (do (swap! state update :defined-changed (fnil inc 0))
+                                        (when (trace?) (binding [*out* *err*] (println "define" n "not restored:" d "changed")))
+@@ -265,13 +265,15 @@
+   fp its fingerprint, or :present for a synthetic class. One not loaded yet
+   is asked of the resolving loader, as translating the method would have
+   (runtime.ss jit! and define-class! bind it); one it doesn't have is a
+-  mismatch."
++  mismatch. An internal name that now resolves to an alias is a mismatch too."
+   [d fp]
+-  (let [e (when-not (= fp :layer)
++  (let [same? (or (= fp :layer) (= d (s/call "resolve-defined-reference" d)))
++        e (when (and same? (not= fp :layer))
+             (or (get-in @state [:classes d])
+                 (do (try (ensure-loaded!* d) (catch Exception _ nil))
+                     (get-in @state [:classes d]))))]
+-    (cond (= fp :layer) (not (outside-boot-layer? d)) ; a JDK class outside java.base
++    (cond (not same?) false
++          (= fp :layer) (not (outside-boot-layer? d)) ; a JDK class outside java.base
+           (nil? e) false
+           (= fp :present) true   ; a lambda class in state.img, thawed or not
+           (packed? e) false      ; a JDK class has that name now
+diff --git a/src/champaca/link.clj b/src/champaca/link.clj
+index 8596f40..de0e23b 100644
+--- a/src/champaca/link.clj
++++ b/src/champaca/link.clj
+@@ -654,6 +654,18 @@
+                     (take-while some? (iterate #(:super (class-info %)) sup)))))
+           (:methods info))))
+ 
++(defn loader-override-refusal
++  "A resolved override constraint violation, or nil; also checked on cache restore."
++  [info]
++  (some #(when (string? %) %)
++        (for [m (or (:methods info)
++                    (some-> (:methods-packed info) unpack edn/read-string intern-members))
++              :when (and (:virtual m) (zero? (bit-and (:flags m) 0x0002)))
++              c (distinct (mapcat ancestry (remove nil? (cons (:super info) (:interfaces info)))))
++              :let [sm (some #(when (and (= (:name m) (:name %)) (= (:desc m) (:desc %))) %) (class-methods c))]
++              :when (and sm (not (cf/static? sm)) (pos? (bit-and (:flags sm) 0x0005)))]
++          (s/call "override-constraint-refusal" c (:desc m)))))
++
+ (defn check-definition!
+   "HotSpot's checks of a class being defined, once its superclass and
+   interfaces are loaded (JVMS 5.3.5, 5.4.5), with its texts: a final
+@@ -668,4 +680,7 @@
+     ;; does that while parsing
+     (doseq [s (remove nil? (cons sup (:interfaces info)))] (check-sealed! info s))
+     (when-let [e (when sup (final-override-error info sup))]
+-      (throw e))))
++      (throw e))
++    (when (= :defined (:origin info))
++      (when-let [why (loader-override-refusal info)]
++        (throw (linkage-error (:name info) "java/lang/LinkageError" why))))))
+diff --git a/src/champaca/loader.clj b/src/champaca/loader.clj
+index a85c2dd..b3e23cf 100644
+--- a/src/champaca/loader.clj
++++ b/src/champaca/loader.clj
+@@ -14,9 +14,10 @@
+   champaca.state's forward hook when this namespace loads, so the linker
+   and the library cache can load a class missing from the table."
+   (:require [clojure.string :as str]
++            [jolt.scheme :as s]
+             [champaca.cachedir :refer [cache-origin load-unit! record!]]
+             [champaca.classfile :as cf]
+-            [champaca.classpath :refer [bytes-fp jar-path refuse-outside-layer!]]
++            [champaca.classpath :refer [bytes-fp jar-path refuse-outside-layer! user-class-bytes]]
+             [champaca.libcache :refer [library-cache-keys restore-defined-class! restore-user-class!
+                                        uncheckable-dep user-deps]]
+             [champaca.link :refer [check-definition! class-map dotted final-sealed? link linkage-error
+@@ -162,15 +163,14 @@
+   "define-class!'s answer when the parsed class c can't be defined, else nil.
+   HotSpot checks the name as it reads it, before the interface and sealed
+   checks."
+-  [c given hidden?]
++  [c given]
+   (cond
+     (:bad c) (str "bad " (:bad c))
+     (:version c) (str "link java/lang/UnsupportedClassVersionError|" (:version c))
+     (and given (not= given (:name c))) (str "wrong " (:name c))
+     (and (pos? (bit-and (:flags c) 0x0200)) (not= "java/lang/Object" (:super c)))
+     (str "bad Interfaces must have java.lang.Object as superclass in class file " (or given (:name c)))
+-    (final-sealed? c) (str "bad PermittedSubclasses attribute in final class file " (or given (:name c)))
+-    (and (not hidden?) (get-in @state [:classes (:name c)])) (str "dup " (:name c))))
++    (final-sealed? c) (str "bad PermittedSubclasses attribute in final class file " (or given (:name c)))))
+ 
+ (defn- defined-deps!
+   "A defined class n's library cache dependencies from what its link and
+@@ -217,29 +217,39 @@
+         (throw e)))))
+ 
+ (defn define-class!
+-  "ClassLoader.defineClass, Lookup.defineClass and defineHiddenClass, Proxy
+-  and Unsafe.defineClass0 (natives.ss define-class!): parse, link and
+-  register a class from the bytes a loader handed over, which cross from
+-  Scheme as a Latin-1 string since a byte array doesn't. given is the name
+-  the caller expects, slashed, or nil. Answers \"ok <name>\", \"bad <message>\"
+-  (not a class file), \"wrong <name in the bytes>\" or \"dup <name>\" (one
+-  class table here, so a second definition of a name is a duplicate whatever
+-  its loader), and the Scheme side throws the JVM's error for each. A hidden
+-  class is named <name>/0x<n>, as HotSpot names one, and renamed inside.
+-  With cacheable? (a named, non-hidden class from a loader of the program's
+-  own), the class is kept in the library cache like a jar's, keyed by its
+-  bytes' fingerprint under the class path's file (defined-jar), and an
+-  earlier run's entry for the same bytes is restored instead of parsing
+-  (restore-defined-class!)."
++  "Define bytes in the current resolving-loader. The runtime assigns an internal
++  name when another loader has already defined the binary name. Hidden classes
++  retain their separate naming rules; aliased classes are not library-cached."
+   [given text hidden? cacheable?]
+   (let [bs (.getBytes ^String text "ISO-8859-1")
+-        fp (when (and cacheable? given) (timed :fingerprint #(bytes-fp bs)))
+-        dj (when fp (defined-jar))]
+-    (or (when (and fp (not (get-in @state [:classes given])))
+-          (restore-defined-class! given bs fp dj))
+-        (let [c (parse-defined bs given)]
+-          (or (definition-refusal c given hidden?)
+-              (define-parsed-class! c hidden? bs fp dj))))))
++        c (parse-defined bs given)
++        binary (:name c)]
++    (or (definition-refusal c given)
++        (let [duplicate? (and (not hidden?) (boolean (s/call "definition-duplicate?" (:name c))))
++              identity (when (and (not hidden?) (not duplicate?)) (s/call "definition-identity" (:name c)))
++              alias? (and identity (not= identity (:name c)))
++              fp (when (and cacheable? given (not alias?)) (timed :fingerprint #(bytes-fp bs)))
++              dj (when fp (defined-jar))]
++          (if duplicate?
++            (str "dup " (:name c))
++            (or (when (and fp (not (get-in @state [:classes given])))
++                  (restore-defined-class! given bs fp dj))
++                (let [c (if alias? (rename-class c identity) c)
++                      c (-> c
++                            (update :super #(when % (s/call "resolve-defined-reference" %)))
++                            (update :interfaces #(mapv (fn [n] (s/call "resolve-defined-reference" n)) %)))]
++                  (let [answer (define-parsed-class! c hidden? bs fp dj)]
++                    (when (and alias? (str/starts-with? answer "ok "))
++                      (s/call "record-definition-name!" identity binary))
++                    answer))))))))
++
++(defn define-classpath-copy!
++  "Load the application's classpath bytes when a custom loader occupied the
++  process-wide name first. The copy is an uncached loader-qualified definition."
++  [name]
++  (if-let [bs (user-class-bytes name)]
++    (define-class! name (String. bs "ISO-8859-1") false false)
++    false))
+ 
+ (defn- defined-jar
+   "The library cache's key for the classes a program's own loaders define:
+diff --git a/test/gen/LoaderErrorGen.java b/test/gen/LoaderErrorGen.java
+new file mode 100644
+index 0000000..29ee922
+--- /dev/null
++++ b/test/gen/LoaderErrorGen.java
+@@ -0,0 +1,24 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++import java.lang.classfile.*;
++import java.lang.constant.*;
++import java.nio.file.*;
++import static java.lang.classfile.ClassFile.*;
++import static java.lang.constant.ConstantDescs.*;
++// A reference with no classpath bytes: each defining loader fails it differently.
++public class LoaderErrorGen {
++    public static void main(String[] args) throws Exception {
++        Path p = Path.of(args[0], "loaderbytes"); Files.createDirectories(p);
++        ClassDesc absent = ClassDesc.of("LoaderErrorAbsent");
++        Files.write(p.resolve("LoaderErrorAbsent.bin"), ClassFile.of().build(absent, b -> {
++            b.withFlags(ACC_PUBLIC | ACC_SUPER);
++            b.withMethodBody(INIT_NAME, MTD_void, ACC_PUBLIC, c -> { c.aload(0); c.invokespecial(CD_Object, INIT_NAME, MTD_void); c.return_(); });
++        }));
++        Files.write(p.resolve("LoaderErrorUser.bin"), ClassFile.of().build(ClassDesc.of("LoaderErrorUser"), b -> {
++            b.withFlags(ACC_PUBLIC | ACC_SUPER);
++            b.withMethodBody("run", MethodTypeDesc.of(CD_Object), ACC_PUBLIC | ACC_STATIC, c -> {
++                c.new_(absent); c.dup(); c.invokespecial(absent, INIT_NAME, MTD_void); c.areturn();
++            });
++        }));
++    }
++}
+diff --git a/test/java/AssignIface.java b/test/java/AssignIface.java
+new file mode 100644
+index 0000000..a7148ba
+--- /dev/null
++++ b/test/java/AssignIface.java
+@@ -0,0 +1 @@
++public interface AssignIface { String who(); }
+diff --git a/test/java/AssignImpl.java b/test/java/AssignImpl.java
+new file mode 100644
+index 0000000..83ff158
+--- /dev/null
++++ b/test/java/AssignImpl.java
+@@ -0,0 +1,3 @@
++public class AssignImpl implements AssignIface {
++    public String who() { return "impl"; }
++}
+diff --git a/test/java/AssignSub.java b/test/java/AssignSub.java
+new file mode 100644
+index 0000000..10105b3
+--- /dev/null
++++ b/test/java/AssignSub.java
+@@ -0,0 +1 @@
++public class AssignSub extends AssignImpl { }
+diff --git a/test/java/AssignSubIface.java b/test/java/AssignSubIface.java
+new file mode 100644
+index 0000000..ca0953a
+--- /dev/null
++++ b/test/java/AssignSubIface.java
+@@ -0,0 +1 @@
++public interface AssignSubIface extends AssignIface { }
+diff --git a/test/java/AssignSubImpl.java b/test/java/AssignSubImpl.java
+new file mode 100644
+index 0000000..2443834
+--- /dev/null
++++ b/test/java/AssignSubImpl.java
+@@ -0,0 +1,3 @@
++public class AssignSubImpl implements AssignSubIface {
++    public String who() { return "subimpl"; }
++}
+diff --git a/test/java/AssignUser.java b/test/java/AssignUser.java
+new file mode 100644
+index 0000000..7dd1e66
+--- /dev/null
++++ b/test/java/AssignUser.java
+@@ -0,0 +1,5 @@
++public class AssignUser {
++    public static boolean isIface(Object o) { return o instanceof AssignIface; }
++    public static AssignIface castIface(Object o) { return (AssignIface) o; }
++    public static boolean isSubIface(Object o) { return o instanceof AssignSubIface; }
++}
+diff --git a/test/java/LoaderAssignabilityCheck.expected b/test/java/LoaderAssignabilityCheck.expected
+new file mode 100644
+index 0000000..0b9b673
+--- /dev/null
++++ b/test/java/LoaderAssignabilityCheck.expected
+@@ -0,0 +1,59 @@
++distinct ifaces: true
++isInstance same A: true
++isInstance cross A-vs-B: true
++isInstance cross B-vs-A: true
++isInstance same B: true
++assignable same A: true
++assignable cross A-from-B: true
++assignable cross B-from-A: true
++assignable same B: true
++impl interfaces identity: true
++sub isInstance same A: true
++sub isInstance cross B-vs-A: true
++sub isInstance same B: true
++subiface isInstance base A: true
++subiface isInstance base cross: true
++subiface isInstance sub A: true
++subiface isInstance sub cross: true
++base assignable from subiface same: true
++base assignable from subiface cross: true
++subiface assignable from subimpl same: true
++subiface assignable from subimpl cross: true
++subiface interfaces identity: true
++bytecode instanceof A same: true
++bytecode instanceof A cross: true
++bytecode instanceof B same: true
++bytecode instanceof B cross: true
++bytecode instanceof subiface A same: true
++bytecode instanceof subiface A cross: true
++bytecode cast cross: rejected
++bytecode cast same: true
++Class.cast cross: rejected
++Class.cast same: true
++array isInstance same: true
++array isInstance cross: true
++array assignable same: true
++array assignable cross: true
++array forName identity: true
++array component: true
++three-way diagonal A: true
++three-way diagonal B: true
++three-way diagonal C: true
++child sub isInstance parent iface: true
++child sub isInstance other iface: true
++child sub superclass is parent impl: true
++app iface is app-loaded: true
++copies distinct: true
++custom isInstance own: true
++custom isInstance app impl: true
++app isInstance own: true
++app isInstance custom impl: true
++app assignable own: true
++app assignable custom: true
++custom assignable own: true
++custom assignable app: true
++app impl interfaces identity: true
++custom impl interfaces identity: true
++delegated impl iface is app iface: true
++own define after delegation: rejected
++LoaderAssignabilityCheck done
+diff --git a/test/java/LoaderAssignabilityCheck.java b/test/java/LoaderAssignabilityCheck.java
+new file mode 100644
+index 0000000..b55f08b
+--- /dev/null
++++ b/test/java/LoaderAssignabilityCheck.java
+@@ -0,0 +1,161 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++import java.io.InputStream;
++import java.lang.reflect.Array;
++
++// Assignability is loader-qualified: a class is an instance of exactly the
++// interface definition its own hierarchy resolved, never of a same-named
++// definition from another loader (the protocol-redefinition gap: a reify
++// whose protocol was redefined under a new loader must satisfy the new
++// definition's checks, and only those). Fixtures are read as bytes, never
++// loaded by the application loader, except in the classpath-copy section,
++// where the application loader's own copies are the point.
++public class LoaderAssignabilityCheck {
++    static final String[] FIXTURES = {"AssignIface", "AssignSubIface", "AssignImpl", "AssignSubImpl", "AssignSub", "AssignUser"};
++    static class Loader extends ClassLoader {
++        Loader(ClassLoader parent) { super(parent); }
++        Class<?> define(String name) throws Exception {
++            try (InputStream in = LoaderAssignabilityCheck.class.getResourceAsStream("/" + name + ".class")) {
++                byte[] b = in.readAllBytes();
++                return defineClass(name, b, 0, b.length);
++            }
++        }
++        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
++            for (String f : FIXTURES) {
++                if (name.equals(f)) {
++                    Class<?> c = findLoadedClass(name);
++                    if (c != null) return c;
++                    if (getParent() instanceof Loader) return getParent().loadClass(name);
++                    try { return define(name); }
++                    catch (Exception e) { throw new ClassNotFoundException(name, e); }
++                }
++            }
++            return super.loadClass(name, resolve);
++        }
++    }
++    // A loader that delegates everything: its own definitions come only
++    // from explicit define() calls (the classpath-copy section's loader).
++    static class DefiningLoader extends ClassLoader {
++        DefiningLoader(ClassLoader parent) { super(parent); }
++        Class<?> define(String name) throws Exception {
++            try (InputStream in = LoaderAssignabilityCheck.class.getResourceAsStream("/" + name + ".class")) {
++                byte[] b = in.readAllBytes();
++                return defineClass(name, b, 0, b.length);
++            }
++        }
++    }
++    static void check(String label, boolean ok) {
++        System.out.println(label + ": " + ok);
++        if (!ok) throw new AssertionError(label);
++    }
++    public static void main(String[] args) throws Exception {
++        Loader a = new Loader(LoaderAssignabilityCheck.class.getClassLoader());
++        Loader b = new Loader(LoaderAssignabilityCheck.class.getClassLoader());
++        Class<?> iA = a.define("AssignIface"), iB = b.define("AssignIface");
++        Class<?> cA = a.define("AssignImpl"),  cB = b.define("AssignImpl");
++        Object oA = cA.getConstructor().newInstance();
++        Object oB = cB.getConstructor().newInstance();
++        check("distinct ifaces", iA != iB);
++        check("isInstance same A", iA.isInstance(oA));
++        check("isInstance cross A-vs-B", !iA.isInstance(oB));
++        check("isInstance cross B-vs-A", !iB.isInstance(oA));
++        check("isInstance same B", iB.isInstance(oB));
++        check("assignable same A", iA.isAssignableFrom(cA));
++        check("assignable cross A-from-B", !iA.isAssignableFrom(cB));
++        check("assignable cross B-from-A", !iB.isAssignableFrom(cA));
++        check("assignable same B", iB.isAssignableFrom(cB));
++        check("impl interfaces identity", cA.getInterfaces()[0] == iA && cB.getInterfaces()[0] == iB);
++        // inherited interface through a subclass defined in each loader
++        Class<?> sA = a.define("AssignSub"), sB = b.define("AssignSub");
++        Object soA = sA.getConstructor().newInstance();
++        Object soB = sB.getConstructor().newInstance();
++        check("sub isInstance same A", iA.isInstance(soA));
++        check("sub isInstance cross B-vs-A", !iB.isInstance(soA));
++        check("sub isInstance same B", iB.isInstance(soB));
++        // subinterface: an impl of the subinterface is an instance of the base
++        Class<?> siA = a.define("AssignSubIface"), siB = b.define("AssignSubIface");
++        Class<?> scA = a.define("AssignSubImpl"), scB = b.define("AssignSubImpl");
++        Object scoA = scA.getConstructor().newInstance();
++        Object scoB = scB.getConstructor().newInstance();
++        check("subiface isInstance base A", iA.isInstance(scoA));
++        check("subiface isInstance base cross", !iB.isInstance(scoA));
++        check("subiface isInstance sub A", siA.isInstance(scoA));
++        check("subiface isInstance sub cross", !siA.isInstance(scoB));
++        check("base assignable from subiface same", iA.isAssignableFrom(siA));
++        check("base assignable from subiface cross", !iA.isAssignableFrom(siB));
++        check("subiface assignable from subimpl same", siA.isAssignableFrom(scA));
++        check("subiface assignable from subimpl cross", !siA.isAssignableFrom(scB));
++        check("subiface interfaces identity", siA.getInterfaces()[0] == iA && siB.getInterfaces()[0] == iB);
++        // bytecode instanceof / checkcast in a class defined per loader
++        Class<?> uA = a.define("AssignUser"), uB = b.define("AssignUser");
++        check("bytecode instanceof A same", (Boolean) uA.getMethod("isIface", Object.class).invoke(null, oA));
++        check("bytecode instanceof A cross", !(Boolean) uA.getMethod("isIface", Object.class).invoke(null, oB));
++        check("bytecode instanceof B same", (Boolean) uB.getMethod("isIface", Object.class).invoke(null, oB));
++        check("bytecode instanceof B cross", !(Boolean) uB.getMethod("isIface", Object.class).invoke(null, oA));
++        check("bytecode instanceof subiface A same", (Boolean) uA.getMethod("isSubIface", Object.class).invoke(null, scoA));
++        check("bytecode instanceof subiface A cross", !(Boolean) uA.getMethod("isSubIface", Object.class).invoke(null, scoB));
++        try { uA.getMethod("castIface", Object.class).invoke(null, oB); throw new AssertionError("bytecode cast cross"); }
++        catch (java.lang.reflect.InvocationTargetException e) {
++            if (!(e.getCause() instanceof ClassCastException)) throw new AssertionError("bytecode cast cross", e);
++            System.out.println("bytecode cast cross: rejected");
++        }
++        check("bytecode cast same", uA.getMethod("castIface", Object.class).invoke(null, oA) == oA);
++        try { iB.cast(oA); throw new AssertionError("Class.cast cross"); }
++        catch (ClassCastException e) { System.out.println("Class.cast cross: rejected"); }
++        check("Class.cast same", iA.cast(oA) == oA);
++        // arrays of a loader-qualified element type
++        Object arrA = Array.newInstance(cA, 1);
++        Class<?> iArrA = Array.newInstance(iA, 0).getClass();
++        Class<?> iArrB = Array.newInstance(iB, 0).getClass();
++        check("array isInstance same", iArrA.isInstance(arrA));
++        check("array isInstance cross", !iArrB.isInstance(arrA));
++        check("array assignable same", iArrA.isAssignableFrom(arrA.getClass()));
++        check("array assignable cross", !iArrB.isAssignableFrom(arrA.getClass()));
++        check("array forName identity", Class.forName("[LAssignIface;", false, a) == iArrA);
++        check("array component", iArrA.getComponentType() == iA && iArrB.getComponentType() == iB);
++        // a third definition of the same name: only the diagonal holds
++        Loader c = new Loader(LoaderAssignabilityCheck.class.getClassLoader());
++        Class<?> iC = c.define("AssignIface");
++        Class<?> cC = c.define("AssignImpl");
++        Object oC = cC.getConstructor().newInstance();
++        check("three-way diagonal A", iA.isInstance(oA) && !iB.isInstance(oA) && !iC.isInstance(oA));
++        check("three-way diagonal B", iB.isInstance(oB) && !iA.isInstance(oB) && !iC.isInstance(oB));
++        check("three-way diagonal C", iC.isInstance(oC) && !iA.isInstance(oC) && !iB.isInstance(oC));
++        // a subclass in a child loader inherits the parent loader's interface
++        Loader child = new Loader(a);
++        Class<?> subChild = child.define("AssignSub");
++        Object oSub = subChild.getConstructor().newInstance();
++        check("child sub isInstance parent iface", iA.isInstance(oSub));
++        check("child sub isInstance other iface", !iB.isInstance(oSub));
++        check("child sub superclass is parent impl", subChild.getSuperclass() == cA);
++        // classpath copy: a custom loader took the name first; the app
++        // loader's own copies stay assignability-isolated from it
++        DefiningLoader l = new DefiningLoader(LoaderAssignabilityCheck.class.getClassLoader());
++        Class<?> iL = l.define("AssignIface");
++        Class<?> cL = l.define("AssignImpl");
++        Object oL = cL.getConstructor().newInstance();
++        Class<?> iApp = Class.forName("AssignIface");
++        Class<?> cApp = Class.forName("AssignImpl");
++        Object oApp = cApp.getConstructor().newInstance();
++        check("app iface is app-loaded", iApp.getClassLoader() == LoaderAssignabilityCheck.class.getClassLoader());
++        check("copies distinct", iL != iApp && cL != cApp);
++        check("custom isInstance own", iL.isInstance(oL));
++        check("custom isInstance app impl", !iL.isInstance(oApp));
++        check("app isInstance own", iApp.isInstance(oApp));
++        check("app isInstance custom impl", !iApp.isInstance(oL));
++        check("app assignable own", iApp.isAssignableFrom(cApp));
++        check("app assignable custom", !iApp.isAssignableFrom(cL));
++        check("custom assignable own", iL.isAssignableFrom(cL));
++        check("custom assignable app", !iL.isAssignableFrom(cApp));
++        check("app impl interfaces identity", cApp.getInterfaces()[0] == iApp);
++        check("custom impl interfaces identity", cL.getInterfaces()[0] == iL);
++        // a loader that already resolved a name by delegation cannot then
++        // define its own class of that name (HotSpot: LinkageError)
++        DefiningLoader m = new DefiningLoader(LoaderAssignabilityCheck.class.getClassLoader());
++        Class<?> mc = m.define("AssignImpl");
++        check("delegated impl iface is app iface", mc.getInterfaces()[0] == iApp);
++        try { m.define("AssignIface"); throw new AssertionError("own define after delegation"); }
++        catch (LinkageError e) { System.out.println("own define after delegation: rejected"); }
++        System.out.println("LoaderAssignabilityCheck done");
++    }
++}
+diff --git a/test/java/LoaderBoundaryCheck.expected b/test/java/LoaderBoundaryCheck.expected
+new file mode 100644
+index 0000000..779e714
+--- /dev/null
++++ b/test/java/LoaderBoundaryCheck.expected
+@@ -0,0 +1,14 @@
++constraint: java.lang.LinkageError
++constraint diagnostic: true
++java.lang.IllegalAccessException: no such method: LoaderBoundaryType.identity(LoaderBoundaryType)LoaderBoundaryType/invokeStatic
++java.lang.LinkageError: bad method type alias: (LoaderBoundaryType)LoaderBoundaryType not visible from class LoaderBoundaryType
++right method type: true
++classpath separate: true
++classpath loader: true
++classpath lookup cached: true
++classpath self reference: true
++classpath caller: true
++sibling invisible
++delegated initiation: true
++initiating loader duplicate rejected
++boot still shared: true
+diff --git a/test/java/LoaderBoundaryCheck.java b/test/java/LoaderBoundaryCheck.java
+new file mode 100644
+index 0000000..88a9fe5
+--- /dev/null
++++ b/test/java/LoaderBoundaryCheck.java
+@@ -0,0 +1,56 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++import java.lang.invoke.*;
++public class LoaderBoundaryCheck {
++    static class L extends ClassLoader {
++        L(ClassLoader p) { super(p); }
++        Class<?> define(String n) throws Exception {
++            try (var in = LoaderBoundaryCheck.class.getResourceAsStream("/" + n + ".class")) {
++                byte[] b = in.readAllBytes(); return defineClass(n, b, 0, b.length);
++            }
++        }
++        protected Class<?> loadClass(String n, boolean r) throws ClassNotFoundException {
++            Class<?> c = findLoadedClass(n);
++            return c != null ? c : super.loadClass(n, r);
++        }
++    }
++    static void check(String n, boolean v) { System.out.println(n + ": " + v); if (!v) throw new AssertionError(n); }
++    public static void main(String[] args) throws Throwable {
++        String n = "LoaderBoundaryType";
++        L a = new L(null), b = new L(a);
++        Class<?> x = a.define(n), y = args.length == 0 ? b.define(n) : x;
++        a.define("LoaderBoundaryParent").getDeclaredMethods();
++        if (args.length != 0) {
++            b.define("LoaderBoundaryChild").getDeclaredMethods();
++            System.out.println("constraint primed");
++            return;
++        }
++        try { b.define("LoaderBoundaryChild").getDeclaredMethods(); throw new AssertionError("constraint accepted"); }
++        catch (LinkageError e) {
++            System.out.println("constraint: " + e.getClass().getName());
++            check("constraint diagnostic", e.getMessage().startsWith("loader constraint violation"));
++        }
++        try { MethodHandles.publicLookup().findStatic(y, "identity", MethodType.methodType(x, x)); throw new AssertionError("alias accepted"); }
++        catch (ReflectiveOperationException e) {
++            System.out.println(e.getClass().getName() + ": " + e.getMessage());
++            System.out.println(e.getCause().getClass().getName() + ": " + e.getCause().getMessage());
++        }
++        Object o = y.getConstructor().newInstance();
++        check("right method type", MethodHandles.publicLookup().findStatic(y, "identity", MethodType.methodType(y, y)).invokeWithArguments(o) == o);
++        ClassLoader app = LoaderBoundaryCheck.class.getClassLoader();
++        Class<?> z = Class.forName(n, false, app);
++        check("classpath separate", z != x && z != y && z.getName().equals(x.getName()));
++        check("classpath loader", z.getClassLoader() == app);
++        check("classpath lookup cached", Class.forName(n, false, app) == z);
++        Object zo = z.getConstructor().newInstance();
++        check("classpath self reference", z.getMethod("literal").invoke(zo) == z);
++        check("classpath caller", Class.forName("LoaderClasspathCaller").getMethod("literal").invoke(null) == z);
++        try { Class.forName(n, false, new L(null)); throw new AssertionError("sibling visible"); }
++        catch (ClassNotFoundException e) { System.out.println("sibling invisible"); }
++        L initiated = new L(a);
++        check("delegated initiation", Class.forName(n, false, initiated) == x);
++        try { initiated.define(n); throw new AssertionError("initiated duplicate accepted"); }
++        catch (LinkageError e) { System.out.println("initiating loader duplicate rejected"); }
++        check("boot still shared", Class.forName("java.lang.String", false, b) == String.class);
++    }
++}
+diff --git a/test/java/LoaderBoundaryChild.java b/test/java/LoaderBoundaryChild.java
+new file mode 100644
+index 0000000..fa55412
+--- /dev/null
++++ b/test/java/LoaderBoundaryChild.java
+@@ -0,0 +1,5 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++public class LoaderBoundaryChild extends LoaderBoundaryParent {
++    public LoaderBoundaryType echo(LoaderBoundaryType x) { return x; }
++}
+diff --git a/test/java/LoaderBoundaryParent.java b/test/java/LoaderBoundaryParent.java
+new file mode 100644
+index 0000000..caadfef
+--- /dev/null
++++ b/test/java/LoaderBoundaryParent.java
+@@ -0,0 +1,5 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++public class LoaderBoundaryParent {
++    public LoaderBoundaryType echo(LoaderBoundaryType x) { return x; }
++}
+diff --git a/test/java/LoaderBoundaryType.java b/test/java/LoaderBoundaryType.java
+new file mode 100644
+index 0000000..e60b335
+--- /dev/null
++++ b/test/java/LoaderBoundaryType.java
+@@ -0,0 +1,6 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++public class LoaderBoundaryType {
++    public static LoaderBoundaryType identity(LoaderBoundaryType x) { return x; }
++    public Class<?> literal() { return LoaderBoundaryType.class; }
++}
+diff --git a/test/java/LoaderClasspathCaller.java b/test/java/LoaderClasspathCaller.java
+new file mode 100644
+index 0000000..cf380dd
+--- /dev/null
++++ b/test/java/LoaderClasspathCaller.java
+@@ -0,0 +1,6 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++public class LoaderClasspathCaller {
++    private static Class<?> helper() { return LoaderBoundaryType.class; }
++    public static Class<?> literal() { return helper(); }
++}
+diff --git a/test/java/LoaderErrorCacheCheck.expected b/test/java/LoaderErrorCacheCheck.expected
+new file mode 100644
+index 0000000..a57d09d
+--- /dev/null
++++ b/test/java/LoaderErrorCacheCheck.expected
+@@ -0,0 +1,5 @@
++java.lang.IllegalStateException: loader A
++java.lang.IllegalArgumentException: loader B
++value loader: true
++java.lang.IllegalStateException: loader A
++java.lang.IllegalArgumentException: loader B
+diff --git a/test/java/LoaderErrorCacheCheck.java b/test/java/LoaderErrorCacheCheck.java
+new file mode 100644
+index 0000000..d63462f
+--- /dev/null
++++ b/test/java/LoaderErrorCacheCheck.java
+@@ -0,0 +1,33 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++public class LoaderErrorCacheCheck {
++    static class L extends ClassLoader {
++        final int mode;
++        L(int mode) { super(null); this.mode = mode; }
++        Class<?> define() throws Exception { return define("LoaderErrorUser"); }
++        Class<?> define(String n) throws Exception {
++            try (var in = LoaderErrorCacheCheck.class.getResourceAsStream("/loaderbytes/" + n + ".bin")) {
++                byte[] b = in.readAllBytes(); return defineClass(null, b, 0, b.length);
++            }
++        }
++        protected Class<?> loadClass(String n, boolean r) throws ClassNotFoundException {
++            if (n.equals("LoaderErrorAbsent")) {
++                if (mode == 0) throw new IllegalStateException("loader A");
++                if (mode == 1) throw new IllegalArgumentException("loader B");
++                Class<?> c = findLoadedClass(n);
++                if (c != null) return c;
++                try { return define(n); } catch (Exception e) { throw new ClassNotFoundException(n, e); }
++            }
++            return super.loadClass(n, r);
++        }
++    }
++    static void run(Class<?> c) throws Exception {
++        try { Object v = c.getMethod("run").invoke(null);
++              System.out.println("value loader: " + (v.getClass().getClassLoader() == c.getClassLoader())); }
++        catch (java.lang.reflect.InvocationTargetException e) { System.out.println(e.getCause().getClass().getName() + ": " + e.getCause().getMessage()); }
++    }
++    public static void main(String[] args) throws Exception {
++        Class<?> a = new L(0).define(), b = new L(1).define(), c = new L(2).define();
++        run(a); run(b); run(c); run(a); run(b);
++    }
++}
+diff --git a/test/java/LoaderIdentityCheck.expected b/test/java/LoaderIdentityCheck.expected
+new file mode 100644
+index 0000000..5c04640
+--- /dev/null
++++ b/test/java/LoaderIdentityCheck.expected
+@@ -0,0 +1,49 @@
++distinct definitions: true
++defining loaders: true
++forName: true
++signature-polymorphic descriptor: true
++literal: true
++field type: true
++method types: true
++constructor type: true
++field value: true
++method value: true
++method handle: true
++constructor handle: true
++field handle: true
++constructor value: true
++array identity: true
++array binary name: true
++array forName: true
++matrix identity: true
++array field: true
++array bytecode: true
++forName: true
++signature-polymorphic descriptor: true
++literal: true
++field type: true
++method types: true
++constructor type: true
++field value: true
++method value: true
++method handle: true
++constructor handle: true
++field handle: true
++constructor value: true
++array identity: true
++array binary name: true
++array forName: true
++matrix identity: true
++array field: true
++array bytecode: true
++static isolation: true
++same-loader duplicate: rejected
++same-loader duplicate: rejected
++superclass identity: true
++inherited method: true
++parent delegation: true
++delegated forName: true
++boot shared: true
++boot array shared: true
++cross-loader argument: rejected
++cross-loader field: rejected
+diff --git a/test/java/LoaderIdentityCheck.java b/test/java/LoaderIdentityCheck.java
+new file mode 100644
+index 0000000..ef83295
+--- /dev/null
++++ b/test/java/LoaderIdentityCheck.java
+@@ -0,0 +1,93 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++import java.io.InputStream;
++import java.lang.reflect.Array;
++
++// Classes are read as bytes, never loaded by the application loader.
++public class LoaderIdentityCheck {
++    static class Loader extends ClassLoader {
++        Loader(ClassLoader parent) { super(parent); }
++        Class<?> define(boolean unnamed) throws Exception {
++            return define("LoaderIdentityValue", unnamed);
++        }
++        Class<?> define(String name, boolean unnamed) throws Exception {
++            try (InputStream in = LoaderIdentityCheck.class.getResourceAsStream("/" + name + ".class")) {
++                byte[] b = in.readAllBytes();
++                return defineClass(unnamed ? null : name, b, 0, b.length);
++            }
++        }
++        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
++            // The app loader must not load the fixture on our behalf.
++            if (name.equals("LoaderIdentityValue")) {
++                Class<?> c = findLoadedClass(name);
++                if (c != null) return c;
++                if (getParent() instanceof Loader) return getParent().loadClass(name);
++                throw new ClassNotFoundException(name);
++            }
++            return super.loadClass(name, resolve);
++        }
++    }
++    static void check(String label, boolean ok) {
++        System.out.println(label + ": " + ok);
++        if (!ok) throw new AssertionError(label);
++    }
++    public static void main(String[] args) throws Exception {
++        Loader a = new Loader(LoaderIdentityCheck.class.getClassLoader());
++        Loader b = new Loader(LoaderIdentityCheck.class.getClassLoader());
++        Class<?> x = a.define(false), y = b.define(true);
++        check("distinct definitions", x != y && x.getName().equals(y.getName()));
++        check("defining loaders", x.getClassLoader() == a && y.getClassLoader() == b);
++        for (Class<?> c : new Class<?>[] {x, y}) {
++            Object o = c.getConstructor().newInstance();
++            check("forName", Class.forName(c.getName(), false, c.getClassLoader()) == c);
++            check("signature-polymorphic descriptor", c.getMethod("exact").invoke(o) == o);
++            check("literal", c.getMethod("literal").invoke(o) == c);
++            check("field type", c.getDeclaredField("self").getType() == c);
++            check("method types", c.getDeclaredMethod("echo", c).getReturnType() == c);
++            check("constructor type", c.getDeclaredConstructor(c).getParameterTypes()[0] == c);
++            c.getField("self").set(o, o);
++            check("field value", c.getField("self").get(o) == o);
++            check("method value", c.getMethod("echo", c).invoke(o, o) == o);
++            java.lang.invoke.MethodHandles.Lookup lookup = java.lang.invoke.MethodHandles.publicLookup();
++            java.lang.invoke.MethodHandle h = lookup.findVirtual(c, "echo", java.lang.invoke.MethodType.methodType(c, c));
++            java.lang.invoke.MethodHandle ctor = lookup.findConstructor(c, java.lang.invoke.MethodType.methodType(void.class, c));
++            java.lang.invoke.MethodHandle get = lookup.findGetter(c, "self", c);
++            java.lang.invoke.MethodHandle set = lookup.findSetter(c, "self", c);
++            try {
++                check("method handle", h.invokeWithArguments(o, o) == o);
++                check("constructor handle", get.invokeWithArguments(ctor.invokeWithArguments(o)) == o);
++                set.invokeWithArguments(o, o);
++                check("field handle", get.invokeWithArguments(o) == o);
++            } catch (Throwable t) { throw new AssertionError(t); }
++            check("constructor value", c.getField("self").get(c.getConstructor(c).newInstance(o)) == o);
++            Class<?> ar = Array.newInstance(c, 0).getClass();
++            check("array identity", ar.getComponentType() == c && ar.getClassLoader() == c.getClassLoader());
++            check("array binary name", ar.getName().equals("[L" + c.getName() + ";"));
++            check("array forName", Class.forName(ar.getName(), false, c.getClassLoader()) == ar);
++            Class<?> matrix = Array.newInstance(c, 0, 0).getClass();
++            check("matrix identity", matrix.getComponentType() == ar
++                && Class.forName(matrix.getName(), false, c.getClassLoader()) == matrix);
++            check("array field", c.getField("values").getType() == ar);
++            check("array bytecode", c.getMethod("array").invoke(o).getClass() == ar);
++        }
++        check("static isolation", x.getField("count").getInt(null) == 1 && y.getField("count").getInt(null) == 1);
++        for (Loader l : new Loader[] {a, b}) {
++            try { l.define(true); throw new AssertionError("duplicate accepted"); }
++            catch (LinkageError expected) { System.out.println("same-loader duplicate: rejected"); }
++        }
++        Class<?> sx = a.define("LoaderIdentitySub", true);
++        Class<?> sy = b.define("LoaderIdentitySub", false);
++        check("superclass identity", sx.getSuperclass() == x && sy.getSuperclass() == y);
++        check("inherited method", sy.getMethod("echo", y).getReturnType() == y);
++        Loader child = new Loader(b);
++        check("parent delegation", child.loadClass(y.getName()) == y);
++        check("delegated forName", Class.forName(y.getName(), false, child) == y);
++        check("boot shared", Class.forName("java.lang.String", false, child) == String.class);
++        check("boot array shared", Class.forName("[Ljava.lang.String;", false, child) == String[].class);
++        Object other = y.getConstructor().newInstance();
++        try { x.getMethod("echo", x).invoke(x.getConstructor().newInstance(), other); throw new AssertionError("cross-loader argument"); }
++        catch (IllegalArgumentException expected) { System.out.println("cross-loader argument: rejected"); }
++        try { x.getField("self").set(x.getConstructor().newInstance(), other); throw new AssertionError("cross-loader field"); }
++        catch (IllegalArgumentException expected) { System.out.println("cross-loader field: rejected"); }
++    }
++}
+diff --git a/test/java/LoaderIdentitySub.java b/test/java/LoaderIdentitySub.java
+new file mode 100644
+index 0000000..d7bf0f1
+--- /dev/null
++++ b/test/java/LoaderIdentitySub.java
+@@ -0,0 +1,5 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++public class LoaderIdentitySub extends LoaderIdentityValue {
++    public LoaderIdentitySub() {}
++}
+diff --git a/test/java/LoaderIdentityValue.java b/test/java/LoaderIdentityValue.java
+new file mode 100644
+index 0000000..5e86794
+--- /dev/null
++++ b/test/java/LoaderIdentityValue.java
+@@ -0,0 +1,19 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++// Fixture read as bytes by LoaderIdentityCheck, never loaded by the app loader.
++public class LoaderIdentityValue {
++    public LoaderIdentityValue self;
++    public LoaderIdentityValue[] values;
++    public static int count;
++    public LoaderIdentityValue() { count++; }
++    public LoaderIdentityValue(LoaderIdentityValue v) { self = v; }
++    public LoaderIdentityValue echo(LoaderIdentityValue v) { return v; }
++    public LoaderIdentityValue[] array() { return new LoaderIdentityValue[1]; }
++    public Object exact() throws Throwable {
++        java.lang.invoke.MethodHandle h = java.lang.invoke.MethodHandles.lookup().findStatic(
++            LoaderIdentityValue.class, "identity", java.lang.invoke.MethodType.methodType(LoaderIdentityValue.class, LoaderIdentityValue.class));
++        return (LoaderIdentityValue) h.invokeExact(this);
++    }
++    public static LoaderIdentityValue identity(LoaderIdentityValue v) { return v; }
++    public Class<?> literal() { return LoaderIdentityValue.class; }
++}
+diff --git a/test/libcache/loader-constraint-prime.expected b/test/libcache/loader-constraint-prime.expected
+new file mode 100644
+index 0000000..41a268e
+--- /dev/null
++++ b/test/libcache/loader-constraint-prime.expected
+@@ -0,0 +1 @@
++constraint primed
+diff --git a/test/libs/ClojureDeftype.java b/test/libs/ClojureDeftype.java
+new file mode 100644
+index 0000000..6a700de
+--- /dev/null
++++ b/test/libs/ClojureDeftype.java
+@@ -0,0 +1,23 @@
++// Copyright (C) 2026  champaca contributors
++// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
++import clojure.java.api.Clojure;
++import clojure.lang.IFn;
++
++// eval creates a new DynamicClassLoader for each deftype and its compiler stub.
++public class ClojureDeftype {
++    public static void main(String[] args) {
++        IFn read = Clojure.var("clojure.core", "read-string");
++        IFn eval = Clojure.var("clojure.core", "eval");
++        Object form = read.invoke("(do (deftype LoaderIdentityType []) (LoaderIdentityType.))");
++        Object[] values = new Object[3];
++        for (int i = 0; i < values.length; i++) {
++            values[i] = eval.invoke(form);
++            System.out.println("definition " + i + ": " + values[i].getClass().getName());
++        }
++        boolean distinct = values[0].getClass() != values[1].getClass()
++                        && values[0].getClass() != values[2].getClass()
++                        && values[1].getClass() != values[2].getClass();
++        System.out.println("distinct classes: " + distinct);
++        if (!distinct) throw new AssertionError("constructors bound to a different loader");
++    }
++}
+diff --git a/test/libs/libs.edn b/test/libs/libs.edn
+index 13cceec..402b83a 100644
+--- a/test/libs/libs.edn
++++ b/test/libs/libs.edn
+@@ -3,7 +3,10 @@
+ ;; `jolt libs:fetch` downloads the missing ones from Maven Central and keeps a
+ ;; jar only when its SHA-1 matches the one pinned here.
+ {:libs
+- [{:main "Lang" :jars [["org.apache.commons:commons-lang3:3.12.0" "c6842c86792ff03b9f1d1fe2aab8dc23aa6c6f0e"]]}
++ [{:main "ClojureDeftype" :jars [["org.clojure:clojure:1.12.0" "8e0b7e60ea3c8f1ef4273d695b27a6cb85000571"]
++                                    ["org.clojure:spec.alpha:0.5.238" "4eb5dea521c4e6e1f68c2c47517f14a922003e60"]
++                                    ["org.clojure:core.specs.alpha:0.4.74" "d56a8d4c666ff8140e6d0a62d41263134be39254"]]}
++  {:main "Lang" :jars [["org.apache.commons:commons-lang3:3.12.0" "c6842c86792ff03b9f1d1fe2aab8dc23aa6c6f0e"]]}
+   {:main "Gs" :jars [["com.google.code.gson:gson:2.13.2" "48b8230771e573b54ce6e867a9001e75977fe78e"]]}
+   {:main "Soup" :jars [["org.jsoup:jsoup:1.18.1" "cb7cd991d47b44101cbe4655dec611cdc01f8a02"]]}
+   {:main "Jack" :jars [["com.fasterxml.jackson.core:jackson-databind:2.20.1" "9586a7fe0e1775de0e54237fa6a2c8455c93ac06"]

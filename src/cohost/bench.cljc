@@ -133,6 +133,13 @@
         (let [a (now-ms) _ (f) d (- (now-ms) a)]
           (recur (conj samples d) (+ spent d)))))))
 
+;; Cases a host's own core cannot run, by case id -> the reason. Such a case
+;; times the stock side only; its host column is reported as not applicable
+;; (:host {:na reason}, :same? nil) rather than as an error.
+(def ^:private host-na
+  #?(:cljs {:format "not applicable: cljs.core has no format"}
+     :default {}))
+
 (defn- side
   "Set up and time one case on one side; -> the measurement, or {:error msg}."
   [eval-fn setup body opts]
@@ -175,8 +182,8 @@
    for seconds after it, and the first cases timed would pay for that."
   [cases scale {:keys [settle-ms]}]
   (when (pos? settle-ms)
-    (doseq [[_ _ n0 setup body] cases
-            ev [eval-host eval-stock]]
+    (doseq [[id _ n0 setup body] cases
+            ev (if (host-na id) [eval-stock] [eval-host eval-stock])]
       (let [n (max 1 (long (* n0 scale)))]
         (host/try-all (fn [] (when setup (ev (subst-n setup n)))
                              (let [f (ev (str "(fn [] " (subst-n body n) ")")) t0 (now-ms)]
@@ -211,9 +218,11 @@
              (let [n (max 1 (long (* n0 scale)))
                    setup (subst-n setup n)
                    body (subst-n body n)
-                   h (side eval-host setup body opts)
+                   na (host-na id)
+                   h (if na {:na na} (side eval-host setup body opts))
                    s (side eval-stock setup body opts)
-                   same? (and (not (:error h)) (not (:error s)) (= (:value h) (:value s)))
+                   same? (when-not na
+                           (and (not (:error h)) (not (:error s)) (= (:value h) (:value s))))
                    r {:id id :label title :n n
                       :host (dissoc h :value) :stock (dissoc s :value)
                       :same? same?
@@ -221,7 +230,8 @@
                (println (str "  " (name id) "  host " (fmt-ms (:median h)) "  stock " (fmt-ms (:median s))
                              (when (and (:median h) (:median s) (pos? (:median h)))
                                (str "  x" (fmt-ms (/ (:median s) (:median h)))))
-                             (when-not same?
+                             (when na (str "  [host " na "]"))
+                             (when (and (not na) (not same?))
                                (str "  [" (or (:error h) (:error s) (str "differ: " (:value h) " vs " (:value s))) "]"))))
                r))
                 cases))

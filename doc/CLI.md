@@ -11,15 +11,19 @@ cohost :lg -X:run :n 2               # an alias's :exec-fn, its :exec-args merge
 cohost :cljs -Spath                  # the source roots, in tools.deps order
 ```
 
-Wired: `:cljs :jolt :lpy :cljw :phel :lg :jank`. `:jvm` runs the real Clojure CLI.
-`:cljrs` is wired when its boot lands (doc/hosts/PLAN.md).
+Wired: `:cljs :jolt :lpy :cljw :phel :lg :jank`. `:jvm` is the `:clj` leg: the stock
+`clojure` CLI when that command is on PATH, otherwise jolt plus a champaca bundle
+of Clojure 1.12. `:cljrs` is wired when its boot lands (doc/hosts/PLAN.md).
 
 ## The target
 
 `cohost :<target> ...` names the runtime for one command. Without it, the target is
 `:cohost/target` in `./deps.edn` (a keyword, e.g. `:lpy`), and without that `:jank`. `:jvm` is the
-reference: the real Clojure CLI runs the command whole, as with `clj`.
-tools.deps ignores the key. `cohost` with no arguments is the REPL.
+`:clj` leg. `cohost :x` needs x's runtime installed; this leg's runtime is the `clojure`
+command. When `clojure` is on PATH the real CLI runs the command whole, as with `clj`.
+When it is not, and `jolt` is on PATH, the leg is jolt's champaca `:clj` handler.
+`COHOST_CLJ_BODY=clojure|jolt` forces one of those. tools.deps ignores the key.
+`cohost` with no arguments is the REPL.
 
 ## New projects
 
@@ -97,6 +101,121 @@ source root:
   `clojure.*` libraries (`clojure.string`, …) load from those sources too: the
   stock root comes first.
 
+## The :clj body
+
+`:jvm` is the `:clj` leg. cohost does not inspect a JVM. `bin/cohost_clj_body.clj`
+looks only at PATH:
+
+- `clojure` resolves: the existing Clojure CLI launch, same arguments as before.
+  Resolving dependencies through that CLI is how cohost works.
+- `clojure` does not resolve, and `jolt` does: jolt resolves the project
+  classpath and `$BUNDLE/lib/champaca` runs `clojure.main`. The classpath
+  command is `jolt -Srepro -Spath`, plus any `-Sdeps`, `-A`, and `-M:`/`-X:`
+  tokens from the command (`jolt -Srepro -Spath -M:main`). jolt leaves
+  `org.clojure/clojure` off that path on purpose. The bundle's `app/*` already
+  holds Clojure 1.12, spec.alpha, and core.specs.alpha, and that directory is
+  the front of `-cp`, so the project classpath does not need the Clojure jar.
+  `-M:alias` prepends the alias's `:main-opts` (aliases combined left to
+  right, `:main-opts` concatenated, from `./deps.edn` and `-Sdeps`; user
+  deps.edn is skipped because the resolve is `-Srepro`) and then the user's
+  arguments. `-X:alias` is `clojure.main -e` of a `requiring-resolve` call:
+  Clojure 1.12's jar has no `clojure.run.exec`. The argument map is the
+  alias's `:exec-args` merged with the command line, the same merge the other
+  hosts use.
+- neither resolves: a diagnostic, exit 1.
+
+`COHOST_CLJ_BODY=clojure` or `=jolt` forces that choice on a lone `:jvm`
+(and on `:cohost/target :jvm`). Unset follows PATH. A host string that names
+several hosts, or names `:clj`, does not consult the override.
+`-T` and `-Sdescribe` stay on the `clojure` CLI on every host string. Without
+`clojure` on PATH they say so and exit 1.
+
+### Host strings
+
+`cohost :jolt:lpy ...` lists hosts in order. The string used to be one host
+name, so `:jolt:lpy` was unknown. It is now a list. `:clj` is not a runtime
+host (the CLI's name for that runtime is `:jvm`). In a host string `:clj`
+means the official `clojure` CLI only, with no champaca fallback. `:jvm`
+keeps the PATH rule above.
+
+Who owns the `:clj` leg (`resolve-clj-leg!`, stored in the `clj-leg` atom):
+
+1. `:clj` anywhere in the string: the official `clojure` CLI.
+2. Otherwise the first listed host that has a `:clj` provider. The table is
+   `jolt -> champaca`, `jvm ->` the PATH selector. Hosts not in the table
+   have none. Another host registers with `swap!` on `clj-providers`.
+3. Otherwise the first host keeps the launch it has today.
+
+The first host is always the process. `:jolt` and `:jolt:lpy` boot the native
+jolt adapter (`jolt -Scp src:champaca-src -m cohost.cli`). Their `:clj` leg is
+champaca inside that process. `champaca-src` is the bundle directory the build
+records in `manifest.edn` (`:champaca-src`), or `COHOST_CHAMPACA_SRC` when that
+is set. It holds champaca's Clojure sources and the Scheme files that checkout
+loads. Those names are read from `cachedir.clj` (`runtime-files`,
+`translator-sources`) and from `(io/resource "...")` in the sources.
+`44ad7c4` has no `archive.ss`; a later checkout that adds the file names
+it itself.
+Without it the launch stops: `(require 'champaca.api)` only searches jolt's
+source roots. The launcher also sets `JAVA_HOME` to the bundle runtime and
+`CHAMPACA_CACHE_DIR`, and `cohost.cli` routes a `:clj` reader arm to
+`champaca.api/init!` on first use, then `champaca.api/save-cache!` (so the
+JIT keeps a generation), then `clojure.lang.RT/init` through
+`champaca.api/invoke-static`, then `save-cache!` again, before any
+`Compiler` call. Each arm calls `save-cache!` after `Compiler/load`.
+A call that finds nothing new does not write. A `:clj` provider that is not champaca
+(`:jolt:clj`) does not add that directory. `:lpy:jolt` and `:jank:jolt` boot basilisp
+and jank. The `:clj` leg is still jolt's champaca, recorded in `clj-leg` as a
+sibling body. This process does not start that sibling. A cross-process router
+would have to launch the jolt/champaca body separately and ship the arm source
+and a return value back. That protocol is not here.
+
+`:clj` as the first token is the official `clojure` CLI, which is that token's
+process. `:clj` later in the string (`:jolt:clj`) still names the official CLI
+as the `:clj` leg, and the first host stays the process.
+
+A jolt host with no `clojure` on PATH resolves the classpath with
+`jolt -Srepro -Spath` and the same alias flags. With `clojure` on PATH it
+keeps the Clojure CLI's basis, which is the argmap this adapter has used.
+Every other host still resolves with `clojure`. A missing binary is
+`cohost: \`clojure\` failed to start`, not an uncaught `IOException`.
+
+The bundle is `COHOST_CLJ_BUNDLE`, or `$HOME/.cache/cohost/cohost-clj`. It is built
+with JDK 25 and jolt 0.8.26, and run with neither:
+
+```bash
+CHAMPACA_SRC=/path/to/patched/champaca bash dev/build-clj-bundle.sh
+```
+
+`CHAMPACA_SRC` is a champaca checkout with the per-loader class identity patch
+applied (johnmn3/atom.broker `lane-m/jolt-clj-body` @ ee947a3fdd,
+`docs/clojure-runtime/multi-bodied/jolt-spike/per-loader-identity.experimental.diff`).
+Upstream champaca does not have that fix yet. The script pins Clojure 1.12.0,
+spec.alpha 0.5.238 and core.specs.alpha 0.4.74, and names the launcher
+`cohost-clj`. The bundle's own `bin/` launcher cannot take a runtime classpath,
+so cohost calls `lib/champaca` directly:
+
+```bash
+JAVA_HOME=$BUNDLE/runtime \
+CHAMPACA_BUNDLE=$BUNDLE \
+CHAMPACA_CACHE_DIR=$HOME/.cache/cohost/champaca \
+  $BUNDLE/lib/champaca -cp "$BUNDLE/app/*:$CP" clojure.main <main-opts then user args>
+```
+
+`$CP` is the `jolt -Srepro -Spath` output (with the alias flag when there is
+one). `app/*` supplies Clojure, so `$CP` omitting it is what this leg expects.
+The build script downloads `clojure-1.12.0.jar` into the Maven repo jolt
+names (`mvn_local_repo`, or `~/.m2/repository`) because `jolt -Spath` omits
+that jar. The same build copies champaca's `src` and `resources` into
+`$BUNDLE/champaca-src` (one jolt source root: `champaca/api.clj` beside
+`champaca/runtime.ss`) and writes that relative path into `$BUNDLE/manifest.edn`.
+The native `:jolt` adapter (`launch!`'s `"jolt"` branch) puts that directory
+on `jolt -Scp` when this process's `:clj` provider is champaca. The `:jvm`
+whole-process path above does not: it still execs `lib/champaca`.
+
+Champaca's guest-private JVM/Chez internals are outside this launcher (memory law
+waived there, John 00:50 ET). This cohost side retains nothing and adds no
+scanner, header counter, journal, or arena.
+
 ## What runs, as `clojure.main` runs it
 
 - **Init options** `-e`/`--eval` and `-i`/`--init`, in the order given; each
@@ -126,8 +245,11 @@ source root:
   `COHOST_MAIN_REPORT=stderr|none` chooses the target instead. The run ends
   with exit code 1; `-X` of a missing fn prints tools.deps'
   `Namespace x loaded but function not found: f`. Exit codes propagate.
-- `-J` options are dropped; `-Sdescribe` and `-T` (tools, JVM programs) run the
-  real CLI; `-Spath` prints the source roots; `-P` resolves and extracts only.
+- `-J` options are dropped; `-Sdescribe` and `-T` run the Clojure CLI only
+  (a missing `clojure` is a diagnostic, including on the champaca leg);
+  `-Spath` prints the source roots on a native host (on `:jvm` it is the CLI's
+  `-Spath`, or `clojure.main`'s arguments when that leg is champaca); `-P`
+  resolves and extracts only.
 
 Per-host launches: `:jolt`, `:cljw` take `-m cohost.cli <config>`; `:lpy` runs it
 through `basilisp run -c`; `:lg` runs `dev/lg_cli.lg` (it has no `-m`); `:phel`
