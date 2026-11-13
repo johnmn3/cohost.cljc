@@ -101,6 +101,7 @@
    :clje [:clj :default]
    :cljr [:clj :default]
    :cljd [:clj :default]
+   :teavm [:clj :default]
    :lg [:clj :default]
    :jank [:jank :clj :default]
    :cljrs [:clj :default]})
