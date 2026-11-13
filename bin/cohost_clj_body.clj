@@ -31,7 +31,9 @@
    :champaca is jolt's bundle launch. :jvm is the :jvm selector
    (`clojure` on PATH, otherwise champaca). :clojure-cli is the official
    JVM `clojure` CLI, with no champaca fallback. A later host registers
-   with swap!."
+   with swap!. teavm registers nothing here, by ruling: it is a real
+   :clj provider only inside the VS embedding, never an external leg
+   owner (see ignored-clj-providers)."
   (atom {"jolt" :champaca
          "jvm" :jvm
          "clj" :clojure-cli}))
@@ -45,8 +47,15 @@
    .clj files; it provides no JDK. Ignoring is scoped to the :clj leg: it
    says nothing about the host's own launch or its other legs. When every
    claimant is ignored (or none is present), resolution falls through as
-   before: the first host owns the leg and :provider is nil."
-  #{"jank"})
+   before: the first host owns the leg and :provider is nil.
+   teavm is here by ruling (John, 2026-11-13), the mirror of jank's case:
+   the TeaVM seat does provide a true Clojure/JDK experience, but only
+   inside the VS embedding, where VS is primary at all times and the
+   seat is its same-thread sister. Externally it has no launch path --
+   bin/cohost cannot start it -- so a clj-providers entry would be a
+   phantom launch promise; the token sits here so the exclusion reads
+   as a ruling, not an omission."
+  #{"jank" "teavm"})
 
 (def clj-absolute
   "Tokens that own :clj from any position, ahead of list order."
