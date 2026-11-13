@@ -2,6 +2,7 @@
 ;; a boot with record mode on and the twelve libraries; the events to the
 ;; file named by the first argument.
 ;;   basilisp run -p src dev/perf/lpy_snapshot_record.lpy <events.edn>
+(require 'cohost.hosts.basilisp-prime)
 (require 'cohost.run)
 (require 'cohost.boot)
 (require 'cohost.bench)

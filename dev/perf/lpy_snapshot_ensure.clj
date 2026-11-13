@@ -48,7 +48,7 @@
         (shell "basilisp" "run" "-p" "src" "dev/perf/lpy_snapshot_record.lpy" events)
         (shell "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "lpy" "--events" events "--out" lpy-src)
         ;; one load: Basilisp compiles each module's bytecode cache
-        (shell "basilisp" "run" "-p" lpy-src "-p" "src" "-c" "(require 'cohost.run) (require 'cohost.core)")
+        (shell "basilisp" "run" "-p" lpy-src "-p" "src" "-c" "(require 'cohost.hosts.basilisp-prime) (require 'cohost.run) (require 'cohost.core)")
         (spit (str lpy-root "/stamp") (str k "\n"))
         (println "LPY-SNAPSHOT-BUILT" k "in" (quot (- (System/nanoTime) t0) 1000000) "ms")
         lpy-src)
