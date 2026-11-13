@@ -1,0 +1,145 @@
+;; cohost.hosts.basilisp-prime -- the lpy host-completion priming.
+;;
+;; Basilisp 0.5.1's core lacks the sorted collections and has no
+;; java.lang.System, so cohost's host-level namespaces cannot be
+;; ANALYZED raw: cohost.http calls (sorted-map) at load-graph level
+;; (http.cljc:176, in header-map) and cohost.cli's temp-dir reads
+;; (System/getProperty "java.io.tmpdir") (cli.cljc:453). Every other
+;; host either has these (a Clojure) or compiles cohost through a
+;; rewriting loader; basilisp raw-compiles, so the launch path primes
+;; the completions FIRST -- before any cohost namespace is required --
+;; by interning them where the analyzer looks:
+;;
+;;   sorted-map / sorted-map-by / sorted-set / sorted-set-by
+;;     interned into basilisp.core (a real sorted implementation over
+;;     a sorted entry vector; see SortedMap below). Side effect, by
+;;     design: cohost.shim's host-fn lookups find them too, so the
+;;     booted stock core's sorted collections work on lpy as well.
+;;   System/getProperty
+;;     a namespace named System holding a getProperty fn backed by
+;;     Python's tempfile/os -- the one java.lang.System call in
+;;     cohost's host graph (cli.cljc's temp-dir).
+;;
+;; Load this namespace before cohost.hosts.basilisp / cohost.cli
+;; (dev/lpy_cli.lpy, bin/cohost's lpy launch, does). Idempotent:
+;; names already present are left alone.
+(ns cohost.hosts.basilisp-prime
+  (:import os
+           tempfile))
+
+(declare make-sorted-map make-sorted-set)
+
+;; ---------------------------------------------------------------------------
+;; SortedMap: entries kept as a vector of [k v] pairs, ascending by cmp.
+;; Implements IPersistentMap (which carries IAssociative, ILookup and
+;; ISeqable). One basilisp deftype limit: dunder __call__ cannot be
+;; declared beside interfaces, so these maps are not IFn -- get/assoc/
+;; seq/count/update/merge/into all work; (m k) does not.
+
+(defn- insert-entry [cmp entries k v]
+  (loop [es (seq entries) acc []]
+    (if es
+      (let [[ek ev] (first es) c (cmp ek k)]
+        (cond (zero? c) (into (conj acc [ek v]) (rest es))
+              (neg? c)  (recur (rest es) (conj acc [ek ev]))
+              :else     (into (conj acc [k v]) es)))
+      (conj acc [k v]))))
+
+(deftype SortedMap [cmp entries]
+  basilisp.lang.interfaces/IPersistentMap
+  (val-at [this k & args]
+    (let [nf (first args)]
+      (loop [es entries]
+        (if (seq es)
+          (let [[ek ev] (first es) c (cmp ek k)]
+            (cond (zero? c) ev (neg? c) (recur (rest es)) :else nf))
+          nf))))
+  (assoc [this & kvs]
+    (reduce (fn [m kv] (make-sorted-map cmp (insert-entry cmp (.-entries m) (first kv) (second kv))))
+            this (partition 2 kvs)))
+  (contains [this k] (not= ::absent (.val-at this k ::absent)))
+  (empty [this] (make-sorted-map cmp []))
+  (entry [this k] (let [v (.val-at this k ::absent)] (when (not= v ::absent) (map-entry k v))))
+  (cons [this o]
+    (cond (map? o) (reduce (fn [m [k v]] (assoc m k v)) this o)
+          (vector? o) (assoc this (first o) (second o))
+          :else (reduce (fn [m e] (assoc m (first e) (second e))) this o)))
+  (dissoc [this & ks]
+    (reduce (fn [m k] (make-sorted-map cmp (vec (remove (fn [[ek _]] (zero? (cmp ek k))) (.-entries m))))) this ks))
+  (seq [this] (seq (map (fn [[k v]] (map-entry k v)) entries)))
+  (__len__ [this] (count entries))
+  (__getitem__ [this k] (.val-at this k))
+  (__iter__ [this] (python/iter (map first (seq this)))))
+
+(defn make-sorted-map [cmp entries] (SortedMap. cmp (vec entries)))
+
+(defn sorted-map-by [cmp & kvs]
+  (reduce (fn [m [k v]] (assoc m k v)) (SortedMap. cmp []) (partition 2 kvs)))
+(defn sorted-map [& kvs] (apply sorted-map-by compare kvs))
+
+;; ---------------------------------------------------------------------------
+;; SortedSet: elements kept as a sorted vector, same pattern.
+
+(defn- insert-elem [cmp elems x]
+  (loop [es (seq elems) acc []]
+    (if es
+      (let [e (first es) c (cmp e x)]
+        (cond (zero? c) (into acc es)
+              (neg? c)  (recur (rest es) (conj acc e))
+              :else     (into (conj acc x) es)))
+      (conj acc x))))
+
+(deftype SortedSet [cmp elems]
+  basilisp.lang.interfaces/IPersistentSet
+  basilisp.lang.interfaces/ILookup
+  (val-at [this x & args]
+    (let [nf (first args)]
+      (loop [es elems]
+        (if (seq es)
+          (let [e (first es) c (cmp e x)]
+            (cond (zero? c) e (neg? c) (recur (rest es)) :else nf))
+          nf))))
+  (cons [this & xs]
+    (reduce (fn [s x] (make-sorted-set cmp (insert-elem cmp (.-elems s) x))) this xs))
+  (empty [this] (make-sorted-set cmp []))
+  (disj [this & xs]
+    (reduce (fn [s x] (make-sorted-set cmp (vec (remove (fn [e] (zero? (cmp e x))) (.-elems s))))) this xs))
+  (seq [this] (seq elems))
+  (__len__ [this] (count elems))
+  (__contains__ [this x] (not= ::absent (.val-at this x ::absent)))
+  (__getitem__ [this x] (.val-at this x))
+  (__iter__ [this] (python/iter elems)))
+
+(defn make-sorted-set [cmp elems] (SortedSet. cmp (vec elems)))
+
+(defn sorted-set-by [cmp & xs]
+  (reduce conj (SortedSet. cmp []) xs))
+(defn sorted-set [& xs] (apply sorted-set-by compare xs))
+
+;; ---------------------------------------------------------------------------
+;; the priming itself
+
+(defn- intern-if-absent! [ns-sym name-sym v]
+  (when-not (ns-resolve (find-ns ns-sym) name-sym)
+    (intern ns-sym name-sym v)))
+
+(intern-if-absent! 'basilisp.core 'sorted-map sorted-map)
+(intern-if-absent! 'basilisp.core 'sorted-map-by sorted-map-by)
+(intern-if-absent! 'basilisp.core 'sorted-set sorted-set)
+(intern-if-absent! 'basilisp.core 'sorted-set-by sorted-set-by)
+
+(when-not (find-ns 'System)
+  (create-ns 'System))
+(intern-if-absent! 'System 'getProperty
+  (fn [k]
+    (case k
+      "java.io.tmpdir" (tempfile/gettempdir)
+      "user.dir" (os/getcwd)
+      "user.home" (os.path/expanduser "~")
+      "file.separator" os/sep
+      "path.separator" os/pathsep
+      "line.separator" "\n"
+      "os.name" "Linux"
+      nil)))
+
+(ns-unmap 'cohost.hosts.basilisp-prime 'intern-if-absent!)

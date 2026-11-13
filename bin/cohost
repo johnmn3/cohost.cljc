@@ -437,9 +437,14 @@
                             "CHAMPACA_CACHE_DIR" (cohost.clj-body/champaca-cache-dir)})]
                (run-inherit cwd ["jolt" "-Scp" srcs "-m" "cohost.cli" cfg] extra))
       "cljw" (run-inherit cwd ["cljw" "-cp" src "-m" "cohost.cli" cfg])
+      ;; the lpy launch runs the dev/lpy_cli.lpy entry (the lg/phel pattern):
+      ;; basilisp raw-compiles, and cohost's host graph does not analyze raw
+      ;; on it (cohost.http's sorted-map, cohost.cli's System/getProperty) --
+      ;; the entry requires cohost.hosts.basilisp-prime first, which interns
+      ;; the host completions, then the adapter, then cohost.cli.
       "lpy" (run-inherit cwd (vec (concat ["basilisp" "run"]
                                           (when-let [d (:lpy-src jank)] ["-p" d])
-                                          ["-p" src "-c" (str "(require 'cohost.cli) (cohost.cli/-main " (pr-str cfg) ")")])))
+                                          ["-p" src (str repo "/dev/lpy_cli.lpy") cfg])))
       "lg" (run-inherit cwd ["lg" "-source-paths" src (str repo "/dev/lg_cli.lg") cfg])
       ;; the snapshot's launcher: cohost.cli compiled with the booted core into one
       ;; jank program (dev/perf/jank_snapshot_key.clj), the program JIT-compiled at
