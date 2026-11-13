@@ -36,6 +36,18 @@
          "jvm" :jvm
          "clj" :clojure-cli}))
 
+(def ignored-clj-providers
+  "Host tokens whose :clj handler is ignored for :clj-leg purposes when a
+   real provider is in the string (John, ~19:11 ET). Only hosts that
+   provide a true Clojure/JDK experience are acknowledged :clj providers:
+   jolt/champaca and the JVM seat. A token here may still register in
+   clj-providers — jank's own reader feature set claims :clj so it can load
+   .clj files; it provides no JDK. Ignoring is scoped to the :clj leg: it
+   says nothing about the host's own launch or its other legs. When every
+   claimant is ignored (or none is present), resolution falls through as
+   before: the first host owns the leg and :provider is nil."
+  #{"jank"})
+
 (def clj-absolute
   "Tokens that own :clj from any position, ahead of list order."
   #{"clj"})
@@ -59,15 +71,23 @@
 (defn resolve-clj-leg!
   "John, 09:28 ET. :clj anywhere means the official clojure CLI. Otherwise
    the first listed host that has a :clj provider owns the leg. Otherwise
-   there is no provider and :owner is the first host (its own launch)."
+   there is no provider and :owner is the first host (its own launch).
+   Claimants named in ignored-clj-providers are skipped while any real
+   provider is in the string, and an ignored owner's own registration
+   never surfaces as :provider."
   [hosts]
   (let [hosts (vec hosts)
         table @clj-providers
         absolute (first (filter clj-absolute hosts))
+        real (first (filter #(and (contains? table %)
+                                  (not (contains? ignored-clj-providers %)))
+                            hosts))
         owner (or absolute
-                  (first (filter #(contains? table %) hosts))
+                  real
                   (first hosts))
-        provider (when (and owner (contains? table owner))
+        provider (when (and owner
+                            (not (contains? ignored-clj-providers owner))
+                            (contains? table owner))
                    (get table owner))
         plan {:hosts hosts :provider provider :owner owner}]
     (reset! clj-leg plan)
