@@ -31,9 +31,19 @@
      on this seat until the yield-to-pump versions land here (the
      one-thread binding's wait contract).
    - :native-ctor / :native-static are carried from hosts/jvm.clj
-     (Class/forName + Reflector); their in-body verdict belongs to the
-     registration landing's miniature -- if Class/forName does not
-     answer in-body they come out, and this docstring records the drop."
+     (Class/forName + Reflector). Their in-body scope is MEASURED
+     (SIS-1 falsifier, banked on lane-m/teavm-c1): Class/forName
+     answers for every name-resolvable class, and the Reflector half
+     answers inside the fork's reflection census (java.lang.* plus
+     the registered clojure.lang data set); outside the census the
+     member metadata is empty and these keys return nil -- the
+     truthful cannot for this seat. Widening the census is R1, a
+     fork-side supplier change, not an adapter change.
+   - :byte-streams' :read-all reads a File through FileInputStream,
+     not java.nio.file.Files/readAllBytes: the fork classlib has no
+     java.nio.file (the fork's dependency analysis rejects
+     File.toPath in this namespace -- registration landing, in-body
+     build). The InputStream arm is the JVM shape unchanged."
   (:require [cohost.adapter :as adapter]
             [cohost.hosts.java :as java]))
 
@@ -148,7 +158,7 @@
                          :text-bytes (fn [^String s] (.getBytes s "UTF-8"))
                          :b64-bytes (fn [^String s] (.decode (java.util.Base64/getDecoder) s))
                          :bytes-b64 (fn [^bytes bs] (.encodeToString (java.util.Base64/getEncoder) bs))
-                         :read-all (fn [x] (cond (instance? java.io.File x) (java.nio.file.Files/readAllBytes (.toPath ^java.io.File x))
+                         :read-all (fn [x] (cond (instance? java.io.File x) (with-open [in (java.io.FileInputStream. ^java.io.File x)] (.readAllBytes in))
                                                  (instance? java.io.InputStream x) (with-open [^java.io.InputStream in x] (.readAllBytes in))
                                                  :else nil))})
    ;; the host's own java.net classes, where cohost.http has no leaves
