@@ -25,11 +25,21 @@
         version (str/trim (:out (shell {:out :string} "basilisp" "version")))]
     (cohost.dev.sha256/sha256-hex (str sums "basilisp " version "\n"))))
 
+(defn- lpy-core-cache
+  "The compiled bytecode cache of the snapshot's core module, or nil.
+   The snapshot's boot loads the modules through Basilisp's importer,
+   which looks for exactly this cache; a snapshot without it is not
+   fresh however good its stamp looks (a build under
+   PYTHONDONTWRITEBYTECODE produces one -- see lpy-ensure!)."
+  []
+  (first (fs/glob lpy-src "cohost/__pycache__/core.*.lpyc")))
+
 (defn- lpy-stale-reason [k]
   (let [stamp (str lpy-root "/stamp")]
     (cond (not (fs/exists? stamp)) "no stamp"
           (not= k (str/trim (slurp stamp))) "another key"
           (not (fs/exists? (str lpy-src "/cohost/core.lpy"))) "no core module"
+          (not (lpy-core-cache)) "no core cache"
           :else nil)))
 
 (defn lpy-fresh-src []
@@ -47,8 +57,19 @@
         (fs/create-dirs lpy-root)
         (shell "basilisp" "run" "-p" "src" "dev/perf/lpy_snapshot_record.lpy" events)
         (shell "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "lpy" "--events" events "--out" lpy-src)
-        ;; one load: Basilisp compiles each module's bytecode cache
-        (shell "basilisp" "run" "-p" lpy-src "-p" "src" "-c" "(require 'cohost.hosts.basilisp-prime) (require 'cohost.run) (require 'cohost.core)")
+        ;; one load: Basilisp compiles each module's bytecode cache.
+        ;; The load's whole product is the caches, so it runs with
+        ;; PYTHONDONTWRITEBYTECODE stripped from its environment --
+        ;; inherited, it suppresses every cache write, and the build
+        ;; would stamp a snapshot whose boot dies in the importer on
+        ;; the missing files. The stamp is written only once the core
+        ;; cache is on disk, for the same reason.
+        (shell "env" "-u" "PYTHONDONTWRITEBYTECODE"
+               "basilisp" "run" "-p" lpy-src "-p" "src" "-c" "(require 'cohost.hosts.basilisp-prime) (require 'cohost.run) (require 'cohost.core)")
+        (when-not (lpy-core-cache)
+          (throw (ex-info (str "lpy snapshot build produced no bytecode cache at "
+                               lpy-src "/cohost/__pycache__ -- not stamping it fresh")
+                          {:snapshot lpy-src})))
         (spit (str lpy-root "/stamp") (str k "\n"))
         (println "LPY-SNAPSHOT-BUILT" k "in" (quot (- (System/nanoTime) t0) 1000000) "ms")
         lpy-src)
