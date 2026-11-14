@@ -177,6 +177,7 @@
     :scan (str "(cohost.boot/snap-scan! " (quoted (:ns e)) ")")
     :thread-layer (str "(cohost.boot/snap-thread-layer!)")
     :http-layer (str "(cohost.boot/snap-http-layer!)")
+    :shim-layer (str "(cohost.boot/snap-shim-layer!)")
     :lib-fill (str "(cohost.boot/snap-lib-fill! " (quoted (:lib e)) ")")
     :inline (str "(cohost.boot/snap-inline! " (quoted (:sym e)) " " (pr-src (decode (:form e))) ")")
     :directive (str "(cohost.boot/snap-directive! " (quoted (decode (:d e))) ")")

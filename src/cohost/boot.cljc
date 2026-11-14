@@ -857,12 +857,63 @@
                     (recur j j (conj out (subs src start i))))
                   (recur (inc i) start out))))))))))
 
+(defn- scan-regex-body
+  "The body of a regex literal whose opening quote is at i-1, translated:
+   a possessive + (one directly after +, *, ? or }) outside a character
+   class and unescaped is dropped. -> [body changed? index past the
+   closing quote]."
+  [cs n i]
+  (loop [j i prev nil in-class? false out [] changed? false]
+    (if (>= j n)
+      [(apply str out) changed? j]
+      (let [c (nth cs j)]
+        (cond (= c \\) (recur (+ j 2) nil in-class? (conj out c (nth cs (min (dec n) (inc j)))) changed?)
+              (and (= c \") (not in-class?)) [(apply str out) changed? (inc j)]
+              (= c \[) (recur (inc j) c true (conj out c) changed?)
+              (= c \]) (recur (inc j) c false (conj out c) changed?)
+              (and (= c \+) (not in-class?) (contains? #{\+ \* \? \}} prev))
+              (recur (inc j) prev in-class? out true)
+              :else (recur (inc j) c in-class? (conj out c) changed?))))))
+
+(defn- bridge-regex-literals
+  "Possessive quantifiers in regex literals, rewritten to the plain
+   greedy ones, for hosts whose regex dialect rejects them (adapter
+   :regex-possessive?): a pattern using one otherwise fails to READ
+   there at all (clojure/main.clj's ([^.])++$ on Go's RE2). Atomic
+   groups have no greedy spelling and are not translated; no stock
+   pattern uses one. Outside regex literals the text is untouched,
+   and a source with nothing to translate comes back as itself."
+  [src]
+  (if (host/regex-possessive?)
+    src
+    (let [n (count src)
+          cs (host/string-chars src)]
+      (loop [i 0 start 0 out nil]
+        (if (>= i n)
+          (if (nil? out) src (apply str (conj out (subs src start n))))
+          (let [c (nth cs i)]
+            (cond (= c \;) (recur (scan-line-end cs n (inc i)) start out)
+                  (= c \") (recur (scan-string-end cs n (inc i)) start out)
+                  (= c \\) (recur (min n (+ i 2)) start out)
+                  (and (= c \#) (< (inc i) n) (= (nth cs (inc i)) \"))
+                  (let [[body changed? j] (scan-regex-body cs n (+ i 2))]
+                    (if changed?
+                      (recur j j (conj (or out []) (subs src start i) "#\"" body "\""))
+                      (recur j start out)))
+                  :else (recur (inc i) start out))))))))
+
+(defn- bridge-source
+  "The source text a stock file is read from: string-tag stripping and,
+   on hosts whose regex dialect needs it, the regex bridge."
+  [src]
+  (bridge-regex-literals (strip-string-tags src)))
+
 (defn boot-file!
   "Boot one source file (a path) into cohost.core."
   [ctx report path]
   (let [src (if (profiling)
-              (prof :read #(strip-string-tags (host/slurp-file path)))
-              (strip-string-tags (host/slurp-file path)))]
+              (prof :read #(bridge-source (host/slurp-file path)))
+              (bridge-source (host/slurp-file path)))]
     (host/with-ns core-ns
       (fn [] (read-prof src (fn [form] (process-form! ctx report form)))
         (scan-macros! ctx)))))
@@ -873,8 +924,8 @@
   [path names]
   (let [found (atom {})]
     (host/try-all (fn [] (let [src (if (profiling)
-                                      (prof :read #(strip-string-tags (host/slurp-file path)))
-                                      (strip-string-tags (host/slurp-file path)))]
+                                      (prof :read #(bridge-source (host/slurp-file path)))
+                                      (bridge-source (host/slurp-file path)))]
                            (read-prof src (fn [form] (let [nm (policy/form-name form)]
                                                        (when (and (contains? names nm) (not (contains? @found nm)))
                                                          (swap! found assoc nm form))))))))
@@ -1033,6 +1084,37 @@
         (record! report :replaced {:name nm :reason :http-layer}))))
   report)
 
+(defn install-shim-layer!
+  "Fill the reader / exception names the host's core left uninterned
+   (read, read+string, load-reader, read-line, line-seq,
+   Throwable->map, PrintWriter-on, the locking macro) from the shim
+   layer's portable implementations over the io layer. Hosts whose
+   core has its own are untouched: a fill interns only a name that
+   is not already interned."
+  [report]
+  (snap! {:op :shim-layer})
+  (doseq [[nm v] shim/core-fills]
+    (when-not (host/interned-var core-ns nm)
+      (host/intern! core-ns nm v)
+      (record! report :replaced {:name nm :reason :shim-layer})))
+  (doseq [[nm f] shim/core-fill-macros]
+    (when-not (host/interned-var core-ns nm)
+      (host/intern! core-ns nm f)
+      (host/mark-macro! (host/interned-var core-ns nm))
+      (record! report :replaced {:name nm :reason :shim-layer})))
+  ;; namespaces created before this install (the user namespace, any
+  ;; library already loaded) hold a snapshot of the core's refers:
+  ;; refer the filled names into them, or the names resolve in
+  ;; libraries loaded later but not in the session namespace
+  ;; (measured: (resolve 'flush) false in user, true in libraries).
+  (let [filled (into (set (keys shim/core-fills)) (keys shim/core-fill-macros))]
+    (when (seq filled)
+      (doseq [ns-sym (into [(symbol (str user-ns))]
+                           (map (fn [n] (symbol n)))
+                           @(:loader-nses (ctx)))]
+        (host/try-all (fn [] (host/refer! ns-sym core-ns {:only (vec filled)}))))))
+  report)
+
 (defn install-collection-fill!
   "Decide and install the Eve collection fill (unit 4) for this
    boot, before the prelude: with the fill in force, the shim's
@@ -1140,6 +1222,7 @@
      ;; before libraries or user code can intern or create atoms
      (install-atom-layer! ctx report eve-atoms)
      (install-http-layer! report)
+     (install-shim-layer! report)
      (scan-macros! ctx)
      (install-host-reducers!)
      (install-eduction-reduce!)
@@ -1514,7 +1597,7 @@
          (host/with-ns (or from-ns core-ns)
            (fn []
              (read-prof
-              (if (profiling) (prof :read #(strip-string-tags src)) (strip-string-tags src))
+              (if (profiling) (prof :read #(bridge-source src)) (bridge-source src))
               (fn [form]
                 (let [cur (host/current-ns)
                       {:keys [action replacement] nm :name} (policy/decide-lib form lib)]
@@ -1751,6 +1834,14 @@
   "install-http-layer! of the recorded boot (as snap-thread-layer!)."
   []
   (install-http-layer! @snap-report)
+  nil)
+
+(defn snap-shim-layer!
+  "install-shim-layer! of the recorded boot (as snap-thread-layer!):
+   without it a snapshot-restored core lacks the shim's core fills
+   (read, in-ns, Throwable->map, PrintWriter-on, ...)."
+  []
+  (install-shim-layer! @snap-report)
   nil)
 
 (defn snap-is! "The shim's instance test for class token c." [c]

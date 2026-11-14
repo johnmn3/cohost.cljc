@@ -301,6 +301,8 @@
     java.lang.InterruptedException [java.lang.Exception java.lang.Throwable java.lang.Object]
     java.io.IOException [java.lang.Exception java.lang.Throwable java.lang.Object]
     java.util.concurrent.ExecutionException [java.lang.Exception java.lang.Throwable java.lang.Object]
+    java.util.concurrent.locks.ReentrantLock [java.lang.Object java.util.concurrent.locks.Lock]
+    java.util.concurrent.locks.Lock [java.lang.Object]
     java.util.concurrent.CompletionException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
     java.util.concurrent.TimeoutException [java.lang.Exception java.lang.Throwable java.lang.Object]
     java.util.concurrent.CancellationException [java.lang.IllegalStateException java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
@@ -309,6 +311,9 @@
     java.net.ProtocolException [java.io.IOException java.lang.Exception java.lang.Throwable java.lang.Object]
     java.net.URI [java.lang.Comparable java.io.Serializable java.lang.Object]
     java.net.URL [java.io.Serializable java.lang.Object]
+    java.net.Socket [java.lang.Object]
+    java.net.ServerSocket [java.lang.Object]
+    java.net.InetAddress [java.io.Serializable java.lang.Object]
     java.net.URLConnection [java.lang.Object]
     java.net.HttpURLConnection [java.net.URLConnection java.lang.Object]
     java.net.http.HttpClient [java.lang.AutoCloseable java.lang.Object]
@@ -486,6 +491,9 @@
     ;; a value of Eve's HTTP layer (cohost.http): the java.net class it stands for
     (and (map? x) (http/value? x)) (http/class-token x)
     ;; a value of the io layer (cohost.io): the java.io class it stands for
+    (identical? :cohost.shim/reentrant-lock (:cohost/kind x)) 'java.util.concurrent.locks.ReentrantLock
+    (identical? :cohost.shim/classloader (:cohost/kind x)) 'clojure.lang.DynamicClassLoader
+    (io/inet-address? x) 'java.net.InetAddress
     (io/value? x) (io/class-token x)
     (host-record? x) (type-of x)
     ;; a layer atom (unit 5) IS a clojure.lang.Atom through the
@@ -1647,6 +1655,221 @@
 (def Murmur3-mixCollHash (host-fn 'mix-collection-hash (fn [h _n] h)))
 (def BigInt-fromBigInteger identity)
 (def BigInt-valueOf (host-fn 'bigint identity))
+
+;; ------------------------------------------------------------------
+;; core fills for hosts whose own core lacks the reader / exception
+;; names (policy's host-names): read, read+string, load-reader,
+;; read-line, line-seq over the io layer's readers, Throwable->map
+;; over the adapter's exception accessors, PrintWriter-on over an io
+;; sink writer, and the locking macro over monitor-enter/exit. Boot
+;; interns these into the booted core only for names the host left
+;; uninterned (install-shim-layer!), so hosts with their own -- the
+;; JVM, jolt -- never see them. The reader is a text scanner in the
+;; EdnReader/read idiom: it consumes exactly one form's characters
+;; (prefixes, discards and nesting respected) and lets the host's
+;; read-string (RT-readString) give the value, so reader semantics
+;; stay the host's own.
+
+(defn- code-peek [rdr]
+  (let [c (io/read-char! rdr)]
+    (when (some? c) (io/unread! rdr c))
+    c))
+
+(defn- code-skip! [rdr]
+  (loop []
+    (let [c (code-peek rdr)]
+      (cond (nil? c) nil
+            (edn-ws? c) (do (io/read-char! rdr) (recur))
+            (= c \;) (do (loop []
+                            (let [d (io/read-char! rdr)]
+                              (when (and (some? d) (not= d \newline)) (recur))))
+                          (recur))
+            :else nil))))
+
+(defn- code-prefixes!
+  "Append a form's prefix characters (' ` ~ ~@ @ and ^meta) to sb,
+   leaving the reader at the form's body. The body itself is scanned
+   by edn-scan!, whose one-form scan already covers collections,
+   strings, chars, tokens, sets, anonymous fns, reader conditionals
+   and discards; the prefixes are the part its token scan would end
+   the form on."
+  [rdr sb]
+  (loop []
+    (let [c (code-peek rdr)]
+      (cond (contains? #{\' \` \@} c)
+            (do (h-sb-append! sb (io/read-char! rdr)) (code-skip! rdr) (recur))
+            (= c \~)
+            (do (h-sb-append! sb (io/read-char! rdr))
+                (when (= (code-peek rdr) \@) (h-sb-append! sb (io/read-char! rdr)))
+                (code-skip! rdr) (recur))
+            (= c \^)
+            (do (h-sb-append! sb (io/read-char! rdr))
+                (code-skip! rdr)
+                (h-sb-append! sb (edn-scan! rdr))
+                (code-skip! rdr) (recur))
+            :else nil))))
+
+(defn- read-one
+  "One form from an io reader: [form text], or [::eof \"\"] when only
+   whitespace and comments remain."
+  [rdr]
+  (let [sb (h-string-builder)]
+    (code-skip! rdr)
+    (if (nil? (code-peek rdr))
+      [::eof ""]
+      (do (code-prefixes! rdr sb)
+          (h-sb-append! sb (edn-scan! rdr))
+          (let [text ((host/capability :sb-string) sb)]
+            [(RT-readString text) text])))))
+
+(defn- core-var-value [sym]
+  (some-> (host/resolve-core sym) (host/var-root)))
+
+(defn- as-reader [x]
+  (cond (io/reader-value? x) x
+        (io/input-stream-value? x) (io/input-stream-reader x)
+        :else (throw (host/ex* 'java.lang.IllegalArgumentException (str "clojure.core read: not a reader of this layer: " (class-of x))))))
+
+(def core-read
+  (fn ([] (core-read (core-var-value '*in*)))
+      ([opts stream]
+       (if (map? opts)
+         (let [[f _] (read-one (as-reader stream))]
+           (if (= ::eof f)
+             (let [e (:eof opts :eofthrow)]
+               (if (= :eofthrow e)
+                 (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+                 e))
+             f))
+         (throw (host/ex* 'java.lang.IllegalArgumentException "read's two-argument form takes an opts map and a stream"))))
+      ([stream] (core-read stream true nil))
+      ([stream eof-error? eof-value] (core-read stream eof-error? eof-value false))
+      ([stream eof-error? eof-value _recursive?]
+       (let [[f _] (read-one (as-reader stream))]
+         (if (= ::eof f)
+           (if eof-error?
+             (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+             eof-value)
+           f)))))
+
+(def core-read+string
+  (fn ([] (core-read+string (core-var-value '*in*)))
+      ([opts stream]
+       (if (map? opts)
+         (let [[f text] (read-one (as-reader stream))]
+           (if (= ::eof f)
+             (let [e (:eof opts :eofthrow)]
+               (if (= :eofthrow e)
+                 (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+                 [e text]))
+             [f text]))
+         (throw (host/ex* 'java.lang.IllegalArgumentException "read+string's two-argument form takes an opts map and a stream"))))
+      ([stream] (core-read+string stream true nil))
+      ([stream eof-error? eof-value] (core-read+string stream eof-error? eof-value false))
+      ([stream eof-error? eof-value _recursive?]
+       (let [[f text] (read-one (as-reader stream))]
+         (if (= ::eof f)
+           (if eof-error?
+             (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+             [eof-value text])
+           [f text])))))
+
+(def core-load-reader
+  (fn [rdr]
+    (let [r (as-reader rdr)]
+      (loop []
+        (let [[f _] (read-one r)]
+          (when (not= ::eof f)
+            ((deref eval-hook) f)
+            (recur)))))
+    nil))
+
+(def core-read-line
+  (fn [] (let [in (core-var-value '*in*)]
+           (when (io/reader-value? in) (io/read-line! in)))))
+
+(def core-line-seq
+  (fn [rdr]
+    (let [r (as-reader rdr)]
+      ((fn step []
+         (lazy-seq
+          (when-let [line (io/read-line! r)]
+            (cons line (step)))))))))
+
+(defn- ste->vec [frame]
+  [(symbol (str (display-class-name (nth frame 0)))) (symbol (str (nth frame 1)))
+   (nth frame 2) (nth frame 3)])
+
+(def core-Throwable->map
+  (fn [t]
+    (let [chain (loop [e t seen #{} out []]
+                  (if (or (nil? e) (contains? seen e))
+                    out
+                    (recur (host/exception-cause e) (conj seen e) (conj out e))))
+          via (mapv (fn [e]
+                      (let [trace (host/ex-trace e)]
+                        (cond-> {:type (symbol (str (class-of e)))
+                                 :message (host/exception-message e)}
+                          (some? (ex-data e)) (assoc :data (ex-data e))
+                          (seq trace) (assoc :at (ste->vec (first trace))))))
+                    chain)]
+      {:cause (host/exception-message (peek chain))
+       :via via
+       :trace (mapv ste->vec (host/ex-trace t))})))
+
+(def core-PrintWriter-on
+  (fn ([f] (core-PrintWriter-on f nil false))
+      ([f stream] (core-PrintWriter-on f stream false))
+      ([f stream _flush-on-newline?]
+       (io/sink-writer (fn [s] (f s) (when (some? stream) (io/append-text! stream s)))))))
+
+(def core-in-ns
+  "clojure.core/in-ns for a host whose boot left it out: enter the
+   namespace (a new one is created bare and given the booted core's
+   refers, as stock's in-ns refers clojure.core), and return it."
+  (fn [ns-sym]
+    (let [found (host/try-all (fn [] (Namespace-find ns-sym)))]
+      (when-not found
+        (host/ensure-bare-ns! ns-sym)
+        (host/refer-all! ns-sym 'cohost.core))
+      (host/set-current-ns! ns-sym)
+      (Namespace-find ns-sym))))
+
+(def core-requiring-resolve
+  "clojure.core/requiring-resolve: require the symbol's namespace
+   through the booted core's require, then answer its var."
+  (fn [sym]
+    (let [ns-sym (symbol (namespace sym))]
+      ((core-var-value 'require) ns-sym)
+      (get (host/ns-interns-map ns-sym) (symbol (name sym))))))
+
+(def core-flush
+  "clojure.core/flush over the layer's writer, when *out* is one."
+  (fn [] (let [out (core-var-value '*out*)]
+           (when (io/writer-value? out) (io/flush-writer! out)))
+    nil))
+
+(def core-fills
+  "clojure.core names this layer supplies when the host's core lacks
+   them (boot's install-shim-layer!)."
+  {'flush core-flush
+   'in-ns core-in-ns
+   'requiring-resolve core-requiring-resolve
+   'read core-read
+   'read+string core-read+string
+   'load-reader core-load-reader
+   'read-line core-read-line
+   'line-seq core-line-seq
+   'Throwable->map core-Throwable->map
+   'PrintWriter-on core-PrintWriter-on})
+
+(def core-fill-macros
+  {'locking (fn [_form _env x & body]
+              (list 'do
+                    (list 'monitor-enter x)
+                    (list 'try (cons 'do body)
+                          (list 'finally (list 'monitor-exit x)))))})
+
 (def LispReader-read (let [rd (host-fn 'read (unsupported "read"))] (fn ([rdr opts] (rd opts rdr)) ([rdr eof-error? eof-val _recursive?] (rd rdr eof-error? eof-val)))))
 (def TaggedLiteral-create (host-fn 'tagged-literal (fn [tag form] {:tag tag :form form})))
 (def ReaderConditional-create (host-fn 'reader-conditional (fn [form splicing?] {:form form :splicing? splicing?})))
@@ -2467,8 +2690,13 @@
 (def new-StringWriter (fn ([] (io/string-writer)) ([_n] (io/string-writer))))
 (def new-CharArrayReader (fn [cs] (io/char-array-reader (seq cs))))
 (def new-InputStreamReader
-  (fn ([in] (io/input-stream-reader in))
-      ([in cs] (utf8-only! cs) (io/input-stream-reader in))))
+  (fn ([in] (if (io/is? :cohost.io/socket-input in)
+              (io/socket-reader in)
+              (io/input-stream-reader in)))
+      ([in cs] (utf8-only! cs)
+       (if (io/is? :cohost.io/socket-input in)
+         (io/socket-reader in)
+         (io/input-stream-reader in)))))
 (def new-OutputStreamWriter
   (fn ([out] (io/output-stream-writer out))
       ([out cs] (utf8-only! cs) (io/output-stream-writer out))))
@@ -2477,6 +2705,25 @@
 (def new-BufferedInputStream (fn ([in] (io/buffered-input-stream in)) ([in _sz] (io/buffered-input-stream in))))
 (def new-BufferedOutputStream (fn ([out] (io/buffered-output-stream out)) ([out _sz] (io/buffered-output-stream out))))
 (def new-PushbackReader (fn ([r] (io/pushback-reader r)) ([r _sz] (io/pushback-reader r))))
+;; clojure.lang.LineNumberingPushbackReader: the layer's pushback reader
+;; (its line count is not tracked; getLineNumber refuses by name)
+(def new-LineNumberingPushbackReader
+  (fn ([r] (io/pushback-reader r)) ([r _n] (io/pushback-reader r))))
+;; java.net sockets: the io layer's in-process loopback
+(def new-ServerSocket
+  (fn ([] (io/listen! 0))
+      ([port] (io/listen! port))
+      ([port _backlog] (io/listen! port))
+      ([port _backlog _addr] (io/listen! port))))
+(def new-Socket
+  (fn ([] (io/unconnected-socket))
+      ([host port] (io/connect! (if (io/inet-address? host) (io/inet-host host) host) port))))
+(def InetAddress-getByName
+  (fn [h] {:cohost/kind :cohost.io/inet-address :host (or h "localhost")}))
+(def InetAddress-getLoopbackAddress
+  (fn [] {:cohost/kind :cohost.io/inet-address :host "localhost"}))
+(def InetAddress-getLocalHost
+  (fn [] {:cohost/kind :cohost.io/inet-address :host "localhost"}))
 (def new-FileReader (fn [f] (io/file-reader (as-file-value f))))
 (def new-FileWriter
   (fn ([f] (io/file-writer (as-file-value f) false))
@@ -2590,7 +2837,15 @@
 (def -getOutputStream (http-member "getOutputStream" {:cohost.http/connection http/conn-output-stream}))
 (def -getResponseCode (http-member "getResponseCode" {:cohost.http/connection (fn [c] (:status (http/conn-response c)))}))
 (def -getResponseMessage (http-member "getResponseMessage" {:cohost.http/connection (fn [c] (get http/reason-phrases (:status (http/conn-response c))))}))
-(def -getInputStream (http-member "getInputStream" {:cohost.http/connection http/conn-input-stream}))
+(def -getInputStream (http-member "getInputStream" {:cohost.http/connection http/conn-input-stream
+                                                     :cohost.io/socket (fn [s] (io/socket-input s))}))
+(def -getOutputStream (http-member "getOutputStream" {:cohost.io/socket (fn [s] (io/socket-output s))}))
+(def -accept (http-member "accept" {:cohost.io/server-socket (fn [s] (io/accept! s))}))
+(def -getLocalPort (http-member "getLocalPort" {:cohost.io/server-socket (fn [s] (io/server-port s))
+                                                :cohost.io/socket (fn [s] (io/socket-local-port s))}))
+(def -getPort (http-member "getPort" {:cohost.io/socket (fn [s] (io/socket-port s))}))
+(def -isClosed (http-member "isClosed" {:cohost.io/server-socket (fn [s] (io/server-closed? s))
+                                        :cohost.io/socket (fn [s] (io/socket-closed? s))}))
 (def -getErrorStream (http-member "getErrorStream" {:cohost.http/connection http/conn-error-stream}))
 (def -getHeaderField (http-member "getHeaderField" {:cohost.http/connection http/conn-header-field}))
 (def -getHeaderFields (http-member "getHeaderFields" {:cohost.http/connection (fn [c] (:headers (http/conn-response c)))}))
@@ -3639,6 +3894,69 @@
 (def -interrupt (fn [x] (when-not (thread/thread-value? x)
                            (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))
                     nil))
+;; Thread.setDaemon records the flag on the thread value (no host leaf
+;; consumes it yet); clojure.core.server's thread macro calls it on
+;; every server and client thread it starts
+(def -setDaemon (fn [x b] (when-not (thread/thread-value? x)
+                            (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))
+                      (thread/set-daemon! x b)
+
+                      nil))
+
+;; java.util.concurrent.locks.ReentrantLock: a standin over an atom --
+;; CAS-acquire with a brief-wait spin, reentrant for the holding
+;; thread (Thread/currentThread is the owner identity). Fairness is
+;; not honored. clojure.core.server's with-lock is the consumer.
+(def new-ReentrantLock
+  (fn ([] {:cohost/kind :cohost.shim/reentrant-lock :state (atom {:owner nil :count 0})})
+      ([_fair?] {:cohost/kind :cohost.shim/reentrant-lock :state (atom {:owner nil :count 0})})))
+
+(defn- shim-wait-brief! []
+  (when-let [db (host/doorbell)] (host/doorbell-wait db 10)))
+
+(defn- lock-acquire! [x]
+  (let [st (:state x) me (Thread-currentThread)]
+    (loop []
+      (let [cur @st]
+        (cond (nil? (:owner cur))
+              (when-not (compare-and-set! st cur {:owner me :count 1}) (recur))
+              (identical? me (:owner cur)) (swap! st update :count inc)
+              :else (do (shim-wait-brief!) (recur))))))
+  nil)
+
+(defn- lock-try! [x]
+  (let [st (:state x) me (Thread-currentThread) cur @st]
+    (cond (nil? (:owner cur)) (boolean (compare-and-set! st cur {:owner me :count 1}))
+          (identical? me (:owner cur)) (do (swap! st update :count inc) true)
+          :else false)))
+
+(defn- lock-release! [x]
+  (let [st (:state x) me (Thread-currentThread)]
+    (if (identical? me (:owner @st))
+      (swap! st (fn [cur] (if (<= (:count cur) 1) {:owner nil :count 0} (update cur :count dec))))
+      (throw (host/ex* 'java.lang.IllegalMonitorStateException "current thread does not hold the lock"))))
+  nil)
+
+;; clojure.lang.DynamicClassLoader: an inert standin -- there is no
+;; class loading to delegate on these hosts, but clojure.main/repl
+;; wraps the thread's context classloader in one on entry, so the
+;; value and the Thread accessors exist. The per-thread CCL lives in
+;; a shim atom keyed by the thread value (its :id makes it unique).
+(def new-DynamicClassLoader
+  (fn ([] {:cohost/kind :cohost.shim/classloader :parent nil})
+      ([parent] {:cohost/kind :cohost.shim/classloader :parent parent})))
+(def ^:private context-classloaders (atom {}))
+(def -getContextClassLoader
+  (http-member "getContextClassLoader" {:cohost.thread/thread (fn [x] (get @context-classloaders x))}))
+(def -setContextClassLoader
+  (http-member "setContextClassLoader" {:cohost.thread/thread (fn [x ccl] (swap! context-classloaders assoc x ccl) nil)}))
+(def -atLineStart (http-member "atLineStart" {:cohost.io/pushback-reader (fn [_] true)}))
+
+(def -lock (http-member "lock" {:cohost.shim/reentrant-lock (fn [x] (lock-acquire! x))}))
+(def -unlock (http-member "unlock" {:cohost.shim/reentrant-lock (fn [x] (lock-release! x))}))
+(def -tryLock (http-member "tryLock" {:cohost.shim/reentrant-lock (fn [x & _args] (lock-try! x))}))
+(def -isLocked (http-member "isLocked" {:cohost.shim/reentrant-lock (fn [x] (some? (:owner @(:state x))))}))
+(def -isHeldByCurrentThread (http-member "isHeldByCurrentThread" {:cohost.shim/reentrant-lock (fn [x] (identical? (Thread-currentThread) (:owner @(:state x))))}))
 (def -cancel (fn [x & _args] (if (thread/future-value? x)
                                (thread/future-cancel x)
                                (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.Future"))))))
@@ -4044,7 +4362,9 @@
 (def -toCharArray (fn [s] (to-array* (vec (nn s)))))
 (def -append (fn [sb x] (h-sb-append! sb (if (nil? x) "null" x))))
 ;; a value of Eve's HTTP layer has nothing to release
-(def -close (fn [x] (cond (http/value? x) nil
+(def -close (fn [x] (cond (io/server-socket-value? x) (io/server-close! x)
+                          (io/socket-value? x) (io/socket-close! x)
+                          (http/value? x) nil
                           (io/reader-value? x) (io/close-reader! x)
                           (io/writer-value? x) (io/close-writer! x)
                           (io/output-stream-value? x) (io/close-output! x)

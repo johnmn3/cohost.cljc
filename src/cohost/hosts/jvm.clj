@@ -18,6 +18,7 @@
    ;; multimethod position naming a java.io class must name the
    ;; layer's record class, not the real class, or dispatch misses
    ;; every value (clojure.java.io's do-copy on [String Writer]).
+   :regex-possessive? true
    :host-type (fn [token]
                 (get '{java.io.File cohost.io.FileValue
                        java.io.InputStream cohost.io.InputStreamValue
@@ -29,7 +30,9 @@
                        java.io.Writer cohost.io.WriterValue
                        java.io.BufferedWriter cohost.io.BufferedWriterValue
                        java.net.URL cohost.io.UrlDispatch
-                       java.net.URI cohost.io.UriDispatch}
+                       java.net.URI cohost.io.UriDispatch
+                       java.net.Socket cohost.io.SocketValue
+                       java.net.ServerSocket cohost.io.ServerSocketValue}
                      token))
    ;; X3-1: the shim's MultiFn with its one-entry cache (adapter.cljc); full bb
    ;; bench:jvm, 5 interleaved rounds on max/main aeac81b: multimethod stock 8.49
@@ -163,7 +166,7 @@
                          :text-bytes (fn [^String s] (.getBytes s "UTF-8"))
                          :b64-bytes (fn [^String s] (.decode (java.util.Base64/getDecoder) s))
                          :bytes-b64 (fn [^bytes bs] (.encodeToString (java.util.Base64/getEncoder) bs))
-                         :read-all (fn [x] (cond (instance? java.io.File x) (with-open [in (java.io.FileInputStream. ^java.io.File x)] (.readAllBytes in))
+                         :read-all (fn [x] (cond (instance? java.io.File x) (java.nio.file.Files/readAllBytes (.toPath ^java.io.File x))
                                                  (instance? java.io.InputStream x) (with-open [^java.io.InputStream in x] (.readAllBytes in))
                                                  :else nil))})
    ;; the host's own java.net classes, where cohost.http has no leaves

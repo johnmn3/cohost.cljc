@@ -124,6 +124,7 @@
         rec {:cohost/kind ::thread
              :id (next-id!)
              :name (atom nil)
+             :daemon (atom false)
              :state state
              :bell bell
              :runnable f
@@ -168,6 +169,7 @@
    {:cohost/kind ::thread
     :id (next-id!)
     :name (atom nm)
+    :daemon (atom false)
     :state (atom :new)
     :bell (host/doorbell)
     :runnable f
@@ -183,11 +185,24 @@
         (let [rec {:cohost/kind ::thread
                    :id (next-id!)
                    :name (atom nil)
+                   :daemon (atom false)
                    :state (atom :running)
                    :bell (host/doorbell)
                    :runnable nil
                    :handle (atom h)}]
           (register-thread! rec h)))))
+
+(defn set-daemon!
+  "Thread.setDaemon on a thread value: record the flag. No host leaf
+   consumes it yet -- layer threads end with their work and the seats'
+   processes exit explicitly -- but the call is part of Thread's
+   surface (clojure.core.server's thread macro makes it on every
+   start), so it is answered, not refused."
+  [t b]
+  (when-let [d (:daemon t)] (reset! d (boolean b)))
+  t)
+
+(defn daemon? [t] (boolean @(:daemon t)))
 
 (defn thread-alive? [t] (= :running @(:state t)))
 

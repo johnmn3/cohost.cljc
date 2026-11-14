@@ -992,7 +992,9 @@
      'java.io.Writer '(cohost.shim/io-class 'java.io.Writer)
      'java.io.BufferedWriter '(cohost.shim/io-class 'java.io.BufferedWriter)
      'java.net.URL '(cohost.shim/io-class 'java.net.URL)
-     'java.net.URI '(cohost.shim/io-class 'java.net.URI)}))
+     'java.net.URI '(cohost.shim/io-class 'java.net.URI)
+     'java.net.Socket '(cohost.shim/io-class 'java.net.Socket)
+     'java.net.ServerSocket '(cohost.shim/io-class 'java.net.ServerSocket)}))
 
 (def ^:private meta-tokens (set '[clojure.lang.IObj clojure.lang.IMeta]))
 
@@ -1090,6 +1092,10 @@
    :var-thread-bound? bound-in-frames?
    :var-set! var-set!
    :thread-bindings thread-bindings
+   ;; threads are goroutines here: a future is the spawn leaf. There is
+   ;; no thread-self leaf (no goroutine identity is exposed), so the
+   ;; thread layer's current-thread is its synthetic record.
+   :thread-spawn (fn [thunk] (future (thunk)))
    :var-bound? (fn [v] (bound? v))
    :error-message error-message
    :exception-class exception-class

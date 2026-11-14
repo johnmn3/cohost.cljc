@@ -51,8 +51,14 @@
    ::writer               'java.io.Writer
    ::buffered-writer      'java.io.BufferedWriter
    ::string-writer        'java.io.StringWriter
+   ::sink                 'java.io.PrintWriter
    ::file-writer          'java.io.FileWriter
-   ::output-stream-writer 'java.io.OutputStreamWriter})
+   ::output-stream-writer 'java.io.OutputStreamWriter
+   ::server-socket        'java.net.ServerSocket
+   ::socket               'java.net.Socket
+   ::socket-input         'java.io.InputStream
+   ::socket-output        'java.io.OutputStream
+   ::socket-reader        'java.io.Reader})
 
 ;; One record type per dispatch class (see the ns docstring). Stream
 ;; values carry [kind state under]: kind the fine kind, state the
@@ -73,6 +79,8 @@
 (defrecord BufferedWriterValue [kind state under])
 (defrecord UrlDispatch [kind state under])
 (defrecord UriDispatch [kind state under])
+(defrecord ServerSocketValue [kind state under])
+(defrecord SocketValue [kind state under])
 
 (defn value?
   "True when x is a value of this layer."
@@ -81,7 +89,8 @@
       (instance? InputStreamValue x) (instance? BufferedInputStreamValue x)
       (instance? OutputStreamValue x) (instance? BufferedOutputStreamValue x)
       (instance? ReaderValue x) (instance? BufferedReaderValue x)
-      (instance? WriterValue x) (instance? BufferedWriterValue x)))
+      (instance? WriterValue x) (instance? BufferedWriterValue x)
+      (instance? ServerSocketValue x) (instance? SocketValue x)))
 
 (defn kind-of [x]
   (cond (instance? FileValue x) ::file
@@ -113,7 +122,13 @@
    ::string-writer         (fn [k s u] (->WriterValue k s u))
    ::file-writer           (fn [k s u] (->WriterValue k s u))
    ::output-stream-writer  (fn [k s u] (->WriterValue k s u))
-   ::buffered-writer       (fn [k s u] (->BufferedWriterValue k s u))})
+   ::buffered-writer       (fn [k s u] (->BufferedWriterValue k s u))
+   ::server-socket         (fn [k s u] (->ServerSocketValue k s u))
+   ::socket                (fn [k s u] (->SocketValue k s u))
+   ::socket-input          (fn [k s u] (->InputStreamValue k s u))
+   ::socket-output         (fn [k s u] (->OutputStreamValue k s u))
+   ::socket-reader         (fn [k s u] (->ReaderValue k s u))
+   ::sink                  (fn [k s u] (->WriterValue k s u))})
 
 (defn value
   "A stream value of fine kind k over state atom s, wrapping u. The
@@ -138,20 +153,203 @@
     java.io.BufferedWriter BufferedWriterValue
     java.net.URL UrlDispatch
     java.net.URI UriDispatch
+    java.net.Socket SocketValue
+    java.net.ServerSocket ServerSocketValue
     nil))
+
+
+;; ---------------------------------------------------------------------------
+;; sockets: an in-process loopback. A pipe is an atom {:bytes [] :closed?}
+;; in the output-stream state shape, so append-byte!/close-output! work
+;; on a socket's output unchanged; a socket input carries its own read
+;; position over the shared pipe and BLOCKS (doorbell-brief waits) while
+;; the pipe is empty and open, as a socket read does. The registry maps
+;; port -> server state; only loopback connects exist here -- a real
+;; network route is a host adapter's, when one grows one.
+
+(declare read-byte!)
+
+(def ^:private listeners (atom {}))
+(def ^:private ephemeral-port (atom 49151))
+
+(defn- wait-brief!
+  "A short wait: a fresh doorbell's timeout where the host has
+   doorbells (an unsignalled wait runs its timeout); a bare yield of
+   the loop where it has none."
+  []
+  (when-let [db (host/doorbell)]
+    (host/doorbell-wait db 25))
+  nil)
+
+(defn- pipe [] (atom {:bytes [] :closed? false}))
+
+(defn socket-value? [x] (instance? SocketValue x))
+(defn server-socket-value? [x] (instance? ServerSocketValue x))
+
+(defn listen!
+  "A ServerSocket value bound at port (0: an ephemeral port)."
+  [port]
+  (let [port (if (zero? port)
+               (loop [p (swap! ephemeral-port inc)]
+                 (if (contains? @listeners p) (recur (swap! ephemeral-port inc)) p))
+               port)]
+    (when (contains? @listeners port)
+      (throw (host/ex* 'java.net.BindException (str "Address already in use: " port))))
+    (let [v (value ::server-socket (atom {:port port :queue (atom []) :closed? false}))]
+      (swap! listeners assoc port v)
+      v)))
+
+(defn server-port [srv] (:port @(state-of srv)))
+(defn server-closed? [srv] (boolean (:closed? @(state-of srv))))
+
+(defn server-close! [srv]
+  (swap! (state-of srv) assoc :closed? true)
+  (swap! listeners dissoc (:port @(state-of srv)))
+  nil)
+
+(defn accept!
+  "ServerSocket.accept: the next queued connection, blocking; a
+   SocketException when the server socket is closed, as stock's
+   accept loop expects on shutdown."
+  [srv]
+  (loop []
+    (when (server-closed? srv)
+      (throw (host/ex* 'java.net.SocketException "Socket is closed")))
+    (let [q (:queue @(state-of srv))]
+      (if (seq @q)
+        (let [conn (first @q)]
+          (swap! q (fn [v] (subvec v 1)))
+          conn)
+        (do (wait-brief!) (recur))))))
+
+(defn- socket-over [in-pipe out-pipe port]
+  (value ::socket (atom {:in-pipe in-pipe :out-pipe out-pipe
+                         :port port :local-port (swap! ephemeral-port inc)
+                         :closed? false :in nil :out nil})))
+
+(defn connect!
+  "A client Socket value connected to a listening port on this
+   process's loopback; ConnectException when nothing listens (or the
+   host is not a loopback name)."
+  [host-name port]
+  (when-not (contains? #{nil "localhost" "127.0.0.1" "::1" "0.0.0.0"} host-name)
+    (throw (host/ex* 'java.net.ConnectException (str "Connection refused: " host-name))))
+  (let [srv (get @listeners port)]
+    (when (or (nil? srv) (server-closed? srv))
+      (throw (host/ex* 'java.net.ConnectException "Connection refused")))
+    (let [c->s (pipe) s->c (pipe)
+          client (socket-over s->c c->s port)
+          server-end (socket-over c->s s->c port)]
+      (swap! (:queue @(state-of srv)) conj server-end)
+      client)))
+
+(defn socket-closed? [s] (boolean (:closed? @(state-of s))))
+(defn socket-port [s] (:port @(state-of s)))
+(defn socket-local-port [s] (:local-port @(state-of s)))
+
+(defn socket-input [s]
+  (or (:in @(state-of s))
+      (let [v (value ::socket-input
+                     (atom {:pipe (:in-pipe @(state-of s)) :pos 0 :closed? false}))]
+        (swap! (state-of s) assoc :in v)
+        v)))
+
+(defn socket-output [s]
+  (or (:out @(state-of s))
+      (let [v (value ::socket-output (:out-pipe @(state-of s)))]
+        (swap! (state-of s) assoc :out v)
+        v)))
+
+(defn socket-close! [s]
+  (let [st (state-of s)]
+    (swap! st assoc :closed? true)
+    (when-let [in (:in @st)] (swap! (state-of in) assoc :closed? true))
+    (swap! (:out-pipe @st) assoc :closed? true)
+    nil))
+
+(defn socket-read-byte!
+  "A blocking InputStream.read over a socket input's pipe."
+  [in]
+  (loop []
+    (let [st @(state-of in)]
+      (when (:closed? st)
+        (throw (host/ex* 'java.io.IOException "Stream closed")))
+      (let [p @(:pipe st) pos (:pos st)]
+        (cond (< pos (count (:bytes p)))
+              (do (swap! (state-of in) update :pos inc) (nth (:bytes p) pos))
+              (:closed? p) -1
+              :else (do (wait-brief!) (recur)))))))
+
+(defn socket-reader
+  "The incremental Reader over a socket input (the layer's other
+   stream readers decode whole content at wrap time; a socket's
+   content has not arrived yet)."
+  [in]
+  (value ::socket-reader (atom {:closed? false :pending nil}) in))
+
+(defn socket-read-char!
+  "Reader.read over a socket reader: bytes assembled into UTF-16
+   units as they arrive; -1 only when the pipe is closed and drained."
+  [r]
+  (let [st (state-of r)]
+    (when (:closed? @st)
+      (throw (host/ex* 'java.io.IOException "Stream closed")))
+    (if-let [pend (:pending @st)]
+      (do (swap! st assoc :pending nil) pend)
+      (let [in (under-of r)
+            b0 (read-byte! in)]
+        (if (neg? b0)
+          -1
+          (let [need (cond (< b0 0x80) 0 (< b0 0xE0) 1 (< b0 0xF0) 2 :else 3)
+                bs (loop [bs [b0] n need]
+                     (if (zero? n)
+                       bs
+                       (let [b (read-byte! in)]
+                         (if (neg? b) bs (recur (conj bs b) (dec n))))))
+                cp (case (count bs)
+                     1 b0
+                     2 (bit-or (bit-shift-left (bit-and b0 0x1F) 6)
+                               (bit-and (nth bs 1) 0x3F))
+                     3 (bit-or (bit-shift-left (bit-and b0 0x0F) 12)
+                               (bit-shift-left (bit-and (nth bs 1) 0x3F) 6)
+                               (bit-and (nth bs 2) 0x3F))
+                     4 (bit-or (bit-shift-left (bit-and b0 0x07) 18)
+                               (bit-shift-left (bit-and (nth bs 1) 0x3F) 12)
+                               (bit-shift-left (bit-and (nth bs 2) 0x3F) 6)
+                               (bit-and (nth bs 3) 0x3F))
+                     b0)]
+            (if (> cp 0xFFFF)
+              (let [v (- cp 0x10000)]
+                (swap! st assoc :pending (char (+ 0xDC00 (bit-and v 0x3FF))))
+                (char (+ 0xD800 (bit-shift-right v 10))))
+              (char cp))))))))
+
+(defn socket-read-line!
+  "BufferedReader.readLine over a socket reader."
+  [r]
+  (loop [sb (StringBuilder.)]
+    (let [c (socket-read-char! r)]
+      (cond (number? c) (when (pos? (.length sb)) (.toString sb))
+            (= c \newline) (.toString sb)
+            (= c \return) (do (let [c2 (socket-read-char! r)]
+                                 (when (and (not (number? c2)) (not= c2 \newline))
+                                   (swap! (state-of r) assoc :pending c2)))
+                               (.toString sb))
+            :else (do (.append sb c) (recur sb))))))
 
 (def reader-kinds
   #{::reader ::buffered-reader ::string-reader ::char-array-reader
-    ::input-stream-reader ::file-reader ::pushback-reader})
+    ::input-stream-reader ::file-reader ::pushback-reader
+    ::socket-reader})
 (def writer-kinds
   #{::writer ::buffered-writer ::string-writer ::file-writer
-    ::output-stream-writer})
+    ::output-stream-writer ::sink})
 (def input-stream-kinds
   #{::input-stream ::buffered-input-stream ::file-input-stream
-    ::byte-input-stream})
+    ::byte-input-stream ::socket-input})
 (def output-stream-kinds
   #{::output-stream ::buffered-output-stream ::file-output-stream
-    ::byte-output-stream})
+    ::byte-output-stream ::socket-output})
 
 (defn reader-value? [x] (contains? reader-kinds (kind-of x)))
 (defn writer-value? [x] (contains? writer-kinds (kind-of x)))
@@ -291,8 +489,17 @@
     (value ::buffered-input-stream (state-of in))
     in))
 
+(declare read-byte-whole! read-bytes-whole! read-char-whole!
+         read-chars-whole! read-line-whole!)
+
 (defn read-byte!
   "InputStream.read: the next byte 0-255, or -1 at the end."
+  [in]
+  (if (is? ::socket-input in)
+    (socket-read-byte! in)
+    (read-byte-whole! in)))
+
+(defn- read-byte-whole!
   [in]
   (let [st @(state-of in)]
     (when (:closed? st)
@@ -306,6 +513,23 @@
 (defn read-bytes!
   "InputStream.read(byte[], off, len) over a vector of ints the shim
    turns into the caller's array: returns [n bytes-vector-slice]."
+  [in len]
+  (if (is? ::socket-input in)
+    (let [b (read-byte! in)]
+      (if (neg? b)
+        [-1 []]
+        (loop [out [b]]
+          (let [st @(state-of in) p @(:pipe st) pos (:pos st)
+                avail (- (count (:bytes p)) pos)]
+            (if (and (pos? avail) (< (count out) len))
+              (let [take (min avail (- len (count out)))]
+                (swap! (state-of in) update :pos + take)
+                [(+ (count out) take)
+                 (into out (subvec (:bytes p) pos (+ pos take)))])
+              [(count out) out])))))
+    (read-bytes-whole! in len)))
+
+(defn- read-bytes-whole!
   [in len]
   (let [st @(state-of in)]
     (when (:closed? st)
@@ -398,7 +622,9 @@
   "A Reader over a byte stream's remaining content, decoded whole
    (UTF-8; the shim refuses another charset by name before here)."
   [in]
-  (reader-over-text ::input-stream-reader (stream-text in)))
+  (if (is? ::socket-input in)
+    (socket-reader in)
+    (reader-over-text ::input-stream-reader (stream-text in))))
 
 (defn file-reader
   "A FileReader over a file's whole text."
@@ -411,7 +637,7 @@
 
 (defn buffered-reader [r]
   (if (and (reader-value? r) (not (is? ::pushback-reader r)))
-    (value ::buffered-reader (state-of r))
+    (value ::buffered-reader (state-of r) r)
     r))
 
 (defn pushback-reader [r]
@@ -447,9 +673,31 @@
     (:closed? @(state-of r))
     (:closed? @(state-of r))))
 
+(defn- socket-backed?
+  "True when r's content is a socket reader's, under any wrappers:
+   a buffered reader is transparent, a pushback reader's governing
+   content is its under's."
+  [r]
+  (loop [x r]
+    (cond (nil? x) false
+          (is? ::socket-reader x) true
+          (or (is? ::buffered-reader x) (is? ::pushback-reader x)) (recur (under-of x))
+          :else false)))
+
 (defn read-char!
   "Reader.read: the next char (a Character), or -1 at the end, as
    cohost.http's readers answer."
+  [r]
+  (cond (is? ::socket-reader r) (socket-read-char! r)
+        (is? ::buffered-reader r) (read-char! (under-of r))
+        (and (is? ::pushback-reader r) (socket-backed? r))
+        (let [buf (:buf @(state-of r))]
+          (if (seq buf)
+            (do (swap! (state-of r) assoc :buf (subs buf 1)) (nth buf 0))
+            (read-char! (under-of r))))
+        :else (read-char-whole! r)))
+
+(defn- read-char-whole!
   [r]
   (when (reader-closed? r)
     (throw (host/ex* 'java.io.IOException "Stream closed")))
@@ -461,6 +709,31 @@
 (defn read-chars!
   "Reader.read(char[], off, len)'s content: [n string]."
   [r len]
+  (cond (is? ::buffered-reader r) (read-chars! (under-of r) len)
+        (and (is? ::pushback-reader r) (socket-backed? r))
+        (let [c0 (read-char! r)]
+          (if (number? c0)
+            [-1 ""]
+            (loop [out (str c0)]
+              (if (>= (count out) len)
+                [(count out) out]
+                (let [c (read-char! r)]
+                  (if (number? c) [(count out) out] (recur (str out c))))))))
+        (is? ::socket-reader r)
+    (let [b0 (socket-read-char! r)]
+      (if (number? b0)
+        [-1 ""]
+        (loop [out (str b0)]
+          (if (>= (count out) len)
+            [(count out) out]
+            (let [c (socket-read-char! r)]
+              (if (number? c)
+                [(count out) out]
+                (recur (str out c))))))))
+        :else (read-chars-whole! r len)))
+
+(defn- read-chars-whole!
+  [r len]
   (when (reader-closed? r)
     (throw (host/ex* 'java.io.IOException "Stream closed")))
   (let [[text pos] (reader-text+pos r)
@@ -470,9 +743,31 @@
       [-1 ""]
       (do (reader-advance! r n) [n (subs text pos (+ pos n))]))))
 
+(declare unread!)
+
+(defn- read-line-chars!
+  "readLine built on read-char!: for a pushback reader over a socket
+   reader, whose buffer and under the char path already composes."
+  [r]
+  (loop [sb (StringBuilder.)]
+    (let [c (read-char! r)]
+      (cond (number? c) (when (pos? (count (.toString sb))) (.toString sb))
+            (= c \newline) (.toString sb)
+            (= c \return) (let [d (read-char! r)]
+                             (when (and (not (number? d)) (not= d \newline)) (unread! r d))
+                             (.toString sb))
+            :else (do (.append sb c) (recur sb))))))
+
 (defn read-line!
   "BufferedReader.readLine: the next line without its terminator
    (\\n, \\r\\n or \\r), nil at the end."
+  [r]
+  (cond (is? ::socket-reader r) (socket-read-line! r)
+        (is? ::buffered-reader r) (read-line! (under-of r))
+        (socket-backed? r) (read-line-chars! r)
+        :else (read-line-whole! r)))
+
+(defn- read-line-whole!
   [r]
   (when (reader-closed? r)
     (throw (host/ex* 'java.io.IOException "Stream closed")))
@@ -536,10 +831,16 @@
   (let [st @(state-of w)]
     (when (:closed? st)
       (throw (host/ex* 'java.io.IOException "Stream closed")))
-    (if-let [out (:out st)]
-      (append-bytes! out (utf8-encode (str t)))
-      (swap! (state-of w) update :text str (str t)))
+    (cond (= ::sink (:cohost/kind w)) ((:sink st) (str t))
+          (:out st) (append-bytes! (:out st) (utf8-encode (str t)))
+          :else (swap! (state-of w) update :text str (str t)))
     nil))
+
+(defn sink-writer
+  "A Writer (class java.io.PrintWriter) whose writes go to the fn f of
+   one string each, as written -- clojure.core/PrintWriter-on's value."
+  [f]
+  (value ::sink (atom {:sink f :closed? false})))
 
 (defn written-text [w]
   (let [st @(state-of w)]
@@ -567,3 +868,15 @@
 ;; resource is simply not found (stock's answer for an absent name).
 
 (def class-loader {:cohost/kind ::class-loader})
+
+(defn inet-address? [x] (= ::inet-address (:cohost/kind x)))
+(defn inet-host [a] (:host a))
+
+(defn unconnected-socket
+  "A Socket value with no connection: its pipes are born closed, so
+   reads see EOF and writes refuse as closed."
+  []
+  (let [p1 (pipe) p2 (pipe)]
+    (swap! p1 assoc :closed? true)
+    (swap! p2 assoc :closed? true)
+    (socket-over p1 p2 nil)))

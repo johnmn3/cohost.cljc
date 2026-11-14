@@ -161,6 +161,7 @@
    :host-data?      [['x] "a cheap test, asked at every (.m x args) before the type is looked up: true only when x is certainly the host's own data, never a user type (jolt: its transients, atoms, fns, strings, numbers ...); default: never true"]
    :invoke-member   [['x 'name 'args 'absent] "x's member called name (a string, as written in the source): the field when args is empty and name is a field, else the method applied to args; absent when x has no such member"]
    :interop-passthrough? [[] "true when the host has a java.* surface of its own (the JVM, jolt): interop the shim lacks is left to the host instead of becoming a throwing cohost.shim/missing-* call"]
+   :regex-possessive? [[] "true when the host's regex dialect accepts Java's possessive quantifiers (++, *+, ?+, {n,m}+) in pattern literals as written; when false (the default: Go RE2, JS, ECMAScript), the loader rewrites them to the plain greedy quantifiers in stock sources, whose patterns otherwise fail to READ (clojure/main.clj's ([^.])++$)"]
    :protocol-var?   [['ns-sym 'name-sym] "is the var ns-sym/name-sym a protocol on this host? (default: its root is a map with a protocol's keys)"]
    ;; runtime types clojure.lang names
    :lazy-seq        [['thunk] "a LazySeq over thunk"]
@@ -447,6 +448,7 @@ namespace cohost_err {
                 (when (every? fn? (vals fs)) fs)))
     :invoke-member (fn [_ _ _ absent] absent)
     :interop-passthrough? false
+    :regex-possessive? false
     :class-instance? #?(:cljd (fn [_c _x] false) :default (fn [c x] (instance? c x)))
     :plain-symbol (fn [x] x)
     :protocol-var? (fn [ns-sym name-sym]
@@ -663,6 +665,7 @@ namespace cohost_err {
 (defn with-meta* [x m] ((cap :with-meta) x m))
 (defn invoke-member [x nm args absent] ((cap :invoke-member) x nm args absent))
 (defn interop-passthrough? [] (boolean (cap :interop-passthrough?)))
+(defn regex-possessive? [] (boolean (cap :regex-possessive?)))
 (defn protocol-var? [ns-sym name-sym] (boolean ((cap :protocol-var?) ns-sym name-sym)))
 (defn protocol-impl-style [] (cap :protocol-impl-style))
 (defn type-method-style [] (cap :type-method-style))
