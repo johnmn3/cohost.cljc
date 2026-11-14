@@ -281,7 +281,7 @@
   "clojure.main's uncaught-error report. The config's :report names the
    target: \"file\" (the default) writes {:clojure.main/message
    :clojure.main/triage :clojure.main/trace} as EDN to
-   <:report-dir>/cohost-<millis>-<n>.edn and prints the message and the
+   <:report-dir>/clojure-<millis>-<n>.edn and prints the message and the
    path to stderr; \"stderr\" prints the report and the message; \"none\"
    prints nothing. No :report-dir, or a failed write, falls back to
    stderr. A failure inside the report building itself prints the
@@ -302,7 +302,7 @@
                path (when (= target "file")
                       (when-let [dir (:report-dir @cli-config)]
                         (host/try-all
-                         (fn [] (let [p (str dir "/cohost-" (host/current-time-millis)
+                         (fn [] (let [p (str dir "/clojure-" (host/current-time-millis)
                                              "-" (swap! report-count inc) ".edn")]
                                   (host/spit-file p (str report-str "\n"))
                                   p))
