@@ -75,6 +75,15 @@
                       :extra-env (merge {"COHOST_HOME" repo} extra)})
       deref :exit))
 
+(defn sdeps-text
+  "A -Sdeps value as data text. Since Clojure CLI 1.12.0.1530 the value
+   may name a file, whose contents are the deps data. Consumers that
+   parse the value themselves (jolt, merged-aliases, the -T template
+   merge) read the file here; the real CLI is handed the value verbatim,
+   file form included, exactly as stock."
+  [s]
+  (if (fs/exists? s) (slurp s) s))
+
 (defn with-templates
   "The Clojure CLI's arguments for a tool (-T): cohost's deps-new templates
    (templates/cohost-app) on its classpath, merged into the -Sdeps the
@@ -84,7 +93,7 @@
         i (.indexOf ^java.util.List args "-Sdeps")]
     (if (neg? i)
       (into ["-Sdeps" (pr-str {:deps lib})] args)
-      (assoc args (inc i) (pr-str (update (edn/read-string (nth args (inc i))) :deps merge lib))))))
+      (assoc args (inc i) (pr-str (update (edn/read-string (sdeps-text (nth args (inc i)))) :deps merge lib))))))
 
 ;; --------------------------------------------------------------------------
 ;; arguments, as the Clojure CLI's own script reads them: its options first,
@@ -531,10 +540,24 @@
   (when (and (string? token) (str/includes? token ":"))
     (mapv #(keyword (subs % 1)) (re-seq #":[^:]+" token))))
 
+(defn jolt-resolve-args
+  "The :resolve flags jolt honours, kept in order: -Sforce, and -Sthreads
+   with its value. -Srepro is the jolt command head's own; -Strace is not
+   forwarded (jolt writes no trace.edn)."
+  [resolve]
+  (loop [xs (seq resolve) out []]
+    (cond (nil? xs) out
+          (= (first xs) "-Sforce") (recur (next xs) (conj out "-Sforce"))
+          (= (first xs) "-Sthreads") (recur (nnext xs) (conj out "-Sthreads" (second xs)))
+          :else (recur (next xs) out))))
+
 (defn jolt-alias-args
-  "Flags after `jolt -Srepro -Spath`: `-Sdeps`, `-A`, and `-M:`/`-X:`."
+  "Flags after `jolt -Srepro -Spath`: `-Sdeps` (the file form read to
+   text — jolt parses the value as EDN and dies on a path), the :resolve
+   flags jolt honours, `-A`, and `-M:`/`-X:`."
   [o]
-  (vec (concat (mapcat (fn [d] ["-Sdeps" d]) (:sdeps o))
+  (vec (concat (mapcat (fn [d] ["-Sdeps" (sdeps-text d)]) (:sdeps o))
+               (jolt-resolve-args (:resolve o))
                (:aliases o)
                (when (seq (alias-keywords (:alias o))) [(:alias o)]))))
 
@@ -554,7 +577,7 @@
    for this leg, so ~/.clojure/deps.edn is not read."
   [cwd sdeps]
   (let [project (read-edn-file (fs/file cwd "deps.edn"))
-        extras (map #(read-edn-string "-Sdeps" %) sdeps)]
+        extras (map #(read-edn-string "-Sdeps" (sdeps-text %)) sdeps)]
     (reduce (fn [aliases deps]
               (merge-with merge aliases (or (:aliases deps) {})))
             (or (:aliases project) {})
