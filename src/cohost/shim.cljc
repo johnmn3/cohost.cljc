@@ -24,6 +24,7 @@
             [cohost.memory :as memory]
             [cohost.thread :as thread]
             [cohost.http :as http]
+            [cohost.io :as io]
             [cohost.unicode-ranges :as unicode]
             [cohost.hosts.auto]
             #?(:cljs [goog.object :as gobj]))
@@ -78,6 +79,7 @@
 (def ^:private h-indexed? (host/capability :indexed?))
 (def ^:private h-counted? (host/capability :counted?))
 (def ^:private h-sb-append! (host/capability :sb-append!))
+(def ^:private h-sb-string (host/capability :sb-string))
 (def ^:private h-sb-str (host/capability :sb-string))
 (def ^:private h-string-builder (host/capability :string-builder))
 (def ^:private h-char-code (host/capability :char-code))
@@ -243,6 +245,31 @@
     clojure.lang.Ratio [java.lang.Number java.lang.Comparable java.lang.Object]
     java.util.regex.Pattern [java.lang.Object]
     java.util.UUID [java.lang.Comparable java.lang.Object]
+    java.util.Date [java.lang.Cloneable java.lang.Comparable java.io.Serializable java.lang.Object]
+    java.sql.Timestamp [java.util.Date java.lang.Cloneable java.lang.Comparable java.io.Serializable java.lang.Object]
+    java.util.Calendar [java.lang.Cloneable java.lang.Comparable java.io.Serializable java.lang.Object]
+    java.util.GregorianCalendar [java.util.Calendar java.lang.Cloneable java.lang.Comparable java.io.Serializable java.lang.Object]
+    java.util.TimeZone [java.lang.Cloneable java.io.Serializable java.lang.Object]
+    java.text.SimpleDateFormat [java.text.DateFormat java.lang.Cloneable java.io.Serializable java.lang.Object]
+    java.io.StringReader [java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.CharArrayReader [java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.InputStreamReader [java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.FileReader [java.io.InputStreamReader java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.FilterReader [java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.PushbackReader [java.io.FilterReader java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.Writer [java.lang.Appendable java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.StringWriter [java.io.Writer java.lang.Appendable java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.FileWriter [java.io.OutputStreamWriter java.io.Writer java.lang.Appendable java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.OutputStreamWriter [java.io.Writer java.lang.Appendable java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.FilterInputStream [java.io.InputStream java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.BufferedInputStream [java.io.FilterInputStream java.io.InputStream java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.FileInputStream [java.io.InputStream java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.ByteArrayInputStream [java.io.InputStream java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    java.io.FilterOutputStream [java.io.OutputStream java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.BufferedOutputStream [java.io.FilterOutputStream java.io.OutputStream java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.FileOutputStream [java.io.OutputStream java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.ByteArrayOutputStream [java.io.OutputStream java.io.Closeable java.io.Flushable java.lang.AutoCloseable java.lang.Object]
+    java.io.File [java.io.Serializable java.lang.Comparable java.lang.Object]
     clojure.lang.ExceptionInfo [clojure.lang.IExceptionInfo java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
     java.lang.RuntimeException [java.lang.Exception java.lang.Throwable java.lang.Object]
     java.lang.IllegalArgumentException [java.lang.RuntimeException java.lang.Exception java.lang.Throwable java.lang.Object]
@@ -403,6 +430,13 @@
     (when (contains? host-seq-tokens (symbol n)) (symbol n))))
 
 (declare Charset?)
+(declare gregcal?)
+(declare dateval?)
+(declare timestampval?)
+(declare tzval?)
+(declare sdfval?)
+(declare file-url-string)
+(declare written-as-text)
 
 (def ^:private stock-lib-names
   ;; the booted stock libraries: their classes are cohost's codemod homes
@@ -430,6 +464,11 @@
   (cond
     (nil? x) nil
     (Charset? x) 'java.nio.charset.Charset
+    (gregcal? x) 'java.util.GregorianCalendar
+    (timestampval? x) 'java.sql.Timestamp
+    (dateval? x) 'java.util.Date
+    (tzval? x) 'java.util.TimeZone
+    (sdfval? x) 'java.text.SimpleDateFormat
     (string? x) 'java.lang.String
     (boolean? x) 'java.lang.Boolean
     (h-char? x) 'java.lang.Character
@@ -446,6 +485,8 @@
     (vector? x) 'clojure.lang.PersistentVector
     ;; a value of Eve's HTTP layer (cohost.http): the java.net class it stands for
     (and (map? x) (http/value? x)) (http/class-token x)
+    ;; a value of the io layer (cohost.io): the java.io class it stands for
+    (io/value? x) (io/class-token x)
     (host-record? x) (type-of x)
     ;; a layer atom (unit 5) IS a clojure.lang.Atom through the
     ;; facade; before the map branch, which would name it a map
@@ -1436,6 +1477,118 @@
 (defn static-get [nm] (get @statics nm))
 (defn static-set! [nm v] (swap! statics assoc nm v) v)
 (def EdnReader-readString (fn [s opts] (host/edn-read-string opts s)))
+
+;; clojure.lang.EdnReader/read over a PushbackReader of the io layer:
+;; scan exactly one form's text off the reader (strings, chars,
+;; comments and nesting respected; nothing past the form is
+;; consumed -- lookahead goes back through the reader's own unread)
+;; and let the host's edn reader give it value semantics, the same
+;; reader readString delegates to. Stock requires the stream to be a
+;; PushbackReader; anything else is the shim's miss for the static.
+(defn- edn-ws? [c]
+  (or (= c \space) (= c \tab) (= c \newline) (= c \return)
+      (= c \formfeed) (= c \,)))
+
+(defn- edn-scan!
+  "One form's text from the pushback reader r, or ::eof. A #_ discard
+   is scanned into a throwaway builder and the following form is the
+   one returned, as the reader does."
+  [r]
+  (let [getc (fn [] (io/read-char! r))
+        peekc (fn [] (let [c (getc)] (when-not (number? c) (io/unread! r (str c))) c))]
+    (letfn [(skip-ws! [sb]
+              ;; whitespace and comments separate tokens: when any is
+              ;; consumed, one space stands for it in the scanned text
+              (loop [ate? false]
+                (let [c (peekc)]
+                  (cond (number? c) (when ate? (h-sb-append! sb \space))
+                        (edn-ws? c) (do (getc) (recur true))
+                        (= c \;) (do (loop []
+                                        (let [c2 (getc)]
+                                          (when (and (not (number? c2))
+                                                     (not= c2 \newline)
+                                                     (not= c2 \return))
+                                            (recur))))
+                                      (recur true))
+                        :else (when ate? (h-sb-append! sb \space))))))
+            (token-char? [c]
+              (and (not (number? c)) (not (edn-ws? c))
+                   (not (contains? #{\" \; \( \) \[ \] \{ \}} c))))
+            (scan-token! [sb]
+              (loop []
+                (let [c (peekc)]
+                  (when (token-char? c)
+                    (h-sb-append! sb (getc))
+                    (recur)))))
+            (scan-string! [sb]
+              (h-sb-append! sb (getc))
+              (loop []
+                (let [c (getc)]
+                  (when (number? c)
+                    (throw (host/ex* 'java.io.IOException "EOF while reading string")))
+                  (h-sb-append! sb c)
+                  (cond (= c \\) (do (h-sb-append! sb (getc)) (recur))
+                        (= c \") nil
+                        :else (recur)))))
+            (alnum? [c]
+              (let [n (int c)]
+                (or (<= 48 n 57) (<= 65 n 90) (<= 97 n 122) (> n 127))))
+            (scan-char! [sb]
+              (h-sb-append! sb (getc))
+              (let [c (getc)]
+                (when (number? c)
+                  (throw (host/ex* 'java.io.IOException "EOF while reading char")))
+                (h-sb-append! sb c)
+                (when (and (not (edn-ws? c)) (alnum? c))
+                  (loop []
+                    (let [c2 (peekc)]
+                      (when (and (not (number? c2)) (alnum? c2))
+                        (h-sb-append! sb (getc))
+                        (recur)))))))
+            (scan-coll! [sb close]
+              (loop []
+                (skip-ws! sb)
+                (let [c (peekc)]
+                  (cond (number? c)
+                        (throw (host/ex* 'java.io.IOException "EOF while reading"))
+                        (= c close) (h-sb-append! sb (getc))
+                        :else (do (scan-form! sb) (recur))))))
+            (scan-form! [sb]
+              (skip-ws! sb)
+              (let [c (peekc)]
+                (cond (number? c) ::eof
+                      (= c \") (scan-string! sb)
+                      (= c \\) (scan-char! sb)
+                      (contains? #{\( \[ \{} c)
+                      (do (h-sb-append! sb (getc))
+                          (scan-coll! sb (case c \( \) \[ \] \{ \})))
+                      (= c \#)
+                      (do (getc)
+                          (let [c2 (peekc)]
+                            (cond (= c2 \{) (do (h-sb-append! sb \#)
+                                                 (h-sb-append! sb (getc))
+                                                 (scan-coll! sb \}))
+                                  (= c2 \_) (do (getc)
+                                                 (scan-form! (h-string-builder))
+                                                 (scan-form! sb))
+                                  :else (do (h-sb-append! sb \#)
+                                            (scan-token! sb)
+                                            (scan-form! sb)))))
+                      :else (scan-token! sb))))]
+      (let [sb (h-string-builder)
+            v (scan-form! sb)]
+        (if (= ::eof v) ::eof (h-sb-string sb))))))
+
+(def EdnReader-read
+  (fn [r opts]
+    (cond (io/is? :cohost.io/pushback-reader r)
+          (let [text (edn-scan! r)]
+            (if (= ::eof text)
+              (if (and (map? opts) (contains? opts :eof))
+                (:eof opts)
+                (throw (host/ex* 'java.io.IOException "EOF while reading")))
+              (host/edn-read-string opts text)))
+          :else (miss! [:static 'clojure.lang.EdnReader 'read]))))
 (def PersistentVector-create (fn [coll] (if (memory/fill-on?) (memory/make-vector coll) (vec coll))))
 (def PersistentVector-EMPTY [])
 ;; the seq classes' creates delegate to the host's own fns, bound at
@@ -2058,7 +2211,7 @@
   [m table]
   (let [miss (missing-method (symbol m))]
     (fn [x & args]
-      (if-let [f (and (map? x) (get table (get x :cohost/kind)))]
+      (if-let [f (get table (:cohost/kind x))]
         (apply f x args)
         (let [r (if (nil? x) absent (host/invoke-member x m (vec args) absent))]
           (if (identical? r absent) (apply miss x args) r))))))
@@ -2066,6 +2219,15 @@
 (def new-URI (http-ctor 'java.net.URI nil http/new-uri))
 (def URI-create (http-ctor 'java.net.URI "create" http/new-uri))
 (def new-URL (http-ctor 'java.net.URL nil http/new-url))
+
+(defn io-class
+  "The io layer's record class object standing for a java.io token,
+   for a host type table's extend positions (a host whose protocols
+   dispatch on types names these in its table; URL/URI name the
+   layer's never-constructed dispatch types -- their values are
+   cohost.http's and cannot dispatch there, a named boundary)."
+  [token]
+  (io/dispatch-class token))
 (def HttpClient-newHttpClient (http-ctor 'java.net.http.HttpClient "newHttpClient" http/new-client))
 (def HttpClient-newBuilder (http-ctor 'java.net.http.HttpClient "newBuilder" http/new-client-builder))
 (def HttpRequest-newBuilder (http-ctor 'java.net.http.HttpRequest "newBuilder" http/new-request-builder))
@@ -2093,7 +2255,8 @@
 ;; the jank AOT build ended without cohost/shim.o (measured 2026-11-05)
 (def ^:private default-ports {"http" 80 "https" 443 "ftp" 21})
 (def -getDefaultPort (http-member "getDefaultPort" {:cohost.http/url (fn [u] (get default-ports (:scheme u) -1))}))
-(def -getPath (http-member "getPath" (http-locator (fn [u] (:path u)))))
+(def -getPath (http-member "getPath" (merge (http-locator (fn [u] (:path u)))
+                                            {:cohost.io/file io/file-path})))
 (def -getRawPath (http-member "getRawPath" {:cohost.http/uri (fn [u] (:path u))}))
 (def -getQuery (http-member "getQuery" (http-locator (fn [u] (if (= :cohost.http/uri (:cohost/kind u)) (some-> (:query u) (URLDecoder-decode "UTF-8")) (:query u))))))
 (def -getRawQuery (http-member "getRawQuery" {:cohost.http/uri (fn [u] (:query u))}))
@@ -2102,9 +2265,12 @@
 (def -getFile (http-member "getFile" {:cohost.http/url http/url-file}))
 (def -getAuthority (http-member "getAuthority" (http-locator http/authority)))
 (def -getUserInfo (http-member "getUserInfo" (http-locator (fn [u] (:user-info u)))))
-(def -isAbsolute (http-member "isAbsolute" {:cohost.http/uri (fn [u] (some? (:scheme u)))}))
-(def -toURL (http-member "toURL" {:cohost.http/uri http/uri->url}))
-(def -toURI (http-member "toURI" {:cohost.http/url http/url->uri}))
+(def -isAbsolute (http-member "isAbsolute" {:cohost.http/uri (fn [u] (some? (:scheme u)))
+                                            ::io/file (fn [f] (io/file-absolute? (io/file-path f)))}))
+(def -toURL (http-member "toURL" {:cohost.http/uri http/uri->url
+                                  :cohost.io/file (fn [f] (http/new-url (file-url-string (io/file-path f))))}))
+(def -toURI (http-member "toURI" {:cohost.http/url http/url->uri
+                                  :cohost.io/file (fn [f] (http/new-uri (file-url-string (io/file-path f))))}))
 (def -toExternalForm (http-member "toExternalForm" {:cohost.http/url http/url-string}))
 (def -resolve (http-member "resolve" {:cohost.http/uri (fn [u r] (http/uri-resolve u (if (map? r) (:raw r) r)))}))
 (def -openConnection (http-member "openConnection" {:cohost.http/url (fn [u & _proxy] (http/open-connection u))}))
@@ -2155,10 +2321,241 @@
 (def -isPresent (http-member "isPresent" {:cohost.http/optional (fn [o] (some? (:value o)))}))
 (def -orElse (http-member "orElse" {:cohost.http/optional (fn [o d] (if (some? (:value o)) (:value o) d))}))
 
+;; ---------------------------------------------------------------------------
+;; java.io over cohost.io (the layer above): File, the stream/writer
+;; families, RT/toUrl and the URL coders. The member tables merge into
+;; the -read / -write / -readLine tables below (one dispatch, keyed by
+;; :cohost/kind for both layers' values).
+
+(defn- io-kind-table
+  "An http-member table answering f for each of the layer kinds ks."
+  [ks f]
+  (into {} (map (fn [k] [k f])) ks))
+
+(defn file-url-string
+  "A file: URL string for a path (an absolute path keeps its slash; a
+   relative one is rooted, where the JVM would absolutize against the
+   process directory -- the layer has no cwd surface)."
+  [p]
+  (str "file:" (if (and (pos? (count p)) (not= \/ (nth p 0))) "/" "") p))
+
+(def RT-toUrl
+  (fn [x]
+    (cond (io/is? :cohost.io/file x) (http/new-url (file-url-string (io/file-path x)))
+          (string? x) (host/try-all (fn [] (http/new-url x))
+                                    (fn [_] (http/new-url (file-url-string x))))
+          :else (miss! [:static 'clojure.lang.RT 'toUrl]))))
+
+(defn- url-encode
+  "URLEncoder.encode(s, \"UTF-8\"): the JVM's form encoding."
+  [s]
+  (let [sb (h-string-builder)]
+    (doseq [c (str s)]
+      (let [code (code-of c)]
+        (cond (or (<= 48 code 57) (<= 65 code 90) (<= 97 code 122)
+                  (contains? #{\. \- \* \_} c))
+              (h-sb-append! sb c)
+              (= c \space) (h-sb-append! sb \+)
+              :else (doseq [b (io/utf8-encode (str c))]
+                      (h-sb-append! sb \%)
+                      (h-sb-append! sb (nth "0123456789ABCDEF" (bit-shift-right b 4)))
+                      (h-sb-append! sb (nth "0123456789ABCDEF" (bit-and b 15)))))))
+    (h-sb-str sb)))
+
+(defn- hex-val [c]
+  (let [code (code-of c)]
+    (cond (<= 48 code 57) (- code 48)
+          (<= 65 code 70) (+ 10 (- code 65))
+          (<= 97 code 102) (+ 10 (- code 97))
+          :else -1)))
+
+(defn- url-decode
+  "URLDecoder.decode(s, \"UTF-8\")."
+  [s]
+  (let [s (str s) n (count s)]
+    (loop [i 0 bytes []]
+      (if (>= i n)
+        (io/utf8-decode bytes)
+        (let [c (nth s i)]
+          (cond (= c \+) (recur (inc i) (conj bytes 32))
+                (and (= c \%) (< (+ i 2) n)
+                     (not (neg? (hex-val (nth s (inc i)))))
+                     (not (neg? (hex-val (nth s (+ i 2))))))
+                (recur (+ i 3) (conj bytes (+ (* 16 (hex-val (nth s (inc i))))
+                                              (hex-val (nth s (+ i 2))))))
+                :else (recur (inc i) (into bytes (io/utf8-encode (str c))))))))))
+
+(def URLEncoder-encode (fn [s _cs] (url-encode s)))
+(def URLDecoder-decode (fn [s _cs] (url-decode s)))
+
+(defn- as-file-value
+  "A File value from a File value or a path string."
+  [x]
+  (cond (io/is? :cohost.io/file x) x
+        (string? x) (io/file x)
+        :else (throw (host/ex* 'java.lang.ClassCastException
+                               (cast-message 'java.io.File x)))))
+
+(def new-File
+  (fn ([p] (cond (io/is? :cohost.io/file p) p
+                 (and (map? p) (contains? #{:cohost.http/uri :cohost.http/url} (:cohost/kind p)))
+                 (io/file (:path p))
+                 :else (io/file p)))
+      ([parent child]
+       (io/file (str (if (io/is? :cohost.io/file parent)
+                       (io/file-path parent) parent)
+                     "/" child)))))
+
+(def File-separator "/")
+(def File-separatorChar \/)
+(def File-pathSeparator ":")
+(def File-pathSeparatorChar \:)
+
+(defn- file-parent-of [p]
+  (let [i (loop [i (dec (count p))]
+            (cond (neg? i) -1 (= \/ (nth p i)) i :else (recur (dec i))))]
+    (cond (neg? i) nil (zero? i) "/" :else (subs p 0 i))))
+
+(defn- file-name-of [p]
+  (let [i (loop [i (dec (count p))]
+            (cond (neg? i) -1 (= \/ (nth p i)) i :else (recur (dec i))))]
+    (if (neg? i) p (subs p (inc i)))))
+
+(def -exists (http-member "exists" {:cohost.io/file io/file-exists?}))
+(def -isFile (http-member "isFile" {:cohost.io/file io/file-exists?}))
+;; a directory cannot be told from an absent path through the
+;; adapter's file caps: isDirectory answers false, by the layer's doc
+(def -isDirectory (http-member "isDirectory" {:cohost.io/file (fn [_] false)}))
+(def -getParent (http-member "getParent" {:cohost.io/file (fn [f] (file-parent-of (io/file-path f)))}))
+(def -getParentFile (http-member "getParentFile" {:cohost.io/file (fn [f] (when-let [p (file-parent-of (io/file-path f))] (io/file p)))}))
+(def -getAbsolutePath (http-member "getAbsolutePath" {:cohost.io/file io/file-path}))
+(def -getCanonicalPath (http-member "getCanonicalPath" {:cohost.io/file io/file-path}))
+;; file mutation has no adapter surface: refused by name, not faked
+(def -delete (http-member "delete" {:cohost.io/file (unsupported "java.io.File/delete: no adapter surface for file mutation")}))
+(def -mkdirs (http-member "mkdirs" {:cohost.io/file (unsupported "java.io.File/mkdirs: no adapter surface for file mutation")}))
+(def -mkdir (http-member "mkdir" {:cohost.io/file (unsupported "java.io.File/mkdir: no adapter surface for file mutation")}))
+(def -createNewFile (http-member "createNewFile" {:cohost.io/file (unsupported "java.io.File/createNewFile: no adapter surface for file mutation")}))
+(def -renameTo (http-member "renameTo" {:cohost.io/file (unsupported "java.io.File/renameTo: no adapter surface for file mutation")}))
+(def -lastModified (http-member "lastModified" {:cohost.io/file (unsupported "java.io.File/lastModified: no adapter surface for file metadata")}))
+(def -list (http-member "list" {:cohost.io/file (unsupported "java.io.File/list: no adapter surface for directory listing")}))
+(def -listFiles (http-member "listFiles" {:cohost.io/file (unsupported "java.io.File/listFiles: no adapter surface for directory listing")}))
+
+(defn- utf8-only!
+  "The wrapper constructors' charset gate: the layer answers UTF-8;
+   another charset is refused by name."
+  [cs]
+  (when cs
+    (let [n (h-upper-case (str (if (string? cs) cs (:name cs))))]
+      (when-not (contains? #{"UTF-8" "UTF8"} n)
+        (throw (host/ex* 'java.io.UnsupportedEncodingException
+                         (str "cohost.io answers UTF-8 only, not " cs)))))))
+
+(defn- host-bytes->ints
+  "A host byte array -> a vector of ints 0-255."
+  [bs]
+  (mapv (fn [b] (bit-and b 0xFF)) (seq bs)))
+
+(defn- ints->signed [bs] (mapv (fn [b] (if (> b 127) (- b 256) b)) bs))
+
+(def new-FileInputStream (fn [f] (io/file-input-stream (as-file-value f))))
+(def new-FileOutputStream
+  (fn ([f] (io/file-output-stream (as-file-value f) false))
+      ([f append?] (io/file-output-stream (as-file-value f) (boolean append?)))))
+(def new-ByteArrayInputStream (fn [bs] (io/byte-input-stream (host-bytes->ints bs))))
+(def new-ByteArrayOutputStream (fn [] (io/byte-output-stream)))
+(def new-StringReader (fn [s] (io/string-reader s)))
+(def new-StringWriter (fn ([] (io/string-writer)) ([_n] (io/string-writer))))
+(def new-CharArrayReader (fn [cs] (io/char-array-reader (seq cs))))
+(def new-InputStreamReader
+  (fn ([in] (io/input-stream-reader in))
+      ([in cs] (utf8-only! cs) (io/input-stream-reader in))))
+(def new-OutputStreamWriter
+  (fn ([out] (io/output-stream-writer out))
+      ([out cs] (utf8-only! cs) (io/output-stream-writer out))))
+(def new-BufferedReader (fn ([r] (io/buffered-reader r)) ([r _sz] (io/buffered-reader r))))
+(def new-BufferedWriter (fn ([w] (io/buffered-writer w)) ([w _sz] (io/buffered-writer w))))
+(def new-BufferedInputStream (fn ([in] (io/buffered-input-stream in)) ([in _sz] (io/buffered-input-stream in))))
+(def new-BufferedOutputStream (fn ([out] (io/buffered-output-stream out)) ([out _sz] (io/buffered-output-stream out))))
+(def new-PushbackReader (fn ([r] (io/pushback-reader r)) ([r _sz] (io/pushback-reader r))))
+(def new-FileReader (fn [f] (io/file-reader (as-file-value f))))
+(def new-FileWriter
+  (fn ([f] (io/file-writer (as-file-value f) false))
+      ([f append?] (io/file-writer (as-file-value f) (boolean append?)))))
+
+(defn- io-read-fn
+  "Reader.read / InputStream.read in their three arities."
+  [x & args]
+  (cond
+    (io/reader-value? x)
+    (if (empty? args)
+      (let [c (io/read-char! x)] (if (= -1 c) -1 (code-of c)))
+      (let [[arr off len] (if (= 1 (count args))
+                            [(first args) 0 (count (first args))]
+                            args)
+            [n s] (io/read-chars! x len)]
+        (when (pos? n)
+          (doseq [i (range n)] (aset arr (+ off i) (nth s i))))
+        n))
+    (io/input-stream-value? x)
+    (if (empty? args)
+      (io/read-byte! x)
+      (let [[arr off len] (if (= 1 (count args))
+                            [(first args) 0 (count (first args))]
+                            args)
+            [n bs] (io/read-bytes! x len)]
+        (when (pos? n)
+          (doseq [i (range n)] (aset arr (+ off i) (if (> (nth bs i) 127) (- (nth bs i) 256) (nth bs i)))))
+        n))
+    :else (miss! [:method 'read])))
+
+(defn- io-write-fn
+  "Writer.write / OutputStream.write in their arities."
+  [x v & args]
+  (cond
+    (io/writer-value? x)
+    (do (io/append-text! x (written-as-text v args)) nil)
+    (io/output-stream-value? x)
+    (do (cond (number? v) (io/append-byte! x v)
+              (arr? v) (let [[off len] (if (seq args) args [0 (count v)])
+                             xs (seq v)]
+                         (io/append-bytes! x (map (fn [i] (bit-and (nth xs i) 0xFF))
+                                                  (range off (+ off len)))))
+              :else (miss! [:method 'write]))
+        nil)
+    :else (miss! [:method 'write])))
+
+(def -unread
+  (http-member "unread"
+               {:cohost.io/pushback-reader
+                (fn [r & args]
+                  (io/unread! r (if (number? (first args))
+                                  (char-str (first args))
+                                  (apply str (map char-str (seq (first args)))))))}))
+(def -available (http-member "available" (io-kind-table io/input-stream-kinds io/available)))
+
+;; the boot's class loader (io/resource): the standin answers every
+;; lookup with nil -- not found, as stock answers an absent name.
+(def -getContextClassLoader (fn [_] io/class-loader))
+(def -getResource (http-member "getResource" {:cohost.io/class-loader (fn [_ _] nil)}))
+(def -getResourceAsStream (http-member "getResourceAsStream" {:cohost.io/class-loader (fn [_ _] nil)}))
+(def -toByteArray
+  (http-member "toByteArray"
+               {:cohost.io/byte-output-stream
+                (fn [o] (Numbers-byte_array (ints->signed (io/output-bytes o))))}))
+(def -skip
+  (http-member "skip"
+               (merge (io-kind-table io/input-stream-kinds
+                                     (fn [in n] (first (io/read-bytes! in n))))
+                      (io-kind-table io/reader-kinds
+                                     (fn [r n] (first (io/read-chars! r n)))))))
+
 ;; the layer's text streams (a host without byte streams of its own):
 ;; BufferedReader.readLine / read, OutputStream / Writer.write
-(def -readLine (http-member "readLine" {:cohost.http/reader http/read-line!}))
-(def -read (http-member "read" {:cohost.http/reader (fn [r] (let [c (http/read-char! r)] (if (= -1 c) -1 (code-of c))))}))
+(def -readLine (http-member "readLine" (merge {:cohost.http/reader http/read-line!}
+                                              (io-kind-table io/reader-kinds io/read-line!))))
+(def -read (http-member "read" (merge {:cohost.http/reader (fn [r] (let [c (http/read-char! r)] (if (= -1 c) -1 (code-of c))))}
+                                      (io-kind-table (into io/reader-kinds io/input-stream-kinds)
+                                                     io-read-fn))))
 (defn- written-as-text
   "What OutputStream.write / Writer.write appends: a String (or a slice of
    one), a char array's chars, a byte array's bytes decoded as UTF-8, or one
@@ -2172,8 +2569,10 @@
                        (let [v (vec xs)] (decode-bytes (Numbers-byte_array v) 0 (count v) "UTF-8"))))
           (number? x) (char-str (bit-and x 0xFFFF))
           :else (str x))))
-(def -write (http-member "write" (let [f (fn [o x & args] (http/append-text! o (written-as-text x args)))]
-                                   {:cohost.http/output-stream f :cohost.http/writer f})))
+(def -write (http-member "write" (merge (let [f (fn [o x & args] (http/append-text! o (written-as-text x args)))]
+                                          {:cohost.http/output-stream f :cohost.http/writer f})
+                                        (io-kind-table (into io/writer-kinds io/output-stream-kinds)
+                                                       io-write-fn))))
 
 ;; HttpURLConnection
 (def -setRequestMethod (http-member "setRequestMethod" {:cohost.http/connection http/conn-set-method!}))
@@ -2701,6 +3100,259 @@
 (def Class-forName (fn [s] (symbol s)))
 
 ;; ---------------------------------------------------------------------------
+;; java.util.Calendar / GregorianCalendar / Date / TimeZone, java.sql.Timestamp
+;; and java.text.SimpleDateFormat, as standin values over pure civil-date
+;; math, for hosts with no java.util date surface of their own (the JVM and
+;; jolt pass through to the real classes). This is the surface
+;; clojure.instant stands on: its construct-* fns build a GregorianCalendar
+;; in a GMT-offset zone and read the millis back, and its printers run a
+;; GMT SimpleDateFormat over the result. A calendar's state is an atom
+;; {:fields {jvm-field-int value} :tz tzval}: the fields are the JVM's raw
+;; field values (MONTH is 0-based, as the JVM's ctor takes it) and are
+;; interpreted in the calendar's zone, as the JVM interprets them.
+
+#?(:jank (defn ->TZVal [offset-minutes id] (host/standin 'TimeZone {:offset-minutes offset-minutes :id id}))
+   :default (defrecord TZVal [offset-minutes id]))
+(defn tzval? [x] #?(:phel (php/is_a x "cohost\\shim\\TZVal") :jank (host/standin? 'TimeZone x) :default (instance? TZVal x)))
+
+#?(:jank (defn ->GregCal [state] (host/standin 'GregorianCalendar {:state state}))
+   :default (defrecord GregCal [state]))
+(defn gregcal? [x] #?(:phel (php/is_a x "cohost\\shim\\GregCal") :jank (host/standin? 'GregorianCalendar x) :default (instance? GregCal x)))
+
+#?(:jank (defn ->DateVal [millis] (host/standin 'Date {:millis millis}))
+   :default (defrecord DateVal [millis]))
+(defn dateval? [x] #?(:phel (php/is_a x "cohost\\shim\\DateVal") :jank (host/standin? 'Date x) :default (instance? DateVal x)))
+
+#?(:jank (defn ->TimestampVal [state] (host/standin 'Timestamp {:state state}))
+   :default (defrecord TimestampVal [state]))
+(defn timestampval? [x] #?(:phel (php/is_a x "cohost\\shim\\TimestampVal") :jank (host/standin? 'Timestamp x) :default (instance? TimestampVal x)))
+
+#?(:jank (defn ->SDFVal [state] (host/standin 'SimpleDateFormat {:state state}))
+   :default (defrecord SDFVal [state]))
+(defn sdfval? [x] #?(:phel (php/is_a x "cohost\\shim\\SDFVal") :jank (host/standin? 'SimpleDateFormat x) :default (instance? SDFVal x)))
+
+(def ^:private utc-tz (->TZVal 0 "GMT"))
+(defn- tz-offset-minutes [tz] (if (tzval? tz) (:offset-minutes tz) 0))
+
+(defn- cal-parse-int
+  "Digits of s as a long (s is digits only, checked by the caller)."
+  [s]
+  (reduce (fn [a c] (+ (* a 10) (- (int c) (int \0)))) 0 s))
+
+(def TimeZone-getTimeZone
+  (fn [id]
+    (let [id (str id)]
+      (if (and (> (count id) 4) (= "GMT" (subs id 0 3))
+               (contains? #{\+ \-} (nth id 3)))
+        (let [sign (if (= \- (nth id 3)) -1 1)
+              body (subs id 4)
+              ci (loop [i 0] (cond (>= i (count body)) -1
+                                   (= (nth body i) \:) i
+                                   :else (recur (inc i))))
+              [hh mm] (if (neg? ci) [body nil] [(subs body 0 ci) (subs body (inc ci))])]
+          (->TZVal (* sign (+ (* 60 (cal-parse-int hh)) (if mm (cal-parse-int mm) 0))) id))
+        ;; "GMT", "UTC", "UT" -- and, as on the JVM, an unknown id falls
+        ;; back to GMT rather than failing
+        (->TZVal 0 id)))))
+
+;; civil date <-> epoch days (Howard Hinnant's algorithms): pure integer
+;; math, exact for any year a long can hold
+(defn- cal-fdiv [a b] (let [r (rem a b)] (if (neg? r) (dec (quot a b)) (quot a b))))
+
+(defn- cal-days-from-civil
+  "Days since 1970-01-01 of the civil date y-m-d (m 1-based)."
+  [y m d]
+  (let [y (if (<= m 2) (dec y) y)
+        era (cal-fdiv y 400)
+        yoe (- y (* era 400))
+        mp (mod (+ m 9) 12)
+        doy (+ (quot (+ (* 153 mp) 2) 5) (dec d))
+        doe (+ (* yoe 365) (quot yoe 4) (- (quot yoe 100)) doy)]
+    (+ (* era 146097) doe -719468)))
+
+(defn- cal-civil-from-days
+  "[y m d] (m 1-based) of the day z days after 1970-01-01."
+  [z]
+  (let [z (+ z 719468)
+        era (cal-fdiv z 146097)
+        doe (- z (* era 146097))
+        yoe (quot (+ (- doe (quot doe 1460)) (quot doe 36524) (- (quot doe 146096))) 365)
+        y (+ yoe (* era 400))
+        doy (- doe (+ (* 365 yoe) (quot yoe 4) (- (quot yoe 100))))
+        mp (quot (+ (* 5 doy) 2) 153)
+        d (+ doy (- (quot (+ (* 153 mp) 2) 5)) 1)
+        m (+ mp (if (< mp 10) 3 -9))]
+    [(if (<= m 2) (inc y) y) m d]))
+
+(def ^:private cal-day-ms 86400000)
+
+(defn- cal-millis
+  "The instant a calendar's fields name, in its zone: epoch millis."
+  [cal]
+  (let [{:keys [fields tz]} @(:state cal)
+        days (cal-days-from-civil (get fields 1 1970) (inc (get fields 2 0)) (get fields 5 1))]
+    (+ (* days cal-day-ms)
+       (* (get fields 11 0) 3600000) (* (get fields 12 0) 60000)
+       (* (get fields 13 0) 1000) (get fields 14 0)
+       (- (* (tz-offset-minutes tz) 60000)))))
+
+(defn cal-set!
+  "Calendar.set(field, value) on a standin calendar (the -set 3-arity)."
+  [cal f v]
+  (swap! (:state cal) assoc-in [:fields f] v)
+  cal)
+
+(defn- cal-from-millis
+  [ms tz]
+  (let [local (+ ms (* (tz-offset-minutes tz) 60000))
+        days (cal-fdiv local cal-day-ms)
+        rem (- local (* days cal-day-ms))
+        [y m d] (cal-civil-from-days days)]
+    (->GregCal (atom {:fields {1 y 2 (dec m) 5 d
+                               11 (quot rem 3600000)
+                               12 (quot (mod rem 3600000) 60000)
+                               13 (quot (mod rem 60000) 1000)
+                               14 (mod rem 1000)}
+                      :tz tz}))))
+
+(def new-GregorianCalendar
+  (fn
+    ([] (cal-from-millis (System-currentTimeMillis) utc-tz))
+    ([y mo d] (new-GregorianCalendar y mo d 0 0 0))
+    ([y mo d h mi] (new-GregorianCalendar y mo d h mi 0))
+    ([y mo d h mi s]
+     (->GregCal (atom {:fields {1 y 2 mo 5 d 11 h 12 mi 13 s 14 0}
+                       :tz utc-tz})))))
+
+(def new-Date
+  (fn
+    ([] (->DateVal (System-currentTimeMillis)))
+    ([ms] (->DateVal ms))))
+
+(def new-Timestamp
+  (fn [ms]
+    (let [frac (- ms (* (cal-fdiv ms 1000) 1000))]
+      (->TimestampVal (atom {:millis ms :nanos (* frac 1000000)})))))
+
+(def new-SimpleDateFormat
+  (fn [pattern] (->SDFVal (atom {:pattern (str pattern) :tz utc-tz}))))
+
+;; Calendar's field constants, as the JVM numbers them
+(def Calendar-ERA 0)
+(def Calendar-YEAR 1)
+(def Calendar-MONTH 2)
+(def Calendar-WEEK_OF_YEAR 3)
+(def Calendar-WEEK_OF_MONTH 4)
+(def Calendar-DATE 5)
+(def Calendar-DAY_OF_MONTH 5)
+(def Calendar-DAY_OF_YEAR 6)
+(def Calendar-DAY_OF_WEEK 7)
+(def Calendar-DAY_OF_WEEK_IN_MONTH 8)
+(def Calendar-AM_PM 9)
+(def Calendar-HOUR 10)
+(def Calendar-HOUR_OF_DAY 11)
+(def Calendar-MINUTE 12)
+(def Calendar-SECOND 13)
+(def Calendar-MILLISECOND 14)
+(def Calendar-ZONE_OFFSET 15)
+(def Calendar-DST_OFFSET 16)
+
+(def -getTime
+  (fn [x]
+    (cond (gregcal? x) (->DateVal (cal-millis x))
+          (timestampval? x) (:millis @(:state x))
+          (dateval? x) (:millis x)
+          :else (miss! [:method 'getTime]))))
+
+(def -getTimeInMillis
+  (fn [x]
+    (cond (gregcal? x) (cal-millis x)
+          (timestampval? x) (:millis @(:state x))
+          (dateval? x) (:millis x)
+          :else (miss! [:method 'getTimeInMillis]))))
+
+(def -setTimeZone
+  (fn [x tz]
+    (cond (gregcal? x) (do (swap! (:state x) assoc :tz tz) nil)
+          (sdfval? x) (do (swap! (:state x) assoc :tz tz) nil)
+          :else (miss! [:method 'setTimeZone]))))
+
+(def -setNanos
+  (fn [x n]
+    (if (timestampval? x)
+      (do (swap! (:state x)
+                 (fn [s]
+                   (let [frac (- (:millis s) (* (cal-fdiv (:millis s) 1000) 1000))]
+                     (assoc s :nanos n
+                            :millis (+ (- (:millis s) frac) (quot n 1000000))))))
+          nil)
+      (miss! [:method 'setNanos]))))
+
+(def -getNanos
+  (fn [x]
+    (if (timestampval? x)
+      (:nanos @(:state x))
+      (miss! [:method 'getNanos]))))
+
+(defn- cal-pad [n w]
+  (let [s (str n) missing (- w (count s))]
+    (if (pos? missing) (str (apply str (repeat missing "0")) s) s)))
+
+(defn- sdf-format
+  "SimpleDateFormat.format over the pattern subset the shim answers:
+   yyyy MM dd HH mm ss SSS and 'quoted' literals. Another pattern letter
+   is refused by name, not mis-printed."
+  [sdf ms]
+  (let [{:keys [pattern tz]} @(:state sdf)
+        local (+ ms (* (tz-offset-minutes tz) 60000))
+        days (cal-fdiv local cal-day-ms)
+        rem (- local (* days cal-day-ms))
+        [y m d] (cal-civil-from-days days)
+        fields {:year y :month m :day d
+                :hour (quot rem 3600000)
+                :minute (quot (mod rem 3600000) 60000)
+                :second (quot (mod rem 60000) 1000)
+                :millis (mod rem 1000)}
+        n (count pattern)]
+    (loop [i 0 sb (h-string-builder)]
+      (if (>= i n)
+        (h-sb-str sb)
+        (let [c (nth pattern i)]
+          (cond
+            (= c \')
+            (if (and (< (inc i) n) (= (nth pattern (inc i)) \'))
+              (do (h-sb-append! sb \') (recur (+ i 2) sb))
+              (let [j (loop [j (inc i)] (if (or (>= j n) (= (nth pattern j) \')) j (recur (inc j))))]
+                (h-sb-append! sb (subs pattern (inc i) j))
+                (recur (min n (inc j)) sb)))
+            (Character-isLetter c)
+            (let [j (loop [j i] (if (and (< j n) (= (nth pattern j) c)) (recur (inc j)) j))
+                  tok (subs pattern i j)
+                  out (case tok
+                        "yyyy" (cal-pad (:year fields) 4)
+                        "MM" (cal-pad (:month fields) 2)
+                        "dd" (cal-pad (:day fields) 2)
+                        "HH" (cal-pad (:hour fields) 2)
+                        "mm" (cal-pad (:minute fields) 2)
+                        "ss" (cal-pad (:second fields) 2)
+                        "SSS" (cal-pad (:millis fields) 3)
+                        nil)]
+              (when (nil? out)
+                (throw (host/ex* 'java.lang.IllegalArgumentException
+                                 (str "SimpleDateFormat pattern token the shim does not answer: " (pr-str tok)))))
+              (h-sb-append! sb out)
+              (recur j sb))
+            :else (do (h-sb-append! sb c) (recur (inc i) sb))))))))
+
+(def -format
+  (fn [x v]
+    (cond (not (sdfval? x)) (miss! [:method 'format])
+          (dateval? v) (sdf-format x (:millis v))
+          (timestampval? v) (sdf-format x (:millis @(:state v)))
+          (gregcal? v) (sdf-format x (cal-millis v))
+          :else (miss! [:method 'format]))))
+
+;; ---------------------------------------------------------------------------
 ;; instance methods: `(.m target args)` -> `(-m target args)`
 
 (def -first first)
@@ -2729,7 +3381,11 @@
                           :else (count x))))
 ;; a String method on nil is the JVM's NullPointerException
 (defn- nn [x] (if (nil? x) (throw (host/ex* 'java.lang.NullPointerException "")) x))
-(def -length (fn [x] (if (h-sb? x) (count (h-sb-str x)) (count (nn x)))))
+(def -length (fn [x] (cond (io/is? :cohost.io/file x)
+                           (host/try-all (fn [] (count (io/utf8-encode (io/file-text x))))
+                                         (fn [_] 0))
+                           (h-sb? x) (count (h-sb-str x))
+                           :else (count (nn x)))))
 (def -getBytes (fn ([s] (String-getBytes s)) ([s cs] (String-getBytes s cs))))
 (def -reverse (fn [x] (if (h-sb? x)
                         (h-sb-append! (h-string-builder) (apply str (reverse (h-sb-str x))))
@@ -2839,11 +3495,17 @@
 (def ^:private h-var-set #?(:jank nil :default (host-fn 'var-set nil)))
 ;; Var.set: the thread binding; a host without var-set (ClojureScript) keeps
 ;; a binding frame's value in the var's slot
-(def -set (fn [x v] (cond (h-atom? x) (tx-write! x #(reset! x v))
-                          h-var-set (h-var-set x v)
-                          (host/var-thread-bound? x) (host/var-set! x v)
-                          :else (throw (host/ex* 'java.lang.IllegalStateException
-                                                 (str "Can't change/establish root binding of: " (host/var-sym x) " with set"))))))
+(def -set (fn ([x v] (cond (h-atom? x) (tx-write! x #(reset! x v))
+                           h-var-set (h-var-set x v)
+                           (host/var-thread-bound? x) (host/var-set! x v)
+                           :else (throw (host/ex* 'java.lang.IllegalStateException
+                                                  (str "Can't change/establish root binding of: " (host/var-sym x) " with set")))))
+              ;; Calendar.set(field, value): the 3-argument set is the
+              ;; calendar's, answered by the date block above
+              ([x f v] (if (gregcal? x)
+                         (do (cal-set! x f v) nil)
+                         (throw (host/ex* 'java.lang.NoSuchMethodError
+                                          (str "set(int, int) on class " (class-of x))))))))
 ;; Ref.alter / commute / touch / history over the atom a Ref is here
 (def -alter (fn [r f args] (tx-write! r #(apply swap! r f args))))
 (def -commute (fn [r f args] (tx-write! r #(apply swap! r f args))))
@@ -3017,6 +3679,11 @@
 (def -toString (fn [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x)
                              ;; a URI / URL of Eve's HTTP layer is its text
                              (or (http/is? :cohost.http/uri x) (http/is? :cohost.http/url x)) (:raw x)
+                             ;; the io layer: a File is its path, a StringWriter
+                             ;; its text, a ByteArrayOutputStream its bytes as text
+                             (io/is? :cohost.io/file x) (io/file-path x)
+                             (io/is? :cohost.io/string-writer x) (io/written-text x)
+                             (io/is? :cohost.io/byte-output-stream x) (io/utf8-decode (io/output-bytes x))
                              (and h-exception-string (h-exception? x)) (h-exception-string x)
                              ;; a namespace is its name (let-go's str says <ns name>)
                              (h-namespace? x) (str (host/ns-name* x))
@@ -3084,7 +3751,8 @@
                     (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (seq (::more (meta s))) :else (next s)))))
 ;; Named.getName; a non-Named value is the JVM's ClassCastException (nil: NPE);
 ;; a host class object (from `class` of a record) prints its name
-(def -getName (fn [x] (cond (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: getName for class clojure.lang.Var"))
+(def -getName (fn [x] (cond (io/is? :cohost.io/file x) (file-name-of (io/file-path x))
+                            (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: getName for class clojure.lang.Var"))
                             ;; a qualified class token in class position
                             ;; (Var.getTag's answer): its name is the full
                             ;; string. An unqualified symbol -- core's sigs
@@ -3357,8 +4025,15 @@
 (def -toCharArray (fn [s] (to-array* (vec (nn s)))))
 (def -append (fn [sb x] (h-sb-append! sb (if (nil? x) "null" x))))
 ;; a value of Eve's HTTP layer has nothing to release
-(def -close (fn [x] (if (http/value? x) nil (host/close! x))))
-(def -flush (fn [_] nil))
+(def -close (fn [x] (cond (http/value? x) nil
+                          (io/reader-value? x) (io/close-reader! x)
+                          (io/writer-value? x) (io/close-writer! x)
+                          (io/output-stream-value? x) (io/close-output! x)
+                          (io/input-stream-value? x) (io/close-input! x)
+                          :else (host/close! x))))
+(def -flush (fn [x] (cond (io/writer-value? x) (io/flush-writer! x)
+                          (io/output-stream-value? x) (io/flush-output! x)
+                          :else nil)))
 (def -numerator (let [h (host-fn 'numerator identity)]
                   ;; (jank, A5-2: Ratio's numerator and denominator are BigIntegers, which
                   ;; print with no N on the JVM; jank's are its BigInt, which prints 3N: a

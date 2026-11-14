@@ -13,6 +13,24 @@
 
 (def adapter
   {:name :clj
+   ;; the io layer's values are its records on every seat, this one
+   ;; included (the shim's java.io ctors make them): an extend or
+   ;; multimethod position naming a java.io class must name the
+   ;; layer's record class, not the real class, or dispatch misses
+   ;; every value (clojure.java.io's do-copy on [String Writer]).
+   :host-type (fn [token]
+                (get '{java.io.File cohost.io.FileValue
+                       java.io.InputStream cohost.io.InputStreamValue
+                       java.io.BufferedInputStream cohost.io.BufferedInputStreamValue
+                       java.io.OutputStream cohost.io.OutputStreamValue
+                       java.io.BufferedOutputStream cohost.io.BufferedOutputStreamValue
+                       java.io.Reader cohost.io.ReaderValue
+                       java.io.BufferedReader cohost.io.BufferedReaderValue
+                       java.io.Writer cohost.io.WriterValue
+                       java.io.BufferedWriter cohost.io.BufferedWriterValue
+                       java.net.URL cohost.io.UrlDispatch
+                       java.net.URI cohost.io.UriDispatch}
+                     token))
    ;; X3-1: the shim's MultiFn with its one-entry cache (adapter.cljc); full bb
    ;; bench:jvm, 5 interleaved rounds on max/main aeac81b: multimethod stock 8.49
    ;; -> 7.24 ms (every true round below every nil round but one), no case
@@ -205,3 +223,14 @@
                               :else absent))))})
 
 (adapter/install! (merge java/capabilities adapter))
+
+;; NOTE (Lane R, family 2): the io layer's record classes stand for the
+;; java.io classes on this seat too, but a record class does not EXTEND
+;; the class it stands for, and stock derive refuses Class parents, so
+;; a class-keyed multimethod in the booted core whose key names a
+;; SUPERCLASS (clojure.java.io's do-copy on [Reader Writer]) misses a
+;; BufferedReader value on this seat. Exact-class keys dispatch (the
+;; codemod keys them on the record classes via :host-type above), and
+;; protocols are exact-class covered by stock io.clj's own extends.
+;; On the token-class seats (lg, jolt) the shim's class hierarchy
+;; carries the subclass relations and the same calls dispatch.

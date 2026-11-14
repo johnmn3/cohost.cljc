@@ -2445,7 +2445,15 @@
                  (let [t (:tag (meta nm))]
                    (when (or (symbol? t) (string? t)
                              (and (seq? t) (= 'quote (first t)) (symbol? (second t))))
-                     t)))
+                     ;; a bare imported class name (io.clj's ^Reader) names
+                     ;; no class in the booted ns, whose imports are the
+                     ;; codemod's own: preserve the tag by its full name
+                     (cond (and (symbol? t) (class-sym? t) (nil? (primitive-hint t)))
+                           (class-token t)
+                           (and (seq? t) (= 'quote (first t)) (symbol? (second t))
+                                (class-sym? (second t)) (nil? (primitive-hint (second t))))
+                           (list 'quote (class-token (second t)))
+                           :else t))))
         nm (carry-meta nm nm)
         nm (if nm-tag (vary-meta nm assoc :tag nm-tag) nm)
         nm (if (some #(contains? (meta nm) %) code-meta-keys)
@@ -3051,6 +3059,27 @@
             (contains? extend-heads (spec-head h))
             (rw-extend ctx (spec-head h) args)
             (spec-head h) (rw-spec-form ctx (cons (spec-head h) args))
+            ;; a defmethod dispatch value naming a class stands for the
+            ;; host's type for it, as an extend position does: io.clj's
+            ;; do-copy keys [String Writer] must key on the class the
+            ;; values dispatch on (the io layer's record class where the
+            ;; host names one), not the class the name alone denotes
+            (= hn "defmethod")
+            (let [dv (second args)
+                  key1 (fn [e] (if (and (symbol? e) (class-sym? e) (not (user-name? ctx e)))
+                                 (let [hts (host-types e)]
+                                   ;; only a passthrough seat dispatches on the
+                                   ;; class object itself; a token seat's keys
+                                   ;; are the quoted tokens rw already emits
+                                   (if (and (:passthrough? ctx) (= 1 (count hts))
+                                            (symbol? (first hts))
+                                            (not= (first hts) (class-token e)))
+                                     (first hts)
+                                     (rw ctx e)))
+                                 (rw ctx e)))]
+              (apply list (rw ctx h) (rw ctx (first args))
+                     (cons (if (vector? dv) (mapv key1 dv) (key1 dv))
+                           (rw-all ctx (nnext args)))))
             (or (= h 'monitor-enter) (= h 'monitor-exit))
             (apply list (shim-fn hn) (rw-all ctx args))
             ;; (.method target args...) and (.-field target): a field the shim

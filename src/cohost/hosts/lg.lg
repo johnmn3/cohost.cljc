@@ -979,7 +979,20 @@
      'java.util.List (vec (cons vecs seqs)) 'clojure.lang.Sequential (vec (cons vecs seqs))
      'java.util.Collection (vec (concat [vecs] sets seqs))
      'java.lang.Iterable colls 'clojure.lang.IPersistentCollection colls 'clojure.lang.Seqable colls
-     'clojure.lang.Counted (vec (concat [vecs maps lst] sets)) 'clojure.lang.Associative [maps vecs]}))
+     'clojure.lang.Counted (vec (concat [vecs maps lst] sets)) 'clojure.lang.Associative [maps vecs]
+     ;; the io layer's dispatch types (cohost.io's deftypes, named
+     ;; through the shim): clojure.java.io's extends stand on these
+     'java.io.File '(cohost.shim/io-class 'java.io.File)
+     'java.io.InputStream '(cohost.shim/io-class 'java.io.InputStream)
+     'java.io.BufferedInputStream '(cohost.shim/io-class 'java.io.BufferedInputStream)
+     'java.io.OutputStream '(cohost.shim/io-class 'java.io.OutputStream)
+     'java.io.BufferedOutputStream '(cohost.shim/io-class 'java.io.BufferedOutputStream)
+     'java.io.Reader '(cohost.shim/io-class 'java.io.Reader)
+     'java.io.BufferedReader '(cohost.shim/io-class 'java.io.BufferedReader)
+     'java.io.Writer '(cohost.shim/io-class 'java.io.Writer)
+     'java.io.BufferedWriter '(cohost.shim/io-class 'java.io.BufferedWriter)
+     'java.net.URL '(cohost.shim/io-class 'java.net.URL)
+     'java.net.URI '(cohost.shim/io-class 'java.net.URI)}))
 
 (def ^:private meta-tokens (set '[clojure.lang.IObj clojure.lang.IMeta]))
 

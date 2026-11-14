@@ -21,6 +21,7 @@
    Equality is the map's: a named distance from the Java classes, as unit 1
    named it for the thread layer's values."
   (:require [cohost.adapter :as host]
+            [cohost.io :as cio]
             [cohost.thread :as thread]))
 
 ;; ---------------------------------------------------------------------------
@@ -508,6 +509,13 @@
    are UTF-8 text."
   [f & _opts]
   (cond (value? f) (slurp-value f)
+        (cio/reader-value? f) (loop [sb (host/string-builder)]
+                                (let [c (cio/read-char! f)]
+                                  (if (= -1 c)
+                                    (str sb)
+                                    (do (host/sb-append! sb c) (recur sb)))))
+        (cio/input-stream-value? f) (cio/stream-text f)
+        (cio/is? :cohost.io/file f) (cio/file-text f)
         (string? f) (host/slurp-file f)
         :else (throw (host/ex* 'java.lang.IllegalArgumentException
                                (str "Cannot open <" (pr-str f) "> as an InputStream.")))))
