@@ -26,7 +26,15 @@
      ["-X:run" ["-X:run" ":user" (pr-str user)]]
      ["-e" ["-e" "(require 'greeter.core)" "-e" (str "(greeter.core/name-of " (pr-str user) ")")]]
      ["script" ["script.clj" user "jvm-x"]]
-     ["-Spath" ["-Spath"]]]))
+     ["-Spath" ["-Spath"]]
+     ["-Stree" ["-Stree"]]
+     ["-Strace -Spath" ["-Strace" "-Spath"]]
+     ["-Sthreads -Spath" ["-Sthreads" "2" "-Spath"]]
+     ["-Sforce -Spath" ["-Sforce" "-Spath"]]
+     ["-Sdeps file -Spath" ["-Sdeps" "extra-deps.edn" "-Spath" "-A:x"]]]))
+
+(def spath-labels #{"-Spath" "-Strace -Spath" "-Sthreads -Spath" "-Sforce -Spath"
+                    "-Sdeps file -Spath"})
 
 (defn run [cmd]
   (let [r (deref (p/process cmd {:dir demo :out :string :err :string :in ""}))]
@@ -56,6 +64,18 @@
     (and (= (count want) (count have))
          (every? true? (map (fn [w h] (if (string? w) (= w h) (boolean (re-matches w h)))) want have)))))
 
+(defn tree-same?
+  "cohost's -Stree is rendered from the basis: the roots and their order
+   and every node line must be clojure's; sibling order under a parent is
+   the basis's, not the POM declaration order stock prints, so the child
+   lines compare as a multiset."
+  [ref got]
+  (let [lines (fn [s] (remove str/blank? (str/split-lines (or s ""))))
+        rl (lines ref) gl (lines got)
+        roots (fn [ls] (filter #(not (str/starts-with? % " ")) ls))]
+    (and (= (roots rl) (roots gl))
+         (= (frequencies rl) (frequencies gl)))))
+
 (defn one-line [s] (str/replace (str/trim (or s "")) #"\s*\n\s*" " | "))
 
 (defn check [[t exe]]
@@ -65,10 +85,12 @@
       (let [ref (run (into ["clojure"] args))
             got (run (into [cohost (str ":" t)] args))
             same? (and (= (:exit ref) (:exit got))
-                       ;; :jvm runs the real CLI: its classpath is the classpath
-                       (if (and (= label "-Spath") (not= t "jvm"))
+                       (cond
+                         ;; :jvm runs the real CLI: its classpath is the classpath
+                         (and (spath-labels label) (not= t "jvm"))
                          (spath-same? (:out ref) (:out got))
-                         (= (:out ref) (:out got))))]
+                         (= label "-Stree") (tree-same? (:out ref) (:out got))
+                         :else (= (:out ref) (:out got))))]
         (println
          (if same?
            (format "%-6s %-8s SAME" t label)

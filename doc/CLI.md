@@ -101,6 +101,44 @@ source root:
   `clojure.*` libraries (`clojure.string`, …) load from those sources too: the
   stock root comes first.
 
+Resolution is delegated, so it fetches: the CLI (or jolt) downloads what the
+deps name. A surface that must not fetch refuses at its own layer; the
+resolver is not the place for that rule.
+
+The launcher's own readings of the resolution flags:
+
+- `-Sverbose` turns on the boot report, the same switch as `COHOST_VERBOSE`.
+- `-Stree` is rendered from the basis the resolution wrote (`:libs` and each
+  lib's `:parents` chains). The graph and versions are the resolver's own;
+  siblings print in basis order, where stock prints the parent POM's
+  declaration order. The jolt/champaca leg writes no basis, and `-Stree`
+  there says so and exits 1; with `clojure` on PATH the `:jvm` target
+  delegates and prints the CLI's tree.
+- `-Strace` is forwarded to the CLI resolution, which writes `trace.edn` in
+  the project directory. jolt writes no trace, and the flag is not forwarded
+  on the jolt paths.
+- A `-Sdeps` value in the CLI's file form (a path to an EDN file) goes to
+  the real CLI verbatim. The consumers that parse the value themselves —
+  jolt (which dies on a path), the champaca leg's alias reader, the `-T`
+  template merge — read the file's text instead.
+- `-Sforce` and `-Sthreads` are forwarded on the jolt paths too (jolt
+  honours both); they already reached the CLI by the `:resolve` route.
+- `-Spath` and `-P` on the champaca leg are answered by the leg's own
+  resolver (jolt's classpath entries; a jolt resolution), since
+  `clojure.main` has no such flags to delegate to.
+- The `-X:deps` programs are the Clojure CLI's own tools. On the `:jvm`
+  target with `clojure` on PATH they are the CLI's, unchanged. On a native
+  host they run from the basis argmap like any `-X` — today they stop at
+  `clojure.java.io`, which the pinned stock sources do not carry. On legs
+  that read aliases themselves (champaca, the no-`clojure` jolt resolver)
+  they refuse by name: no CLI, no programs.
+- `clojure.java.basis`: a program on the `:jvm` target served by the real
+  CLI can read it — the CLI sets the `clojure.basis` property and writes
+  the basis. Cohost's other legs do not expose it: on native hosts the
+  stock namespace chain needs `clojure.java.io` (not in the pinned
+  sources), and on the jolt paths no basis artifact exists. The launcher
+  still consumes the basis itself for the argmap, as above.
+
 ## The :clj body
 
 `:jvm` is the `:clj` leg. cohost does not inspect a JVM. `bin/cohost_clj_body.clj`
