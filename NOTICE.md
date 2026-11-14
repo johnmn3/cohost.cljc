@@ -38,8 +38,15 @@ byte:
   `clojure/core_print.clj`, and the libraries `clojure/walk.clj`, `set.clj`,
   `string.clj`, `zip.clj`, `data.clj`, `edn.clj`, `template.clj`, `test.clj`,
   `math.clj`, `stacktrace.clj` and `repl.clj`.
+- From the same **Clojure 1.12.0** jar, added by the stock-tree completion
+  (family 1): `clojure/instant.clj`, `clojure/uuid.clj`, `clojure/datafy.clj`,
+  `clojure/xml.clj`, `clojure/core/reducers.clj`, `clojure/test/junit.clj`,
+  `clojure/test/tap.clj`, `clojure/reflect.clj` and
+  `clojure/reflect/java.clj`.
 - From the **clojure.spec.alpha 0.5.238** release jar (the version Clojure
   1.12.0 depends on): `clojure/spec/alpha.clj` and `clojure/spec/gen/alpha.clj`.
+- From the **clojure.core.specs.alpha 0.4.74** release jar (the version
+  Clojure 1.12.0 depends on): `clojure/core/specs/alpha.clj`.
 
 Their headers say **Copyright (c) Rich Hickey. All rights reserved.**
 (`clojure/repl.clj`: **Copyright (c) Chris Houser, Dec 2008. All rights
