@@ -324,10 +324,25 @@
                 (char (+ 0xD800 (bit-shift-right v 10))))
               (char cp))))))))
 
+(defn- line-buffer
+  "The read-line loops' accumulator: a StringBuilder on the class
+   hosts. Squint's analyzer resolves no StringBuilder class and JS
+   has none at runtime, so there the buffer is a small object with
+   the same append/length/toString surface over a JS array."
+  []
+  #?(:squint (let [parts (array)
+                   o (js-obj)]
+               (set! (.-append o) (fn [c] (.push parts c) o))
+               (set! (.-toString o) (fn [] (.join parts "")))
+               (.defineProperty js/Object o "length"
+                                (js-obj "get" (fn [] (.-length parts))))
+               o)
+     :default (StringBuilder.)))
+
 (defn socket-read-line!
   "BufferedReader.readLine over a socket reader."
   [r]
-  (loop [sb (StringBuilder.)]
+  (loop [sb (line-buffer)]
     (let [c (socket-read-char! r)]
       (cond (number? c) (when (pos? (.length sb)) (.toString sb))
             (= c \newline) (.toString sb)
@@ -749,7 +764,7 @@
   "readLine built on read-char!: for a pushback reader over a socket
    reader, whose buffer and under the char path already composes."
   [r]
-  (loop [sb (StringBuilder.)]
+  (loop [sb (line-buffer)]
     (let [c (read-char! r)]
       (cond (number? c) (when (pos? (count (.toString sb))) (.toString sb))
             (= c \newline) (.toString sb)

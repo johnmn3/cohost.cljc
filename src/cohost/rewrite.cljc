@@ -837,7 +837,13 @@
       (when (seq m) m))))
 
 (defn- meta-capable? [x]
-  (or (seq? x) (vector? x) (map? x) (set? x) (symbol? x)))
+  ;; squint: a symbol is a plain JS string and cannot carry meta --
+  ;; squint's with-meta copies its target and a string matches no
+  ;; copy case, so it throws. Meta on symbols is dropped on that
+  ;; host, exactly as its reader drops it; var meta lives in the
+  ;; host adapter's registry.
+  (or (seq? x) (vector? x) (map? x) (set? x)
+      #?(:squint false :default (symbol? x))))
 
 (defn- carry-meta
   "Give `out` the (stripped) metadata of `orig`."

@@ -36,6 +36,7 @@
    dotted global path (other.ns/get-x -> other.ns.get_x()); its
    core import is the only import a require-free chunk emits."
   (:require [cohost.adapter :as adapter]
+            [cohost.policy :as policy]
             [clojure.string :as string]
             ["node:fs" :as fs]
             ["squint-cljs/core.js" :as sqcore]
@@ -327,6 +328,7 @@
   (let [c (nth cs (inc i))]
     (cond
       (= c "{") (read-coll cs (+ i 2) "}" (fn [acc] (apply hash-set acc)) ns-sym)
+      (= c "'") (let [[form j] (read-form* cs (+ i 2))] [(list 'var form) j])
       (= c "(") (let [[form j] (read-form* cs (inc i))] [(fn-literal form) j])
       (= c "\"") (let [[s j] (read-string-lit cs (inc i))] [(js/RegExp. s) j])
       (= c "?") (let [[v j _] (read-reader-cond cs i ns-sym false)] [v j])
@@ -465,7 +467,12 @@
       (let [head (first form)]
         (cond
           (= head 'quote) form
-          (= head 'fn*)
+          ;; surface fn/let/loop and the defn family get the same
+          ;; binding-aware treatment as their starred/special
+          ;; counterparts below: without it the generic walk
+          ;; qualifies binding names as var refs and print-form's
+          ;; keyword heuristic then refuses them at compile time.
+          (or (= head 'fn*) (= head 'fn))
           (let [named? (symbol? (second form))
                 sigs (if named? (nthrest form 2) (rest form))
                 sigs (if (vector? (first sigs)) (list sigs) sigs)
@@ -476,7 +483,10 @@
                                   (apply list params (map #(qualify % ns-sym locals') (rest sig)))))
                               sigs)]
             (apply list (concat (if named? ['fn* (second form)] ['fn*]) new-sigs)))
-          (or (= head 'let*) (= head 'loop*))
+          (or (= head 'let*) (= head 'loop*) (= head 'let) (= head 'loop)
+              (= head 'binding) (= head 'doseq) (= head 'dotimes)
+              (= head 'for) (= head 'with-open) (= head 'if-let)
+              (= head 'when-let) (= head 'if-some) (= head 'when-some))
           (let [binds (second form)
                 [new-binds locals']
                 (loop [bs (seq binds) acc [] locals locals]
@@ -487,7 +497,35 @@
                              (conj acc bf (qualify init ns-sym locals))
                              (into locals (binding-names bf))))))]
             (apply list head new-binds (map #(qualify % ns-sym locals') (nthrest form 2))))
-          (= head 'letfn*)
+          (or (= head 'defn) (= head 'defn-) (= head 'defmacro)
+              (= head 'defmacro-) (= head 'definline))
+          (let [nm (second form)
+                tail0 (nthrest form 2)
+                tail (cond-> tail0
+                       (instance? js/String (first tail0)) rest
+                       (map? (first (cond-> tail0 (instance? js/String (first tail0)) rest))) rest)
+                prefix (take (- (count tail0) (count tail)) tail0)
+                arities (if (vector? (first tail)) (list tail) tail)
+                locals' (conj locals nm)]
+            (apply list head nm
+                   (concat prefix
+                           (map (fn [sig]
+                                  (let [params (first sig)
+                                        ls (into locals' (binding-names params))]
+                                    (apply list params (map #(qualify % ns-sym ls) (rest sig)))))
+                                arities))))
+          (= head 'defmethod)
+          (let [nm (second form)
+                tail (nthrest form 3)
+                arities (if (vector? (first tail)) (list tail) tail)
+                locals' (conj locals nm)]
+            (apply list head nm (qualify (nth form 2) ns-sym locals)
+                   (map (fn [sig]
+                          (let [params (first sig)
+                                ls (into locals' (binding-names params))]
+                            (apply list params (map #(qualify % ns-sym ls) (rest sig)))))
+                        arities)))
+          (or (= head 'letfn*) (= head 'letfn))
           (let [specs (second form)
                 names (into locals (map (comp first) specs))
                 new-specs (mapv (fn [spec]
@@ -575,16 +613,41 @@
     (string? form)
     (cond quoted? form
           (contains? locals form) form
-          (string/includes? form "/") form
+          (string/includes? form "/")
+          ;; a qualified symbol whose name part is not a plain
+          ;; identifier (an operator: +, *, ...) compiles to
+          ;; garbage -- squint emits (1 cohost.core/+ 2) for
+          ;; cohost.core/+ -- while the munged dotted path
+          ;; (cohost.core._PLUS_) compiles to the ns object's
+          ;; slot, where the value actually lives.
+          (let [i (.lastIndexOf form "/")
+                nm (subs form (inc i))]
+            (if (re-matches #"[A-Za-z0-9_$\-]+" nm)
+              form
+              (str (subs form 0 i) "." (munge-name nm))))
           (contains? special-forms form) form
           :else form)
     (seq? form)
     (if (empty? form)
       "()"
-      (let [head (first form)]
+      (let [head (first form)
+            ;; heads reach the printer already qualified by the
+            ;; qualify walk (cohost.core/let, cohost.core/defn);
+            ;; branch on the name part so the binding-aware
+            ;; branches still fire -- a qualified head that fell
+            ;; through to the generic printer got its binding
+            ;; names keyword-printed and the form died at compile
+            ;; or ran with free variables.
+            hname (when (string? head) (name head))]
         (cond
-          (= head 'quote) (str "(quote " (print-form (second form) locals true) ")")
-          (= head 'fn*)
+          (= hname "quote") (str "(quote " (print-form (second form) locals true) ")")
+          ;; surface fn reaches eval too (macro expansions and the
+          ;; rewriter emit it); without this branch its binding
+          ;; vector falls to the generic vector printer, whose
+          ;; keyword heuristic prints params as :keywords and
+          ;; squint's compiler refuses them ("Unsupported binding
+          ;; key"). fn and fn* are the same form to the compiler.
+          (or (= hname "fn*") (= hname "fn"))
           (let [named? (symbol? (second form))
                 sigs (if named? (nthrest form 2) (rest form))
                 sigs (if (vector? (first sigs)) (list sigs) sigs)]
@@ -600,7 +663,11 @@
                                             ")")))
                                    sigs))
                  ")"))
-          (or (= head 'let*) (= head 'loop*))
+          ;; surface let/loop likewise: route them through the
+          ;; binding-aware printer, keeping their own head (squint
+          ;; compiles the surface heads; only the binding vector
+          ;; needed the bare-symbol treatment).
+          (contains? #{"let*" "loop*" "let" "loop"} hname)
           (let [binds (second form)
                 pairs (partition 2 binds)
                 locals' (reduce (fn [ls [bf _]] (into ls (binding-names bf))) locals pairs)]
@@ -617,7 +684,7 @@
                  "] "
                  (string/join " " (map #(print-form % locals' quoted?) (nthrest form 2)))
                  ")"))
-          (= head 'letfn*)
+          (or (= hname "letfn*") (= hname "letfn"))
           (let [specs (second form)
                 names (into locals (map (comp first) specs))]
             (str "(letfn* ["
@@ -633,7 +700,7 @@
                  "] "
                  (string/join " " (map #(print-form % names quoted?) (nthrest form 2)))
                  ")"))
-          (or (= head 'def) (= head 'defonce))
+          (or (= hname "def") (= hname "defonce"))
           ;; [def name init] or [def name docstring init]: only the
           ;; four-element shape has a docstring in position 2
           (str "(" head " " (second form)
@@ -642,7 +709,7 @@
                (let [init (nth form (if (= (count form) 4) 3 2) nil)]
                  (when (some? init) (str " " (print-form init locals quoted?))))
                ")")
-          (= head 'try)
+          (= hname "try")
           (str "(try "
                (string/join " "
                             (map (fn [p]
@@ -654,6 +721,59 @@
                                      (print-form p locals quoted?)))
                                  (rest form)))
                ")")
+          ;; the defn family: name, optional docstring/attr-map
+          ;; (defmethod: a dispatch form), then arities whose
+          ;; binding vectors must print through print-binding-form
+          ;; and whose bodies take the params as locals. Printed
+          ;; generically, the params keyword-print and the form
+          ;; dies ("Unsupported binding key") or runs free.
+          (contains? #{"defn" "defn-" "defmacro" "defmacro-"
+                       "definline" "defmethod"} hname)
+          (let [nm (second form)
+                tail0 (nthrest form (if (= hname "defmethod") 3 2))
+                tail (if (and (not= hname "defmethod") (instance? js/String (first tail0)))
+                       (rest tail0) tail0)
+                tail (if (and (not= hname "defmethod") (map? (first tail)))
+                       (rest tail) tail)
+                prefix (take (- (count tail0) (count tail)) tail0)
+                single? (vector? (first tail))
+                arities (if single? (list tail) tail)
+                locals' (conj locals nm)
+                print-sig (fn [sig parens?]
+                            (let [ls (into locals' (binding-names (first sig)))]
+                              (str (when parens? "(")
+                                   (print-binding-form (first sig) locals quoted?)
+                                   (when (seq (rest sig)) " ")
+                                   (string/join " " (map #(print-form % ls quoted?) (rest sig)))
+                                   (when parens? ")"))))]
+            (str "(" head " " nm
+                 (when (= hname "defmethod")
+                   (str " " (print-form (nth form 2) locals quoted?)))
+                 (when (seq prefix)
+                   (str " " (string/join " " (map #(print-form % locals quoted?) prefix))))
+                 " "
+                 (string/join " " (map #(print-sig % (not single?)) arities))
+                 ")"))
+          ;; binding-second macros: (head [bf init ...] body...)
+          ;; -- the binding vector prints pair-wise like let's.
+          (contains? #{"binding" "doseq" "dotimes" "for" "with-open"
+                       "if-let" "when-let" "if-some" "when-some"} hname)
+          (let [binds (second form)
+                pairs (partition 2 binds)
+                locals' (reduce (fn [ls [bf _]] (into ls (binding-names bf))) locals pairs)]
+            (str "(" head " ["
+                 (string/join " "
+                              (loop [ps (seq pairs) ls locals acc []]
+                                (if (empty? ps)
+                                  acc
+                                  (let [[bf init] (first ps)]
+                                    (recur (rest ps)
+                                           (into ls (binding-names bf))
+                                           (conj acc (print-binding-form bf locals quoted?)
+                                                 (print-form init ls quoted?)))))))
+                 "] "
+                 (string/join " " (map #(print-form % locals' quoted?) (nthrest form 2)))
+                 ")"))
           :else
           (let [hname (when (string? head) (name head))]
             (str "(" (print-form head locals quoted?)
@@ -716,8 +836,13 @@
        ""))
 
 (defn- compile-js [src]
+  ;; compileString's return shape at the pin (0.16.213): the JS
+  ;; text itself, a plain string. (.-javascript res) on it is
+  ;; undefined and the chunk died in string/replace before any
+  ;; form ran -- accept the string, keep the object arm for
+  ;; compilers that return one.
   (let [res (squint-compiler/compileString src (js-obj))]
-    (.-javascript res)))
+    (if (string? res) res (.-javascript res))))
 
 (defn- run-js-chunk
   "Compile src (a single top-level form's text, no ns form, no
@@ -744,8 +869,24 @@
 
 (defn- eval-form-impl [form]
   (let [ns-sym @cur-ns
-        q (qualify form ns-sym #{})
-        head (when (seq? q) (first q))]
+        q0 (qualify form ns-sym #{})
+        head (when (seq? q0) (first q0))
+        ;; squint compiles defmacro to NOTHING (macros are
+        ;; compile-time only in its model: no value, no export),
+        ;; so a defmacro chunk interns undefined and every later
+        ;; expansion applies it and dies. Materialize the macro
+        ;; fn instead: direct-macro-def turns the form into
+        ;; (def nm (fn* nm [&form &env ...] ...)), a real value
+        ;; the registry can hold and boot can apply.
+        ;; definline is deliberately NOT materialized yet: its
+        ;; real expansion embeds (eval (list 'fn args expr)) and
+        ;; the rewrite walk of that expansion does not terminate
+        ;; (defect banked in the lane STATUS, stack evidence
+        ;; there); definline vars stay uninterned and their uses
+        ;; error in the census, as before.
+        q (if (contains? '#{defmacro} head)
+            (policy/direct-macro-def q0)
+            q0)]
     (if (contains? def-heads head)
       (let [exports (run-js-chunk (print-form q #{} false))
             nm (second q)
@@ -877,6 +1018,15 @@
    :read-forms read-forms-impl
    :read-string (fn ([s] (read-one s {})) ([s opts] (read-one s opts)))
    :host-read-string (fn [s] (read-one s {}))
+   ;; squint's nth on a string walks it from the start (measured
+   ;; at the pin: nth at index 100000 of the 276k-char core.clj
+   ;; takes ~100 ms), so boot's char scanners over :string-chars
+   ;; would run O(n^2) with a giant constant and the boot never
+   ;; gets past the first file. A split array makes nth the
+   ;; constant-time array read the cap contract promises; the
+   ;; elements are UTF-16 units, so indices stay aligned with
+   ;; the string's own (subs, last-index-of).
+   :string-chars (fn [s] (.split s ""))
    :plain-symbol (fn [x] x)
    :with-ns (fn [ns-sym thunk]
               (let [old @cur-ns]
@@ -964,6 +1114,37 @@
    :NEGATIVE_INFINITY (- js/Infinity)
    :NaN js/NaN})
 
+(defn- chunk-core
+  "The core object eval chunks see as squint_core (run-js-chunk
+   rewrites every chunk's core import to the globalThis stash).
+   A shallow copy of squint's own core module -- every value the
+   identical object, so class identity and protocol slots are
+   shared with the compiled graph -- with two fns replaced:
+
+   with-meta / vary-meta. Squint's with-meta copies its target
+   (the copy fn in squint's core.js) and a JS string matches no
+   copy case, so it throws \"Don't know how to copy object of
+   type string.\" On this host every symbol and keyword IS a
+   string, and stock macro bodies (defn and its kin) call
+   with-meta on name symbols at expansion time -- that was the
+   boot census's dominant error class (594 of 595, smoke 3).
+   Metadata has nowhere to ride on a squint symbol: the value
+   comes back unchanged, exactly as the reader's with-meta*
+   drops meta on symbols at read time; var metadata lives in
+   this adapter's registry, where boot's caps read it. nil is
+   returned unchanged too (with-meta on nil is nil in Clojure).
+   Every other value delegates to squint's own fns."
+  []
+  (let [orig-with-meta (aget sqcore "with_meta")
+        orig-vary-meta (aget sqcore "vary_meta")
+        wrapped (js/Object.assign (js-obj) sqcore)]
+    (aset wrapped "with_meta"
+          (fn [x m] (if (or (string? x) (nil? x)) x (orig-with-meta x m))))
+    (aset wrapped "vary_meta"
+          (fn [x f & args]
+            (if (or (string? x) (nil? x)) x (apply orig-vary-meta x f args))))
+    wrapped))
+
 (defn install!
   "Install the squint adapter and the seat's constants namespace.
    Runs on module load (below), the cljs adapter's pattern: the
@@ -971,7 +1152,17 @@
    defs) must find the adapter installed, in the compiled body
    and in the compiler's own load of the graph alike."
   []
-  (aset js/globalThis "__cohost_squint_core" sqcore)
+  (let [wrapped (chunk-core)]
+    (aset js/globalThis "__cohost_squint_core" wrapped)
+    ;; var values live on globalThis.<ns> objects (ns-obj!), and
+    ;; :var-raw-root reads them from there -- but nothing else ever
+    ;; populates squint.core's object, so every host-fn lookup of a
+    ;; core var (shim's record?, map-entry?, ...) resolved to
+    ;; undefined and died when called. Seed it from the (wrapped)
+    ;; core module: same values the chunks see.
+    (let [core-obj (ns-obj! 'squint.core)]
+      (doseq [k (js/Object.keys wrapped)]
+        (aset core-obj k (aget wrapped k)))))
   ;; squint core has no munge; the AOT shim's :cljs arms call the
   ;; bare global (squint emits it unqualified), so supply it here
   (aset js/globalThis "munge" (fn [x] (munge-name x)))

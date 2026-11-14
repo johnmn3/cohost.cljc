@@ -25,7 +25,11 @@
             [eve.atom :as eve-atom]
             [eve.host :as eve-host]
             [eve.host-init :as eve-init]
-            [eve.digest :as eve-digest]
+            [eve.codec :as codec]
+            [eve.crypto :as crypto]
+            [eve.int32 :as i32]
+            [eve.thread-host :as eve-thread-host]
+            [eve.deftype-proto.serialize :as ser]
             [eve.deftype-proto.data :as eve-data]))
 
 (defonce ^:private hosting
@@ -119,13 +123,38 @@
     (reset! hosting {:dir (:dir s) :registry nil :registry-domain nil :minted 0 :shards []})
     true))
 
+(defn- digest-words
+  "eve.digest/compute-digest, spelled from its public parts. The
+   digest fn is private in eve.digest, and squint does not export
+   private vars (the compiled module keeps it module-local, so the
+   direct call the other seats make is not a function here). This
+   is the same computation: SHA-256 over the value's canonical
+   codec bytes under a shared write, packed as 8 little-endian i32
+   words; nil when the content has no canonical bytes."
+  [v]
+  (let [[ok? words]
+        (eve-thread-host/attempt
+         (fn []
+           (let [bs (binding [ser/*shared-write* true]
+                      (codec/value->eve-bytes v))
+                 raw (crypto/sha256 (mapv (fn [b] (bit-and b 0xFF)) bs))
+                 ubs (mapv (fn [b] (bit-and b 0xFF)) raw)]
+             (mapv (fn [i]
+                     (let [o (* 4 i)]
+                       (i32/i32 (bit-or (nth ubs o)
+                                        (bit-shift-left (nth ubs (+ o 1)) 8)
+                                        (bit-shift-left (nth ubs (+ o 2)) 16)
+                                        (bit-shift-left (nth ubs (+ o 3)) 24)))))
+                   (range 8)))))]
+    (when ok? words)))
+
 (defn root-digests
   "The two digests of a layer atom's current Eve root: :seal and
    :sha256 (SHA-256 over the root's canonical codec bytes)."
   [a]
   (let [h (atom-layer/eve-handle a)]
     {:seal (eve-atom/seal h)
-     :sha256 (eve-digest/compute-digest @h)}))
+     :sha256 (digest-words @h)}))
 
 (defn hosting-state
   "Domain counts for probes and the report."

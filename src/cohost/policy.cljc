@@ -237,6 +237,13 @@
    (skipped: nothing to take from the host, and no stock definition over one)."
   {:cljs {:host (set '[defmacro])        ; only cljs.core's defmacro can make a macro there
           :skip (set '[])}
+   ;; squint: the definline array-casters' expansions send the boot's
+   ;; rewrite walk into a non-terminating seq step (convicted by CDP
+   ;; stack samples at (definline booleans ...) — split-with under a
+   ;; macro-apply cycle, no form completes); their bodies are
+   ;; clojure.lang host calls that cannot run on squint in any case,
+   ;; so they are skipped rather than walked.
+   :squint {:skip (set '[booleans bytes chars shorts floats ints doubles longs])}
    ;; basilisp's format is Python's % operator: core.clj's format (and printf
    ;; over it) run String/format, the shim's java.util.Formatter
    :lpy {:stock (set '[format printf])}
@@ -273,14 +280,19 @@
    ([params] body...)+)` -> `(def ^{:macro true ...} name (fn* name (...)))`,
    what stock defmacro + defn expand to, without going through either."
   [[_ nm & more]]
-  (let [[doc more] (if (string? (first more)) [(first more) (rest more)] [nil more])
+  ;; squint: the host reader returns string literals as String
+  ;; objects (its string? is a typeof check and misses them), so
+  ;; the docstring test needs the object arm there.
+  (let [[doc more] (if #?(:squint (or (string? (first more)) (instance? js/String (first more)))
+                          :default (string? (first more)))
+                     [(first more) (rest more)] [nil more])
         [attrs more] (if (map? (first more)) [(first more) (rest more)] [{} more])
         arities (if (vector? (first more)) [more] more)
         arities' (map (fn [[params & body]]
                         (apply list (into ['&form '&env] params) body))
                       arities)
         m (merge attrs {:macro true :arglists (list 'quote (apply list (map first arities)))} (when doc {:doc doc}))]
-    (list 'def (with-meta nm m) (apply list 'fn* nm arities'))))
+    (list 'def #?(:squint nm :default (with-meta nm m)) (apply list 'fn* nm arities'))))
 
 (def ^:private fn-heads (set '[fn* fn]))
 
@@ -303,7 +315,7 @@
               more (if (symbol? (first more)) (rest more) more)
               arities (if (vector? (first more)) [more] more)
               arities' (map (fn [[params & body]] (apply list (vec (drop 2 params)) body)) arities)]
-          (apply list 'defmacro (vary-meta nm dissoc :macro) arities'))
+          (apply list 'defmacro #?(:squint nm :default (vary-meta nm dissoc :macro)) arities'))
         (and (= h '.) (seq? nm) (= 'var (first nm)) (= '(setMacro) init)) nil
         :else form))))
 
