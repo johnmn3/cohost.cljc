@@ -194,12 +194,43 @@
            problems (assoc :clojure.error/spec data))))
      :clojure.error/phase phase)))
 
+(defn- spec-explain-str
+  "Stock ex-str's spec rendering, through the booted core's own
+   clojure.spec.alpha/explain-out. Only the explain-data's problems
+   cross (they are all explain-printer reads): they go over as a
+   pr-str literal, set-command-line-args!'s channel, and the core
+   renders them -- its *explain-out* is the one user code sees, and
+   stock's default-printer adaptation (the problems lose their :in)
+   is applied in the core, as stock applies it. nil when the render
+   is unavailable (a value pr-str cannot print readably rides the
+   problems, or the render itself fails): ex-str then prints the
+   cause, as it did before this port."
+  [spec]
+  (host/try-all
+   (fn []
+     (let [probs #?(:jank (pr-str (:clojure.spec.alpha/problems spec))
+                    :phel (pr-str (:clojure.spec.alpha/problems spec))
+                    :lg (pr-str (:clojure.spec.alpha/problems spec))
+                    :default (binding [*print-namespace-maps* false]
+                               (pr-str (:clojure.spec.alpha/problems spec))))]
+       (boot/eval-str
+        (str "(do (require 'clojure.spec.alpha)"
+             " (let [probs (quote " probs ")]"
+             "  (with-out-str"
+             "   (clojure.spec.alpha/explain-out"
+             "    {:clojure.spec.alpha/problems"
+             "     (if (= clojure.spec.alpha/*explain-out* clojure.spec.alpha/explain-printer)"
+             "       (mapv (fn [p] (dissoc p :in)) probs) probs)}))))")
+        {:session? false})))
+   (fn [_] nil)))
+
 (defn- ex-str
-  "clojure.main's ex-str, its wording exactly, built with str. (A spec
-   error's explain text is the one piece not ported: the cause prints,
-   and the explain-data rides the report file.)"
+  "clojure.main's ex-str, its wording exactly, built with str. A spec
+   error's explain text is rendered from the triage's explain-data
+   (spec-explain-str); when the render is unavailable the cause
+   prints, as before the port."
   [triage]
-  (let [{:clojure.error/keys [phase source path line column symbol class cause]} triage
+  (let [{:clojure.error/keys [phase source path line column symbol class cause spec]} triage
         loc (str (or path source "REPL") ":" (or line 1) (when column (str ":" column)))
         class-name (name (or class ""))
         simple-class (let [i (host/last-index-of* class-name ".")]
@@ -209,13 +240,20 @@
         sym (if symbol (str symbol " ") "")]
     (case phase
       :read-source (str "Syntax error reading source at (" loc ").\n" cause "\n")
-      :macro-syntax-check (str "Syntax error macroexpanding " sym "at (" loc ").\n" cause "\n")
+      :macro-syntax-check (if spec
+                            (str "Syntax error macroexpanding " sym "at (" loc ").\n"
+                                 (or (spec-explain-str spec) (str cause "\n")))
+                            (str "Syntax error macroexpanding " sym "at (" loc ").\n" cause "\n"))
       :macroexpansion (str "Unexpected error" cause-type " macroexpanding " sym "at (" loc ").\n" cause "\n")
       :compile-syntax-check (str "Syntax error" cause-type " compiling " sym "at (" loc ").\n" cause "\n")
       :compilation (str "Unexpected error" cause-type " compiling " sym "at (" loc ").\n" cause "\n")
       :read-eval-result (str "Error reading eval result" cause-type " at " symbol " (" loc ").\n" cause "\n")
       :print-eval-result (str "Error printing return value" cause-type " at " symbol " (" loc ").\n" cause "\n")
-      (str "Execution error" cause-type " at " sym "(" loc ").\n" cause "\n"))))
+      (if spec
+        (str "Execution error - invalid arguments to " (if symbol (str symbol) "null")
+             " at (" loc ").\n"
+             (or (spec-explain-str spec) (str cause "\n")))
+        (str "Execution error" cause-type " at " sym "(" loc ").\n" cause "\n")))))
 
 (def ^:private report-count (atom 0))
 
