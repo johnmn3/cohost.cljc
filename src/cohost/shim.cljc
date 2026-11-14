@@ -2855,7 +2855,26 @@
 (def System-nanoTime (host/capability :nano-time))
 (def System-currentTimeMillis host/current-time-millis)
 (def System-exit host/exit)
-(def System-getProperty (fn ([_k] nil) ([_k dflt] dflt)))
+(def ^:private system-properties
+  "The System property store: a launcher (the cohost main's prep) or a
+   program sets the properties a process was started with -- notably
+   clojure.basis, which stock clojure.java.basis reads. Unset keys keep
+   the stub's answers (nil / the caller's default)."
+  (atom {}))
+
+(def System-getProperty
+  (fn ([k] (get @system-properties k))
+      ([k dflt] (get @system-properties k dflt))))
+
+(def System-setProperty
+  (fn [k v] (let [old (get @system-properties k)]
+              (swap! system-properties assoc k v)
+              old)))
+
+(def System-clearProperty
+  (fn [k] (let [old (get @system-properties k)]
+            (swap! system-properties dissoc k)
+            old)))
 (def System-identityHashCode hash)
 ;; String.format(fmt, Object... args): core.clj's format passes one array
 (declare jformat)
