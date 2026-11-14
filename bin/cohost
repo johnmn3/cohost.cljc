@@ -271,19 +271,25 @@
 
 (defn main-config
   "clojure.main's arguments: init options (-i/--init, -e/--eval, in the
-   order given), then one main option. -> {:inits [...] :main {...}|nil}"
+   order given), then one main option. clojure.main's --report flag is
+   consumed in this option region, as stock consumes it, and returned
+   beside the run config; a valueless --report yields \"\", an
+   unrecognized target, which the report dispatch treats as stock
+   treats one (the stderr fallback). -> {:inits [...] :main {...}|nil
+   :report <target>|nil}"
   [cwd args]
-  (loop [[a b & more :as args] args inits []]
+  (loop [[a b & more :as args] args inits [] report nil]
     (cond
-      (nil? a) {:inits inits :main (when (empty? inits) {:type :repl})}
-      (#{"-i" "--init"} a) (recur more (conj inits [:i (abs-path cwd b)]))
-      (#{"-e" "--eval"} a) (recur more (conj inits [:e b]))
-      (#{"-m" "--main"} a) {:inits inits :main {:type :main :ns b :args (vec more)}}
-      (#{"-r" "--repl"} a) {:inits inits :main {:type :repl}}
-      (= "-" a) {:inits inits :main {:type :stdin :args (vec (rest args))}}
+      (nil? a) {:inits inits :main (when (empty? inits) {:type :repl}) :report report}
+      (#{"-i" "--init"} a) (recur more (conj inits [:i (abs-path cwd b)]) report)
+      (#{"-e" "--eval"} a) (recur more (conj inits [:e b]) report)
+      (= "--report" a) (recur more inits (or b ""))
+      (#{"-m" "--main"} a) {:inits inits :main {:type :main :ns b :args (vec more)} :report report}
+      (#{"-r" "--repl"} a) {:inits inits :main {:type :repl} :report report}
+      (= "-" a) {:inits inits :main {:type :stdin :args (vec (rest args))} :report report}
       (#{"-h" "--help" "-?"} a) (usage)
       (str/starts-with? a "-") (die 2 (str "cohost: unknown option " a))
-      :else {:inits inits :main {:type :script :path (abs-path cwd a) :args (vec (rest args))}})))
+      :else {:inits inits :main {:type :script :path (abs-path cwd a) :args (vec (rest args))} :report report})))
 
 (defn exec-config
   "clojure.run.exec's arguments: an optional fn symbol, then key value pairs
@@ -781,7 +787,7 @@
             (fs/create-dirs (fs/parent cfg-file))
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
                                                :report-dir (System/getProperty "java.io.tmpdir")
-                                               :report (or (System/getenv "COHOST_MAIN_REPORT") "file")
+                                               :report (or (:report run) (System/getenv "COHOST_MAIN_REPORT") "file")
                                                :verbose (boolean (or (:verbose? o) (System/getenv "COHOST_VERBOSE")))
                                                :clj-provider (:provider plan)
                                                :clj-owner (:owner plan)
