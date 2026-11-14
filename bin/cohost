@@ -705,7 +705,7 @@
             (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
                                                :report-dir (System/getProperty "java.io.tmpdir")
                                                :report (or (System/getenv "COHOST_MAIN_REPORT") "file")
-                                               :verbose (boolean (System/getenv "COHOST_VERBOSE"))
+                                               :verbose (boolean (or (:verbose? o) (System/getenv "COHOST_VERBOSE")))
                                                :clj-provider (:provider plan)
                                                :clj-owner (:owner plan)
                                                :hosts (:hosts plan)}
