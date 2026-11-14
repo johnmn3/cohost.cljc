@@ -339,8 +339,23 @@
    (let [kind (kind-of meta)]
      (if (= :mem kind)
        (let [rep (root-representable? init)
-             h ((:make-atom @factory) (if rep init host-held))
-             st (atom {:eve h
+             ;; The seat hosting's handle mint, bound before use:
+             ;; with no factory installed this seat cannot make
+             ;; Eve atoms at all, and the unguarded invoke of the
+             ;; missing entry read as an opaque null-pointer trap
+             ;; in the wasm body (an NPE on the JVM) at the §3.13
+             ;; registry's first touch — C2 turn 15. Refuse by
+             ;; name instead, the tier path's shape; available?
+             ;; is the probe a caller can make first.
+             mk (:make-atom @factory)]
+         (when-not mk
+           (throw (kind-error (str "cohost.atom: no atom factory installed on this seat "
+                                   "(seat hosting installs one at body init — "
+                                   "cohost.atom-eve / cohost.atom-eve-sab; "
+                                   "the layer is unavailable without it)")
+                              {:cohost.atom/error :no-factory :kind :mem})))
+         (let [h (mk (if rep init host-held))
+               st (atom {:eve h
                        :gate (if rep :open :host)
                        :root (when-not rep init)
                        :kind :mem
@@ -352,9 +367,9 @@
                        :validator validator
                        :meta meta
                        :readers 0})
-             a (layer-atom st)]
-         (validate! validator init)
-         a)
+               a (layer-atom st)]
+           (validate! validator init)
+           a))
        (do (check-kind-spec! kind meta)
            (check-tier-value! kind init)
            (validate! validator init)
