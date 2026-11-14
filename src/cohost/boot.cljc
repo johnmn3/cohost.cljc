@@ -456,6 +456,8 @@
   (atom []))
 
 (declare eval-top)
+(declare load-relative!)
+(declare load-source!)
 (declare directive)
 (declare directive!)
 
@@ -875,14 +877,24 @@
               (recur (inc j) prev in-class? out true)
               :else (recur (inc j) c in-class? (conj out c) changed?))))))
 
+(defn- symbol-char? [c]
+  (let [u (int c)]
+    (or (and (>= u 65) (<= u 90)) (and (>= u 97) (<= u 122))
+        (and (>= u 48) (<= u 57))
+        (contains? #{\_ \- \* \+ \! \? \< \> \= \. \/} c))))
+
 (defn- bridge-regex-literals
-  "Possessive quantifiers in regex literals, rewritten to the plain
-   greedy ones, for hosts whose regex dialect rejects them (adapter
-   :regex-possessive?): a pattern using one otherwise fails to READ
-   there at all (clojure/main.clj's ([^.])++$ on Go's RE2). Atomic
-   groups have no greedy spelling and are not translated; no stock
-   pattern uses one. Outside regex literals the text is untouched,
-   and a source with nothing to translate comes back as itself."
+  "Source spellings a host reader rejects, rewritten before the read,
+   for hosts whose reader is not Java-faithful (adapter
+   :regex-possessive?): possessive quantifiers in regex literals
+   become the plain greedy ones (a pattern using one otherwise fails
+   to READ at all -- clojure/main.clj's ([^.])++$ on Go's RE2; atomic
+   groups have no greedy spelling and are not translated, and no
+   stock pattern uses one), and #'~sym, an invalid var quote to Go's
+   reader (clojure/pprint/pretty_writer.clj's alter-meta! form),
+   is spelled (var ~sym), which reads identically. Outside regex
+   literals and that sequence the text is untouched, and a source
+   with nothing to translate comes back as itself."
   [src]
   (if (host/regex-possessive?)
     src
@@ -900,6 +912,16 @@
                     (if changed?
                       (recur j j (conj (or out []) (subs src start i) "#\"" body "\""))
                       (recur j start out)))
+                  (and (= c \#) (< (+ i 3) n)
+                       (= (nth cs (inc i)) \')
+                       (= (nth cs (+ i 2)) \~)
+                       (symbol-char? (nth cs (+ i 3))))
+                  (let [j (loop [j (+ i 3)]
+                            (if (and (< j n) (symbol-char? (nth cs j)))
+                              (recur (inc j))
+                              j))]
+                    (recur j j (conj (or out []) (subs src start i)
+                                     "(var ~" (subs src (+ i 3) j) ")")))
                   :else (recur (inc i) start out))))))))
 
 (defn- bridge-source
@@ -943,7 +965,7 @@
            :libs {(symbol "clojure.core") {:ns core-ns :status :loaded}})
     ;; (eval form) evaluates in the namespace the caller runs in, as on the JVM
     (reset! shim/eval-hook (fn [form] (eval-in (host/current-ns) form)))
-    (reset! shim/load-hook (fn [path] (boot-file! ctx report (str root "/clojure/" path ".clj"))))
+    (reset! shim/load-hook load-relative!)
     [ctx report]))
 
 (defn- install-eduction-reduce!
@@ -1094,7 +1116,16 @@
   [report]
   (snap! {:op :shim-layer})
   (doseq [[nm v] shim/core-fills]
-    (when-not (host/interned-var core-ns nm)
+    ;; load is fill-wins even where the host supplied one: the host's
+    ;; load resolves a relative path against the BOOTED namespace
+    ;; name (cohost.pprint -> cohost/pprint/...), but a stock
+    ;; library's sub-loads live under its stock name
+    ;; (clojure/pprint/...) in the source roots -- measured on the
+    ;; JVM seat, where take-from-host! interns clojure.core/load and
+    ;; pprint's seven sub-loads all fail "Could not locate
+    ;; cohost/pprint/...". The fill's load-relative! maps the booted
+    ;; name back to the stock package root on every seat.
+    (when (or (= 'load nm) (not (host/interned-var core-ns nm)))
       (host/intern! core-ns nm v)
       (record! report :replaced {:name nm :reason :shim-layer})))
   (doseq [[nm f] shim/core-fill-macros]
@@ -1575,6 +1606,36 @@
     (if (seq bs)
       (host/with-thread-bindings! bs thunk)
       (thunk))))
+
+(defn- load-relative!
+  "One clojure.core/load path from booted code (shim/load-hook): a
+   leading / is absolute against the source roots; a bare path is
+   relative to the loading namespace's package root, stock's rule
+   (clojure.pprint loading \"pprint/utilities\" finds
+   clojure/pprint/utilities). The file loads into the current
+   namespace with load-source!'s tolerance. -> true when found."
+  [p]
+  (let [cur (str (host/current-ns))
+        stock (if (and (> (count cur) 7) (= "cohost." (subs cur 0 7)))
+                (str "clojure." (subs cur 7))
+                cur)
+        base (loop [i (dec (count stock))]
+               (cond (neg? i) ""
+                     (= \. (nth stock i))
+                     (str (apply str (map (fn [c] (if (= c \.) \/ c)) (subs stock 0 i))) "/")
+                     :else (recur (dec i))))
+        res (if (and (pos? (count p)) (= "/" (subs p 0 1))) (subs p 1) (str base p))
+        lib (symbol (apply str (map (fn [c] (if (= c \/) \. c)) res)))
+        exts (scan/source-exts (scan/ranking (:name (host/current))))]
+    (boolean
+      (some (fn [root]
+              (some (fn [ext]
+                      (let [path (str root "/" res ext)]
+                        (when-let [src (try-slurp path)]
+                          (load-source! lib src (host/current-ns) path)
+                          true)))
+                    exts))
+            (into [(:root @state)] (source-roots))))))
 
 (defn- load-source!
   "Every top-level form of a library, read and evaluated one at a time in the

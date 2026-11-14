@@ -114,16 +114,23 @@
 
 (defn missing-static [c m] (fn [& _args] (miss! [:static c m])))
 (defn missing-static-value [c m] (miss! [:static-field c m]))
+(declare proxy-value?)
+
 (defn missing-method
-  "A method the shim lacks: the target's own method of that name where the host
-   can call one at run time (a JavaScript or Python method), else a miss."
+  "A method the shim lacks: a proxy value's own method of that name
+   first (an interface-only member like PrettyFlush/ppflush has no
+   -<name> var), then the target's own method of that name where the
+   host can call one at run time (a JavaScript or Python method),
+   else a miss."
   [m]
   (fn [target & args]
     (when (nil? target)
       (throw (host/ex* 'java.lang.NullPointerException (str "Cannot invoke \"" m "()\" because the target is null"))))
-    (if-let [f (host/native-method target (name m))]
-      (apply f target args)
-      (miss! [:method m]))))
+    (if (and (proxy-value? target) (contains? (:methods target) m))
+      (apply (get (:methods target) m) target args)
+      (if-let [f (host/native-method target (name m))]
+        (apply f target args)
+        (miss! [:method m])))))
 (defn missing-ctor [c] (fn [& _args] (miss! [:ctor c])))
 
 (def ^:private absent (host/->SB :cohost.shim/absent))
@@ -463,6 +470,32 @@
       (symbol (str "clojure." (subs head 7) (if (neg? dollar) "" (subs s dollar))))
       class)))
 
+;; ------------------------------------------------------------------
+;; proxies (clojure.core/proxy) for hosts whose core has none: a
+;; methods table over the layer's member dispatch. pprint's writers
+;; are the consumer: (proxy [Writer IDeref] [] (write ...) (deref []
+;; fields)) -- the methods close over the construction site, `this`
+;; is bound by the fill macro, fields live in the ref the deref
+;; method returns (get-field/set-field read through @@this, as
+;; stock's do).
+
+(defrecord ProxyValue [methods supers])
+
+(defn proxy-value? [x] (instance? ProxyValue x))
+
+(defn make-proxy
+  "A proxy over supers (symbols) whose members answer from methods
+   {name fn-of [this & args]}. Superclass constructor arguments have
+   no shim meaning (there is no superclass) and are not evaluated."
+  [supers methods]
+  (->ProxyValue methods (vec supers)))
+
+(defn proxy-deref [x]
+  (if-let [f (get (:methods x) 'deref)]
+    (f x)
+    (throw (host/ex* 'java.lang.IllegalStateException
+                     "proxy has no deref method"))))
+
 (defn class-of
   "The JVM class token (a symbol) of a host value."
   [x]
@@ -494,6 +527,8 @@
     (identical? :cohost.shim/reentrant-lock (:cohost/kind x)) 'java.util.concurrent.locks.ReentrantLock
     (identical? :cohost.shim/classloader (:cohost/kind x)) 'clojure.lang.DynamicClassLoader
     (io/inet-address? x) 'java.net.InetAddress
+    (proxy-value? x) (or (first (filter (fn [t] (contains? token-ancestors t)) (:supers x)))
+                         'java.lang.Object)
     (io/value? x) (io/class-token x)
     (host-record? x) (type-of x)
     ;; a layer atom (unit 5) IS a clojure.lang.Atom through the
@@ -616,7 +651,7 @@
    'clojure.lang.IRef #(or (h-var? %) (h-atom? %))
    ;; the thread layer's futures and promises are blocking derefs, its
    ;; agents plain derefs: stock deref branches on exactly these
-   'clojure.lang.IDeref #(or (h-deref? %) (atom-layer/atom-value? %) (thread/future-value? %) (thread/promise-value? %) (thread/agent-value? %))
+   'clojure.lang.IDeref #(or (h-deref? %) (atom-layer/atom-value? %) (thread/future-value? %) (thread/promise-value? %) (thread/agent-value? %) (and (proxy-value? %) (contains? (set (:supers %)) 'clojure.lang.IDeref)))
    'clojure.lang.IBlockingDeref #(or (h-deref? %) (thread/future-value? %) (thread/promise-value? %))
    'clojure.lang.IPending #(or (h-pending? %) (thread/future-value? %) (thread/promise-value? %))
    ;; sorted collections have no transient form
@@ -1849,10 +1884,91 @@
            (when (io/writer-value? out) (io/flush-writer! out)))
     nil))
 
+(def core-load
+  "clojure.core/load over boot's source roots (see load-hook): the
+   stock sub-file loads -- pprint's (load \"pprint/utilities\"),
+   reflect's (load \"reflect/java\") -- resolve against the loading
+   namespace's package, as RT.load resolves them."
+  (fn [& paths]
+    (doseq [p paths]
+      (when-not (@load-hook (str p))
+        (throw (host/ex* 'java.io.FileNotFoundException
+                         (str "Could not locate " p " on classpath.")))))
+    nil))
+
+(def core-StackTraceElement->vec
+  "core_print.clj's defn, a companion name: the shim's trace frames
+   already are [class method file line] vectors."
+  (fn [ste] (if (vector? ste) ste (ste->vec ste))))
+
+(def core-create-struct
+  "A struct basis over plain maps: the basis records its keys;
+   instances are maps (keyword access is the struct access)."
+  (fn [& keys] {:cohost/struct-keys (vec keys)}))
+
+(def core-struct
+  (fn [basis & vals]
+    (with-meta (zipmap (:cohost/struct-keys basis) vals)
+      {:cohost/struct-basis basis})))
+
+(def core-struct-map
+  (fn [basis & kvs]
+    (with-meta (merge (zipmap (:cohost/struct-keys basis) (repeat nil))
+                      (apply hash-map kvs))
+      {:cohost/struct-basis basis})))
+
+(def core-accessor
+  (fn [_basis k] (fn [m] (get m k))))
+
+(def core-get-field
+  "clojure.core/get-field of a proxy: the field in the map the
+   proxy's deref chain bottoms out in (@@this), as stock's."
+  (fn [p f]
+    (get (deref (if (proxy-value? p) (proxy-deref p) (deref p))) f)))
+
+(def core-set-field
+  "clojure.core/set-field of a proxy: assoc the field into the map
+   behind the proxy's deref method's ref (@this), as stock's."
+  (fn [p f v]
+    (alter (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v)
+    v))
+
+(defn- strip-ns [named]
+  (if (symbol? named)
+    (symbol nil (name named))
+    (keyword nil (name named))))
+
+(def core-lift-ns
+  "core_print.clj's lift-ns, a companion form the boot's extraction
+   does not take; clojure.pprint's dispatch calls it as
+   #'clojure.core/lift-ns."
+  (fn [m]
+    (when (core-var-value '*print-namespace-maps*)
+      (loop [ns nil
+             [[k v :as entry] & entries] (seq m)
+             kvs []]
+        (if entry
+          (when (and (ident? k) (some? (namespace k)))
+            (if ns
+              (when (= ns (namespace k))
+                (recur ns entries (conj kvs [(strip-ns k) v])))
+              (when-let [new-ns (namespace k)]
+                (recur new-ns entries (conj kvs [(strip-ns k) v])))))
+          [ns kvs])))))
+
 (def core-fills
   "clojure.core names this layer supplies when the host's core lacks
    them (boot's install-shim-layer!)."
-  {'flush core-flush
+  {'lift-ns core-lift-ns
+   'create-struct core-create-struct
+   'struct core-struct
+   'struct-map core-struct-map
+   'accessor core-accessor
+   'get-field core-get-field
+   'set-field core-set-field
+   'load core-load
+   'StackTraceElement->vec core-StackTraceElement->vec
+   'flush core-flush
    'in-ns core-in-ns
    'requiring-resolve core-requiring-resolve
    'read core-read
@@ -1864,7 +1980,24 @@
    'PrintWriter-on core-PrintWriter-on})
 
 (def core-fill-macros
-  {'locking (fn [_form _env x & body]
+  {'defstruct (fn [_form _env name & keys]
+                (let [keys (if (string? (first keys)) (rest keys) keys)]
+                  (list 'def name (cons 'create-struct keys))))
+   'proxy (fn [_form _env supers _ctor-args & methods]
+            (let [clause (fn [[params & body]]
+                           (cons (vec (cons 'this params)) body))
+                  mmap (into {}
+                             (map (fn [method]
+                                    (let [nm (first method)
+                                          r (next method)
+                                          clauses (if (vector? (first r))
+                                                    (list r)
+                                                    r)]
+                                      [(list 'quote nm)
+                                       (cons 'fn (map clause clauses))])))
+                             methods)]
+              (list 'cohost.shim/make-proxy (list 'quote supers) mmap)))
+   'locking (fn [_form _env x & body]
               (list 'do
                     (list 'monitor-enter x)
                     (list 'try (cons 'do body)
@@ -2436,8 +2569,12 @@
     (fn [x & args]
       (if-let [f (get table (:cohost/kind x))]
         (apply f x args)
-        (let [r (if (nil? x) absent (host/invoke-member x m (vec args) absent))]
-          (if (identical? r absent) (apply miss x args) r))))))
+        (if (proxy-value? x)
+          (if-let [mf (get (:methods x) (symbol m))]
+            (apply mf x args)
+            (apply miss x args))
+          (let [r (if (nil? x) absent (host/invoke-member x m (vec args) absent))]
+            (if (identical? r absent) (apply miss x args) r)))))))
 
 (def new-URI (http-ctor 'java.net.URI nil http/new-uri))
 (def URI-create (http-ctor 'java.net.URI "create" http/new-uri))
@@ -3861,7 +3998,8 @@
                                 (rm x m))))))
 (def -setMeta -resetMeta)
 ;; ClojureScript has no blocking deref: the timed form reads the value now
-(def -deref (fn ([x] (cond (or (thread/future-value? x) (thread/promise-value? x))
+(def -deref (fn ([x] (cond (proxy-value? x) (proxy-deref x)
+                           (or (thread/future-value? x) (thread/promise-value? x))
                            (thread/deref-blocking x)
                            (thread/agent-value? x) (thread/agent-state x)
                            (atom-layer/atom-value? x) (atom-layer/deref-atom x)
