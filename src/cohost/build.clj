@@ -105,10 +105,28 @@ process.exit(r.status === null ? 1 : r.status);
         out (io/file "target" name)
         ;; the source roots, resolved as `cohost :cljs` resolves them (jars extracted)
         roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":cljs" "-Spath")) #":")
-        ;; cohost's ClojureScript host build: `cohost :cljs` builds it when stale
-        _ (sh! "." (str home "/bin/cohost") ":cljs" "-e" "nil")]
+        ;; cohost's ClojureScript host build is a cohost.aot artifact in
+        ;; the shared cache (bin/cohost's ensure-cljs-build!);
+        ;; -Sbuild-dir ensures it and prints its directory
+        built (str/trim (sh! "." (str home "/bin/cohost") ":cljs" "-Sbuild-dir"))]
     (sh! "." "rm" "-rf" (str out))
-    (copy-tree! (str home "/target/cljs-cli") (io/file out "target/cljs-cli"))
+    (copy-tree! built (io/file out "target/cljs-cli"))
+    ;; The copied bootstrap recorded the artifact dir relative to the
+    ;; cohost repo (bin/cohost's launch cwd); in the bundle the same
+    ;; tree sits at target/cljs-cli under the bundle's own cwd, and
+    ;; run.js launches it from there — re-record that one path. The
+    ;; recorded string occurs only in main.js (its two bootstrap
+    ;; requires); if it is absent, the bootstrap's shape changed and
+    ;; the bundle would break silently, so refuse.
+    (let [main-js (io/file out "target/cljs-cli/main.js")
+          recorded (str (.relativize (.toPath (.getCanonicalFile (io/file home)))
+                                      (.toPath (.getCanonicalFile (io/file built)))))
+          s (slurp main-js)]
+      (when-not (str/includes? s recorded)
+        (throw (ex-info (str "build: the cljs bootstrap does not record " recorded
+                             " — its shape changed; the bundle cannot re-record it")
+                        {:built built})))
+      (spit main-js (str/replace s recorded "target/cljs-cli")))
     (copy-tree! (str home "/resources/cohost/clojure-1.12.0") (io/file out "stock"))
     (let [names (map-indexed (fn [i r] (str "roots/" i "-" (.getName (io/file r)))) roots)]
       (doseq [[r n] (map vector roots names)] (copy-tree! r (io/file out n)))

@@ -6,7 +6,9 @@
 ;; The first argument names the runtime; everything after it is the Clojure
 ;; CLI's own surface: -Sdeps, -A/-M/-X aliases (with their :main-opts,
 ;; :exec-fn and :exec-args), -e, -i, -m, a script, -, -r, -X fn kvs, -Spath,
-;; -P, -Sdescribe. deps.edn in the current directory is resolved with
+;; -P, -Sdescribe. -Sbuild-dir is cohost's own addition for the compiled
+;; bodies (:cljs, :squint): it ensures the body's cohost.aot artifact and
+;; prints its directory. deps.edn in the current directory is resolved with
 ;; tools.deps (through the Clojure CLI, the resolver `clj` uses); every
 ;; classpath entry becomes a cohost source root — directories as they are,
 ;; jars extracted under ~/.cache/cohost/deps — so booted code's `require`
@@ -61,6 +63,7 @@
        "       cohost :cljs -M -m demo.main arg1"
        "       cohost :jolt -X demo.core/run :x 1"
        "       cohost :cljs -Spath"
+       "       cohost :cljs -Sbuild-dir   (the compiled body's cohost.aot artifact dir)"
        "  :jvm is the :clj leg: `clojure` on PATH, else jolt's champaca backup."
        "  :jolt:lpy names several hosts; :clj in that string is the official clojure CLI."
        "  COHOST_CLJ_BODY=clojure|jolt."
@@ -110,6 +113,7 @@
       (= a "-Strace") (recur (next args) (update o :resolve conj "-Strace"))
       (= a "-Stree") (recur (next args) (assoc o :tree? true))
       (= a "-Spath") (recur more (assoc o :spath? true))
+      (= a "-Sbuild-dir") (recur more (assoc o :builddir? true))
       (= a "-Sdescribe") (recur more (assoc o :describe? true))
       (= a "-Sverbose") (recur more (assoc o :verbose? true))
       (= a "-P") (recur more (assoc o :prepare? true))
@@ -316,63 +320,143 @@
 ;; --------------------------------------------------------------------------
 ;; host launches
 
-(defn ensure-cljs-build! []
-  (let [lm (fn [f] (.toMillis (fs/last-modified-time f)))
-        out (fs/file repo "target/cljs-cli/main.js")
-        stale? (or (not (fs/exists? out))
-                   (> (lm (fs/file repo "cljs-cli.edn")) (lm out))
-                   (boolean (some (fn [f] (> (lm f) (lm out)))
-                                  (fs/glob (fs/file repo "src") "**.{cljc,cljs}"))))]
-    (when stale?
-      (binding [*out* *err*] (println "cohost: compiling the ClojureScript host build (target/cljs-cli) ..."))
-      ;; cljs-cli.edn's relative output paths are load-bearing: the nodejs
-      ;; bootstrap joins the output-dir onto the process's directory, so the
-      ;; build — and the node launch — both run from the repo, and cohost.cli
-      ;; moves to the project directory (:cwd).
-      ;; unit 8: Eve is in the build (cohost.hosts.cljs-eve): its hosts.edn
-      ;; :cljs row joins the classpath (dev/eve-cljs/eve_paths.clj), merged
-      ;; with COHOST_CLI_SDEPS; the git dep is fetched first when absent
-      (let [_ (load-file (str repo "/dev/eve-cljs/eve_paths.clj"))
-            _ (when-not (fs/exists? ((resolve 'eve-paths/eve-checkout-dir) repo))
-                (run-inherit repo ["clojure" "-P" "-M:cljs"]))
-            sdeps ((resolve 'eve-paths/eve-cljs-build-sdeps) repo (System/getenv "COHOST_CLI_SDEPS"))
-            cmd (vec (concat ["clojure" "-Sdeps" sdeps]
-                             ["-M:cljs" "-m" "cljs.main" "-co" "cljs-cli.edn" "-c"]))]
-        (when-not (zero? (run-inherit repo cmd))
-          (die 1 "cohost: cljs build failed"))))))
+;; The compiled bodies (:cljs, :squint) are cohost.aot citizens — the
+;; platform AOT law (src/cohost/aot.cljc): a body's compiled form is a
+;; function of its BASIS (sister, runtime version, the content of every
+;; source file the compiler reads, the resolved classpath string),
+;; stamped by content hash — never by mtime — and kept in the shared
+;; cache (<cache-root>/aot/<sister>/<stamp>/), never under the
+;; checkout's target/. cohost.aot itself is loaded lazily (only the
+;; compiled bodies need it) and called through resolve, the eve-paths
+;; precedent above: one stamp recipe, the contract's own code.
+(def aot-ns
+  (delay (load-file (str repo "/src/cohost/aot.cljc")) :loaded))
 
-(defn ensure-squint-build! []
-  ;; The squint body is a compiled body like cljs: the whole
-  ;; cohost + Eve graph is staged and compiled by squint ahead of
-  ;; time (dev/build_squint.clj) into target/squint-cli; node runs
-  ;; its main.mjs with the cfg. Eve comes from the same pinned git
-  ;; dep the cljs build uses; its hosts.edn :squint row names the
-  ;; adapter roots. Rebuilds when any source under src/ or the
-  ;; Eve checkout's squint roots is newer than the build stamp.
-  (let [work (fs/file repo "target/squint-cli")
-        main (fs/file work "main.mjs")
-        _ (load-file (str repo "/dev/eve-cljs/eve_paths.clj"))
+(defn- aot-call [sym & args]
+  @aot-ns
+  (apply (resolve (symbol "cohost.aot" (str sym))) args))
+
+(def node-version
+  "The runtime both compiled bodies execute on — and squint's compiler
+   runs on: one value, computed once, shared by both bases."
+  (delay (-> (p/process ["node" "--version"] {:out :string}) deref :out str/trim)))
+
+(defn- source-files
+  "Every regular file under roots matching glob, as path strings — a
+   basis's :files, content-hashed in sorted order by basis-stamp."
+  [roots glob]
+  (into []
+        (comp (mapcat (fn [r] (fs/glob r glob)))
+              (filter fs/regular-file?)
+              (map str))
+        roots))
+
+(defn- aot-ensure!
+  "cohost.aot/ensure! for one compiled body: basis -> stamp -> the
+   artifact dir, compiling under the aot lock whatever entries the
+   artifact lacks. A failed build throws (ensure!'s finally releases
+   the lock) rather than dying in place."
+  [basis entries marker build!]
+  (aot-call 'ensure!
+            {:sister (:sister basis)
+             :stamp (aot-call 'basis-stamp basis)
+             :entries entries
+             :marker marker
+             :build! build!}))
+
+(defn ensure-cljs-build!
+  "The ClojureScript body's compiled form, as a cohost.aot artifact;
+   -> the artifact dir (its main.js is the entry).
+
+   Basis: cljs-cli.edn, deps.edn, the repo's src, the dev/eve-cljs
+   unit (the foreign-lib bridges, eve_paths), the pinned Eve
+   checkout's hosts.edn, its src and its hosts.edn :cljs-row sources;
+   :extra is the resolved -Sdeps string (unit 8: Eve is in the build —
+   cohost.hosts.cljs-eve; its row joins the classpath through
+   dev/eve-cljs/eve_paths.clj, merged with COHOST_CLI_SDEPS; the git
+   dep is fetched first when absent); the runtime is node's version.
+
+   cljs-cli.edn's output paths stay relative in the file (a direct
+   cljs.main run from the repo keeps working); the build merges a
+   second -co over it. The recorded output-dir is load-bearing: the
+   nodejs bootstrap joins it onto the process's directory, so the
+   build records the artifact dir RELATIVE TO THE REPO — the compiler,
+   running in the repo, writes through that string into the cache
+   artifact, and the node launch, also in the repo, resolves it back.
+   The artifact itself lives in the shared cache; nothing is written
+   under the checkout's target/."
+  []
+  (let [_ (load-file (str repo "/dev/eve-cljs/eve_paths.clj"))
+        eve-dir ((resolve 'eve-paths/eve-checkout-dir) repo)
+        _ (when-not (fs/exists? eve-dir)
+            (run-inherit repo ["clojure" "-P" "-M:cljs"]))
+        sdeps ((resolve 'eve-paths/eve-cljs-build-sdeps) repo (System/getenv "COHOST_CLI_SDEPS"))
+        eve-roots (into [(str eve-dir "/src")]
+                        (map #(str eve-dir "/" %)
+                             (:cljs (edn/read-string (slurp (fs/file eve-dir "hosts.edn"))))))
+        files (into [(str repo "/cljs-cli.edn") (str repo "/deps.edn")
+                     (str eve-dir "/hosts.edn")]
+                    (concat (source-files [(str repo "/src")] "**.{cljc,cljs,clj}")
+                            (source-files [(str repo "/dev/eve-cljs")] "**")
+                            (source-files eve-roots "**.{cljc,cljs,clj}")))]
+    (aot-ensure!
+      {:sister :cljs :runtime @node-version :files files :extra sdeps}
+      [:cljs]
+      (fn [_] "main.js")
+      (fn [dir _missing]
+        (binding [*out* *err*] (println "cohost: compiling the ClojureScript host build (cohost.aot :cljs) ..."))
+        (let [rel (str (fs/relativize repo dir))
+              cmd (vec (concat ["clojure" "-Sdeps" sdeps]
+                               ["-M:cljs" "-m" "cljs.main" "-co" "cljs-cli.edn"
+                                "-co" (str "{:output-to \"" rel "/main.js\""
+                                           " :output-dir \"" rel "\"}")
+                                "-c"]))]
+          (when-not (zero? (run-inherit repo cmd))
+            (throw (ex-info "cohost: cljs build failed" {}))))))))
+
+(defn ensure-squint-build!
+  "The squint body's compiled form, as a cohost.aot artifact; -> the
+   artifact dir (its main.mjs is the entry).
+
+   The squint body is a compiled body like cljs: the whole cohost +
+   Eve graph is staged and compiled by squint ahead of time
+   (dev/build_squint.clj); node runs its main.mjs with the cfg. Eve
+   comes from the same pinned git dep the cljs build uses; its
+   hosts.edn :squint row names the adapter roots.
+
+   Basis: every source under the build roots, the checkout's
+   hosts.edn, deps.edn (the Eve pin), bb.edn, the build driver
+   dev/build_squint.clj (which pins the squint version) and its
+   staging unit dev/squint_stage.clj; the runtime is node's version.
+   build_squint.clj takes the artifact dir as its work dir, as it
+   always has — only the dir's location and the staleness decision
+   changed (content stamp in the shared cache, not mtime in target/)."
+  []
+  (let [_ (load-file (str repo "/dev/eve-cljs/eve_paths.clj"))
         eve-dir ((resolve 'eve-paths/eve-checkout-dir) repo)]
     (when-not (fs/exists? eve-dir)
       (run-inherit repo ["clojure" "-P" "-M:cljs"]))
     (let [hosts-edn (fs/file eve-dir "hosts.edn")
           row (when (fs/exists? hosts-edn)
-                (get (clojure.edn/read-string (slurp hosts-edn)) :squint))]
+                (get (edn/read-string (slurp hosts-edn)) :squint))]
       (when-not row
         (die 1 (str "cohost: the pinned Eve checkout has no :squint row in hosts.edn"
                     " — the squint seat is not in this Eve pin yet")))
       (let [roots (into [(str repo "/src") (str eve-dir "/src")]
                         (map #(str eve-dir "/" %) row))
-            lm (fn [f] (try (.toMillis (fs/last-modified-time f)) (catch Exception _ 0)))
-            stale? (or (not (fs/exists? main))
-                       (boolean (some (fn [f] (> (lm f) (lm main)))
-                                      (mapcat #(fs/glob % "**.{cljc,cljs}") roots))))]
-        (when stale?
-          (binding [*out* *err*] (println "cohost: compiling the squint host build (target/squint-cli) ..."))
-          (when-not (zero? (run-inherit repo (vec (concat ["bb" "dev/build_squint.clj"
-                                                           (str work) "cohost.squint-main" (str eve-dir)]
-                                                          roots))))
-            (die 1 "cohost: squint build failed")))))))
+            files (into [(str hosts-edn) (str repo "/deps.edn") (str repo "/bb.edn")
+                         (str repo "/dev/build_squint.clj") (str repo "/dev/squint_stage.clj")]
+                        (source-files roots "**.{cljc,cljs,clj}"))]
+        (aot-ensure!
+          {:sister :squint :runtime @node-version :files files :extra "cohost.squint-main"}
+          [:squint]
+          (fn [_] "main.mjs")
+          (fn [dir _missing]
+            (binding [*out* *err*] (println "cohost: compiling the squint host build (cohost.aot :squint) ..."))
+            (when-not (zero? (run-inherit repo (vec (concat ["bb" "dev/build_squint.clj"
+                                                             (str dir) "cohost.squint-main" (str eve-dir)]
+                                                            roots))))
+              (throw (ex-info "cohost: squint build failed" {})))))))))
 
 (defn jank-aot-dir!
   "cohost's own namespaces compiled -O3 (jank-FAST Step 6 stage 1), rebuilt
@@ -476,13 +560,14 @@
         src (str repo "/src")]
     (case host
       ;; node starts in the repo, Phel too (its phel-config.php names the
-      ;; source directories); cohost.cli moves to the project directory
-      "cljs" (do (ensure-cljs-build!)
-                 (run-inherit repo ["node" (str repo "/target/cljs-cli/main.js") cfg]))
+      ;; source directories); cohost.cli moves to the project directory.
+      ;; The compiled bodies' entries live in their cohost.aot artifacts
+      ;; (the shared cache); the cljs bootstrap resolves its recorded
+      ;; repo-relative output-dir against this cwd, the repo.
+      "cljs" (run-inherit repo ["node" (str (ensure-cljs-build!) "/main.js") cfg])
       ;; squint: the compiled body runs its `cli` entry with the cfg,
       ;; the same contract as the cljs body's main
-      "squint" (do (ensure-squint-build!)
-                   (run-inherit repo ["node" (str repo "/target/squint-cli/main.mjs") "cli" cfg]))
+      "squint" (run-inherit repo ["node" (str (ensure-squint-build!) "/main.mjs") "cli" cfg])
       ;; Phel compiles to PHP files under $TMPDIR/phel and never removes them: give
       ;; each run its own TMPDIR and remove it after
       "phel" (let [tmp (str (fs/create-temp-dir {:prefix "cohost-phel-"}))]
@@ -776,6 +861,10 @@
                        (print-dep-tree (:basis resolved))
                        (die 1 "cohost: -Stree renders from the Clojure CLI's basis; this resolution wrote none"))
           (:spath? o) (println (str/join path-sep roots))
+          (:builddir? o) (case host
+                           "cljs" (println (ensure-cljs-build!))
+                           "squint" (println (ensure-squint-build!))
+                           (die 1 "cohost: -Sbuild-dir is only for the compiled bodies (:cljs, :squint)"))
           (:prepare? o) (binding [*out* *err*]
                           (println (str "cohost: prepared " (count roots) " source roots under " cache-dir)))
           :else

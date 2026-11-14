@@ -32,14 +32,26 @@
      :lpy      dev/perf/lpy_snapshot_ensure.clj — a stamped snapshot of the booted core.
      :jank     dev/perf/jank_aot_ensure.clj (-O3 objects of cohost's namespaces) plus the snapshot
                machinery in dev/perf/jank_snapshot_cli.clj.
-     :cljs     the compiled body (bin/cohost's ensure-cljs-build!).
-     :squint   the compiled body (bin/cohost's ensure-squint-build!).
+     :cljs     the compiled body: bin/cohost's ensure-cljs-build! registers the basis here —
+               the repo's cljs sources and build config, the pinned Eve checkout's src and
+               :cljs-row sources, the resolved -Sdeps as :extra, node's version as the
+               runtime — and the artifact's main.js is the entry. One cljs wrinkle: the
+               nodejs bootstrap records its output-dir and joins it onto the launch cwd, so
+               the build records the artifact dir relative to the repo (the launch still
+               starts node in the repo). cohost.build's app bundles copy the artifact via
+               `bin/cohost :cljs -Sbuild-dir` and re-record that one path for the bundle's
+               own layout.
+     :squint   the compiled body: bin/cohost's ensure-squint-build! registers the basis
+               here — every source under the build roots (repo src, the Eve checkout's src
+               and :squint row), the build driver (which pins the squint version) and its
+               staging unit, node's version as the runtime — and the artifact's main.mjs
+               is the entry. dev/build_squint.clj takes the artifact dir as its work dir,
+               as it always has.
 
-   Known gap, named rather than hidden: the :cljs and :squint bodies still decide staleness by
-   file mtime and keep their artifacts under the checkout's target/. Converting them is mechanical
-   — basis-stamp instead of mtime, artifact dir here instead of target/ — and is the next step
-   after the :jvm instance; the lpy/jank ensures predate this namespace and register by being
-   named here, their internals unchanged."
+   The :cljs and :squint bodies were the last mtime/target holdouts; they are converted
+   (2026-11-14): basis-stamp instead of mtime, artifacts here instead of the checkout's
+   target/. The lpy/jank ensures predate this namespace and register by being named here,
+   their internals unchanged."
   (:require [clojure.string :as str]
             #?(:clj  [clojure.java.io :as io]
                :bb   [babashka.fs :as fs])))
