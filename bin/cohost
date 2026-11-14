@@ -107,6 +107,8 @@
       (= a "-Sdeps") (recur (next more) (update o :sdeps conj (first more)))
       (= a "-Sthreads") (recur (next more) (update o :resolve conj a (first more)))
       (#{"-Srepro" "-Sforce"} a) (recur more (update o :resolve conj a))
+      (= a "-Strace") (recur (next args) (update o :resolve conj "-Strace"))
+      (= a "-Stree") (recur (next args) (assoc o :tree? true))
       (= a "-Spath") (recur more (assoc o :spath? true))
       (= a "-Sdescribe") (recur more (assoc o :describe? true))
       (= a "-Sverbose") (recur more (assoc o :verbose? true))
@@ -210,14 +212,35 @@
     (let [lines (str/split-lines (:out out))
           cp-file (some #(second (re-matches #"cp_file\s*=\s*(.*)" %)) lines)
           basis (when cp-file (fs/file (under cwd (str/replace cp-file #"\.cp$" ".basis"))))
-          argmap (when (and basis (fs/exists? basis))
-                   (:argmap (edn/read-string {:default tagged-literal} (slurp basis))))
+          basis-edn (when (and basis (fs/exists? basis))
+                      (edn/read-string {:default tagged-literal} (slurp basis)))
           entries (cp-entries cwd (:out out))]
-      {:argmap argmap
+      {:argmap (:argmap basis-edn)
+       :basis basis-edn
        :entries (vec (remove nil? entries))
        :roots (roots-of entries)})))
 
 (declare jolt-alias-args alias-argmap)
+
+(defn dep-version [coord]
+  (or (:mvn/version coord) (:git/sha coord) (some-> (:local/root coord) str) ""))
+
+(defn print-dep-tree
+  "The -Stree answer, rendered natively from the delegated basis: roots
+   are the basis's top-level deps in order; a lib's children are the libs
+   whose :parents contain the chain from a root down to it. The basis
+   does not keep a parent's POM declaration order, so siblings print in
+   basis order; the graph and the versions are the resolver's own."
+  [basis]
+  (let [libs (:libs basis)]
+    (letfn [(walk [chain lib depth]
+              (println (str (apply str (repeat depth "  "))
+                            (when (pos? depth) ". ")
+                            lib " " (dep-version (get libs lib))))
+              (doseq [[child _] (filter (fn [[_ e]] (contains? (:parents e) chain)) libs)]
+                (walk (conj chain child) child (inc depth))))]
+      (doseq [root (keys (:deps basis))]
+        (walk [root] root 0)))))
 
 (defn resolve-deps-jolt
   "Classpath for the native jolt adapter when `clojure` is not on PATH.
@@ -688,6 +711,12 @@
           (die 1 "cohost: :clj is the official `clojure` CLI, which is not on PATH."
                "  a host string that names :clj does not fall back to another :clj leg."))
 
+        (and (= host "jvm") (:tree? o))
+        (if (= :jolt (:body (cohost.clj-body/select-clj-body)))
+          (die 1 "cohost: -Stree renders from the Clojure CLI's basis; the jolt/champaca leg writes none"
+               "  put `clojure` on PATH, or ask a native host, where the CLI resolves and the basis is read")
+          (exit-jvm))
+
         (= host "jvm")
         (exit-jvm)
 
@@ -715,6 +744,9 @@
             app (when (and bundle (fs/exists? (fs/file bundle "app")))
                   (mapv str (fs/list-dir (fs/file bundle "app"))))]
         (cond
+          (:tree? o) (if (:basis resolved)
+                       (print-dep-tree (:basis resolved))
+                       (die 1 "cohost: -Stree renders from the Clojure CLI's basis; this resolution wrote none"))
           (:spath? o) (println (str/join path-sep roots))
           (:prepare? o) (binding [*out* *err*]
                           (println (str "cohost: prepared " (count roots) " source roots under " cache-dir)))
