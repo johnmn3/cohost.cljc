@@ -632,7 +632,13 @@
 
 (defn alias-argmap
   [cwd o]
-  (combine-aliases (merged-aliases cwd (:sdeps o)) (selected-alias-kws o)))
+  (let [aliases (merged-aliases cwd (:sdeps o))]
+    (when (and (= :X (:mode o))
+               (some #{:deps} (selected-alias-kws o))
+               (not (contains? aliases :deps)))
+      (die 1 "cohost: -X:deps programs are the Clojure CLI's own tools — they ship with the CLI, not with the project — and this leg reads aliases itself, with no CLI to supply them"
+           "  put `clojure` on PATH so the :jvm target delegates to it, or run -X:deps on a native host, where the CLI's basis supplies the programs"))
+    (combine-aliases aliases (selected-alias-kws o))))
 
 (defn exec-invoke-args
   "clojure.main arguments for `-X`. Clojure 1.12's jar has no clojure.run.exec,
@@ -715,6 +721,20 @@
         (if (= :jolt (:body (cohost.clj-body/select-clj-body)))
           (die 1 "cohost: -Stree renders from the Clojure CLI's basis; the jolt/champaca leg writes none"
                "  put `clojure` on PATH, or ask a native host, where the CLI resolves and the basis is read")
+          (exit-jvm))
+
+        ;; -Spath and -P are launcher verbs: on the champaca leg there is
+        ;; no clojure.main flag for them (it would read -Spath as a script
+        ;; path), so the leg answers from its own resolver — jolt's
+        ;; classpath entries for -Spath, a jolt resolution for -P.
+        (and (= host "jvm") (:spath? o))
+        (if (= :jolt (:body (cohost.clj-body/select-clj-body)))
+          (println (str/join path-sep (:entries (resolve-deps-jolt cwd o))))
+          (exit-jvm))
+
+        (and (= host "jvm") (:prepare? o))
+        (if (= :jolt (:body (cohost.clj-body/select-clj-body)))
+          (do (resolve-deps-jolt cwd o) nil)
           (exit-jvm))
 
         (= host "jvm")
