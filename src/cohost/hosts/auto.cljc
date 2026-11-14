@@ -3,6 +3,7 @@
 ;; first matching arm wins; `bb lint:reader-order` checks the order.)
 (ns cohost.hosts.auto
   (:require #?(:squint [cohost.hosts.squint]
+               :glj [cohost.hosts.glj]
                :lpy [cohost.hosts.basilisp]
                :jolt [cohost.hosts.jolt]
                :cljs [cohost.hosts.cljs]

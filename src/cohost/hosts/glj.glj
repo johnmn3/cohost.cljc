@@ -1,0 +1,436 @@
+;; The glojure adapter (a Clojure interpreter/compiler on a Go VM, v0.7.22).
+;; Glojure's runtime mirrors clojure.lang, so where let-go's adapter
+;; (hosts/lg.lg, 1,148 lines) had to BUILD the contract — a text scan and
+;; syntax-quote expander for a reader that expands syntax-quote wrongly,
+;; binding frames for vars without thread bindings, a codemod for a
+;; compiler without letfn* or named fn*, one-method protocols for types
+;; without deftype methods — this adapter mostly NAMES glojure's own:
+;; a real JVM-shaped reader (syntax-quote, metadata on symbols, data
+;; readers, reader conditionals under :glj), real vars with thread
+;; bindings, real namespaces, macros that receive &form and &env.
+;;
+;; What stock glojure lacks, Eve's glojure completion already supplies on
+;; the Eve seat (adapters/completion/glojure/src/eve/host_completion.glj,
+;; loaded first there): deftype and reify (record-backed), fixed-arity
+;; protocol method fns, checked + - *, deref/swap! reaching a type's
+;; IDeref/IAtom. The seat's launcher loads that file before cohost.cli,
+;; exactly as eve.host loads it first on the :glj Eve seat, so the caps
+;; below are written against the completed core.
+;;
+;; Glojure facts this file relies on (each probed on glj-eve, evidence/
+;; glj/probe-1.txt .. probe-4.glj):
+;; - a var's metadata carries no :ns / :name (eve.thread-host, adapters/
+;;   thread/glojure): a var's namespace and name come from its printed
+;;   form, #'ns/name, as in lg.lg.
+;; - Var/isMacro reads the :macro metadata entry (pkg/lang/var.go), so
+;;   the defaults' alter-meta!-based :mark-macro! / :macro-var? hold.
+;; - (RuntimeException. msg) and kin construct: the javacompat throwable
+;;   package registers Throwable, Exception, RuntimeException,
+;;   IllegalArgumentException, IllegalStateException and
+;;   UnsupportedOperationException as host constructors; no other
+;;   java.lang exception class resolves (host_completion.glj, measured).
+;; - ex-message of an interpreter error carries the interpreter stack
+;;   after "\n\nGLJ Stack:" (eve.thread-host/error-data): :error-message
+;;   cuts it there.
+;; - (catch go/any e ...) is glojure's catch-everything clause; Throwable
+;;   is also a host class (the error interface). :catch-all names
+;;   Throwable, the JVM's shape; the probe verifies a host error lands.
+;; - clojure.core/read is a STUB ("read is not supported; use
+;;   read-string", core.glj:3757) and read-string is 1-arity, reads the
+;;   FIRST form only, and processes reader conditionals under :glj —
+;;   so :read-forms below is a form-end scanner over the source string
+;;   feeding read-string one chunk at a time (the scanner is the one
+;;   part of lg.lg's text machinery glojure still needs; its reader
+;;   does everything else).
+;; - The class symbols clojure.lang.ITransientCollection and
+;;   clojure.lang.LazySeq do NOT resolve, and core lacks bigint? and
+;;   mis-reports volatile? (false for a real volatile): those four
+;;   predicates go by (str (type x)) — "*lang.TransientVector" /
+;;   "*lang.TransientMap" / "*lang.TransientSet", "*lang.LazySeq",
+;;   "*lang.BigInt", "*lang.Volatile" (all measured).
+;; - The regex matcher's interop surface is Find/End/Group/GroupInt/
+;;   GroupCount/Matches — there is no Start(): a match's start is
+;;   End − (count Group₀). (.group m i) does NOT dispatch; the
+;;   1-arity method is .groupInt. Indices are Go byte offsets (RE2,
+;;   as on the let-go seat); ASCII text is unaffected.
+;; - pr-str of a PersistentQueue (empty or not) recurses fatally in
+;;   glojure's print path (goroutine stack overflow, measured twice):
+;;   :empty-queue still returns the real EMPTY — nothing on this seat
+;;   may print it.
+(ns cohost.hosts.glj
+  (:require [cohost.adapter :as adapter]
+            [clojure.string :as string]
+            [clojure.edn :as edn]
+            [clojure.core.protocols :as protocols]))
+
+;; ---------------------------------------------------------------------------
+;; host-gap patch (measured, evidence/glj/probe-6.glj): glojure's
+;; clojure/core/protocols.glj registers coll-reduce methods only for
+;; nil, IReduceInit, LazySeq, PersistentVector and String — the JVM's
+;; Object fallback (seq-reduce for everything else) is commented out
+;; there, so transduce / into-with-xform over a hash map's seq (NodeSeq,
+;; ArrayNodeSeq) or a map's key/val seq throws "No method in
+;; multimethod 'coll-reduce'". Plain reduce survives (it checks
+;; IReduce first and seq-walks), which is why the gap hides until a
+;; transducer runs. cohost.shim's top-level (into {} (map …) (seq
+;; big-literal)) is the first form that trips it, while LOADING
+;; cohost.shim — before boot, outside any cap's reach — so the patch
+;; is applied here, at adapter load: hosts.auto is required before
+;; cohost.boot/cohost.shim on every entry (run, cli), and the JVM's
+;; own semantics are exactly this default (walk the seq).
+
+(defmethod protocols/coll-reduce :default
+  ([coll f]
+   (if-let [s (seq coll)]
+     (protocols/coll-reduce (rest s) f (first s))
+     (f)))
+  ([coll f val]
+   (loop [s (seq coll) acc val]
+     (if s
+       (let [acc (f acc (first s))]
+         (if (reduced? acc) @acc (recur (next s) acc)))
+       acc))))
+
+;; ---------------------------------------------------------------------------
+;; host-gap patch (measured, evidence/glj/probe-19 chunk 581/582,
+;; probe-20, probe-22): glojure's / panics with a Go "divide by zero"
+;; on ANY zero denominator. The JVM follows IEEE 754 for a floating
+;; denominator (x/0.0 = ±Infinity by sign, 0.0/0.0 = NaN) and throws
+;; ArithmeticException for an integer one. cohost.shim's top-level
+;; (def Double-POSITIVE_INFINITY (/ 1.0 0.0)) and its NEGATIVE twin are
+;; the first forms that trip the panic, while LOADING cohost.shim — so,
+;; like the coll-reduce default above, the patch is applied here, at
+;; adapter load: clojure.core/'s root is wrapped with the IEEE cases
+;; (sign of a -0.0 denominator via doubleToRawLongBits: glojure's
+;; Double/compare misreports -0.0, probe-21). Integer zero denominators
+;; still delegate to the host's / — ArithmeticException does not
+;; resolve as a class in glojure (probe-21), so the JVM's exact throw
+;; is not the adapter's to fake; no load-time form needs it.
+
+(let [orig @#'/]
+  (alter-var-root
+   #'/
+   (fn [_]
+     (fn div
+       ([x] (orig x))
+       ([x y]
+        (if (and (number? x) (number? y) (zero? y)
+                 (or (double? x) (double? y) (float? x) (float? y)))
+          (let [yneg (neg? (Double/doubleToRawLongBits (double y)))]
+            (cond (zero? x) Double/NaN
+                  (not= (neg? (double x)) yneg) Double/NEGATIVE_INFINITY
+                  :else Double/POSITIVE_INFINITY))
+          (orig x y)))
+       ([x y & more] (apply orig x y more))))))
+
+;; ---------------------------------------------------------------------------
+;; reading: a form-end scanner over the source string + read-string per
+;; chunk, one form at a time so a form is read after the one before it
+;; ran, as in hosts/jvm.clj. The scanner tracks only what decides a
+;; form's extent — strings, char literals, comments, bracket depth,
+;; prefix forms (' ` ~ @ ^ and the # dispatch family); glojure's real
+;; reader does all interpretation of the chunk.
+
+;; The source length is bound ONCE in read-forms and threaded through
+;; every helper: (count s) on a glojure String is a fresh pass over the
+;; whole source, so the first version of this scanner — which re-counted
+;; in form-end/skip-ws, i.e. per form — was quadratic in source size
+;; (measured, probe-16: 50 lines of shim.cljc 0.53 s, 100 → 1.6 s,
+;; 150 → 3.6 s; the full 3,653-line file never finished).
+
+(defn- skip-ws [^String s n i]
+  ;; whitespace, commas and ;-comments
+  (loop [i i]
+    (if (< i n)
+      (let [c (.charAt s i)]
+        (cond (or (= c \space) (= c \tab) (= c \newline) (= c \return) (= c \,)) (recur (inc i))
+              (= c \;) (recur (loop [j i] (if (or (>= j n) (= (.charAt s j) \newline)) j (recur (inc j)))))
+              :else i))
+      i)))
+
+(defn- string-end [^String s n i]
+  ;; i at the opening quote; index just past the closing quote
+  (loop [j (inc i)]
+    (cond (>= j n) n
+          (= (.charAt s j) \\) (recur (+ j 2))
+          (= (.charAt s j) \") (inc j)
+          :else (recur (inc j)))))
+
+(defn- bracket-end [^String s n i]
+  ;; i at an opening bracket; index just past its match
+  (loop [j i depth 0]
+    (if (>= j n)
+      n
+      (let [c (.charAt s j)]
+        (cond (= c \") (recur (string-end s n j) depth)
+              (= c \;) (recur (skip-ws s n j) depth)
+              (= c \\) (recur (min n (+ j 2)) depth) ; char literal: the escaped char never opens a string/bracket
+              (or (= c \() (= c \[) (= c \{)) (recur (inc j) (inc depth))
+              (or (= c \)) (= c \]) (= c \})) (let [d (dec depth)] (if (zero? d) (inc j) (recur (inc j) d)))
+              :else (recur (inc j) depth))))))
+
+(defn- form-end [^String s n i]
+  ;; i at a form's first character; index just past the form
+  (let [c (.charAt s i)]
+    (cond (= c \") (string-end s n i)
+          (or (= c \() (= c \[) (= c \{)) (bracket-end s n i)
+          (= c \\) (loop [k (+ i 2)] ;; char literal: \a, \newline, \u0041 — the name's letters/digits belong to it
+                     (if (and (< k n) (let [d (int (.charAt s k))]
+                                        (or (<= 48 d 57) (<= 65 d 90) (<= 97 d 122))))
+                       (recur (inc k))
+                       k))
+          (or (= c \') (= c \`) (= c \@) (= c \~))
+          (let [j (if (and (= c \~) (< (inc i) n) (= (.charAt s (inc i)) \@)) (+ i 2) (inc i))
+                k (skip-ws s n j)]
+            (if (< k n) (form-end s n k) n))
+          (= c \^) (let [k (skip-ws s n (inc i))] ;; metadata: meta form, then the form
+                     (if (< k n)
+                       (let [e (form-end s n k) k2 (skip-ws s n e)]
+                         (if (< k2 n) (form-end s n k2) e))
+                       n))
+          (= c \#) (let [d (when (< (inc i) n) (.charAt s (inc i)))]
+                     (cond (= d \") (string-end s n (inc i)) ; regex
+                           (or (= d \{) (= d \()) (bracket-end s n (inc i))
+                           (= d \_) ; discard: the chunk is #_ + form + the form it yields to
+                           (let [k (skip-ws s n (+ i 2))]
+                             (if (< k n)
+                               (let [e (form-end s n k) k2 (skip-ws s n e)]
+                                 (if (< k2 n) (form-end s n k2) e))
+                               n))
+                           (= d \?) (let [j (+ i 2) ; reader conditional: #? (…), #?@ (…)
+                                          j (if (and (< j n) (= (.charAt s j) \@)) (inc j) j)
+                                          k (skip-ws s n j)]
+                                      (if (< k n) (form-end s n k) n))
+                           (= d \') (form-end s n (inc i)) ; var-quote: the ' prefix scans the rest
+                           (= d \=) (let [k (skip-ws s n (+ i 2))] (if (< k n) (form-end s n k) n)) ; read-eval
+                           :else (let [e (form-end s n (inc i)) ; a tagged literal: tag token, then its datum
+                                       k (skip-ws s n e)]
+                                   (if (< k n) (form-end s n k) e))))
+          :else (loop [j i] ;; a token: symbol, keyword, number, nil/true/false
+                  (if (and (< j n)
+                           (let [d (.charAt s j)]
+                             (not (or (= d \space) (= d \tab) (= d \newline) (= d \return) (= d \,) (= d \;)
+                                      (= d \() (= d \)) (= d \[) (= d \]) (= d \{) (= d \}) (= d \")))))
+                    (recur (inc j))
+                    j)))))
+
+(defn- read-forms [src cb]
+  (let [n (count src)]
+    (loop [i 0]
+      (let [i (skip-ws src n i)]
+        (when (< i n)
+          (let [e (form-end src n i)
+                chunk (subs src i e)]
+            ;; a chunk that is only a discard at end of input reads as
+            ;; EOF in a real reader too; everywhere else read-string's
+            ;; own errors are the verdict
+            (when-not (and (string/starts-with? chunk "#_")
+                           (try (read-string chunk) false (catch Throwable _ true))
+                           (= e n))
+              (cb (read-string chunk)))
+            (recur e)))))))
+
+;; ---------------------------------------------------------------------------
+;; vars: namespace and name from the printed form #'ns/name (see header)
+
+(defn- var-sym [v] (symbol (subs (str v) 2)))
+(defn- var-ns-sym [v] (symbol (namespace (var-sym v))))
+
+;; ---------------------------------------------------------------------------
+;; errors: the message alone (see header), and the registered exception
+;; constructors
+
+(defn- error-message [e]
+  (let [m (or (ex-message e) (str e))
+        i (string/index-of m "\n\nGLJ Stack:")]
+    (if i (subs m 0 i) m)))
+
+(def ^:private exception-ctors
+  {'java.lang.Throwable (fn ([ ] (Throwable.)) ([msg] (Throwable. msg)) ([msg cause] (Throwable. msg cause)))
+   'java.lang.Exception (fn ([ ] (Exception.)) ([msg] (Exception. msg)) ([msg cause] (Exception. msg cause)))
+   'java.lang.RuntimeException (fn ([ ] (RuntimeException.)) ([msg] (RuntimeException. msg)) ([msg cause] (RuntimeException. msg cause)))
+   'java.lang.IllegalArgumentException (fn ([ ] (IllegalArgumentException.)) ([msg] (IllegalArgumentException. msg)) ([msg cause] (IllegalArgumentException. msg cause)))
+   'java.lang.IllegalStateException (fn ([ ] (IllegalStateException.)) ([msg] (IllegalStateException. msg)) ([msg cause] (IllegalStateException. msg cause)))
+   'java.lang.UnsupportedOperationException (fn ([ ] (UnsupportedOperationException.)) ([msg] (UnsupportedOperationException. msg)) ([msg cause] (UnsupportedOperationException. msg cause)))})
+
+(defn- new-exception [klass msg cause]
+  (when-let [ctor (get exception-ctors klass)]
+    (cond (some? cause) (ctor msg cause)
+          (some? msg) (ctor msg)
+          :else (ctor))))
+
+;; ---------------------------------------------------------------------------
+;; java.lang.Math: the javacompat math package registers Math/* statics,
+;; so the shim's Math names are glojure's own, by the JVM's names
+
+(def ^:private jvm-math
+  {'sin (fn [x] (Math/sin x)) 'cos (fn [x] (Math/cos x)) 'tan (fn [x] (Math/tan x))
+   'asin (fn [x] (Math/asin x)) 'acos (fn [x] (Math/acos x)) 'atan (fn [x] (Math/atan x))
+   'atan2 (fn [x y] (Math/atan2 x y)) 'exp (fn [x] (Math/exp x)) 'expm1 (fn [x] (Math/expm1 x))
+   'log (fn [x] (Math/log x)) 'log10 (fn [x] (Math/log10 x)) 'log1p (fn [x] (Math/log1p x))
+   'sqrt (fn [x] (Math/sqrt x)) 'cbrt (fn [x] (Math/cbrt x)) 'hypot (fn [x y] (Math/hypot x y))
+   'pow (fn [x y] (Math/pow x y)) 'sinh (fn [x] (Math/sinh x)) 'cosh (fn [x] (Math/cosh x))
+   'tanh (fn [x] (Math/tanh x)) 'ulp (fn [x] (Math/ulp x)) 'nextUp (fn [x] (Math/nextUp x))
+   'nextDown (fn [x] (Math/nextDown x)) 'nextAfter (fn [x y] (Math/nextAfter x y))
+   'getExponent (fn [x] (Math/getExponent x)) 'scalb (fn [x y] (Math/scalb x y))
+   'copySign (fn [x y] (Math/copySign x y)) 'IEEEremainder (fn [x y] (Math/IEEEremainder x y))
+   'rint (fn [x] (Math/rint x)) 'signum (fn [x] (Math/signum x))
+   'toRadians (fn [x] (Math/toRadians x)) 'toDegrees (fn [x] (Math/toDegrees x))})
+
+;; ---------------------------------------------------------------------------
+;; macros: glojure's own compiler cannot be left to expand the booted
+;; stock macros. Expanding one forces the stock defn macro's body,
+;; whose (nil? ds) the compiler inlines from the booted var's :inline
+;; into (clojure.lang.Util/identical ds nil) — a host form glojure's
+;; EvalAST cannot resolve (there is no clojure.lang.Util on this
+;; seat; measured: both Util/equiv and Util/identical throw
+;; EvalASTMaybeHostForm in raw eval). Every defmacro form of the
+;; stock boot failed that way (55 forms, plus the resolve cascades
+;; of the macros they never defined). So the codemod expands stock
+;; macros itself, by direct apply — the jank adapter's shape: the
+;; macro fn runs interpreted, its output returns raw, and the
+;; codemod rewrites the output (host forms -> shim) itself.
+
+(defn- expand-macro [v form locals]
+  (if (and v (:macro (meta v)) (not= "clojure.core" (str (:ns (meta v)))))
+    (binding [adapter/*raw-macro-output* true]
+      (apply (var-get v) form (zipmap locals (repeat nil)) (rest form)))
+    form))
+
+;; ---------------------------------------------------------------------------
+
+(def adapter
+  {:name :glj
+   :expand-macro expand-macro
+   ;; the Util-inline family: stock nil?/false?/true?/identical?
+   ;; carry :inline fns that emit clojure.lang.Util host calls, and
+   ;; glojure's AST walker substitutes a var's :inline when it walks
+   ;; a body that calls it — inside defmacro's own body ((nil? ds),
+   ;; core.clj) that substitution produced
+   ;; (clojure.lang.Util/identical ds nil), unresolvable on this
+   ;; seat, and killed every stock defmacro form (measured, probe6/7).
+   ;; Glojure's own four are exact stock semantics, so they stand in
+   ;; as natives: no stock :inline for them reaches the walker, and
+   ;; the codemod likewise captures no inline for them.
+   :natives {'clojure.core/nil? :host
+             'clojure.core/false? :host
+             'clojure.core/true? :host
+             'clojure.core/identical? :host}
+   ;; str: taken from the host by default, and glojure's str of the
+   ;; shim's StringBuilder stand-in (cohost.adapter/SB) is the
+   ;; record's printed form, not its contents — so stock
+   ;; clojure.string/join, whose last form is (str sb), returned
+   ;; "#cohost.adapter.SB{...}" instead of "a-b" (measured, probe9:
+   ;; boot report entry {:name str, :status :host}; in the booted
+   ;; env (str sb) => the repr string while (.toString sb) =>
+   ;; "a-b" via the shim -toString's SB branch). Declaring str a
+   ;; core lack boots the stock defn, whose (. x (toString)) the
+   ;; codemod rewrites to that same shim -toString: an SB
+   ;; stringifies to its contents; every other value falls through
+   ;; to the host's str, as before.
+   :core-lacks #{'str}
+   :core-ns 'clojure.core
+   :catch-all 'Throwable
+   :read-forms read-forms
+   :ensure-bare-ns! (fn [ns-sym]
+                      (binding [*ns* *ns*]
+                        (eval (list 'ns ns-sym '(:refer-clojure :only [])))
+                        (the-ns ns-sym)))
+   :refer-from-core! (fn [into-ns sym]
+                       (binding [*ns* (the-ns into-ns)]
+                         (ns-unmap into-ns sym)
+                         (refer 'clojure.core :only [sym])))
+   ;; find-var on a MISSING var returns a hollow Var (var? true, ns
+   ;; pointer nil; str/meta/type on it crash — probe-8), where the JVM
+   ;; returns nil; and a bare (get (ns-interns ns) sym) inside this
+   ;; adapter's own fns was measured returning the same hollow shape
+   ;; for a missing sym (probe-10/11: the identical body in a probe ns
+   ;; returns nil). Both lookups therefore guard on contains? first —
+   ;; ns-interns' key set is truthful (probe-8: no 'array? key).
+   :resolve-core (fn [sym]
+                   (let [m (ns-interns 'clojure.core)]
+                     (when (contains? m sym)
+                       (let [v (get m sym)]
+                         (when (and (var? v) (= 'clojure.core (var-ns-sym v))
+                                    (not (:private (meta v))))
+                           v)))))
+   :interned-var (fn [ns-sym sym]
+                   (when (find-ns ns-sym)
+                     (let [m (ns-interns ns-sym)]
+                       (when (contains? m sym)
+                         (let [v (get m sym)]
+                           (when (and (var? v) (= ns-sym (var-ns-sym v))) v))))))
+   :var-ns (fn [v] (var-ns-sym v))
+   :var-sym (fn [v] (symbol (name (var-sym v))))
+   :current-ns (fn [] (ns-name *ns*))
+   :var-bound? (fn [v] (bound? v))
+   :empty-queue (fn [] clojure.lang.PersistentQueue/EMPTY)
+   :namespace? (fn [x] (instance? clojure.lang.Namespace x))
+   :error-message error-message
+   :new-exception new-exception
+   :ex-info (fn ([msg m] (ex-info (or msg "") m))
+              ([msg m cause] (if (nil? cause) (ex-info (or msg "") m) (ex-info (or msg "") m cause))))
+   :lazy-seq (fn [f] (lazy-seq (f)))
+   :delay (fn [f] (delay (f)))
+   :exception? (fn [x] (instance? Throwable x))
+   :nano-time (fn [] (System/nanoTime))
+   :current-time-millis (fn [] (System/currentTimeMillis))
+   :math-ceil (fn [x] (Math/ceil x))
+   :math-floor (fn [x] (Math/floor x))
+   :math-sqrt (fn [x] (Math/sqrt x))
+   :math jvm-math
+   :parse-long (fn [s] (try (Long/parseLong s) (catch Throwable _ nil)))
+   :parse-double (fn [s] (Double/parseDouble s))
+   :nan? (fn [x] (and (number? x) (Double/isNaN (double x))))
+   :infinite? (fn [x] (and (number? x) (Double/isInfinite (double x))))
+   :index-of (fn [s sub from] (let [i (string/index-of s sub from)] (if (nil? i) -1 i)))
+   :upper-case (fn [s] (string/upper-case s))
+   :lower-case (fn [s] (string/lower-case s))
+   :sort-array! (fn [arr cmp]
+                  (let [v (vec (sort cmp (seq arr)))]
+                    (dotimes [i (count v)] (aset arr i (nth v i)))
+                    arr))
+   :char? (fn [x] (char? x))
+   :char-code (fn [c] (int c))
+   ;; core volatile? mis-reports (false for a real volatile) and bigint?
+   ;; does not exist; both go by the measured type name, as do
+   ;; transient?/lazy-seq?, whose class symbols do not resolve
+   :volatile? (fn [x] (= "*lang.Volatile" (str (type x))))
+   :delay? (fn [x] (delay? x))
+   :reduced? (fn [x] (reduced? x))
+   :uuid? (fn [x] (uuid? x))
+   :bigint? (fn [x] (= "*lang.BigInt" (str (type x))))
+   :ratio? (fn [x] (ratio? x))
+   :decimal? (fn [x] (decimal? x))
+   :indexed? (fn [x] (indexed? x))
+   :counted? (fn [x] (counted? x))
+   :reversible? (fn [x] (reversible? x))
+   :sorted? (fn [x] (sorted? x))
+   :transient? (fn [x] (contains? #{"*lang.TransientVector" "*lang.TransientMap" "*lang.TransientSet"} (str (type x))))
+   :lazy-seq? (fn [x] (= "*lang.LazySeq" (str (type x))))
+   ;; the matcher has no Start(): start = End − (count Group₀);
+   ;; groups via .groupInt (the (.group m i) shape does not dispatch)
+   :re-group-count (fn [re] (.groupCount (re-matcher re "")))
+   :re-find-at (fn [re s from]
+                 (let [m (re-matcher re (subs s from))]
+                   (when (.find m)
+                     (let [end (+ from (.end m))]
+                       [(- end (count (.group m))) end
+                        (into [(.group m)]
+                              (map (fn [i] (.groupInt m i)))
+                              (range 1 (inc (.groupCount m))))]))))
+   :re-match-full (fn [re s]
+                    (let [m (re-matcher re s)]
+                      (when (.matches m)
+                        [0 (count s)
+                         (into [(.group m)]
+                               (map (fn [i] (.groupInt m i)))
+                               (range 1 (inc (.groupCount m))))])))
+   ;; clojure.edn is the completion's (loaded before this ns on the seat)
+   :edn-read-string (fn [s] (edn/read-string s))
+   :atom? (fn [x] (instance? clojure.lang.Atom x))
+   :deref? (fn [x] (instance? clojure.lang.IDeref x))
+   :pending? (fn [x] (instance? clojure.lang.IPending x))
+   :regex? (fn [x] (instance? java.util.regex.Pattern x))})
+
+(adapter/install! adapter)
