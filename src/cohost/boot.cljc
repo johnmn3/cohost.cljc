@@ -895,6 +895,29 @@
     (reset! shim/load-hook (fn [path] (boot-file! ctx report (str root "/clojure/" path ".clj"))))
     [ctx report]))
 
+(defn- install-eduction-reduce!
+  "IReduceInit's 1-arity coll-reduce casts its collection to IReduce.
+   Eduction is IReduceInit and not IReduce. pref keeps the first of two
+   unrelated interfaces, and that order is Class identity-hash order, which
+   follows which classes loaded first. cohost's AOT classes on the classpath
+   change that order, the cast wins, and (reduce f (eduction ...)) throws.
+   A collection that is IReduceInit but not IReduce reduces through the seq."
+  []
+  #?(:clj
+     (extend-type clojure.lang.IReduceInit
+       clojure.core.protocols/CollReduce
+       (coll-reduce
+         ([coll f]
+          (if (instance? clojure.lang.IReduce coll)
+            (.reduce ^clojure.lang.IReduce coll f)
+            (let [s (seq coll)]
+              (if s
+                (clojure.core.protocols/internal-reduce (next s) f (first s))
+                (f)))))
+         ([coll f val]
+          (.reduce ^clojure.lang.IReduceInit coll f val))))
+     :default nil))
+
 (defn- install-host-reducers!
   "reduce with core's + or * hands the host its own (shim/host-reducers)."
   []
@@ -1119,6 +1142,7 @@
      (install-http-layer! report)
      (scan-macros! ctx)
      (install-host-reducers!)
+     (install-eduction-reduce!)
      (reset! (:booted? ctx) true)
      (let [r (assoc @report
                     :rewrite-misses (rw/misses ctx)
@@ -1770,6 +1794,7 @@
    and its report."
   [data]
   (install-host-reducers!)
+  (install-eduction-reduce!)
   (snap-restore! data)
   (reset! (:booted? (ctx)) true)
   (swap! state assoc :report (:report data) :snapshot? true)
