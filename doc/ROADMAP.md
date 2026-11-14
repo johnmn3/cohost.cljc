@@ -89,15 +89,25 @@ counts per library per host.
   `read`, `eval`, `print` — bootable once the adapter exposes the host's
   stdin/stdout streams and a `Reader` shim exists (phase 1 brings
   `LineNumberingPushbackReader`).
-- Socket REPL: `clojure.core.server` is small; it needs `java.net.ServerSocket`
-  and threads — an adapter capability (`:accept-connections!`) per host
-  (jolt has sockets via FFI, Node has `net`, basilisp has `socket`).
+- Socket REPL: DONE (stock-tree completion, family 3). `clojure.core.server`
+  and `clojure.main` are vendored unmodified and load on the native hosts.
+  The server's `java.net.ServerSocket`/`Socket` leans are served by
+  `cohost.io` socket values — an in-process loopback on hosts without a
+  socket capability, the real sockets on passthrough seats — and its
+  threads by the thread layer. A `prepl` round-trip over a socket pair is
+  proven on a native host (let-go): `(+ 1 2)` taps back
+  `{:tag :ret, :val 3, ...}`. Named boundary: on let-go the stock
+  thread-per-connection accept path cannot consume the streams in the
+  client thread (records conveyed through the layer's thread bindings
+  lose their boxing in that VM — host-side crossings are unaffected);
+  the stream-level prepl path is the proven shape there.
 - nREPL: `nrepl/nrepl` is JVM-Clojure (bencode, sessions, middleware); its
   transport and session machinery lean on `java.net` and threads, the rest is
   Clojure. Load it through the loader with the phase-1 shims; the host's own
   nREPL (jolt ships one) is the fallback and the comparison.
-- The dev host: `clojure.repl` (`doc`, `source`, `apropos`), `clojure.java.io`
-  over the adapter's file IO, `clojure.stacktrace` over the adapter's
+- The dev host: `clojure.repl` (`doc`, `source`, `apropos`); `clojure.java.io`
+  is vendored (stock-tree completion, family 2) and served by `cohost.io`
+  over the adapter's file IO; `clojure.stacktrace` over the adapter's
   exception introspection, `*1`/`*2`/`*e`.
 
 Measure: CIDER / Calva connect and evaluate against a cohost nREPL on

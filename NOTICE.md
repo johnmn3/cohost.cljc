@@ -43,6 +43,18 @@ byte:
   `clojure/xml.clj`, `clojure/core/reducers.clj`, `clojure/test/junit.clj`,
   `clojure/test/tap.clj`, `clojure/reflect.clj` and
   `clojure/reflect/java.clj`.
+- From the same **Clojure 1.12.0** jar, added by the stock-tree completion
+  (family 2): `clojure/java/io.clj`, `clojure/java/basis.clj`,
+  `clojure/java/basis/impl.clj`, `clojure/java/process.clj`,
+  `clojure/java/shell.clj`, `clojure/java/browse.clj`,
+  `clojure/java/javadoc.clj` and `clojure/java/browse_ui.clj`. The
+  namespaces are the stock files; their java.io/java.lang leans are
+  served by the shim layer (`src/cohost/io.cljc`, `src/cohost/shim.cljc`)
+  over the host adapters.
+- From the same **Clojure 1.12.0** jar, added by the stock-tree completion
+  (family 3): `clojure/main.clj` and `clojure/core/server.clj`. Both load
+  unmodified on the native hosts; the server's socket/thread leans are
+  served by `src/cohost/io.cljc`'s socket values and the thread layer.
 - From the **clojure.spec.alpha 0.5.238** release jar (the version Clojure
   1.12.0 depends on): `clojure/spec/alpha.clj` and `clojure/spec/gen/alpha.clj`.
 - From the **clojure.core.specs.alpha 0.4.74** release jar (the version
