@@ -869,7 +869,7 @@
 
 (def class-loader {:cohost/kind ::class-loader})
 
-(defn inet-address? [x] (= ::inet-address (:cohost/kind x)))
+(defn inet-address? [x] (and (map? x) (= ::inet-address (:cohost/kind x))))
 (defn inet-host [a] (:host a))
 
 (defn unconnected-socket

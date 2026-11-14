@@ -524,8 +524,8 @@
     ;; a value of Eve's HTTP layer (cohost.http): the java.net class it stands for
     (and (map? x) (http/value? x)) (http/class-token x)
     ;; a value of the io layer (cohost.io): the java.io class it stands for
-    (identical? :cohost.shim/reentrant-lock (:cohost/kind x)) 'java.util.concurrent.locks.ReentrantLock
-    (identical? :cohost.shim/classloader (:cohost/kind x)) 'clojure.lang.DynamicClassLoader
+    (and (map? x) (identical? :cohost.shim/reentrant-lock (:cohost/kind x))) 'java.util.concurrent.locks.ReentrantLock
+    (and (map? x) (identical? :cohost.shim/classloader (:cohost/kind x))) 'clojure.lang.DynamicClassLoader
     (io/inet-address? x) 'java.net.InetAddress
     (proxy-value? x) (or (first (filter (fn [t] (contains? token-ancestors t)) (:supers x)))
                          'java.lang.Object)
