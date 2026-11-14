@@ -63,6 +63,13 @@ byte:
   The namespaces are the stock files; the sub-loads, struct maps and
   writer proxies they stand on are served by the shim layer
   (`src/cohost/shim.cljc`'s proxy/struct core fills over the io layer).
+- From the same **Clojure 1.12.0** jar, added by the stock-tree completion
+  (family 6): `clojure/parallel.clj`, `clojure/inspector.clj`,
+  `clojure/tools/deps/interop.clj`, `clojure/repl/deps.clj`, and the
+  `clojure.core` companions `clojure/genclass.clj`,
+  `clojure/core_proxy.clj` and `clojure/gvec.clj`. The namespaces are
+  the stock files; the companions enter only through `clojure.core`'s
+  own loads, as in stock.
 - From the **clojure.spec.alpha 0.5.238** release jar (the version Clojure
   1.12.0 depends on): `clojure/spec/alpha.clj`, `clojure/spec/gen/alpha.clj`
   and `clojure/spec/test/alpha.clj` (family 4 companion).
