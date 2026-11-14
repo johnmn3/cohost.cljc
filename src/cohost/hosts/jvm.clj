@@ -163,7 +163,7 @@
                          :text-bytes (fn [^String s] (.getBytes s "UTF-8"))
                          :b64-bytes (fn [^String s] (.decode (java.util.Base64/getDecoder) s))
                          :bytes-b64 (fn [^bytes bs] (.encodeToString (java.util.Base64/getEncoder) bs))
-                         :read-all (fn [x] (cond (instance? java.io.File x) (java.nio.file.Files/readAllBytes (.toPath ^java.io.File x))
+                         :read-all (fn [x] (cond (instance? java.io.File x) (with-open [in (java.io.FileInputStream. ^java.io.File x)] (.readAllBytes in))
                                                  (instance? java.io.InputStream x) (with-open [^java.io.InputStream in x] (.readAllBytes in))
                                                  :else nil))})
    ;; the host's own java.net classes, where cohost.http has no leaves
