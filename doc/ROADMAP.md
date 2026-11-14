@@ -74,6 +74,22 @@ library calls. The tiers are clinj's:
 Measure with the libraries' own test suites run on the host; report pass
 counts per library per host.
 
+Stock-tree completion (2026-11-14): `clojure.pprint` is no longer a T2
+aspiration — the full stock set (`clojure/pprint.clj` + its seven
+sub-libraries) is vendored byte-identical in the stock root, standing
+on the shim's core fills (in-core `load`, struct maps, writer proxies
+over the io layer). Measured state: on the JVM seat the library loads
+complete (306 forms, 0 errors) and cl-format's engine runs; on RE2
+hosts (let-go) `cl_format.clj` cannot be read — its parameter pattern
+uses a `(?=,)` lookahead RE2 does not have, with no faithful
+respelling — so cl-format and the dispatch entries naming
+`formatter-out` are absent there while the rest of pprint loads
+(268 forms). Scalar leaves on native hosts are bounded by the host's
+own `print-method` (a host-taken name): let-go's refuses non-host
+writers, and on the JVM seat the real one casts layer writer values
+to `java.io.Writer`. Both are print-machinery seams, recorded in
+NOTICE.md's family-4 entry and the completion lane's STATUS.
+
 ## 3. nREPL, socket REPL, the dev host
 
 - Where it starts (2026-10-30): `cohost.boot/eval-str` is already a session

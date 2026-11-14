@@ -55,8 +55,17 @@ byte:
   (family 3): `clojure/main.clj` and `clojure/core/server.clj`. Both load
   unmodified on the native hosts; the server's socket/thread leans are
   served by `src/cohost/io.cljc`'s socket values and the thread layer.
+- From the same **Clojure 1.12.0** jar, added by the stock-tree completion
+  (family 4): `clojure/pprint.clj` and `clojure/pprint/cl_format.clj`,
+  `clojure/pprint/column_writer.clj`, `clojure/pprint/dispatch.clj`,
+  `clojure/pprint/pprint_base.clj`, `clojure/pprint/pretty_writer.clj`,
+  `clojure/pprint/print_table.clj` and `clojure/pprint/utilities.clj`.
+  The namespaces are the stock files; the sub-loads, struct maps and
+  writer proxies they stand on are served by the shim layer
+  (`src/cohost/shim.cljc`'s proxy/struct core fills over the io layer).
 - From the **clojure.spec.alpha 0.5.238** release jar (the version Clojure
-  1.12.0 depends on): `clojure/spec/alpha.clj` and `clojure/spec/gen/alpha.clj`.
+  1.12.0 depends on): `clojure/spec/alpha.clj`, `clojure/spec/gen/alpha.clj`
+  and `clojure/spec/test/alpha.clj` (family 4 companion).
 - From the **clojure.core.specs.alpha 0.4.74** release jar (the version
   Clojure 1.12.0 depends on): `clojure/core/specs/alpha.clj`.
 
