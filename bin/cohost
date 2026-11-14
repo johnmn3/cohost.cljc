@@ -613,13 +613,15 @@
                (alias-keywords (:alias o)))))
 
 (defn combine-aliases
-  "Clojure CLI alias merge for the keys this leg uses. :main-opts concatenate
-   left to right. :exec-fn and :ns-default are the last alias that sets them.
-   :exec-args and :ns-aliases merge, later keys winning."
+  "Clojure CLI alias merge for the keys this leg uses. :main-opts are the
+   last alias's that sets them — the CLI replaces, it does not concatenate
+   (measured against the basis argmap and stock execution). :exec-fn and
+   :ns-default are likewise the last alias that sets them. :exec-args and
+   :ns-aliases merge, later keys winning."
   [aliases kws]
   (reduce (fn [acc kw]
             (if-let [a (get aliases kw)]
-              {:main-opts (into (or (:main-opts acc) []) (or (:main-opts a) []))
+              {:main-opts (if (some? (:main-opts a)) (:main-opts a) (:main-opts acc))
                :exec-fn (or (:exec-fn a) (:exec-fn acc))
                :exec-args (merge (:exec-args acc) (:exec-args a))
                :ns-default (or (:ns-default a) (:ns-default acc))

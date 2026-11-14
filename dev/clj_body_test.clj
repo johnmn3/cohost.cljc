@@ -272,7 +272,7 @@
     :expect :champaca
     :jolt-args "-Srepro -Spath -M:main"
     :main-args ["-m" "demo.main" "-g" "hi" "-n" "2" "jolt-user"]}
-   {:name "-M:a:b concatenates :main-opts left to right"
+   {:name "-M:a:b :main-opts are the last alias's (the CLI replaces, not concatenates)"
     :args [":jvm" "-M:a:b" "-m" "user.main"]
     :deps {:aliases {:a {:main-opts ["-e" "1"]}
                      :b {:main-opts ["-e" "2"]}}}
@@ -280,8 +280,8 @@
     :bundle true
     :expect :champaca
     :jolt-args "-Srepro -Spath -M:a:b"
-    :main-args ["-e" "1" "-e" "2" "-m" "user.main"]}
-   {:name "-A then -M keeps both aliases on the jolt classpath and in :main-opts"
+    :main-args ["-e" "2" "-m" "user.main"]}
+   {:name "-A then -M keeps both aliases on the jolt classpath; :main-opts are the last alias's"
     :args [":jvm" "-A:extra" "-M:main" "arg"]
     :deps {:aliases {:extra {:main-opts ["-e" ":extra"]}
                      :main {:main-opts ["-m" "demo.main"]}}}
@@ -289,7 +289,7 @@
     :bundle true
     :expect :champaca
     :jolt-args "-Srepro -Spath -A:extra -M:main"
-    :main-args ["-e" ":extra" "-m" "demo.main" "arg"]}
+    :main-args ["-m" "demo.main" "arg"]}
    {:name "-X:alias invokes the exec fn with merged args"
     :args [":jvm" "-X:run" ":user" "\"jolt-user\""]
     :deps {:aliases {:run {:exec-fn 'demo.core/run

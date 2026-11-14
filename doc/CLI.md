@@ -115,8 +115,9 @@ looks only at PATH:
   `org.clojure/clojure` off that path on purpose. The bundle's `app/*` already
   holds Clojure 1.12, spec.alpha, and core.specs.alpha, and that directory is
   the front of `-cp`, so the project classpath does not need the Clojure jar.
-  `-M:alias` prepends the alias's `:main-opts` (aliases combined left to
-  right, `:main-opts` concatenated, from `./deps.edn` and `-Sdeps`; user
+  `-M:alias` prepends the selected aliases' `:main-opts` (aliases combined
+  in order, `:main-opts` the last alias's that sets them — the CLI replaces
+  rather than concatenates — from `./deps.edn` and `-Sdeps`; user
   deps.edn is skipped because the resolve is `-Srepro`) and then the user's
   arguments. `-X:alias` is `clojure.main -e` of a `requiring-resolve` call:
   Clojure 1.12's jar has no `clojure.run.exec`. The argument map is the
