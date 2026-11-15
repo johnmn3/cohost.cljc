@@ -1651,7 +1651,17 @@
   [[h args]]
   (let [cur (host/current-ns)]
     (case h
-      ns [nil (ns! (first args) (rest args))]
+      ;; the JVM's ns macro conj's the lib onto *loaded-libs*, so a later
+      ;; (require 'lib) of a namespace a file or session made with ns is a
+      ;; no-op; here the loader's record is that list (measured on jank: a
+      ;; two-ns script's (:require [its-first-ns]) went looking for a file
+      ;; -- "The module `deftype-perf.bench-rt` could not be found"). A
+      ;; library being loaded already has its record (:loading) and keeps it.
+      ns (let [after (ns! (first args) (rest args))
+               lib (first args)]
+           (when (and (symbol? lib) (nil? (get-in @state [:libs lib])))
+             (swap! state assoc-in [:libs lib] {:ns after :status :loaded}))
+           [nil after])
       in-ns (let [t (first args)
                   t (if-let [m (get @(:renames (ctx)) (str t))] (symbol m) t)
                   found (host/try-all (fn [] (shim/Namespace-find t)))]
