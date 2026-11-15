@@ -2,8 +2,7 @@
 ;; lpy launch runs this file with the cfg path as its sole argument.
 ;; The require ORDER is the fix for the cold-boot walls: the host-
 ;; completion priming loads first (it interns the sorted collections
-;; into basilisp.core and the System namespace cohost.cli's temp-dir
-;; reads), then the adapter, then cohost.cli itself -- whose graph
+;; into basilisp.core and the System namespace), then the adapter, then cohost.cli itself -- whose graph
 ;; (boot, shim, http) only analyzes once the completions exist.
 (ns lpy-cli
   (:require [cohost.hosts.basilisp-prime]

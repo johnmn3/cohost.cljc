@@ -1594,8 +1594,12 @@
    library the loader did not compile into the image: the namespace never
    loaded and the call returned as though it had (measured: the probe's
    (try (require 'clojure.spec.alpha) ...) printed OK and the later eval
-   failed reading clojure.spec.alpha off undefined). Called by the cljs
-   entry points after boot; other seats keep their host's require."
+   failed reading clojure.spec.alpha off undefined). The JVM seat's
+   host require looks on the host classpath, where the source roots are
+   not: stock clojure.main's -m, (doto (symbol main-ns) require), missed
+   every project namespace (measured: \"Could not locate seam/ok__init.class
+   ... on classpath\"). Called by the entry points after boot (cohost.cli
+   on every seat, the cljs entry points)."
   []
   (host/intern! core-ns 'require (fn [& args] (require! (host/current-ns) args false) nil))
   (host/intern! core-ns 'use (fn [& args] (require! (host/current-ns) args true) nil))

@@ -14,14 +14,14 @@ MP=$(bb -e '(println (:module-path (read-string (slurp *in*))))' <<<"$L")
 SNAP=$(bb -e '(println (:snapshot? (read-string (slurp *in*))))' <<<"$L")
 [ "$SNAP" = true ] || { echo "the snapshot is not fresh: $L"; exit 1; }
 ROOTS=$("$R/bin/cohost" :jank -Spath 2>/dev/null)
-cfg() { # main-edn inits-edn -> a config file
+cfg() { # clojure.main's arguments, an EDN vector -> a config file
   local f=$(mktemp --suffix=.edn)
-  bb -e "(spit \"$f\" (pr-str {:stock-root \"$R/resources/cohost/clojure-1.12.0\" :roots (vec (clojure.string/split \"$ROOTS\" (re-pattern \":\"))) :cwd \"$P\" :inits $2 :main $1 :snapshot? true :verbose false}))"
+  bb -e "(spit \"$f\" (pr-str {:stock-root \"$R/resources/cohost/clojure-1.12.0\" :roots (vec (clojure.string/split \"$ROOTS\" (re-pattern \":\"))) :cwd \"$P\" :args $1 :snapshot? true :verbose false}))"
   echo "$f"
 }
 printf '(println "x")\n' > /tmp/claude-empty.jank
 printf "(require 'cohost.run)\n" > /tmp/claude-cohost-run.jank
-C0=$(cfg nil '[]'); C1=$(cfg nil "[[:e \"(require '$M)\"]]"); C2=$(cfg "{:type :main :ns \"$M\" :args [\"$A\"]}" '[]')
+C0=$(cfg '["-e" "nil"]'); C1=$(cfg "[\"-e\" \"(require '$M)\"]"); C2=$(cfg "[\"-m\" \"$M\" \"$A\"]")
 J=(env GC_INITIAL_HEAP_SIZE=512M jank -O3 --module-path "$MP")
 three bb-start bb -e nil
 three cohost-Spath "$R/bin/cohost" :jank -Spath
@@ -38,8 +38,8 @@ three jank-cli-main "${J[@]}" run-main cohost.cli -- "$C2"
 PJ=$(cd "$R" && bb -e "(load-file \"dev/perf/jank_snapshot_cli.clj\") (prn (jank-project-launch \"$R\" \"$P\" (clojure.string/split \"$ROOTS\" (re-pattern \":\")) \"$M\" \"$MP\" {}))" 2>/dev/null)
 PMP=$(bb -e '(println (or (:module-path (read-string (slurp *in*))) ""))' <<<"$PJ")
 if [ -n "$PMP" ]; then
-  pcfg() { local f=$(cfg "$1" "$2"); bb -e "(spit \"$f\" (pr-str (assoc (read-string (slurp \"$f\")) :project-snapshot \"cohost.project\")))"; echo "$f"; }
-  P0=$(pcfg nil '[]'); P1=$(pcfg nil "[[:e \"(require '$M)\"]]"); P2=$(pcfg "{:type :main :ns \"$M\" :args [\"$A\"]}" '[]')
+  pcfg() { local f=$(cfg "$1"); bb -e "(spit \"$f\" (pr-str (assoc (read-string (slurp \"$f\")) :project-snapshot \"cohost.project\")))"; echo "$f"; }
+  P0=$(pcfg '["-e" "nil"]'); P1=$(pcfg "[\"-e\" \"(require '$M)\"]"); P2=$(pcfg "[\"-m\" \"$M\" \"$A\"]")
   PJR=(env GC_INITIAL_HEAP_SIZE=512M jank -O3 --module-path "$PMP")
   three proj-cli-boot-exit "${PJR[@]}" run-main cohost.cli -- "$P0"
   three proj-cli-load-app "${PJR[@]}" run-main cohost.cli -- "$P1"

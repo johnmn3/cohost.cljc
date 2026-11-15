@@ -91,8 +91,8 @@ const meta = JSON.parse(fs.readFileSync(path.join(here, 'bundle.json'), 'utf8'))
 const s = x => JSON.stringify(x);
 const edn = '{:stock-root ' + s(path.join(here, 'stock')) +
   ' :roots [' + meta.roots.map(r => s(path.join(here, r))).join(' ') + ']' +
-  ' :cwd ' + s(process.cwd()) + ' :inits []' +
-  ' :main {:type :main :ns ' + s(meta.main) + ' :args [' + process.argv.slice(2).map(s).join(' ') + ']}}';
+  ' :cwd ' + s(process.cwd()) +
+  ' :args ["-m" ' + s(meta.main) + ' ' + process.argv.slice(2).map(s).join(' ') + ']}';
 const cfg = path.join(os.tmpdir(), 'cohost-run-' + process.pid + '.edn');
 fs.writeFileSync(cfg, edn);
 const r = cp.spawnSync('node', [path.join('target', 'cljs-cli', 'main.js'), cfg], {cwd: here, stdio: 'inherit'});
@@ -158,7 +158,7 @@ process.exit(r.status === null ? 1 : r.status);
        "args=''; for a in \"$@\"; do args=\"$args $(q \"$a\")\"; done\n"
        "roots=''; for r in " (str/join " " roots) "; do roots=\"$roots $(q \"$here/$r\")\"; done\n"
        "cfg=$(mktemp \"${TMPDIR:-/tmp}/cohost-run-XXXXXX\")\n"
-       "printf '{:stock-root %s :roots [%s] :cwd %s :inits [] :main {:type :main :ns %s :args [%s]}" (or extra-cfg "") "}' "
+       "printf '{:stock-root %s :roots [%s] :cwd %s :args [\"-m\" %s%s]" (or extra-cfg "") "}' "
        "\"$(q \"$here/stock\")\" \"$roots\" \"$(q \"$PWD\")\" \"$(q " (pr-str (str main)) ")\" \"$args\" > \"$cfg\"\n"
        launch " \"$cfg\"\n"
        "code=$?\nrm -f \"$cfg\"\nexit $code\n"))

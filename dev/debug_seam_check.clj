@@ -8,8 +8,9 @@
 ;; quotes the exact text it matched.
 ;;
 ;; For jvm the seam is cohost.cli on the JVM host itself
-;; (clojure -M -m cohost.cli <config>), not the real CLI; for jank it
-;; is bin/cohost :jank in dev/cli-demo.
+;; (clojure -M -m cohost.cli <config>, the config's :args being
+;; clojure.main's own arguments, handed to the booted stock main), not
+;; the real CLI; for jank it is bin/cohost :jank in dev/cli-demo.
 (require '[babashka.fs :as fs]
          '[babashka.process :as p]
          '[clojure.string :as str])
@@ -18,8 +19,6 @@
 (def demo (str repo "/dev/cli-demo"))
 (def target (or (first *command-line-args*) "jvm"))
 (def tmp (str (fs/create-temp-dir {:prefix "debug-seam-"})))
-(def reports-dir (str tmp "/reports"))
-(fs/create-dirs reports-dir)
 
 (defn run-proc
   "-> {:out :err :exit} (:exit :timeout past the limit)."
@@ -35,11 +34,12 @@
        {:out (:out done) :err (:err done) :exit (:exit done)}))))
 
 (defn jvm-cli
-  "cohost.cli on the JVM host with the given config map; stdin a string."
+  "cohost.cli on the JVM host with the given config map; stdin a string.
+   Report files land where stock main writes them (java.io.tmpdir)."
   [cfg stdin]
   (let [cfg-file (str tmp "/cfg-" (rand-int 100000000) ".edn")]
     (spit cfg-file (pr-str (merge {:stock-root (str repo "/resources/cohost/clojure-1.12.0")
-                                   :roots [] :report "file" :report-dir reports-dir}
+                                   :roots [] :report "file"}
                                   cfg)))
     (run-proc ["clojure" "-Sdeps" "{:paths [\"src\"]}" "-M" "-m" "cohost.cli" cfg-file]
               repo stdin)))
@@ -55,21 +55,20 @@
    the namespace loads through the loader, then -main runs)."
   [ns-sym]
   (case target
-    "jvm" (jvm-cli {:roots [(str demo "/src")]
-                    :main {:type :main :ns ns-sym :args []}} "")
+    "jvm" (jvm-cli {:roots [(str demo "/src")] :args ["-m" (str ns-sym)]} "")
     "jank" (jank-cli ["-m" ns-sym] "")))
 
 (defn run-e
   "One -e program (a single string of forms), uncaught errors and all."
   [program]
   (case target
-    "jvm" (jvm-cli {:inits [[:e program]] :main nil} "")
+    "jvm" (jvm-cli {:args ["-e" program]} "")
     "jank" (jank-cli ["-e" program] "")))
 
 (defn run-repl
   [stdin]
   (case target
-    "jvm" (jvm-cli {:main {:type :repl}} stdin)
+    "jvm" (jvm-cli {:args []} stdin)
     "jank" (jank-cli [] stdin)))
 
 (def results (atom []))
@@ -81,8 +80,8 @@
 
 ;; ---- the sessions ----------------------------------------------------
 
-;; one top-level form, so the -e value printing (run-cli! prints each
-;; form's value) prints nothing for it: #1 can then hold stdout to the
+;; one top-level form, so the -e value printing (stock main prints each
+;; form's non-nil value) prints nothing for it: #1 can then hold stdout to the
 ;; research contract (the report on stderr, nothing on stdout)
 (def boom-program "(do (defn boom [] (throw (ex-info \"kaboom\" {:x 5}))) (boom))")
 (def uncaught (run-e boom-program))
@@ -108,15 +107,21 @@
 ;; and a script that exits 3
 (def exec-missing
   (case target
+    ;; -X as bin/cohost presents it to stock main (exec-invoke-args):
+    ;; clojure.main has no -X; the launcher hands it -e
     "jvm" (jvm-cli {:roots [(str demo "/src")]
-                    :main {:type :exec :ns "seam.ok" :fn "nope" :args-edn "[]"}} "")
+                    :args ["-e" (str "(do (require 'seam.ok)"
+                                     " (if-let [f (resolve 'seam.ok/nope)]"
+                                     " (do (f []) nil)"
+                                     " (do (binding [*out* *err*] (println \"Namespace seam.ok loaded but function not found: nope\"))"
+                                     " (System/exit 1))))")]} "")
     "jank" (jank-cli ["-X" "seam.ok/nope"] "")))
 (def exec-missing-text (str (:out exec-missing) "\n" (:err exec-missing)))
 (def exit3-path (str tmp "/exit3.clj"))
 (spit exit3-path "(System/exit 3)\n")
 (def exit3-run
   (case target
-    "jvm" (jvm-cli {:main {:type :script :path exit3-path :args []}} "")
+    "jvm" (jvm-cli {:args [exit3-path]} "")
     "jank" (jank-cli [exit3-path] "")))
 (def reader-run (run-e "(defn broken [x"))
 (def reader-text (str (:out reader-run) "\n" (:err reader-run)))
@@ -140,8 +145,12 @@
 ;; C++ exception against a stock catch (the catch hole)
 (def bad-load (run-main "seam.bad"))
 (def bad-load-text (str (:out bad-load) "\n" (:err bad-load)))
+;; one program per target: stock main's -e reads without reader
+;; conditionals (clojure -e '#?(...)' is "Conditional read not allowed")
 (def native-catch
-  (run-e "#?(:jank (try (throw (cpp/std.runtime_error \"boom\")) (catch Throwable e (prn :caught (ex-message e)))) :default (try (throw (ex-info \"boom\" {})) (catch Throwable e (prn :caught (ex-message e))))"))
+  (run-e (case target
+           "jank" "(try (throw (cpp/std.runtime_error \"boom\")) (catch Throwable e (prn :caught (ex-message e))))"
+           "(try (throw (ex-info \"boom\" {})) (catch Throwable e (prn :caught (ex-message e))))")))
 (def native-catch-text (str (:out native-catch) "\n" (:err native-catch)))
 
 ;; U3: a macro that expands to an unresolved symbol, loaded as a namespace

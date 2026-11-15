@@ -271,29 +271,18 @@
 ;; --------------------------------------------------------------------------
 ;; clojure.main's arguments, and clojure.run.exec's
 
-(defn abs-path [cwd f] (str (fs/absolutize (under cwd f))))
-
-(defn main-config
-  "clojure.main's arguments: init options (-i/--init, -e/--eval, in the
-   order given), then one main option. clojure.main's --report flag is
-   consumed in this option region, as stock consumes it, and returned
-   beside the run config; a valueless --report yields \"\", an
-   unrecognized target, which the report dispatch treats as stock
-   treats one (the stderr fallback). -> {:inits [...] :main {...}|nil
-   :report <target>|nil}"
-  [cwd args]
-  (loop [[a b & more :as args] args inits [] report nil]
-    (cond
-      (nil? a) {:inits inits :main (when (empty? inits) {:type :repl}) :report report}
-      (#{"-i" "--init"} a) (recur more (conj inits [:i (abs-path cwd b)]) report)
-      (#{"-e" "--eval"} a) (recur more (conj inits [:e b]) report)
-      (= "--report" a) (recur more inits (or b ""))
-      (#{"-m" "--main"} a) {:inits inits :main {:type :main :ns b :args (vec more)} :report report}
-      (#{"-r" "--repl"} a) {:inits inits :main {:type :repl} :report report}
-      (= "-" a) {:inits inits :main {:type :stdin :args (vec (rest args))} :report report}
-      (#{"-h" "--help" "-?"} a) (usage)
-      (str/starts-with? a "-") (die 2 (str "cohost: unknown option " a))
-      :else {:inits inits :main {:type :script :path (abs-path cwd a) :args (vec (rest args))} :report report})))
+;; clojure.main's own arguments go to the host unparsed: the booted stock
+;; clojure.main/main parses them (cohost.cli is PREP only). The launcher
+;; reads one fact from them, for jank's per-project snapshot: the -m
+;; namespace, past the init options' (option value) pairs.
+(defn main-ns-of
+  "The -m/--main namespace of clojure.main arguments, or nil."
+  [args]
+  (loop [[a b & more] args]
+    (cond (nil? a) nil
+          (#{"-m" "--main"} a) b
+          (#{"-i" "--init" "-e" "--eval" "--report"} a) (recur more)
+          :else nil)))
 
 (defn exec-config
   "clojure.run.exec's arguments: an optional fn symbol, then key value pairs
@@ -493,10 +482,9 @@
    from a per-project snapshot, built when stale (D-8). An introspection
    run (JANK_PRINT_CODEGEN / JANK_PRINT_IR) overrides all of that to the
    source boot: cohost's AOT objects and core from src."
-  [cwd roots run]
+  [cwd roots main-ns]
   (load-file (str repo "/dev/perf/jank_snapshot_cli.clj"))
   (let [l ((resolve 'jank-cli-launch) repo)
-        main-ns (when (#{:main :exec} (get-in run [:main :type])) (get-in run [:main :ns]))
         ;; the launcher binary has no module path: it adds the per-project
         ;; snapshot's directories at run time (the config's :module-paths);
         ;; an introspection run skips the project snapshot too — its
@@ -735,11 +723,17 @@
 
 (defn exec-invoke-args
   "clojure.main arguments for `-X`. Clojure 1.12's jar has no clojure.run.exec,
-   so this is that invocation: require the fn, call it with the merged arg
-   map, and yield nil so `-e` does not print the return value."
+   so this is that invocation: require the fn's namespace, call the fn with
+   the merged arg map, and yield nil so `-e` does not print the return value;
+   a function the loaded namespace lacks is clojure.run.exec's message on
+   stderr and exit 1."
   [cfg]
-  ["-e" (str "(do ((requiring-resolve '" (:ns cfg) "/" (:fn cfg) ") "
-             (:args-edn cfg) ") nil)")])
+  (let [ns (:ns cfg) f (:fn cfg)]
+    ["-e" (str "(do (require '" ns ")"
+               " (if-let [f (resolve '" ns "/" f ")]"
+               " (do (f " (:args-edn cfg) ") nil)"
+               " (do (binding [*out* *err*] (println \"Namespace " ns " loaded but function not found: " f "\"))"
+               " (System/exit 1))))")]))
 
 (defn champaca-main-args
   "clojure.main arguments for the champaca leg.
@@ -868,15 +862,18 @@
           (:prepare? o) (binding [*out* *err*]
                           (println (str "cohost: prepared " (count roots) " source roots under " cache-dir)))
           :else
-          (let [run (if (= mode :X)
-                      {:inits [] :main (exec-config (:main o) argmap)}
-                      (main-config cwd (concat (when (= mode :M) (:main-opts argmap)) (:main o))))
+          (let [exec (when (= mode :X) (exec-config (:main o) argmap))
+                main-args (if exec
+                            (exec-invoke-args exec)
+                            (vec (concat (when (= mode :M) (:main-opts argmap)) (:main o))))
                 cfg-file (fs/file cache-dir "cli" (str "config-" (System/currentTimeMillis) "-" (rand-int 100000) ".edn"))
-                jank (case host "jank" (jank-launch cwd roots run) "lpy" (lpy-launch) nil)]
+                jank (case host
+                       "jank" (jank-launch cwd roots (if exec (:ns exec) (main-ns-of main-args)))
+                       "lpy" (lpy-launch)
+                       nil)]
             (fs/create-dirs (fs/parent cfg-file))
-            (spit cfg-file (pr-str (merge run {:stock-root stock-root :roots roots :cwd cwd
-                                               :report-dir (System/getProperty "java.io.tmpdir")
-                                               :report (or (:report run) (System/getenv "COHOST_MAIN_REPORT") "file")
+            (spit cfg-file (pr-str (merge {:args main-args :stock-root stock-root :roots roots :cwd cwd
+                                               :report (or (System/getenv "COHOST_MAIN_REPORT") "file")
                                                :verbose (boolean (or (:verbose? o) (System/getenv "COHOST_VERBOSE")))
                                                :clj-provider (:provider plan)
                                                :clj-owner (:owner plan)

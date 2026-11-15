@@ -3,8 +3,8 @@
 ;; Basilisp 0.5.1's core lacks the sorted collections and has no
 ;; java.lang.System, so cohost's host-level namespaces cannot be
 ;; ANALYZED raw: cohost.http calls (sorted-map) at load-graph level
-;; (http.cljc:176, in header-map) and cohost.cli's temp-dir reads
-;; (System/getProperty "java.io.tmpdir") (cli.cljc:453). Every other
+;; (http.cljc:176, in header-map), and the System namespace stands in
+;; for java.lang.System/getProperty. Every other
 ;; host either has these (a Clojure) or compiles cohost through a
 ;; rewriting loader; basilisp raw-compiles, so the launch path primes
 ;; the completions FIRST -- before any cohost namespace is required --
@@ -17,8 +17,8 @@
 ;;     booted stock core's sorted collections work on lpy as well.
 ;;   System/getProperty
 ;;     a namespace named System holding a getProperty fn backed by
-;;     Python's tempfile/os -- the one java.lang.System call in
-;;     cohost's host graph (cli.cljc's temp-dir).
+;;     Python's tempfile/os (java.io.tmpdir and the like), for a
+;;     System/getProperty a raw-compiled namespace reaches.
 ;;
 ;; Load this namespace before cohost.hosts.basilisp / cohost.cli
 ;; (dev/lpy_cli.lpy, bin/cohost's lpy launch, does). Idempotent:
