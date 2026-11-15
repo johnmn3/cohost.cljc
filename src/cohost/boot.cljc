@@ -329,16 +329,30 @@
                              [nm (with-meta (symbol (str core) (str hs)) {:cohost/host true})])))))
                    shim-names))))
 
+(declare ensure-macro-wrapped!)
+
 (defn- head-resolver
   "(fn [sym]) -> the var sym names in the namespace being compiled, or nil:
    the codemod tells a core fn it may inline, and a macro whose expansion it
-   rewrites, from a namespace's own name."
+   rewrites, from a namespace's own name. A resolved macro the loader never
+   scan-wrapped (one interned by a host-native load \u2014 Eve's jank
+   completion, primed by cohost.cli through the host's own require \u2014 or
+   by an adapter's core-extras, or made by a library defmacro whose
+   setMacro step the shim fills as a meta mark) is wrapped here, on first
+   resolution, as scan-macros! would have wrapped it: on jank a library
+   macro's registration lives only in its var's meta (the host's Var has
+   no setMacro its analyzer resolves \u2014 measured: (. (var x) (setMacro))
+   is an unresolved C++ symbol there), so :cohost/wrapped must not depend
+   on which load path interned the var."
   []
   (let [resolve* (or (get (host/core-extras) 'ns-resolve)
                      (some-> (host/resolve-core 'ns-resolve) host/var-root))]
     (when resolve*
       (fn [sym]
-        (host/try-all (fn [] (let [v (resolve* (host/current-ns) sym)] (when (host/var?* v) v))))))))
+        (host/try-all (fn [] (let [v (resolve* (host/current-ns) sym)]
+                               (when (host/var?* v)
+                                 (ensure-macro-wrapped! v)
+                                 v))))))))
 
 (defn- var-meta*
   "A resolved var's metadata (a ClojureScript Var object carries its own)."
@@ -352,6 +366,25 @@
   (let [core (name core-ns)]
     (fn [v] (when (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (host/ns-name* x) x))))
               (symbol (name (host/var-sym v)))))))
+
+(defn- ensure-macro-wrapped!
+  "Wrap a macro var scan-macros! never reached, exactly as it would have:
+   under :root wrap-style the var's root becomes the codemod-wrapped macro
+   fn, and its meta gains :cohost/wrapped, so rewritten-macro? honors it.
+   A no-op for vars already wrapped, for the host's own vars, and for
+   non-macros. Called from head-resolver, the one place every macro head
+   the codemod judges passes through."
+  [v]
+  (let [m (var-meta* v)]
+    (when (and (:macro m) (not (:cohost/wrapped m)) (not (:cohost/host m)))
+      (let [ns-name (let [x (host/var-ns v)] (if (host/namespace? x) (host/ns-name* x) x))
+            macro-sym (symbol (str ns-name) (str (host/var-sym v)))]
+        (when (= :root (host/macro-wrap-style))
+          (when-let [c (ctx)]
+            (host/set-var-root! v (fn [f] (wrap-macro c f macro-sym)))))
+        (host/alter-var-meta! v assoc :cohost/wrapped true)
+        (when @snapshot-log (snap! {:op :scan :ns ns-name :sym (host/var-sym v)})))))
+  v)
 
 (defn- rewritten-macro?
   "Is v a macro whose expansion the codemod rewrites: one cohost wrapped
