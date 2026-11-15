@@ -1460,6 +1460,9 @@
   "Set by cohost.boot: eval through the codemod, in cohost.core."
   (atom (fn [form] (host/eval-form form))))
 (def Compiler-eval (fn [form] (@eval-hook form)))
+;; (fn [ns-sym form] -> [value ns-after]): the boot's top-level eval, for the
+;; loaders above that carry the namespace from form to form
+(def eval-top-hook (atom nil))
 (def Compiler-load (unsupported "Compiler/load"))
 ;; macroexpand-1 is the macro's own expansion: the codemod's rewrite of it is
 ;; for the compiler, which expands the form again when it is evaluated
@@ -1873,13 +1876,23 @@
 (def core-read+string (read-dispatch layer-read+string 'read+string))
 
 (def core-load-reader
+  ;; with the boot's eval-top hook, each form is evaluated in the namespace
+  ;; the form before it left -- a file's (ns ...) applies to the forms after
+  ;; it, as the JVM's load binds *ns* -- and the caller's namespace is left as
+  ;; it was (measured on jank: a two-ns script's (def ...) after its second
+  ;; ns form landed in user, and #'that-ns/name could not be resolved)
   (fn [rdr]
     (let [r (as-reader rdr)]
-      (loop []
-        (let [[f _] (read-one r)]
-          (when (not= ::eof f)
-            ((deref eval-hook) f)
-            (recur)))))
+      (if-let [et (deref eval-top-hook)]
+        (loop [ns (host/current-ns)]
+          (let [[f _] (read-one r)]
+            (when (not= ::eof f)
+              (recur (second (et ns f))))))
+        (loop []
+          (let [[f _] (read-one r)]
+            (when (not= ::eof f)
+              ((deref eval-hook) f)
+              (recur))))))
     nil))
 
 (def core-read-line
@@ -2967,7 +2980,10 @@
 ;; -i) -- the JVM passes it through; elsewhere the file's forms are read and
 ;; evaluated through the boot, as load-reader does (measured on jank:
 ;; `bin/cohost :jank script.clj` died in script-opt with no shim for it)
-(def Compiler-loadFile (fn [path] (core-load-reader (new-FileReader path))))
+(def Compiler-loadFile
+  ;; over a LineNumberingPushbackReader, as the JVM's loadFile reads: the
+  ;; reader unreads (measured: a bare FileReader -> "Unread not permitted")
+  (fn [path] (core-load-reader (new-LineNumberingPushbackReader (new-FileReader path)))))
 (def new-FileWriter
   (fn ([f] (io/file-writer (as-file-value f) false))
       ([f append?] (io/file-writer (as-file-value f) (boolean append?)))))

@@ -1027,6 +1027,7 @@
            :libs {(symbol "clojure.core") {:ns core-ns :status :loaded}})
     ;; (eval form) evaluates in the namespace the caller runs in, as on the JVM
     (reset! shim/eval-hook (fn [form] (eval-in (host/current-ns) form)))
+    (reset! shim/eval-top-hook (fn [ns-sym form] (eval-top ctx ns-sym form)))
     (reset! shim/load-hook load-relative!)
     [ctx report]))
 
