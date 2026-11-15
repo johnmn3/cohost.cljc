@@ -1001,7 +1001,7 @@
   [w]
   (if (is? ::string-writer w)
     (written-text w)
-    (str (class-token w) "@" #?(:clj (Integer/toHexString (System/identityHashCode w)) :default (hash w)))))
+    (str (class-token w) "@" #?(:jolt (hash w) :cljw (hash w) :clj (Integer/toHexString (System/identityHashCode w)) :default (hash w)))))
 
 (defn flush-writer! [w]
   (let [st @(state-of w)]
