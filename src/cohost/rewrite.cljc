@@ -3062,6 +3062,24 @@
             (let [t (second form)
                               [c f] (if (seq? t) [(declass (second t)) (nth t 2)] [(symbol (namespace t)) (symbol (name t))])]
                           (list (shim-fn "static-set!") (static-name c f) (rw ctx (nth form 2))))
+            ;; a spec head whose macro the host adapter supplies itself
+            ;; (its own type layer) on a host that asks the codemod to
+            ;; expand it (:expand-spec-heads?): the host's compiler does
+            ;; not expand the adapter's meta-marked intern when it
+            ;; analyzes the rewritten form in a loader-built namespace
+            ;; (measured on jank: (deftype JvmSlabCtx [^objects regions
+            ;; ...]) reached jank's analyzer as a call, its field vector
+            ;; analyzed as values, first field symbol unresolved). The
+            ;; expansion goes through the same path as any rewritten
+            ;; macro and is rewritten in turn; a head the adapter does
+            ;; not supply, or an expansion that returns the form,
+            ;; keeps the rw-spec-form path below. Hosts whose spec
+            ;; heads are genuine core macros never set the cap.
+            (and (spec-head h) (:expand-spec-heads? ctx) (rewritten-macro? ctx h))
+            (if-let [ex (:expand-macro ctx)]
+              (let [x (ex (head-var ctx h) form *locals*)]
+                (if (identical? x form) (rw-spec-form ctx (cons (spec-head h) args)) (rw ctx x)))
+              (rw-spec-form ctx (cons (spec-head h) args)))
             (contains? extend-heads (spec-head h))
             (rw-extend ctx (spec-head h) args)
             (spec-head h) (rw-spec-form ctx (cons (spec-head h) args))
