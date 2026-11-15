@@ -1813,10 +1813,20 @@ namespace cohost_assoc {
 (defn inst-keys [desc] (:keys desc))
 
 (defn- ctor-forms [tname fields record?]
-  (let [params (vec fields)]
+  (let [params (vec fields)
+        ;; jank's fn limit is 10 fixed parameters (its analyzer's own
+        ;; error prescribes a variadic fn past that): a wider type's
+        ;; positional ctor collects its arguments and forwards the
+        ;; field vector new-instance takes either way. Call sites are
+        ;; positional under both shapes; types of 10 or fewer fields
+        ;; keep the fixed-arity ctor.
+        mk-ctor (fn []
+                  (if (> (count params) 10)
+                    (list 'fn '[& fields] (list 'cohost.hosts.jank-host/new-instance tname (list 'vec 'fields)))
+                    (list 'fn params (list 'cohost.hosts.jank-host/new-instance tname params))))]
     (concat
-     [(list 'def (symbol (str "->" (name tname))) (list 'fn params (list 'cohost.hosts.jank-host/new-instance tname params)))
-      (list 'def (symbol (str (name tname) ".")) (list 'fn params (list 'cohost.hosts.jank-host/new-instance tname params)))]
+     [(list 'def (symbol (str "->" (name tname))) (mk-ctor))
+      (list 'def (symbol (str (name tname) ".")) (mk-ctor))]
      (when record?
        [(list 'def (symbol (str "map->" (name tname)))
               (list 'fn ['m]
