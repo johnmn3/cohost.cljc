@@ -72,36 +72,66 @@
 ;; type table can name a type for java.net.URL / java.net.URI in an
 ;; extend position (the values themselves are cohost.http's, whose
 ;; record type a host's protocol dispatch cannot tell from a map's).
-(defrecord FileValue [path parent])
-(defrecord InputStreamValue [kind state under])
-(defrecord BufferedInputStreamValue [kind state under])
-(defrecord OutputStreamValue [kind state under])
-(defrecord BufferedOutputStreamValue [kind state under])
-(defrecord ReaderValue [kind state under])
-(defrecord BufferedReaderValue [kind state under])
+;; jank has no defrecord: jank compiles this file itself, and the type
+;; macros are its adapter's, interned into cohost.core for booted code
+;; only (measured: compile-module of a one-defrecord module dies
+;; "unresolved-symbol defrecord" on jank 0.1-noble). There a value of the
+;; layer is the adapter's standin shape -- a map tagged with its record's
+;; name, as cohost.adapter's Iter/SB and cohost.shim's date values -- and
+;; dispatch reads :cohost/kind through the shim's class-of, as it does for
+;; cohost.http's maps.
+#?(:jank (defn- stream-standin [tag k s u] (host/standin tag {:kind k :state s :under u})))
+#?(:jank (defn ->FileValue [path parent] (host/standin 'FileValue {:path path :parent parent}))
+   :default (defrecord FileValue [path parent]))
+#?(:jank (defn ->InputStreamValue [k s u] (stream-standin 'InputStreamValue k s u))
+   :default (defrecord InputStreamValue [kind state under]))
+#?(:jank (defn ->BufferedInputStreamValue [k s u] (stream-standin 'BufferedInputStreamValue k s u))
+   :default (defrecord BufferedInputStreamValue [kind state under]))
+#?(:jank (defn ->OutputStreamValue [k s u] (stream-standin 'OutputStreamValue k s u))
+   :default (defrecord OutputStreamValue [kind state under]))
+#?(:jank (defn ->BufferedOutputStreamValue [k s u] (stream-standin 'BufferedOutputStreamValue k s u))
+   :default (defrecord BufferedOutputStreamValue [kind state under]))
+#?(:jank (defn ->ReaderValue [k s u] (stream-standin 'ReaderValue k s u))
+   :default (defrecord ReaderValue [kind state under]))
+#?(:jank (defn ->BufferedReaderValue [k s u] (stream-standin 'BufferedReaderValue k s u))
+   :default (defrecord BufferedReaderValue [kind state under]))
 ;; StringWriter.toString is its text: on the JVM seat the host's str of a
 ;; writer is its toString, and stock with-out-str is (str the-writer)
 (declare writer-string)
-(defrecord WriterValue [kind state under]
-  #?@(:jolt [] :cljw [] :clj [Object (toString [this] (writer-string this))]))
-(defrecord BufferedWriterValue [kind state under])
-(defrecord UrlDispatch [kind state under])
-(defrecord UriDispatch [kind state under])
-(defrecord ServerSocketValue [kind state under])
-(defrecord SocketValue [kind state under])
+#?(:jank (defn ->WriterValue [k s u] (stream-standin 'WriterValue k s u))
+   :default (defrecord WriterValue [kind state under]
+              #?@(:jolt [] :cljw [] :clj [Object (toString [this] (writer-string this))])))
+#?(:jank (defn ->BufferedWriterValue [k s u] (stream-standin 'BufferedWriterValue k s u))
+   :default (defrecord BufferedWriterValue [kind state under]))
+#?(:jank nil :default (defrecord UrlDispatch [kind state under]))
+#?(:jank nil :default (defrecord UriDispatch [kind state under]))
+#?(:jank (defn ->ServerSocketValue [k s u] (stream-standin 'ServerSocketValue k s u))
+   :default (defrecord ServerSocketValue [kind state under]))
+#?(:jank (defn ->SocketValue [k s u] (stream-standin 'SocketValue k s u))
+   :default (defrecord SocketValue [kind state under]))
+
+#?(:jank (def ^:private standin-tags
+           '#{FileValue InputStreamValue BufferedInputStreamValue OutputStreamValue
+              BufferedOutputStreamValue ReaderValue BufferedReaderValue WriterValue
+              BufferedWriterValue ServerSocketValue SocketValue}))
+
+(defn- file-value? [x]
+  #?(:jank (host/standin? 'FileValue x) :default (instance? FileValue x)))
 
 (defn value?
   "True when x is a value of this layer."
   [x]
-  (or (instance? FileValue x)
-      (instance? InputStreamValue x) (instance? BufferedInputStreamValue x)
-      (instance? OutputStreamValue x) (instance? BufferedOutputStreamValue x)
-      (instance? ReaderValue x) (instance? BufferedReaderValue x)
-      (instance? WriterValue x) (instance? BufferedWriterValue x)
-      (instance? ServerSocketValue x) (instance? SocketValue x)))
+  #?(:jank (and (map? x) (contains? standin-tags (get x :cohost/standin)))
+     :default
+     (or (instance? FileValue x)
+         (instance? InputStreamValue x) (instance? BufferedInputStreamValue x)
+         (instance? OutputStreamValue x) (instance? BufferedOutputStreamValue x)
+         (instance? ReaderValue x) (instance? BufferedReaderValue x)
+         (instance? WriterValue x) (instance? BufferedWriterValue x)
+         (instance? ServerSocketValue x) (instance? SocketValue x))))
 
 (defn kind-of [x]
-  (cond (instance? FileValue x) ::file
+  (cond (file-value? x) ::file
         (value? x) (:cohost/kind x)
         :else nil))
 
@@ -151,6 +181,16 @@
   "The record class object standing for a java.io/java.net token in
    a host's extend positions (see the *Dispatch note above)."
   [token]
+  ;; jank: no record classes; the standin's tag names the type
+  #?(:jank (get '{java.io.File FileValue java.io.InputStream InputStreamValue
+                  java.io.BufferedInputStream BufferedInputStreamValue
+                  java.io.OutputStream OutputStreamValue
+                  java.io.BufferedOutputStream BufferedOutputStreamValue
+                  java.io.Reader ReaderValue java.io.BufferedReader BufferedReaderValue
+                  java.io.Writer WriterValue java.io.BufferedWriter BufferedWriterValue
+                  java.net.Socket SocketValue java.net.ServerSocket ServerSocketValue}
+                token)
+     :default
   (case token
     java.io.File FileValue
     java.io.InputStream InputStreamValue
@@ -165,7 +205,7 @@
     java.net.URI UriDispatch
     java.net.Socket SocketValue
     java.net.ServerSocket ServerSocketValue
-    nil))
+    nil)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -193,8 +233,8 @@
 
 (defn- pipe [] (atom {:bytes [] :closed? false}))
 
-(defn socket-value? [x] (instance? SocketValue x))
-(defn server-socket-value? [x] (instance? ServerSocketValue x))
+(defn socket-value? [x] #?(:jank (host/standin? 'SocketValue x) :default (instance? SocketValue x)))
+(defn server-socket-value? [x] #?(:jank (host/standin? 'ServerSocketValue x) :default (instance? ServerSocketValue x)))
 
 (defn listen!
   "A ServerSocket value bound at port (0: an ephemeral port)."
@@ -347,20 +387,27 @@
                (.defineProperty js/Object o "length"
                                 (js-obj "get" (fn [] (.-length parts))))
                o)
+     ;; jank: no StringBuilder class and no JVM members; the scope's
+     ;; local atom of chars, read through the helpers below
+     :jank (atom [])
      :default (StringBuilder.)))
+
+(defn- lb-append! [sb c] #?(:jank (do (swap! sb conj c) sb) :default (.append sb c)))
+(defn- lb-length [sb] #?(:jank (count @sb) :default (.length sb)))
+(defn- lb-str [sb] #?(:jank (apply str @sb) :default (.toString sb)))
 
 (defn socket-read-line!
   "BufferedReader.readLine over a socket reader."
   [r]
   (loop [sb (line-buffer)]
     (let [c (socket-read-char! r)]
-      (cond (number? c) (when (pos? (.length sb)) (.toString sb))
-            (= c \newline) (.toString sb)
+      (cond (number? c) (when (pos? (lb-length sb)) (lb-str sb))
+            (= c \newline) (lb-str sb)
             (= c \return) (do (let [c2 (socket-read-char! r)]
                                  (when (and (not (number? c2)) (not= c2 \newline))
                                    (swap! (state-of r) assoc :pending c2)))
-                               (.toString sb))
-            :else (do (.append sb c) (recur sb))))))
+                               (lb-str sb))
+            :else (do (lb-append! sb c) (recur sb))))))
 
 ;; ---------------------------------------------------------------------------
 ;; the host's standard streams (adapter :io-handles). A host whose own
@@ -844,12 +891,12 @@
   [r]
   (loop [sb (line-buffer)]
     (let [c (read-char! r)]
-      (cond (number? c) (when (pos? (count (.toString sb))) (.toString sb))
-            (= c \newline) (.toString sb)
+      (cond (number? c) (when (pos? (count (lb-str sb))) (lb-str sb))
+            (= c \newline) (lb-str sb)
             (= c \return) (let [d (read-char! r)]
                              (when (and (not (number? d)) (not= d \newline)) (unread! r d))
-                             (.toString sb))
-            :else (do (.append sb c) (recur sb))))))
+                             (lb-str sb))
+            :else (do (lb-append! sb c) (recur sb))))))
 
 (defn read-line!
   "BufferedReader.readLine: the next line without its terminator

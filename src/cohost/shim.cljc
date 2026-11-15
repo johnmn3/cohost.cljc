@@ -494,9 +494,11 @@
 ;; method returns (get-field/set-field read through @@this, as
 ;; stock's do).
 
-(defrecord ProxyValue [methods supers])
+;; jank has no defrecord (see cohost.io): the adapter's standin shape there
+#?(:jank (defn ->ProxyValue [methods supers] (host/standin 'ProxyValue {:methods methods :supers supers}))
+   :default (defrecord ProxyValue [methods supers]))
 
-(defn proxy-value? [x] (instance? ProxyValue x))
+(defn proxy-value? [x] #?(:jank (host/standin? 'ProxyValue x) :default (instance? ProxyValue x)))
 
 (defn make-proxy
   "A proxy over supers (symbols) whose members answer from methods
