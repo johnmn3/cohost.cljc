@@ -1952,8 +1952,16 @@
    through the booted core's require, then answer its var."
   (fn [sym]
     (let [ns-sym (symbol (namespace sym))]
-      ((core-var-value 'require) ns-sym)
-      (get (host/ns-interns-map ns-sym) (symbol (name sym))))))
+      ;; the BOOTED core's require (the host core's would load the
+      ;; host's own copy of a stock library)
+      ((or (some-> (host/interned-var 'cohost.core 'require) (host/var-root))
+           (core-var-value 'require)) ns-sym)
+      ;; a seat that boots stock namespaces under booted names (the JVM
+      ;; seat: clojure.pprint -> cohost.pprint) answers through the
+      ;; booted core's resolve, which maps the stock name
+      (or (host/try-all (fn [] (get (host/ns-interns-map ns-sym) (symbol (name sym)))))
+          ((or (some-> (host/interned-var 'cohost.core 'resolve) (host/var-root))
+               (core-var-value 'resolve)) sym)))))
 
 (def core-flush
   "clojure.core/flush over the layer's writer, when *out* is one."
@@ -4612,9 +4620,13 @@
 (def -append (fn
                 ;; Writer.append (a char, a CharSequence, or nil as "null"),
                 ;; returning the writer: core.clj's pr, newline write *out* so
-                ([sb x] (if (io/writer-value? sb)
-                          (do (io/append-text! sb (if (nil? x) "null" (str x))) sb)
-                          (h-sb-append! sb (if (nil? x) "null" x))))
+                ([sb x] (cond (io/writer-value? sb)
+                              (do (io/append-text! sb (if (nil? x) "null" (str x))) sb)
+                              (h-sb? sb) (h-sb-append! sb (if (nil? x) "null" x))
+                              ;; a host Writer / Appendable (the JVM seat's
+                              ;; proxy pretty-writer): its own append
+                              :else (let [r (if (nil? sb) absent (host/invoke-member sb "append" [(if (nil? x) "null" x)] absent))]
+                                      (if (identical? r absent) (h-sb-append! sb (if (nil? x) "null" x)) r))))
                 ([w x start end] (let [t (if (nil? x) "null" (str x))]
                                    (io/append-text! w (subs t start end))
                                    w))))

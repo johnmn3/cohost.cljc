@@ -39,6 +39,19 @@
    ;; -> 7.24 ms (every true round below every nil round but one), no case
    ;; outside its spread, battery and libraries the same both ways
    :multimethod-cache? true
+   ;; F1: the host's printer takes only java.io.Writers, and the booted
+   ;; world's writers are the io layer's records ((java.io.StringWriter.)
+   ;; in booted code is one): (binding [*out* (java.io.StringWriter.)]
+   ;; (println 1)) threw ClassCastException here. cohost owns the print/read
+   ;; stack on this seat as on let-go; the host gives the raw leaves over its
+   ;; own *out*/*err*/*in* (as this host fn sees them, so a host-side binding
+   ;; of clojure.core/*out* around a boot call is followed).
+   :io-handles {:out (fn [] *out*) :err (fn [] *err*) :in (fn [] *in*)
+                :write! (fn [^java.io.Writer h ^String s] (.write h s))
+                :flush! (fn [^java.io.Writer h] (.flush h))
+                :read-line (fn [h] (if (instance? clojure.lang.LineNumberingPushbackReader h)
+                                     (.readLine ^clojure.lang.LineNumberingPushbackReader h)
+                                     (.readLine ^java.io.BufferedReader h)))}
    :core-ns 'clojure.core
    :catch-all 'Throwable
    :read-forms read-forms

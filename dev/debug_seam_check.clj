@@ -217,7 +217,12 @@
                   (str/blank? (:out uncaught))
                   (includes? (:err uncaught) "Execution error (ExceptionInfo) at user/boom" "kaboom" "Full report at:")
                   report-text
-                  (includes? report-text ":trace [["))
+                  ;; stock pprint breaks a long :trace onto its own line
+                  ;; (measured: stock clojure 1.12 -e's report has
+                  ;; ":trace\n  [[") -- whitespace-tolerant, and the report
+                  ;; must name the user's fn
+                  (re-find #":trace\s+\[\[" report-text)
+                  (includes? report-text "user/boom"))
            "PASS"
            "FAIL")
          (str "exit " (:exit uncaught)
@@ -227,7 +232,10 @@
                 (str "matched " (pr-str "Execution error (ExceptionInfo) at user/boom")
                      " and " (pr-str "Full report at:"))
                 (str "first line: " (first-real-line (:err uncaught))))
-              "; report " (if report-text "written, matched \":trace [[\"" "missing/empty")))
+              "; report " (cond (and report-text (re-find #":trace\s+\[\[" report-text) (includes? report-text "user/boom"))
+                                    "written, matched \":trace [[\" and \"user/boom\""
+                                    report-text "written, NO :trace/user/boom"
+                                    :else "missing/empty")))
 
 (record! 2
          (if (= target "jank")

@@ -79,7 +79,11 @@
 (defrecord BufferedOutputStreamValue [kind state under])
 (defrecord ReaderValue [kind state under])
 (defrecord BufferedReaderValue [kind state under])
-(defrecord WriterValue [kind state under])
+;; StringWriter.toString is its text: on the JVM seat the host's str of a
+;; writer is its toString, and stock with-out-str is (str the-writer)
+(declare writer-string)
+(defrecord WriterValue [kind state under]
+  #?@(:jolt [] :cljw [] :clj [Object (toString [this] (writer-string this))]))
 (defrecord BufferedWriterValue [kind state under])
 (defrecord UrlDispatch [kind state under])
 (defrecord UriDispatch [kind state under])
@@ -990,6 +994,14 @@
     (if (:out st)
       (utf8-decode (output-bytes (:out st)))
       (:text st))))
+
+(defn writer-string
+  "Object.toString of a layer writer: a StringWriter's text, else the
+   class's name and an identity hash, as the JVM's."
+  [w]
+  (if (is? ::string-writer w)
+    (written-text w)
+    (str (class-token w) "@" #?(:clj (Integer/toHexString (System/identityHashCode w)) :default (hash w)))))
 
 (defn flush-writer! [w]
   (let [st @(state-of w)]
