@@ -685,7 +685,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? loop-int-init native-int-aliases def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? cohost-types? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source? loop-rebind-shadow? def-tag?]
+           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro expand-spec-heads? syntax-quote-source? loop-rebind-shadow? def-tag?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:plain-symbol (or plain-symbol identity)
    :def-tag? def-tag?
@@ -720,6 +720,7 @@
    ;; form itself when var holds none): where the host's compiler hands a
    ;; macro no &env (let-go), the codemod expands it in place
    :expand-macro expand-macro
+   :expand-spec-heads? (boolean expand-spec-heads?)
    :inline-fn inline-fn
    ;; try-all: (fn [thunk]) -> (thunk), or nil when it throws anything: the
    ;; host's catch-all (cohost.adapter/try-all), for an inline expansion that
@@ -3062,6 +3063,24 @@
             (let [t (second form)
                               [c f] (if (seq? t) [(declass (second t)) (nth t 2)] [(symbol (namespace t)) (symbol (name t))])]
                           (list (shim-fn "static-set!") (static-name c f) (rw ctx (nth form 2))))
+            ;; a spec head whose macro the host adapter supplies itself
+            ;; (its own type layer) on a host that asks the codemod to
+            ;; expand it (:expand-spec-heads?): the host's compiler does
+            ;; not expand the adapter's meta-marked intern when it
+            ;; analyzes the rewritten form in a loader-built namespace
+            ;; (measured on jank: (deftype JvmSlabCtx [^objects regions
+            ;; ...]) reached jank's analyzer as a call, its field vector
+            ;; analyzed as values, first field symbol unresolved). The
+            ;; expansion goes through the same path as any rewritten
+            ;; macro and is rewritten in turn; a head the adapter does
+            ;; not supply, or an expansion that returns the form,
+            ;; keeps the rw-spec-form path below. Hosts whose spec
+            ;; heads are genuine core macros never set the cap.
+            (and (spec-head h) (:expand-spec-heads? ctx) (rewritten-macro? ctx h))
+            (if-let [ex (:expand-macro ctx)]
+              (let [x (ex (head-var ctx h) form *locals*)]
+                (if (identical? x form) (rw-spec-form ctx (cons (spec-head h) args)) (rw ctx x)))
+              (rw-spec-form ctx (cons (spec-head h) args)))
             (contains? extend-heads (spec-head h))
             (rw-extend ctx (spec-head h) args)
             (spec-head h) (rw-spec-form ctx (cons (spec-head h) args))
