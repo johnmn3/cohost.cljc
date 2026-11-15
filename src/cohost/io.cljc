@@ -1047,14 +1047,29 @@
 (defn buffered-writer [w]
   (if (writer-value? w) (value ::buffered-writer (state-of w)) w))
 
+(defn- append-buf-in-place!
+  "Grow a buffer. On the JVM a StringBuilder is mutated in place so a
+  tight prn loop does not swap! a new state map on every write (the
+  remaining F1 print-loop tax after the str-concat fix: ARM6 was ~4x
+  native, ~7x when compared to a single native prn). Other hosts still
+  swap! a chunk vector and join once at read."
+  [state k t]
+  (let [s (str t)
+        st @state
+        buf (get st k)]
+    #?(:clj (if (instance? StringBuilder buf)
+              (do (.append ^StringBuilder buf s) nil)
+              (swap! state update k text-buf-append s))
+       :default (swap! state update k text-buf-append s))))
+
 (defn append-text! [w t]
   (let [st @(state-of w)]
     (when (:closed? st)
       (throw (host/ex* 'java.io.IOException "Stream closed")))
-    (cond (= ::sink (:cohost/kind w)) (swap! (state-of w) update :buf text-buf-append (str t))
+    (cond (= ::sink (:cohost/kind w)) (append-buf-in-place! (state-of w) :buf t)
           (:handle st) (host/io-write! ((:handle st)) (str t))
           (:out st) (append-bytes! (:out st) (utf8-encode (str t)))
-          :else (swap! (state-of w) update :text text-buf-append (str t)))
+          :else (append-buf-in-place! (state-of w) :text t))
     nil))
 
 (defn sink-writer
