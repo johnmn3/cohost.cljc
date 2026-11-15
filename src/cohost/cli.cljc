@@ -94,6 +94,17 @@
     ;; :module-paths -- its directories, added for a host whose require has no
     ;; module path (jank's compiled launcher)
     (doseq [p (:module-paths cfg)] (host/add-module-path! p))
+    ;; jank: a root carrying Eve's jank completion has it loaded FIRST, by
+    ;; jank itself (a .jank file is the host's, cohost.scan/host-native-keys):
+    ;; Eve's jank modules see the names it interns into jank's clojure.core
+    ;; only when they are made after it (Eve's jank runner loads it first for
+    ;; the same reason) -- the order bb boot:lpy keeps on basilisp
+    ;; (lpy-eve-load). Measured: without it, cohost.eve-bridge's Eve requires
+    ;; died "The symbol `satisfies?` could not be resolved".
+    #?(:jank (when (some (fn [r] (host/try-all (fn [] (some? (host/slurp-file (str r "/eve/host_completion.jank"))))
+                                               (fn [_] false)))
+                         (:roots cfg))
+               (host/require-host! 'eve.host-completion)))
     (when-let [m (:project-snapshot cfg)] (host/require-host! (symbol m)))
     ;; clojure.main's namespace: user, seeing the stock core (a session
     ;; starts in cohost.user, and moves there)
