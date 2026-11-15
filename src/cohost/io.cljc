@@ -989,11 +989,42 @@
   nil)
 
 ;; ---------------------------------------------------------------------------
-;; writers (state {:text s :closed? bool :out out-stream? :file f?})
+;; writers (state {:text buf :closed? bool :out out-stream? :file f?})
+;; :text is a growable buffer, not a concatenated string. A tight
+;; with-out-str prn loop was ~4× (per-iter) to ~80× (one writer, many
+;; prn) slower than native Clojure because append-text! did
+;; (swap! … update :text str t), which copies the whole accumulation
+;; on every write. JVM uses StringBuilder; other hosts accumulate
+;; chunks and join once at read.
+
+(defn- new-text-buf
+  ([] (new-text-buf nil))
+  ([s]
+   #?(:clj (let [b (StringBuilder.)]
+             (when (and s (pos? (count (str s)))) (.append b (str s)))
+             b)
+      :default (if (and s (pos? (count (str s)))) [(str s)] []))))
+
+(defn- text-buf-append
+  "Append t to buf, returning the (possibly same) buffer for swap!."
+  [buf t]
+  (let [s (str t)]
+    #?(:clj (cond (instance? StringBuilder buf) (doto ^StringBuilder buf (.append s))
+                  (string? buf) (doto (StringBuilder. ^String buf) (.append s))
+                  :else (doto (StringBuilder.) (.append (str buf)) (.append s)))
+       :default (if (string? buf) (str buf s) (conj (or buf []) s)))))
+
+(defn- text-buf-str [buf]
+  (cond (nil? buf) ""
+        (string? buf) buf
+        #?(:clj (instance? StringBuilder buf) :default false)
+        #?(:clj (.toString ^StringBuilder buf) :default "")
+        (sequential? buf) (apply str buf)
+        :else (str buf)))
 
 (defn writer-over
   [kind file out]
-  (value kind (atom {:text "" :closed? false :file file :out out})))
+  (value kind (atom {:text (new-text-buf) :closed? false :file file :out out})))
 
 (defn string-writer [] (writer-over ::string-writer nil nil))
 
@@ -1010,7 +1041,7 @@
   [f append?]
   (let [v (writer-over ::file-writer f nil)]
     (when append?
-      (host/try-all (fn [] (swap! (state-of v) assoc :text (file-text f)))))
+      (host/try-all (fn [] (swap! (state-of v) assoc :text (new-text-buf (file-text f))))))
     v))
 
 (defn buffered-writer [w]
@@ -1020,10 +1051,10 @@
   (let [st @(state-of w)]
     (when (:closed? st)
       (throw (host/ex* 'java.io.IOException "Stream closed")))
-    (cond (= ::sink (:cohost/kind w)) (swap! (state-of w) update :buf str (str t))
+    (cond (= ::sink (:cohost/kind w)) (swap! (state-of w) update :buf text-buf-append (str t))
           (:handle st) (host/io-write! ((:handle st)) (str t))
           (:out st) (append-bytes! (:out st) (utf8-encode (str t)))
-          :else (swap! (state-of w) update :text str (str t)))
+          :else (swap! (state-of w) update :text text-buf-append (str t)))
     nil))
 
 (defn sink-writer
@@ -1034,13 +1065,13 @@
    under its BufferedWriter: one call of f per flush, never per write."
   ([f] (sink-writer f nil))
   ([f close-f]
-   (value ::sink (atom {:sink f :close close-f :buf "" :closed? false}))))
+   (value ::sink (atom {:sink f :close close-f :buf (new-text-buf) :closed? false}))))
 
 (defn written-text [w]
   (let [st @(state-of w)]
     (if (:out st)
       (utf8-decode (output-bytes (:out st)))
-      (:text st))))
+      (text-buf-str (:text st)))))
 
 (defn writer-string
   "Object.toString of a layer writer: a StringWriter's text, else the
@@ -1053,11 +1084,11 @@
 (defn flush-writer! [w]
   (let [st @(state-of w)]
     (cond (= ::sink (:cohost/kind w))
-          (let [b (:buf st)]
+          (let [b (text-buf-str (:buf st))]
             (when (pos? (count b))
-              (swap! (state-of w) assoc :buf "")
+              (swap! (state-of w) assoc :buf (new-text-buf))
               ((:sink st) b)))
-          (:file st) (write-file-text! (:file st) (:text st))
+          (:file st) (write-file-text! (:file st) (text-buf-str (:text st)))
           (:out st) (flush-output! (:out st))
           (:handle st) (host/io-flush! ((:handle st))))
     nil))
