@@ -963,12 +963,25 @@
                                   (record! report :skipped {:name nm :reason :print-file})))))
         (scan-macros! ctx)))))
 
+(def ^:private io-reader-forms
+  [['read '(def read (fn ([] (cohost.shim/core-read *in*))
+                         ([a] (cohost.shim/core-read a))
+                         ([a b] (cohost.shim/core-read a b))
+                         ([a b c] (cohost.shim/core-read a b c))
+                         ([a b c d] (cohost.shim/core-read a b c d))))]
+   ['read+string '(def read+string (fn ([] (cohost.shim/core-read+string *in*))
+                                       ([a] (cohost.shim/core-read+string a))
+                                       ([a b] (cohost.shim/core-read+string a b))
+                                       ([a b c] (cohost.shim/core-read+string a b c))
+                                       ([a b c d] (cohost.shim/core-read+string a b c d))))]
+   ['read-line '(def read-line (fn [] (cohost.io/read-line! *in*)))]])
+
 (defn install-io-layer!
   "Give cohost.core's *out*, *err* and *in* their roots on a host with
    :io-handles: a writer over the host's out / err leaf, and stdin's reader
    as a pushback reader (the LineNumberingPushbackReader the JVM gives *in*)
    over the in leaf. Other hosts are untouched (their *out* is the host's)."
-  [report]
+  [ctx report]
   (when (host/io-handles)
     (snap! {:op :io-layer})
     (doseq [[nm v] [['*out* (io/host-writer (fn [] (host/io-handle :out)))]
@@ -976,8 +989,18 @@
                     ['*in* (io/pushback-reader (io/host-reader (fn [] (host/io-handle :in))))]]]
       (when-let [h (host/interned-var core-ns nm)]
         (host/set-var-root! h (constantly v))
-        (record! report :replaced {:name nm :reason :io-layer}))))
+        (record! report :replaced {:name nm :reason :io-layer})))
+    ;; the shim's reader fills read *in* through the adapter's var-get, which
+    ;; on let-go does not see a binding made on another thread (a layer
+    ;; Thread's goroutine: measured, M3 [4 1]); booted code's own reference
+    ;; to *in* does. Their no-stream arities are booted here over it.
+    (host/with-ns core-ns
+      (fn []
+        (doseq [[nm form] io-reader-forms]
+          (eval-form! ctx report form nm :replaced)))))
   report)
+
+
 
 (defn- companion-forms
   "{name form}: the first top-level form defining each of names in the file
@@ -1310,7 +1333,7 @@
      ;; (after the shim layer: print-throwable calls its Throwable->map)
      (when (host/io-handles)
        (boot-print-file! ctx report (str root "/clojure/core_print.clj")))
-     (install-io-layer! report)
+     (install-io-layer! ctx report)
      (scan-macros! ctx)
      (install-host-reducers!)
      (install-eduction-reduce!)

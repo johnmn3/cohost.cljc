@@ -3170,6 +3170,12 @@
 ;; loads, before boot. The static field is the same value, no division.
 (def Double-POSITIVE_INFINITY #?(:glj Double/POSITIVE_INFINITY :default (/ 1.0 0.0)))
 (def Double-NEGATIVE_INFINITY #?(:glj Double/NEGATIVE_INFINITY :default (/ -1.0 0.0)))
+;; Float's: core_print's Float method compares with them (the layer has one
+;; floating type, so a float is a double here)
+(def Float-POSITIVE_INFINITY Double-POSITIVE_INFINITY)
+(def Float-NEGATIVE_INFINITY Double-NEGATIVE_INFINITY)
+;; Double.isNaN / Float.isNaN, the instance methods (core_print's Double method)
+(def -isNaN (fn [x] (boolean (h-nan? x))))
 ;; the JVM's number grammars: a host's parser is looser (parseInt "12abc" -> 12,
 ;; float("abc") raises ValueError), so the string is checked here first
 (defn- nfe
