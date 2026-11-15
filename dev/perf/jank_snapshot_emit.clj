@@ -255,6 +255,13 @@
 
 (def placement-totals (atom {:placed 0 :unplaceable 0 :targeted 0}))
 
+(def placement-unplaceable
+  "Every unplaceable form as [module target actual], in encounter
+   order: the PLACEMENT summary names the modules (and their target
+   lines) so the header-height fix can be designed against the list,
+   not the count."
+  (atom []))
+
 (defn- verify-placement!
   "U4c assertion (coordinator addendum 645d12a section 3a): every
    recorded form that carries a target line must land on that line in
@@ -281,7 +288,8 @@
             (= actual (first ts))
             (swap! placement-totals update :placed inc)
             (> actual (first ts))
-            (swap! placement-totals update :unplaceable inc)
+            (do (swap! placement-totals update :unplaceable inc)
+                (swap! placement-unplaceable conj [module (first ts) actual]))
             :else
             (throw (ex-info (str "emitter placement: form of " module " landed above its target line")
                             {:module module :target (first ts) :actual actual}))))
@@ -349,6 +357,9 @@
 (let [{:keys [placed unplaceable targeted]} @placement-totals]
   (println "PLACEMENT" placed "of" targeted "targeted forms at their original lines,"
            unplaceable "unplaceable"))
+(doseq [[module entries] (sort-by key (group-by first @placement-unplaceable))]
+  (println "UNPLACEABLE" module (count entries)
+           "targets" (pr-str (mapv second entries))))
 
 ;; The build's entry: one compile-module of cohost.snapshot compiles the core
 ;; and every library module (a library a library requires is loaded, and
