@@ -2963,6 +2963,11 @@
 (def InetAddress-getLocalHost
   (fn [] {:cohost/kind :cohost.io/inet-address :host "localhost"}))
 (def new-FileReader (fn [f] (io/file-reader (as-file-value f))))
+;; Compiler.loadFile(path): stock clojure.main's load-script (a script path,
+;; -i) -- the JVM passes it through; elsewhere the file's forms are read and
+;; evaluated through the boot, as load-reader does (measured on jank:
+;; `bin/cohost :jank script.clj` died in script-opt with no shim for it)
+(def Compiler-loadFile (fn [path] (core-load-reader (new-FileReader path))))
 (def new-FileWriter
   (fn ([f] (io/file-writer (as-file-value f) false))
       ([f append?] (io/file-writer (as-file-value f) (boolean append?)))))
