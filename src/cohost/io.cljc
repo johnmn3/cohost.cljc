@@ -807,6 +807,54 @@
   (swap! (state-of r) update :buf str (str s))
   nil)
 
+;; LineNumberingPushbackReader's line number and string capture, read
+;; off the reader's own state: the consumed text is the under reader's
+;; text up to its position, less what was pushed back. The line is the
+;; newlines consumed past the base setLineNumber recorded (1 at
+;; construction, as LNPR starts); a capture records where it began.
+;; A socket-backed reader keeps no text: its line stays at the base.
+(defn- newlines-in [s]
+  (loop [n 0 from 0]
+    (let [i (host/index-of s "\n" from)]
+      (if (neg? i) n (recur (inc n) (inc i))))))
+
+(defn- consumed-text
+  "The text a pushback reader over a text reader has handed out: nil for
+   a socket-backed one (its content is not retained)."
+  [r]
+  (when-not (socket-backed? r)
+    (let [ust @(state-of (under-of r))
+          buf (:buf @(state-of r))
+          upto (max 0 (- (:pos ust) (count buf)))]
+      (subs (:text ust) 0 upto))))
+
+(defn line-number
+  "LineNumberingPushbackReader.getLineNumber over a pushback reader."
+  [r]
+  (+ (get @(state-of r) :line-base 1)
+     (if-let [t (consumed-text r)] (newlines-in t) 0)))
+
+(defn set-line-number!
+  "LineNumberingPushbackReader.setLineNumber: the line here becomes n."
+  [r n]
+  (swap! (state-of r) assoc :line-base
+         (- n (if-let [t (consumed-text r)] (newlines-in t) 0)))
+  nil)
+
+(defn capture-string!
+  "LineNumberingPushbackReader.captureString: begin capturing the text read."
+  [r]
+  (swap! (state-of r) assoc :capture-at (count (or (consumed-text r) "")))
+  nil)
+
+(defn captured-string
+  "LineNumberingPushbackReader.getString: the text read since
+   captureString (nil when none began), ending the capture."
+  [r]
+  (let [at (:capture-at @(state-of r))]
+    (swap! (state-of r) dissoc :capture-at)
+    (when at (subs (or (consumed-text r) "") at))))
+
 (defn close-reader! [r]
   (if (is? ::pushback-reader r)
     (do (swap! (state-of r) assoc :closed? true)

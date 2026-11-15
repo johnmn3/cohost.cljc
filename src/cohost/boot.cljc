@@ -1125,7 +1125,13 @@
     ;; pprint's seven sub-loads all fail "Could not locate
     ;; cohost/pprint/...". The fill's load-relative! maps the booted
     ;; name back to the stock package root on every seat.
-    (when (or (= 'load nm) (not (host/interned-var core-ns nm)))
+    ;; read and read+string are fill-wins too: the fill reads a layer
+    ;; stream through the io layer and hands a host stream to the host's
+    ;; own read (shim/read-dispatch) -- the host's read alone casts the
+    ;; layer's LineNumberingPushbackReader (stock main's -e *in*) and
+    ;; throws (measured on the JVM seat: ClassCastException
+    ;; cohost.io.BufferedReaderValue -> java.io.PushbackReader)
+    (when (or (contains? #{'load 'read 'read+string} nm) (not (host/interned-var core-ns nm)))
       (host/intern! core-ns nm v)
       (record! report :replaced {:name nm :reason :shim-layer})))
   (doseq [[nm f] shim/core-fill-macros]

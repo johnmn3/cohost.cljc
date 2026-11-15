@@ -1710,10 +1710,11 @@
 ;; read-string (RT-readString) give the value, so reader semantics
 ;; stay the host's own.
 
+;; the next char, left on the reader; nil at the end (io/read-char!
+;; answers -1 there, which must not go back through unread)
 (defn- code-peek [rdr]
   (let [c (io/read-char! rdr)]
-    (when (some? c) (io/unread! rdr c))
-    c))
+    (when-not (number? c) (io/unread! rdr c) c)))
 
 (defn- code-skip! [rdr]
   (loop []
@@ -1722,7 +1723,7 @@
             (edn-ws? c) (do (io/read-char! rdr) (recur))
             (= c \;) (do (loop []
                             (let [d (io/read-char! rdr)]
-                              (when (and (some? d) (not= d \newline)) (recur))))
+                              (when (and (not (number? d)) (not= d \newline)) (recur))))
                           (recur))
             :else nil))))
 
@@ -1770,8 +1771,8 @@
         (io/input-stream-value? x) (io/input-stream-reader x)
         :else (throw (host/ex* 'java.lang.IllegalArgumentException (str "clojure.core read: not a reader of this layer: " (class-of x))))))
 
-(def core-read
-  (fn ([] (core-read (core-var-value '*in*)))
+(def ^:private layer-read
+  (fn ([] (layer-read (core-var-value '*in*)))
       ([opts stream]
        (if (map? opts)
          (let [[f _] (read-one (as-reader stream))]
@@ -1782,8 +1783,8 @@
                  e))
              f))
          (throw (host/ex* 'java.lang.IllegalArgumentException "read's two-argument form takes an opts map and a stream"))))
-      ([stream] (core-read stream true nil))
-      ([stream eof-error? eof-value] (core-read stream eof-error? eof-value false))
+      ([stream] (layer-read stream true nil))
+      ([stream eof-error? eof-value] (layer-read stream eof-error? eof-value false))
       ([stream eof-error? eof-value _recursive?]
        (let [[f _] (read-one (as-reader stream))]
          (if (= ::eof f)
@@ -1792,8 +1793,8 @@
              eof-value)
            f)))))
 
-(def core-read+string
-  (fn ([] (core-read+string (core-var-value '*in*)))
+(def ^:private layer-read+string
+  (fn ([] (layer-read+string (core-var-value '*in*)))
       ([opts stream]
        (if (map? opts)
          (let [[f text] (read-one (as-reader stream))]
@@ -1804,8 +1805,8 @@
                  [e text]))
              [f text]))
          (throw (host/ex* 'java.lang.IllegalArgumentException "read+string's two-argument form takes an opts map and a stream"))))
-      ([stream] (core-read+string stream true nil))
-      ([stream eof-error? eof-value] (core-read+string stream eof-error? eof-value false))
+      ([stream] (layer-read+string stream true nil))
+      ([stream eof-error? eof-value] (layer-read+string stream eof-error? eof-value false))
       ([stream eof-error? eof-value _recursive?]
        (let [[f text] (read-one (as-reader stream))]
          (if (= ::eof f)
@@ -1813,6 +1814,25 @@
              (throw (host/ex* 'java.io.EOFException "EOF while reading"))
              [eof-value text])
            [f text])))))
+
+;; read and read+string as the booted core sees them: a stream of the io
+;; layer (with-in-str's, LineNumberingPushbackReader.'s -- what stock
+;; main's -e and its REPL re-read bind *in* to) reads through the layer
+;; above; a host stream (the JVM seat's own *in*, a host
+;; LineNumberingPushbackReader) through the host core's own read, where
+;; the host has one. Interned fill-wins (boot's install-shim-layer!): the
+;; host's read alone casts a layer reader to its reader class and throws.
+(defn- layer-stream? [x] (or (io/reader-value? x) (io/input-stream-value? x)))
+(defn- read-dispatch [layer host-sym]
+  (let [own (host-fn host-sym nil)
+        pick (fn [stream] (if (or (nil? own) (layer-stream? stream)) layer own))]
+    (fn ([] (let [in (core-var-value '*in*)] ((pick in) in)))
+        ([a] ((pick a) a))
+        ([a b] ((pick b) a b))
+        ([a b c] ((pick a) a b c))
+        ([a b c d] ((pick a) a b c d)))))
+(def core-read (read-dispatch layer-read 'read))
+(def core-read+string (read-dispatch layer-read+string 'read+string))
 
 (def core-load-reader
   (fn [rdr]
@@ -2013,7 +2033,11 @@
                     (list 'try (cons 'do body)
                           (list 'finally (list 'monitor-exit x)))))})
 
-(def LispReader-read (let [rd (host-fn 'read (unsupported "read"))] (fn ([rdr opts] (rd opts rdr)) ([rdr eof-error? eof-val _recursive?] (rd rdr eof-error? eof-val)))))
+;; clojure.lang.LispReader/read: read's own dispatch (core-read: a layer
+;; reader through the io layer, a host reader through the host's read)
+(def LispReader-read
+  (fn ([rdr opts] (core-read opts rdr))
+      ([rdr eof-error? eof-val _recursive?] (core-read rdr eof-error? eof-val))))
 (def TaggedLiteral-create (host-fn 'tagged-literal (fn [tag form] {:tag tag :form form})))
 (def ReaderConditional-create (host-fn 'reader-conditional (fn [form splicing?] {:form form :splicing? splicing?})))
 (def Delay-force (host-fn 'force (fn [x] (if (h-delay? x) (deref x) x))))
@@ -2853,7 +2877,7 @@
 (def new-BufferedOutputStream (fn ([out] (io/buffered-output-stream out)) ([out _sz] (io/buffered-output-stream out))))
 (def new-PushbackReader (fn ([r] (io/pushback-reader r)) ([r _sz] (io/pushback-reader r))))
 ;; clojure.lang.LineNumberingPushbackReader: the layer's pushback reader
-;; (its line count is not tracked; getLineNumber refuses by name)
+;; (its line number and string capture read off its state: io/line-number)
 (def new-LineNumberingPushbackReader
   (fn ([r] (io/pushback-reader r)) ([r _n] (io/pushback-reader r))))
 ;; java.net sockets: the io layer's in-process loopback
@@ -4400,7 +4424,16 @@
 (def -getClassName (fn [frame] (str (display-class-name (nth frame 0)))))
 (def -getMethodName (fn [frame] (str (nth frame 1))))
 (def -getFileName (fn [frame] (nth frame 2)))
-(def -getLineNumber (fn [frame] (nth frame 3)))
+;; getLineNumber is two members: StackTraceElement's (a frame vector's
+;; slot) and LineNumberingPushbackReader's -- the io layer's reader's
+;; line, else the target's own (a host LNPR: the JVM seat's *in*, which
+;; stock main's REPL asks every read cycle)
+(def -getLineNumber
+  (let [own (http-member "getLineNumber" {:cohost.io/pushback-reader io/line-number})]
+    (fn [x] (if (vector? x) (nth x 3) (own x)))))
+(def -setLineNumber (http-member "setLineNumber" {:cohost.io/pushback-reader io/set-line-number!}))
+(def -captureString (http-member "captureString" {:cohost.io/pushback-reader io/capture-string!}))
+(def -getString (http-member "getString" {:cohost.io/pushback-reader io/captured-string}))
 (def -fillInStackTrace (fn [e] e))
 (def -printStackTrace (fn [e] (println (str e))))
 (def -getClass class-of)
