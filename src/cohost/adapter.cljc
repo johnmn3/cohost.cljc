@@ -98,6 +98,7 @@
    :native-static   [['class-sym 'member] "nil (the default), or as :native-ctor for the static method member of class-sym"]
    :http-value      [['m] "nil (the default), or a fn of a cohost.http URI / URL value (a tagged map) -> the same map as the host's own map type whose str is the URL's text (the JVM: a record overriding toString); nil: the tagged map itself"]
    :byte-streams    [[] "nil (the default), or the host's own byte streams for cohost.http's bodies: {:input (fn [bytes] an InputStream over them) :output (fn [] a fresh ByteArrayOutputStream) :output-bytes (fn [out] its bytes) :bytes? (fn [x] host byte array?) :text-bytes (fn [s] UTF-8 bytes) :b64-bytes :bytes-b64 :read-all (fn [InputStream or File] its bytes, or nil)} (the JVM: java.io's); nil: bodies stay text"]
+   :io-handles      [[] "nil (the default), or the host's standard streams for a host whose own print/read machinery takes only its native handles (let-go's IOHandle): {:out (fn [] handle) :err (fn [] handle) :in (fn [] handle) :write! (fn [handle s] write the string s, raw) :flush! (fn [handle]) :read-line (fn [handle] the next line without its terminator, or nil at the end)}. With it cohost owns the print and read stack on that host: the boot boots core.clj's pr/prn/print/println/newline/flush/pr-str family, print-method/print-dup and core_print.clj's methods as stock over the shim, fills read/read-line/read+string from the shim, and gives cohost.core its own *out*/*err*/*in* whose roots are io-layer writers/readers over these leaves -- the host's print machinery is never asked to write to a layer value"]
    :core-lacks      [[] "the set of core names this host's core has only as stubs (or not at all in usable form): the boot treats them as lacked, so a fill (the thread layer's) supplies them instead of the stub (default #{})"]
    :current-ns      [[] "the symbol of the namespace evaluated code currently runs in (*ns*)"]
    :macroexpand-1   [['form] "the host's one-step macroexpansion of form in the current namespace"]
@@ -387,6 +388,7 @@ namespace cohost_err {
     :doorbell-wait nil
     :doorbell-signal nil
     :core-lacks #{}
+    :io-handles nil
     :http-request nil
     :http-serve nil
     :byte-streams nil
@@ -890,6 +892,15 @@ namespace cohost_err {
   "Signal doorbell db: every current and future wait on it returns true."
   [db]
   (when-let [f (cap :doorbell-signal)] (f db)))
+(defn io-handles
+  "The host's standard-stream leaves (contract :io-handles), or nil when
+   its own print/read machinery serves the booted core."
+  []
+  (cap :io-handles))
+(defn io-handle [k] (when-let [f (get (cap :io-handles) k)] (f)))
+(defn io-write! [h s] ((get (cap :io-handles) :write!) h s))
+(defn io-flush! [h] (when-let [f (get (cap :io-handles) :flush!)] (f h)))
+(defn io-read-line [h] ((get (cap :io-handles) :read-line) h))
 (defn core-lacks
   "Core names this host has only as stubs; the boot treats them as lacked."
   []
