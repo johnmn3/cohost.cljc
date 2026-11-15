@@ -152,6 +152,7 @@ namespace cohost_tag {
   inline int big_decimal() { return static_cast<int>(object_type::big_decimal); }
   inline int big_integer() { return static_cast<int>(object_type::big_integer); }
   inline int re_pattern() { return static_cast<int>(object_type::re_pattern); }
+  inline int opaque_box() { return static_cast<int>(object_type::opaque_box); }
   inline bool is_transient(object_ref x) {
     switch (x.get_type()) {
       case object_type::transient_vector:
@@ -718,6 +719,10 @@ namespace cohost_var {
   inline object_ref set_dynamic(object_ref v) {
     static_cast<jank::runtime::var *>(v.ptr())->set_dynamic(true);
     return v;
+  }
+  // jank's own dynamic flag (its vars carry no :dynamic metadata)
+  inline bool is_dynamic(object_ref v) {
+    return static_cast<jank::runtime::var *>(v.ptr())->dynamic.load();
   }
   // Var.set: write the var's thread binding (jank's own var-set is a
   // TODO stub); the result is an error string when no binding is active
@@ -1938,6 +1943,46 @@ namespace cohost_assoc {
 
 (declare xform-seq)
 
+;; printing's two stubs: jank 0.1's clojure.core flush and newline throw
+;; "TODO: port flesh" / "TODO: port newline", and cohost takes both from the
+;; host (policy/host-names) -- so stock clojure.main/main, whose finally
+;; calls (flush), died at its end on jank (measured: min1 through bin/cohost,
+;; cohost main 3300201). jank prints through C stdio onto *out*, a boxed
+;; FILE* (stdout, or with-out-str's memstream): flush is fflush of every
+;; open output stream (fflush(nullptr): the current one among them) and
+;; newline prints "\n" through jank's own print, onto the same *out*.
+(cpp/raw "#include <cstdio>
+namespace cohost_io {
+  inline long long flush_all() { return (long long)std::fflush(nullptr); }
+}")
+(defn- jank-flush [] (cpp/cohost_io.flush_all) nil)
+(defn- jank-newline [] (print "\n") nil)
+
+;; Writer members on jank's own *out* values (an opaque box over a FILE*:
+;; stdout, or with-out-str's memstream). Stock code that writes through a
+;; Writer -- pprint's column writer, measured: stock report-error's pprint
+;; died "no shim for [:method write]" -- reaches them through the shim's
+;; missing-method (:native-method). jank's print writes to *out*'s FILE*.
+(defn- native-writer-method [x nm]
+  (when (= (cpp/cohost_tag.of x) (cpp/cohost_tag.opaque_box))
+    (case nm
+      "write" (fn ([w a] (binding [*out* w] (print (if (integer? a) (str (char a)) (str a)))) nil)
+                  ([w buf off len] (binding [*out* w] (print (subs (apply str buf) off (+ off len)))) nil))
+      "append" (fn [w c] (binding [*out* w] (print (str c))) w)
+      "flush" (fn [_w] (cpp/cohost_io.flush_all) nil)
+      nil)))
+
+;; set!: jank has no set! special form (measured: "The symbol `set!` could
+;; not be resolved" for stock clojure.main's (set! *command-line-args* args)).
+;; A var target sets the var's thread binding through the shim's Var.set
+;; (cohost.shim/-set over :var-set!); any other target is refused by name at
+;; expansion -- before this, booted code had no set! at all on jank.
+(defn set!-macro [&form &env target v]
+  (if (and (symbol? target) (var? (resolve target)))
+    (list 'cohost.shim/-set (list 'var target) v)
+    (throw (ex-info (str "set!: on jank only a var target is supported, got " (pr-str target))
+                    {:target target}))))
+
 (def ^:private type-core-extras
   {'deftype deftype-macro
    'defrecord defrecord-macro
@@ -2551,7 +2596,12 @@ namespace cohost_err {
                        nil)
    :ensure-bare-ns! (fn [ns-sym]
                       (create-ns ns-sym)
-                      (when (= 'cohost.core ns-sym) (intern ns-sym 'concat* concat-star))
+                      (when (= 'cohost.core ns-sym)
+                        (intern ns-sym 'concat* concat-star)
+                        ;; set! is no core.clj def the boot would meet: interned
+                        ;; here, as the core is made, so every namespace that
+                        ;; refers the core sees it
+                        (alter-meta! (intern ns-sym 'set! set!-macro) assoc :macro true))
                       ns-sym)
    :refer-from-core! (fn [into-ns sym]
                        (binding [*ns* (the-ns into-ns)]
@@ -2563,6 +2613,8 @@ namespace cohost_err {
    ;; (policy/chunk-names); jank's own chunk-cons realizes its rest (A4 (a)), so cohost.core
    ;; gets the lazy one instead
    :core-extras (assoc type-core-extras 'eduction eduction*
+                                        'flush jank-flush
+                                        'newline jank-newline
                                         'read-string jank-read-string
                                         'chunk-cons jank-rt/chunk-cons)
    :intern! (fn [ns-sym sym val]
@@ -2585,6 +2637,7 @@ namespace cohost_err {
                                    (if (and (:name m) (:ns m)) m
                                      (assoc m :name (var-sym-of x) :ns (var-ns-of x))))
                         :else (meta x)))
+   :native-method native-writer-method
    :invoke-member (fn [x nm args absent]
                     (if-let [d (instance-desc x)]
                       (let [msym (symbol nm)
@@ -2829,6 +2882,14 @@ namespace cohost_err {
    ;; var dynamic here: alter-meta!'s :dynamic alone does not flip jank's
    ;; own dynamic flag, and pushThreadBindings checks that flag
    :set-dynamic! (fn [v] (cpp/cohost_var.set_dynamic v) (alter-meta! v assoc :dynamic true) v)
+   ;; jank's own dynamic flag: its core's dynamic vars carry no :dynamic
+   ;; metadata, so the default test (the metadata) called them static and
+   ;; the boot COPIED them into cohost.core instead of referring them --
+   ;; measured: stock clojure.main's with-bindings died "Can't dynamically
+   ;; bind non-dynamic var: #'cohost.core/*command-line-args*" while jank's
+   ;; own *command-line-args* is dynamic (is_dynamic true for every runtime
+   ;; var jank has)
+   :dynamic-var? (fn [v] (boolean (and (var? v) (cpp/cohost_var.is_dynamic v))))
    ;; Var.set (jank's own var-set is a TODO stub the shim would call)
    :var-set! (fn [v val] (cpp/cohost_var.set_var v val))
    ;; the thread layer's leaves (Eve-in-cohost unit 2; cohost_thread /
@@ -2847,7 +2908,15 @@ namespace cohost_err {
    ;; jank's core has the whole concurrency family only as TODO stubs
    ;; (agent, pmap, await, send, ... throw "TODO: port X"): the boot
    ;; treats them as lacked and Eve's thread layer fills them (unit 2)
-   :core-lacks policy/thread-names
+   ;; names jank 0.1's core has only as "TODO: port" stubs that the shim
+   ;; fills (shim/core-fills) or stock core.clj defines over the io layer:
+   ;; lacked, so the fill / stock definition wins over the stub (stock
+   ;; clojure.main's report-error calls requiring-resolve). flush and
+   ;; newline are :core-extras above. (with-in-str is not here: no fill,
+   ;; and host-only, so lacking it would leave it unbound.)
+   :core-lacks (into policy/thread-names
+                     '[requiring-resolve read read+string read-line line-seq load-reader
+                       create-struct struct struct-map accessor])
    ;; standin exceptions print as their class (the shim asks this first);
    ;; jank's own str of an exception is its #error dump
    ;; A5-5: jank's str of a double is C's (3e+10, 1e-04); the JVM's is Double.toString

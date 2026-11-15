@@ -1203,8 +1203,14 @@
     ;; copy, which prints to the host's *out* -- measured on the JVM seat:
     ;; the report leaked to stdout and with-out-str captured ""
     ;; (scoped to a host with :io-handles -- the seats F1 measured)
+    ;; a name the adapter declares a stub (:core-lacks) takes the fill
+    ;; too: the boot skipped its stock definition (host-only), which can
+    ;; leave the name interned but UNBOUND -- measured on jank, stock
+    ;; report-error died "Invalid call to var_unbound_root" -- and only
+    ;; the fill can bind it
     (when (or (contains? #{'load 'read 'read+string 'Throwable->map} nm)
               (and (= 'requiring-resolve nm) (some? (host/io-handles)))
+              (contains? (set (host/core-lacks)) nm)
               (not (host/interned-var core-ns nm)))
       (host/intern! core-ns nm v)
       (record! report :replaced {:name nm :reason :shim-layer})))

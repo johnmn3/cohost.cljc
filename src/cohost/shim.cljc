@@ -3379,6 +3379,9 @@
   (fn [k] (let [old (get @system-properties k)]
             (swap! system-properties dissoc k)
             old)))
+;; System.lineSeparator(): the line.separator property, as the JVM answers
+;; it (stock clojure.main's report-error prints with it)
+(def System-lineSeparator (fn [] (System-getProperty "line.separator")))
 (def System-identityHashCode hash)
 ;; String.format(fmt, Object... args): core.clj's format passes one array
 (declare jformat)
