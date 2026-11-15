@@ -232,6 +232,18 @@
                     (let [[form s] (read+string {:eof EOF :read-cond :allow} in-reader)]
                       (try
                         (when-not (identical? form EOF)
+                          ;; After a form, skip its trailing newline so
+                          ;; (read-line) / (read) during eval see the next
+                          ;; line, not an empty line. Without this, a
+                          ;; prepl write of "(read-line)\nline-for-read-line"
+                          ;; returns "" and then evaluates the leftover
+                          ;; symbol (ember/cedar F1 CASE6/CASE7). Same
+                          ;; hook as clojure.main/repl-read. A 10-second
+                          ;; miniature (stock LNPR + read+string) proved
+                          ;; NO-SKIP => "" + CompilerException, SKIP-EOL
+                          ;; => "line-for-read-line" and [(read) (read)]
+                          ;; => [11 :kw].
+                          (m/skip-if-eol in-reader)
                           (let [start (System/nanoTime)
                                 ret (eval form)
                                 ms (quot (- (System/nanoTime) start) 1000000)]
