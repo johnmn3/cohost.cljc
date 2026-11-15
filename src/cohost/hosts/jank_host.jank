@@ -2733,6 +2733,12 @@ namespace cohost_err {
                              (get (ns-publics 'clojure.core) sym)))
    :mark-macro! (fn [v] (alter-meta! v assoc :macro true) v)
    :expand-macro expand-macro
+   ;; the type layer above is this adapter's own macros, interned into
+   ;; cohost.core with a meta-only :macro mark; jank's analyzer does not
+   ;; expand them when it compiles a codemod-rewritten spec form in a
+   ;; loader-built namespace (the deftype field vector is analyzed as
+   ;; values), so the codemod expands spec heads itself on this host
+   :expand-spec-heads? true
    ;; its compiler honors a var's :inline, and core.clj's write raw JVM interop:
    ;; the codemod applies them itself, and strips them from what jank sees
    :inline-meta :strip
