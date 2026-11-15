@@ -1032,6 +1032,17 @@
    :resolve-core (fn [sym]
                    (let [v (when-not (contains? stock-anyway sym) (ns-resolve 'core sym))]
                      (when (and (var? v) (not (:private (meta v)))) v)))
+   ;; F1: let-go's print/read machinery takes only its own IOHandles (a layer
+   ;; writer bound to *out* is bypassed to the process stdout, a layer reader
+   ;; given to read-line refused): cohost owns the print/read stack here and
+   ;; this adapter gives only the raw leaves -- a string written to a handle,
+   ;; one line read from one. The handle is let-go's *out*/*err*/*in* as this
+   ;; host fn sees it. (let-go writes unbuffered: flush has nothing to do, and
+   ;; its flush! of a pipe refuses "sync /dev/stdout: invalid argument")
+   :io-handles {:out (fn [] *out*) :err (fn [] *err*) :in (fn [] *in*)
+                :write! (fn [h s] (write! h s) nil)
+                :flush! (fn [_] nil)
+                :read-line (fn [h] (read-line h))}
    ;; (let-go writes *out* unbuffered: flush has nothing to do)
    :core-extras {'ns-resolve ns-resolve* 'resolve resolve* 'extend extend*
                  'newline (fn [] (print "\n") nil) 'flush (fn [] nil)}

@@ -144,6 +144,48 @@
          error-mode agent-errors clear-agent-errors shutdown-agents
          await await-for await1]))
 
+;; A host whose adapter gives :io-handles (its own print/read machinery
+;; takes only its native handles: let-go) has cohost own the print and
+;; read stack instead of taking the host's.
+(def io-owned-stock
+  "With :io-handles, these boot as core.clj writes them (over the shim and
+   the io layer) rather than being taken from the host: the pr family over
+   pr-on and print-method, newline/flush over *out*'s members, the string
+   forms over StringWriter."
+  (set '[pr prn print println newline flush printf pr-str prn-str print-str println-str
+         pr-on print-method print-dup with-out-str with-in-str]))
+
+(def io-owned-lacks
+  "With :io-handles, these are treated as lacked by the host: cohost.core
+   gets its own *out*/*err*/*in* (the prelude's defs; roots set to io-layer
+   values over the host's leaves after the boot), and the shim fills the
+   readers (install-shim-layer!)."
+  (set '[*out* *err* *in* read read-line read+string]))
+
+(def io-owned-print-forms
+  "With :io-handles, the forms of clojure/core_print.clj the boot evaluates
+   (in cohost.core, after core.clj): print-method's and print-dup's methods
+   and prefers, and the private helpers they call. The file's dynamic vars
+   stay the host's (host-names); its Throwable->map, StackTraceElement->vec
+   and PrintWriter-on stay the shim's / host's as before."
+  (set '[print-sequential print-meta print-simple print-ctor print-tagged-object
+         print-object print-prefix-map print-map strip-ns lift-ns
+         char-escape-string char-name-string primitives-classnames deref-as-map
+         print-throwable]))
+
+(defn decide-print-form
+  "-> {:action :eval|:skip :name} for a top-level form of core_print.clj on
+   a host with :io-handles (see io-owned-print-forms)."
+  [form]
+  (let [head (form-head form)
+        nm (form-name form)
+        mm (when (seq? form) (second form))]
+    (cond
+      (and (contains? #{'defmethod 'prefer-method} head) (contains? #{'print-method 'print-dup} mm))
+      {:action :eval :name (symbol (str head " " mm))}
+      (and nm (contains? io-owned-print-forms nm)) {:action :eval :name nm}
+      :else {:action :skip :name (or nm head)})))
+
 (def companion-names
   "clojure.core names that the booted forms do not define: they come from the
    companion files (core_deftype, core_proxy, genclass, gvec, core_print)
@@ -321,14 +363,18 @@
 
 (defn lists
   "{:host-names :skip-names :special-names} for `host` (the adapter's :name): the lists above
-   with its host-overrides applied, and chunk-names when chunks? (the adapter
-   has :chunks). A boot computes them once."
-  ([host] (lists host false))
-  ([host chunks?]
-   (let [ov (get host-overrides host)]
-     {:host-names (cond-> (apply disj (into host-names (:host ov)) (:stock ov))
+   with its host-overrides applied, chunk-names when chunks? (the adapter
+   has :chunks), and io-owned-stock booted as stock when owns-io? (the
+   adapter has :io-handles). A boot computes them once."
+  ([host] (lists host false false))
+  ([host chunks?] (lists host chunks? false))
+  ([host chunks? owns-io?]
+   (let [ov (get host-overrides host)
+         stock (into (set (:stock ov)) (when owns-io? io-owned-stock))]
+     {:host-names (cond-> (apply disj (into host-names (:host ov)) stock)
                     chunks? (into chunk-names))
-      :skip-names (into skip-names (:skip ov))
+      :skip-names (apply disj (into skip-names (:skip ov)) stock)
+      :stock-names stock
       :special-names (or (:special ov) #{})})))
 
 (defn decide
@@ -348,6 +394,10 @@
        ;; a special form of the host's evaluator with no var: the host has it,
        ;; and nothing of the name can be defined over it
        (and nm (contains? (:special-names ls) nm)) {:action :skip :name nm :reason :host-special-form}
+       ;; a name the host's overrides boot as stock, whatever its head
+       ;; (print-method's defmulti on a host with :io-handles); a defmethod
+       ;; of it here is core.clj's Eduction one, whose deftype is skipped
+       (and nm (contains? (:stock-names ls) nm) (not (contains? #{'alter-meta! 'defmethod} head))) {:action :eval :name nm}
        (and nm (contains? host-names nm))
        (if (= head 'alter-meta!)
          {:action :skip :name nm :reason :host-var}

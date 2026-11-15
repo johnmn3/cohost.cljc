@@ -19,6 +19,7 @@
             [cohost.thread :as thread]
             [cohost.atom :as atom-layer]
             [cohost.http :as http]
+            [cohost.io :as io]
             [cohost.scan :as scan]))
 
 (def core-ns "The namespace the stock core.clj boots into." 'cohost.core)
@@ -940,6 +941,44 @@
       (fn [] (read-prof src (fn [form] (process-form! ctx report form)))
         (scan-macros! ctx)))))
 
+;; ---------------------------------------------------------------------------
+;; the print/read stack on a host with :io-handles (adapter.cljc): core.clj's
+;; pr family and print-method boot as stock (policy/io-owned-stock), the
+;; methods come from core_print.clj (boot-print-file!), the readers are the
+;; shim's fills, and cohost.core's own *out*/*err*/*in* get io-layer roots
+;; over the host's leaves (install-io-layer!). Every print and read then runs
+;; through cohost's layers, and a binding of *out* in booted code is seen by
+;; them, in every extent -- they read the var, not the host's print frame.
+
+(defn- boot-print-file!
+  "Evaluate core_print.clj's print-method / print-dup forms into cohost.core
+   (policy/decide-print-form); the file's other forms are not evaluated."
+  [ctx report path]
+  (let [src (bridge-source (host/slurp-file path))]
+    (host/with-ns core-ns
+      (fn [] (read-prof src (fn [form]
+                              (let [{:keys [action] nm :name} (policy/decide-print-form form)]
+                                (if (= :eval action)
+                                  (eval-form! ctx report form nm :ok)
+                                  (record! report :skipped {:name nm :reason :print-file})))))
+        (scan-macros! ctx)))))
+
+(defn install-io-layer!
+  "Give cohost.core's *out*, *err* and *in* their roots on a host with
+   :io-handles: a writer over the host's out / err leaf, and stdin's reader
+   as a pushback reader (the LineNumberingPushbackReader the JVM gives *in*)
+   over the in leaf. Other hosts are untouched (their *out* is the host's)."
+  [report]
+  (when (host/io-handles)
+    (snap! {:op :io-layer})
+    (doseq [[nm v] [['*out* (io/host-writer (fn [] (host/io-handle :out)))]
+                    ['*err* (io/host-writer (fn [] (host/io-handle :err)))]
+                    ['*in* (io/pushback-reader (io/host-reader (fn [] (host/io-handle :in))))]]]
+      (when-let [h (host/interned-var core-ns nm)]
+        (host/set-var-root! h (constantly v))
+        (record! report :replaced {:name nm :reason :io-layer}))))
+  report)
+
 (defn- companion-forms
   "{name form}: the first top-level form defining each of names in the file
    at path, read once (the file's other forms are not evaluated)."
@@ -960,7 +999,7 @@
   (host/ensure-bare-ns! core-ns)
   (let [ctx (if (profiling) (prof :setup #(make-ctx)) (make-ctx))
         report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
-    (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks))))
+    (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks)) (some? (host/io-handles))))
     (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
            :libs {(symbol "clojure.core") {:ns core-ns :status :loaded}})
     ;; (eval form) evaluates in the namespace the caller runs in, as on the JVM
@@ -1201,6 +1240,7 @@
    (swap! state assoc :eve-atoms (boolean eve-atoms)
                       :host-lacks (into (set host-lacks)
                                         (concat (host/core-lacks)
+                                                (when (host/io-handles) policy/io-owned-lacks)
                                                 (when eve-atoms atom-surface-names))))
    (install-collection-fill! eve-collections)
    (snap! {:op :begin :opts {:root root :files files}})
@@ -1239,7 +1279,8 @@
                        (if-let [form (get stock nm)]
                          (process-form! ctx report form)
                          (record! report :skipped {:name nm :reason :no-host-equivalent}))
-                       (when-not (take-from-host! report nm)
+                       (when-not (or (and (host/io-handles) (host/interned-var core-ns nm))
+                                     (take-from-host! report nm))
                          (if-let [v (get (host/core-extras) nm)]
                            (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil)
                                (snap! {:op :extra :sym nm}))
@@ -1264,6 +1305,12 @@
      (install-atom-layer! ctx report eve-atoms)
      (install-http-layer! report)
      (install-shim-layer! report)
+     ;; a host whose print/read machinery takes only its own handles: the
+     ;; print-method / print-dup methods of core.clj's companion core_print
+     ;; (after the shim layer: print-throwable calls its Throwable->map)
+     (when (host/io-handles)
+       (boot-print-file! ctx report (str root "/clojure/core_print.clj")))
+     (install-io-layer! report)
      (scan-macros! ctx)
      (install-host-reducers!)
      (install-eduction-reduce!)

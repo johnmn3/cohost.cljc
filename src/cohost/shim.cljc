@@ -259,6 +259,21 @@
     java.util.TimeZone [java.lang.Cloneable java.io.Serializable java.lang.Object]
     java.text.SimpleDateFormat [java.text.DateFormat java.lang.Cloneable java.io.Serializable java.lang.Object]
     java.io.StringReader [java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
+    ;; the interfaces' own supers, as the JVM's: MultiFn's prefers walk a
+    ;; dispatch value's parents (core_print's print-method prefers
+    ;; IPersistentCollection to java.util.Map; IPersistentMap reaches it
+    ;; through Associative)
+    clojure.lang.IPersistentCollection [clojure.lang.Seqable]
+    clojure.lang.Associative [clojure.lang.IPersistentCollection clojure.lang.ILookup clojure.lang.Seqable]
+    clojure.lang.IPersistentStack [clojure.lang.IPersistentCollection clojure.lang.Seqable]
+    clojure.lang.ISeq [clojure.lang.IPersistentCollection clojure.lang.Seqable]
+    clojure.lang.IPersistentMap [java.lang.Iterable clojure.lang.Associative clojure.lang.Counted clojure.lang.IPersistentCollection clojure.lang.ILookup clojure.lang.Seqable]
+    clojure.lang.IPersistentVector [clojure.lang.Associative clojure.lang.Sequential clojure.lang.IPersistentStack clojure.lang.Reversible clojure.lang.Indexed clojure.lang.Counted clojure.lang.IPersistentCollection clojure.lang.ILookup clojure.lang.Seqable]
+    clojure.lang.IPersistentSet [clojure.lang.IPersistentCollection clojure.lang.Counted clojure.lang.Seqable]
+    clojure.lang.IPersistentList [clojure.lang.Sequential clojure.lang.IPersistentStack clojure.lang.IPersistentCollection clojure.lang.Seqable]
+    java.util.Collection [java.lang.Iterable]
+    java.util.List [java.util.Collection java.lang.Iterable]
+    java.util.Set [java.util.Collection java.lang.Iterable]
     java.io.CharArrayReader [java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
     java.io.InputStreamReader [java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
     java.io.FileReader [java.io.InputStreamReader java.io.Reader java.io.Closeable java.lang.AutoCloseable java.lang.Object]
@@ -1778,8 +1793,14 @@
           (let [text ((host/capability :sb-string) sb)]
             [(RT-readString text) text])))))
 
-(defn- core-var-value [sym]
-  (some-> (host/resolve-core sym) (host/var-root)))
+(defn- core-var-value
+  "The current value of the host core's sym; for *in*/*out*/*err*,
+   cohost.core's own var when the boot interned one (a host with
+   :io-handles: the booted core owns its streams)."
+  [sym]
+  (some-> (or (when (contains? #{'*in* '*out* '*err*} sym) (host/interned-var 'cohost.core sym))
+              (host/resolve-core sym))
+          (host/var-root)))
 
 (defn- as-reader [x]
   (cond (io/reader-value? x) x
@@ -1904,10 +1925,15 @@
         (some? phase) (assoc :phase phase)))))
 
 (def core-PrintWriter-on
+  "clojure.core/PrintWriter-on [flush-fn close-fn autoflush?]: flush-fn of
+   the text written since the last flush, at each flush; close-fn (when not
+   nil) at close. (autoflush? is the PrintWriter's println/printf/format
+   autoflush, which Clojure's printing never calls: its prn/println flush
+   by *flush-on-newline*.)"
   (fn ([f] (core-PrintWriter-on f nil false))
-      ([f stream] (core-PrintWriter-on f stream false))
-      ([f stream _flush-on-newline?]
-       (io/sink-writer (fn [s] (f s) (when (some? stream) (io/append-text! stream s)))))))
+      ([f close-f] (core-PrintWriter-on f close-f false))
+      ([f close-f _autoflush?]
+       (io/sink-writer f close-f))))
 
 (def core-in-ns
   "clojure.core/in-ns for a host whose boot left it out: enter the
@@ -3319,9 +3345,14 @@
    the stub's answers (nil / the caller's default)."
   (atom {}))
 
+(def ^:private property-defaults
+  "Properties every JVM has, answered while unset: core.clj reads
+   line.separator once at boot (system-newline, newline's text)."
+  {"line.separator" "\n"})
+
 (def System-getProperty
-  (fn ([k] (get @system-properties k))
-      ([k dflt] (get @system-properties k dflt))))
+  (fn ([k] (get @system-properties k (get property-defaults k)))
+      ([k dflt] (get @system-properties k (get property-defaults k dflt)))))
 
 (def System-setProperty
   (fn [k v] (let [old (get @system-properties k)]
@@ -4572,7 +4603,15 @@
                                     (if (<= 56320 lo 57343) (+ 65536 (* (- hi 55296) 1024) (- lo 56320)) hi))
                                   hi)))))
 (def -toCharArray (fn [s] (to-array* (vec (nn s)))))
-(def -append (fn [sb x] (h-sb-append! sb (if (nil? x) "null" x))))
+(def -append (fn
+                ;; Writer.append (a char, a CharSequence, or nil as "null"),
+                ;; returning the writer: core.clj's pr, newline write *out* so
+                ([sb x] (if (io/writer-value? sb)
+                          (do (io/append-text! sb (if (nil? x) "null" (str x))) sb)
+                          (h-sb-append! sb (if (nil? x) "null" x))))
+                ([w x start end] (let [t (if (nil? x) "null" (str x))]
+                                   (io/append-text! w (subs t start end))
+                                   w))))
 ;; a value of Eve's HTTP layer has nothing to release
 (def -close (fn [x] (cond (io/server-socket-value? x) (io/server-close! x)
                           (io/socket-value? x) (io/socket-close! x)

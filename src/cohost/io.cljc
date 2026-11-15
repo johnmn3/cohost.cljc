@@ -58,7 +58,11 @@
    ::socket               'java.net.Socket
    ::socket-input         'java.io.InputStream
    ::socket-output        'java.io.OutputStream
-   ::socket-reader        'java.io.Reader})
+   ::socket-reader        'java.io.Reader
+   ;; the host's standard streams (adapter :io-handles): System.out's
+   ;; writer and System.in's reader as the JVM gives *out* and *in* theirs
+   ::host-writer          'java.io.OutputStreamWriter
+   ::host-reader          'java.io.InputStreamReader})
 
 ;; One record type per dispatch class (see the ns docstring). Stream
 ;; values carry [kind state under]: kind the fine kind, state the
@@ -128,7 +132,9 @@
    ::socket-input          (fn [k s u] (->InputStreamValue k s u))
    ::socket-output         (fn [k s u] (->OutputStreamValue k s u))
    ::socket-reader         (fn [k s u] (->ReaderValue k s u))
-   ::sink                  (fn [k s u] (->WriterValue k s u))})
+   ::sink                  (fn [k s u] (->WriterValue k s u))
+   ::host-writer           (fn [k s u] (->WriterValue k s u))
+   ::host-reader           (fn [k s u] (->ReaderValue k s u))})
 
 (defn value
   "A stream value of fine kind k over state atom s, wrapping u. The
@@ -352,13 +358,70 @@
                                (.toString sb))
             :else (do (.append sb c) (recur sb))))))
 
+;; ---------------------------------------------------------------------------
+;; the host's standard streams (adapter :io-handles). A host whose own
+;; print/read machinery takes only its native handles (let-go) gives the
+;; layer raw leaves instead: write a string to a handle, flush it, read
+;; one line from it. The booted core's *out*/*err*/*in* roots are these
+;; values, so cohost's print/read stack -- not the host's -- serves them.
+;; The handle is looked up per operation (a thunk), so a host-side
+;; rebinding of its own stream (a host with-out-str around a boot call)
+;; is seen. State is the value's atom, as for every stream of the layer.
+
+(defn host-writer
+  "A Writer over the host stream the thunk h answers (:out or :err's leaf)."
+  [h]
+  (value ::host-writer (atom {:handle h :closed? false})))
+
+(defn host-reader
+  "An incremental Reader over the host stream the thunk h answers: a line
+   is pulled through the adapter's :read-line leaf when the buffered one
+   is used up; -1 once the leaf answers nil."
+  [h]
+  (value ::host-reader (atom {:handle h :text "" :pos 0 :eof? false :closed? false})))
+
+(defn- host-fill!
+  "Make sure a host reader has an unread char buffered, pulling lines
+   from the host; false at the end of the stream."
+  [r]
+  (let [st (state-of r)]
+    (loop []
+      (let [{:keys [text pos eof? handle]} @st]
+        (cond (< pos (count text)) true
+              eof? false
+              :else (let [line (host/io-read-line (handle))]
+                      (if (nil? line)
+                        (swap! st assoc :eof? true :text "" :pos 0)
+                        (swap! st assoc :text (str line "\n") :pos 0))
+                      (recur)))))))
+
+(defn- host-read-char! [r]
+  (when (:closed? @(state-of r))
+    (throw (host/ex* 'java.io.IOException "Stream closed")))
+  (if (host-fill! r)
+    (let [{:keys [text pos]} @(state-of r)]
+      (swap! (state-of r) assoc :pos (inc pos))
+      (nth text pos))
+    -1))
+
+(defn- host-read-line! [r]
+  (when (:closed? @(state-of r))
+    (throw (host/ex* 'java.io.IOException "Stream closed")))
+  (when (host-fill! r)
+    (let [st (state-of r)
+          {:keys [text pos]} @st
+          ;; the buffer holds exactly one host line and its \n
+          line (subs text pos (dec (count text)))]
+      (swap! st assoc :pos (count text))
+      line)))
+
 (def reader-kinds
   #{::reader ::buffered-reader ::string-reader ::char-array-reader
     ::input-stream-reader ::file-reader ::pushback-reader
-    ::socket-reader})
+    ::socket-reader ::host-reader})
 (def writer-kinds
   #{::writer ::buffered-writer ::string-writer ::file-writer
-    ::output-stream-writer ::sink})
+    ::output-stream-writer ::sink ::host-writer})
 (def input-stream-kinds
   #{::input-stream ::buffered-input-stream ::file-input-stream
     ::byte-input-stream ::socket-input})
@@ -696,6 +759,7 @@
   (loop [x r]
     (cond (nil? x) false
           (is? ::socket-reader x) true
+          (is? ::host-reader x) true
           (or (is? ::buffered-reader x) (is? ::pushback-reader x)) (recur (under-of x))
           :else false)))
 
@@ -704,6 +768,7 @@
    cohost.http's readers answer."
   [r]
   (cond (is? ::socket-reader r) (socket-read-char! r)
+        (is? ::host-reader r) (host-read-char! r)
         (is? ::buffered-reader r) (read-char! (under-of r))
         (and (is? ::pushback-reader r) (socket-backed? r))
         (let [buf (:buf @(state-of r))]
@@ -734,6 +799,15 @@
                 [(count out) out]
                 (let [c (read-char! r)]
                   (if (number? c) [(count out) out] (recur (str out c))))))))
+        (is? ::host-reader r)
+        ;; up to len chars, never past the end of the buffered host line:
+        ;; a read must not block for input the caller did not ask for
+        (if (host-fill! r)
+          (let [{:keys [text pos]} @(state-of r)
+                n (min len (- (count text) pos))]
+            (swap! (state-of r) assoc :pos (+ pos n))
+            [n (subs text pos (+ pos n))])
+          [-1 ""])
         (is? ::socket-reader r)
     (let [b0 (socket-read-char! r)]
       (if (number? b0)
@@ -778,6 +852,7 @@
    (\\n, \\r\\n or \\r), nil at the end."
   [r]
   (cond (is? ::socket-reader r) (socket-read-line! r)
+        (is? ::host-reader r) (host-read-line! r)
         (is? ::buffered-reader r) (read-line! (under-of r))
         (socket-backed? r) (read-line-chars! r)
         :else (read-line-whole! r)))
@@ -894,16 +969,21 @@
   (let [st @(state-of w)]
     (when (:closed? st)
       (throw (host/ex* 'java.io.IOException "Stream closed")))
-    (cond (= ::sink (:cohost/kind w)) ((:sink st) (str t))
+    (cond (= ::sink (:cohost/kind w)) (swap! (state-of w) update :buf str (str t))
+          (:handle st) (host/io-write! ((:handle st)) (str t))
           (:out st) (append-bytes! (:out st) (utf8-encode (str t)))
           :else (swap! (state-of w) update :text str (str t)))
     nil))
 
 (defn sink-writer
-  "A Writer (class java.io.PrintWriter) whose writes go to the fn f of
-   one string each, as written -- clojure.core/PrintWriter-on's value."
-  [f]
-  (value ::sink (atom {:sink f :closed? false})))
+  "A Writer (class java.io.PrintWriter) -- clojure.core/PrintWriter-on's
+   value: writes build up a string, and a flush calls f with the string
+   built since the last flush (when there is one); a close flushes, then
+   calls close-f (when given) of no arguments. As stock's proxy Writer
+   under its BufferedWriter: one call of f per flush, never per write."
+  ([f] (sink-writer f nil))
+  ([f close-f]
+   (value ::sink (atom {:sink f :close close-f :buf "" :closed? false}))))
 
 (defn written-text [w]
   (let [st @(state-of w)]
@@ -913,8 +993,14 @@
 
 (defn flush-writer! [w]
   (let [st @(state-of w)]
-    (cond (:file st) (write-file-text! (:file st) (:text st))
-          (:out st) (flush-output! (:out st)))
+    (cond (= ::sink (:cohost/kind w))
+          (let [b (:buf st)]
+            (when (pos? (count b))
+              (swap! (state-of w) assoc :buf "")
+              ((:sink st) b)))
+          (:file st) (write-file-text! (:file st) (:text st))
+          (:out st) (flush-output! (:out st))
+          (:handle st) (host/io-flush! ((:handle st))))
     nil))
 
 (defn close-writer! [w]
@@ -922,7 +1008,9 @@
     (flush-writer! w)
     (swap! (state-of w) assoc :closed? true)
     (when-let [out (:out @(state-of w))]
-      (close-output! out)))
+      (close-output! out))
+    (when-let [cf (:close @(state-of w))]
+      (cf)))
   nil)
 
 ;; ---------------------------------------------------------------------------
