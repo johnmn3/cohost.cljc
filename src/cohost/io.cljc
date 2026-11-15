@@ -100,7 +100,12 @@
 (declare writer-string)
 #?(:jank (defn ->WriterValue [k s u] (stream-standin 'WriterValue k s u))
    :default (defrecord WriterValue [kind state under]
-              #?@(:jolt [] :cljw [] :clj [Object (toString [this] (writer-string this))])))
+              #?@(:jolt [] :cljw [] :clj [Object
+                                          (toString [this]
+                                            (let [u (.under ^WriterValue this)]
+                                              (if (instance? StringBuilder u)
+                                                (.toString ^StringBuilder u)
+                                                (writer-string this))))])))
 #?(:jank (defn ->BufferedWriterValue [k s u] (stream-standin 'BufferedWriterValue k s u))
    :default (defrecord BufferedWriterValue [kind state under]))
 #?(:jank nil :default (defrecord UrlDispatch [kind state under]))
@@ -1026,7 +1031,17 @@
   [kind file out]
   (value kind (atom {:text (new-text-buf) :closed? false :file file :out out})))
 
-(defn string-writer [] (writer-over ::string-writer nil nil))
+(defn string-writer
+  "A fresh StringWriter. On the JVM the StringBuilder lives in the
+   record's `under` field so append and toString do not deref the state
+   atom (with-out-str ends in (str s#); that deref+map path was ~9× a
+   native StringWriter.toString)."
+  []
+  #?(:clj (assoc (->WriterValue ::string-writer
+                                (atom {:closed? false})
+                                (StringBuilder.))
+                 :cohost/kind ::string-writer)
+     :default (writer-over ::string-writer nil nil)))
 
 (defn output-stream-writer
   "A Writer over a byte output stream: its text is encoded UTF-8
@@ -1072,12 +1087,20 @@
                 :else (state-of w))
      :default (state-of w)))
 
+(defn- string-builder-under
+  "A StringWriter's buffer, when it lives on the record (JVM string-writer)."
+  [w]
+  #?(:clj (let [u (if (instance? WriterValue w) (.under ^WriterValue w) nil)]
+            (when (instance? StringBuilder u) u))
+     :default nil))
+
 (defn append-text!
-  "Append t to writer w. On the JVM the StringBuilder is mutated in place
-   from the already-deref'd state (no second swap!/deref). Called from the
-   tight dot$write path, so keep this to field reads and .append."
+  "Append t to writer w. On the JVM a StringWriter appends to the
+   StringBuilder in `under` with no atom deref."
   [w t]
-  (let [s (if (string? t) t (str t))
+  (if-let [sb (string-builder-under w)]
+    (do (.append ^StringBuilder sb (if (string? t) t (str t))) nil)
+    (let [s (if (string? t) t (str t))
         a (writer-state-atom w)
         st @a]
     (when (:closed? st)
@@ -1097,7 +1120,7 @@
                   (.append ^StringBuilder buf s)
                   (swap! a update :text text-buf-append s)))
          :default (swap! a update :text text-buf-append s)))
-    nil))
+    nil)))
 
 (defn sink-writer
   "A Writer (class java.io.PrintWriter) -- clojure.core/PrintWriter-on's
@@ -1109,19 +1132,80 @@
   ([f close-f]
    (value ::sink (atom {:sink f :close close-f :buf (new-text-buf) :closed? false}))))
 
-(defn written-text [w]
-  (let [st @(state-of w)]
-    (if (:out st)
-      (utf8-decode (output-bytes (:out st)))
-      (text-buf-str (:text st)))))
+(defn written-text
+  "The writer's accumulated text. On the JVM a StringWriter's buffer is
+   `.toString` of the StringBuilder on the record, no atom deref."
+  [w]
+  (if-let [sb (string-builder-under w)]
+    (.toString ^StringBuilder sb)
+    (let [st @(writer-state-atom w)]
+      (if (:out st)
+        (utf8-decode (output-bytes (:out st)))
+        (let [buf (:text st)]
+          #?(:clj (if (instance? StringBuilder buf)
+                    (.toString ^StringBuilder buf)
+                    (text-buf-str buf))
+             :default (text-buf-str buf)))))))
 
 (defn writer-string
   "Object.toString of a layer writer: a StringWriter's text, else the
    class's name and an identity hash, as the JVM's."
   [w]
-  (if (is? ::string-writer w)
-    (written-text w)
-    (str (class-token w) "@" #?(:jolt (hash w) :cljw (hash w) :clj (Integer/toHexString (System/identityHashCode w)) :default (hash w)))))
+  (if-let [sb (string-builder-under w)]
+    (.toString ^StringBuilder sb)
+    (if (is? ::string-writer w)
+      (written-text w)
+      (str (class-token w) "@" #?(:jolt (hash w) :cljw (hash w) :clj (Integer/toHexString (System/identityHashCode w)) :default (hash w))))))
+
+(defn write-printed-string!
+  "print-method String without a per-char shim hop. The loop is a host
+   tight loop (no rewritten .charAt / .append, no char-escape-string
+   map lookup). Escapes are stock core_print's seven: \\n \\t \\r \\\" \\\\ \\f \\b.
+   readably? is (or *print-dup* *print-readably*)."
+  [w s readably?]
+  #?(:clj
+     (let [s (if (instance? String s) s (str s))]
+       (if-not readably?
+         (append-text! w s)
+         (if-let [sb (string-builder-under w)]
+           (let [n (.length ^String s)]
+             (.append ^StringBuilder sb \")
+             (loop [i 0]
+               (when (< i n)
+                 (let [c (.charAt ^String s i)]
+                   (case (int c)
+                     10 (.append ^StringBuilder sb "\\n")
+                     9  (.append ^StringBuilder sb "\\t")
+                     13 (.append ^StringBuilder sb "\\r")
+                     34 (.append ^StringBuilder sb "\\\"")
+                     92 (.append ^StringBuilder sb "\\\\")
+                     12 (.append ^StringBuilder sb "\\f")
+                     8  (.append ^StringBuilder sb "\\b")
+                     (.append ^StringBuilder sb c)))
+                 (recur (inc i))))
+             (.append ^StringBuilder sb \"))
+           (append-text!
+            w
+            (let [n (.length ^String s)
+                  b (StringBuilder. (+ n 2))]
+              (.append b \")
+              (loop [i 0]
+                (when (< i n)
+                  (let [c (.charAt ^String s i)]
+                    (case (int c)
+                      10 (.append b "\\n")
+                      9  (.append b "\\t")
+                      13 (.append b "\\r")
+                      34 (.append b "\\\"")
+                      92 (.append b "\\\\")
+                      12 (.append b "\\f")
+                      8  (.append b "\\b")
+                      (.append b c)))
+                  (recur (inc i))))
+              (.append b \")
+              (.toString b))))))
+     :default (append-text! w (if readably? (str "\"" s "\"") (str s))))
+  nil)
 
 (defn flush-writer! [w]
   (let [st @(state-of w)]

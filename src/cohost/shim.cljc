@@ -4781,6 +4781,34 @@
   [x]
   (io/writer-value? x))
 
+(defn- append-dot
+  "dot$append: .append on an io-layer writer appends directly and returns
+   the writer (Writer.append's contract). Other targets use the generic
+   host-object? / invoke-member / -append dispatcher."
+  [fallback]
+  (fn
+    ([x]
+     (when (nil? x) (throw (npe-on "append")))
+     (fallback x))
+    ([x a]
+     (when (nil? x) (throw (npe-on "append")))
+     (if (layer-writer? x)
+       (do (io/append-text! x (if (string? a) a (if (nil? a) "null" (str a)))) x)
+       (fallback x a)))
+    ([x a b]
+     (when (nil? x) (throw (npe-on "append")))
+     (fallback x a b))
+    ([x a b c]
+     (when (nil? x) (throw (npe-on "append")))
+     (if (layer-writer? x)
+       (let [t (if (nil? a) "null" (str a))]
+         (io/append-text! x (subs t b c))
+         x)
+       (fallback x a b c)))
+    ([x a b c & more]
+     (when (nil? x) (throw (npe-on "append")))
+     (apply fallback x a b c more))))
+
 (defn- write-dot
   "dot$write: .write on an io-layer writer appends directly. Other targets
    use the generic host-object? / invoke-member / -write dispatcher."
@@ -4842,6 +4870,13 @@
                   (fallback x)))]
         #?(:cljs (gobj/set js/cohost.shim (munge "dot$toString") f)
            :default (host/intern! 'cohost.shim 'dot$toString f))))
+    ;; print-method String and print-prefix-map use .append (a char or a
+    ;; CharSequence) and return the writer. The generic dot still paid
+    ;; host-object? on every call; route layer writers straight to append-text!.
+    (when (some #{'dot$append} installed)
+      (let [f (append-dot (dot "append" -append))]
+        #?(:cljs (gobj/set js/cohost.shim (munge "dot$append") f)
+           :default (host/intern! 'cohost.shim 'dot$append f))))
     installed))
 
 ;; ---------------------------------------------------------------------------

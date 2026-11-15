@@ -1010,6 +1010,57 @@
                                        ([a b c d] (cohost.shim/core-read+string a b c d))))]
    ['read-line '(def read-line (fn [] (cohost.io/read-line! *in*)))]])
 
+;; F1 print-loop: pr-on of a keyword/long/boolean/nil was ~3–4× native
+;; because each call went through the MultiFn even though those methods
+;; are (.write w (str x)). Strings paid a per-char shim .charAt/.append.
+;; Simple maps/vectors (no *print-level*/length/namespace-maps/meta) skip
+;; print-method and print-sequential. Installed after core_print, evaluated
+;; in cohost.core so *print-dup* and .write are the booted/shimmed ones.
+;; Records, print-dup, and everything else still go to print-method.
+(def ^:private fast-pr-on-form
+  '(def pr-on
+     (fn [x w]
+       (if *print-dup*
+         (print-dup x w)
+         (cond (instance? clojure.lang.Keyword x) (do (.write w (str x)) nil)
+               (instance? Long x) (do (.write w (str x)) nil)
+               (nil? x) (do (.write w "nil") nil)
+               (instance? Boolean x) (do (.write w (if x "true" "false")) nil)
+               (instance? String x)
+               (do (cohost.io/write-printed-string! w x (boolean (or *print-dup* *print-readably*))) nil)
+               (and (instance? clojure.lang.IPersistentMap x)
+                    (not (instance? clojure.lang.IRecord x))
+                    (not *print-level*)
+                    (not *print-length*)
+                    (not *print-namespace-maps*)
+                    (not (and (meta x) (or *print-dup* (and *print-meta* *print-readably*)))))
+               (do (.write w "{")
+                   (loop [xs (seq x)]
+                     (when xs
+                       (let [e (first xs) n (next xs)]
+                         (pr-on (key e) w)
+                         (.write w " ")
+                         (pr-on (val e) w)
+                         (when n (.write w ", "))
+                         (recur n))))
+                   (.write w "}")
+                   nil)
+               (and (instance? clojure.lang.IPersistentVector x)
+                    (not *print-level*)
+                    (not *print-length*)
+                    (not (and (meta x) (or *print-dup* (and *print-meta* *print-readably*)))))
+               (do (.write w "[")
+                   (loop [xs (seq x)]
+                     (when xs
+                       (pr-on (first xs) w)
+                       (when (next xs) (.write w " "))
+                       (recur (next xs))))
+                   (.write w "]")
+                   nil)
+               :else (print-method x w)))
+       nil)))
+
+
 (defn install-io-layer!
   "Give cohost.core's *out*, *err* and *in* their roots on a host with
    :io-handles: a writer over the host's out / err leaf, and stdin's reader
@@ -1383,6 +1434,9 @@
      (when (host/io-handles)
        (boot-print-file! ctx report (str root "/clojure/core_print.clj")))
      (install-io-layer! ctx report)
+     (when (host/io-handles)
+       (host/with-ns core-ns
+         (fn [] (eval-form! ctx report fast-pr-on-form 'pr-on :replaced))))
      (scan-macros! ctx)
      (install-host-reducers!)
      (install-eduction-reduce!)
