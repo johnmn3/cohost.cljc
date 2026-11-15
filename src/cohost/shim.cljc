@@ -4735,7 +4735,13 @@
          (if (identical? hit absent)
            ;; (a URL / URI of Eve's HTTP layer may be a host record, cohost.http's
            ;; own type: the shim's members answer for it)
-           (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type-of x))) (not (http/value? x))))]
+           ;; io layer records are defrecords (IRecord), so user-type? is
+           ;; true of them; they are still the shim's values, like http's.
+           ;; Without this exclusion every (.write w s) paid invoke-member
+           ;; (a reflected miss) before falling through to -write (F1 ARM6:
+           ;; invoke_member on 24% of samples; write-str 18x native).
+           (let [r (boolean (and (host/user-type? x) (not (contains? shim-types (type-of x)))
+                                 (not (http/value? x)) (not (io/value? x))))]
              (swap! host-object-types assoc t r)
              r)
            hit))))
@@ -4770,6 +4776,64 @@
   #?(:cljs (gobj/get js/cohost.shim (munge nm))
      :default (some-> (get vars (symbol nm)) host/var-root)))
 
+(defn- layer-writer?
+  "An io-layer Writer (StringWriter, BufferedWriter, sink, host-writer)."
+  [x]
+  (io/writer-value? x))
+
+(defn- append-dot
+  "dot$append: .append on an io-layer writer appends directly and returns
+   the writer (Writer.append's contract). Other targets use the generic
+   host-object? / invoke-member / -append dispatcher."
+  [fallback]
+  (fn
+    ([x]
+     (when (nil? x) (throw (npe-on "append")))
+     (fallback x))
+    ([x a]
+     (when (nil? x) (throw (npe-on "append")))
+     (if (layer-writer? x)
+       (do (io/append-text! x (if (string? a) a (if (nil? a) "null" (str a)))) x)
+       (fallback x a)))
+    ([x a b]
+     (when (nil? x) (throw (npe-on "append")))
+     (fallback x a b))
+    ([x a b c]
+     (when (nil? x) (throw (npe-on "append")))
+     (if (layer-writer? x)
+       (let [t (if (nil? a) "null" (str a))]
+         (io/append-text! x (subs t b c))
+         x)
+       (fallback x a b c)))
+    ([x a b c & more]
+     (when (nil? x) (throw (npe-on "append")))
+     (apply fallback x a b c more))))
+
+(defn- write-dot
+  "dot$write: .write on an io-layer writer appends directly. Other targets
+   use the generic host-object? / invoke-member / -write dispatcher."
+  [fallback]
+  (fn
+    ([x]
+     (when (nil? x) (throw (npe-on "write")))
+     (fallback x))
+    ([x a]
+     (when (nil? x) (throw (npe-on "write")))
+     (if (layer-writer? x)
+       (do (io/append-text! x (if (string? a) a (written-as-text a nil))) nil)
+       (fallback x a)))
+    ([x a b]
+     (when (nil? x) (throw (npe-on "write")))
+     (fallback x a b))
+    ([x a b c]
+     (when (nil? x) (throw (npe-on "write")))
+     (if (layer-writer? x)
+       (do (io/append-text! x (written-as-text a [b c])) nil)
+       (fallback x a b c)))
+    ([x a b c & more]
+     (when (nil? x) (throw (npe-on "write")))
+     (apply fallback x a b c more))))
+
 (defn install-dots!
   "For each instance method -m the shim has (method-syms, symbols): dot$m,
    the dispatcher (dot \"m\" -m), built once -- the codemod's (.m x args)
@@ -4777,17 +4841,43 @@
    call. A shim var (on ClojureScript, the property of the namespace object
    its shim-ref names). -> the names installed."
   [method-syms]
-  (let [vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))]
-    (vec (keep (fn [s]
-                 (let [nm (str s)
-                       f (shim-value vars nm)]
-                   (when (fn? f)
-                     (let [d (str "dot$" (subs nm 1))
-                           v (dot (subs nm 1) f)]
-                       #?(:cljs (gobj/set js/cohost.shim (munge d) v)
-                          :default (host/intern! 'cohost.shim (symbol d) v))
-                       (symbol d)))))
-               method-syms))))
+  (let [vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))
+        installed (vec (keep (fn [s]
+                               (let [nm (str s)
+                                     f (shim-value vars nm)]
+                                 (when (fn? f)
+                                   (let [d (str "dot$" (subs nm 1))
+                                         v (dot (subs nm 1) f)]
+                                     #?(:cljs (gobj/set js/cohost.shim (munge d) v)
+                                        :default (host/intern! 'cohost.shim (symbol d) v))
+                                     (symbol d)))))
+                             method-syms))]
+    ;; F1 print-loop: overwrite dot$write with a direct layer path so a tight
+    ;; prn loop does not hop host-object? / invoke-member / http-member.
+    (when (some #{'dot$write} installed)
+      (let [f (write-dot (dot "write" -write))]
+        #?(:cljs (gobj/set js/cohost.shim (munge "dot$write") f)
+           :default (host/intern! 'cohost.shim 'dot$write f))))
+    ;; with-out-str ends in (str s#). Before the host-object? exclusion that
+    ;; call was a reflected .toString of the record; now it must hit the
+    ;; shim's written-text without a generic dot hop.
+    (when (some #{'dot$toString} installed)
+      (let [fallback (dot "toString" -toString)
+            f (fn [x]
+                (when (nil? x) (throw (npe-on "toString")))
+                (if (layer-writer? x)
+                  (io/writer-string x)
+                  (fallback x)))]
+        #?(:cljs (gobj/set js/cohost.shim (munge "dot$toString") f)
+           :default (host/intern! 'cohost.shim 'dot$toString f))))
+    ;; print-method String and print-prefix-map use .append (a char or a
+    ;; CharSequence) and return the writer. The generic dot still paid
+    ;; host-object? on every call; route layer writers straight to append-text!.
+    (when (some #{'dot$append} installed)
+      (let [f (append-dot (dot "append" -append))]
+        #?(:cljs (gobj/set js/cohost.shim (munge "dot$append") f)
+           :default (host/intern! 'cohost.shim 'dot$append f))))
+    installed))
 
 ;; ---------------------------------------------------------------------------
 ;; java.util.Formatter, where the host's own format is not the JVM's
