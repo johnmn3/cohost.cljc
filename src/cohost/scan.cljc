@@ -163,6 +163,15 @@
   [s]
   (apply str (map (fn [c] (if (or (= c \newline) (= c \return)) c \space)) s)))
 
+;; Slices of the source are cut from its CHARACTER vector, never with subs:
+;; positions are found on (vec src), and jank's subs is byte-indexed (its
+;; count/nth/subs walk UTF-8 bytes while seq walks characters), so after the
+;; first multibyte character a subs slice lands short and the blanked text
+;; drifts -- measured: eve/host.cljc (a "§" and "—" before its top-level
+;; #?(:cljs ...)) read on jank as an endless run of empty forms. Same text on
+;; every other host.
+(defn- cut [cs a b] (apply str (subvec cs a b)))
+
 (defn- rank-of [ranking k]
   (loop [r (seq ranking) n 0]
     (cond (nil? r) nil (= k (first r)) n :else (recur (next r) (inc n)))))
@@ -184,23 +193,23 @@
                  (let [fe (token-end cs k)
                        b (skip-ws cs fe)
                        be (form-end cs b)
-                       r (rank-of ranking (subs src k fe))]
+                       r (rank-of ranking (cut cs k fe))]
                    (recur (skip-ws cs be)
-                          (if (and r (or (nil? best) (< r (first best)))) [r (subs src k fe) b be] best)))))]
+                          (if (and r (or (nil? best) (< r (first best)))) [r (cut cs k fe) b be] best)))))]
     (if best
       (let [[_ k b be] best
             [s e] (if splice? [(inc b) (dec be)] [b be])
-            raw (subs src s e)
+            raw (cut cs s e)
             route (when (= k ":clj") @clj-arm-route)]
         (if route
-          [(str (blank (subs src i s)) (route raw) (blank (subs src e end)))
+          [(str (blank (cut cs i s)) (route raw) (blank (cut cs e end)))
            end
            [[s e :clj]]]
           (let [[text spans] (resolve* raw ranking)]
-            [(str (blank (subs src i s)) text (blank (subs src e end)))
+            [(str (blank (cut cs i s)) text (blank (cut cs e end)))
              end
              (conj (mapv (fn [[a z k']] [(+ a s) (+ z s) k']) spans) [s e (keyword (subs k 1))])])))
-      [(blank (subs src i end)) end []])))
+      [(blank (cut cs i end)) end []])))
 
 (defn- resolve*
   "-> [text spans]; ranking holds the keys as text (\":clj\")."
@@ -208,7 +217,7 @@
   (let [cs (vec src) n (count cs)]
     (loop [i 0 start 0 out [] spans []]
       (if (>= i n)
-        [(if (empty? out) src (apply str (conj out (subs src start n)))) spans]
+        [(if (empty? out) src (apply str (conj out (cut cs start n)))) spans]
         (let [c (nth cs i)]
           (cond
             (or (ws? c) (contains? #{\( \) \[ \] \{ \} \' \` \~ \@ \^} c)) (recur (inc i) start out spans)
@@ -218,7 +227,7 @@
             (= c \#) (let [d (at cs (inc i))]
                        (cond (= d \") (recur (string-end cs (inc i)) start out spans)
                              (= d \?) (let [[text end sp] (branch src cs i ranking)]
-                                        (recur end end (conj out (subs src start i) text) (into spans sp)))
+                                        (recur end end (conj out (cut cs start i) text) (into spans sp)))
                              :else (recur (inc i) start out spans)))
             :else (recur (token-end cs i) start out spans)))))))
 
