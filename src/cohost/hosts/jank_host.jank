@@ -2007,6 +2007,39 @@ namespace cohost_io {
                      [(if (case-has-recur? d) d (list 'clojure.core/identity d))])))
     (apply jank-case-root &form &env e clauses)))
 
+;; jank 0.1-noble's whole stubs: clojure.core names whose definition is only
+;; (throw (ex-info "TODO: port ..." {})) (core.jank, measured). A stub is no
+;; host implementation: the shim's (host-fn 'x fallback) lookups take the
+;; host's fn over their own fallback, so a stub there throws where the
+;; fallback works -- measured: Eve's eve.hamt-util/xxh3-secret died "TODO: port
+;; byte" through RT-byteCast = (host-fn 'byte ...), and every Eve namespace
+;; after it with it. :resolve-core hides them, except the names the boot
+;; itself takes from the host (policy/host-names), which its own fills,
+;; extras and :core-lacks already serve.
+(def ^:private jank-core-stubs
+  '#{unchecked-inc-int unchecked-dec-int unchecked-dec unchecked-negate-int
+    unchecked-negate unchecked-add-int unchecked-add unchecked-subtract-int
+    unchecked-subtract unchecked-multiply-int unchecked-multiply
+    unchecked-divide-int unchecked-remainder-int rationalize instance? cast
+    sorted-map-by find-keyword rseq agent set-agent-send-executor!
+    set-agent-send-off-executor! send-via send send-off release-pending-sends
+    agent-error restart-agent set-error-handler! error-handler
+    set-error-mode! error-mode clear-agent-errors shutdown-agents ref
+    deref-future commute alter ref-set ref-history-count ref-min-history
+    ref-max-history ensure sync io! line-seq await await1 await-for
+    into-array class short byte unchecked-byte unchecked-short unchecked-char
+    unchecked-int unchecked-long unchecked-float unchecked-double newline
+    flush read-line memfn make-array to-array-2d create-struct struct-map
+    struct accessor load-reader load-string ns-imports ns-refers ns-aliases
+    var-set seq-to-map-for-destructuring elide-top-frames file-seq
+    special-symbol? with-precision mk-bound-fn subseq rsubseq
+    mix-collection-hash hash-ordered-coll class? is-annotation?
+    is-runtime-annotation? descriptor add-annotation bases resultset-seq
+    iterator-seq enumeration-seq with-loading-context serialized-require
+    requiring-resolve reversible? indexed? future? future-done?
+    stream-reduce! stream-seq! stream-into! when-class pmap iteration
+    reader-conditional? reader-conditional})
+
 (def ^:private type-core-extras
   {'deftype deftype-macro
    'defrecord defrecord-macro
@@ -2694,7 +2727,10 @@ namespace cohost_err {
    ;; unchecked-dec: jank's own is a TODO stub that throws, and the
    ;; shim's Numbers/unchecked_dec prefers the host fn over its dec
    ;; fallback -- report it absent so the fallback runs
-   :resolve-core (fn [sym] (when-not (= 'unchecked-dec sym) (get (ns-publics 'clojure.core) sym)))
+   :resolve-core (fn [sym] (when-not (or (= 'unchecked-dec sym)
+                                         (and (contains? jank-core-stubs sym)
+                                              (not (contains? policy/host-names sym))))
+                             (get (ns-publics 'clojure.core) sym)))
    :mark-macro! (fn [v] (alter-meta! v assoc :macro true) v)
    :expand-macro expand-macro
    ;; its compiler honors a var's :inline, and core.clj's write raw JVM interop:
