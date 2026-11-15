@@ -685,7 +685,7 @@
   [{:keys [shim-names catch-all passthrough? core-ns shim-ref loop-variadic-recur? loop-int-init native-int-aliases def-meta strip-inline?
            current-ns imports renames host-type var-form per-arity-impls? python-methods? move-methods? cohost-types? host-method
            record? protocol-var? interned? host-aliases inline-fn resolve-head stock-name rewritten-macro?
-           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro syntax-quote-source? loop-rebind-shadow? def-tag?]
+           instance-fn missing-dot try-all named-fn*? special-forms binding-style vector-rest-args? plain-symbol expand-macro expand-spec-heads? syntax-quote-source? loop-rebind-shadow? def-tag?]
     :or {shim-names #{} catch-all 'Exception passthrough? false core-ns "cohost.core"}}]
   {:plain-symbol (or plain-symbol identity)
    :def-tag? def-tag?
@@ -720,6 +720,7 @@
    ;; form itself when var holds none): where the host's compiler hands a
    ;; macro no &env (let-go), the codemod expands it in place
    :expand-macro expand-macro
+   :expand-spec-heads? (boolean expand-spec-heads?)
    :inline-fn inline-fn
    ;; try-all: (fn [thunk]) -> (thunk), or nil when it throws anything: the
    ;; host's catch-all (cohost.adapter/try-all), for an inline expansion that
