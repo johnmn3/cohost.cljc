@@ -1062,14 +1062,41 @@
               (swap! state update k text-buf-append s))
        :default (swap! state update k text-buf-append s))))
 
-(defn append-text! [w t]
-  (let [st @(state-of w)]
+(defn- writer-state-atom
+  "The writer's state atom. On the JVM a type-hinted field read avoids
+   Keyword valAt on the record (WriterValue.valAt was a measurable leaf
+   in the F1 ARM6 sample)."
+  [w]
+  #?(:clj (cond (instance? WriterValue w) (.state ^WriterValue w)
+                (instance? BufferedWriterValue w) (.state ^BufferedWriterValue w)
+                :else (state-of w))
+     :default (state-of w)))
+
+(defn append-text!
+  "Append t to writer w. On the JVM the StringBuilder is mutated in place
+   from the already-deref'd state (no second swap!/deref). Called from the
+   tight dot$write path, so keep this to field reads and .append."
+  [w t]
+  (let [s (if (string? t) t (str t))
+        a (writer-state-atom w)
+        st @a]
     (when (:closed? st)
       (throw (host/ex* 'java.io.IOException "Stream closed")))
-    (cond (= ::sink (:cohost/kind w)) (append-buf-in-place! (state-of w) :buf t)
-          (:handle st) (host/io-write! ((:handle st)) (str t))
-          (:out st) (append-bytes! (:out st) (utf8-encode (str t)))
-          :else (append-buf-in-place! (state-of w) :text t))
+    (cond
+      (= ::sink (:cohost/kind w))
+      #?(:clj (let [buf (:buf st)]
+                (if (instance? StringBuilder buf)
+                  (.append ^StringBuilder buf s)
+                  (swap! a update :buf text-buf-append s)))
+         :default (swap! a update :buf text-buf-append s))
+      (:handle st) (host/io-write! ((:handle st)) s)
+      (:out st) (append-bytes! (:out st) (utf8-encode s))
+      :else
+      #?(:clj (let [buf (:text st)]
+                (if (instance? StringBuilder buf)
+                  (.append ^StringBuilder buf s)
+                  (swap! a update :text text-buf-append s)))
+         :default (swap! a update :text text-buf-append s)))
     nil))
 
 (defn sink-writer
