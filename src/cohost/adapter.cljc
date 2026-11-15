@@ -478,6 +478,7 @@ namespace cohost_err {
     :edn-read-string (unsupported :edn-read-string)
     :macro-def-style :meta
     :macro-wrap-style :root
+    :expand-spec-heads? nil
     :rewrite-output-ref 'cohost.boot/rewrite-output
     :code-form nil
     :snapshot-emit nil
@@ -645,6 +646,7 @@ namespace cohost_err {
 (defn catch-all-sym [] (cap :catch-all))
 (defn macro-def-style [] (cap :macro-def-style))
 (defn macro-wrap-style [] (cap :macro-wrap-style))
+(defn expand-spec-heads? [] (boolean (cap :expand-spec-heads?)))
 (defn rewrite-output-ref [] (cap :rewrite-output-ref))
 (defn code-form "A macro's rewritten expansion as code the host takes (adapter :code-form)." [form]
   (if-let [f (get @installed :code-form)] (f form) form))
