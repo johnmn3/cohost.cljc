@@ -491,9 +491,18 @@
         ;; namespaces also compile in the run, from source
         proj (when (and (:snapshot? l) (not (jank-introspect?)))
                ((resolve 'jank-project-launch) repo cwd roots main-ns (:module-path l) (:env l)))
-        merged (merge l proj (when (and (:launcher l) proj) {:module-paths (:project-paths proj)}))]
+        merged (merge l proj (when (and (:launcher l) proj) {:module-paths (:project-paths proj)}))
+        ;; the project's roots on jank's OWN module path too: a root's .jank
+        ;; files (Eve's per-seat completion and adapters) are the host's to
+        ;; load (cohost.scan/host-native-keys), through jank's require, as
+        ;; bb boot:lpy puts Eve's :lpy row on basilisp's path. The compiled
+        ;; launcher adds them at run time (:module-paths).
+        merged (if (seq roots)
+                 (cond-> (update merged :module-paths (fn [ps] (vec (concat ps roots))))
+                   (:module-path merged) (update :module-path str ":" (str/join ":" roots)))
+                 merged)]
     (if (jank-introspect?)
-      (assoc merged :module-path (str (jank-aot-dir!) ":" repo "/src")
+      (assoc merged :module-path (str (jank-aot-dir!) ":" repo "/src" (when (seq roots) (str ":" (str/join ":" roots))))
                     :snapshot? false)
       merged)))
 

@@ -133,8 +133,24 @@
    (foo.clj, foo.cljc, ...) loads the one whose key ranks first."
   {:clj ".clj" :cljs ".cljs" :cljr ".cljr" :cljd ".cljd" :lpy ".lpy" :jank ".jank" :bb ".bb" :default ".cljc"})
 
-(defn source-exts "ranking -> the extensions to look for, best first." [ranking]
-  (vec (keep key-exts ranking)))
+(def host-native-keys
+  "Keys whose extension names the host's OWN source, not portable Clojure: a
+   .jank file is jank with C++ interop, as a .lpy file is basilisp's or a
+   .clje file clojerl's. The loader never boots such a file -- the host's own
+   require loads it (load-lib!'s fallback), so it completes the HOST's core,
+   never cohost.core: Eve's per-seat completion (eve.host-completion) and
+   adapters load that way on every seat. The key still ranks for #? arms of
+   a booted .cljc. (jank ranked :jank first from the Nov 7 collation, which
+   made .jank files bootable as a side effect: Eve's jank completion was
+   booted and its ~60 clojure.core re-roots landed on cohost.core --
+   measured: every case then died and concat spun.)"
+  #{:jank})
+
+(defn source-exts
+  "ranking -> the extensions the loader boots, best first (a host-native key's
+   extension is the host's to load, see host-native-keys)."
+  [ranking]
+  (vec (keep key-exts (remove host-native-keys ranking))))
 
 (defn ext-key "a path -> the key its extension names (:default for .cljc), or nil." [path]
   (some (fn [[k ext]] (let [n (count path) e (count ext)]
