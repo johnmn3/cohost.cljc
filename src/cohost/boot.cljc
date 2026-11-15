@@ -467,6 +467,7 @@
                 :current-ns host/current-ns
                 :host-type (host/host-type-fn)
                 :expand-macro (host/expand-macro-fn)
+                :expand-spec-heads? (host/expand-spec-heads?)
                 :per-arity-impls? (= :per-arity (host/protocol-impl-style))
                 :python-methods? (= :python (host/type-method-style))
                 :move-methods? (= :protocols (host/type-method-style))
