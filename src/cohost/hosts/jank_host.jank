@@ -1983,11 +1983,36 @@ namespace cohost_io {
     (throw (ex-info (str "set!: on jank only a var target is supported, got " (pr-str target))
                     {:target target}))))
 
+;; case: jank's case* stores each branch's value boxed but not the default's,
+;; so a literal default (an integer, keyword, string, boolean) fails C++
+;; compilation natively -- measured on a cohost jank body: (case x 1 :a 2)
+;; died "no viable overloaded '='" (core.jank:4527) and took the process
+;; down. Eve's jank completion boxes the default for plain jank
+;; (eve.host-completion's case re-root, its "upstream defect 19"); that
+;; completion now completes jank's own core and cohost.core keeps a copy of
+;; jank's case taken before it, so the booted core boxes the default here,
+;; the same way: through clojure.core/identity, unless it holds a recur
+;; (identity would take the recur out of tail position).
+(def ^:private jank-case-root (var-get #'clojure.core/case))
+(defn- case-has-recur? [form]
+  (cond (= 'recur form) true
+        (or (seq? form) (vector? form)) (boolean (some case-has-recur? form))
+        (map? form) (boolean (some case-has-recur? (concat (keys form) (vals form))))
+        :else false))
+(defn case-macro [&form &env e & clauses]
+  (if (odd? (count clauses))
+    (let [d (last clauses)]
+      (apply jank-case-root &form &env e
+             (concat (butlast clauses)
+                     [(if (case-has-recur? d) d (list 'clojure.core/identity d))])))
+    (apply jank-case-root &form &env e clauses)))
+
 (def ^:private type-core-extras
   {'deftype deftype-macro
    'defrecord defrecord-macro
    'defprotocol defprotocol-macro
    'reify reify-macro
+   'case case-macro
    'extend-type extend-type-macro
    'extend-protocol extend-protocol-macro
    ;; stock extend takes any number of protocol / method-map pairs
@@ -2049,7 +2074,7 @@ namespace cohost_io {
 
 (def ^:private type-macro-names
   (into #{} (filter (fn [s] (contains? type-core-extras s))
-                    ['deftype 'defrecord 'defprotocol 'reify 'extend-type 'extend-protocol 'sync 'dosync])))
+                    ['deftype 'defrecord 'defprotocol 'reify 'extend-type 'extend-protocol 'sync 'dosync 'case])))
 
 ;; jank's own sequence is a TODO stub: a lazy pull-through transducer seq.
 ;; The reducing fn runs over a fresh vector per input, so the vector holds
@@ -2621,6 +2646,10 @@ namespace cohost_err {
               (let [v (intern ns-sym sym val)]
                 (when (and (= 'cohost.core ns-sym) (contains? type-macro-names sym))
                   (alter-meta! v assoc :macro true))
+                ;; case expands to jank's case* as the host's copy did: no
+                ;; codemod pass over its output (:cohost/wrapped, as before)
+                (when (and (= 'cohost.core ns-sym) (= 'case sym))
+                  (alter-meta! v assoc :cohost/wrapped true))
                 v))
    :user-type? (fn [x] (cohost-object? x))
    :instance-desc instance-desc
