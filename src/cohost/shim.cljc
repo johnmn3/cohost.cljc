@@ -528,7 +528,12 @@
     (and (map? x) (identical? :cohost.shim/classloader (:cohost/kind x))) 'clojure.lang.DynamicClassLoader
     (io/inet-address? x) 'java.net.InetAddress
     (proxy-value? x) (or (first (filter (fn [t] (contains? token-ancestors t)) (:supers x)))
-                         'java.lang.Object)
+                         ;; (symbol ...) not a quote: squint's graph
+                         ;; loader resolves a quoted class symbol in
+                         ;; this position as a class and fails the
+                         ;; load; the :else branch below spells it
+                         ;; the same way.
+                         (symbol "java.lang.Object"))
     (io/value? x) (io/class-token x)
     (host-record? x) (type-of x)
     ;; a layer atom (unit 5) IS a clojure.lang.Atom through the
@@ -1930,7 +1935,12 @@
   "clojure.core/set-field of a proxy: assoc the field into the map
    behind the proxy's deref method's ref (@this), as stock's."
   (fn [p f v]
-    (alter (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v)
+    ;; squint: alter is a booted-core var, not a host-realm one, and
+    ;; its analyzer resolves no alter here; a Ref on this layer is
+    ;; an atom (see -alter below), so the write is the swap! -alter
+    ;; performs, spelled directly.
+    #?(:squint (swap! (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v)
+       :default (alter (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v))
     v))
 
 (defn- strip-ns [named]
