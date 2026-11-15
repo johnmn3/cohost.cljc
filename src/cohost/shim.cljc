@@ -4623,6 +4623,13 @@
                 ([sb x] (cond (io/writer-value? sb)
                               (do (io/append-text! sb (if (nil? x) "null" (str x))) sb)
                               (h-sb? sb) (h-sb-append! sb (if (nil? x) "null" x))
+                              ;; a layer proxy Writer (pprint's pretty-writer
+                              ;; off the JVM): its append, else Writer.append's
+                              ;; own default, write(String.valueOf(x))
+                              (proxy-value? sb)
+                              (if-let [mf (get (:methods sb) 'append)]
+                                (mf sb x)
+                                (do (-write sb (if (nil? x) "null" (str x))) sb))
                               ;; a host Writer / Appendable (the JVM seat's
                               ;; proxy pretty-writer): its own append
                               :else (let [r (if (nil? sb) absent (host/invoke-member sb "append" [(if (nil? x) "null" x)] absent))]

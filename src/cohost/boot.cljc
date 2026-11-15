@@ -1202,7 +1202,10 @@
     ;; (requiring-resolve 'clojure.pprint/pprint)) loads the host's own
     ;; copy, which prints to the host's *out* -- measured on the JVM seat:
     ;; the report leaked to stdout and with-out-str captured ""
-    (when (or (contains? #{'load 'read 'read+string 'Throwable->map 'requiring-resolve} nm) (not (host/interned-var core-ns nm)))
+    ;; (scoped to a host with :io-handles -- the seats F1 measured)
+    (when (or (contains? #{'load 'read 'read+string 'Throwable->map} nm)
+              (and (= 'requiring-resolve nm) (some? (host/io-handles)))
+              (not (host/interned-var core-ns nm)))
       (host/intern! core-ns nm v)
       (record! report :replaced {:name nm :reason :shim-layer})))
   (doseq [[nm f] shim/core-fill-macros]
