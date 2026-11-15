@@ -995,7 +995,22 @@
                              (memory/make-vector (if arr (first xs) xs))
                              (if arr (vec (first xs)) (vec xs))))))
 (def RT-toArray to-array*)
-(def RT-seqToTypedArray (fn ([s] (to-array* s)) ([_t s] (to-array* s))))
+;; seqToTypedArray with a component type: the host's own typed array where
+;; the host makes one and the type names a host class its elements are (the JVM seat: a varargs call such as stock main's
+;; Files/createTempFile ... (into-array FileAttribute []) needs the
+;; FileAttribute[] its signature names; an Object[] there is a
+;; ClassCastException), else the shim's array
+(def RT-seqToTypedArray
+  (let [typed (host-fn 'into-array nil)]
+    (fn ([s] (to-array* s))
+        ([t s] (let [c (and typed (some? t)
+                            (host/try-all (fn [] (host/host-class t)) (fn [_] nil)))]
+                 ;; the layer's stand-ins (a StackTraceElement frame vector,
+                 ;; an io File) are no host instance of their token's
+                 ;; class: such a seq keeps the shim's array
+                 (if (and c (every? (fn [x] (or (nil? x) (instance? c x))) s))
+                   (typed c s)
+                   (to-array* s)))))))
 (def RT-object_array (fn [n-or-seq] (if (number? n-or-seq) (to-array* (repeat n-or-seq nil)) (to-array* n-or-seq))))
 (def RT-alength #?(:phel count :default (host-fn 'alength count))) ; (Phel's takes a PHP array)
 (def RT-aclone #?(:phel (fn [a] (to-array* (seq a))) :default (host-fn 'aclone (fn [a] (to-array (seq a))))))
@@ -1860,22 +1875,33 @@
   [(symbol (str (display-class-name (nth frame 0)))) (symbol (str (nth frame 1)))
    (nth frame 2) (nth frame 3)])
 
+;; Throwable->map, stock's shape (core_print.clj) over the adapter's
+;; trace: :via outermost first, :trace and :cause and :data the ROOT
+;; cause's, :phase the outermost's ex-data :clojure.error/phase. Frames
+;; are the adapter's (construction machinery elided) under their display
+;; names, so stock main's ex-triage, which skips clojure.lang.* and the
+;; core namespaces' frames, finds the user's frame: a booted
+;; cohost.core$ex_info frame reads clojure.core$ex_info, as on the JVM.
 (def core-Throwable->map
   (fn [t]
     (let [chain (loop [e t seen #{} out []]
                   (if (or (nil? e) (contains? seen e))
                     out
                     (recur (host/exception-cause e) (conj seen e) (conj out e))))
-          via (mapv (fn [e]
-                      (let [trace (host/ex-trace e)]
-                        (cond-> {:type (symbol (str (class-of e)))
-                                 :message (host/exception-message e)}
-                          (some? (ex-data e)) (assoc :data (ex-data e))
-                          (seq trace) (assoc :at (ste->vec (first trace))))))
-                    chain)]
-      {:cause (host/exception-message (peek chain))
-       :via via
-       :trace (mapv ste->vec (host/ex-trace t))})))
+          base (fn [e]
+                 (let [trace (host/ex-trace e)
+                       msg (host/exception-message e)]
+                   (cond-> {:type (symbol (str (class-of e)))}
+                     (some? msg) (assoc :message msg)
+                     (some? (ex-data e)) (assoc :data (ex-data e))
+                     (seq trace) (assoc :at (ste->vec (first trace))))))
+          root (peek chain)
+          phase (get (ex-data t) :clojure.error/phase)]
+      (cond-> {:via (mapv base chain)
+               :trace (mapv ste->vec (host/ex-trace root))}
+        (some? (host/exception-message root)) (assoc :cause (host/exception-message root))
+        (some? (ex-data root)) (assoc :data (ex-data root))
+        (some? phase) (assoc :phase phase)))))
 
 (def core-PrintWriter-on
   (fn ([f] (core-PrintWriter-on f nil false))
@@ -2783,12 +2809,17 @@
 (def URLDecoder-decode (fn [s _cs] (url-decode s)))
 
 (defn- as-file-value
-  "A File value from a File value or a path string."
+  "A File value from a File value, a path string, or a host's own file
+   (its getPath: the JVM seat's java.nio Path.toFile, as stock main's
+   report-error makes its report file)."
   [x]
   (cond (io/is? :cohost.io/file x) x
         (string? x) (io/file x)
-        :else (throw (host/ex* 'java.lang.ClassCastException
-                               (cast-message 'java.io.File x)))))
+        :else (let [p (if (nil? x) absent (host/invoke-member x "getPath" [] absent))]
+                (if (string? p)
+                  (io/file p)
+                  (throw (host/ex* 'java.lang.ClassCastException
+                                   (cast-message 'java.io.File x)))))))
 
 (def new-File
   (fn ([p] (cond (io/is? :cohost.io/file p) p

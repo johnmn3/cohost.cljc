@@ -1130,8 +1130,12 @@
     ;; own read (shim/read-dispatch) -- the host's read alone casts the
     ;; layer's LineNumberingPushbackReader (stock main's -e *in*) and
     ;; throws (measured on the JVM seat: ClassCastException
-    ;; cohost.io.BufferedReaderValue -> java.io.PushbackReader)
-    (when (or (contains? #{'load 'read 'read+string} nm) (not (host/interned-var core-ns nm)))
+    ;; cohost.io.BufferedReaderValue -> java.io.PushbackReader).
+    ;; Throwable->map likewise: the host's reads the raw host trace, whose
+    ;; booted frames (cohost.core$..., the adapter's construction frames)
+    ;; stock main's ex-triage cannot skip -- its report then names
+    ;; cohost.adapter/build-defaults$fn instead of the user's fn
+    (when (or (contains? #{'load 'read 'read+string 'Throwable->map} nm) (not (host/interned-var core-ns nm)))
       (host/intern! core-ns nm v)
       (record! report :replaced {:name nm :reason :shim-layer})))
   (doseq [[nm f] shim/core-fill-macros]
