@@ -1102,19 +1102,9 @@
             (when (instance? StringBuilder u) u))
      :default nil))
 
-(defn append-text!
-  "Append t to writer w. On the JVM a StringWriter appends to the
-   StringBuilder in `under` with no atom deref."
+(defn- append-text-slow!
   [w t]
-  (if-let [sb (string-builder-under w)]
-    ;; the .append form sits under :clj: on jank there is no StringBuilder
-    ;; (see lb: "no StringBuilder class and no JVM members") and
-    ;; string-builder-under is nil there, so this branch is never taken —
-    ;; but jank's analyzer rejects the unconditioned member call at boot
-    ;; (kind WITH mini, 2026-11-15). JVM forms unchanged.
-    #?(:clj (do (.append ^StringBuilder sb (if (string? t) t (str t))) nil)
-       :default nil)
-    (let [s (if (string? t) t (str t))
+  (let [s (if (string? t) t (str t))
         a (writer-state-atom w)
         st @a]
     (when (:closed? st)
@@ -1134,7 +1124,23 @@
                   (.append ^StringBuilder buf s)
                   (swap! a update :text text-buf-append s)))
          :default (swap! a update :text text-buf-append s)))
-    nil)))
+    nil))
+
+(defn append-text!
+  "Append t to writer w. On the JVM a StringWriter appends to the
+   StringBuilder in `under` with no helper call and no atom deref.
+   The tight .under/.append path is :clj-only: jank's analyzer rejects
+   an unconditioned StringBuilder member call at boot (kind WITH mini #58)."
+  [w t]
+  #?(:clj
+     (if (instance? WriterValue w)
+       (let [u (.under ^WriterValue w)]
+         (if (instance? StringBuilder u)
+           (do (.append ^StringBuilder u (if (instance? String t) t (str t))) nil)
+           (append-text-slow! w t)))
+       (append-text-slow! w t))
+     :default
+     (append-text-slow! w t)))
 
 (defn sink-writer
   "A Writer (class java.io.PrintWriter) -- clojure.core/PrintWriter-on's
@@ -1151,7 +1157,7 @@
    `.toString` of the StringBuilder on the record, no atom deref."
   [w]
   (if-let [sb (string-builder-under w)]
-    (.toString ^StringBuilder sb)
+    #?(:clj (.toString ^StringBuilder sb) :default (text-buf-str sb))
     (let [st @(writer-state-atom w)]
       (if (:out st)
         (utf8-decode (output-bytes (:out st)))
@@ -1166,7 +1172,7 @@
    class's name and an identity hash, as the JVM's."
   [w]
   (if-let [sb (string-builder-under w)]
-    (.toString ^StringBuilder sb)
+    #?(:clj (.toString ^StringBuilder sb) :default (text-buf-str sb))
     (if (is? ::string-writer w)
       (written-text w)
       (str (class-token w) "@" #?(:jolt (hash w) :cljw (hash w) :clj (Integer/toHexString (System/identityHashCode w)) :default (hash w))))))
@@ -1221,6 +1227,57 @@
      :default (append-text! w (if readably? (str "\"" s "\"") (str s))))
   nil)
 
+(defn- pr-on-into-sb!
+  "fast-pr-on! when w's buffer is a StringBuilder on `under`: append
+   directly, no per-chunk append-text! / string-builder-under hop."
+  [x ^StringBuilder sb w print-level print-length print-namespace-maps print-meta print-readably fallback]
+  (letfn [(pr* [x]
+            (cond
+              (instance? clojure.lang.Keyword x)
+              (.append sb (.toString ^clojure.lang.Keyword x))
+              (instance? Long x)
+              (.append sb ^long (.longValue ^Long x))
+              (nil? x) (.append sb "nil")
+              (instance? Boolean x) (.append sb (if x "true" "false"))
+              (instance? String x)
+              (write-printed-string! w x (boolean print-readably))
+              (and (instance? clojure.lang.IPersistentMap x)
+                   (not (instance? clojure.lang.IRecord x))
+                   (not print-level)
+                   (not print-length)
+                   (or (not print-namespace-maps)
+                       (let [e (first x)]
+                         (or (nil? e)
+                             (let [k (key e)]
+                               (not (and (or (keyword? k) (symbol? k))
+                                         (namespace k)))))))
+                   (not (and (meta x) (and print-meta print-readably))))
+              (do (.append sb "{")
+                  (when-let [xs (seq x)]
+                    (loop [e (first xs) n (next xs)]
+                      (pr* (key e))
+                      (.append sb " ")
+                      (pr* (val e))
+                      (when n
+                        (.append sb ", ")
+                        (recur (first n) (next n)))))
+                  (.append sb "}"))
+              (and (instance? clojure.lang.IPersistentVector x)
+                   (not print-level)
+                   (not print-length)
+                   (not (and (meta x) (and print-meta print-readably))))
+              (do (.append sb "[")
+                  (let [n (count x)]
+                    (loop [i 0]
+                      (when (< i n)
+                        (when (pos? i) (.append sb " "))
+                        (pr* (nth x i))
+                        (recur (unchecked-inc i)))))
+                  (.append sb "]"))
+              :else (fallback x w)))]
+    (pr* x)
+    nil))
+
 (defn fast-pr-on!
   "Host-compiled pr-on for the common types. The earlier booted seat's
    (instance? clojure.lang.IPersistentMap x) went through the shim's
@@ -1237,6 +1294,9 @@
      ;; knows how to .write / .append them.
      (if-not (or (instance? WriterValue w) (instance? BufferedWriterValue w))
        (do (fallback x w) nil)
+       (if-let [sb (string-builder-under w)]
+         (pr-on-into-sb! x sb w print-level print-length print-namespace-maps
+                         print-meta print-readably fallback)
        (letfn [(pr* [x]
                (cond
                  (instance? clojure.lang.Keyword x) (append-text! w (str x))
@@ -1280,35 +1340,327 @@
                      (append-text! w "]"))
                  :else (fallback x w)))]
          (pr* x)
-         nil))
+         nil)))
      :default (do (fallback x w) nil)))
 
 (def ^:private system-newline
   #?(:clj (or (System/getProperty "line.separator") "\n")
      :default "\n"))
 
-(def ^:private out-var* (volatile! nil))
+(def ^:private ^"[Ljava.lang.Object;" print-vs (object-array 10))
+;; 0 *out*, 1 *print-dup*, 2 *print-level*, 3 *print-length*,
+;; 4 *print-namespace-maps*, 5 *print-meta*, 6 *print-readably*,
+;; 7 *flush-on-newline*, 8 print-method, 9 print-dup
+
+(defn- resolve-core-var [nm]
+  (ns-resolve 'cohost.core nm))
 
 (defn- out-var
-  "The booted *out* var, resolved once after the io layer is installed."
+  "The booted *out* var, cached in print-vs after install-print-vars!."
   []
-  (or @out-var*
-      (let [v (ns-resolve 'cohost.core '*out*)]
-        (vreset! out-var* v)
+  (or (aget ^"[Ljava.lang.Object;" print-vs 0)
+      (let [v (resolve-core-var '*out*)]
+        (aset ^"[Ljava.lang.Object;" print-vs 0 v)
         v)))
 
+(defn install-print-vars!
+  "Cache cohost.core's print vars after the io layer and core_print are in.
+   The hot path then .deref's these Vars; no ns-resolve, no clojure.core/deref."
+  []
+  (let [vs ^"[Ljava.lang.Object;" print-vs]
+    (aset vs 0 (resolve-core-var '*out*))
+    (aset vs 1 (resolve-core-var '*print-dup*))
+    (aset vs 2 (resolve-core-var '*print-level*))
+    (aset vs 3 (resolve-core-var '*print-length*))
+    (aset vs 4 (resolve-core-var '*print-namespace-maps*))
+    (aset vs 5 (resolve-core-var '*print-meta*))
+    (aset vs 6 (resolve-core-var '*print-readably*))
+    (aset vs 7 (resolve-core-var '*flush-on-newline*))
+    (aset vs 8 (resolve-core-var 'print-method))
+    (aset vs 9 (resolve-core-var 'print-dup))
+    nil))
+
+(defn- fallback-print-method [x w]
+  (let [f (aget ^"[Ljava.lang.Object;" print-vs 8)]
+    (if f (f x w) (print-method x w))))
+
+#?(:clj
+   (do
+     ;; Direct accessors for package-private Var$Frame / Var$TBox, defined
+     ;; as hidden classes in clojure.lang (so they can new TBox/Frame and
+     ;; read Frame.bindings without Field.get or Constructor.newInstance
+     ;; on the hot path). A Lookup is obtained by calling MethodHandles.lookup
+     ;; through Reflector, which lives in clojure.lang and has the privilege
+     ;; to define those classes.
+     (defn- emit-fn-bytes
+       [iname iface apply-desc emit-apply!]
+       (let [cw (clojure.asm.ClassWriter.
+                 (bit-or clojure.asm.ClassWriter/COMPUTE_FRAMES
+                         clojure.asm.ClassWriter/COMPUTE_MAXS))]
+         (.visit cw clojure.asm.Opcodes/V11
+                 (bit-or clojure.asm.Opcodes/ACC_PUBLIC
+                         clojure.asm.Opcodes/ACC_FINAL
+                         clojure.asm.Opcodes/ACC_SUPER)
+                 iname nil "java/lang/Object"
+                 (into-array String [iface]))
+         (let [mv (.visitMethod cw clojure.asm.Opcodes/ACC_PUBLIC "<init>" "()V" nil nil)]
+           (.visitCode mv)
+           (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 0)
+           (.visitMethodInsn mv clojure.asm.Opcodes/INVOKESPECIAL
+                             "java/lang/Object" "<init>" "()V" false)
+           (.visitInsn mv clojure.asm.Opcodes/RETURN)
+           (.visitMaxs mv 0 0)
+           (.visitEnd mv))
+         (let [mv (.visitMethod cw clojure.asm.Opcodes/ACC_PUBLIC "apply" apply-desc nil nil)]
+           (.visitCode mv)
+           (emit-apply! mv)
+           (.visitMaxs mv 0 0)
+           (.visitEnd mv))
+         (.visitEnd cw)
+         (.toByteArray cw)))
+
+     (defn- clojure-lang-lookup
+       ^java.lang.invoke.MethodHandles$Lookup []
+       (clojure.lang.Reflector/invokeStaticMethod
+         java.lang.invoke.MethodHandles "lookup" (object-array 0)))
+
+     (defn- new-hidden [bytes]
+       (let [lk (clojure-lang-lookup)
+             opts (into-array java.lang.invoke.MethodHandles$Lookup$ClassOption
+                              [java.lang.invoke.MethodHandles$Lookup$ClassOption/NESTMATE])
+             hidden (.defineHiddenClass lk bytes true opts)
+             cls (.lookupClass hidden)
+             ctor (.findConstructor hidden cls
+                                    (java.lang.invoke.MethodType/methodType Void/TYPE))]
+         (.invokeWithArguments ctor (object-array 0))))
+
+     (def ^:private ^java.util.function.Function frame-bindings-of
+       (new-hidden
+         (emit-fn-bytes "clojure/lang/$$CohostFrameBindings"
+                        "java/util/function/Function"
+                        "(Ljava/lang/Object;)Ljava/lang/Object;"
+                        (fn [^clojure.asm.MethodVisitor mv]
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 1)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "clojure/lang/Var$Frame")
+                          (.visitFieldInsn mv clojure.asm.Opcodes/GETFIELD
+                                           "clojure/lang/Var$Frame" "bindings"
+                                           "Lclojure/lang/Associative;")
+                          (.visitInsn mv clojure.asm.Opcodes/ARETURN)))))
+
+     (def ^:private ^java.util.function.BiFunction tbox-maker
+       (new-hidden
+         (emit-fn-bytes "clojure/lang/$$CohostTBox"
+                        "java/util/function/BiFunction"
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
+                        (fn [^clojure.asm.MethodVisitor mv]
+                          (.visitTypeInsn mv clojure.asm.Opcodes/NEW "clojure/lang/Var$TBox")
+                          (.visitInsn mv clojure.asm.Opcodes/DUP)
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 1)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "java/lang/Thread")
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 2)
+                          (.visitMethodInsn mv clojure.asm.Opcodes/INVOKESPECIAL
+                                            "clojure/lang/Var$TBox" "<init>"
+                                            "(Ljava/lang/Thread;Ljava/lang/Object;)V" false)
+                          (.visitInsn mv clojure.asm.Opcodes/ARETURN)))))
+
+     (def ^:private ^java.util.function.BiFunction frame-maker
+       (new-hidden
+         (emit-fn-bytes "clojure/lang/$$CohostFrame"
+                        "java/util/function/BiFunction"
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
+                        (fn [^clojure.asm.MethodVisitor mv]
+                          (.visitTypeInsn mv clojure.asm.Opcodes/NEW "clojure/lang/Var$Frame")
+                          (.visitInsn mv clojure.asm.Opcodes/DUP)
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 1)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "clojure/lang/Associative")
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 2)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "clojure/lang/Var$Frame")
+                          (.visitMethodInsn mv clojure.asm.Opcodes/INVOKESPECIAL
+                                            "clojure/lang/Var$Frame" "<init>"
+                                            "(Lclojure/lang/Associative;Lclojure/lang/Var$Frame;)V" false)
+                          (.visitInsn mv clojure.asm.Opcodes/ARETURN)))))
+
+     (def ^:private ^java.util.function.Function thread-bound-of
+       (new-hidden
+         (emit-fn-bytes "clojure/lang/$$CohostThreadBound"
+                        "java/util/function/Function"
+                        "(Ljava/lang/Object;)Ljava/lang/Object;"
+                        (fn [^clojure.asm.MethodVisitor mv]
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 1)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "clojure/lang/Var")
+                          (.visitFieldInsn mv clojure.asm.Opcodes/GETFIELD
+                                           "clojure/lang/Var" "threadBound"
+                                           "Ljava/util/concurrent/atomic/AtomicBoolean;")
+                          (.visitInsn mv clojure.asm.Opcodes/ARETURN)))))
+
+     (defn- frame-bindings
+       "The current thread's Var binding map (Var -> TBox), via the Frame."
+       []
+       (.apply frame-bindings-of (clojure.lang.Var/getThreadBindingFrame)))
+
+     (def ^:private out-thread-bound (object-array 1))
+
+     (defn- mark-thread-bound!
+       [v]
+       (let [slot ^"[Ljava.lang.Object;" out-thread-bound
+             ab (or (aget slot 0)
+                    (let [x (.apply thread-bound-of v)]
+                      (aset slot 0 x)
+                      x))]
+         (.set ^java.util.concurrent.atomic.AtomicBoolean ab true)))
+
+     (defn- make-tbox [val]
+       (.apply tbox-maker (Thread/currentThread) val))
+
+     (defn- make-frame [bindings prev]
+       (.apply frame-maker bindings prev))
+
+     ;; Overlay one Var->TBox on top of an existing binding map so a
+     ;; with-out-str push does not PersistentHashMap.assoc. entryAt of
+     ;; the overlaid var is an identity check against a cached MapEntry
+     ;; (Var.getThreadBinding / deref of *out* must not allocate). Other
+     ;; keys go to `under`.
+     (deftype OutOverlay [under v tbox entry]
+       clojure.lang.ILookup
+       (valAt [this k] (.valAt this k nil))
+       (valAt [_ k not-found]
+         (if (identical? k v)
+           tbox
+           (.valAt ^clojure.lang.ILookup under k not-found)))
+       clojure.lang.Associative
+       (containsKey [_ k]
+         (or (identical? k v)
+             (.containsKey ^clojure.lang.Associative under k)))
+       (entryAt [_ k]
+         (if (identical? k v)
+           entry
+           (.entryAt ^clojure.lang.Associative under k)))
+       (assoc [_ k val]
+         (if (identical? k v)
+           (OutOverlay. under v val (clojure.lang.MapEntry/create v val))
+           (OutOverlay. (.assoc ^clojure.lang.Associative under k val) v tbox entry)))
+       clojure.lang.IPersistentCollection
+       (cons [this o]
+         (if (instance? java.util.Map$Entry o)
+           (.assoc this (.getKey ^java.util.Map$Entry o)
+                   (.getValue ^java.util.Map$Entry o))
+           this))
+       (empty [_]
+         (OutOverlay. clojure.lang.PersistentHashMap/EMPTY v tbox entry))
+       (equiv [_ o]
+         (and (instance? OutOverlay o)
+              (identical? v (.-v ^OutOverlay o))
+              (= tbox (.-tbox ^OutOverlay o))
+              (= under (.-under ^OutOverlay o))))
+       (count [_]
+         (let [n (.count ^clojure.lang.Counted under)]
+           (if (.containsKey ^clojure.lang.Associative under v) n (inc n))))
+       clojure.lang.Seqable
+       (seq [_]
+         (cons entry (remove #(identical? (key %) v) (seq under))))
+       clojure.lang.Counted)
+
+     (defn- out-overlay [under v tbox]
+       (OutOverlay. under v tbox (clojure.lang.MapEntry/create v tbox)))
+
+     ;; Flag snapshot, keyed by the current Var Frame object. Binding
+     ;; (including print-sequential's *print-level* bind inside
+     ;; print-method) allocates a new Frame, so the next pr-on-any!
+     ;; recomputes and sees the new values. When the frame holds none
+     ;; of the print-flag vars, values are getRawRoot (no HashMap.find).
+     ;; An OutOverlay with-out-str frame only rebinds *out*, so push/pop
+     ;; retarget this cache at the new Frame identity and keep the values.
+     (def ^:private flag-snap (ThreadLocal.))
+
+     (def ^:private frame-class (Class/forName "clojure.lang.Var$Frame"))
+
+     (defn- retarget-flag-snap!
+       "If the snapshot was taken for from-frame, retarget it at to-frame.
+        OutOverlay only rebinds *out*, so the flag values stay valid. Do
+        not retarget a snapshot from some other frame (e.g. a *print-meta*
+        binding that has not been snapshotted yet)."
+       [from-frame to-frame]
+       (when-let [c (.get ^ThreadLocal flag-snap)]
+         (when (identical? (aget ^"[Ljava.lang.Object;" c 0) from-frame)
+           (aset ^"[Ljava.lang.Object;" c 0 to-frame))))
+
+     (defn- frame-holds-print-flags? [bmap]
+       (let [^"[Ljava.lang.Object;" vs print-vs
+             ^clojure.lang.Associative m bmap]
+         (or (.containsKey m (aget vs 1))
+             (.containsKey m (aget vs 2))
+             (.containsKey m (aget vs 3))
+             (.containsKey m (aget vs 4))
+             (.containsKey m (aget vs 5))
+             (.containsKey m (aget vs 6))
+             (.containsKey m (aget vs 7)))))
+
+     (defn- snapshot-print-flags
+       "Object array: [frame dup level length nsmaps meta readably flush?].
+        Cached for this thread until the binding frame changes. An OutOverlay
+        push retargets the cached frame pointer so ARM1 does not resnapshot."
+       []
+       (let [frame (clojure.lang.Var/getThreadBindingFrame)
+             ^"[Ljava.lang.Object;" c (.get ^ThreadLocal flag-snap)]
+         (if (and c (identical? (aget c 0) frame))
+           c
+           (let [^"[Ljava.lang.Object;" vs print-vs
+                 snap (object-array 8)
+                 root? (not (frame-holds-print-flags? (frame-bindings)))]
+             (aset snap 0 frame)
+             (dotimes [i 7]
+               (let [^clojure.lang.Var v (aget vs (inc i))]
+                 (aset snap (inc i)
+                       (if root? (.getRawRoot v) (.deref v)))))
+             (.set ^ThreadLocal flag-snap snap)
+             snap))))))
+
+(def ^:private out-save
+  #?(:clj (ThreadLocal.)
+     :default nil))
+
 (defn push-out!
-  "Host push-thread-bindings of cohost.core/*out*. Used by the installed
-   with-out-str so the ARM1 loop does not go through the shimmed
-   Var/pushThreadBindings → adapter cap."
+  "Bind cohost.core/*out* to s. If *out* is already thread-bound, set!
+   the existing box and remember the previous value (no new binding
+   frame). Otherwise push a Frame that overlays *out* on the current
+   bindings without PersistentHashMap.assoc. set! and get-thread-bindings
+   work during the body; popThreadBindings restores the previous frame
+   (including on throw). Used by the installed with-out-str."
   [s]
-  (push-thread-bindings {(out-var) s})
-  nil)
+  #?(:clj
+     (let [^clojure.lang.Var v (out-var)
+           tb (.getThreadBinding v)]
+       (if (some? tb)
+         (do (.set ^ThreadLocal out-save (cons (.deref v) (.get ^ThreadLocal out-save)))
+             (.set v s)
+             nil)
+         (let [prev (clojure.lang.Var/getThreadBindingFrame)
+               overlay (out-overlay (frame-bindings) v (make-tbox s))
+               neu (make-frame overlay prev)]
+           (mark-thread-bound! v)
+           (when-let [vf (.getValidator v)]
+             (when-not (boolean (vf s))
+               (throw (IllegalStateException. "Invalid reference state"))))
+           (clojure.lang.Var/resetThreadBindingFrame neu)
+           (retarget-flag-snap! prev neu)
+           (.set ^ThreadLocal out-save (cons neu (.get ^ThreadLocal out-save)))
+           nil)))
+     :default
+     (do (push-thread-bindings {(out-var) s}) nil)))
 
 (defn pop-out!
   []
-  (pop-thread-bindings)
-  nil)
+  #?(:clj
+     (let [st (.get ^ThreadLocal out-save)
+           old (first st)]
+       (.set ^ThreadLocal out-save (next st))
+       (if (.isInstance ^Class frame-class old)
+         (do (clojure.lang.Var/popThreadBindings)
+             (retarget-flag-snap! old (clojure.lang.Var/getThreadBindingFrame)))
+         (.set ^clojure.lang.Var (out-var) old))
+       nil)
+     :default
+     (do (pop-thread-bindings) nil)))
 
 (defn append-newline!
   "Write the platform newline to w. Layer writers use append-text!;
@@ -1335,6 +1687,97 @@
             (:out st) (flush-output! (:out st))
             (:handle st) (host/io-flush! ((:handle st))))
       nil)))
+
+(defn flush-any!
+  "Flush w without re-reading *out*. Layer writers use flush-writer!;
+   a java.io.Flushable gets .flush; anything else is a no-op."
+  [w]
+  #?(:clj
+     (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+       (flush-writer! w)
+       (when (instance? java.io.Flushable w)
+         (.flush ^java.io.Flushable w)))
+     :default nil)
+  nil)
+
+(defn pr-on-any!
+  "Host pr-on of x onto an already-read writer w. Print flags are
+   snapshotted once per binding frame (not per nested value). A
+   binding inside print-method / print-sequential changes the frame,
+   so the next call sees the new values. *out* is not reread."
+  [x w]
+  #?(:clj
+     (let [^"[Ljava.lang.Object;" snap (snapshot-print-flags)]
+       (if (aget snap 1)
+         (let [^clojure.lang.Var pdf (aget ^"[Ljava.lang.Object;" print-vs 9)]
+           ((.deref pdf) x w))
+         (fast-pr-on! x w
+                      (aget snap 2)
+                      (aget snap 3)
+                      (aget snap 4)
+                      (aget snap 5)
+                      (aget snap 6)
+                      fallback-print-method)))
+     :default nil)
+  nil)
+
+(defn- current-out
+  ^Object []
+  #?(:clj
+     (let [^"[Ljava.lang.Object;" vs print-vs
+           ^clojure.lang.Var v (aget vs 0)]
+       (.deref v))
+     :default @(out-var)))
+
+(defn- flush-on-newline?
+  []
+  #?(:clj (aget ^"[Ljava.lang.Object;" (snapshot-print-flags) 7)
+     :default nil))
+
+(defn- needs-flush?
+  "prn's *flush-on-newline* flush. A StringWriter whose buffer is on
+   `under` is a no-op in flush-writer!; skip the call."
+  [w]
+  #?(:clj
+     (if (and (instance? WriterValue w)
+              (instance? StringBuilder (.under ^WriterValue w)))
+       false
+       (boolean (flush-on-newline?)))
+     :default (boolean (flush-on-newline?))))
+
+(defn prn0!
+  "0-arg prn: newline + optional flush, *out* read once."
+  []
+  (let [w (current-out)]
+    (append-newline! w)
+    (when (needs-flush? w)
+      (flush-any! w))
+    nil))
+
+(defn prn1!
+  "1-arg prn: deref *out* once, print, newline, optional flush."
+  [x]
+  (let [w (current-out)]
+    (pr-on-any! x w)
+    (append-newline! w)
+    (when (needs-flush? w)
+      (flush-any! w))
+    nil))
+
+(defn prn*!
+  "Variadic prn of x then more, *out* read once."
+  [x more]
+  (let [w (current-out)]
+    (pr-on-any! x w)
+    (doseq [y more]
+      (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+        (append-text! w " ")
+        #?(:clj (.append ^java.lang.Appendable w " ") :default nil))
+      (pr-on-any! y w))
+    (append-newline! w)
+    (when (needs-flush? w)
+      (flush-any! w))
+    nil))
 
 (defn close-writer! [w]
   (if (string-builder-under w)

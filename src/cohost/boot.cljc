@@ -1010,55 +1010,45 @@
                                        ([a b c d] (cohost.shim/core-read+string a b c d))))]
    ['read-line '(def read-line (fn [] (cohost.io/read-line! *in*)))]])
 
-;; F1 print-loop: pr-on of a keyword/long/boolean/nil was ~3–4× native
-;; because each call went through the MultiFn even though those methods
-;; are (.write w (str x)). Strings paid a per-char shim .charAt/.append.
-;; Simple maps/vectors (no *print-level*/length/namespace-maps/meta) skip
-;; print-method and print-sequential. Installed after core_print, evaluated
-;; in cohost.core so *print-dup* and .write are the booted/shimmed ones.
-;; Records, print-dup, and everything else still go to print-method.
+;; F1 print-loop: the previous in-core seat still used the shim's
+;; instance? (instance_fn / token-isa? / class-of) for every cond clause.
+;; IPersistentMap often missed, so {:a i} went through print-method /
+;; print-sequential (MultiFn on ~64% of ARM2 samples; instance_fn on
+;; ~43%). The seat is now host-compiled (JVM instanceof, append-text!);
+;; this wrapper only supplies the print flags and the print-method /
+;; print-dup fallback. Records, print-dup, *print-level*/length /
+;; qualified namespace-maps / meta still go to print-method.
 (def ^:private fast-pr-on-form
   '(def pr-on
      (fn [x w]
-       (if *print-dup*
-         (print-dup x w)
-         (cond (instance? clojure.lang.Keyword x) (do (.write w (str x)) nil)
-               (instance? Long x) (do (.write w (str x)) nil)
-               (nil? x) (do (.write w "nil") nil)
-               (instance? Boolean x) (do (.write w (if x "true" "false")) nil)
-               (instance? String x)
-               (do (cohost.io/write-printed-string! w x (boolean (or *print-dup* *print-readably*))) nil)
-               (and (instance? clojure.lang.IPersistentMap x)
-                    (not (instance? clojure.lang.IRecord x))
-                    (not *print-level*)
-                    (not *print-length*)
-                    (not *print-namespace-maps*)
-                    (not (and (meta x) (or *print-dup* (and *print-meta* *print-readably*)))))
-               (do (.write w "{")
-                   (loop [xs (seq x)]
-                     (when xs
-                       (let [e (first xs) n (next xs)]
-                         (pr-on (key e) w)
-                         (.write w " ")
-                         (pr-on (val e) w)
-                         (when n (.write w ", "))
-                         (recur n))))
-                   (.write w "}")
-                   nil)
-               (and (instance? clojure.lang.IPersistentVector x)
-                    (not *print-level*)
-                    (not *print-length*)
-                    (not (and (meta x) (or *print-dup* (and *print-meta* *print-readably*)))))
-               (do (.write w "[")
-                   (loop [xs (seq x)]
-                     (when xs
-                       (pr-on (first xs) w)
-                       (when (next xs) (.write w " "))
-                       (recur (next xs))))
-                   (.write w "]")
-                   nil)
-               :else (print-method x w)))
+       (cohost.io/pr-on-any! x w)
        nil)))
+
+;; with-out-str setup was a top ARM1 leaf: booted (binding [*out* s#]) went
+;; through shimmed Var/pushThreadBindings → adapter cap (~25-29% of ARM1
+;; samples), and (new java.io.StringWriter) assoc-copied a state atom.
+;; The installed macro uses the host string-writer, host push/pop of
+;; cohost.core/*out*, and writer-string — no shim hops, no (str writer).
+(def ^:private fast-with-out-str-form
+  '(defmacro with-out-str
+     [& body]
+     `(let [s# (cohost.io/string-writer)]
+        (cohost.io/push-out! s#)
+        (try
+          ~@body
+          (cohost.io/writer-string s#)
+          (finally
+            (cohost.io/pop-out!))))))
+
+;; Stock prn is only variadic, so even (prn x) does (apply pr more). The
+;; booted apply path (_applyTo / shim$dot) sat on every ARM sample. A
+;; 1-arg arity calls pr-on directly, then a host newline + optional flush.
+(def ^:private fast-prn-form
+  '(def prn
+     (fn
+       ([] (cohost.io/prn0!))
+       ([x] (cohost.io/prn1! x))
+       ([x & more] (cohost.io/prn*! x more)))))
 
 
 (defn install-io-layer!
@@ -1436,7 +1426,11 @@
      (install-io-layer! ctx report)
      (when (host/io-handles)
        (host/with-ns core-ns
-         (fn [] (eval-form! ctx report fast-pr-on-form 'pr-on :replaced))))
+         (fn []
+           (io/install-print-vars!)
+           (eval-form! ctx report fast-pr-on-form 'pr-on :replaced)
+           (eval-form! ctx report fast-with-out-str-form 'with-out-str :replaced)
+           (eval-form! ctx report fast-prn-form 'prn :replaced))))
      (scan-macros! ctx)
      (install-host-reducers!)
      (install-eduction-reduce!)
