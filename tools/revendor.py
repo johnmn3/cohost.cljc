@@ -728,7 +728,21 @@ def main():
     fingerprint = F
     if state.get("stage").get("hash") == fingerprint and os.path.exists(listings_path):
         L = json.load(open(listings_path))
-        out("STEP 1 stage SKIP (listings hash-correct from a previous run)")
+        # The source listings are content-addressed by the manifest
+        # fingerprint and stay valid across runs. The TARGET listing
+        # does not: it snapshots the target as the staging run found
+        # it, and that run's own write (or any later edit) moves the
+        # target. Census, dispositions, plan and the write loop all
+        # judge the target, so re-read it live and persist the
+        # refresh; the skip saves the source fetches, not this walk.
+        # (Defect found 2026-11-16, vendoring-auto lane: a same-
+        # workdir re-run censused the pre-write snapshot — it false-
+        # stopped a pristine copy naming every file missing, named a
+        # pin bump's own files as deltas, and could not see an edit
+        # planted after the bump. Proven: toy_rerun_proof.py.)
+        L["target"] = target.tree()
+        json.dump(L, open(listings_path, "w"), indent=0, sort_keys=True)
+        out("STEP 1 stage SKIP (source listings hash-correct from a previous run; target re-read live)")
     else:
         L = {"eve": eve_src.tree(), "cohost": coh_src.tree(), "target": target.tree(),
              "baseline": eve_base.tree() if eve_base else {}}
