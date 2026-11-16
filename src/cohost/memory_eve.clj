@@ -309,7 +309,7 @@
   "The Eve list of already-converted items."
   [items]
   (let [sio (ctx)
-        ser (partial eve-mem/value+sio->eve-bytes sio)]
+        ser (partial @value+sio->eve-bytes sio)]
     (eve-list/jvm-sab-list-from-offset sio (eve-list/jvm-write-list! sio ser (apply list items)))))
 
 (def ^:private absent-key ::absent-key)
@@ -358,7 +358,7 @@
                    (if (some #(= absent-key %) items)
                      absent-key
                      (let [sio (ctx)
-                           ser (partial eve-mem/value+sio->eve-bytes sio)]
+                           ser (partial @value+sio->eve-bytes sio)]
                        (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser items)))))
         (seq? x) (let [items (mapv #(convert % mode) x)]
                    (if (some #(= absent-key %) items)
@@ -416,7 +416,7 @@
   (if (analyzer-active?)
     (set coll)
     (let [sio (ctx)
-          ser (partial eve-mem/value+sio->eve-bytes sio)]
+          ser (partial @value+sio->eve-bytes sio)]
       (eve-set/jvm-eve-hash-set-from-offset sio (eve-set/jvm-write-set! sio ser (map ->eve coll))))))
 
 (defn build-list
