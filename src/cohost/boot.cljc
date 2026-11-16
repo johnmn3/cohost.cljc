@@ -1020,15 +1020,9 @@
 ;; qualified namespace-maps / meta still go to print-method.
 (def ^:private fast-pr-on-form
   '(def pr-on
-     (let [fallback (fn [x w] (print-method x w))]
-       (fn [x w]
-         (if *print-dup*
-           (print-dup x w)
-           (cohost.io/fast-pr-on! x w *print-level* *print-length*
-                                  *print-namespace-maps* *print-meta*
-                                  *print-readably*
-                                  fallback))
-         nil))))
+     (fn [x w]
+       (cohost.io/pr-on-any! x w)
+       nil)))
 
 ;; with-out-str setup was a top ARM1 leaf: booted (binding [*out* s#]) went
 ;; through shimmed Var/pushThreadBindings → adapter cap (~25-29% of ARM1

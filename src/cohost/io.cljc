@@ -1384,6 +1384,145 @@
   (let [f (aget ^"[Ljava.lang.Object;" print-vs 8)]
     (if f (f x w) (print-method x w))))
 
+#?(:clj
+   (do
+     (def ^:private frame-bindings-field
+       (doto (.getDeclaredField (Class/forName "clojure.lang.Var$Frame") "bindings")
+         (.setAccessible true)))
+
+     (def ^:private thread-bound-field
+       (doto (.getDeclaredField clojure.lang.Var "threadBound")
+         (.setAccessible true)))
+
+     (def ^:private tbox-ctor
+       (doto (.getDeclaredConstructor (Class/forName "clojure.lang.Var$TBox")
+                                      (into-array Class [Thread Object]))
+         (.setAccessible true)))
+
+     (def ^:private frame-ctor
+       (doto (.getDeclaredConstructor (Class/forName "clojure.lang.Var$Frame")
+                                      (into-array Class [clojure.lang.Associative
+                                                         (Class/forName "clojure.lang.Var$Frame")]))
+         (.setAccessible true)))
+
+     (defn- frame-bindings
+       "The current thread's Var binding map (Var -> TBox), via the Frame."
+       []
+       (.get ^java.lang.reflect.Field frame-bindings-field
+             (clojure.lang.Var/getThreadBindingFrame)))
+
+     (defn- mark-thread-bound!
+       [^clojure.lang.Var v]
+       (.set ^java.util.concurrent.atomic.AtomicBoolean
+             (.get ^java.lang.reflect.Field thread-bound-field v)
+             true))
+
+     ;; Reused 2-slot array so Constructor.newInstance does not pay
+     ;; into-array / seq on every with-out-str. newInstance reads the
+     ;; slots synchronously, so reuse on this thread is safe.
+     (def ^:private ctor-arg-tl (ThreadLocal.))
+
+     (defn- fill-ctor-args
+       ^"[Ljava.lang.Object;" [a b]
+       (let [^ThreadLocal tl ctor-arg-tl
+             ^"[Ljava.lang.Object;" arr (or (.get tl)
+                                            (let [n (object-array 2)]
+                                              (.set tl n)
+                                              n))]
+         (aset arr 0 a)
+         (aset arr 1 b)
+         arr))
+
+     (defn- make-tbox [val]
+       (.newInstance ^java.lang.reflect.Constructor tbox-ctor
+                     ^"[Ljava.lang.Object;" (fill-ctor-args (Thread/currentThread) val)))
+
+     (defn- make-frame [bindings prev]
+       (.newInstance ^java.lang.reflect.Constructor frame-ctor
+                     ^"[Ljava.lang.Object;" (fill-ctor-args bindings prev)))
+
+     ;; Overlay one Var->TBox on top of an existing binding map so a
+     ;; with-out-str push does not PersistentHashMap.assoc. entryAt of
+     ;; the overlaid var is an identity check; other keys go to `under`.
+     ;; Var.getThreadBinding / isBound / get-thread-bindings / a nested
+     ;; pushThreadBindings.assoc all go through this.
+     (deftype OutOverlay [under v tbox]
+       clojure.lang.ILookup
+       (valAt [this k] (.valAt this k nil))
+       (valAt [_ k not-found]
+         (if (identical? k v)
+           tbox
+           (.valAt ^clojure.lang.ILookup under k not-found)))
+       clojure.lang.Associative
+       (containsKey [_ k]
+         (or (identical? k v)
+             (.containsKey ^clojure.lang.Associative under k)))
+       (entryAt [_ k]
+         (if (identical? k v)
+           (clojure.lang.MapEntry/create v tbox)
+           (.entryAt ^clojure.lang.Associative under k)))
+       (assoc [_ k val]
+         (if (identical? k v)
+           (OutOverlay. under v val)
+           (OutOverlay. (.assoc ^clojure.lang.Associative under k val) v tbox)))
+       clojure.lang.IPersistentCollection
+       (cons [this o]
+         (if (instance? java.util.Map$Entry o)
+           (.assoc this (.getKey ^java.util.Map$Entry o)
+                   (.getValue ^java.util.Map$Entry o))
+           this))
+       (empty [_] (OutOverlay. clojure.lang.PersistentHashMap/EMPTY v tbox))
+       (equiv [_ o]
+         (and (instance? OutOverlay o)
+              (identical? v (.-v ^OutOverlay o))
+              (= tbox (.-tbox ^OutOverlay o))
+              (= under (.-under ^OutOverlay o))))
+       (count [_]
+         (let [n (.count ^clojure.lang.Counted under)]
+           (if (.containsKey ^clojure.lang.Associative under v) n (inc n))))
+       clojure.lang.Seqable
+       (seq [_]
+         (cons (clojure.lang.MapEntry/create v tbox)
+               (remove #(identical? (key %) v) (seq under))))
+       clojure.lang.Counted)
+
+     ;; Flag snapshot, keyed by the current Var Frame object. Binding
+     ;; (including print-sequential's *print-level* bind inside
+     ;; print-method) allocates a new Frame, so the next pr-on-any!
+     ;; recomputes and sees the new values. When the frame holds none
+     ;; of the print-flag vars, values are getRawRoot (no HashMap.find).
+     (def ^:private flag-snap (ThreadLocal.))
+
+     (defn- frame-holds-print-flags? [bmap]
+       (let [^"[Ljava.lang.Object;" vs print-vs
+             ^clojure.lang.Associative m bmap]
+         (or (.containsKey m (aget vs 1))
+             (.containsKey m (aget vs 2))
+             (.containsKey m (aget vs 3))
+             (.containsKey m (aget vs 4))
+             (.containsKey m (aget vs 5))
+             (.containsKey m (aget vs 6))
+             (.containsKey m (aget vs 7)))))
+
+     (defn- snapshot-print-flags
+       "Object array: [frame dup level length nsmaps meta readably flush?].
+        Cached for this thread until the binding frame changes."
+       []
+       (let [frame (clojure.lang.Var/getThreadBindingFrame)
+             ^"[Ljava.lang.Object;" c (.get ^ThreadLocal flag-snap)]
+         (if (and c (identical? (aget c 0) frame))
+           c
+           (let [^"[Ljava.lang.Object;" vs print-vs
+                 snap (object-array 8)
+                 root? (not (frame-holds-print-flags? (frame-bindings)))]
+             (aset snap 0 frame)
+             (dotimes [i 7]
+               (let [^clojure.lang.Var v (aget vs (inc i))]
+                 (aset snap (inc i)
+                       (if root? (.getRawRoot v) (.deref v)))))
+             (.set ^ThreadLocal flag-snap snap)
+             snap))))))
+
 (def ^:private out-save
   #?(:clj (ThreadLocal.)
      :default nil))
@@ -1391,20 +1530,28 @@
 (defn push-out!
   "Bind cohost.core/*out* to s. If *out* is already thread-bound, set!
    the existing box and remember the previous value (no new binding
-   frame). Otherwise Var/pushThreadBindings of that one var. Used by
-   the installed with-out-str so the ARM1 loop does not go through the
-   shimmed Var/pushThreadBindings → adapter cap."
+   frame). Otherwise push a Frame that overlays *out* on the current
+   bindings without PersistentHashMap.assoc. set! and get-thread-bindings
+   work during the body; popThreadBindings restores the previous frame
+   (including on throw). Used by the installed with-out-str."
   [s]
   #?(:clj
-     (let [v ^clojure.lang.Var (out-var)
+     (let [^clojure.lang.Var v (out-var)
            tb (.getThreadBinding v)]
        (if (some? tb)
          (do (.set ^ThreadLocal out-save (cons (.deref v) (.get ^ThreadLocal out-save)))
              (.set v s)
              nil)
-         (do (.set ^ThreadLocal out-save (cons ::frame (.get ^ThreadLocal out-save)))
-             (clojure.lang.Var/pushThreadBindings (array-map v s))
-             nil)))
+         (let [prev (clojure.lang.Var/getThreadBindingFrame)
+               overlay (OutOverlay. (frame-bindings) v (make-tbox s))
+               neu (make-frame overlay prev)]
+           (mark-thread-bound! v)
+           (when-let [vf (.getValidator v)]
+             (when-not (boolean (vf s))
+               (throw (IllegalStateException. "Invalid reference state"))))
+           (clojure.lang.Var/resetThreadBindingFrame neu)
+           (.set ^ThreadLocal out-save (cons ::frame (.get ^ThreadLocal out-save)))
+           nil)))
      :default
      (do (push-thread-bindings {(out-var) s}) nil)))
 
@@ -1459,28 +1606,24 @@
      :default nil)
   nil)
 
-(defn- pr-on-any!
+(defn pr-on-any!
   "Host pr-on of x onto an already-read writer w. Print flags are
-   .deref of cached Vars (typically root bindings). *out* is not reread."
+   snapshotted once per binding frame (not per nested value). A
+   binding inside print-method / print-sequential changes the frame,
+   so the next call sees the new values. *out* is not reread."
   [x w]
   #?(:clj
-     (let [^"[Ljava.lang.Object;" vs print-vs
-           ^clojure.lang.Var dup (aget vs 1)]
-       (if (.deref dup)
-         (let [^clojure.lang.Var pdf (aget vs 9)]
+     (let [^"[Ljava.lang.Object;" snap (snapshot-print-flags)]
+       (if (aget snap 1)
+         (let [^clojure.lang.Var pdf (aget ^"[Ljava.lang.Object;" print-vs 9)]
            ((.deref pdf) x w))
-         (let [^clojure.lang.Var level (aget vs 2)
-               ^clojure.lang.Var length (aget vs 3)
-               ^clojure.lang.Var nsmaps (aget vs 4)
-               ^clojure.lang.Var pmeta (aget vs 5)
-               ^clojure.lang.Var pread (aget vs 6)]
-           (fast-pr-on! x w
-                        (.deref level)
-                        (.deref length)
-                        (.deref nsmaps)
-                        (.deref pmeta)
-                        (.deref pread)
-                        fallback-print-method))))
+         (fast-pr-on! x w
+                      (aget snap 2)
+                      (aget snap 3)
+                      (aget snap 4)
+                      (aget snap 5)
+                      (aget snap 6)
+                      fallback-print-method)))
      :default nil)
   nil)
 
@@ -1494,10 +1637,7 @@
 
 (defn- flush-on-newline?
   []
-  #?(:clj
-     (let [^"[Ljava.lang.Object;" vs print-vs
-           ^clojure.lang.Var v (aget vs 7)]
-       (.deref v))
+  #?(:clj (aget ^"[Ljava.lang.Object;" (snapshot-print-flags) 7)
      :default nil))
 
 (defn- needs-flush?
