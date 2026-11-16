@@ -1017,7 +1017,7 @@
 ;; ~43%). The seat is now host-compiled (JVM instanceof, append-text!);
 ;; this wrapper only supplies the print flags and the print-method /
 ;; print-dup fallback. Records, print-dup, *print-level*/length /
-;; namespace-maps / meta still go to print-method.
+;; qualified namespace-maps / meta still go to print-method.
 (def ^:private fast-pr-on-form
   '(def pr-on
      (let [fallback (fn [x w] (print-method x w))]
@@ -1029,6 +1029,45 @@
                                   *print-readably*
                                   fallback))
          nil))))
+
+;; with-out-str setup was a top ARM1 leaf: booted (binding [*out* s#]) went
+;; through shimmed Var/pushThreadBindings → adapter cap (~25-29% of ARM1
+;; samples), and (new java.io.StringWriter) assoc-copied a state atom.
+;; The installed macro uses the host string-writer, host push/pop of
+;; cohost.core/*out*, and writer-string — no shim hops, no (str writer).
+(def ^:private fast-with-out-str-form
+  '(defmacro with-out-str
+     [& body]
+     `(let [s# (cohost.io/string-writer)]
+        (cohost.io/push-out! s#)
+        (try
+          ~@body
+          (cohost.io/writer-string s#)
+          (finally
+            (cohost.io/pop-out!))))))
+
+;; Stock prn is only variadic, so even (prn x) does (apply pr more). The
+;; booted apply path (_applyTo / shim$dot) sat on every ARM sample. A
+;; 1-arg arity calls pr-on directly, then a host newline + optional flush.
+(def ^:private fast-prn-form
+  '(def prn
+     (fn
+       ([]
+        (newline)
+        (when *flush-on-newline* (flush)))
+       ([x]
+        (pr-on x *out*)
+        (cohost.io/append-newline! *out*)
+        (when *flush-on-newline* (flush))
+        nil)
+       ([x & more]
+        (pr-on x *out*)
+        (doseq [y more]
+          (. *out* (append \space))
+          (pr-on y *out*))
+        (cohost.io/append-newline! *out*)
+        (when *flush-on-newline* (flush))
+        nil))))
 
 
 (defn install-io-layer!
@@ -1406,7 +1445,10 @@
      (install-io-layer! ctx report)
      (when (host/io-handles)
        (host/with-ns core-ns
-         (fn [] (eval-form! ctx report fast-pr-on-form 'pr-on :replaced))))
+         (fn []
+           (eval-form! ctx report fast-pr-on-form 'pr-on :replaced)
+           (eval-form! ctx report fast-with-out-str-form 'with-out-str :replaced)
+           (eval-form! ctx report fast-prn-form 'prn :replaced))))
      (scan-macros! ctx)
      (install-host-reducers!)
      (install-eduction-reduce!)

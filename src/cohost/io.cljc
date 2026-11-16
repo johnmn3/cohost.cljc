@@ -137,7 +137,7 @@
 
 (defn kind-of [x]
   (cond (file-value? x) ::file
-        (value? x) (:cohost/kind x)
+        (value? x) (or (:cohost/kind x) (:kind x))
         :else nil))
 
 (defn state-of [x] (:state x))
@@ -1037,14 +1037,18 @@
 
 (defn string-writer
   "A fresh StringWriter. On the JVM the StringBuilder lives in the
-   record's `under` field so append and toString do not deref the state
-   atom (with-out-str ends in (str s#); that deref+map path was ~9× a
-   native StringWriter.toString)."
+   record's `under` field so append and toString do not deref a state
+   atom. No per-call atom: close/flush of this writer is a no-op (stock
+   with-out-str never closes). The 7-arg record ctor carries
+   :cohost/kind in the extmap without an assoc copy (F1 ARM1: RT.assoc
+   was a measurable leaf under string-writer)."
   []
-  #?(:clj (assoc (->WriterValue ::string-writer
-                                (atom {:closed? false})
-                                (StringBuilder.))
-                 :cohost/kind ::string-writer)
+  #?(:clj (WriterValue. ::string-writer
+                        nil
+                        (StringBuilder.)
+                        nil
+                        {:cohost/kind ::string-writer}
+                        -1 -1)
      :default (writer-over ::string-writer nil nil)))
 
 (defn output-stream-writer
@@ -1239,7 +1243,12 @@
                       (not (instance? clojure.lang.IRecord x))
                       (not print-level)
                       (not print-length)
-                      (not print-namespace-maps)
+                      (or (not print-namespace-maps)
+                          (let [e (first x)]
+                            (or (nil? e)
+                                (let [k (key e)]
+                                  (not (and (or (keyword? k) (symbol? k))
+                                            (namespace k)))))))
                       (not (and (meta x) (and print-meta print-readably))))
                  (do (append-text! w "{")
                      (when-let [xs (seq x)]
@@ -1268,26 +1277,69 @@
          nil))
      :default (do (fallback x w) nil)))
 
+(def ^:private system-newline
+  #?(:clj (or (System/getProperty "line.separator") "\n")
+     :default "\n"))
+
+(def ^:private out-var* (volatile! nil))
+
+(defn- out-var
+  "The booted *out* var, resolved once after the io layer is installed."
+  []
+  (or @out-var*
+      (let [v (ns-resolve 'cohost.core '*out*)]
+        (vreset! out-var* v)
+        v)))
+
+(defn push-out!
+  "Host push-thread-bindings of cohost.core/*out*. Used by the installed
+   with-out-str so the ARM1 loop does not go through the shimmed
+   Var/pushThreadBindings → adapter cap."
+  [s]
+  (push-thread-bindings {(out-var) s})
+  nil)
+
+(defn pop-out!
+  []
+  (pop-thread-bindings)
+  nil)
+
+(defn append-newline!
+  "Write the platform newline to w. Layer writers use append-text!;
+   anything else (pretty-writer, a real java.io.Writer) uses .append."
+  [w]
+  #?(:clj
+     (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+       (append-text! w system-newline)
+       (.append ^java.lang.Appendable w (str system-newline)))
+     :default nil)
+  nil)
+
 (defn flush-writer! [w]
-  (let [st @(state-of w)]
-    (cond (= ::sink (:cohost/kind w))
-          (let [b (text-buf-str (:buf st))]
-            (when (pos? (count b))
-              (swap! (state-of w) assoc :buf (new-text-buf))
-              ((:sink st) b)))
-          (:file st) (write-file-text! (:file st) (text-buf-str (:text st)))
-          (:out st) (flush-output! (:out st))
-          (:handle st) (host/io-flush! ((:handle st))))
-    nil))
+  ;; A JVM StringWriter with its buffer on `under` has no state atom.
+  (if (string-builder-under w)
+    nil
+    (let [st @(state-of w)]
+      (cond (= ::sink (:cohost/kind w))
+            (let [b (text-buf-str (:buf st))]
+              (when (pos? (count b))
+                (swap! (state-of w) assoc :buf (new-text-buf))
+                ((:sink st) b)))
+            (:file st) (write-file-text! (:file st) (text-buf-str (:text st)))
+            (:out st) (flush-output! (:out st))
+            (:handle st) (host/io-flush! ((:handle st))))
+      nil)))
 
 (defn close-writer! [w]
-  (when-not (:closed? @(state-of w))
-    (flush-writer! w)
-    (swap! (state-of w) assoc :closed? true)
-    (when-let [out (:out @(state-of w))]
-      (close-output! out))
-    (when-let [cf (:close @(state-of w))]
-      (cf)))
+  (if (string-builder-under w)
+    nil
+    (when-not (:closed? @(state-of w))
+      (flush-writer! w)
+      (swap! (state-of w) assoc :closed? true)
+      (when-let [out (:out @(state-of w))]
+        (close-output! out))
+      (when-let [cf (:close @(state-of w))]
+        (cf))))
   nil)
 
 ;; ---------------------------------------------------------------------------
