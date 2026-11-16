@@ -1107,7 +1107,13 @@
    StringBuilder in `under` with no atom deref."
   [w t]
   (if-let [sb (string-builder-under w)]
-    (do (.append ^StringBuilder sb (if (string? t) t (str t))) nil)
+    ;; the .append form sits under :clj: on jank there is no StringBuilder
+    ;; (see lb: "no StringBuilder class and no JVM members") and
+    ;; string-builder-under is nil there, so this branch is never taken —
+    ;; but jank's analyzer rejects the unconditioned member call at boot
+    ;; (kind WITH mini, 2026-11-15). JVM forms unchanged.
+    #?(:clj (do (.append ^StringBuilder sb (if (string? t) t (str t))) nil)
+       :default nil)
     (let [s (if (string? t) t (str t))
         a (writer-state-atom w)
         st @a]
