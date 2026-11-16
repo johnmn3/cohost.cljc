@@ -1230,7 +1230,8 @@
 ;; pr-on-into-sb! is :clj only: its arglist hint and body name the JVM class
 ;; StringBuilder, which no other body's analyzer can resolve; every other
 ;; body's fast-pr-on! takes its :default (fallback) arm and never calls it.
-#?(:clj (defn- pr-on-into-sb!
+#?(:clj
+    (defn- pr-on-into-sb!
   "fast-pr-on! when w's buffer is a StringBuilder on `under`: append
    directly, no per-chunk append-text! / string-builder-under hop."
   [x ^StringBuilder sb w print-level print-length print-namespace-maps print-meta print-readably fallback]
@@ -1350,10 +1351,13 @@
   #?(:clj (or (System/getProperty "line.separator") "\n")
      :default "\n"))
 
-;; No hint on this def: the string array-class hint fails jank's parser
-;; (parse/invalid-meta-hint-value) and ^objects fails the JVM's def-tag
-;; resolution (it is an array hint only in fn-arg/let positions). The
-;; use sites carry ^objects, where both hosts accept it.
+;; No hint on this def: jank's parser rejects string meta hints
+;; (parse/invalid-meta-hint-value) ANYWHERE in a file — it parses
+;; reader-conditional branches it will not select, so every array
+;; hint in this file is spelled ^objects — and the `objects`
+;; symbol hint is valid only in fn-arg/let positions — in def-var
+;; position the JVM resolves the tag as a class and fails. Every
+;; use site carries its own ^objects hint, so nothing loses typing.
 (def ^:private print-vs (object-array 10))
 ;; 0 *out*, 1 *print-dup*, 2 *print-level*, 3 *print-length*,
 ;; 4 *print-namespace-maps*, 5 *print-meta*, 6 *print-readably*,
@@ -1509,7 +1513,7 @@
 
      (defn- mark-thread-bound!
        [v]
-       (let [slot ^"[Ljava.lang.Object;" out-thread-bound
+       (let [^objects slot out-thread-bound
              ab (or (aget slot 0)
                     (let [x (.apply thread-bound-of v)]
                       (aset slot 0 x)
@@ -1588,11 +1592,11 @@
         binding that has not been snapshotted yet)."
        [from-frame to-frame]
        (when-let [c (.get ^ThreadLocal flag-snap)]
-         (when (identical? (aget ^"[Ljava.lang.Object;" c 0) from-frame)
-           (aset ^"[Ljava.lang.Object;" c 0 to-frame))))
+         (when (identical? (aget ^objects c 0) from-frame)
+           (aset ^objects c 0 to-frame))))
 
      (defn- frame-holds-print-flags? [bmap]
-       (let [^"[Ljava.lang.Object;" vs print-vs
+       (let [^objects vs print-vs
              ^clojure.lang.Associative m bmap]
          (or (.containsKey m (aget vs 1))
              (.containsKey m (aget vs 2))
@@ -1608,10 +1612,10 @@
         push retargets the cached frame pointer so ARM1 does not resnapshot."
        []
        (let [frame (clojure.lang.Var/getThreadBindingFrame)
-             ^"[Ljava.lang.Object;" c (.get ^ThreadLocal flag-snap)]
+             ^objects c (.get ^ThreadLocal flag-snap)]
          (if (and c (identical? (aget c 0) frame))
            c
-           (let [^"[Ljava.lang.Object;" vs print-vs
+           (let [^objects vs print-vs
                  snap (object-array 8)
                  root? (not (frame-holds-print-flags? (frame-bindings)))]
              (aset snap 0 frame)
@@ -1714,7 +1718,7 @@
    so the next call sees the new values. *out* is not reread."
   [x w]
   #?(:clj
-     (let [^"[Ljava.lang.Object;" snap (snapshot-print-flags)]
+     (let [^objects snap (snapshot-print-flags)]
        (if (aget snap 1)
          (let [^clojure.lang.Var pdf (aget ^objects print-vs 9)]
            ((.deref pdf) x w))
@@ -1731,14 +1735,14 @@
 (defn- current-out
   ^Object []
   #?(:clj
-     (let [^"[Ljava.lang.Object;" vs print-vs
+     (let [^objects vs print-vs
            ^clojure.lang.Var v (aget vs 0)]
        (.deref v))
      :default @(out-var)))
 
 (defn- flush-on-newline?
   []
-  #?(:clj (aget ^"[Ljava.lang.Object;" (snapshot-print-flags) 7)
+  #?(:clj (aget ^objects (snapshot-print-flags) 7)
      :default nil))
 
 (defn- needs-flush?
@@ -1777,7 +1781,7 @@
   (let [w (current-out)]
     (pr-on-any! x w)
     (doseq [y more]
-      (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+      (if (writer-value? w)
         (append-text! w " ")
         #?(:clj (.append ^java.lang.Appendable w " ") :default nil))
       (pr-on-any! y w))
