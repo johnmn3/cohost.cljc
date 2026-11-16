@@ -64,6 +64,7 @@
        "       cohost :jolt -X demo.core/run :x 1"
        "       cohost :cljs -Spath"
        "       cohost :cljs -Sbuild-dir   (the compiled body's cohost.aot artifact dir)"
+       "       cohost vendor   (resolve ./deps.edn's vendored deps into the tree, hash-verified)"
        "  :jvm is the :clj leg: `clojure` on PATH, else jolt's champaca backup."
        "  :jolt:lpy names several hosts; :clj in that string is the official clojure CLI."
        "  COHOST_CLJ_BODY=clojure|jolt."
@@ -767,6 +768,12 @@
 
 (let [args *command-line-args*]
   (when (#{"-h" "--help" "help"} (first args)) (usage))
+  ;; `cohost vendor` — resolve ./deps.edn's vendored declarations into the
+  ;; tree (tools/vendoring.py over the one re-vendor driver): the sources
+  ;; materialize in-tree, hash-verified, planted-delta stopped, resumable.
+  (when (= "vendor" (first args))
+    (System/exit (run-inherit (str (fs/canonicalize "."))
+                              ["python3" (str repo "/tools/vendoring.py") (str (fs/canonicalize "."))])) )
   ;; `cohost :<host> ...` names the target; `cohost ...` takes the project's
   (let [explicit? (some-> (first args) (str/starts-with? ":"))
         raw-host (if explicit? (str/replace (first args) #"^:" "") (default-target))
