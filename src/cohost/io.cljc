@@ -1386,67 +1386,141 @@
 
 #?(:clj
    (do
-     (def ^:private frame-bindings-field
-       (doto (.getDeclaredField (Class/forName "clojure.lang.Var$Frame") "bindings")
-         (.setAccessible true)))
+     ;; Direct accessors for package-private Var$Frame / Var$TBox, defined
+     ;; as hidden classes in clojure.lang (so they can new TBox/Frame and
+     ;; read Frame.bindings without Field.get or Constructor.newInstance
+     ;; on the hot path). A Lookup is obtained by calling MethodHandles.lookup
+     ;; through Reflector, which lives in clojure.lang and has the privilege
+     ;; to define those classes.
+     (defn- emit-fn-bytes
+       [iname iface apply-desc emit-apply!]
+       (let [cw (clojure.asm.ClassWriter.
+                 (bit-or clojure.asm.ClassWriter/COMPUTE_FRAMES
+                         clojure.asm.ClassWriter/COMPUTE_MAXS))]
+         (.visit cw clojure.asm.Opcodes/V11
+                 (bit-or clojure.asm.Opcodes/ACC_PUBLIC
+                         clojure.asm.Opcodes/ACC_FINAL
+                         clojure.asm.Opcodes/ACC_SUPER)
+                 iname nil "java/lang/Object"
+                 (into-array String [iface]))
+         (let [mv (.visitMethod cw clojure.asm.Opcodes/ACC_PUBLIC "<init>" "()V" nil nil)]
+           (.visitCode mv)
+           (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 0)
+           (.visitMethodInsn mv clojure.asm.Opcodes/INVOKESPECIAL
+                             "java/lang/Object" "<init>" "()V" false)
+           (.visitInsn mv clojure.asm.Opcodes/RETURN)
+           (.visitMaxs mv 0 0)
+           (.visitEnd mv))
+         (let [mv (.visitMethod cw clojure.asm.Opcodes/ACC_PUBLIC "apply" apply-desc nil nil)]
+           (.visitCode mv)
+           (emit-apply! mv)
+           (.visitMaxs mv 0 0)
+           (.visitEnd mv))
+         (.visitEnd cw)
+         (.toByteArray cw)))
 
-     (def ^:private thread-bound-field
-       (doto (.getDeclaredField clojure.lang.Var "threadBound")
-         (.setAccessible true)))
+     (defn- clojure-lang-lookup
+       ^java.lang.invoke.MethodHandles$Lookup []
+       (clojure.lang.Reflector/invokeStaticMethod
+         java.lang.invoke.MethodHandles "lookup" (object-array 0)))
 
-     (def ^:private tbox-ctor
-       (doto (.getDeclaredConstructor (Class/forName "clojure.lang.Var$TBox")
-                                      (into-array Class [Thread Object]))
-         (.setAccessible true)))
+     (defn- new-hidden [bytes]
+       (let [lk (clojure-lang-lookup)
+             opts (into-array java.lang.invoke.MethodHandles$Lookup$ClassOption
+                              [java.lang.invoke.MethodHandles$Lookup$ClassOption/NESTMATE])
+             hidden (.defineHiddenClass lk bytes true opts)
+             cls (.lookupClass hidden)
+             ctor (.findConstructor hidden cls
+                                    (java.lang.invoke.MethodType/methodType Void/TYPE))]
+         (.invokeWithArguments ctor (object-array 0))))
 
-     (def ^:private frame-ctor
-       (doto (.getDeclaredConstructor (Class/forName "clojure.lang.Var$Frame")
-                                      (into-array Class [clojure.lang.Associative
-                                                         (Class/forName "clojure.lang.Var$Frame")]))
-         (.setAccessible true)))
+     (def ^:private ^java.util.function.Function frame-bindings-of
+       (new-hidden
+         (emit-fn-bytes "clojure/lang/$$CohostFrameBindings"
+                        "java/util/function/Function"
+                        "(Ljava/lang/Object;)Ljava/lang/Object;"
+                        (fn [^clojure.asm.MethodVisitor mv]
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 1)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "clojure/lang/Var$Frame")
+                          (.visitFieldInsn mv clojure.asm.Opcodes/GETFIELD
+                                           "clojure/lang/Var$Frame" "bindings"
+                                           "Lclojure/lang/Associative;")
+                          (.visitInsn mv clojure.asm.Opcodes/ARETURN)))))
+
+     (def ^:private ^java.util.function.BiFunction tbox-maker
+       (new-hidden
+         (emit-fn-bytes "clojure/lang/$$CohostTBox"
+                        "java/util/function/BiFunction"
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
+                        (fn [^clojure.asm.MethodVisitor mv]
+                          (.visitTypeInsn mv clojure.asm.Opcodes/NEW "clojure/lang/Var$TBox")
+                          (.visitInsn mv clojure.asm.Opcodes/DUP)
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 1)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "java/lang/Thread")
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 2)
+                          (.visitMethodInsn mv clojure.asm.Opcodes/INVOKESPECIAL
+                                            "clojure/lang/Var$TBox" "<init>"
+                                            "(Ljava/lang/Thread;Ljava/lang/Object;)V" false)
+                          (.visitInsn mv clojure.asm.Opcodes/ARETURN)))))
+
+     (def ^:private ^java.util.function.BiFunction frame-maker
+       (new-hidden
+         (emit-fn-bytes "clojure/lang/$$CohostFrame"
+                        "java/util/function/BiFunction"
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
+                        (fn [^clojure.asm.MethodVisitor mv]
+                          (.visitTypeInsn mv clojure.asm.Opcodes/NEW "clojure/lang/Var$Frame")
+                          (.visitInsn mv clojure.asm.Opcodes/DUP)
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 1)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "clojure/lang/Associative")
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 2)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "clojure/lang/Var$Frame")
+                          (.visitMethodInsn mv clojure.asm.Opcodes/INVOKESPECIAL
+                                            "clojure/lang/Var$Frame" "<init>"
+                                            "(Lclojure/lang/Associative;Lclojure/lang/Var$Frame;)V" false)
+                          (.visitInsn mv clojure.asm.Opcodes/ARETURN)))))
+
+     (def ^:private ^java.util.function.Function thread-bound-of
+       (new-hidden
+         (emit-fn-bytes "clojure/lang/$$CohostThreadBound"
+                        "java/util/function/Function"
+                        "(Ljava/lang/Object;)Ljava/lang/Object;"
+                        (fn [^clojure.asm.MethodVisitor mv]
+                          (.visitVarInsn mv clojure.asm.Opcodes/ALOAD 1)
+                          (.visitTypeInsn mv clojure.asm.Opcodes/CHECKCAST "clojure/lang/Var")
+                          (.visitFieldInsn mv clojure.asm.Opcodes/GETFIELD
+                                           "clojure/lang/Var" "threadBound"
+                                           "Ljava/util/concurrent/atomic/AtomicBoolean;")
+                          (.visitInsn mv clojure.asm.Opcodes/ARETURN)))))
 
      (defn- frame-bindings
        "The current thread's Var binding map (Var -> TBox), via the Frame."
        []
-       (.get ^java.lang.reflect.Field frame-bindings-field
-             (clojure.lang.Var/getThreadBindingFrame)))
+       (.apply frame-bindings-of (clojure.lang.Var/getThreadBindingFrame)))
+
+     (def ^:private out-thread-bound (object-array 1))
 
      (defn- mark-thread-bound!
-       [^clojure.lang.Var v]
-       (.set ^java.util.concurrent.atomic.AtomicBoolean
-             (.get ^java.lang.reflect.Field thread-bound-field v)
-             true))
-
-     ;; Reused 2-slot array so Constructor.newInstance does not pay
-     ;; into-array / seq on every with-out-str. newInstance reads the
-     ;; slots synchronously, so reuse on this thread is safe.
-     (def ^:private ctor-arg-tl (ThreadLocal.))
-
-     (defn- fill-ctor-args
-       ^"[Ljava.lang.Object;" [a b]
-       (let [^ThreadLocal tl ctor-arg-tl
-             ^"[Ljava.lang.Object;" arr (or (.get tl)
-                                            (let [n (object-array 2)]
-                                              (.set tl n)
-                                              n))]
-         (aset arr 0 a)
-         (aset arr 1 b)
-         arr))
+       [v]
+       (let [slot ^"[Ljava.lang.Object;" out-thread-bound
+             ab (or (aget slot 0)
+                    (let [x (.apply thread-bound-of v)]
+                      (aset slot 0 x)
+                      x))]
+         (.set ^java.util.concurrent.atomic.AtomicBoolean ab true)))
 
      (defn- make-tbox [val]
-       (.newInstance ^java.lang.reflect.Constructor tbox-ctor
-                     ^"[Ljava.lang.Object;" (fill-ctor-args (Thread/currentThread) val)))
+       (.apply tbox-maker (Thread/currentThread) val))
 
      (defn- make-frame [bindings prev]
-       (.newInstance ^java.lang.reflect.Constructor frame-ctor
-                     ^"[Ljava.lang.Object;" (fill-ctor-args bindings prev)))
+       (.apply frame-maker bindings prev))
 
      ;; Overlay one Var->TBox on top of an existing binding map so a
      ;; with-out-str push does not PersistentHashMap.assoc. entryAt of
-     ;; the overlaid var is an identity check; other keys go to `under`.
-     ;; Var.getThreadBinding / isBound / get-thread-bindings / a nested
-     ;; pushThreadBindings.assoc all go through this.
-     (deftype OutOverlay [under v tbox]
+     ;; the overlaid var is an identity check against a cached MapEntry
+     ;; (Var.getThreadBinding / deref of *out* must not allocate). Other
+     ;; keys go to `under`.
+     (deftype OutOverlay [under v tbox entry]
        clojure.lang.ILookup
        (valAt [this k] (.valAt this k nil))
        (valAt [_ k not-found]
@@ -1459,19 +1533,20 @@
              (.containsKey ^clojure.lang.Associative under k)))
        (entryAt [_ k]
          (if (identical? k v)
-           (clojure.lang.MapEntry/create v tbox)
+           entry
            (.entryAt ^clojure.lang.Associative under k)))
        (assoc [_ k val]
          (if (identical? k v)
-           (OutOverlay. under v val)
-           (OutOverlay. (.assoc ^clojure.lang.Associative under k val) v tbox)))
+           (OutOverlay. under v val (clojure.lang.MapEntry/create v val))
+           (OutOverlay. (.assoc ^clojure.lang.Associative under k val) v tbox entry)))
        clojure.lang.IPersistentCollection
        (cons [this o]
          (if (instance? java.util.Map$Entry o)
            (.assoc this (.getKey ^java.util.Map$Entry o)
                    (.getValue ^java.util.Map$Entry o))
            this))
-       (empty [_] (OutOverlay. clojure.lang.PersistentHashMap/EMPTY v tbox))
+       (empty [_]
+         (OutOverlay. clojure.lang.PersistentHashMap/EMPTY v tbox entry))
        (equiv [_ o]
          (and (instance? OutOverlay o)
               (identical? v (.-v ^OutOverlay o))
@@ -1482,16 +1557,32 @@
            (if (.containsKey ^clojure.lang.Associative under v) n (inc n))))
        clojure.lang.Seqable
        (seq [_]
-         (cons (clojure.lang.MapEntry/create v tbox)
-               (remove #(identical? (key %) v) (seq under))))
+         (cons entry (remove #(identical? (key %) v) (seq under))))
        clojure.lang.Counted)
+
+     (defn- out-overlay [under v tbox]
+       (OutOverlay. under v tbox (clojure.lang.MapEntry/create v tbox)))
 
      ;; Flag snapshot, keyed by the current Var Frame object. Binding
      ;; (including print-sequential's *print-level* bind inside
      ;; print-method) allocates a new Frame, so the next pr-on-any!
      ;; recomputes and sees the new values. When the frame holds none
      ;; of the print-flag vars, values are getRawRoot (no HashMap.find).
+     ;; An OutOverlay with-out-str frame only rebinds *out*, so push/pop
+     ;; retarget this cache at the new Frame identity and keep the values.
      (def ^:private flag-snap (ThreadLocal.))
+
+     (def ^:private frame-class (Class/forName "clojure.lang.Var$Frame"))
+
+     (defn- retarget-flag-snap!
+       "If the snapshot was taken for from-frame, retarget it at to-frame.
+        OutOverlay only rebinds *out*, so the flag values stay valid. Do
+        not retarget a snapshot from some other frame (e.g. a *print-meta*
+        binding that has not been snapshotted yet)."
+       [from-frame to-frame]
+       (when-let [c (.get ^ThreadLocal flag-snap)]
+         (when (identical? (aget ^"[Ljava.lang.Object;" c 0) from-frame)
+           (aset ^"[Ljava.lang.Object;" c 0 to-frame))))
 
      (defn- frame-holds-print-flags? [bmap]
        (let [^"[Ljava.lang.Object;" vs print-vs
@@ -1506,7 +1597,8 @@
 
      (defn- snapshot-print-flags
        "Object array: [frame dup level length nsmaps meta readably flush?].
-        Cached for this thread until the binding frame changes."
+        Cached for this thread until the binding frame changes. An OutOverlay
+        push retargets the cached frame pointer so ARM1 does not resnapshot."
        []
        (let [frame (clojure.lang.Var/getThreadBindingFrame)
              ^"[Ljava.lang.Object;" c (.get ^ThreadLocal flag-snap)]
@@ -1543,14 +1635,15 @@
              (.set v s)
              nil)
          (let [prev (clojure.lang.Var/getThreadBindingFrame)
-               overlay (OutOverlay. (frame-bindings) v (make-tbox s))
+               overlay (out-overlay (frame-bindings) v (make-tbox s))
                neu (make-frame overlay prev)]
            (mark-thread-bound! v)
            (when-let [vf (.getValidator v)]
              (when-not (boolean (vf s))
                (throw (IllegalStateException. "Invalid reference state"))))
            (clojure.lang.Var/resetThreadBindingFrame neu)
-           (.set ^ThreadLocal out-save (cons ::frame (.get ^ThreadLocal out-save)))
+           (retarget-flag-snap! prev neu)
+           (.set ^ThreadLocal out-save (cons neu (.get ^ThreadLocal out-save)))
            nil)))
      :default
      (do (push-thread-bindings {(out-var) s}) nil)))
@@ -1561,8 +1654,9 @@
      (let [st (.get ^ThreadLocal out-save)
            old (first st)]
        (.set ^ThreadLocal out-save (next st))
-       (if (identical? old ::frame)
-         (clojure.lang.Var/popThreadBindings)
+       (if (.isInstance ^Class frame-class old)
+         (do (clojure.lang.Var/popThreadBindings)
+             (retarget-flag-snap! old (clojure.lang.Var/getThreadBindingFrame)))
          (.set ^clojure.lang.Var (out-var) old))
        nil)
      :default
