@@ -400,6 +400,11 @@ namespace cohost_err {
     :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
     :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :cljd (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
     :refer! #?(:cljs (unsupported :refer!) :phel (unsupported :refer!) :cljd (unsupported :refer!)
+               ;; ValueScript: refer is its evaluator's verb, not a var, so it is called by name and never passed
+               ;; to apply; a nil filter is the absent filter to its refer
+               :vs (fn [into-ns from-ns {:keys [only exclude rename]}]
+                     (binding [*ns* (the-ns into-ns)]
+                       (refer from-ns :only only :exclude exclude :rename rename)))
                :default (fn [into-ns from-ns {:keys [only exclude rename]}]
                           (binding [*ns* (the-ns into-ns)]
                             (apply refer from-ns (concat (when only [:only only]) (when exclude [:exclude exclude])
