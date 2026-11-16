@@ -1227,11 +1227,7 @@
      :default (append-text! w (if readably? (str "\"" s "\"") (str s))))
   nil)
 
-;; pr-on-into-sb! is :clj only: its arglist hint and body name the JVM class
-;; StringBuilder, which no other body's analyzer can resolve; every other
-;; body's fast-pr-on! takes its :default (fallback) arm and never calls it.
-#?@(:clj
-    [(defn- pr-on-into-sb!
+(defn- pr-on-into-sb!
   "fast-pr-on! when w's buffer is a StringBuilder on `under`: append
    directly, no per-chunk append-text! / string-builder-under hop."
   [x ^StringBuilder sb w print-level print-length print-namespace-maps print-meta print-readably fallback]
@@ -1280,7 +1276,7 @@
                   (.append sb "]"))
               :else (fallback x w)))]
     (pr* x)
-    nil))])
+    nil))
 
 (defn fast-pr-on!
   "Host-compiled pr-on for the common types. The earlier booted seat's
