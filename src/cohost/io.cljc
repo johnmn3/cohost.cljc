@@ -1102,19 +1102,9 @@
             (when (instance? StringBuilder u) u))
      :default nil))
 
-(defn append-text!
-  "Append t to writer w. On the JVM a StringWriter appends to the
-   StringBuilder in `under` with no atom deref."
+(defn- append-text-slow!
   [w t]
-  (if-let [sb (string-builder-under w)]
-    ;; the .append form sits under :clj: on jank there is no StringBuilder
-    ;; (see lb: "no StringBuilder class and no JVM members") and
-    ;; string-builder-under is nil there, so this branch is never taken —
-    ;; but jank's analyzer rejects the unconditioned member call at boot
-    ;; (kind WITH mini, 2026-11-15). JVM forms unchanged.
-    #?(:clj (do (.append ^StringBuilder sb (if (string? t) t (str t))) nil)
-       :default nil)
-    (let [s (if (string? t) t (str t))
+  (let [s (if (string? t) t (str t))
         a (writer-state-atom w)
         st @a]
     (when (:closed? st)
@@ -1134,7 +1124,23 @@
                   (.append ^StringBuilder buf s)
                   (swap! a update :text text-buf-append s)))
          :default (swap! a update :text text-buf-append s)))
-    nil)))
+    nil))
+
+(defn append-text!
+  "Append t to writer w. On the JVM a StringWriter appends to the
+   StringBuilder in `under` with no helper call and no atom deref.
+   The tight .under/.append path is :clj-only: jank's analyzer rejects
+   an unconditioned StringBuilder member call at boot (kind WITH mini #58)."
+  [w t]
+  #?(:clj
+     (if (instance? WriterValue w)
+       (let [u (.under ^WriterValue w)]
+         (if (instance? StringBuilder u)
+           (do (.append ^StringBuilder u (if (instance? String t) t (str t))) nil)
+           (append-text-slow! w t)))
+       (append-text-slow! w t))
+     :default
+     (append-text-slow! w t)))
 
 (defn sink-writer
   "A Writer (class java.io.PrintWriter) -- clojure.core/PrintWriter-on's
@@ -1221,6 +1227,57 @@
      :default (append-text! w (if readably? (str "\"" s "\"") (str s))))
   nil)
 
+(defn- pr-on-into-sb!
+  "fast-pr-on! when w's buffer is a StringBuilder on `under`: append
+   directly, no per-chunk append-text! / string-builder-under hop."
+  [x ^StringBuilder sb w print-level print-length print-namespace-maps print-meta print-readably fallback]
+  (letfn [(pr* [x]
+            (cond
+              (instance? clojure.lang.Keyword x)
+              (.append sb (.toString ^clojure.lang.Keyword x))
+              (instance? Long x)
+              (.append sb ^long (.longValue ^Long x))
+              (nil? x) (.append sb "nil")
+              (instance? Boolean x) (.append sb (if x "true" "false"))
+              (instance? String x)
+              (write-printed-string! w x (boolean print-readably))
+              (and (instance? clojure.lang.IPersistentMap x)
+                   (not (instance? clojure.lang.IRecord x))
+                   (not print-level)
+                   (not print-length)
+                   (or (not print-namespace-maps)
+                       (let [e (first x)]
+                         (or (nil? e)
+                             (let [k (key e)]
+                               (not (and (or (keyword? k) (symbol? k))
+                                         (namespace k)))))))
+                   (not (and (meta x) (and print-meta print-readably))))
+              (do (.append sb "{")
+                  (when-let [xs (seq x)]
+                    (loop [e (first xs) n (next xs)]
+                      (pr* (key e))
+                      (.append sb " ")
+                      (pr* (val e))
+                      (when n
+                        (.append sb ", ")
+                        (recur (first n) (next n)))))
+                  (.append sb "}"))
+              (and (instance? clojure.lang.IPersistentVector x)
+                   (not print-level)
+                   (not print-length)
+                   (not (and (meta x) (and print-meta print-readably))))
+              (do (.append sb "[")
+                  (let [n (count x)]
+                    (loop [i 0]
+                      (when (< i n)
+                        (when (pos? i) (.append sb " "))
+                        (pr* (nth x i))
+                        (recur (unchecked-inc i)))))
+                  (.append sb "]"))
+              :else (fallback x w)))]
+    (pr* x)
+    nil))
+
 (defn fast-pr-on!
   "Host-compiled pr-on for the common types. The earlier booted seat's
    (instance? clojure.lang.IPersistentMap x) went through the shim's
@@ -1237,6 +1294,9 @@
      ;; knows how to .write / .append them.
      (if-not (or (instance? WriterValue w) (instance? BufferedWriterValue w))
        (do (fallback x w) nil)
+       (if-let [sb (string-builder-under w)]
+         (pr-on-into-sb! x sb w print-level print-length print-namespace-maps
+                         print-meta print-readably fallback)
        (letfn [(pr* [x]
                (cond
                  (instance? clojure.lang.Keyword x) (append-text! w (str x))
@@ -1280,35 +1340,86 @@
                      (append-text! w "]"))
                  :else (fallback x w)))]
          (pr* x)
-         nil))
+         nil)))
      :default (do (fallback x w) nil)))
 
 (def ^:private system-newline
   #?(:clj (or (System/getProperty "line.separator") "\n")
      :default "\n"))
 
-(def ^:private out-var* (volatile! nil))
+(def ^:private ^"[Ljava.lang.Object;" print-vs (object-array 10))
+;; 0 *out*, 1 *print-dup*, 2 *print-level*, 3 *print-length*,
+;; 4 *print-namespace-maps*, 5 *print-meta*, 6 *print-readably*,
+;; 7 *flush-on-newline*, 8 print-method, 9 print-dup
+
+(defn- resolve-core-var [nm]
+  (ns-resolve 'cohost.core nm))
 
 (defn- out-var
-  "The booted *out* var, resolved once after the io layer is installed."
+  "The booted *out* var, cached in print-vs after install-print-vars!."
   []
-  (or @out-var*
-      (let [v (ns-resolve 'cohost.core '*out*)]
-        (vreset! out-var* v)
+  (or (aget ^"[Ljava.lang.Object;" print-vs 0)
+      (let [v (resolve-core-var '*out*)]
+        (aset ^"[Ljava.lang.Object;" print-vs 0 v)
         v)))
 
+(defn install-print-vars!
+  "Cache cohost.core's print vars after the io layer and core_print are in.
+   The hot path then .deref's these Vars; no ns-resolve, no clojure.core/deref."
+  []
+  (let [vs ^"[Ljava.lang.Object;" print-vs]
+    (aset vs 0 (resolve-core-var '*out*))
+    (aset vs 1 (resolve-core-var '*print-dup*))
+    (aset vs 2 (resolve-core-var '*print-level*))
+    (aset vs 3 (resolve-core-var '*print-length*))
+    (aset vs 4 (resolve-core-var '*print-namespace-maps*))
+    (aset vs 5 (resolve-core-var '*print-meta*))
+    (aset vs 6 (resolve-core-var '*print-readably*))
+    (aset vs 7 (resolve-core-var '*flush-on-newline*))
+    (aset vs 8 (resolve-core-var 'print-method))
+    (aset vs 9 (resolve-core-var 'print-dup))
+    nil))
+
+(defn- fallback-print-method [x w]
+  (let [f (aget ^"[Ljava.lang.Object;" print-vs 8)]
+    (if f (f x w) (print-method x w))))
+
+(def ^:private out-save
+  #?(:clj (ThreadLocal.)
+     :default nil))
+
 (defn push-out!
-  "Host push-thread-bindings of cohost.core/*out*. Used by the installed
-   with-out-str so the ARM1 loop does not go through the shimmed
-   Var/pushThreadBindings → adapter cap."
+  "Bind cohost.core/*out* to s. If *out* is already thread-bound, set!
+   the existing box and remember the previous value (no new binding
+   frame). Otherwise Var/pushThreadBindings of that one var. Used by
+   the installed with-out-str so the ARM1 loop does not go through the
+   shimmed Var/pushThreadBindings → adapter cap."
   [s]
-  (push-thread-bindings {(out-var) s})
-  nil)
+  #?(:clj
+     (let [v ^clojure.lang.Var (out-var)
+           tb (.getThreadBinding v)]
+       (if (some? tb)
+         (do (.set ^ThreadLocal out-save (cons (.deref v) (.get ^ThreadLocal out-save)))
+             (.set v s)
+             nil)
+         (do (.set ^ThreadLocal out-save (cons ::frame (.get ^ThreadLocal out-save)))
+             (clojure.lang.Var/pushThreadBindings (array-map v s))
+             nil)))
+     :default
+     (do (push-thread-bindings {(out-var) s}) nil)))
 
 (defn pop-out!
   []
-  (pop-thread-bindings)
-  nil)
+  #?(:clj
+     (let [st (.get ^ThreadLocal out-save)
+           old (first st)]
+       (.set ^ThreadLocal out-save (next st))
+       (if (identical? old ::frame)
+         (clojure.lang.Var/popThreadBindings)
+         (.set ^clojure.lang.Var (out-var) old))
+       nil)
+     :default
+     (do (pop-thread-bindings) nil)))
 
 (defn append-newline!
   "Write the platform newline to w. Layer writers use append-text!;
@@ -1335,6 +1446,104 @@
             (:out st) (flush-output! (:out st))
             (:handle st) (host/io-flush! ((:handle st))))
       nil)))
+
+(defn flush-any!
+  "Flush w without re-reading *out*. Layer writers use flush-writer!;
+   a java.io.Flushable gets .flush; anything else is a no-op."
+  [w]
+  #?(:clj
+     (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+       (flush-writer! w)
+       (when (instance? java.io.Flushable w)
+         (.flush ^java.io.Flushable w)))
+     :default nil)
+  nil)
+
+(defn- pr-on-any!
+  "Host pr-on of x onto an already-read writer w. Print flags are
+   .deref of cached Vars (typically root bindings). *out* is not reread."
+  [x w]
+  #?(:clj
+     (let [^"[Ljava.lang.Object;" vs print-vs
+           ^clojure.lang.Var dup (aget vs 1)]
+       (if (.deref dup)
+         (let [^clojure.lang.Var pdf (aget vs 9)]
+           ((.deref pdf) x w))
+         (let [^clojure.lang.Var level (aget vs 2)
+               ^clojure.lang.Var length (aget vs 3)
+               ^clojure.lang.Var nsmaps (aget vs 4)
+               ^clojure.lang.Var pmeta (aget vs 5)
+               ^clojure.lang.Var pread (aget vs 6)]
+           (fast-pr-on! x w
+                        (.deref level)
+                        (.deref length)
+                        (.deref nsmaps)
+                        (.deref pmeta)
+                        (.deref pread)
+                        fallback-print-method))))
+     :default nil)
+  nil)
+
+(defn- current-out
+  ^Object []
+  #?(:clj
+     (let [^"[Ljava.lang.Object;" vs print-vs
+           ^clojure.lang.Var v (aget vs 0)]
+       (.deref v))
+     :default @(out-var)))
+
+(defn- flush-on-newline?
+  []
+  #?(:clj
+     (let [^"[Ljava.lang.Object;" vs print-vs
+           ^clojure.lang.Var v (aget vs 7)]
+       (.deref v))
+     :default nil))
+
+(defn- needs-flush?
+  "prn's *flush-on-newline* flush. A StringWriter whose buffer is on
+   `under` is a no-op in flush-writer!; skip the call."
+  [w]
+  #?(:clj
+     (if (and (instance? WriterValue w)
+              (instance? StringBuilder (.under ^WriterValue w)))
+       false
+       (boolean (flush-on-newline?)))
+     :default (boolean (flush-on-newline?))))
+
+(defn prn0!
+  "0-arg prn: newline + optional flush, *out* read once."
+  []
+  (let [w (current-out)]
+    (append-newline! w)
+    (when (needs-flush? w)
+      (flush-any! w))
+    nil))
+
+(defn prn1!
+  "1-arg prn: deref *out* once, print, newline, optional flush."
+  [x]
+  (let [w (current-out)]
+    (pr-on-any! x w)
+    (append-newline! w)
+    (when (needs-flush? w)
+      (flush-any! w))
+    nil))
+
+(defn prn*!
+  "Variadic prn of x then more, *out* read once."
+  [x more]
+  (let [w (current-out)]
+    (pr-on-any! x w)
+    (doseq [y more]
+      (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+        (append-text! w " ")
+        #?(:clj (.append ^java.lang.Appendable w " ") :default nil))
+      (pr-on-any! y w))
+    (append-newline! w)
+    (when (needs-flush? w)
+      (flush-any! w))
+    nil))
 
 (defn close-writer! [w]
   (if (string-builder-under w)

@@ -1052,22 +1052,9 @@
 (def ^:private fast-prn-form
   '(def prn
      (fn
-       ([]
-        (newline)
-        (when *flush-on-newline* (flush)))
-       ([x]
-        (pr-on x *out*)
-        (cohost.io/append-newline! *out*)
-        (when *flush-on-newline* (flush))
-        nil)
-       ([x & more]
-        (pr-on x *out*)
-        (doseq [y more]
-          (. *out* (append \space))
-          (pr-on y *out*))
-        (cohost.io/append-newline! *out*)
-        (when *flush-on-newline* (flush))
-        nil))))
+       ([] (cohost.io/prn0!))
+       ([x] (cohost.io/prn1! x))
+       ([x & more] (cohost.io/prn*! x more)))))
 
 
 (defn install-io-layer!
@@ -1446,6 +1433,7 @@
      (when (host/io-handles)
        (host/with-ns core-ns
          (fn []
+           (io/install-print-vars!)
            (eval-form! ctx report fast-pr-on-form 'pr-on :replaced)
            (eval-form! ctx report fast-with-out-str-form 'with-out-str :replaced)
            (eval-form! ctx report fast-prn-form 'prn :replaced))))
