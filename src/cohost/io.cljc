@@ -486,7 +486,11 @@
     ::byte-output-stream ::socket-output})
 
 (defn reader-value? [x] (contains? reader-kinds (kind-of x)))
-(defn writer-value? [x] (contains? writer-kinds (kind-of x)))
+(defn writer-value? [x]
+  ;; JVM: two instanceof checks. The kind-of path walks every io record
+  ;; type, then reads :cohost/kind off the extmap (F1 write-dot / toString).
+  #?(:clj (or (instance? WriterValue x) (instance? BufferedWriterValue x))
+     :default (contains? writer-kinds (kind-of x))))
 (defn input-stream-value? [x] (contains? input-stream-kinds (kind-of x)))
 (defn output-stream-value? [x] (contains? output-stream-kinds (kind-of x)))
 
@@ -1206,6 +1210,63 @@
               (.toString b))))))
      :default (append-text! w (if readably? (str "\"" s "\"") (str s))))
   nil)
+
+(defn fast-pr-on!
+  "Host-compiled pr-on for the common types. The earlier booted seat's
+   (instance? clojure.lang.IPersistentMap x) went through the shim's
+   instance_fn / token-isa? / class-of (43% of ARM2 samples) and often
+   missed, so simple maps fell through to print-method / print-sequential
+   (MultiFn on 64% of stacks). Here instance? is JVM instanceof, and
+   writes go to append-text!, not shimmed .write.
+   Called only when *print-dup* is false. fallback is (fn [x w] ...) for
+   types this seat does not handle (typically print-method). Returns nil."
+  [x w print-level print-length print-namespace-maps print-meta print-readably fallback]
+  #?(:clj
+     ;; Only the io-layer writers take append-text!. pprint's pretty-writer
+     ;; and other targets go to fallback (print-method), which already
+     ;; knows how to .write / .append them.
+     (if-not (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+       (do (fallback x w) nil)
+       (letfn [(pr* [x]
+               (cond
+                 (instance? clojure.lang.Keyword x) (append-text! w (str x))
+                 (instance? Long x) (append-text! w (str x))
+                 (nil? x) (append-text! w "nil")
+                 (instance? Boolean x) (append-text! w (if x "true" "false"))
+                 (instance? String x)
+                 (write-printed-string! w x (boolean print-readably))
+                 (and (instance? clojure.lang.IPersistentMap x)
+                      (not (instance? clojure.lang.IRecord x))
+                      (not print-level)
+                      (not print-length)
+                      (not print-namespace-maps)
+                      (not (and (meta x) (and print-meta print-readably))))
+                 (do (append-text! w "{")
+                     (when-let [xs (seq x)]
+                       (loop [e (first xs) n (next xs)]
+                         (pr* (key e))
+                         (append-text! w " ")
+                         (pr* (val e))
+                         (when n
+                           (append-text! w ", ")
+                           (recur (first n) (next n)))))
+                     (append-text! w "}"))
+                 (and (instance? clojure.lang.IPersistentVector x)
+                      (not print-level)
+                      (not print-length)
+                      (not (and (meta x) (and print-meta print-readably))))
+                 (do (append-text! w "[")
+                     (let [n (count x)]
+                       (loop [i 0]
+                         (when (< i n)
+                           (when (pos? i) (append-text! w " "))
+                           (pr* (nth x i))
+                           (recur (unchecked-inc i)))))
+                     (append-text! w "]"))
+                 :else (fallback x w)))]
+         (pr* x)
+         nil))
+     :default (do (fallback x w) nil)))
 
 (defn flush-writer! [w]
   (let [st @(state-of w)]

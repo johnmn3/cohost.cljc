@@ -1010,55 +1010,25 @@
                                        ([a b c d] (cohost.shim/core-read+string a b c d))))]
    ['read-line '(def read-line (fn [] (cohost.io/read-line! *in*)))]])
 
-;; F1 print-loop: pr-on of a keyword/long/boolean/nil was ~3–4× native
-;; because each call went through the MultiFn even though those methods
-;; are (.write w (str x)). Strings paid a per-char shim .charAt/.append.
-;; Simple maps/vectors (no *print-level*/length/namespace-maps/meta) skip
-;; print-method and print-sequential. Installed after core_print, evaluated
-;; in cohost.core so *print-dup* and .write are the booted/shimmed ones.
-;; Records, print-dup, and everything else still go to print-method.
+;; F1 print-loop: the previous in-core seat still used the shim's
+;; instance? (instance_fn / token-isa? / class-of) for every cond clause.
+;; IPersistentMap often missed, so {:a i} went through print-method /
+;; print-sequential (MultiFn on ~64% of ARM2 samples; instance_fn on
+;; ~43%). The seat is now host-compiled (JVM instanceof, append-text!);
+;; this wrapper only supplies the print flags and the print-method /
+;; print-dup fallback. Records, print-dup, *print-level*/length /
+;; namespace-maps / meta still go to print-method.
 (def ^:private fast-pr-on-form
   '(def pr-on
-     (fn [x w]
-       (if *print-dup*
-         (print-dup x w)
-         (cond (instance? clojure.lang.Keyword x) (do (.write w (str x)) nil)
-               (instance? Long x) (do (.write w (str x)) nil)
-               (nil? x) (do (.write w "nil") nil)
-               (instance? Boolean x) (do (.write w (if x "true" "false")) nil)
-               (instance? String x)
-               (do (cohost.io/write-printed-string! w x (boolean (or *print-dup* *print-readably*))) nil)
-               (and (instance? clojure.lang.IPersistentMap x)
-                    (not (instance? clojure.lang.IRecord x))
-                    (not *print-level*)
-                    (not *print-length*)
-                    (not *print-namespace-maps*)
-                    (not (and (meta x) (or *print-dup* (and *print-meta* *print-readably*)))))
-               (do (.write w "{")
-                   (loop [xs (seq x)]
-                     (when xs
-                       (let [e (first xs) n (next xs)]
-                         (pr-on (key e) w)
-                         (.write w " ")
-                         (pr-on (val e) w)
-                         (when n (.write w ", "))
-                         (recur n))))
-                   (.write w "}")
-                   nil)
-               (and (instance? clojure.lang.IPersistentVector x)
-                    (not *print-level*)
-                    (not *print-length*)
-                    (not (and (meta x) (or *print-dup* (and *print-meta* *print-readably*)))))
-               (do (.write w "[")
-                   (loop [xs (seq x)]
-                     (when xs
-                       (pr-on (first xs) w)
-                       (when (next xs) (.write w " "))
-                       (recur (next xs))))
-                   (.write w "]")
-                   nil)
-               :else (print-method x w)))
-       nil)))
+     (let [fallback (fn [x w] (print-method x w))]
+       (fn [x w]
+         (if *print-dup*
+           (print-dup x w)
+           (cohost.io/fast-pr-on! x w *print-level* *print-length*
+                                  *print-namespace-maps* *print-meta*
+                                  *print-readably*
+                                  fallback))
+         nil))))
 
 
 (defn install-io-layer!
