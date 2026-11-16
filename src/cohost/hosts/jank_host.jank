@@ -961,6 +961,31 @@ namespace cohost_dcall_init {
 
 (def ^:private concat-star (var-get (get (ns-interns 'clojure.core) 'concat*)))
 
+;; monitor-enter / monitor-exit: stock core's `locking` macro syntax-quotes
+;; its expansion into these names, but they are special forms only on the
+;; JVM — jank's core has neither the special forms nor vars, so a locking
+;; expansion analyzed without cohost's rewriter in the loop (a loaded
+;; namespace's macro expansion, an eval) dies with "The symbol
+;; clojure.core/monitor-enter could not be resolved" (perf pair, WITH
+;; init). :ensure-bare-ns! interns these no-op fns under the names when
+;; the booted core is made, so the expansion resolves as a plain call.
+;; The no-op pair is the honest semantics on this seat: cohost's rewriter
+;; already routes source-level monitor-enter to cohost.shim's no-op vars
+;; on every body, and a monitor section here guards only in-process
+;; state while the thread adapter is thread/none.
+(def ^:private monitor-enter* (fn [_] nil))
+(def ^:private monitor-exit* (fn [_] nil))
+
+;; the same pair goes into jank's NATIVE clojure.core (this file's own
+;; core — the one (ns-interns 'clojure.core) reads above): measured on
+;; the booted body, a read symbol clojure.core/monitor-enter resolves
+;; through the booted core's intern, but the symbol as produced by the
+;; AOT-compiled locking macro's syntax quote is resolved by jank's
+;; analyzer against the native core, where the name must also exist or
+;; the expansion dies with the same "could not be resolved" error.
+(intern 'clojure.core 'monitor-enter monitor-enter*)
+(intern 'clojure.core 'monitor-exit monitor-exit*)
+
 
 ;; ---------------------------------------------------------------------------
 ;; the type layer: deftype, defrecord, defprotocol and reify on a host with
@@ -2666,6 +2691,8 @@ namespace cohost_err {
                       (create-ns ns-sym)
                       (when (= 'cohost.core ns-sym)
                         (intern ns-sym 'concat* concat-star)
+                        (intern ns-sym 'monitor-enter monitor-enter*)
+                        (intern ns-sym 'monitor-exit monitor-exit*)
                         ;; set! is no core.clj def the boot would meet: interned
                         ;; here, as the core is made, so every namespace that
                         ;; refers the core sees it
