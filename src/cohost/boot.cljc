@@ -1106,6 +1106,11 @@
    it too): cohost.core, the codemod's ctx, the hooks. -> [ctx report]."
   [root]
   (host/ensure-bare-ns! core-ns)
+  ;; the host's :special names (its own special forms, which no stock form defines: ValueScript's let, loop and fn)
+  ;; are referred from its core before the first stock form is read, so a stock macro's syntax-quote resolves them to
+  ;; the host's — read bare in cohost.core, `fn became cohost.core/fn, which nothing defines
+  (doseq [s (:special-names (policy/lists (host/host-name) (some? (host/chunks)) (some? (host/io-handles))))]
+    (host/try-all (fn [] (host/refer! core-ns (host/core-ns-sym) {:only [s]})) (fn [_] nil)))
   (let [ctx (if (profiling) (prof :setup #(make-ctx)) (make-ctx))
         report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
     (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks)) (some? (host/io-handles))))
