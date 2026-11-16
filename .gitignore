@@ -9,3 +9,6 @@ node_modules/
 /phel-snap/
 /phel-snap-run/
 /phel-snap-build/
+
+# the vendoring driver's read cache (tools/revendor.py)
+/tools/ghcache/

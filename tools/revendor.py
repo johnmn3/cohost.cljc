@@ -66,7 +66,7 @@ def file_blob_sha(path: str) -> str:
 GH = os.path.expanduser("~/workspace/custom-connectors/custom.legacy-github/bin/gh-api")
 GH_ENV = dict(os.environ, PYTHONPATH="/opt/muse/skills/custom-connector-setup/bin")
 
-def gh_get(repo: str, path: str):
+def _gh_get_api(repo: str, path: str):
     """In-process GitHub GET (Lane J6 transport extension, proven
     in run_transport_proof.py against the helper route below).
     The subprocess-per-call route costs ~1.7 s/call in gh-api
@@ -84,6 +84,88 @@ def gh_get(repo: str, path: str):
         with urllib.request.urlopen(req) as resp: return read_json_response(resp)
     except Exception as e:
         raise IOError(f"gh GET /repos/{repo}{path} failed: {e}")
+
+# The git route (2026-11-16): the same four reads — a branch tip, a
+# recursive tree, one tree level, a blob — answered by plain git
+# against the repo's remote, for seats that have git access to the
+# source repos and no API credential helper. Objects are named by
+# SHA either way, so the two routes return the same listings and
+# the same bytes; everything above this function is route-blind.
+# COHOST_VENDOR_TRANSPORT=api|git forces a route; unset, the API
+# route is used where its helper is installed, git elsewhere.
+# COHOST_VENDOR_GIT_REMOTES="owner/repo=<url or path>,..." names a
+# remote other than https://github.com/<owner>/<repo>.git.
+GIT_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ghcache", "git")
+
+def _git_remote(repo: str) -> str:
+    for ent in os.environ.get("COHOST_VENDOR_GIT_REMOTES", "").split(","):
+        k, _, v = ent.partition("=")
+        if k.strip() == repo and v.strip(): return v.strip()
+    return f"https://github.com/{repo}.git"
+
+def _git(repo: str, *args, check=True) -> subprocess.CompletedProcess:
+    d = os.path.join(GIT_CACHE, repo.replace("/", "_") + ".git")
+    if not os.path.isdir(d):
+        os.makedirs(d, exist_ok=True)
+        subprocess.run(["git", "init", "-q", "--bare", d], check=True)
+    r = subprocess.run(["git", "-C", d, *args], capture_output=True)
+    if check and r.returncode != 0:
+        raise IOError(f"git {' '.join(args[:3])} ({repo}) failed: {r.stderr.decode(errors='replace').strip()[:300]}")
+    return r
+
+def _git_have(repo: str, sha: str) -> bool:
+    return _git(repo, "cat-file", "-e", sha, check=False).returncode == 0
+
+def _git_ensure(repo: str, sha: str):
+    """The object named sha is in the cache: a commit is fetched by
+    SHA, whole (depth 1: its tree and every blob in one pack); trees
+    and blobs arrive with the commit that was fetched for them."""
+    if _git_have(repo, sha): return
+    _git(repo, "fetch", "-q", "--depth", "1", _git_remote(repo), sha)
+    if not _git_have(repo, sha):
+        raise IOError(f"{repo}: object {sha} not present after fetch")
+
+def _git_tree_entries(repo: str, sha: str, recursive: bool) -> list:
+    _git_ensure(repo, sha)
+    r = _git(repo, "ls-tree", "-z", *(["-r"] if recursive else []), sha)
+    out = []
+    for rec in r.stdout.split(b"\0"):
+        if not rec: continue
+        meta, _, path = rec.partition(b"\t")
+        _mode, typ, osha = meta.decode().split()
+        out.append({"path": path.decode(), "type": typ, "sha": osha})
+    return out
+
+def _gh_get_git(repo: str, path: str):
+    if path.startswith("/branches/"):
+        branch = urllib.parse.unquote(path[len("/branches/"):])
+        r = subprocess.run(["git", "ls-remote", _git_remote(repo), f"refs/heads/{branch}"], capture_output=True)
+        line = r.stdout.decode().strip()
+        if r.returncode != 0 or not line:
+            raise IOError(f"git ls-remote {repo} refs/heads/{branch} failed: {r.stderr.decode(errors='replace').strip()[:300]}")
+        return {"commit": {"sha": line.split()[0]}}
+    if path.startswith("/git/trees/"):
+        sha, _, q = path[len("/git/trees/"):].partition("?")
+        return {"tree": _git_tree_entries(repo, sha, "recursive=1" in q), "truncated": False}
+    if path.startswith("/git/blobs/"):
+        sha = path[len("/git/blobs/"):]
+        if not _git_have(repo, sha):
+            raise IOError(f"{repo}: blob {sha} is not in the git cache (no commit carrying it was fetched)")
+        return {"content": base64.b64encode(_git(repo, "cat-file", "blob", sha).stdout).decode()}
+    raise IOError(f"git route: unsupported read {path}")
+
+def _transport() -> str:
+    t = os.environ.get("COHOST_VENDOR_TRANSPORT", "")
+    if t in ("api", "git"): return t
+    return "api" if os.path.isdir("/opt/muse/skills/custom-connector-setup/bin") else "git"
+
+def gh_get(repo: str, path: str):
+    """One read of the source repo, by the seat's route (above)."""
+    try:
+        return _gh_get_api(repo, path) if _transport() == "api" else _gh_get_git(repo, path)
+    except IOError: raise
+    except Exception as e:
+        raise IOError(f"read /repos/{repo}{path} failed: {e}")
 
 def gh_branch_tip(repo: str, branch: str) -> str:
     d = gh_get(repo, f"/branches/{urllib.parse.quote(branch, safe='')}")

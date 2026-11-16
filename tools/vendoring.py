@@ -19,6 +19,18 @@ driver's manifest from them, and prints the pins it enforces.
 Which libs are vendored, and where they land, is data — PROFILES
 below; a new vendored dep is a new profile row, not new machinery.
 
+Overlay (a consumer's own host seat on a vendored lib): the
+coordinate may name a directory of the consumer,
+`:cohost.vendor/overlay "<dir>"`. Files under `<dir>/<dest>/`
+are carried into the vendored root at the same relative paths
+(the driver's named overlay set: listed by blob sha, verified by
+content, never part of the upstream census), and
+`<dir>/<dest>.hosts-row.edn` — one hosts.edn key followed by its
+value — replaces the profile's hosts.edn patch step with the
+consumer's row. The overlay lives outside the vendored root, in
+the consumer's own history; the vendored root stays derived
+state. A fix to upstream content is still made upstream.
+
 Resumability: the driver writes its bank record only when a run
 completes. If a run dies without recording an exit (kill, power),
 the next run removes the vendored roots — derived state — and
@@ -53,6 +65,7 @@ PROFILES = {
 }
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+OVERLAYS = {}  # lib -> the consumer's overlay dir, when its coordinate declares one
 
 def die(msg):
     print(f"cohost vendor: {msg}", file=sys.stderr)
@@ -81,7 +94,9 @@ def read_declaration(root):
             die(f"deps.edn: {lib} must declare :git/url and a 40-hex :git/sha")
         repo = re.sub(r"^https://github\.com/", "", url.group(1))
         repo = re.sub(r"\.git$", "", repo)
+        ov = re.search(r':cohost\.vendor/overlay\s+"([^"]+)"', m.group(1))
         out[lib] = (repo, sha.group(1))
+        if ov: OVERLAYS[lib] = ov.group(1)
     if not out:
         die("deps.edn declares no vendored dep (profiled libs: "
             + ", ".join(sorted(PROFILES)) + ")")
@@ -114,7 +129,36 @@ def build_manifest(root, decl, driver):
             art["working_line_files"] = p["working_line_files"]
         man[p["artifact"]] = art
         hp = p.get("hosts_patch")
-        if hp:
+        ov_dir = OVERLAYS.get(lib)
+        row = None
+        if ov_dir:
+            ov_root = os.path.join(root, ov_dir)
+            if not os.path.isdir(ov_root):
+                die(f"deps.edn: {lib} declares :cohost.vendor/overlay {ov_dir!r}, which is not a directory of {root}")
+            if overlay["source"].get("kind") == "local-dir" and overlay["source"]["root"] != ov_root:
+                die("deps.edn: every lib's :cohost.vendor/overlay must name the same directory "
+                    f"({overlay['source']['root']} vs {ov_root})")
+            overlay["source"] = {"kind": "local-dir", "root": ov_root}
+            sub = os.path.join(ov_root, p["dest"])
+            for dp, dns, fns in os.walk(sub):
+                dns.sort()
+                for fn in sorted(fns):
+                    full = os.path.join(dp, fn)
+                    overlay["files"].append({"path": os.path.relpath(full, ov_root),
+                                             "sha": driver.file_blob_sha(full)})
+            row_path = os.path.join(ov_root, p["dest"] + ".hosts-row.edn")
+            if os.path.exists(row_path):
+                if not hp:
+                    die(f"{ov_dir}/{p['dest']}.hosts-row.edn: {lib} has no hosts.edn patch step to carry a row")
+                text = "\n".join(l for l in open(row_path).read().splitlines()
+                                 if not l.lstrip().startswith(";")).strip()
+                m = re.match(r"(:[^\s\[\]{}()]+)\s+(.+)\Z", text, re.S)
+                if not m:
+                    die(f"{ov_dir}/{p['dest']}.hosts-row.edn must hold one hosts.edn key followed by its value")
+                row = (m.group(1), m.group(2).strip())
+        if hp and row:
+            overlay["hosts_edn_patch"] = {"path": hp["path"], "key": row[0], "value": row[1]}
+        elif hp:
             try:
                 pinned = driver.gh_path_content(repo, sha, hp["file"]).decode()
             except Exception as e:
