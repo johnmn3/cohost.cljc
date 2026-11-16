@@ -1227,10 +1227,7 @@
      :default (append-text! w (if readably? (str "\"" s "\"") (str s))))
   nil)
 
-;; pr-on-into-sb! is :clj only: its arglist hint and body name the JVM class
-;; StringBuilder, which no other body's analyzer can resolve; every other
-;; body's fast-pr-on! takes its :default (fallback) arm and never calls it.
-#?(:clj (defn- pr-on-into-sb!
+(defn- pr-on-into-sb!
   "fast-pr-on! when w's buffer is a StringBuilder on `under`: append
    directly, no per-chunk append-text! / string-builder-under hop."
   [x ^StringBuilder sb w print-level print-length print-namespace-maps print-meta print-readably fallback]
@@ -1279,7 +1276,7 @@
                   (.append sb "]"))
               :else (fallback x w)))]
     (pr* x)
-    nil)))
+    nil))
 
 (defn fast-pr-on!
   "Host-compiled pr-on for the common types. The earlier booted seat's
@@ -1350,10 +1347,7 @@
   #?(:clj (or (System/getProperty "line.separator") "\n")
      :default "\n"))
 
-;; ^objects, not the string array-class hint: jank's parser rejects
-;; string meta hints (parse/invalid-meta-hint-value); the JVM compiler
-;; maps the `objects` symbol to [Ljava.lang.Object; identically.
-(def ^:private ^objects print-vs (object-array 10))
+(def ^:private ^"[Ljava.lang.Object;" print-vs (object-array 10))
 ;; 0 *out*, 1 *print-dup*, 2 *print-level*, 3 *print-length*,
 ;; 4 *print-namespace-maps*, 5 *print-meta*, 6 *print-readably*,
 ;; 7 *flush-on-newline*, 8 print-method, 9 print-dup
@@ -1364,16 +1358,16 @@
 (defn- out-var
   "The booted *out* var, cached in print-vs after install-print-vars!."
   []
-  (or (aget ^objects print-vs 0)
+  (or (aget ^"[Ljava.lang.Object;" print-vs 0)
       (let [v (resolve-core-var '*out*)]
-        (aset ^objects print-vs 0 v)
+        (aset ^"[Ljava.lang.Object;" print-vs 0 v)
         v)))
 
 (defn install-print-vars!
   "Cache cohost.core's print vars after the io layer and core_print are in.
    The hot path then .deref's these Vars; no ns-resolve, no clojure.core/deref."
   []
-  (let [vs ^objects print-vs]
+  (let [vs ^"[Ljava.lang.Object;" print-vs]
     (aset vs 0 (resolve-core-var '*out*))
     (aset vs 1 (resolve-core-var '*print-dup*))
     (aset vs 2 (resolve-core-var '*print-level*))
@@ -1387,7 +1381,7 @@
     nil))
 
 (defn- fallback-print-method [x w]
-  (let [f (aget ^objects print-vs 8)]
+  (let [f (aget ^"[Ljava.lang.Object;" print-vs 8)]
     (if f (f x w) (print-method x w))))
 
 #?(:clj
@@ -1715,7 +1709,7 @@
   #?(:clj
      (let [^"[Ljava.lang.Object;" snap (snapshot-print-flags)]
        (if (aget snap 1)
-         (let [^clojure.lang.Var pdf (aget ^objects print-vs 9)]
+         (let [^clojure.lang.Var pdf (aget ^"[Ljava.lang.Object;" print-vs 9)]
            ((.deref pdf) x w))
          (fast-pr-on! x w
                       (aget snap 2)
