@@ -1393,6 +1393,23 @@
 
 #?(:clj
    (do
+     ;; [vs-cohost] Host split for the Frame / TBox internals. An AOT for a host with no
+     ;; runtime class definition (the TeaVM wasm-gc seat: closed-world, its
+     ;; MethodHandles.Lookup is a stub, Lookup$ClassOption.NESTMATE does not link, and
+     ;; private fields carry no reflection metadata) uses clojure.lang.Var's public API
+     ;; with Frame opaque: Var/getThreadBindings for the print-flag check and
+     ;; Var/pushThreadBindings for the *out* frame (the same dynamic check, validator,
+     ;; threadBound mark, TBox and Frame that the direct path builds by hand). The marker
+     ;; is the TeaVM body's PRE class EveRegion, on the classpath of every TeaVM AOT,
+     ;; census and preflight step and of no JVM cohost; a JVM keeps the direct path.
+     (defmacro ^:private on-frame-host [direct public-api]
+       (if (try (Class/forName "EveRegion" false (clojure.lang.RT/baseLoader)) true
+                (catch Throwable _ false))
+         public-api
+         direct))
+
+     (on-frame-host
+      (do
      ;; Direct accessors for package-private Var$Frame / Var$TBox, defined
      ;; as hidden classes in clojure.lang (so they can new TBox/Frame and
      ;; read Frame.bindings without Field.get or Constructor.newInstance
@@ -1520,7 +1537,11 @@
        (.apply tbox-maker (Thread/currentThread) val))
 
      (defn- make-frame [bindings prev]
-       (.apply frame-maker bindings prev))
+       (.apply frame-maker bindings prev)))
+      (defn- frame-bindings
+        "The current thread's binding map, Var -> value (public API)."
+        []
+        (clojure.lang.Var/getThreadBindings)))
 
      ;; Overlay one Var->TBox on top of an existing binding map so a
      ;; with-out-str push does not PersistentHashMap.assoc. entryAt of
@@ -1642,13 +1663,18 @@
              (.set v s)
              nil)
          (let [prev (clojure.lang.Var/getThreadBindingFrame)
-               overlay (out-overlay (frame-bindings) v (make-tbox s))
-               neu (make-frame overlay prev)]
-           (mark-thread-bound! v)
-           (when-let [vf (.getValidator v)]
-             (when-not (boolean (vf s))
-               (throw (IllegalStateException. "Invalid reference state"))))
-           (clojure.lang.Var/resetThreadBindingFrame neu)
+               neu (on-frame-host
+                    (let [overlay (out-overlay (frame-bindings) v (make-tbox s))
+                          neu (make-frame overlay prev)]
+                      (mark-thread-bound! v)
+                      (when-let [vf (.getValidator v)]
+                        (when-not (boolean (vf s))
+                          (throw (IllegalStateException. "Invalid reference state"))))
+                      (clojure.lang.Var/resetThreadBindingFrame neu)
+                      neu)
+                    (do (clojure.lang.Var/pushThreadBindings
+                          (clojure.lang.PersistentArrayMap/createAsIfByAssoc (object-array [v s])))
+                        (clojure.lang.Var/getThreadBindingFrame)))]
            (retarget-flag-snap! prev neu)
            (.set ^ThreadLocal out-save (cons neu (.get ^ThreadLocal out-save)))
            nil)))
