@@ -331,6 +331,30 @@
 
 (declare ensure-macro-wrapped!)
 
+(defn- take-aliases
+  "{name -> the host core's symbol, marked} for every name the host takes
+   (policy/lists :host-names): host-aliases does this for the shim's statics,
+   whose values are host fns; a take is the same fact one level up — the
+   booted core's var of the name holds the host's fn, so a reference spelled
+   with the booted core's name and one spelled with the host's name denote
+   the one value. The codemod spells the host's name (rewrite.cljc's
+   rw-symbol arm), for the reason U2.2 names: a host compiler that keys work
+   on its own core's names — VS's canonical-form walk reads f1-core-head?,
+   which passes a clojure.core/<name> head and refuses the booted core's —
+   can only see a site whose names are the host's. A name the host's core
+   does not resolve is left out: the policy set decides takes statically,
+   and on VS every taken name resolves (the host's core is whole), so the
+   map is the same at the first form and the last; a host where one did not
+   resolve would simply not alias it, and the boot's zero errors remain the
+   guard either way."
+  []
+  (let [core (host/core-ns-sym)]
+    (into {}
+          (keep (fn [nm]
+                  (when (host/try-all (fn [] (some? (host/resolve-core nm))))
+                    [nm (with-meta (symbol (str core) (str nm)) {:cohost/host true})])))
+          (:host-names (policy/lists (host/host-name) (some? (host/chunks)) (some? (host/io-handles)))))))
+
 (defn- head-resolver
   "(fn [sym]) -> the var sym names in the namespace being compiled, or nil:
    the codemod tells a core fn it may inline, and a macro whose expansion it
@@ -441,6 +465,8 @@
    (rw/make-ctx {:def-tag? (contains? #{:clj :jolt :cljs} (host/host-name))
                 :shim-names shim-names
                 :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
+                ;; ValueScript only: its compiler keys work on its own core's names (U2.2 B-1); no other host reads the map
+                :take-aliases (when (and (= :vs (host/host-name)) (host/host-aliases?)) (take-aliases))
                 :instance-fn (if-not @snapshot-log
                                shim/install-is!
                                (fn [c]
