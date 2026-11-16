@@ -1350,10 +1350,11 @@
   #?(:clj (or (System/getProperty "line.separator") "\n")
      :default "\n"))
 
-;; ^objects, not the string array-class hint: jank's parser rejects
-;; string meta hints (parse/invalid-meta-hint-value); the JVM compiler
-;; maps the `objects` symbol to [Ljava.lang.Object; identically.
-(def ^:private ^objects print-vs (object-array 10))
+;; No hint on this def: the string array-class hint fails jank's parser
+;; (parse/invalid-meta-hint-value) and ^objects fails the JVM's def-tag
+;; resolution (it is an array hint only in fn-arg/let positions). The
+;; use sites carry ^objects, where both hosts accept it.
+(def ^:private print-vs (object-array 10))
 ;; 0 *out*, 1 *print-dup*, 2 *print-level*, 3 *print-length*,
 ;; 4 *print-namespace-maps*, 5 *print-meta*, 6 *print-readably*,
 ;; 7 *flush-on-newline*, 8 print-method, 9 print-dup
