@@ -236,13 +236,21 @@ def gh_path_content(repo: str, ref: str, path: str) -> bytes:
 
 # ---------------------------------------------------------------- local trees
 def local_tree(root: str) -> dict:
+    """path -> blob sha of a directory, as git would list it: a
+    symbolic link is the blob of its link text and is never followed
+    (a link to a directory is one entry; a dangling link is still an
+    entry), and a .git directory is the repository's store, not
+    content."""
     out = {}
     for dp, dns, fns in os.walk(root):
-        dns.sort()
-        for fn in sorted(fns):
+        dns[:] = sorted(d for d in dns if d != ".git")
+        links = [d for d in dns if os.path.islink(os.path.join(dp, d))]
+        dns[:] = [d for d in dns if d not in links]
+        for fn in sorted(fns + links):
             full = os.path.join(dp, fn)
             rel = os.path.relpath(full, root)
-            out[rel] = file_blob_sha(full)
+            out[rel] = (blob_sha(os.readlink(full).encode()) if os.path.islink(full)
+                        else file_blob_sha(full))
     return out
 
 def local_pin(root: str) -> str:
