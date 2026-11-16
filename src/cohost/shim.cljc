@@ -4834,6 +4834,21 @@
      (when (nil? x) (throw (npe-on "write")))
      (apply fallback x a b c more))))
 
+(defn- flush-dot
+  "dot$flush: .flush on an io-layer writer goes straight to flush-writer!.
+   Other targets use the generic host-object? / invoke-member / -flush
+   dispatcher (pprint's pretty-writer, a real java.io.Writer)."
+  [fallback]
+  (fn
+    ([x]
+     (when (nil? x) (throw (npe-on "flush")))
+     (if (layer-writer? x)
+       (do (io/flush-writer! x) nil)
+       (fallback x)))
+    ([x & more]
+     (when (nil? x) (throw (npe-on "flush")))
+     (apply fallback x more))))
+
 (defn install-dots!
   "For each instance method -m the shim has (method-syms, symbols): dot$m,
    the dispatcher (dot \"m\" -m), built once -- the codemod's (.m x args)
@@ -4877,6 +4892,13 @@
       (let [f (append-dot (dot "append" -append))]
         #?(:cljs (gobj/set js/cohost.shim (munge "dot$append") f)
            :default (host/intern! 'cohost.shim 'dot$append f))))
+    ;; prn / println honor *flush-on-newline* with (. *out* (flush)).
+    ;; The generic dot paid host-object? on every call (F1 ARM2 leftover
+    ;; after the map-fast-path landing).
+    (when (some #{'dot$flush} installed)
+      (let [f (flush-dot (dot "flush" -flush))]
+        #?(:cljs (gobj/set js/cohost.shim (munge "dot$flush") f)
+           :default (host/intern! 'cohost.shim 'dot$flush f))))
     installed))
 
 ;; ---------------------------------------------------------------------------
