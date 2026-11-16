@@ -1157,7 +1157,7 @@
    `.toString` of the StringBuilder on the record, no atom deref."
   [w]
   (if-let [sb (string-builder-under w)]
-    (.toString ^StringBuilder sb)
+    #?(:clj (.toString ^StringBuilder sb) :default (text-buf-str sb))
     (let [st @(writer-state-atom w)]
       (if (:out st)
         (utf8-decode (output-bytes (:out st)))
@@ -1172,7 +1172,7 @@
    class's name and an identity hash, as the JVM's."
   [w]
   (if-let [sb (string-builder-under w)]
-    (.toString ^StringBuilder sb)
+    #?(:clj (.toString ^StringBuilder sb) :default (text-buf-str sb))
     (if (is? ::string-writer w)
       (written-text w)
       (str (class-token w) "@" #?(:jolt (hash w) :cljw (hash w) :clj (Integer/toHexString (System/identityHashCode w)) :default (hash w))))))
