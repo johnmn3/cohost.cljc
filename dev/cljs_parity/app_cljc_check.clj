@@ -23,8 +23,14 @@
   (read-all (fn [r] (read {:eof ::eof :read-cond :allow :features #{:clj}} r)) file))
 
 (defn read-all-cljs [file]
-  (let [opts {:read-cond :allow :features #{:cljs} :eof ::eof}]
-    (read-all (fn [r] (cljs-reader/read opts r)) file)))
+  ;; the vendored reader's defaults carry no js tag reader (the
+  ;; compiler's env registers one); for a read-validity check a
+  ;; stand-in is the honest binding
+  (binding [cljs-reader/*data-readers*
+            (assoc cljs-reader/default-data-readers
+                   'js (fn [v] (list 'js-literal v)))]
+    (let [opts {:read-cond :allow :features #{:cljs} :eof ::eof}]
+      (read-all (fn [r] (cljs-reader/read opts r)) file))))
 
 (defn required-libs [ns-form]
   ;; the lib specs of every :require clause in a resolved ns form
@@ -35,13 +41,26 @@
               (map (fn [spec] (if (sequential? spec) (first spec) spec))))
         ns-form))
 
+;; per-file expectations: the :cljs-resolved and :clj-resolved require
+;; sets of the ns form. "page" is the converted page.cljc (cljs-side
+;; libs only, clj side none). "tasks" is the capstone's unified
+;; cohost-media.tasks (src/), which the page's browser tasks moved
+;; into: a real two-sided cljc whose arms must resolve as listed.
 (def expected
-  {"tasks" '#{clojure.string eve.net.platform eve.thread eve.thread.net
-              eve.thread.rung cohost-media.core}
-   "page"  '#{clojure.string eve.process eve.thread eve.thread-host
-              eve.thread.domain eve.thread.meta eve.thread.net
-              eve.thread.rung cohost-media.core cohost-media.tasks
-              reagami.core}})
+  {"tasks" {:cljs '#{clojure.string eve.thread cohost-media.av
+                     cohost-media.core cohost-media.media
+                     cohost-media.state cohost-media.work
+                     eve.net.platform eve.thread.net eve.thread.rung}
+            :clj  '#{clojure.string eve.thread cohost-media.av
+                     cohost-media.core cohost-media.media
+                     cohost-media.state cohost-media.work
+                     cohost-media.phash cohost-media.r128 eve.mem
+                     eve.region}}
+   "page"  {:cljs '#{clojure.string eve.process eve.thread eve.thread-host
+                     eve.thread.domain eve.thread.meta eve.thread.net
+                     eve.thread.rung cohost-media.core cohost-media.tasks
+                     reagami.core}
+            :clj  '#{}}})
 
 (def results (atom []))
 (defn check [label pass detail]
@@ -56,12 +75,12 @@
     (check (str base " clj-reads") (vector? clj-forms) (str clj-forms))
     (check (str base " cljs-reads") (vector? cljs-forms) (str cljs-forms))
     (when (vector? clj-forms)
-      (check (str base " clj-side requires none")
-             (empty? (required-libs (first clj-forms)))
-             (str (required-libs (first clj-forms)))))
+      (check (str base " clj-side requires as expected")
+             (= (get-in expected [kind :clj]) (required-libs (first clj-forms)))
+             (str "got " (required-libs (first clj-forms)))))
     (when (vector? cljs-forms)
-      (check (str base " cljs-side requires the original libs")
-             (= (get expected kind) (required-libs (first cljs-forms)))
+      (check (str base " cljs-side requires as expected")
+             (= (get-in expected [kind :cljs]) (required-libs (first cljs-forms)))
              (str "got " (required-libs (first cljs-forms)))))))
 
 (let [rs @results]
