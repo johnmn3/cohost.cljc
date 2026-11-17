@@ -163,6 +163,14 @@
       (throw (ex-info (str "cljs source resource missing: " resource) {:resource resource})))
     (binding [ana/*cljs-ns* 'cljs.user
               ana/*cljs-file* resource
+              ;; the bindings the stock entry points (compile-file,
+              ;; analyze-form-seq) establish: core.cljs's own
+              ;; (set! *unchecked-arrays* true) lands in the analyzer's
+              ;; dynamic vars, which need thread bindings to be set!
+              ana/*file-defs* (atom #{})
+              ana/*unchecked-if* false
+              ana/*unchecked-arrays* false
+              ana/*cljs-warnings* ana/*cljs-warnings*
               reader/*alias-map* (or (ana/get-bridged-alias-map) reader/*alias-map* {})
               comp/*source-map-data* nil
               comp/*source-map-data-gen-col* (AtomicLong.)]
