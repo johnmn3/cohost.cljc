@@ -403,6 +403,11 @@ namespace cohost_err {
     ;; evaluator's verb rather than a var (ValueScript) compiles a call of it
     ;; and nothing else; a nil filter is the absent filter to refer
     :refer! #?(:cljs (unsupported :refer!) :phel (unsupported :refer!) :cljd (unsupported :refer!)
+               ;; ValueScript: refer is its evaluator's verb, not a var, so it is called by name and never passed
+               ;; to apply; a nil filter is the absent filter to its refer
+               :vs (fn [into-ns from-ns {:keys [only exclude rename]}]
+                     (binding [*ns* (the-ns into-ns)]
+                       (refer from-ns :only only :exclude exclude :rename rename)))
                :default (fn [into-ns from-ns {:keys [only exclude rename]}]
                           (binding [*ns* (the-ns into-ns)]
                             (refer from-ns :only only :exclude exclude :rename rename))))

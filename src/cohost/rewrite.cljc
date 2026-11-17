@@ -2549,10 +2549,30 @@
 
 (declare core-value-alias)
 
+(defn- take-alias
+  "The spelling for a reference to a host-taken name: the host core's symbol
+   from ctx :take-aliases, marked {:cohost/host true} so restock lets it
+   stand. Fires for a bare reference or one spelled with a core namespace's
+   name (a syntax-quoted stock expansion names the booted core:
+   cohost.core/<name>); never for a local of the name (a local is the
+   caller's own value, not the take), a class or shim symbol, or a reference
+   into another namespace. Without the mark the spelling would restock to
+   the booted core, whose names a host compiler keying on its own core
+   cannot see through."
+  [ctx s]
+  (when (and (symbol? s) (:take-aliases ctx)
+             (not (contains? *locals* (symbol (name s))))
+             (or (nil? (namespace s)) (contains? core-ns-names (namespace s))))
+    (get (:take-aliases ctx) (symbol (name s)))))
+
 (defn- rw-symbol [ctx s]
   (let [s0 s
-        s (restock ctx (declass (*plain* s)))]
+        s (restock ctx (declass (*plain* s)))
+        ta (take-alias ctx s)]
     (cond
+      ;; a reference to a host-taken name names the host's fn (boot.cljc's
+      ;; take-aliases): the one value under the host's own spelling
+      ta ta
       ;; a cpp/... symbol on a :cpp? host is the host's own name for a C++
       ;; type or value: it stands as written, named here so no class rule
       ;; below can grow into eating it
