@@ -27,9 +27,10 @@
             [cljs.analyzer :as ana]
             [cljs.compiler :as comp]
             [cljs.env :as env]
-            [cljs.tools.reader :as reader]
+            [cljs.vendor.clojure.tools.reader :as reader]
             [cohost.js-rewrite :as jrw])
   (:import [java.io StringWriter]
+           [java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit]
            [java.util.concurrent.atomic AtomicLong]
            [org.graalvm.polyglot Context Value]
            [org.graalvm.polyglot.proxy ProxyExecutable]))
@@ -61,12 +62,56 @@
           (do (.eval ctx "js" text) true)
           false)))))
 
+(defn- timer-hooks
+  "The realm's timer family, which a bare JS engine does not carry
+   (setTimeout and kin are host functions, not ECMAScript): two host
+   hooks over one daemon scheduler. __cohostSchedule(kind, fn, ms)
+   answers an id; __cohostCancel(id) drops it. The preamble below
+   spells them as the standard globals when the engine lacks them."
+  []
+  (let [exec (Executors/newSingleThreadScheduledExecutor
+              (reify ThreadFactory
+                (newThread [_ r]
+                  (doto (Thread. ^Runnable r "cohost-cljs-realm-timer")
+                    (.setDaemon true)))))
+        counter (atom 0)
+        timers (atom {})]
+    {:schedule
+     (reify ProxyExecutable
+       (execute [_ args]
+         (let [kind (str (aget args 0))
+               f ^Value (aget args 1)
+               ms (max 0 (.asLong ^Value (aget args 2)))
+               id (swap! counter inc)
+               task (reify Runnable
+                      (run [_] (try (.execute f (object-array 0))
+                                    (catch Throwable _ nil))))
+               fut (if (= kind "interval")
+                     (.scheduleAtFixedRate ^ScheduledExecutorService exec task ms ms TimeUnit/MILLISECONDS)
+                     (.schedule ^ScheduledExecutorService exec task ms TimeUnit/MILLISECONDS))]
+           (swap! timers assoc id fut)
+           id)))
+     :cancel
+     (reify ProxyExecutable
+       (execute [_ args]
+         (let [id (.asLong ^Value (aget args 0))]
+           (when-let [fut (get @timers id)]
+             (.cancel fut false)
+             (swap! timers dissoc id))
+           nil)))}))
+
 (def realm-preamble
   "The realm's prepared globals (see the namespace docstring)."
   (str "globalThis.CLOSURE_IMPORT_SCRIPT = function(src) { return __cohostLoadFile(src); };\n"
        "if (typeof window === 'undefined') { globalThis.window = globalThis; }\n"
        "if (typeof self === 'undefined') { globalThis.self = globalThis; }\n"
-       "if (typeof navigator === 'undefined') { globalThis.navigator = {userAgent: 'GraalJS (cohost cljs realm)'}; }\n"))
+       "if (typeof navigator === 'undefined') { globalThis.navigator = {userAgent: 'GraalJS (cohost cljs realm)'}; }\n"
+       "if (typeof setTimeout === 'undefined') {\n"
+       "  globalThis.setTimeout = function(fn, ms) { return __cohostSchedule('timeout', fn, ms || 0); };\n"
+       "  globalThis.clearTimeout = function(id) { __cohostCancel(id); };\n"
+       "  globalThis.setInterval = function(fn, ms) { return __cohostSchedule('interval', fn, ms || 0); };\n"
+       "  globalThis.clearInterval = function(id) { __cohostCancel(id); };\n"
+       "}\n"))
 
 (defn make-realm
   "A fresh GraalJS realm with the preamble run and Closure's base
@@ -75,8 +120,11 @@
   (let [ctx (-> (Context/newBuilder (into-array String ["js"]))
                 (.allowAllAccess true)
                 (.build))
-        bindings (.getBindings ctx "js")]
+        bindings (.getBindings ctx "js")
+        timers (timer-hooks)]
     (.putMember bindings "__cohostLoadFile" (load-file-hook ctx))
+    (.putMember bindings "__cohostSchedule" (:schedule timers))
+    (.putMember bindings "__cohostCancel" (:cancel timers))
     (.eval ctx "js" realm-preamble)
     (doseq [r ["goog/base.js" "goog/deps.js"]]
       (if-let [text (classpath-text r)]
