@@ -399,9 +399,6 @@ namespace cohost_err {
     :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
     :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
     :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :cljd (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
-    ;; refer called by name, not passed to apply: a host whose refer is its
-    ;; evaluator's verb rather than a var (ValueScript) compiles a call of it
-    ;; and nothing else; a nil filter is the absent filter to refer
     :refer! #?(:cljs (unsupported :refer!) :phel (unsupported :refer!) :cljd (unsupported :refer!)
                ;; ValueScript: refer is its evaluator's verb, not a var, so it is called by name and never passed
                ;; to apply; a nil filter is the absent filter to its refer
@@ -410,7 +407,8 @@ namespace cohost_err {
                        (refer from-ns :only only :exclude exclude :rename rename)))
                :default (fn [into-ns from-ns {:keys [only exclude rename]}]
                           (binding [*ns* (the-ns into-ns)]
-                            (refer from-ns :only only :exclude exclude :rename rename))))
+                            (apply refer from-ns (concat (when only [:only only]) (when exclude [:exclude exclude])
+                                                         (when rename [:rename rename]))))))
     ;; resolved, not named: a host may have no alias fn (basilisp adds aliases on the namespace)
     :alias! #?(:cljs (unsupported :alias!) :phel (unsupported :alias!) :cljd (unsupported :alias!) :default (fn [into-ns a target] (binding [*ns* (the-ns into-ns)] ((resolve 'alias) a target))))
     :set-current-ns! #?(:jolt (fn [ns-sym]
