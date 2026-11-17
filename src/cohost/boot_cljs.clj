@@ -24,6 +24,7 @@
    The per-form loop is cljs.compiler/emit-source's, with the file
    replaced by the realm and the form by its rewrite."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [cljs.analyzer :as ana]
             [cljs.compiler :as comp]
             [cljs.env :as env]
@@ -331,6 +332,82 @@
   (compile-reader! realm (java.io.StringReader. source) name rewrite?))
 
 ;; ---------------------------------------------------------------------------
+;; loading a namespace graph (the library / app case)
+;;
+;; boot! loads the shim, core.cljs and its related files by name. A
+;; library or an app -- eve's cljs graph under a member, say -- is a
+;; namespace graph, and compile-source! needs it in dependency order:
+;; a file's analysis reads its dependencies' analyses, and its
+;; emitted ns form goog.requires them in the realm, where they must
+;; already be provided. load-namespace! walks the graph from a root
+;; namespace, resolving sources on the boot classpath.
+
+(declare compiler-env)
+(declare realm-envs)
+
+(defn ns-source
+  "The classpath resource path of cljs namespace ns-sym's source: a
+   .cljs file preferred over a .cljc, the preference cljs builds
+   make (eve.host is src/eve/host.cljc for the clj hosts and the
+   adapters' eve/host.cljs for cljs). nil when the namespace has no
+   cljs source on the classpath (a goog library, a macro-only
+   namespace)."
+  [ns-sym]
+  (let [base (-> (name ns-sym) (str/replace "." "/") (str/replace "-" "_"))]
+    (some (fn [ext]
+            (let [path (str base ext)]
+              (when (io/resource path) path)))
+          [".cljs" ".cljc"])))
+
+(defn- ns-requires
+  "The library namespaces a cljs source's ns form requires: the
+   first element of each :require spec (a bare symbol spec is
+   itself). Strings (JS libraries) and :require-macros are not
+   libraries. The source is read at :cljs features, as the analyzer
+   reads it."
+  [text]
+  (let [form (try (reader/read-string {:eof ::eof :read-cond :allow :features #{:cljs}} text)
+                  (catch Throwable _ nil))]
+    (when (and (seq? form) (= 'ns (first form)))
+      (->> (rest form)
+           (filter seq?)
+           (filter #(= :require (first %)))
+           (mapcat rest)
+           (keep (fn [spec]
+                   (cond (symbol? spec) spec
+                         (vector? spec) (let [s (first spec)]
+                                          (when (symbol? s) s))
+                         :else nil)))
+           distinct))))
+
+(defn load-namespace!
+  "Compile cljs namespace ns-sym into realm, its uncompiled cljs
+   dependencies first (see the section comment). A namespace the
+   realm's compiler env already holds is done; one with no cljs
+   source on the classpath is skipped -- the analyzer answers for
+   it when a dependent compiles (a goog library through the closure
+   registry, a macro namespace through the JVM). Answers the
+   namespaces compiled, in load order."
+  [realm ns-sym]
+  (let [cenv (or (get @realm-envs realm) @compiler-env)]
+    (when-not cenv
+      (throw (ex-info "load-namespace! before boot!" {})))
+    (let [compiled (atom [])]
+      (letfn [(visit [ns-sym stack]
+                (when-not (contains? (:cljs.analyzer/namespaces @cenv) ns-sym)
+                  (when (contains? stack ns-sym)
+                    (throw (ex-info (str "cohost.boot-cljs: circular cljs require: "
+                                         (pr-str (conj (vec stack) ns-sym)))
+                                    {:stack (conj (vec stack) ns-sym)})))
+                  (when-let [path (ns-source ns-sym)]
+                    (doseq [dep (ns-requires (slurp (io/resource path)))]
+                      (visit dep (conj stack ns-sym)))
+                    (compile-source! realm path true)
+                    (swap! compiled conj ns-sym))))]
+        (visit ns-sym #{})
+        @compiled))))
+
+;; ---------------------------------------------------------------------------
 ;; the boot
 
 (def related-files
@@ -374,10 +451,13 @@
    another engine -- see eval-in). Answers the realm.
 
    opts: :wrap-macros -- rewrite macro expansions too (stage 2; see
-   the macro-wrapping section). Off by default."
+   the macro-wrapping section). Off by default.
+         :load-ns -- namespaces to load after the boot, each with
+   its cljs dependency graph (see load-namespace!): a library or
+   an app the realm is to run."
   ([] (boot! (make-realm)))
   ([realm] (boot! realm {}))
-  ([realm {:keys [wrap-macros] :as _opts}]
+  ([realm {:keys [wrap-macros load-ns] :as _opts}]
    (let [cenv (env/default-compiler-env compiler-opts)]
      (reset! compiler-env cenv)
      (swap! realm-envs assoc realm cenv)
@@ -390,6 +470,8 @@
          (compile-source! realm r true))
        (compile-string! realm "(ns cljs.user)" "<user-ns>" false)
        (swap! user-ns-realms conj realm)
+       (doseq [ns-sym load-ns]
+         (load-namespace! realm ns-sym))
        realm))))
 
 (defn eval-form
