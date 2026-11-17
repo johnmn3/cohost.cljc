@@ -131,6 +131,24 @@ for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
 }
 realm.console = stderrConsole;
 realm.navigator = {userAgent: 'Node (cohost cljs realm)'};
+// The platform globals a fresh vm context does NOT carry: they are
+// properties of node's main context, not V8 intrinsics of a new one
+// (measured on node 24: a bare context has SharedArrayBuffer, Atomics
+// and WebAssembly, but no TextEncoder, URL, fetch, ...). The shim's
+// contract is that a realm provides the standard globals of their
+// names, so the host lends its own -- the same move as the timers and
+// console above. Only names the realm lacks and the host has are
+// lent; a global node itself lacks stays absent, and the shim's
+// typeof guards keep reading it as undefined.
+for (const name of ['TextEncoder', 'TextDecoder', 'URL', 'Blob',
+                    'MessageChannel', 'crypto', 'atob', 'btoa',
+                    'setImmediate', 'clearImmediate', 'fetch',
+                    'AbortController', 'queueMicrotask',
+                    'structuredClone', 'performance']) {
+  if (typeof realm[name] === 'undefined' && typeof globalThis[name] !== 'undefined') {
+    realm[name] = globalThis[name];
+  }
+}
 
 const requireRoot = process.argv[2];
 if (requireRoot) {
