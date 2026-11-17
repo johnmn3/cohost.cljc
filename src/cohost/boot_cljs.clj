@@ -166,6 +166,8 @@
    :language-in :ecmascript-2020
    :language-out :ecmascript-2020})
 
+(declare compiler-env)
+
 (defn- emit-string
   "Emit one analyzed form to its JavaScript string."
   [ast]
@@ -179,7 +181,13 @@
    form (rewritten when rewrite?), emit it, eval it in the realm, in
    order. Answers the namespace the source defined."
   [^Context ctx rdr name rewrite?]
-  (binding [ana/*cljs-ns* 'cljs.user
+  ;; the analyzer's state lives in env/*compiler*: boot! binds it for
+  ;; its own files; a later compile-source! (a library, say) rebinds
+  ;; it from the realm's persisted env
+  (if-not env/*compiler*
+    (env/with-compiler-env @compiler-env
+      (compile-reader! ctx rdr name rewrite?))
+    (binding [ana/*cljs-ns* 'cljs.user
             ana/*cljs-file* name
             ;; the bindings the stock entry points (compile-file,
             ;; analyze-form-seq) establish: core.cljs's own
@@ -209,7 +217,7 @@
                    (throw (ex-info (str "realm eval failed in " name ": " (pr-str form))
                                    {:resource name :form form :js js} t))))
             (recur (rest forms) (if (= :ns (:op ast)) (:name ast) ns-name)))
-          (or ns-name 'cljs.user))))))
+          (or ns-name 'cljs.user)))))))
 
 (defn compile-source!
   "Analyze, emit and realm-eval every form of the source at resource,
