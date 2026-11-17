@@ -321,9 +321,14 @@
    ;; transducers, STATUS.md 2026-11-07 8:00 PM ET); VS's values are the same semantics with no layering, and
    ;; the walk's fused loop is written against them. A take lands only with the boot at zero errors on both
    ;; pins, as every take before it.
+   ;; The regex fns (re-find re-seq re-matches re-matcher re-groups re-pattern) are taken because stock's run through
+   ;; the shim's java.util.regex.Matcher over the adapter's :re-find-at, which the :vs adapter cannot declare (VS's
+   ;; regex engine hands out no match positions); VS's own are java.util.regex's semantics (hosts/vs.vs :natives
+   ;; carries clojure.string's regex verbs the same way). MEASURED 2026-11-17, boot at zero errors with them taken.
    :vs {:special (set '[let loop fn letfn])
         :host (set '[odd? even? zero? pos? neg? integer? number? seq first rest next cons count nth
-                     map filter remove keep reduce transduce into range take comp conj])}})
+                     map filter remove keep reduce transduce into range take comp conj
+                     re-find re-seq re-matches re-matcher re-groups re-pattern])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."

@@ -191,6 +191,17 @@
    :require-host! require-host!
    :resolve-core resolve-core
    :macro-var? macro-var?
+   ;; clojure.string's regex verbs are VS's own (adapter :natives, boot.cljc native-of): stock's run through the shim's
+   ;; java.util.regex.Matcher over :re-find-at / :re-match-full, which this host does not declare — VS's regex engine is
+   ;; its runtime's (java.util.regex's semantics) and hands out no match positions to build them from. MEASURED
+   ;; 2026-11-17 on the CP4 pair: vanilla_stream's (str/split-lines text) through cohost threw `this host provides no
+   ;; :re-find-at`; with these four natives (and policy :vs :host's re-* for clojure.core) it loads, and
+   ;; [(re-find #"[0-9]+" "ab12c") (re-seq #"a." "axbyaz") (s/split-lines "a\r\nb\nc") (s/split "a,b,,c" #",")
+   ;; (s/replace "a-b-c" #"-" "+")] answers ["12" ("ax" "az") ["a" "b" "c"] ["a" "b" "" "c"] "a+b+c"], the JVM's.
+   ;; split-lines is also the fold's line source: VS's is the deferred text / file range its walk reads (vs core.vs
+   ;; prog--clojure-string--split-lines), which stock's regex split would hide from the walk.
+   :natives {'clojure.string/split-lines string/split-lines 'clojure.string/split string/split
+             'clojure.string/replace string/replace 'clojure.string/replace-first string/replace-first}
    ;; one lookup: VS's ns-resolve answers an interned name with one map get on the namespace's own interns (vs.core
    ;; prog-h-resolve-in); a referred or core name answers a var of another namespace, excluded by its :ns. MEASURED
    ;; before (atom.broker docs/vs-cohost/perf/probe-boot-cost.repl, 617 interns): (get (ns-interns ns) sym) 79 ms a
