@@ -273,14 +273,21 @@
 (defn- compile-reader!
   "The per-form loop over rdr (named name for errors): analyze each
    form (rewritten when rewrite?), emit it, eval it in the realm, in
-   order. Answers the namespace the source defined."
-  [realm rdr name rewrite?]
+   order. Answers the namespace the source defined.
+
+   hooks, when given, is {:before-ns (fn [ns-sym]) :after-ns (fn
+   [ns-sym])}, each called around the realm eval of an ns form --
+   load-namespace!'s node-module support hangs the realm-side half
+   of a string require there (see ns-node-modules)."
+  ([realm rdr name rewrite?]
+   (compile-reader! realm rdr name rewrite? nil))
+  ([realm rdr name rewrite? hooks]
   ;; the analyzer's state lives in env/*compiler*: boot! binds it for
   ;; its own files; a later compile-source! (a library, say) rebinds
   ;; it from the realm's persisted env
   (if-not env/*compiler*
     (env/with-compiler-env (or (get @realm-envs realm) @compiler-env)
-      (compile-reader! realm rdr name rewrite?))
+      (compile-reader! realm rdr name rewrite? hooks))
     (binding [ana/*cljs-ns* 'cljs.user
             ana/*cljs-file* name
             ;; the bindings the stock entry points (compile-file,
@@ -308,23 +315,30 @@
                              (throw (ex-info (str "analysis failed in " name ": " (pr-str form))
                                              {:resource name :form form} t))))
                   js (emit-string ast)]
+              (when (and hooks (= :ns (:op ast)) (:before-ns hooks))
+                ((:before-ns hooks) (:name ast)))
               (try (eval-in realm js)
                    (catch Throwable t
                      (throw (ex-info (str "realm eval failed in " name ": " (pr-str form))
                                      {:resource name :form form :js js} t))))
+              (when (and hooks (= :ns (:op ast)) (:after-ns hooks))
+                ((:after-ns hooks) (:name ast)))
               (recur (rest forms) (if (= :ns (:op ast)) (:name ast) ns-name))))
-          (or ns-name 'cljs.user)))))))
+          (or ns-name 'cljs.user))))))))
 
 (defn compile-source!
   "Analyze, emit and realm-eval every form of the source at resource,
    in order. rewrite? selects the js-shim rewrite (on for stock cljs
-   sources, off for the shim itself). Answers the namespace defined."
-  [realm resource rewrite?]
-  (let [url (io/resource resource)]
-    (when-not url
-      (throw (ex-info (str "cljs source resource missing: " resource) {:resource resource})))
-    (with-open [rdr (io/reader url)]
-      (compile-reader! realm rdr resource rewrite?))))
+   sources, off for the shim itself). Answers the namespace defined.
+   hooks, when given, are compile-reader!'s ns-form hooks."
+  ([realm resource rewrite?]
+   (compile-source! realm resource rewrite? nil))
+  ([realm resource rewrite? hooks]
+   (let [url (io/resource resource)]
+     (when-not url
+       (throw (ex-info (str "cljs source resource missing: " resource) {:resource resource})))
+     (with-open [rdr (io/reader url)]
+       (compile-reader! realm rdr resource rewrite? hooks)))))
 
 (defn compile-string!
   "compile-reader! over a source string."
@@ -359,12 +373,10 @@
               (when (io/resource path) path)))
           [".cljs" ".cljc"])))
 
-(defn- ns-requires
-  "The library namespaces a cljs source's ns form requires: the
-   first element of each :require spec (a bare symbol spec is
-   itself). Strings (JS libraries) and :require-macros are not
-   libraries. The source is read at :cljs features, as the analyzer
-   reads it."
+(defn- require-specs
+  "A cljs source's ns-form :require specs, raw: each spec as written
+   (a bare symbol or string is itself; a vector spec is the vector).
+   The source is read at :cljs features, as the analyzer reads it."
   [text]
   (let [form (try (reader/read-string {:eof ::eof :read-cond :allow :features #{:cljs}} text)
                   (catch Throwable _ nil))]
@@ -372,13 +384,68 @@
       (->> (rest form)
            (filter seq?)
            (filter #(= :require (first %)))
-           (mapcat rest)
-           (keep (fn [spec]
-                   (cond (symbol? spec) spec
-                         (vector? spec) (let [s (first spec)]
-                                          (when (symbol? s) s))
-                         :else nil)))
-           distinct))))
+           (mapcat rest)))))
+
+(defn- ns-requires
+  "The library namespaces a cljs source's ns form requires: the
+   first element of each :require spec (a bare symbol spec is
+   itself). Strings (JS libraries) and :require-macros are not
+   libraries."
+  [text]
+  (->> (require-specs text)
+       (keep (fn [spec]
+               (cond (symbol? spec) spec
+                     (vector? spec) (let [s (first spec)]
+                                      (when (symbol? s) s))
+                     :else nil)))
+       distinct))
+
+(defn- ns-node-modules
+  "The JS modules a cljs source's ns form string-requires, raw
+   names in require order: ([\"crypto\" :as nc] [\"node:fs\" :as fs])
+   in eve's node adapters, say -- node builtins and npm packages.
+   A stock cljs build resolves them through its node-module index
+   and a per-namespace binding the build's preamble assigns from
+   require(); load-namespace! carries both halves for a realm (see
+   node-module-hooks)."
+  [text]
+  (->> (require-specs text)
+       (keep (fn [spec]
+               (cond (string? spec) spec
+                     (vector? spec) (let [s (first spec)]
+                                      (when (string? s) s))
+                     :else nil)))
+       distinct))
+
+(defn- node-module-hooks
+  "compile-reader! hooks carrying the realm-side half of a source's
+   string requires (modules: raw names, see ns-node-modules). The
+   emitted ns form goog.requires each module under its munged name
+   and the source's bodies read the module from the namespace's
+   node$module$* vars (cljs.analyzer/munge-node-lib), so: before
+   the ns form evals, goog.provide each munged name (the require
+   then short-circuits, as it does for an already-compiled cljs
+   dep); after it evals, assign each var from the realm's own
+   require -- the :node seat's, anchored at its :require-root.
+   A realm with no require (not a node realm) skips the assignment:
+   the vars stay unset and a call into the module fails at use,
+   the honest state of such a realm."
+  [realm modules]
+  {:before-ns
+   (fn [_]
+     (doseq [m modules]
+       (eval-in realm (str "if (!goog.isProvided_('" (comp/munge m) "')) "
+                           "goog.provide('" (comp/munge m) "');"))))
+   :after-ns
+   (fn [ns-sym]
+     (eval-in realm
+              (str "if (typeof require !== 'undefined') { "
+                   (str/join " "
+                             (map (fn [m]
+                                    (str (comp/munge ns-sym) "." (ana/munge-node-lib m)
+                                         " = require('" m "');"))
+                                  modules))
+                   " }")))})
 
 (defn load-namespace!
   "Compile cljs namespace ns-sym into realm, its uncompiled cljs
@@ -386,7 +453,10 @@
    realm's compiler env already holds is done; one with no cljs
    source on the classpath is skipped -- the analyzer answers for
    it when a dependent compiles (a goog library through the closure
-   registry, a macro namespace through the JVM). Answers the
+   registry, a macro namespace through the JVM). A source's string
+   requires (JS modules: node builtins, npm packages) are carried
+   on both halves -- the analyzer's node-module index and the
+   realm's own require (see ns-node-modules). Answers the
    namespaces compiled, in load order."
   [realm ns-sym]
   (let [cenv (or (get @realm-envs realm) @compiler-env)]
@@ -400,10 +470,22 @@
                                          (pr-str (conj (vec stack) ns-sym)))
                                     {:stack (conj (vec stack) ns-sym)})))
                   (when-let [path (ns-source ns-sym)]
-                    (doseq [dep (ns-requires (slurp (io/resource path)))]
-                      (visit dep (conj stack ns-sym)))
-                    (compile-source! realm path true)
-                    (swap! compiled conj ns-sym))))]
+                    (let [text (slurp (io/resource path))
+                          modules (ns-node-modules text)]
+                      (doseq [dep (ns-requires text)]
+                        (visit dep (conj stack ns-sym)))
+                      ;; the analyzer half of the source's string
+                      ;; requires: the names join the realm env's
+                      ;; node-module index, so analyze-deps takes
+                      ;; them as node modules instead of hunting a
+                      ;; cljs source for them
+                      (when (seq modules)
+                        (swap! cenv update :node-module-index
+                               (fn [idx] (reduce #(assoc %1 %2 {}) idx modules))))
+                      (compile-source! realm path true
+                                       (when (seq modules)
+                                         (node-module-hooks realm modules)))
+                      (swap! compiled conj ns-sym)))))]
         (visit ns-sym #{})
         @compiled))))
 
