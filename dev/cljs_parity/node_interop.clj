@@ -11,6 +11,8 @@
 ;; The fixture dir carries package.json + node_modules with sharp
 ;; and music-metadata (npm install). Checks:
 ;;   require-in-realm   (exists? js/require) under the rooted seat
+;;   text-encoder       js/TextEncoder constructs in the realm (the
+;;                      platform globals the host lends its context)
 ;;   process-cwd        the realm process's cwd is the root
 ;;   console-survives   a realm console.log (stderr now) leaves the
 ;;                      protocol stream intact for the next eval
@@ -59,6 +61,13 @@
 (check "require-in-realm"
        (sub 'cljs.user '(fn [] (exists? js/require)))
        true)
+
+;; the platform globals a bare vm context lacks (TextEncoder is the
+;; one eve.encoding constructs at namespace load): the host lends
+;; them, so construction works in the realm
+(check "text-encoder"
+       (sub 'cljs.user '(fn [] (.-length (.encode (js/TextEncoder.) "héllo"))))
+       6)
 
 (check "process-cwd"
        (sub 'cljs.user '(fn [] (.cwd js/process)))
