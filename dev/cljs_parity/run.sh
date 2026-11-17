@@ -18,7 +18,7 @@ WT="$(cd "$HERE/../.." && pwd)"
 RUN=/tmp/cljs-run
 mkdir -p "$RUN"
 cat > "$RUN/deps.edn" <<EOF
-{:paths ["$WT/src" "$HOME/workspace/cohost-media/cljs-parity/census/hiccups-src"]
+{:paths ["$WT/src" "$HERE" "$HOME/workspace/cohost-media/cljs-parity/census/hiccups-src"]
  :deps {org.clojure/clojure {:mvn/version "1.12.0"}
         org.clojure/clojurescript {:mvn/version "1.12.134"}
         org.clojure/data.json {:mvn/version "2.5.2"}

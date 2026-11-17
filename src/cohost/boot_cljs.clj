@@ -225,7 +225,11 @@
   (when (and (.isMacro v) (not (contains? @wrapped-macros v)))
     (let [orig @v]
       (when (ifn? orig)
-        (alter-var-root v (fn [_] (fn [& args] (jrw/rewrite (apply orig args)))))
+        ;; expansions are rewritten with jrw/rewrite-expansion, not
+        ;; the source rewrite: a js* form in an expansion is the
+        ;; compiler's own contract and stays verbatim (see
+        ;; cohost.js-rewrite's docstring for the measured case)
+        (alter-var-root v (fn [_] (fn [& args] (jrw/rewrite-expansion (apply orig args)))))
         (swap! wrapped-macros conj v)))))
 
 (defn wrap-loaded-macros!
