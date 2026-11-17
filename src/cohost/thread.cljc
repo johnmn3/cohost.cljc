@@ -235,6 +235,15 @@
 
 (declare run-worker)
 
+(defn- item-thunk
+  "A queue item as the thunk the worker runs: host items are thunks
+   already; a runtime executor's items are realm items (maps whose :run
+   is the thunk that enters the realm — see the runtime section)."
+  [item]
+  (if (and (map? item) (= ::realm-item (:cohost/kind item)))
+    (:run item)
+    item))
+
 (defn- ensure-workers! [ex]
   (let [ctl (:ctl ex)]
     (loop []
@@ -254,7 +263,7 @@
     (loop []
       (let [item (claim! (:queue ex))]
         (cond (some? item)
-              (do (host/try-all item)
+              (do (host/try-all (item-thunk item))
                   (recur))
               (:shutdown @(:ctl ex)) nil
               ;; wait on the current generation bell: a submit after
@@ -274,6 +283,9 @@
    given (executor submit), else the executor."
   ([ex thunk] (submit! ex thunk nil))
   ([ex thunk fut]
+   (when (= :runtime (:kind ex))
+     (throw (host/ex* 'java.lang.IllegalStateException
+                      "cohost: a runtime executor takes forms, not closures (submit-form / submit-call)" nil)))
    (when (:shutdown @(:ctl ex))
      (throw (host/ex* 'java.util.concurrent.RejectedExecutionException
                       "cohost: executor is shut down" nil)))
@@ -285,6 +297,10 @@
 (defn shutdown-executor! [ex]
   (swap! (:ctl ex) assoc :shutdown true)
   (signal-workers! ex)
+  (when (= :runtime (:kind ex))
+    (when-let [st @(:realm ex)]
+      (when-let [close! (:close! (:sister ex))] (close! st))
+      (reset! (:realm ex) nil)))
   ex)
 
 (defn send-executor
@@ -474,6 +490,80 @@
      (if (= ::timed-out v)
        (throw (host/ex* 'java.util.concurrent.TimeoutException "future get timed out" nil))
        v))))
+
+;; ---------------------------------------------------------------------------
+;; runtime executors
+;;
+;; An executor whose workers run inside a chosen sister runtime (a
+;; realm): the pool half of the layer's realm story, of which
+;; future-form-call above is the future half. A closure cannot cross
+;; into another runtime's heap, so work crosses as data -- a namespace,
+;; a form, argument values (the tfn rule). The sister is an impl map
+;; {:boot! (fn [opts] state) :eval-form (fn [state ns-sym form] value)
+;; :close! (fn [state])} supplied by the seat (the JVM seat's is
+;; cohost.sci-pool, over SCI); the executor value, its queue, its
+;; doorbell discipline and its futures are the layer's own, shared with
+;; the host executors above. The realm boots lazily on first submission,
+;; under a lock, so pool threads never race a boot or a namespace load.
+;; A pool of size 1 is one worker thread serving its realm serially --
+;; the single-thread pool is the :solo shape with a realm behind it.
+
+(defn runtime-executor
+  "An executor of `size` workers whose work runs in the sister runtime
+   `sister` (an impl map, see the section comment). `opts` are the
+   sister's boot options (source roots, namespaces to load, features),
+   handed to its :boot! on the first submission."
+  [sister size opts]
+  {:cohost/kind ::executor
+   :kind :runtime
+   :size (max 1 size)
+   :queue (atom (empty-queue))
+   :ctl (atom {:running 0 :shutdown false :bell (host/doorbell)})
+   :sister sister
+   :realm (atom nil)
+   :boot-opts opts})
+
+(defn- realm-state!
+  "The executor's booted sister state, booting on first use."
+  [ex]
+  (or @(:realm ex)
+      (locking (:realm ex)
+        (or @(:realm ex)
+            (reset! (:realm ex) ((:boot! (:sister ex)) (:boot-opts ex)))))))
+
+(defn submit-form
+  "Run `form` in namespace `ns-sym` inside the runtime executor ex's
+   realm, applied to `args`: the realm evaluates (apply form args) with
+   form read in ns-sym, and the layer future holds its value. Arguments
+   and results are data crossing by value (see the section comment);
+   the form-carrying sibling of submit-future."
+  [ex ns-sym form & args]
+  (when-not (= :runtime (:kind ex))
+    (throw (host/ex* 'java.lang.IllegalStateException
+                     "cohost: submit-form needs a runtime executor (runtime-executor)" nil)))
+  (when (:shutdown @(:ctl ex))
+    (throw (host/ex* 'java.util.concurrent.RejectedExecutionException
+                      "cohost: executor is shut down" nil)))
+  (let [fut (new-future*)
+        state (realm-state! ex)
+        eval-form (:eval-form (:sister ex))]
+    (swap! (:queue ex) q-conj
+           {:cohost/kind ::realm-item
+            :run (fn []
+                   (host/try-all
+                    (fn [] (complete-future! fut {:status :done
+                                                  :value (eval-form state ns-sym
+                                                                    (list 'apply form (list 'quote (vec args))))}))
+                    (fn [e] (complete-future! fut {:status :error :error e}))))})
+    (ensure-workers! ex)
+    (signal-workers! ex)
+    fut))
+
+(defn submit-call
+  "submit-form with a named entry point: (submit-call ex 'some.ns/f 1 2)
+   runs some.ns/f on 1 and 2 in ex's realm; a layer future of the value."
+  [ex qsym & args]
+  (apply submit-form ex (symbol (namespace qsym)) qsym args))
 
 ;; ---------------------------------------------------------------------------
 ;; CountDownLatch
