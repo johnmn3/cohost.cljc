@@ -1,4 +1,3 @@
-'use strict';
 // The node seat's cljs realm host: a vm context whose global is the
 // realm, driven by cohost.cljs-pool's node sister over stdio with
 // length-prefixed JSON frames ("<byte-count>\n<utf8 bytes>"):
@@ -15,33 +14,39 @@
 // The realm's prepared globals are the ones cohost.boot-cljs's
 // preamble expects to find or to install: the Closure loader hooks
 // (__cohostLoadFile / __cohostReadFile, here), the host's own timer
-// family and console (the preamble installs its scheduler hooks only
-// when the engine lacks them), and a navigator stub. window/self are
-// the preamble's to set. The shim and the boot are the same ones the
+// family (the preamble installs its scheduler hooks only when the
+// engine lacks them), and a navigator stub. window/self are the
+// preamble's to set. The shim and the boot are the same ones the
 // GraalJS seat runs; only this host differs.
+//
+// Two seats' worth of programs run here, and the host serves both:
+// a form-at-a-time guest (the parity proofs), whose evals are the
+// only thing that ever happens; and a resident program (a member:
+// timers, promise continuations, a claim pump on the event loop),
+// whose life runs BETWEEN evals. So the frame reader is async while
+// the seat is idle -- stdin 'data' feeds the same buffer the
+// synchronous file-service reader drains mid-eval -- and the stream
+// is paused for the length of an eval, when no 'data' event could
+// fire anyway. A file answer can only be written after its request,
+// so no answer byte can sit in the stream's own buffer when a
+// synchronous read starts.
+//
+// The realm's console writes to stderr, never stdout: stdout is the
+// protocol stream (a realm println on it would desync the framing),
+// and the driver already files the realm's stderr -- a resident
+// program's own log lines ride it.
+//
+// Node interop: when the seat supplies a require root (argv[2], the
+// app directory), the realm also gets a require anchored at that root
+// (module.createRequire over its package.json, so the realm resolves
+// the app's node_modules exactly as a node process started there
+// would), process, and Buffer. Without a root the realm stays bare,
+// as before.
 const fs = require('fs');
 const vm = require('vm');
+const util = require('util');
 
-function readFrame() {
-  let header = '';
-  const one = Buffer.alloc(1);
-  for (;;) {
-    const n = fs.readSync(0, one, 0, 1, null);
-    if (n === 0) return null;
-    const c = one.toString('utf8');
-    if (c === '\n') break;
-    header += c;
-  }
-  const len = parseInt(header, 10);
-  const buf = Buffer.alloc(len);
-  let off = 0;
-  while (off < len) {
-    const n = fs.readSync(0, buf, off, len - off, null);
-    if (n === 0) break;
-    off += n;
-  }
-  return buf.toString('utf8');
-}
+// --- frames ------------------------------------------------------------
 
 function writeFrame(s) {
   const b = Buffer.from(s, 'utf8');
@@ -52,13 +57,40 @@ function writeFrame(s) {
   while (off < b.length) off += fs.writeSync(1, b, off, b.length - off);
 }
 
+// One input buffer, two readers: the async pump (idle) and the
+// synchronous file service (mid-eval) both take frames from it.
+let inbuf = Buffer.alloc(0);
+
+function takeFrame() {
+  const nl = inbuf.indexOf(10);
+  if (nl < 0) return null;
+  const len = parseInt(inbuf.toString('utf8', 0, nl), 10);
+  if (inbuf.length < nl + 1 + len) return null;
+  const s = inbuf.toString('utf8', nl + 1, nl + 1 + len);
+  inbuf = inbuf.subarray(nl + 1 + len);
+  return s;
+}
+
+const syncChunk = Buffer.alloc(65536);
+function readSyncFrame() {
+  for (;;) {
+    const s = takeFrame();
+    if (s !== null) return s;
+    const n = fs.readSync(0, syncChunk, 0, syncChunk.length, null);
+    if (n === 0) return null;
+    inbuf = Buffer.concat([inbuf, syncChunk.subarray(0, n)]);
+  }
+}
+
 function requestFile(path) {
   writeFrame(JSON.stringify({op: 'file', path: path}));
-  const frame = readFrame();
+  const frame = readSyncFrame();
   if (frame === null) return null;
   const msg = JSON.parse(frame);
   return (msg.text === null || msg.text === undefined) ? null : msg.text;
 }
+
+// --- the realm -----------------------------------------------------------
 
 const realm = vm.createContext({});
 realm.__cohostLoadFile = function (path, contents) {
@@ -75,8 +107,22 @@ realm.setTimeout = setTimeout;
 realm.clearTimeout = clearTimeout;
 realm.setInterval = setInterval;
 realm.clearInterval = clearInterval;
-realm.console = console;
+const stderrConsole = {};
+for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+  stderrConsole[level] = function (...args) {
+    fs.writeSync(2, util.format(...args) + '\n');
+  };
+}
+realm.console = stderrConsole;
 realm.navigator = {userAgent: 'Node (cohost cljs realm)'};
+
+const requireRoot = process.argv[2];
+if (requireRoot) {
+  const path = require('path');
+  realm.require = require('module').createRequire(path.join(requireRoot, 'package.json'));
+  realm.process = process;
+  realm.Buffer = Buffer;
+}
 
 function jsonSafe(v) {
   if (v === null || v === undefined) return null;
@@ -85,15 +131,34 @@ function jsonSafe(v) {
   return '#<' + t + '>';
 }
 
-let frame;
-while ((frame = readFrame()) !== null) {
+// --- the eval pump ---------------------------------------------------------
+
+let busy = false;
+let sawEof = false;
+
+function pump() {
+  if (busy) return;
+  const frame = takeFrame();
+  if (frame === null) {
+    if (sawEof) process.exit(0);
+    return;
+  }
   const msg = JSON.parse(frame);
   if (typeof msg.eval === 'string') {
+    busy = true;
+    process.stdin.pause();
     try {
       const v = vm.runInContext(msg.eval, realm);
       writeFrame(JSON.stringify({ok: true, value: jsonSafe(v)}));
     } catch (e) {
       writeFrame(JSON.stringify({ok: false, error: String((e && e.stack) || e)}));
     }
+    busy = false;
+    process.stdin.resume();
+    pump();
   }
 }
+
+process.stdin.on('data', (data) => { inbuf = Buffer.concat([inbuf, data]); pump(); });
+process.stdin.on('end', () => { sawEof = true; pump(); });
+process.stdin.on('error', () => process.exit(1));

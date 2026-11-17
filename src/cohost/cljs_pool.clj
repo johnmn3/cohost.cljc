@@ -131,7 +131,14 @@
             (when-let [p @(:pending state)]
               (deliver p msg))))
         (recur)))
-    (catch Throwable _ nil)))
+    (catch Throwable _ nil)
+    (finally
+      ;; the stream ended -- the process died or was closed: a pending
+      ;; eval must not wait out its timeout for an answer that is
+      ;; never coming
+      (when-let [p @(:pending state)]
+        (deliver p {:ok false
+                    :error "cohost: the node realm process closed"})))))
 
 (defn- node-eval!
   [state ^String js]
@@ -152,15 +159,23 @@
 
 (defn- make-node-realm
   "Spawn the node realm process and answer its transport map (a
-   boot-cljs realm: see eval-in). node-bin is the node executable."
-  [node-bin]
+   boot-cljs realm: see eval-in). node-bin is the node executable.
+   require-root, when given, is the realm's node interop anchor: the
+   realm script receives it as its argument (its require is created
+   over it) and the process starts with it as working directory, as
+   a node process of that directory would."
+  [node-bin require-root]
   (let [script-url (io/resource "cohost/node_realm.js")]
     (when-not script-url
       (throw (ex-info "cohost/node_realm.js missing from the classpath" {})))
     (let [tmp (File/createTempFile "cohost-node-realm" ".js")
           errlog (File/createTempFile "cohost-node-realm" ".err")]
       (io/copy (io/input-stream script-url) tmp)
-      (let [pb (ProcessBuilder. [node-bin (.getAbsolutePath tmp)])]
+      (let [pb (ProcessBuilder. (if require-root
+                                  [node-bin (.getAbsolutePath tmp) (str require-root)]
+                                  [node-bin (.getAbsolutePath tmp)]))]
+        (when require-root
+          (.directory pb (File. (str require-root))))
         (.redirectError pb errlog)
         (let [proc (.start pb)
               state {:proc proc
@@ -178,10 +193,16 @@
 (defn node-sister
   "The node sister impl map for cohost.thread/runtime-executor.
    Boot options: cohost.boot-cljs/boot!'s, plus :node-bin (default
-   \"node\", from PATH)."
+   \"node\", from PATH) and :require-root -- a directory the realm's
+   node interop anchors at: the realm gets a require created over
+   that directory (its node_modules resolve as a node process
+   started there would resolve them), process and Buffer, and the
+   realm process's working directory is that directory. Without
+   :require-root the realm stays bare (no require, no process)."
   []
   {:boot! (fn [opts]
-            (let [realm (make-node-realm (get opts :node-bin "node"))]
+            (let [realm (make-node-realm (get opts :node-bin "node")
+                                         (:require-root opts))]
               ;; the preamble and Closure's base, as the in-process
               ;; realm gets from make-realm; then the shared boot
               (bc/eval-in realm bc/realm-preamble)
@@ -767,8 +788,9 @@
    process; (executor 1 {:seat :browser :bootstream \"index.html\"})
    -- the host's own JS engine in a browser page, the server and the
    browser started as the thread. Boot options pass through to the
-   sister (boot-cljs's :wrap-macros; the node seat's :node-bin; the
-   browser seat's :bootstream :server :chrome). Submit with
+   sister (boot-cljs's :wrap-macros and :load-ns; the node seat's
+   :node-bin and :require-root; the browser seat's :bootstream
+   :server :chrome). Submit with
    cohost.thread/submit-call and submit-form; read results with
    cohost.thread/deref-future. Size 1 is the honest configuration:
    a realm serves serially whatever the pool's size."
