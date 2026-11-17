@@ -522,12 +522,12 @@
             (if-let [f (static-file root uri)]
               (respond-bytes! ex 200 (assoc headers "Content-Type" (mime-for (.getName f)))
                               (Files/readAllBytes (.toPath f)))
-              (if handler
-                (let [resp (handler req)]
+              (let [resp (when handler (handler req))]
+                (if resp
                   (respond-text! ex (or (:status resp) 200)
                                  (merge headers (:headers resp))
-                                 (:body resp)))
-                (respond-text! ex 404 headers "not found")))))
+                                 (:body resp))
+                  (respond-text! ex 404 headers "not found"))))))
         (catch Throwable t
           (try (respond-text! ex 500 {"Content-Type" "text/plain"}
                               (str "cohost: " (ex-message t)))
@@ -552,10 +552,11 @@
    port actually bound (the default config's is ephemeral, 0).
    `config` may also carry :handler, a fn of the request map
    answering {:status :headers :body} for paths that are neither
-   interop nor a static hit. Public because the browser thread IS
-   basically a server: an application may run the web half alone,
-   and the seat's proofs measure CORS against a second origin
-   served by this same machinery."
+   interop nor a static hit (nil means not mine: the server
+   answers 404). Public because the browser thread IS basically a
+   server: an application may run the web half alone, and the seat's
+   proofs measure CORS against a second origin served by this same
+   machinery."
   ([config] (start-server! config nil))
   ([config channel]
    (let [cfg (merge-server-config (:server config))
