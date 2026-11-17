@@ -22,7 +22,20 @@
    - (var ...): its argument names a var, never a js global.
 
    A js root the shim does not define is not papered over here: the
-   rewritten reference fails analysis, naming the missing root.")
+   rewritten reference fails analysis, naming the missing root.
+
+   rewrite-expansion is the second entry, for macro expansions (the
+   macro wrap in cohost.boot-cljs). It differs in exactly one rule:
+   a js* form is returned verbatim, template AND arguments. In an
+   expansion a js* form is the compiler's own contract, not source
+   interop: cljs.core's exists? macro, for one, expands to a js* form
+   whose argument spells a namespace object's var as js/<ns>.<name>
+   (js/cljs.core.PROTOCOL_SENTINEL) -- the js/ prefix there names the
+   namespace object, never a global, and rewriting it corrupts the
+   reference (measured: a wrapping boot died on core.cljs's
+   (defonce PROTOCOL_SENTINEL #object[...]) with exactly those
+   symbols rewritten). Source forms keep the descending rule: their
+   js* arguments are source expressions, written by a programmer.")
 
 (def shim-ns 'cohost.js-shim)
 
@@ -47,31 +60,63 @@
       :else
       (symbol (str shim-ns) nm))))
 
-(declare rewrite)
+(declare rewrite*)
 
-(defn- rewrite-list [form]
+(defn- rewrite-list [mode form]
   (let [head (first form)]
     (cond
       (= 'quote head) form
       (= 'var head) form
-      ;; (js* "template" expr...): template verbatim, exprs rewritten
-      (= 'js* head) (apply list 'js* (second form) (map rewrite (drop 2 form)))
-      :else (apply list (map rewrite form)))))
+      ;; (js* "template" expr...): the template is always verbatim.
+      ;; Source mode rewrites the argument expressions; expansion
+      ;; mode leaves the whole form alone (see the docstring: in an
+      ;; expansion the arguments are the compiler's own references).
+      (= 'js* head) (if (= :expansion mode)
+                      form
+                      (apply list 'js* (second form)
+                             (map #(rewrite* mode %) (drop 2 form))))
+      :else (apply list (map #(rewrite* mode %) form)))))
+
+(defn- rewrite*
+  [mode form]
+  ;; metadata is captured BEFORE the rebuild and reattached after:
+  ;; on an expansion it is semantic, not decoration -- the
+  ;; deftype/extend-type macros mark the method fn forms they
+  ;; generate with :cljs.analyzer/type (and protocol-impl/inline),
+  ;; and the analyzer reads exactly that to emit the method's
+  ;; `var self__ = this;` for field access. Dropping it (the first
+  ;; walker did: it checked the rebuilt form's meta, which is always
+  ;; nil) leaves field references munged to self__.<field> with no
+  ;; declaration -- a wrapping boot died on core.cljs's MultiFn that
+  ;; way. On source forms the same preservation keeps the reader's
+  ;; line/column data, which the old walker also silently dropped.
+  (let [m (meta form)
+        form' (cond
+                (symbol? form) (if (= "js" (namespace form))
+                                 (js-symbol form)
+                                 form)
+                (seq? form) (rewrite-list mode form)
+                (vector? form) (mapv #(rewrite* mode %) form)
+                (map? form) (into (try (empty form) (catch Throwable _ {}))
+                                  (map (fn [[k v]] [(rewrite* mode k) (rewrite* mode v)]))
+                                  form)
+                (set? form) (into (try (empty form) (catch Throwable _ #{}))
+                                  (map #(rewrite* mode %))
+                                  form)
+                :else form)]
+    (if (and m (instance? clojure.lang.IObj form'))
+      (with-meta form' (rewrite* mode m))
+      form')))
 
 (defn rewrite
   "Rewrite one read form (see the namespace docstring for the rules)."
   [form]
-  (let [form (cond
-               (symbol? form) (if (= "js" (namespace form))
-                                (js-symbol form)
-                                form)
-               (seq? form) (rewrite-list form)
-               (vector? form) (mapv rewrite form)
-               (map? form) (into {} (map (fn [[k v]] [(rewrite k) (rewrite v)])) form)
-               (set? form) (into #{} (map rewrite) form)
-               :else form)]
-    ;; metadata rides along rewritten (a ^js/Foo tag is inference data
-    ;; only, but a tag naming a shim root should name the shim's var)
-    (if (and (instance? clojure.lang.IObj form) (meta form))
-      (with-meta form (rewrite (meta form)))
-      form)))
+  (rewrite* :source form))
+
+(defn rewrite-expansion
+  "Rewrite one macro expansion: like rewrite, but a js* form is
+   returned verbatim -- in expansion position js* is the compiler's
+   contract, and its js/ arguments name namespace objects, not
+   globals."
+  [form]
+  (rewrite* :expansion form))
