@@ -7,6 +7,9 @@
 #   dev/cljs_parity/run.sh seat_proof.clj graal # stage 2: executor realm, GraalJS seat
 #   dev/cljs_parity/run.sh seat_proof.clj node  # stage 2: executor realm, node seat
 #   dev/cljs_parity/run.sh macro_wrap_proof.clj # stage 2: macro-wrapping proof
+#   dev/cljs_parity/run.sh browser_server_proof.clj # stage 3: the browser seat's server, no browser
+#   EVE_CHROME=/path/to/chrome dev/cljs_parity/run.sh browser_proof.clj
+#                                               # stage 3: the browser thread type, full proof
 #
 # The runner deps live in /tmp (ephemeral by design); the scripts are
 # the durable part and live beside this file. Maven resolves offline
