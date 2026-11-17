@@ -259,7 +259,14 @@
    the macro wrote it, not rewritten for the host's compiler."
   false)
 
-#?(:jank (defn ->SB [state] (standin 'SB {:state state})) :default (defrecord SB [state]))
+;; :vs — the host takes `str` (policy host-names) and VS's str of a typed record is its class's toString, the
+;; record's printed map when it has none: stock (str sb) of this stand-in answered "#cohost.adapter.SB{:state
+;; #object[]}" (MEASURED 2026-11-17 on the CP4 pair: (clojure.string/join ", " ["a" "b"]) through cohost, and every
+;; (str (StringBuilder. …))), so vanilla_stream's {…} line printed that; with the toString VS's str answers the text
+;; (a defrecord's Object toString is honored by VS's str from any namespace, str as a value too — measured the same night)
+#?(:jank (defn ->SB [state] (standin 'SB {:state state}))
+   :vs (defrecord SB [state] Object (toString [_] (apply str @state)))
+   :default (defrecord SB [state]))
 (defn- generic-sb "A StringBuilder stand-in (the host's str does not print it)." [] (->SB (atom [])))
 ;; (on Phel a record is a struct whose name is its constructor fn: its PHP
 ;; class is asked, cohost\adapter\SB for SB)
