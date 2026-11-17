@@ -84,6 +84,15 @@
 (def console js/console)
 (def process (js* "typeof process !== 'undefined' ? process : void 0"))
 (def performance (js* "typeof performance !== 'undefined' ? performance : void 0"))
+;; Node interop roots, for library code that runs in a node realm (eve's
+;; cljs adapters, an app's npm tasks): the realm global the :node seat
+;; installs -- a require anchored at the seat's :require-root, the module
+;; object, Node's Buffer. Absent on the graal and browser realms, where
+;; these are void 0 and the libraries' (exists? js/require) guards read
+;; false, exactly as before these vars existed.
+(def require (js* "typeof require !== 'undefined' ? require : void 0"))
+(def module (js* "typeof module !== 'undefined' ? module : void 0"))
+(def Buffer (js* "typeof Buffer !== 'undefined' ? Buffer : void 0"))
 (def Math js/Math)   ;; LIBRARY
 (def JSON js/JSON)   ;; goog.string and libraries; core.cljs proper does not
 
