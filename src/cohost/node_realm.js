@@ -72,11 +72,27 @@ function takeFrame() {
 }
 
 const syncChunk = Buffer.alloc(65536);
+const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+function readSyncAvailable() {
+  for (;;) {
+    try {
+      return fs.readSync(0, syncChunk, 0, syncChunk.length, null);
+    } catch (e) {
+      // stdin is non-blocking once the async pump has listened on
+      // it: the driver's answer is on its way -- wait a beat, retry
+      if (e && e.code === 'EAGAIN') {
+        Atomics.wait(sleepCell, 0, 0, 5);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
 function readSyncFrame() {
   for (;;) {
     const s = takeFrame();
     if (s !== null) return s;
-    const n = fs.readSync(0, syncChunk, 0, syncChunk.length, null);
+    const n = readSyncAvailable();
     if (n === 0) return null;
     inbuf = Buffer.concat([inbuf, syncChunk.subarray(0, n)]);
   }
