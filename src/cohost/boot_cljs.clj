@@ -42,9 +42,11 @@
   (when-let [url (io/resource resource)]
     (slurp url)))
 
-(defn- goog-text
+(defn goog-text
   "The text of a goog dependency path (relative to goog/), or of the
-   path as given, as a classpath resource."
+   path as given, as a classpath resource. Public: a realm hosted in
+   another process (the node seat) is served its goog files through
+   this same resolution."
   [path]
   (let [rel (cond-> path
               (.startsWith path "../") (subs 3)
@@ -158,6 +160,92 @@
   [^Context ctx ^String js]
   (.eval ctx "js" js))
 
+(defn eval-in
+  "Eval a JavaScript string in a realm, whatever hosts it: a GraalJS
+   Context in this process, or a transport map {:eval! (fn [js]
+   value)} for a realm living in another process or engine (the node
+   seat's sister builds one). Answers the completion value in the
+   transport's terms (a polyglot Value for GraalJS; a plain value --
+   string, number, boolean, nil -- for a transport map)."
+  [realm ^String js]
+  (cond
+    (instance? Context realm) (.eval ^Context realm "js" js)
+    (map? realm) ((:eval! realm) js)
+    :else (throw (ex-info "not a cljs realm" {:realm realm}))))
+
+;; ---------------------------------------------------------------------------
+;; macro wrapping (stage 2)
+;;
+;; The per-form rewrite runs on source forms, before analysis. A macro
+;; expansion materializes during analysis, after that rewrite, so a
+;; js/* symbol the expansion introduces reaches the analyzer
+;; unrewritten and is emitted as a raw realm global -- bypassing the
+;; shim and its typeof-guarded roots (js/COMPILED, js/process throw
+;; ReferenceError as raw globals on seats that lack them). On the JVM
+;; seat core.cljc's own macros never do this (stage 1's whole-core
+;; boot is the proof), but library and user macros can, and on a
+;; self-hosted seat -- the compiler itself in the realm -- expansions
+;; are the normal case, not the exception.
+;;
+;; The wrap: cljs.analyzer applies the macro var's root at expansion
+;; time (macroexpand-1*), so interning a rewriting root on every macro
+;; var the compiler env knows makes every expansion pass through
+;; cohost.js-rewrite before analysis continues. Wrapping is per-realm
+;; opt-in (boot!'s :wrap-macros), off by default: stage 1's behavior
+;; is unchanged unless a realm asks.
+
+(defonce ^:private wrapped-macros
+  ;; macro vars whose roots already rewrite their expansions (macro
+  ;; vars are JVM-side and shared by every realm in this process, so
+  ;; the set is too)
+  (atom #{}))
+
+(defonce ^:private macro-ns-scanned
+  ;; [ns-sym intern-count] pairs already scanned by wrap-loaded-macros!:
+  ;; a namespace is re-scanned only when its interns change (a macro
+  ;; namespace loading or reloading mid-boot)
+  (atom #{}))
+
+(defonce ^:private wrap-macros-realms
+  ;; realms that opted into macro wrapping
+  (atom #{}))
+
+(defn wrap-macros-enabled?
+  [realm]
+  (contains? @wrap-macros-realms realm))
+
+(defn enable-macro-wrapping!
+  "Opt a realm into macro wrapping (see the section comment)."
+  [realm]
+  (swap! wrap-macros-realms conj realm)
+  realm)
+
+(defn- wrap-macro-var!
+  [^clojure.lang.Var v]
+  (when (and (.isMacro v) (not (contains? @wrapped-macros v)))
+    (let [orig @v]
+      (when (ifn? orig)
+        (alter-var-root v (fn [_] (fn [& args] (jrw/rewrite (apply orig args)))))
+        (swap! wrapped-macros conj v)))))
+
+(defn wrap-loaded-macros!
+  "Wrap every macro var of every macro namespace the ambient compiler
+   env has interned and not yet scanned at its current intern count.
+   Called before each analysis in a wrapping realm, so a macro
+   namespace loaded by one form is wrapped before the next form --
+   which may already use it -- is analyzed."
+  []
+  (when env/*compiler*
+    (doseq [[ns-sym ns-map] (:cljs.analyzer/namespaces @env/*compiler*)]
+      (when (contains? ns-map :macros)
+        (when-let [jvm-ns (find-ns ns-sym)]
+          (let [interns (ns-interns jvm-ns)
+                scan-key [ns-sym (count interns)]]
+            (when-not (contains? @macro-ns-scanned scan-key)
+              (swap! macro-ns-scanned conj scan-key)
+              (doseq [[_ v] interns]
+                (wrap-macro-var! v)))))))))
+
 ;; ---------------------------------------------------------------------------
 ;; the per-form loop (cljs.compiler/emit-source's shape)
 
@@ -167,6 +255,7 @@
    :language-out :ecmascript-2020})
 
 (declare compiler-env)
+(declare realm-envs)
 
 (defn- emit-string
   "Emit one analyzed form to its JavaScript string."
@@ -180,13 +269,13 @@
   "The per-form loop over rdr (named name for errors): analyze each
    form (rewritten when rewrite?), emit it, eval it in the realm, in
    order. Answers the namespace the source defined."
-  [^Context ctx rdr name rewrite?]
+  [realm rdr name rewrite?]
   ;; the analyzer's state lives in env/*compiler*: boot! binds it for
   ;; its own files; a later compile-source! (a library, say) rebinds
   ;; it from the realm's persisted env
   (if-not env/*compiler*
-    (env/with-compiler-env @compiler-env
-      (compile-reader! ctx rdr name rewrite?))
+    (env/with-compiler-env (or (get @realm-envs realm) @compiler-env)
+      (compile-reader! realm rdr name rewrite?))
     (binding [ana/*cljs-ns* 'cljs.user
             ana/*cljs-file* name
             ;; the bindings the stock entry points (compile-file,
@@ -206,34 +295,36 @@
         (if (seq forms)
           (let [env (assoc env :ns (ana/get-namespace ana/*cljs-ns*))
                 form (first forms)
-                form (if rewrite? (jrw/rewrite form) form)
-                ast (try (ana/analyze env form nil compiler-opts)
-                         (catch Throwable t
-                           (throw (ex-info (str "analysis failed in " name ": " (pr-str form))
-                                           {:resource name :form form} t))))
-                js (emit-string ast)]
-            (try (eval-js! ctx js)
-                 (catch Throwable t
-                   (throw (ex-info (str "realm eval failed in " name ": " (pr-str form))
-                                   {:resource name :form form :js js} t))))
-            (recur (rest forms) (if (= :ns (:op ast)) (:name ast) ns-name)))
+                form (if rewrite? (jrw/rewrite form) form)]
+            (when (wrap-macros-enabled? realm)
+              (wrap-loaded-macros!))
+            (let [ast (try (ana/analyze env form nil compiler-opts)
+                           (catch Throwable t
+                             (throw (ex-info (str "analysis failed in " name ": " (pr-str form))
+                                             {:resource name :form form} t))))
+                  js (emit-string ast)]
+              (try (eval-in realm js)
+                   (catch Throwable t
+                     (throw (ex-info (str "realm eval failed in " name ": " (pr-str form))
+                                     {:resource name :form form :js js} t))))
+              (recur (rest forms) (if (= :ns (:op ast)) (:name ast) ns-name))))
           (or ns-name 'cljs.user)))))))
 
 (defn compile-source!
   "Analyze, emit and realm-eval every form of the source at resource,
    in order. rewrite? selects the js-shim rewrite (on for stock cljs
    sources, off for the shim itself). Answers the namespace defined."
-  [^Context ctx resource rewrite?]
+  [realm resource rewrite?]
   (let [url (io/resource resource)]
     (when-not url
       (throw (ex-info (str "cljs source resource missing: " resource) {:resource resource})))
     (with-open [rdr (io/reader url)]
-      (compile-reader! ctx rdr resource rewrite?))))
+      (compile-reader! realm rdr resource rewrite?))))
 
 (defn compile-string!
   "compile-reader! over a source string."
-  [^Context ctx source name rewrite?]
-  (compile-reader! ctx (java.io.StringReader. source) name rewrite?))
+  [realm source name rewrite?]
+  (compile-reader! realm (java.io.StringReader. source) name rewrite?))
 
 ;; ---------------------------------------------------------------------------
 ;; the boot
@@ -256,9 +347,16 @@
    "clojure/walk.cljs"])
 
 (defonce ^:private compiler-env
-  ;; the analyzer's state for the booted realm: cljs.core's defs live
-  ;; here, so eval-cljs must analyze against this same env
+  ;; the analyzer's state for the most recently booted realm: kept for
+  ;; stage 1's callers; realm-envs below is the per-realm record
   (atom nil))
+
+(defonce ^:private realm-envs
+  ;; realm -> its compiler env. A realm's analyzer state is its own:
+  ;; two realms booted in one process (a GraalJS realm and a node
+  ;; realm, say) hold separate namespace tables, and each realm's
+  ;; forms must be analyzed against the env its own boot built.
+  (atom {}))
 
 (defonce ^:private user-ns-realms
   ;; realms whose cljs.user namespace object exists (goog.provide ran
@@ -268,34 +366,64 @@
 
 (defn boot!
   "Boot the shim, stock core.cljs and its related files into realm
-   (a fresh one by default). Answers the realm."
+   (a fresh GraalJS realm by default; a transport map is a realm in
+   another engine -- see eval-in). Answers the realm.
+
+   opts: :wrap-macros -- rewrite macro expansions too (stage 2; see
+   the macro-wrapping section). Off by default."
   ([] (boot! (make-realm)))
-  ([^Context ctx]
+  ([realm] (boot! realm {}))
+  ([realm {:keys [wrap-macros] :as _opts}]
    (let [cenv (env/default-compiler-env compiler-opts)]
      (reset! compiler-env cenv)
+     (swap! realm-envs assoc realm cenv)
+     (when wrap-macros
+       (enable-macro-wrapping! realm))
      (env/with-compiler-env cenv
-       (compile-source! ctx "cohost/js_shim.cljs" false)
-       (compile-source! ctx "cljs/core.cljs" true)
+       (compile-source! realm "cohost/js_shim.cljs" false)
+       (compile-source! realm "cljs/core.cljs" true)
        (doseq [r related-files]
-         (compile-source! ctx r true))
-       (compile-string! ctx "(ns cljs.user)" "<user-ns>" false)
-       (swap! user-ns-realms conj ctx)
-       ctx))))
+         (compile-source! realm r true))
+       (compile-string! realm "(ns cljs.user)" "<user-ns>" false)
+       (swap! user-ns-realms conj realm)
+       realm))))
+
+(defn eval-form
+  "Analyze form (a read cljs form, not a string) in namespace ns-sym
+   against realm's compiler env, emit it and eval it in the realm.
+   The form goes through the js-shim rewrite, like any stock source.
+   Answers the realm value in the transport's terms (see eval-in).
+   This is the entry the runtime-executor sister (cohost.cljs-pool)
+   is built on: work crosses as a form, per the layer's contract."
+  [realm ns-sym form]
+  (let [cenv (or (get @realm-envs realm) @compiler-env)]
+    (when-not cenv
+      (throw (ex-info "eval-form before boot!" {})))
+    (binding [env/*compiler* cenv]
+      (when (wrap-macros-enabled? realm)
+        (wrap-loaded-macros!))
+      (binding [ana/*cljs-ns* ns-sym
+                ana/*cljs-file* "<eval-form>"]
+        (let [env (assoc (ana/empty-env) :ns (ana/get-namespace ns-sym))
+              ast (ana/analyze env (jrw/rewrite form) nil compiler-opts)]
+          (eval-in realm (emit-string ast)))))))
 
 (defn eval-cljs
   "Compile and eval one cljs form (a string) in the booted realm's
    cljs.user, answering the realm value. The form goes through the
    js-shim rewrite, like any stock source."
-  [^Context ctx form-str]
-  (when-not @compiler-env
+  [realm form-str]
+  (when-not (or (get @realm-envs realm) @compiler-env)
     (throw (ex-info "eval-cljs before boot!" {})))
-  (binding [env/*compiler* @compiler-env]
-    (when-not (contains? @user-ns-realms ctx)
-      (compile-string! ctx "(ns cljs.user)" "<user-ns>" false)
-      (swap! user-ns-realms conj ctx))
+  (binding [env/*compiler* (or (get @realm-envs realm) @compiler-env)]
+    (when-not (contains? @user-ns-realms realm)
+      (compile-string! realm "(ns cljs.user)" "<user-ns>" false)
+      (swap! user-ns-realms conj realm))
     (binding [ana/*cljs-ns* 'cljs.user
               ana/*cljs-file* "<eval>"]
       (let [env (assoc (ana/empty-env) :ns (ana/get-namespace 'cljs.user))
-            form (jrw/rewrite (reader/read-string form-str))
-            ast (ana/analyze env form nil compiler-opts)]
-        (eval-js! ctx (emit-string ast))))))
+            form (jrw/rewrite (reader/read-string form-str))]
+        (when (wrap-macros-enabled? realm)
+          (wrap-loaded-macros!))
+        (let [ast (ana/analyze env form nil compiler-opts)]
+          (eval-in realm (emit-string ast)))))))
