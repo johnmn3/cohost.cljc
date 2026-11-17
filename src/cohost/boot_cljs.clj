@@ -42,25 +42,44 @@
   (when-let [url (io/resource resource)]
     (slurp url)))
 
+(defn- goog-text
+  "The text of a goog dependency path (relative to goog/), or of the
+   path as given, as a classpath resource."
+  [path]
+  (let [rel (cond-> path
+              (.startsWith path "../") (subs 3)
+              (.startsWith path "./") (subs 2)
+              (.startsWith path "/") (subs 1))]
+    (or (classpath-text (str "goog/" rel))
+        (classpath-text rel)
+        (classpath-text path))))
+
 (defn- load-file-hook
-  "The realm's file loader, reached from JS as __cohostLoadFile(path).
-   goog's dependency paths are relative to goog/; resolve them (and,
-   failing that, the path as given) as classpath resources, eval the
-   file in the realm, answer whether it was found."
+  "The realm's CLOSURE_IMPORT_SCRIPT, reached from JS as
+   __cohostLoadFile(path, opt_contents). Plain dependencies are
+   fetched and eval'd; transformed ones (goog.module) arrive with
+   their contents as the second argument -- an empty path -- and the
+   contents are eval'd instead. Answers whether the file was loaded."
   [^Context ctx]
   (reify ProxyExecutable
     (execute [_ args]
-      (let [path (str (aget args 0))
-            rel (cond-> path
-                  (.startsWith path "../") (subs 3)
-                  (.startsWith path "./") (subs 2)
-                  (.startsWith path "/") (subs 1))
-            text (or (classpath-text (str "goog/" rel))
-                     (classpath-text rel)
-                     (classpath-text path))]
+      (let [contents (when (and (> (alength args) 1) (not (.isNull ^Value (aget args 1))))
+                       (.asString ^Value (aget args 1)))
+            text (or contents (goog-text (str (aget args 0))))]
         (if text
           (do (.eval ctx "js" text) true)
           false)))))
+
+(defn- read-file-hook
+  "The realm's CLOSURE_LOAD_FILE_SYNC, reached from JS as
+   __cohostReadFile(path): the file's contents, or nil. Transformed
+   dependencies fetch their contents through this hook, transform
+   them (a goog.module is wrapped in goog.loadModule), and hand the
+   result back through CLOSURE_IMPORT_SCRIPT."
+  [_ctx]
+  (reify ProxyExecutable
+    (execute [_ args]
+      (goog-text (str (aget args 0))))))
 
 (defn- timer-hooks
   "The realm's timer family, which a bare JS engine does not carry
@@ -102,7 +121,8 @@
 
 (def realm-preamble
   "The realm's prepared globals (see the namespace docstring)."
-  (str "globalThis.CLOSURE_IMPORT_SCRIPT = function(src) { return __cohostLoadFile(src); };\n"
+  (str "globalThis.CLOSURE_IMPORT_SCRIPT = function(src, contents) { return __cohostLoadFile(src, contents); };\n"
+       "globalThis.CLOSURE_LOAD_FILE_SYNC = function(src) { return __cohostReadFile(src); };\n"
        "if (typeof window === 'undefined') { globalThis.window = globalThis; }\n"
        "if (typeof self === 'undefined') { globalThis.self = globalThis; }\n"
        "if (typeof navigator === 'undefined') { globalThis.navigator = {userAgent: 'GraalJS (cohost cljs realm)'}; }\n"
@@ -123,6 +143,7 @@
         bindings (.getBindings ctx "js")
         timers (timer-hooks)]
     (.putMember bindings "__cohostLoadFile" (load-file-hook ctx))
+    (.putMember bindings "__cohostReadFile" (read-file-hook ctx))
     (.putMember bindings "__cohostSchedule" (:schedule timers))
     (.putMember bindings "__cohostCancel" (:cancel timers))
     (.eval ctx "js" realm-preamble)
@@ -153,6 +174,43 @@
       (comp/emit ast))
     (str sw)))
 
+(defn- compile-reader!
+  "The per-form loop over rdr (named name for errors): analyze each
+   form (rewritten when rewrite?), emit it, eval it in the realm, in
+   order. Answers the namespace the source defined."
+  [^Context ctx rdr name rewrite?]
+  (binding [ana/*cljs-ns* 'cljs.user
+            ana/*cljs-file* name
+            ;; the bindings the stock entry points (compile-file,
+            ;; analyze-form-seq) establish: core.cljs's own
+            ;; (set! *unchecked-arrays* true) lands in the analyzer's
+            ;; dynamic vars, which need thread bindings to be set!
+            ana/*file-defs* (atom #{})
+            ana/*unchecked-if* false
+            ana/*unchecked-arrays* false
+            ana/*cljs-warnings* ana/*cljs-warnings*
+            reader/*alias-map* (or (ana/get-bridged-alias-map) reader/*alias-map* {})
+            comp/*source-map-data* nil
+            comp/*source-map-data-gen-col* (AtomicLong.)]
+    (let [env (ana/empty-env)]
+      (loop [forms (ana/forms-seq* rdr name)
+             ns-name nil]
+        (if (seq forms)
+          (let [env (assoc env :ns (ana/get-namespace ana/*cljs-ns*))
+                form (first forms)
+                form (if rewrite? (jrw/rewrite form) form)
+                ast (try (ana/analyze env form nil compiler-opts)
+                         (catch Throwable t
+                           (throw (ex-info (str "analysis failed in " name ": " (pr-str form))
+                                           {:resource name :form form} t))))
+                js (emit-string ast)]
+            (try (eval-js! ctx js)
+                 (catch Throwable t
+                   (throw (ex-info (str "realm eval failed in " name ": " (pr-str form))
+                                   {:resource name :form form :js js} t))))
+            (recur (rest forms) (if (= :ns (:op ast)) (:name ast) ns-name)))
+          (or ns-name 'cljs.user))))))
+
 (defn compile-source!
   "Analyze, emit and realm-eval every form of the source at resource,
    in order. rewrite? selects the js-shim rewrite (on for stock cljs
@@ -161,37 +219,13 @@
   (let [url (io/resource resource)]
     (when-not url
       (throw (ex-info (str "cljs source resource missing: " resource) {:resource resource})))
-    (binding [ana/*cljs-ns* 'cljs.user
-              ana/*cljs-file* resource
-              ;; the bindings the stock entry points (compile-file,
-              ;; analyze-form-seq) establish: core.cljs's own
-              ;; (set! *unchecked-arrays* true) lands in the analyzer's
-              ;; dynamic vars, which need thread bindings to be set!
-              ana/*file-defs* (atom #{})
-              ana/*unchecked-if* false
-              ana/*unchecked-arrays* false
-              ana/*cljs-warnings* ana/*cljs-warnings*
-              reader/*alias-map* (or (ana/get-bridged-alias-map) reader/*alias-map* {})
-              comp/*source-map-data* nil
-              comp/*source-map-data-gen-col* (AtomicLong.)]
-      (with-open [rdr (io/reader url)]
-        (loop [forms (ana/forms-seq* rdr resource)
-               ns-name nil]
-          (if (seq forms)
-            (let [env (assoc (ana/empty-env) :ns (ana/get-namespace ana/*cljs-ns*))
-                  form (first forms)
-                  form (if rewrite? (jrw/rewrite form) form)
-                  ast (try (ana/analyze env form nil compiler-opts)
-                           (catch Throwable t
-                             (throw (ex-info (str "analysis failed in " resource ": " (pr-str form))
-                                             {:resource resource :form form} t))))
-                  js (emit-string ast)]
-              (try (eval-js! ctx js)
-                   (catch Throwable t
-                     (throw (ex-info (str "realm eval failed in " resource ": " (pr-str form))
-                                     {:resource resource :form form :js js} t))))
-              (recur (rest forms) (if (= :ns (:op ast)) (:name ast) ns-name)))
-            (or ns-name 'cljs.user)))))))
+    (with-open [rdr (io/reader url)]
+      (compile-reader! ctx rdr resource rewrite?))))
+
+(defn compile-string!
+  "compile-reader! over a source string."
+  [^Context ctx source name rewrite?]
+  (compile-reader! ctx (java.io.StringReader. source) name rewrite?))
 
 ;; ---------------------------------------------------------------------------
 ;; the boot
@@ -199,6 +233,15 @@
 (def related-files
   "core.cljs's related files, in dependency order."
   ["clojure/string.cljs"
+   ;; cljs.reader is a wrapper over cljs.tools.reader (from the
+   ;; tools.reader jar): its family boots first, leaves up
+   "cljs/tools/reader/impl/inspect.cljs"
+   "cljs/tools/reader/impl/utils.cljs"
+   "cljs/tools/reader/impl/commons.cljs"
+   "cljs/tools/reader/reader_types.cljs"
+   "cljs/tools/reader/impl/errors.cljs"
+   "cljs/tools/reader.cljs"
+   "cljs/tools/reader/edn.cljs"
    "cljs/reader.cljs"
    "clojure/set.cljs"
    "clojure/data.cljs"
@@ -208,6 +251,12 @@
   ;; the analyzer's state for the booted realm: cljs.core's defs live
   ;; here, so eval-cljs must analyze against this same env
   (atom nil))
+
+(defonce ^:private user-ns-realms
+  ;; realms whose cljs.user namespace object exists (goog.provide ran
+  ;; there): the analyzer learns cljs.user from any file's loop, but
+  ;; the realm only gets the object from an emitted ns form
+  (atom #{}))
 
 (defn boot!
   "Boot the shim, stock core.cljs and its related files into realm
@@ -221,6 +270,8 @@
        (compile-source! ctx "cljs/core.cljs" true)
        (doseq [r related-files]
          (compile-source! ctx r true))
+       (compile-string! ctx "(ns cljs.user)" "<user-ns>" false)
+       (swap! user-ns-realms conj ctx)
        ctx))))
 
 (defn eval-cljs
@@ -230,14 +281,13 @@
   [^Context ctx form-str]
   (when-not @compiler-env
     (throw (ex-info "eval-cljs before boot!" {})))
-  (binding [env/*compiler* @compiler-env
-            ana/*cljs-ns* 'cljs.user
-            ana/*cljs-file* "<eval>"]
-    (when-not (get-in @env/*compiler* [::ana/namespaces 'cljs.user])
+  (binding [env/*compiler* @compiler-env]
+    (when-not (contains? @user-ns-realms ctx)
+      (compile-string! ctx "(ns cljs.user)" "<user-ns>" false)
+      (swap! user-ns-realms conj ctx))
+    (binding [ana/*cljs-ns* 'cljs.user
+              ana/*cljs-file* "<eval>"]
       (let [env (assoc (ana/empty-env) :ns (ana/get-namespace 'cljs.user))
-            ast (ana/analyze env '(ns cljs.user) nil compiler-opts)]
-        (eval-js! ctx (emit-string ast))))
-    (let [env (assoc (ana/empty-env) :ns (ana/get-namespace 'cljs.user))
-          form (jrw/rewrite (reader/read-string form-str))
-          ast (ana/analyze env form nil compiler-opts)]
-      (eval-js! ctx (emit-string ast)))))
+            form (jrw/rewrite (reader/read-string form-str))
+            ast (ana/analyze env form nil compiler-opts)]
+        (eval-js! ctx (emit-string ast))))))
