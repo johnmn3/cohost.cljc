@@ -44,6 +44,7 @@
            [java.net InetSocketAddress URLDecoder]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
+           [java.util Base64]
            [java.util.concurrent Executors LinkedBlockingQueue ThreadFactory TimeUnit]
            [org.graalvm.polyglot Context]))
 
@@ -372,11 +373,11 @@
 ;; ---------------------------------------------------------------------------
 ;; the web server's plumbing (JDK HttpServer)
 
-(defn- read-body [^InputStream in]
+(defn- read-body-bytes [^InputStream in]
   (when in
     (let [out (ByteArrayOutputStream.)]
       (io/copy in out)
-      (.toString out "UTF-8"))))
+      (.toByteArray out))))
 
 (defn- query-params [^String q]
   (if (str/blank? q)
@@ -402,16 +403,20 @@
                   (when body (.getBytes body "UTF-8"))))
 
 (defn- exchange-request
-  "The request as a map: {:method :uri :query :headers :body}, header
-   names lower-cased."
+  "The request as a map: {:method :uri :query :headers :body :body-b64},
+   header names lower-cased. :body is the request body as a UTF-8 string;
+   :body-b64 is the same bytes base64-encoded (eve.http-server's
+   convention), for handlers whose traffic is binary."
   [^HttpExchange ex]
-  (let [uri (.getRequestURI ex)]
+  (let [uri (.getRequestURI ex)
+        bs (read-body-bytes (.getRequestBody ex))]
     {:method (keyword (str/lower-case (.getRequestMethod ex)))
      :uri (.getPath uri)
      :query (query-params (.getRawQuery uri))
      :headers (into {} (for [[k vs] (.getRequestHeaders ex)]
                          [(str/lower-case k) (first vs)]))
-     :body (read-body (.getRequestBody ex))}))
+     :body (when bs (String. bs "UTF-8"))
+     :body-b64 (when bs (.encodeToString (Base64/getEncoder) bs))}))
 
 (defn- app-headers
   "The server-config header pipeline every app response passes
@@ -501,8 +506,9 @@
    (at / and at its own name, with the realm script injected),
    static files under the bootstream's root, :handler's own
    endpoints for anything else (a handler answers {:status :headers
-   :body}; its headers win over the pipeline's where they name the
-   same key)."
+   :body}, or {:body-as :b64 :body <base64>} for binary traffic —
+   eve.http-server's convention, mirrored; its headers win over the
+   pipeline's where they name the same key)."
   [{:keys [cfg html root boot-name handler]}]
   (reify HttpHandler
     (handle [_ ex]
@@ -524,9 +530,16 @@
                               (Files/readAllBytes (.toPath f)))
               (let [resp (when handler (handler req))]
                 (if resp
-                  (respond-text! ex (or (:status resp) 200)
-                                 (merge headers (:headers resp))
-                                 (:body resp))
+                  (if (= :b64 (:body-as resp))
+                    ;; a handler answers binary traffic as base64 text
+                    ;; (eve.http-server's convention: :body-as :b64)
+                    (respond-bytes! ex (or (:status resp) 200)
+                                    (merge headers (:headers resp))
+                                    (when (:body resp)
+                                      (.decode (Base64/getDecoder) ^String (:body resp))))
+                    (respond-text! ex (or (:status resp) 200)
+                                   (merge headers (:headers resp))
+                                   (:body resp)))
                   (respond-text! ex 404 headers "not found"))))))
         (catch Throwable t
           (try (respond-text! ex 500 {"Content-Type" "text/plain"}
