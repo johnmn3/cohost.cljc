@@ -31,7 +31,10 @@
 ;; they are the JS API most used by the majority of libraries (the
 ;; hiccup-class panel of the census), carried so those libraries run out
 ;; of the box.
-(ns cohost.js-shim)
+(ns cohost.js-shim
+  ;; require is this shim's own var below (the realm's node require),
+  ;; not cljs.core's
+  (:refer-clojure :exclude [require]))
 
 ;; ---------------------------------------------------------------------------
 ;; errors: core.cljs's throw sites construct these (Error 122x in the
@@ -77,6 +80,9 @@
 (def WeakSet js/WeakSet)
 (def Promise js/Promise)
 (def BigInt js/BigInt)
+;; LIBRARY: BigInt's typed arrays (eve's codec names them, exists?-guarded)
+(def BigInt64Array (js* "typeof BigInt64Array !== 'undefined' ? BigInt64Array : void 0"))
+(def BigUint64Array (js* "typeof BigUint64Array !== 'undefined' ? BigUint64Array : void 0"))
 
 ;; ---------------------------------------------------------------------------
 ;; namespace-like globals
@@ -97,6 +103,31 @@
 (def JSON js/JSON)   ;; goog.string and libraries; core.cljs proper does not
 
 ;; ---------------------------------------------------------------------------
+;; LIBRARY: the wider platform surface the library census names -- eve's
+;; cljs adapters and app code (encoding's TextEncoder/TextDecoder pair is
+;; the load-bearing one: eve.encoding constructs both at namespace load).
+;; Every var is typeof-guarded like process/performance above: a realm
+;; that lacks the global leaves the var undefined, so the libraries'
+;; (exists? js/X) guards keep their per-host meaning.
+
+(def TextEncoder (js* "typeof TextEncoder !== 'undefined' ? TextEncoder : void 0"))
+(def TextDecoder (js* "typeof TextDecoder !== 'undefined' ? TextDecoder : void 0"))
+(def SharedArrayBuffer (js* "typeof SharedArrayBuffer !== 'undefined' ? SharedArrayBuffer : void 0"))
+(def Atomics (js* "typeof Atomics !== 'undefined' ? Atomics : void 0"))
+(def WebAssembly (js* "typeof WebAssembly !== 'undefined' ? WebAssembly : void 0"))
+(def Blob (js* "typeof Blob !== 'undefined' ? Blob : void 0"))
+(def URL (js* "typeof URL !== 'undefined' ? URL : void 0"))
+(def MessageChannel (js* "typeof MessageChannel !== 'undefined' ? MessageChannel : void 0"))
+(def Worker (js* "typeof Worker !== 'undefined' ? Worker : void 0"))
+(def WorkerGlobalScope (js* "typeof WorkerGlobalScope !== 'undefined' ? WorkerGlobalScope : void 0"))
+(def Window (js* "typeof Window !== 'undefined' ? Window : void 0"))
+(def XMLHttpRequest (js* "typeof XMLHttpRequest !== 'undefined' ? XMLHttpRequest : void 0"))
+(def crypto (js* "typeof crypto !== 'undefined' ? crypto : void 0"))
+(def document (js* "typeof document !== 'undefined' ? document : void 0"))
+(def location (js* "typeof location !== 'undefined' ? location : void 0"))
+(def navigator (js* "typeof navigator !== 'undefined' ? navigator : void 0"))
+
+;; ---------------------------------------------------------------------------
 ;; global functions and values
 
 (def parseInt js/parseInt)
@@ -114,6 +145,12 @@
 (def decodeURIComponent js/decodeURIComponent)
 (def encodeURI js/encodeURI)
 (def decodeURI js/decodeURI)
+;; LIBRARY: guarded like the platform vars above (setImmediate is node's;
+;; fetch and the base64 pair are absent from some realms)
+(def atob (js* "typeof atob !== 'undefined' ? atob : void 0"))
+(def btoa (js* "typeof btoa !== 'undefined' ? btoa : void 0"))
+(def fetch (js* "typeof fetch !== 'undefined' ? fetch : void 0"))
+(def setImmediate (js* "typeof setImmediate !== 'undefined' ? setImmediate : void 0"))
 
 ;; ---------------------------------------------------------------------------
 ;; the realm's global object, under the names core.cljs asks for it.
@@ -121,6 +158,9 @@
 ;; which is the branch core.cljs's own setup code expects.
 
 (def global js/globalThis)
+(def globalThis js/globalThis) ;; LIBRARY: named directly by eve's adapters
+(def NaN (js* "typeof NaN !== 'undefined' ? NaN : void 0")) ;; LIBRARY: js/NaN in eve's numeric code
+(def undefined (js* "void 0")) ;; LIBRARY: js/undefined in eve's http adapter
 (def window (js* "typeof window !== 'undefined' ? window : void 0"))
 (def self (js* "typeof self !== 'undefined' ? self : void 0"))
 (def COMPILED false)
