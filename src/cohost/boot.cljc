@@ -1373,7 +1373,7 @@
       (when-not (memory/hosting-registered?)
         ;; the lib's name is built at run time: a static require scan (ValueScript's launcher composes every
         ;; quoted require it reads into the compile) must not pull the JVM seat's Eve hosting into another seat
-        (host/try-all (fn [] (host/eval-form (list 'require (list 'quote (symbol "cohost.memory-eve"))))))))
+        (host/try-all (fn [] (host/eval-form (list 'require (list 'quote (symbol "cohost.memory-eve")))))))
       (if (memory/hosting-registered?)
         (do (memory/install-fill!)
             (memory/set-fill! true))
