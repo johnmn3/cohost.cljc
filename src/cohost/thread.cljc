@@ -117,18 +117,24 @@
 (defn spawn
   "Run f on a new host thread as a layer thread; the layer Thread value.
    f runs with no conveyed bindings: conveyance is the caller's business
-   (future-call and the agent machinery capture and restore their own)."
-  [f]
-  (let [state (atom :new)
-        bell (host/doorbell)
-        rec {:cohost/kind ::thread
-             :id (next-id!)
-             :name (atom nil)
-             :daemon (atom false)
-             :state state
-             :bell bell
-             :runnable f
-             :handle (atom nil)}]
+   (future-call and the agent machinery capture and restore their own).
+   The 2-arity carries m as the thread's Clojure metadata -- an executor
+   spawns its workers with its own metadata, so a worker thread answers
+   (meta t) with the runtime it was constructed over, exactly as its
+   executor does."
+  ([f] (spawn f nil))
+  ([f m]
+   (let [state (atom :new)
+         bell (host/doorbell)
+         rec0 {:cohost/kind ::thread
+               :id (next-id!)
+               :name (atom nil)
+               :daemon (atom false)
+               :state state
+               :bell bell
+               :runnable f
+               :handle (atom nil)}
+         rec (if (some? m) (with-meta rec0 m) rec0)]
     (if-let [h (host/thread-spawn
                 (fn []
                   (register-thread! rec (host/thread-self))
@@ -139,7 +145,7 @@
                          (host/doorbell-signal bell)))))]
       (do (reset! (:handle rec) h) rec)
       (throw (host/ex* 'java.lang.IllegalStateException
-                       "cohost: this host provides no thread-spawn" nil)))))
+                       "cohost: this host provides no thread-spawn" nil))))))
 
 (defn start-thread!
   "The shim's Thread.start: spawn the thread value's runnable."
@@ -223,15 +229,30 @@
 ;; swapped for a fresh one at every signal, so a wait never misses work
 ;; enqueued between the claim check and the wait.
 
+(defn- executor-meta
+  "The Clojure metadata an executor is constructed with: the runtime its
+   threads are constructed over, and the domain when construction names
+   one. This is the spec's executor metadata -- it rides the value as
+   metadata, read with (meta ex); it is not a namespace of its own and
+   no program names it to construct or submit anything."
+  [runtime opts]
+  (cond-> {:cohost/runtime runtime}
+    (and (map? opts) (contains? opts :domain))
+    (assoc :cohost/domain (:domain opts))))
+
 (defn new-executor
   "kind :pooled (size workers, for futures and send) or :solo (one worker,
-   for send-off). Also the value behind the shim's Executors factories."
+   for send-off). Also the value behind the shim's Executors factories.
+   Its threads are constructed over the hosting runtime itself, and
+   (meta ex) says so."
   [kind size]
-  {:cohost/kind ::executor
-   :kind kind
-   :size (if (= kind :solo) 1 (max 1 size))
-   :queue (atom (empty-queue))
-   :ctl (atom {:running 0 :shutdown false :bell (host/doorbell)})})
+  (with-meta
+    {:cohost/kind ::executor
+     :kind kind
+     :size (if (= kind :solo) 1 (max 1 size))
+     :queue (atom (empty-queue))
+     :ctl (atom {:running 0 :shutdown false :bell (host/doorbell)})}
+    (executor-meta (host/host-name) nil)))
 
 (declare run-worker)
 
@@ -250,7 +271,7 @@
       (let [c @ctl]
         (when (and (not (:shutdown c)) (< (:running c) (:size ex)))
           (when (compare-and-set! ctl c (update c :running inc))
-            (spawn (fn [] (run-worker ex)))
+            (spawn (fn [] (run-worker ex)) (meta ex))
             (recur)))))))
 
 (defn- signal-workers! [ex]
@@ -512,16 +533,21 @@
   "An executor of `size` workers whose work runs in the sister runtime
    `sister` (an impl map, see the section comment). `opts` are the
    sister's boot options (source roots, namespaces to load, features),
-   handed to its :boot! on the first submission."
+   handed to its :boot! on the first submission. The runtime it is
+   constructed over rides as the executor's Clojure metadata:
+   (meta ex) answers {:cohost/runtime sister}, plus :cohost/domain
+   when opts name one."
   [sister size opts]
-  {:cohost/kind ::executor
-   :kind :runtime
-   :size (max 1 size)
-   :queue (atom (empty-queue))
-   :ctl (atom {:running 0 :shutdown false :bell (host/doorbell)})
-   :sister sister
-   :realm (atom nil)
-   :boot-opts opts})
+  (with-meta
+    {:cohost/kind ::executor
+     :kind :runtime
+     :size (max 1 size)
+     :queue (atom (empty-queue))
+     :ctl (atom {:running 0 :shutdown false :bell (host/doorbell)})
+     :sister sister
+     :realm (atom nil)
+     :boot-opts opts}
+    (executor-meta sister opts)))
 
 (defn- realm-state!
   "The executor's booted sister state, booting on first use."
