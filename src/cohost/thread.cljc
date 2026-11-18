@@ -105,7 +105,17 @@
                  (do (reset! got (q-peek qq)) (q-pop qq)))))
     (let [v @got] (when-not (= ::none v) v))))
 
-(defn- now-ms [] (host/current-time-millis))
+(defn now-ms
+  "The wall clock in milliseconds, the clock the layer's leases and
+   deadlines read -- the portable answer to a host's now, for programs
+   the layer serves."
+  [] (host/current-time-millis))
+
+(defn sleep-ms!
+  "Sleep ms milliseconds: a wait on a doorbell nothing rings."
+  [ms]
+  (when (and (some? ms) (pos? ms)) (host/doorbell-wait (host/doorbell) ms))
+  nil)
 
 ;; ---------------------------------------------------------------------------
 ;; threads
