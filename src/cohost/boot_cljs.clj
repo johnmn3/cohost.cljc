@@ -527,6 +527,17 @@
   ;; the realm only gets the object from an emitted ns form
   (atom #{}))
 
+(defonce ^:private boot-lock
+  ;; boots are serialized: analyzing a boot's first ns form runs the
+  ;; analyzer's load-core, which interns cljs.core's macros from the
+  ;; JVM namespace of that name -- and the-ns does not take the load
+  ;; lock, so two realms booting concurrently in one process race
+  ;; the first require of cljs.core and the loser dies with "No
+  ;; namespace: cljs.core found" (measured in the demo: the browser
+  ;; and node seats boot together, the node seat's shim compile lost,
+  ;; 2026-11-17). A boot is once per realm; the lock costs nothing.
+  (Object.))
+
 (defn boot!
   "Boot the shim, stock core.cljs and its related files into realm
    (a fresh GraalJS realm by default; a transport map is a realm in
@@ -540,21 +551,22 @@
   ([] (boot! (make-realm)))
   ([realm] (boot! realm {}))
   ([realm {:keys [wrap-macros load-ns] :as _opts}]
-   (let [cenv (env/default-compiler-env compiler-opts)]
-     (reset! compiler-env cenv)
-     (swap! realm-envs assoc realm cenv)
-     (when wrap-macros
-       (enable-macro-wrapping! realm))
-     (env/with-compiler-env cenv
-       (compile-source! realm "cohost/js_shim.cljs" false)
-       (compile-source! realm "cljs/core.cljs" true)
-       (doseq [r related-files]
-         (compile-source! realm r true))
-       (compile-string! realm "(ns cljs.user)" "<user-ns>" false)
-       (swap! user-ns-realms conj realm)
-       (doseq [ns-sym load-ns]
-         (load-namespace! realm ns-sym))
-       realm))))
+   (locking boot-lock
+     (let [cenv (env/default-compiler-env compiler-opts)]
+       (reset! compiler-env cenv)
+       (swap! realm-envs assoc realm cenv)
+       (when wrap-macros
+         (enable-macro-wrapping! realm))
+       (env/with-compiler-env cenv
+         (compile-source! realm "cohost/js_shim.cljs" false)
+         (compile-source! realm "cljs/core.cljs" true)
+         (doseq [r related-files]
+           (compile-source! realm r true))
+         (compile-string! realm "(ns cljs.user)" "<user-ns>" false)
+         (swap! user-ns-realms conj realm)
+         (doseq [ns-sym load-ns]
+           (load-namespace! realm ns-sym))
+         realm)))))
 
 (defn eval-form
   "Analyze form (a read cljs form, not a string) in namespace ns-sym
