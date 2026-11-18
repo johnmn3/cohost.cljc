@@ -422,8 +422,16 @@
   (let [resp-headers (.getResponseHeaders ex)]
     (doseq [[k v] headers] (.set resp-headers k v))
     (if bytes
-      (do (.sendResponseHeaders ex status (alength bytes))
-          (with-open [os (.getResponseBody ex)] (.write os bytes)))
+      ;; A HEAD answer carries the GET answer's headers, Content-Length
+      ;; included, and no body. The JDK logs a warning when
+      ;; sendResponseHeaders is given a length for a HEAD request, so the
+      ;; length rides as an explicit header and the call itself gets -1.
+      (if (= "HEAD" (.getRequestMethod ex))
+        (do (when (nil? (.getFirst resp-headers "Content-Length"))
+              (.set resp-headers "Content-Length" (str (alength bytes))))
+            (.sendResponseHeaders ex status -1))
+        (do (.sendResponseHeaders ex status (alength bytes))
+            (with-open [os (.getResponseBody ex)] (.write os bytes))))
       (.sendResponseHeaders ex status -1))))
 
 (defn- respond-text!
