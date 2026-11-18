@@ -32,8 +32,7 @@
             [eve.thread.rung :as rung]
             [eve.thread.fold :as tf]
             #?@(:cljs [[eve.thread.net :as tn]
-                       [eve.net.platform :as platform]]
-                :clj [[eve.thread.net :as tn]])))
+                       [eve.net.platform :as platform]])))
 
 ;; ---------------------------------------------------------------------------
 ;; time (Eve's process clock, the one the leases read)
@@ -126,9 +125,14 @@
    (defn net-atom
      "The atom registered as name at the gateway cfg names
       ({:endpoint :domain-id :api-key}), reached over the network:
-      read-atom/swap-atom! take it, and attach takes it as a rendezvous."
-     ([cfg name] (tn/rung cfg name))
-     ([cfg name platform] (tn/rung cfg name platform))))
+      read-atom/swap-atom! take it, and attach takes it as a rendezvous.
+      The network rung is resolved at call time, not required: this
+      namespace is also a macro namespace (deftask) for ClojureScript
+      builds whose JVM pass has no HTTP adapter on its classpath, and
+      a load-time require of the network stack would take the macros
+      down with it (measured in the page build, 2026-11-17)."
+     ([cfg name] ((requiring-resolve 'eve.thread.net/rung) cfg name))
+     ([cfg name platform] ((requiring-resolve 'eve.thread.net/rung) cfg name platform))))
 
 ;; ---------------------------------------------------------------------------
 ;; attach: this process joins a rendezvous atom's pools
