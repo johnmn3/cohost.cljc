@@ -23,6 +23,7 @@
   (:refer-clojure :exclude [swap!])
   (:require [clojure.core :as core]
             [eve.atom :as ea]
+            [eve.deftype-proto.data :as ed]
             [eve.process :as proc]
             [eve.thread :as et]
             [eve.thread.domain :as dom]
@@ -45,6 +46,12 @@
 (defn sleep-ms!
   "Sleep ms milliseconds."
   [ms] (proc/sleep-ms! ms))
+
+(defn start-timer!
+  "Call f every period-ms until the returned handle is stopped: a
+   member's own ticker (a folder watcher, a heartbeat on a seat with
+   no pool ticker of its own). The handle is the host's."
+  [period-ms f] (proc/start-timer! period-ms f))
 
 ;; ---------------------------------------------------------------------------
 ;; domains and their atoms: shared state, opened by every member alike.
@@ -152,10 +159,10 @@
   ([h name opts] (dom/pool h name opts)))
 
 (defn registry
-  "The registry every attached runtime reads, as data: each runtime's
-   descriptor (its caps among them; leases aside) and each pool with
-   its members."
-  [h] (dom/registry h))
+  "The runtimes joined to the pools, as data: {rid {:caps [...]
+   :pools [...] :host ...}} -- each runtime's descriptor, leases aside
+   (a runtime's liveness is runtime-alive?'s question)."
+  [h] (:runtimes (dom/registry h)))
 
 (defn runtimes
   "The registry's runtimes with their leases: {rid {:caps #{...} :ttl ms
@@ -175,6 +182,26 @@
    :failed :cancelled. Settled descriptors are forgotten past a horizon;
    a settled job's record is what it wrote, not its descriptor."
   [h] (dom/read-meta h [:descs]))
+
+(defn- meta-path-of
+  "The coordination state's value at path, read at rendezvous atom a
+   without attaching (a launcher's or a check's read: it joins nothing,
+   renews nothing)."
+  [a path]
+  (let [r (if (rung? a) a (rung/eve-rung a))]
+    (rung/-read (rung/-meta-rung r {})
+                (fn [v] (ed/eve->clj (get-in v path))))))
+
+(defn descriptors-of
+  "The descriptors in flight at rendezvous atom a, as descriptors
+   answers them, for a reader that is not a runtime of the pools (the
+   launcher's checks, a progress report)."
+  [a] (meta-path-of a [:descs]))
+
+(defn runtimes-of
+  "The runtimes joined at rendezvous atom a, as runtimes answers them,
+   for a reader that is not one of them."
+  [a] (meta-path-of a [:runtimes]))
 
 ;; ---------------------------------------------------------------------------
 ;; submission: work is data -- {:task qualified-sym :args [value ...]} --
