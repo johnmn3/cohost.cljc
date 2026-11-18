@@ -676,7 +676,12 @@
         args (vec (concat [bin]
                           (when (get chrome-cfg :headless true)
                             ["--headless=new" "--disable-gpu"])
-                          ["--no-sandbox" "--disable-dev-shm-usage"
+                          ;; --no-sandbox only where Chrome refuses to run
+                          ;; without it (root); anywhere else Chrome itself
+                          ;; flags the flag as unsupported
+                          (when (= "root" (System/getProperty "user.name"))
+                            ["--no-sandbox"])
+                          ["--disable-dev-shm-usage"
                            "--no-proxy-server" "--no-first-run"
                            "--no-default-browser-check"
                            (str "--user-data-dir=" (.toString profile))]
