@@ -15,3 +15,15 @@
   "Whether path p exists, over node's fs."
   [p]
   (.existsSync fs p))
+
+(defonce promise-outcome (atom nil))
+
+(defn promise-sum!
+  "Promise.all over two resolved promises; the sum lands in
+   promise-outcome when the realm's pump turns. Promise.all throws
+   'called on non-object' when the call loses its receiver (the
+   shape eve.process-slab's init! hits in the member graph)."
+  []
+  (-> (js/Promise.all (into-array [(js/Promise.resolve 20)
+                                   (js/Promise.resolve 22)]))
+      (.then (fn [xs] (reset! promise-outcome (reduce + 0 xs))))))
