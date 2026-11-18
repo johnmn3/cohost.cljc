@@ -211,7 +211,15 @@
                   (bc/eval-in realm text)
                   (throw (ex-info (str "closure library resource missing: goog/" r)
                                   {:resource r}))))
-              (bc/boot! realm opts)
+              ;; Eve's type registrations are this realm's own boot,
+              ;; not the app's: their register! calls run at load in
+              ;; the type-defining namespaces, which do not require
+              ;; the registrars, so both load before any type in the
+              ;; app's graph registers -- an app names only its own
+              ;; namespaces in :load-ns.
+              (bc/boot! realm (update opts :load-ns
+                                      (fn [nss] (into '[eve.type-readers eve.flat.sister]
+                                                      (remove #{'eve.type-readers 'eve.flat.sister} nss)))))
               {:realm realm :lock (Object.)}))
    :eval-form (fn [state ns-sym form]
                 (locking (:lock state)
