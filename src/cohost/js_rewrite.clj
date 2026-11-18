@@ -7,6 +7,19 @@
      js/Error.                      ->  cohost.js-shim/Error.
      js/Number.POSITIVE_INFINITY    ->  (.-POSITIVE_INFINITY cohost.js-shim/Number)
      js/a.b.c                       ->  (.-c (.-b cohost.js-shim/a))
+     (js/Promise.all xs)            ->  (.all cohost.js-shim/Promise xs)
+
+   A dotted js/* symbol in call position is a method call on the
+   global, and stock cljs calls it on its receiver. The plain walk
+   would rewrite the head to a (.-all ...) property read and call the
+   extracted function unbound -- Promise.all throws a TypeError
+   (called on non-object) that way, measured in the node seat's
+   member graph: eve.process-slab's init! calls
+   (js/Promise.all slab-promises).
+   rewrite-list rebuilds such a call as a dot call on the chain
+   minus its last segment, which the analyzer emits as a call on
+   the receiver. In value position the same symbol stays a property
+   read -- an unbound function value, exactly stock cljs's meaning.
 
    Everything else is walked through unchanged in shape: sequences,
    vectors, maps, sets and metadata are rebuilt with rewritten elements.
@@ -62,11 +75,32 @@
 
 (declare rewrite*)
 
+(defn- dotted-js-head
+  "When a list's head is a dotted js/* symbol (js/Promise.all -- not
+   a constructor's trailing dot), the [root middle... method] name
+   parts; else nil."
+  [head]
+  (when (and (symbol? head) (= "js" (namespace head)))
+    (let [nm (name head)]
+      (when (and (.contains nm ".") (not (.endsWith nm ".")))
+        (.split nm "\\.")))))
+
 (defn- rewrite-list [mode form]
   (let [head (first form)]
     (cond
       (= 'quote head) form
       (= 'var head) form
+      ;; a dotted js/* head: a method call on the global (see the
+      ;; namespace docstring). Rebuild as (.method target args...)
+      ;; over the chain minus its last segment, each argument
+      ;; rewritten as usual.
+      (dotted-js-head head)
+      (let [parts (dotted-js-head head)
+            target (reduce (fn [acc part] (list (symbol (str ".-" part)) acc))
+                           (symbol (str shim-ns) (aget parts 0))
+                           (drop 1 (butlast parts)))]
+        (apply list (symbol (str "." (last parts))) target
+               (map #(rewrite* mode %) (rest form))))
       ;; (js* "template" expr...): the template is always verbatim.
       ;; Source mode rewrites the argument expressions; expansion
       ;; mode leaves the whole form alone (see the docstring: in an

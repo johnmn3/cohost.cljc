@@ -12,6 +12,8 @@
 ;;   graph-loads     the executor's boot (with :load-ns) completes
 ;;   crypto-call     sha256-hex of "abc" is the known digest
 ;;   node-fs-call    fs-there? answers true and false for real paths
+;;   promise-all     (js/Promise.all ...) keeps its receiver through
+;;                   the js rewrite (an unbound call throws)
 (require 'cohost.hosts.auto)
 (require '[cohost.thread :as thread]
          '[cohost.cljs-pool :as pool])
@@ -46,6 +48,15 @@
         (sub 'cljs.user '(fn [p] (string-require-test/fs-there? p))
              (str fixture "/no-such-file"))]
        [true false])
+
+(sub 'cljs.user '(fn [] (string-require-test/promise-sum!)))
+(check "promise-all"
+       (loop [n 0]
+         (let [v (sub 'cljs.user '(fn [] @string-require-test/promise-outcome))]
+           (if (or (= 42 v) (= n 20))
+             v
+             (do (Thread/sleep 250) (recur (inc n))))))
+       42)
 
 (thread/shutdown-executor! ex)
 
