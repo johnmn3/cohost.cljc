@@ -159,6 +159,9 @@
 
 (def global js/globalThis)
 (def globalThis js/globalThis) ;; LIBRARY: named directly by eve's adapters
+(def goog js/goog) ;; LIBRARY: eve's thread adapters resolve entry fns through
+                   ;; goog.getObjectByName; the realm's Closure base defines
+                   ;; the object before any graph file compiles.
 (def NaN (js* "typeof NaN !== 'undefined' ? NaN : void 0")) ;; LIBRARY: js/NaN in eve's numeric code
 (def undefined (js* "void 0")) ;; LIBRARY: js/undefined in eve's http adapter
 (def window (js* "typeof window !== 'undefined' ? window : void 0"))
