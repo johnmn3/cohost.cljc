@@ -10,7 +10,8 @@ a classpath dependency it hands its users):
             :git/sha "e6cddc906da3620b912287f30046ffb67058ac4e"
             :dest "vendor/eve"                       ; where the source lands, relative to the project root
             :paths ["src" "hosts.edn" "LICENSE"]     ; the upstream paths taken (files or directories)
-            :paths-from {"hosts.edn" :vs}}}          ; … plus the paths an EDN file at the pin lists under a key
+            :paths-from {"hosts.edn" :vs}            ; … plus the paths an EDN file at the pin lists under a key
+            :version "0.9.3.2"}}                     ; optional: PIN's `version` line (else VERSION / a tag)
 
 THE BASE RECORD — <dest>/PIN: `lib`, `repo`, `commit` (and `version`) header lines, then `<git-blob-sha1> <path>` per
 file, exactly as `git ls-tree -r <commit>` prints them upstream. It names the upstream commit the tree was last
@@ -140,7 +141,7 @@ def declaration(root):
         if not (url and sha and re.fullmatch(r"[0-9a-f]{40}", sha) and dest):
             die(f"deps.edn :cohost/vendor {lib}: :git/url, a 40-hex :git/sha and :dest are required", 2)
         out[str(lib)] = {"url": url, "sha": sha, "dest": dest, "paths": list(g("paths") or []),
-                         "paths-from": dict(g("paths-from") or {})}
+                         "paths-from": dict(g("paths-from") or {}), "version": g("version")}
     return out
 
 
@@ -308,7 +309,7 @@ def sync(root, lib, spec):
     cache = fetch(cache_for(spec["url"]), spec["url"], spec["sha"])
     new = selected(cache, spec, spec["sha"])
     head, base_files = read_pin(dest)
-    version = version_of(cache, spec["sha"])
+    version = spec["version"] or version_of(cache, spec["sha"])
     if head is None:   # first materialization: the tree must be empty of vendored files
         if os.path.isdir(dest) and tree_files(dest):
             die(f"{spec['dest']} holds files but no PIN — move them aside or write its PIN first", 3)
