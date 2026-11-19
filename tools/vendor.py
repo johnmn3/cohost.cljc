@@ -306,9 +306,13 @@ def merge3(base, ours, theirs):
 
 def sync(root, lib, spec):
     dest = os.path.join(root, spec["dest"])
+    head, base_files = read_pin(dest)
+    if head is not None and head.get("commit") == spec["sha"]:   # current: no network
+        e = edits(dest, base_files)
+        print(f"vendor: {lib} at {spec['sha'][:12]} (current) · {len(e)} local edit(s)")
+        return 0
     cache = fetch(cache_for(spec["url"]), spec["url"], spec["sha"])
     new = selected(cache, spec, spec["sha"])
-    head, base_files = read_pin(dest)
     version = spec["version"] or version_of(cache, spec["sha"])
     if head is None:   # first materialization: the tree must be empty of vendored files
         if os.path.isdir(dest) and tree_files(dest):
@@ -319,10 +323,6 @@ def sync(root, lib, spec):
         print(f"vendor: {lib} materialized at {spec['sha'][:12]} -> {spec['dest']}/ ({len(new)} files)")
         return 0
     old = head.get("commit", "")
-    if old == spec["sha"]:
-        e = edits(dest, base_files)
-        print(f"vendor: {lib} at {old[:12]} (current) · {len(e)} local edit(s)")
-        return 0
     fetch(cache, head.get("repo", spec["url"]), old) if old else None
     mine = edits(dest, base_files)
     conflicts, carried, taken = [], 0, 0
