@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""vendoring.py — cohost's vendoring: deps.edn declarations resolved
+"""vendoring.py — the TeaVM campaign's front over tools/revendor.py (its PROFILES).
+The general vendoring tool — deps.edn :cohost/vendor, source in the tree,
+edits carried onto new pins, contributed upstream — is tools/vendor.py,
+and `bin/cohost vendor` runs that one. What follows is this file's
+original description.
+
+vendoring.py — cohost's vendoring: deps.edn declarations resolved
 into vendored trees. Entry point: `bin/cohost vendor`, run in a
 consumer project (or this file directly, with the project root as
 argv[1]).
