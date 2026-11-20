@@ -259,11 +259,8 @@
    the macro wrote it, not rewritten for the host's compiler."
   false)
 
-;; :vs — the host takes `str` (policy host-names) and VS's str of a typed record is its class's toString, the
-;; record's printed map when it has none: stock (str sb) of this stand-in answered "#cohost.adapter.SB{:state
-;; #object[]}" (MEASURED 2026-11-17 on the CP4 pair: (clojure.string/join ", " ["a" "b"]) through cohost, and every
-;; (str (StringBuilder. …))), so vanilla_stream's {…} line printed that; with the toString VS's str answers the text
-;; (a defrecord's Object toString is honored by VS's str from any namespace, str as a value too — measured the same night)
+;; :vs — the host's own `str` is taken (policy host-names), and it prints a typed record through its class's toString,
+;; falling back to the record's printed map: without a toString, (str sb) of this stand-in is the record's map text.
 #?(:jank (defn ->SB [state] (standin 'SB {:state state}))
    :vs (defrecord SB [state] Object (toString [_] (apply str @state)))
    :default (defrecord SB [state]))

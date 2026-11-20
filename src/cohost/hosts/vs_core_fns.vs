@@ -3,9 +3,8 @@
    itself generated from the core roster): the core's fn VALUES by their bare names — the alias leaf the VS host
    roots the core's vars with at install. VS resolves a core var by name at run time without a root
    (`@(resolve 'inc)` is nil, MEASURED 2026-11-06), while a fn referenced by name in compiled code is the value
-   (alter-meta! is left out, as patch 0013 4/4 left it on 2026-11-07: VS's alter-meta! VALUE serves one arity in
-   compiled code, so a rooted cohost.core/alter-meta! threw ArityException at stock core.clj's four-argument calls —
-   RE-DERIVED 2026-11-17 on valuescript pair e818d4d4 and on ce1145cd; the adapter's alter-var-meta! row serves it)",
+   (alter-meta! is left out: VS's alter-meta! as a VALUE serves one arity, so a rooted cohost.core/alter-meta!
+   throws ArityException at stock core.clj's four-argument calls; the adapter's alter-var-meta! row serves it)",
    {:vs/lang true})
 
 (def fns
