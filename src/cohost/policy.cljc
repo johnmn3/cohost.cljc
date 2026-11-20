@@ -336,11 +336,15 @@
         ;; with no list to keep (get assoc inc + = min max quot rem nth count vals keys …). A name the host lacks
         ;; boots as stock, as any :host name does.
         :host-shells? true
-        ;; kept stock among the shells: the reader and loader (cohost's own), gensym (the codemod reads its names),
-        ;; hash (stock `case` is compiled against the JVM's hashes), and the JVM array verbs (the shim's arrays)
-        :stock (set '[read-string load add-classpath gensym hash iterator-seq sequence shuffle to-array into-array
+        ;; kept stock among the shells: the reader (cohost's own), gensym (the codemod reads its names),
+        ;; hash (stock `case` is compiled against the JVM's hashes), the JVM array verbs (the shim's arrays), and
+        ;; chunk-cons (a shell over RT/count, but its chunk is stock chunk-buffer's / chunk's: :vs has no :chunks, so
+        ;; the rest of the chunk family boots stock and the pair must be one implementation's). NOT load: it is a host name
+        ;; (host-names), and stock load reads loader helpers the skip list drops — MEASURED (2026-11-20, boot12): kept
+        ;; stock, load failed `Unable to resolve symbol: root-directory`
+        :stock (set '[read-string add-classpath gensym hash iterator-seq sequence shuffle to-array into-array
                       aclone aget aset alength float-array boolean-array byte-array char-array short-array
-                      double-array object-array int-array long-array])}})
+                      double-array object-array int-array long-array chunk-cons])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."

@@ -7,10 +7,9 @@
    the session's defs and namespaces are interned there, vs.repl.eval
    mirror-def!), constructors and predicates are the core's, time and files are
    the WASI arms. Macro status is the analyzer's user-macro table: mark-macro!
-   registers the var's name with a stamp and roots the var in a fn that answers
-   the stamp (THE STAMP ARITY, analyzer.vs mx-var-fn), the shape a defmacro the
-   analyzer compiles has; alter-var-root! keeps that stamp on a registered macro
-   so cohost's expansion wrapper (boot.cljc wrap-macro) stays a macro."
+   registers the var's name with an any-count arity (analyzer.vs mx-register!),
+   and the analyzer expands it through the var's current root (mx-var-fn,
+   mx-call-loaded), cohost's expansion wrapper (boot.cljc wrap-macro) included."
   (:require [cohost.adapter :as adapter]
             [cohost.hosts.vs-core-fns :as core-fns]
             [clojure.string :as string]
@@ -146,34 +145,31 @@
 (defn- require-host! [lib] (eval (list 'require (q lib))))
 
 ;; ---------------------------------------------------------------------------
-;; macro status: the analyzer's user-macro table + THE STAMP ARITY
+;; macro status: the analyzer's user-macro table. Since U2.5 (analyzer.vs mx-register! / mx-expand) the table holds a
+;; macro's ARITIES — (params body) pairs, as mx-arities-of reads a defmacro — and the analyzer expands a registered name by
+;; calling the fn its var holds with &form, &env and the arguments (mx-call-loaded), after checking the call's argument
+;; count against those arities (mx-arity-ok?). A stock macro's fn takes [&form &env …] and checks its own args, so it
+;; registers one any-count arity, ([& args] nil). MEASURED before (2026-11-20, pair 0dd582b0, boot11): mark-macro!
+;; registered THE STAMP (a name hash, a number) — no arity of a number takes any count, so every expansion of a booted
+;; macro threw `Wrong number of args (n) passed to: cohost.core/defn` and stock core.clj booted with 387 errors (the
+;; seam's takes switched off or on alike); the stamp wrapper on the root is read by nothing since U2.5.
 
 (defn- var-qname [v] (str (:ns (meta v)) "/" (:name (meta v))))
 
-(defn- stamped
-  "f answering stamp when called with the one argument nil (mx-var-fn's check), f otherwise."
-  [f stamp]
-  (fn
-    ([x] (if (nil? x) stamp (f x)))
-    ([a b] (f a b))
-    ([a b & more] (apply f a b more))))
+(def ^:private any-arity (first (rdr/read-string-all "(([& args] nil))" nil)))
 
 (defn- mark-macro! [v]
-  (let [qn (var-qname v)
-        stamp (vs.analyzer-scope/-name-hash qn)]
-    ;; a var with no fn root is one of the analyzer's own macros taken from the host (cohost interns the host's
-    ;; macro var and marks it): the analyzer expands it by name already; registering it would route the call to nil
-    (when (fn? (var-get v))
-      (vs.analyzer/mx-register! qn stamp)
-      (alter-var-root v (fn [f] (stamped f stamp))))
-    (alter-meta! v assoc :macro true)
-    v))
+  ;; a var with no fn root is one of the analyzer's own macros taken from the host (cohost interns the host's
+  ;; macro var and marks it): the analyzer expands it by name already; registering it would route the call to nil
+  (when (fn? (var-get v))
+    (vs.analyzer/mx-register! (var-qname v) any-arity))
+  (alter-meta! v assoc :macro true)
+  v)
 
+;; a registered macro stays one through a root change: the table names it, and the analyzer calls the var's CURRENT root
+;; (mx-var-fn), cohost's expansion wrapper (boot.cljc wrap-macro) included
 (defn- alter-var-root! [v f]
   (alter-var-root v f)
-  (let [stamp (vs.analyzer/mx-lookup (var-qname v))]
-    (when-not (nil? stamp)
-      (alter-var-root v (fn [g] (stamped g stamp)))))
   v)
 
 ;; ---------------------------------------------------------------------------
