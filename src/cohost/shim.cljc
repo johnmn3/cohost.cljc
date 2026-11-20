@@ -4127,11 +4127,15 @@
 (def -alterMeta (fn [x f args] (if (atom-layer/atom-value? x)
                                  (atom-layer/alter-meta-atom x f args)
                                  (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args))))
+;; a host namespace that holds no metadata (VS: reset-meta! and alter-meta! refuse a namespace, "not a reference")
+;; keeps none: stock `ns` resets its name's metadata — the reader's position marks — on every load. MEASURED before
+;; (2026-11-20, valuescript pair 0dd582b0, boot12): `(ns vanilla-1brc …)` through cohost.boot/eval-str threw
+;; "reset-meta!: not a reference" and the program never loaded. The VS defect (no namespace metadata) is open.
 (def -resetMeta (let [rm (host-fn 'reset-meta! (fn [x m] (host-alter-meta! x (constantly m))))]
                   (fn [x m] (let [m (host-meta (meta-map m))]
-                              (if (atom-layer/atom-value? x)
-                                (atom-layer/set-meta-atom! x m)
-                                (rm x m))))))
+                              (cond (atom-layer/atom-value? x) (atom-layer/set-meta-atom! x m)
+                                    (and (= :vs (host/host-name)) (host/namespace? x)) m
+                                    :else (rm x m))))))
 (def -setMeta -resetMeta)
 ;; ClojureScript has no blocking deref: the timed form reads the value now
 (def -deref (fn ([x] (cond (proxy-value? x) (proxy-deref x)
