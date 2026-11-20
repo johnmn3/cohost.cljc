@@ -195,7 +195,12 @@
    ;; :re-match-full can't be declared and the shim's java.util.regex.Matcher has nothing to run on. split-lines is
    ;; also the line source VS's fold reads (a deferred text / file range), which stock's regex split would hide.
    :natives {'clojure.string/split-lines string/split-lines 'clojure.string/split string/split
-             'clojure.string/replace string/replace 'clojure.string/replace-first string/replace-first}
+             'clojure.string/replace string/replace 'clojure.string/replace-first string/replace-first
+             'clojure.string/index-of string/index-of 'clojure.string/last-index-of string/last-index-of
+             'clojure.string/join string/join 'clojure.string/starts-with? string/starts-with?
+             'clojure.string/ends-with? string/ends-with? 'clojure.string/includes? string/includes?
+             'clojure.string/trim string/trim 'clojure.string/upper-case string/upper-case
+             'clojure.string/lower-case string/lower-case 'clojure.string/blank? string/blank?}
    ;; one lookup: VS's ns-resolve answers an interned name with one map get on the namespace's own interns (vs.core
    ;; prog-h-resolve-in); a referred or core name answers a var of another namespace, excluded by its :ns. MEASURED
    ;; before (atom.broker docs/vs-cohost/perf/probe-boot-cost.repl, 617 interns): (get (ns-interns ns) sym) 79 ms a

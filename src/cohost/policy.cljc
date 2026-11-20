@@ -324,7 +324,21 @@
    ;; The regex fns are taken from VS: its regex engine exposes no match positions, so :re-find-at can't be declared
    ;; and stock's, which run through the shim's java.util.regex.Matcher, have nothing to run on.
                      map filter remove keep reduce transduce into range take comp conj
-                     re-find re-seq re-matches re-matcher re-groups re-pattern])}})
+                     re-find re-seq re-matches re-matcher re-groups re-pattern
+                     ;; the host's own string, parse, transient and sort primitives: stock's are java.lang.String /
+                     ;; ITransient / java.util.Arrays method calls through the shim
+                     subs parse-long parse-double parse-boolean transient persistent! assoc! conj! dissoc! disj! pop!
+                     sort sort-by reduce-kv partition-all])
+        ;; THE RUNTIME'S OWN PRIMITIVES ARE THE HOST'S (jvm-shell?): a stock fn whose body calls clojure.lang.RT,
+        ;; Numbers or Util is core.clj's shell over the JVM runtime; where the host's core has the name it is taken,
+        ;; with no list to keep (get assoc inc + = min max quot rem nth count vals keys …). A name the host lacks
+        ;; boots as stock, as any :host name does.
+        :host-shells? true
+        ;; kept stock among the shells: the reader and loader (cohost's own), gensym (the codemod reads its names),
+        ;; hash (stock `case` is compiled against the JVM's hashes), and the JVM array verbs (the shim's arrays)
+        :stock (set '[read-string load add-classpath gensym hash iterator-seq sequence shuffle to-array into-array
+                      aclone aget aset alength float-array boolean-array byte-array char-array short-array
+                      double-array object-array int-array long-array])}})
 
 (def setmacro-defined
   "Bootstrap fns core.clj turns into macros with `(. (var x) (setMacro))`."
@@ -395,7 +409,28 @@
                     chunks? (into chunk-names))
       :skip-names (apply disj (into skip-names (:skip ov)) stock)
       :stock-names stock
-      :special-names (or (:special ov) #{})})))
+      :special-names (or (:special ov) #{})
+      :host-shells? (boolean (:host-shells? ov))})))
+
+(defn- runtime-class-sym?
+  "Is x a symbol naming clojure.lang.RT, Numbers or Util, or a static of one (clojure.lang.RT/get)?"
+  [x]
+  (and (symbol? x)
+       (let [t (str x)]
+         (some (fn [c] (or (= t c) (and (> (count t) (count c)) (= (subs t 0 (inc (count c))) (str c "/")))))
+               ["clojure.lang.RT" "clojure.lang.Numbers" "clojure.lang.Util"]))))
+
+(defn- form-symbols [x]
+  (cond (symbol? x) [x]
+        (or (seq? x) (vector? x) (set? x)) (mapcat form-symbols x)
+        (map? x) (mapcat form-symbols (concat (keys x) (vals x)))
+        :else nil))
+
+(defn jvm-shell?
+  "Is the top-level def form a fn (no macro: no &form param) whose body calls the JVM runtime's own classes?"
+  [form]
+  (let [syms (form-symbols (drop 2 form))]
+    (boolean (and (some runtime-class-sym? syms) (not (some (fn [x] (= x '&form)) syms))))))
 
 (defn decide
   "-> {:action :eval|:skip|:host|:replace, :name sym, :reason kw, :replacement form}
@@ -422,6 +457,7 @@
        (if (= head 'alter-meta!)
          {:action :skip :name nm :reason :host-var}
          {:action :host :name nm})
+       (and nm (:host-shells? ls) (contains? #{'defn 'def} head) (jvm-shell? form)) {:action :host :name nm}
        (contains? skip-heads head) {:action :skip :name (or nm head) :reason :skip-head}
        (and (= head 'alter-meta!) (nil? nm)) {:action :skip :name head :reason :jvm-only}
        :else {:action :eval :name (or nm head)}))))
