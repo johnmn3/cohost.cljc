@@ -1761,8 +1761,11 @@
         cpp-clauses (when (host/cpp?) (filter #(contains? #{:include :refer-global} (first %)) clauses))
         rc (some #(when (= :refer-clojure (first %)) (apply hash-map (rest %))) clauses)]
     (host/ensure-bare-ns! target)
+    ;; :vs keeps no namespace metadata: VS's alter-meta! refuses a namespace, and throws a bare string the try-all's
+    ;; Throwable catch does not see. MEASURED before (2026-11-20, valuescript pair 0dd582b0, boot15): stock string.clj's
+    ;; (ns ^{:doc … :author …} clojure.string …), loaded by vanilla's require, threw "reset-meta!: not a reference"
     #?(:cljs nil
-       :default (when (seq ns-meta)
+       :default (when (and (seq ns-meta) (not= :vs (host/host-name)))
                   (host/try-all (fn [] (alter-meta! (host/the-ns* target) merge ns-meta)))))
     (swap! (:loader-nses (ctx)) conj (str target))
     (refer-core! target (or rc {}))
