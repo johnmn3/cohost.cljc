@@ -323,6 +323,8 @@
    ;; pins, as every take before it.
    ;; The regex fns are taken from VS: its regex engine exposes no match positions, so :re-find-at can't be declared
    ;; and stock's, which run through the shim's java.util.regex.Matcher, have nothing to run on.
+   :vs {:special (set '[let loop fn letfn])
+        :host (set '[odd? even? zero? pos? neg? integer? number? seq first rest next cons count nth
                      map filter remove keep reduce transduce into range take comp conj
                      re-find re-seq re-matches re-matcher re-groups re-pattern
                      ;; the host's own string, parse, transient and sort primitives: stock's are java.lang.String /
