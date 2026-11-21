@@ -5,8 +5,14 @@
    (`@(resolve 'inc)` is nil, MEASURED 2026-11-06), while a fn referenced by name in compiled code is the value",
    {:vs/lang true})
 
+;; "*" was missing from the generated table (its generator is not in this tree; every other arithmetic name was here), so
+;; resolve-core answered nil for it and stock core.clj's `*` — (cohost.shim/Numbers-multiply x y) — booted in its place.
+;; MEASURED (2026-11-20, CP11, boot18): the emitted 1BRC program's row path was every name HOST but `*`, and one such
+;; call a row takes VS's fold off its fused path (vanilla_stream.vs with `*` routed through a value def: fold-ms 18,246
+;; against 277).
 (def fns
-  {"*'" *'
+  {"*" *
+   "*'" *'
    "+" +
    "+'" +'
    "-" -
