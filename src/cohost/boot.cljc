@@ -288,6 +288,17 @@
              (when (= :root (host/macro-wrap-style))
                (host/set-var-root! v (fn [f] (wrap-macro ctx f (symbol (str ns-sym) (str sym))))))
              (host/alter-var-meta! v assoc :cohost/wrapped true))
+           ;; a macro the host knows only by its own table carries :macro too: a host whose compiler reads the var's
+           ;; :macro (VS since its analyzer's U2.5, THE MACRO IS THE VAR) otherwise compiles a top-level call of it as a
+           ;; fn call — the codemod expands the calls inside a def's body, not a top-level one. MEASURED before
+           ;; (2026-11-20, valuescript pair 0dd582b0, boot12): every top-level call of a macro stock defmacro made threw
+           ;; (def-aset ×8 `Unable to resolve symbol: setInt`, add-doc-and-meta ×18 `Wrong number of args (3)`);
+           ;; with :macro set by hand on the two vars, both expand. Reverted once (c23f617) because with :macro the stock
+           ;; if-let, when-let … failed in assert-args with `Wrong number of args (8) passed to a fn`: that was VS's REPL
+           ;; vocabulary serving `concat` past 7 args through an 8-fixed-param rest arm its runtime cannot call (a
+           ;; syntax-quote of 8+ parts calls concat), fixed in valuescript 00bf83a907
+           (when (and (host/macro-var? v) (not (:macro m)))
+             (host/alter-var-meta! v assoc :macro true))
            (when (and @snapshot-log (or mark? wrap?))
              (snap! {:op :scan :ns ns-sym :sym sym}))))))))
 
