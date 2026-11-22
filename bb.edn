@@ -245,4 +245,26 @@
                                     ["boot:cljrs" "cljrs"] ["boot:jank" jank-bin]]]
                      (if (babashka.fs/which exe)
                        (do (println (str "== " t " ==")) (shell "bb" t))
-                       (println (str "== " t " == (skipped: no " exe " on PATH)"))))}}}
+                       (println (str "== " t " == (skipped: no " exe " on PATH)"))))}
+  ;; Fleet syntax gate (syntax-formalization campaign): identical task
+  ;; names in every adopted repo, so `bb lint` is the gate everywhere.
+  ;; Paths adapted to this repo's layout: cohost's own sources are src/
+  ;; (there is no test/ dir; the behavior battery lives in src). The
+  ;; vendored stock tree under resources/ is NOT linted — see the named
+  ;; exception proposal in CENSUS.md.
+  ;; Tool pins: clj-kondo 2026.10.26 (binary on PATH), splint 1.25.0
+  ;; (needs babashka >= 1.12.205 on PATH), cljfmt 0.16.6, carve via bbin.
+  lint-kondo {:doc "clj-kondo at the default fail level — warnings fail"
+              :task (shell "clj-kondo --lint src")}
+  lint-splint {:doc "Splint shape/smell rules"
+               :task (shell "bb splint")}
+  carve-report {:doc "fail if any unused var is reported"
+                :task (shell "carve --opts '{:paths [\"src\"] :report {:format :text}}'")}
+  fmt-check {:doc "cljfmt check — the fleet .cljfmt.edn is the rules"
+             :task (shell "cljfmt check src")}
+  fmt {:doc "apply the fleet formatting"
+       :task (shell "cljfmt fix src")}
+  lint-docs {:doc "dprint check over docs/config (config: dprint.json)"
+             :task (shell "dprint check")}
+  lint {:doc "the whole gate"
+        :depends [lint-kondo lint-splint carve-report fmt-check lint-docs]}}}

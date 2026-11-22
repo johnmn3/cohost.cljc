@@ -1,0 +1,8 @@
+; Fleet clj-kondo config — copied byte-identical to
+; .clj-kondo/config.edn in each adopted repo (see cljfmt.edn header
+; for the sync law). v1 pins the tool floor and otherwise runs the
+; clj-kondo DEFAULT linter levels: the Phase 1 census measures the
+; default gate. Linter levels are never demoted to make a repo pass;
+; off-by-default idiom linters are enabled in deliberate fleet-wide
+; batches, recorded here.
+{:min-clj-kondo-version "2026.10.26"}
