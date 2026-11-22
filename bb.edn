@@ -256,6 +256,13 @@
   ;; (needs babashka >= 1.12.205 on PATH), cljfmt 0.16.6, carve via bbin.
   lint-kondo {:doc "clj-kondo at the default fail level — warnings fail"
               :task (shell "clj-kondo --lint src")}
+  splint {:doc "Splint 1.25.0 shape/smell rules: bb splint [paths] (default src)"
+          :extra-deps {io.github.noahtheduke/splint {:mvn/version "1.25.0"}}
+          :task (do (require 'noahtheduke.splint)
+                    (apply (resolve 'noahtheduke.splint/-main)
+                           (if (seq *command-line-args*)
+                             *command-line-args*
+                             ["src"])))}
   lint-splint {:doc "Splint shape/smell rules"
                :task (shell "bb splint")}
   carve-report {:doc "fail if any unused var is reported"
