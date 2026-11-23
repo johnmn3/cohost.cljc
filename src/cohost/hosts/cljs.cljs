@@ -21,7 +21,7 @@
               [cljs.tools.reader.edn :as edn]
               [cljs.tools.reader.reader-types :as rt]
               [cljs.reader]
-              [clojure.string :as string]
+              [clojure.string :as str]
               [goog.object :as gobj]
               [goog.string :as gstring]
               [goog.string.StringBuffer])
@@ -333,9 +333,9 @@
                 (.get fn-names f)
                 (let [nss (keys (::ana/namespaces @st))
             ;; the booted core first: nearly every crossing fn is one of its
-                      nss (sort-by (fn [n] (if (string/includes? (str n) "core") 0 1)) nss)
+                      nss (sort-by (fn [n] (if (str/includes? (str n) "core") 0 1)) nss)
                       q (some (fn [ns-sym]
-                                  (when-not (string/ends-with? (str ns-sym) "$macros")
+                                  (when-not (str/ends-with? (str ns-sym) "$macros")
                                             (some (fn [sym]
                                                       (when (identical? f (try (js-path ns-sym sym) (catch :default _ nil)))
                                                             (symbol (str ns-sym) (str sym))))
@@ -536,18 +536,20 @@
                      (swap! st assoc-in [::ana/namespaces ns :use-macros sym] target))))
 
 (defn- resolve-core [sym]
-       (cond (contains? core-names sym) (handle 'cljs.core sym false)
-             (contains? core-macro-names sym) (handle 'cljs.core$macros sym true)
-             :else nil))
+       (condp contains? sym
+              core-names (handle 'cljs.core sym false)
+              core-macro-names (handle 'cljs.core$macros sym true)
+              nil))
 
 (defn- exception-class
        "cljs.core throws plain js/Error with a message where the JVM throws a
    class; the message decides the class token."
        [e]
        (let [m (str (.-message e))]
-            (cond (some? (.-cohost$class e)) (.-cohost$class e) (= :reader-exception (:type (ex-data e))) (cond (re-find #"^Invalid number" m) 'NumberFormatException
-                                                                                                                (re-find #"[Dd]uplicate key" m) 'IllegalArgumentException
-                                                                                                                :else 'RuntimeException) (instance? js/RangeError e) 'StackOverflowError (instance? js/TypeError e) (if (re-find #"null|undefined" m) 'NullPointerException 'ClassCastException) (instance? js/SyntaxError e) 'IllegalArgumentException (re-find #"^No item \d+ in|^Index out of bounds|^Index \d+ out of bounds" m) 'IndexOutOfBoundsException (re-find #"^Assert failed" m) 'AssertionError (re-find #"^Divide by zero" m) 'ArithmeticException (or (re-find #"^No protocol method ICounted\.-count" m) (re-find #"[Nn]ot supported|cannot be transient|Can't create empty" m)) 'UnsupportedOperationException (re-find #"^Invalid arity|^Duplicate key|^Vector arg to map conj|^Wrong number of args|is not ISeqable$|^No protocol method|^No matching clause" m) 'IllegalArgumentException (re-find #"^Transient used after persistent|^Can't dynamically bind|^Validator rejected reference state|^Can't pop empty" m) 'IllegalStateException :else 'RuntimeException)))
+            (cond (some? (.-cohost$class e)) (.-cohost$class e) (= :reader-exception (:type (ex-data e))) (condp re-find m
+                                                                                                                 #"^Invalid number" 'NumberFormatException
+                                                                                                                 #"[Dd]uplicate key" 'IllegalArgumentException
+                                                                                                                 'RuntimeException) (instance? js/RangeError e) 'StackOverflowError (instance? js/TypeError e) (if (re-find #"null|undefined" m) 'NullPointerException 'ClassCastException) (instance? js/SyntaxError e) 'IllegalArgumentException (re-find #"^No item \d+ in|^Index out of bounds|^Index \d+ out of bounds" m) 'IndexOutOfBoundsException (re-find #"^Assert failed" m) 'AssertionError (re-find #"^Divide by zero" m) 'ArithmeticException (or (re-find #"^No protocol method ICounted\.-count" m) (re-find #"[Nn]ot supported|cannot be transient|Can't create empty" m)) 'UnsupportedOperationException (re-find #"^Invalid arity|^Duplicate key|^Vector arg to map conj|^Wrong number of args|is not ISeqable$|^No protocol method|^No matching clause" m) 'IllegalArgumentException (re-find #"^Transient used after persistent|^Can't dynamically bind|^Validator rejected reference state|^Can't pop empty" m) 'IllegalStateException :else 'RuntimeException)))
 
 (defn- slurp* [path]
        (if (exists? js/require)
@@ -890,7 +892,7 @@
                 'clojure.core/swap-vals! swap-vals! 'clojure.core/reset-vals! reset-vals!
              ;; (the other clojure.string fns: the JVM's checkcast of a
              ;; ^CharSequence argument is not ClojureScript's)
-                'clojure.string/join string/join}
+                'clojure.string/join str/join}
       :catch-all :default
       :slurp slurp*
       :read-forms read-forms
@@ -971,8 +973,8 @@
       :host-type (fn [token] (get host-types token))
       :host-instance? host-instance?
       :math math-fns
-      :upper-case (fn [s] (string/upper-case (str s)))
-      :lower-case (fn [s] (string/lower-case (str s)))
+      :upper-case (fn [s] (str/upper-case (str s)))
+      :lower-case (fn [s] (str/lower-case (str s)))
       :re-find-at re-find-at
       :re-match-full re-match-full
       :re-group-count re-group-count

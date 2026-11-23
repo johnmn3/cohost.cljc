@@ -25,9 +25,11 @@
                       flags (set (filter #(and (string? %) (= "--" (subs % 0 (min 2 (count %))))) args))
                       root (or (first (remove flags args)) "resources/cohost/clojure-1.12.0")
                       t0 (host/nano-time)
-                      report (boot/boot! (merge {:root root :verbose (contains? flags "--verbose")}
+                      report (boot/boot! ;; splint: not single-arg — the second map is a reader conditional (:cljs core-boot-opts)
+                              #_{:splint/disable [lint/redundant-call]}
+                              (merge {:root root :verbose (contains? flags "--verbose")}
                                   ;; unit 8: the Node seat's heap is Eve's
-                                                #?(:cljs (cljs-realm/core-boot-opts {:root root :roots []}))))
+                                     #?(:cljs (cljs-realm/core-boot-opts {:root root :roots []}))))
                       boot-ms (/ (double (- (host/nano-time) t0)) 1000000.0)]
                      (boot/print-report report)
                      #?(:cljs (boot/install-runtime-loader!))

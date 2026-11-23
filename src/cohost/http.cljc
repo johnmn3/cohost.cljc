@@ -581,9 +581,10 @@
       "clojure.java.io/output-stream: a layer OutputStream itself, or an
    HttpURLConnection's request body."
       [x & _opts]
-      (cond (is? ::output-stream x) x
-            (is? ::connection x) (conn-output-stream x)
-            :else (cannot-open x "an OutputStream")))
+      (condp is? x
+             ::output-stream x
+             ::connection (conn-output-stream x)
+             (cannot-open x "an OutputStream")))
 
 (defn io-writer
       "clojure.java.io/writer: a Writer over io-output-stream's stream, or a

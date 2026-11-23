@@ -1728,6 +1728,9 @@
              rf (xform (fn ([] nil) ([acc] acc) ([acc x] (swap! out conj x) acc)))
              finish! (fn [] (when-not @done (reset! done true) (rf nil)))
              pull! (fn []
+                       ;; splint: the loop is the pull mechanism; recur
+                       ;; keeps it stack-safe where a self-call would not.
+                       #_{:splint/disable [lint/empty-loop-in-fn]}
                        (loop []
                              (when (and (empty? @out) (not @done))
                                    (if (every? host/iter-has-next? its)

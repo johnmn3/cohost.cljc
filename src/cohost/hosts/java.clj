@@ -4,7 +4,7 @@
    the host. Merged into hosts/jvm.clj's and hosts/jolt.clj's adapter maps."
     (:require
      [clojure.math] [clojure.edn :as edn]
-     [clojure.string :as string]
+     [clojure.string :as str]
      [cohost.memory :as memory]))
 
 (defn- groups [^java.util.regex.Matcher m]
@@ -112,14 +112,14 @@
       'clojure.core/last last 'clojure.core/butlast butlast
       'clojure.core/max-key max-key 'clojure.core/min-key min-key
       'clojure.core/repeatedly repeatedly
-      'clojure.string/join string/join
-      'clojure.string/upper-case string/upper-case 'clojure.string/lower-case string/lower-case
-      'clojure.string/capitalize string/capitalize
-      'clojure.string/trim string/trim 'clojure.string/triml string/triml 'clojure.string/trimr string/trimr
-      'clojure.string/blank? string/blank? 'clojure.string/includes? string/includes?
-      'clojure.string/starts-with? string/starts-with? 'clojure.string/ends-with? string/ends-with?
-      'clojure.string/index-of string/index-of 'clojure.string/last-index-of string/last-index-of
-      'clojure.string/split-lines string/split-lines})
+      'clojure.string/join str/join
+      'clojure.string/upper-case str/upper-case 'clojure.string/lower-case str/lower-case
+      'clojure.string/capitalize str/capitalize
+      'clojure.string/trim str/trim 'clojure.string/triml str/triml 'clojure.string/trimr str/trimr
+      'clojure.string/blank? str/blank? 'clojure.string/includes? str/includes?
+      'clojure.string/starts-with? str/starts-with? 'clojure.string/ends-with? str/ends-with?
+      'clojure.string/index-of str/index-of 'clojure.string/last-index-of str/last-index-of
+      'clojure.string/split-lines str/split-lines})
 
 (def capabilities
      {:natives natives
@@ -138,7 +138,7 @@
    ;; Any other object the shim does not model (a Future, a Thread, a
    ;; StringBuilder, a java.util collection) answers its own members too.
       :user-type? (fn [x] (and (let [n (str (class x))]
-                                    (not (and (string/starts-with? n "class clojure.") (not (string/includes? n "$reify")))))
+                                    (not (and (str/starts-with? n "class clojure.") (not (str/includes? n "$reify")))))
                                (or (instance? clojure.lang.IType x)
                                    (instance? clojure.lang.IRecord x)
                                    (and (instance? clojure.lang.IObj x) (not (coll? x)) (not (symbol? x)) (not (fn? x)))
@@ -188,8 +188,8 @@
                   ;; (getNumericValue and forDigit: jolt has neither; the shim's serve)
                      }
       :re-group-count (fn [re] (.groupCount (re-matcher re "")))
-      :upper-case (fn [s] (string/upper-case (str s)))
-      :lower-case (fn [s] (string/lower-case (str s)))
+      :upper-case (fn [s] (str/upper-case (str s)))
+      :lower-case (fn [s] (str/lower-case (str s)))
       :string-builder (fn [] (StringBuilder.))
       :sb-append! (fn [^StringBuilder sb x] (.append sb (str x)) sb)
       :sb-string str

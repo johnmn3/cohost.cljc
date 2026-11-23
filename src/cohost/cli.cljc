@@ -77,10 +77,12 @@
     ;; the module path (jank: bin/cohost through dev/perf/jank_snapshot_cli.clj)
                      (let [report (if (:snapshot? cfg)
                                       (boot/boot-from-snapshot! {:root (:stock-root cfg)})
-                                      (boot/boot! (merge {:root (:stock-root cfg) :verbose (boolean (:verbose cfg))}
+                                      (boot/boot! ;; splint: not single-arg — the second map is a reader conditional (:cljs core-boot-opts)
+                                       #_{:splint/disable [lint/redundant-call]}
+                                       (merge {:root (:stock-root cfg) :verbose (boolean (:verbose cfg))}
                                       ;; unit 8: the Node seat's heap is Eve's
-                                                         #?(:cljs (cljs-realm/core-boot-opts {:root (:stock-root cfg)
-                                                                                              :roots (vec (:roots cfg))})))))]
+                                              #?(:cljs (cljs-realm/core-boot-opts {:root (:stock-root cfg)
+                                                                                   :roots (vec (:roots cfg))})))))]
                           (when (:verbose cfg) (boot/print-report report)))
     ;; require as a function loads through the loader on every seat: stock
     ;; main's -m is (doto (symbol main-ns) require), and a host's own

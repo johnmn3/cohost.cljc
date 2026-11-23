@@ -37,7 +37,7 @@
    core import is the only import a require-free chunk emits."
     (:require [cohost.adapter :as adapter]
               [cohost.policy :as policy]
-              [clojure.string :as string]
+              [clojure.string :as str]
               ["node:fs" :as fs]
               ["squint-cljs/core.js" :as sqcore]
               ["squint-cljs" :as squint-compiler])
@@ -57,7 +57,7 @@
       "~" "_TILDE_" "^" "_CARET_" ":" "_COLON_"})
 
 (defn- munge-name [s]
-       (string/join (map (fn [ch] (get munge-table ch ch)) (str s))))
+       (str/join (map (fn [ch] (get munge-table ch ch)) (str s))))
 
 ;; ---------------------------------------------------------------------
 ;; the registry
@@ -73,7 +73,7 @@
        "The JS object holding ns-sym's var values, created on demand:
    globalThis.<seg>.<seg>... for the namespace's dotted name."
        [ns-sym]
-       (loop [obj js/globalThis segs (string/split (str ns-sym) #"\.")]
+       (loop [obj js/globalThis segs (str/split (str ns-sym) #"\.")]
              (if (empty? segs)
                  obj
                  (let [seg (first segs)
@@ -144,32 +144,31 @@
             (loop [j i] (if (or (>= j n) (term-char? (nth cs j))) j (recur (inc j))))))
 
 (defn- parse-number [tok]
-       (cond
-        (re-matches #"[+-]?\d+" tok) (js/parseInt tok 10)
-        (re-matches #"[+-]?\d+N" tok) (js/BigInt (subs tok 0 (dec (count tok))))
-        (re-matches #"[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?M?" tok) (js/parseFloat tok)
-        (re-matches #"[+-]?\d+/\d+" tok)
-        (let [[a b] (string/split tok #"/")]
-             (list 'cohost.core// (js/parseInt a 10) (js/parseInt b 10)))
-        (re-matches #"0[xX][0-9a-fA-F]+" tok) (js/parseInt tok 16)
-        :else nil))
+       (condp re-matches tok
+              #"[+-]?\d+" (js/parseInt tok 10)
+              #"[+-]?\d+N" (js/BigInt (subs tok 0 (dec (count tok))))
+              #"[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?M?" (js/parseFloat tok)
+              #"[+-]?\d+/\d+" (let [[a b] (str/split tok #"/")]
+                                   (list 'cohost.core// (js/parseInt a 10) (js/parseInt b 10)))
+              #"0[xX][0-9a-fA-F]+" (js/parseInt tok 16)
+              nil))
 
 (defn- read-token [tok ns-sym]
        (cond
         (= tok "nil") nil
         (= tok "true") true
         (= tok "false") false
-        (string/starts-with? tok ":")
+        (str/starts-with? tok ":")
         (let [body (subs tok 1)]
              (cond
-              (string/starts-with? body ":")
+              (str/starts-with? body ":")
               (let [b (subs body 1)]
-                   (if (string/includes? b "/")
-                       (let [[a nm] (string/split b #"/" 2)]
+                   (if (str/includes? b "/")
+                       (let [[a nm] (str/split b #"/" 2)]
                             (keyword (str (or (get-in @reg [ns-sym :aliases (symbol a)]) a)) nm))
                        (keyword (str ns-sym) b)))
-              (string/includes? body "/")
-              (let [[a nm] (string/split body #"/" 2)] (keyword a nm))
+              (str/includes? body "/")
+              (let [[a nm] (str/split body #"/" 2)] (keyword a nm))
               :else (keyword body)))
         :else
         (let [num (parse-number tok)]
@@ -181,7 +180,7 @@
        (loop [j (inc i) sb []]
              (let [c (nth cs j)]
                   (cond
-                   (= c "\"") [(string/join sb) (inc j)]
+                   (= c "\"") [(str/join sb) (inc j)]
                    (= c "\\")
                    (let [e (nth cs (inc j))]
                         (case e
@@ -192,7 +191,7 @@
                               "f" (recur (+ j 2) (conj sb "\f"))
                               "\\" (recur (+ j 2) (conj sb "\\"))
                               "\"" (recur (+ j 2) (conj sb "\""))
-                              "u" (recur (+ j 6) (conj sb (js/String.fromCharCode (js/parseInt (string/join (subvec cs (+ j 2) (+ j 6))) 16))))
+                              "u" (recur (+ j 6) (conj sb (js/String.fromCharCode (js/parseInt (str/join (subvec cs (+ j 2) (+ j 6))) 16))))
                               (recur (+ j 2) (conj sb e))))
                    :else (recur (inc j) (conj sb c))))))
 
@@ -205,7 +204,7 @@
         (symbol? form)
         (cond
          (contains? #{'unquote 'unquote-splicing} form) form
-         (string/ends-with? (str form) "#")
+         (str/ends-with? (str form) "#")
          (let [base (subs (str form) 0 (dec (count (str form))))]
               (if (contains? @gens base)
                   (list 'quote (get @gens base))
@@ -303,7 +302,7 @@
                           (cond
                            (symbol? f)
                            (let [s (str f)]
-                                (when (and (not nested?) (string/starts-with? s "%"))
+                                (when (and (not nested?) (str/starts-with? s "%"))
                                       (swap! refs conj s)))
                            (seq? f) (let [nested?' (or nested? (= (first f) 'fn*) (and (seq? f) (symbol? (first f)) (= (str (first f)) "fn")))]
                                          (doseq [e f] (walk e nested?')))
@@ -343,7 +342,7 @@
                   [(into {} (map (fn [[k v]] [(if (and (keyword? k) (not (namespace k))) (keyword prefix (name k)) k) v]) m)) j2])
              (= c "#")
              (let [j (token-end cs (+ i 2))
-                   tok (string/join (subvec cs (+ i 2) j))]
+                   tok (str/join (subvec cs (+ i 2) j))]
                   [(symbol "cohost.squint-consts" (case tok
                                                         "Inf" "POSITIVE_INFINITY"
                                                         "-Inf" "NEGATIVE_INFINITY"
@@ -395,17 +394,17 @@
                        [(with-meta* f mm) j2])
                   (= c "\\")
                   (let [j (token-end cs (inc i))
-                        tok (string/join (subvec cs (inc i) j))]
+                        tok (str/join (subvec cs (inc i) j))]
                        [(js/String. (or (get char-names tok)
                                         (cond
-                                         (string/starts-with? tok "u") (js/String.fromCharCode (js/parseInt (subs tok 1) 16))
-                                         (string/starts-with? tok "o") (js/String.fromCharCode (js/parseInt (subs tok 1) 8))
+                                         (str/starts-with? tok "u") (js/String.fromCharCode (js/parseInt (subs tok 1) 16))
+                                         (str/starts-with? tok "o") (js/String.fromCharCode (js/parseInt (subs tok 1) 8))
                                          :else (subs tok 0 1))))
                         j])
                   (= c "#") (read-dispatch cs i @cur-ns)
                   :else
                   (let [j (token-end cs i)
-                        tok (string/join (subvec cs i j))]
+                        tok (str/join (subvec cs i j))]
                        [(read-token tok @cur-ns) j])))))
 
 (defn- read-forms-impl [src cb]
@@ -559,11 +558,11 @@
 
 (defn- escape-string [s]
        (-> (str s)
-           (string/replace "\\" "\\\\")
-           (string/replace "\"" "\\\"")
-           (string/replace "\n" "\\n")
-           (string/replace "\r" "\\r")
-           (string/replace "\t" "\\t")))
+           (str/replace "\\" "\\\\")
+           (str/replace "\"" "\\\"")
+           (str/replace "\n" "\\n")
+           (str/replace "\r" "\\r")
+           (str/replace "\t" "\\t")))
 
 (def ^:private key-arg-heads #{"get" "contains?" "find"})
 (def ^:private key-args-heads #{"assoc" "dissoc"})
@@ -574,21 +573,21 @@
        (cond
         (string? bf) bf
         (vector? bf)
-        (str "[" (string/join " " (map #(print-binding-form % locals quoted?) bf)) "]")
+        (str "[" (str/join " " (map #(print-binding-form % locals quoted?) bf)) "]")
         (map? bf)
         (str "{"
-             (string/join " "
-                          (map (fn [[k v]]
-                                   (cond
-                                    (contains? #{"keys" "syms" "strs" "as"} k)
-                                    (str ":" k " [" (string/join " " (map str v)) "]")
-                                    (= k "or")
-                                    (str ":or {" (string/join " " (map (fn [[dk dv]] (str dk " " (print-form dv locals quoted?))) v)) "}")
-                                    :else
-                                    (str (print-binding-form k locals quoted?)
-                                         " "
-                                         (if (string? v) (str ":" v) (print-form v locals quoted?)))))
-                               bf))
+             (str/join " "
+                       (map (fn [[k v]]
+                                (cond
+                                 (contains? #{"keys" "syms" "strs" "as"} k)
+                                 (str ":" k " [" (str/join " " (map str v)) "]")
+                                 (= k "or")
+                                 (str ":or {" (str/join " " (map (fn [[dk dv]] (str dk " " (print-form dv locals quoted?))) v)) "}")
+                                 :else
+                                 (str (print-binding-form k locals quoted?)
+                                      " "
+                                      (if (string? v) (str ":" v) (print-form v locals quoted?)))))
+                            bf))
              "}")
         :else (print-form bf locals quoted?)))
 
@@ -603,11 +602,11 @@
         (instance? js/RegExp form)
         (str "(js/RegExp. \"" (escape-string (.-source form)) "\" \"" (escape-string (.-flags form)) "\")")
         (string? form)
-        (cond (or quoted? (contains? locals form)) form (string/includes? form "/") (let [i (.lastIndexOf form "/")
-                                                                                          nm (subs form (inc i))]
-                                                                                         (if (re-matches #"[A-Za-z0-9_$\-]+" nm)
-                                                                                             form
-                                                                                             (str (subs form 0 i) "." (munge-name nm)))) (or (contains? special-forms form) :else) form)
+        (cond (or quoted? (contains? locals form)) form (str/includes? form "/") (let [i (.lastIndexOf form "/")
+                                                                                       nm (subs form (inc i))]
+                                                                                      (if (re-matches #"[A-Za-z0-9_$\-]+" nm)
+                                                                                          form
+                                                                                          (str (subs form 0 i) "." (munge-name nm)))) (or (contains? special-forms form) :else) form)
         (seq? form)
         (if (empty? form)
             "()"
@@ -634,15 +633,15 @@
                         sigs (if (vector? (first sigs)) (list sigs) sigs)]
                        (str "(fn* "
                             (when named? (str (second form) " "))
-                            (string/join " "
-                                         (map (fn [sig]
-                                                  (let [locals' (into locals (binding-names (first sig)))
-                                                        locals' (if named? (conj locals' (second form)) locals')]
-                                                       (str "(" (print-binding-form (first sig) locals quoted?)
-                                                            " "
-                                                            (string/join " " (map #(print-form % locals' quoted?) (rest sig)))
-                                                            ")")))
-                                              sigs))
+                            (str/join " "
+                                      (map (fn [sig]
+                                               (let [locals' (into locals (binding-names (first sig)))
+                                                     locals' (if named? (conj locals' (second form)) locals')]
+                                                    (str "(" (print-binding-form (first sig) locals quoted?)
+                                                         " "
+                                                         (str/join " " (map #(print-form % locals' quoted?) (rest sig)))
+                                                         ")")))
+                                           sigs))
                             ")"))
           ;; surface let/loop likewise: route them through the
           ;; binding-aware printer, keeping their own head (squint
@@ -653,33 +652,33 @@
                         pairs (partition 2 binds)
                         locals' (reduce (fn [ls [bf _]] (into ls (binding-names bf))) locals pairs)]
                        (str "(" head " ["
-                            (string/join " "
-                                         (loop [ps (seq pairs) ls locals acc []]
-                                               (if (empty? ps)
-                                                   acc
-                                                   (let [[bf init] (first ps)]
-                                                        (recur (rest ps)
-                                                               (into ls (binding-names bf))
-                                                               (conj acc (print-binding-form bf locals quoted?)
-                                                                     (print-form init ls quoted?)))))))
+                            (str/join " "
+                                      (loop [ps (seq pairs) ls locals acc []]
+                                            (if (empty? ps)
+                                                acc
+                                                (let [[bf init] (first ps)]
+                                                     (recur (rest ps)
+                                                            (into ls (binding-names bf))
+                                                            (conj acc (print-binding-form bf locals quoted?)
+                                                                  (print-form init ls quoted?)))))))
                             "] "
-                            (string/join " " (map #(print-form % locals' quoted?) (nthrest form 2)))
+                            (str/join " " (map #(print-form % locals' quoted?) (nthrest form 2)))
                             ")"))
                   (or (= hname "letfn*") (= hname "letfn"))
                   (let [specs (second form)
                         names (into locals (map first specs))]
                        (str "(letfn* ["
-                            (string/join " "
-                                         (map (fn [spec]
-                                                  (let [locals' (into names (binding-names (second spec)))]
-                                                       (str "(" (first spec) " "
-                                                            (print-binding-form (second spec) locals quoted?)
-                                                            " "
-                                                            (string/join " " (map #(print-form % locals' quoted?) (nthrest spec 2)))
-                                                            ")")))
-                                              specs))
+                            (str/join " "
+                                      (map (fn [spec]
+                                               (let [locals' (into names (binding-names (second spec)))]
+                                                    (str "(" (first spec) " "
+                                                         (print-binding-form (second spec) locals quoted?)
+                                                         " "
+                                                         (str/join " " (map #(print-form % locals' quoted?) (nthrest spec 2)))
+                                                         ")")))
+                                           specs))
                             "] "
-                            (string/join " " (map #(print-form % names quoted?) (nthrest form 2)))
+                            (str/join " " (map #(print-form % names quoted?) (nthrest form 2)))
                             ")"))
                   (or (= hname "def") (= hname "defonce"))
           ;; [def name init] or [def name docstring init]: only the
@@ -692,15 +691,15 @@
                        ")")
                   (= hname "try")
                   (str "(try "
-                       (string/join " "
-                                    (map (fn [p]
-                                             (if (and (seq? p) (= (first p) 'catch))
-                                                 (let [locals' (if (symbol? (nth p 2)) (conj locals (nth p 2)) locals)]
-                                                      (str "(catch " (second p) " " (nth p 2) " "
-                                                           (string/join " " (map #(print-form % locals' quoted?) (nthrest p 3)))
-                                                           ")"))
-                                                 (print-form p locals quoted?)))
-                                         (rest form)))
+                       (str/join " "
+                                 (map (fn [p]
+                                          (if (and (seq? p) (= (first p) 'catch))
+                                              (let [locals' (if (symbol? (nth p 2)) (conj locals (nth p 2)) locals)]
+                                                   (str "(catch " (second p) " " (nth p 2) " "
+                                                        (str/join " " (map #(print-form % locals' quoted?) (nthrest p 3)))
+                                                        ")"))
+                                              (print-form p locals quoted?)))
+                                      (rest form)))
                        ")")
           ;; the defn family: name, optional docstring/attr-map
           ;; (defmethod: a dispatch form), then arities whose
@@ -725,15 +724,15 @@
                                            (str (when parens? "(")
                                                 (print-binding-form (first sig) locals quoted?)
                                                 (when (seq (rest sig)) " ")
-                                                (string/join " " (map #(print-form % ls quoted?) (rest sig)))
+                                                (str/join " " (map #(print-form % ls quoted?) (rest sig)))
                                                 (when parens? ")"))))]
                        (str "(" head " " nm
                             (when (= hname "defmethod")
                                   (str " " (print-form (nth form 2) locals quoted?)))
                             (when (seq prefix)
-                                  (str " " (string/join " " (map #(print-form % locals quoted?) prefix))))
+                                  (str " " (str/join " " (map #(print-form % locals quoted?) prefix))))
                             " "
-                            (string/join " " (map #(print-sig % (not single?)) arities))
+                            (str/join " " (map #(print-sig % (not single?)) arities))
                             ")"))
           ;; binding-second macros: (head [bf init ...] body...)
           ;; -- the binding vector prints pair-wise like let's.
@@ -743,69 +742,69 @@
                         pairs (partition 2 binds)
                         locals' (reduce (fn [ls [bf _]] (into ls (binding-names bf))) locals pairs)]
                        (str "(" head " ["
-                            (string/join " "
-                                         (loop [ps (seq pairs) ls locals acc []]
-                                               (if (empty? ps)
-                                                   acc
-                                                   (let [[bf init] (first ps)]
-                                                        (recur (rest ps)
-                                                               (into ls (binding-names bf))
-                                                               (conj acc (print-binding-form bf locals quoted?)
-                                                                     (print-form init ls quoted?)))))))
+                            (str/join " "
+                                      (loop [ps (seq pairs) ls locals acc []]
+                                            (if (empty? ps)
+                                                acc
+                                                (let [[bf init] (first ps)]
+                                                     (recur (rest ps)
+                                                            (into ls (binding-names bf))
+                                                            (conj acc (print-binding-form bf locals quoted?)
+                                                                  (print-form init ls quoted?)))))))
                             "] "
-                            (string/join " " (map #(print-form % locals' quoted?) (nthrest form 2)))
+                            (str/join " " (map #(print-form % locals' quoted?) (nthrest form 2)))
                             ")"))
                   :else
                   (let [hname (when (string? head) (name head))]
                        (str "(" (print-form head locals quoted?)
                             (when (seq (rest form)) " ")
-                            (string/join " "
-                                         (map-indexed
-                                          (fn [i el]
-                                              (let [pos (inc i)]
-                                                   (if (and (string? el)
-                                                            (not quoted?)
-                                                            (not (contains? locals el))
-                                                            (not (string/includes? el "/"))
-                                                            (not (contains? special-forms el))
-                                                            (or (and (contains? key-arg-heads hname) (= pos 2))
-                                                                (and (contains? key-args-heads hname) (>= pos 2)
-                                                                     (or (= hname "dissoc") (even? pos)))))
-                                                       (str ":" el)
-                                                       (print-form el locals quoted?))))
-                                          (rest form)))
+                            (str/join " "
+                                      (map-indexed
+                                       (fn [i el]
+                                           (let [pos (inc i)]
+                                                (if (and (string? el)
+                                                         (not quoted?)
+                                                         (not (contains? locals el))
+                                                         (not (str/includes? el "/"))
+                                                         (not (contains? special-forms el))
+                                                         (or (and (contains? key-arg-heads hname) (= pos 2))
+                                                             (and (contains? key-args-heads hname) (>= pos 2)
+                                                                  (or (= hname "dissoc") (even? pos)))))
+                                                    (str ":" el)
+                                                    (print-form el locals quoted?))))
+                                       (rest form)))
                             ")")))))
         (vector? form)
-        (str "[" (string/join " " (map (fn [el]
-                                           (if (and (string? el) (not quoted?)
-                                                    (not (contains? locals el))
-                                                    (not (string/includes? el "/"))
-                                                    (not (contains? special-forms el)))
-                                               (str ":" el)
-                                               (print-form el locals quoted?)))
-                                       form)) "]")
+        (str "[" (str/join " " (map (fn [el]
+                                        (if (and (string? el) (not quoted?)
+                                                 (not (contains? locals el))
+                                                 (not (str/includes? el "/"))
+                                                 (not (contains? special-forms el)))
+                                            (str ":" el)
+                                            (print-form el locals quoted?)))
+                                    form)) "]")
         (map? form)
         (str "{"
-             (string/join " "
-                          (map (fn [[k v]]
-                                   (str (if (and (string? k) (not quoted?)
-                                                 (not (string/includes? k "/")))
-                                            (str ":" k)
-                                            (print-form k locals quoted?))
-                                        " "
-                                        (print-form v locals quoted?)))
-                               form))
+             (str/join " "
+                       (map (fn [[k v]]
+                                (str (if (and (string? k) (not quoted?)
+                                              (not (str/includes? k "/")))
+                                         (str ":" k)
+                                         (print-form k locals quoted?))
+                                     " "
+                                     (print-form v locals quoted?)))
+                            form))
              "}")
         (set? form)
         (str "#{"
-             (string/join " "
-                          (map (fn [el]
-                                   (if (and (string? el) (not quoted?)
-                                            (not (contains? locals el))
-                                            (not (string/includes? el "/")))
-                                       (str ":" el)
-                                       (print-form el locals quoted?)))
-                               form))
+             (str/join " "
+                       (map (fn [el]
+                                (if (and (string? el) (not quoted?)
+                                         (not (contains? locals el))
+                                         (not (str/includes? el "/")))
+                                    (str ":" el)
+                                    (print-form el locals quoted?)))
+                            form))
              "}")
         :else (pr-str form)))
 
@@ -827,15 +826,15 @@
    for the chunk's exports."
        [src]
        (let [js (compile-js src)
-             js (string/replace js
-                                "import * as squint_core from 'squint-cljs/core.js';"
-                                "const squint_core = globalThis.__cohost_squint_core;")
+             js (str/replace js
+                             "import * as squint_core from 'squint-cljs/core.js';"
+                             "const squint_core = globalThis.__cohost_squint_core;")
              export-m (re-find #"export\s*\{([^}]*)\}" js)
              names (if export-m
-                       (map string/trim (string/split (nth export-m 1) #","))
+                       (map str/trim (str/split (nth export-m 1) #","))
                        [])
-             body (string/replace js #"export\s*\{[^}]*\}" "")
-             ret (string/join ", " (map (fn [nm] (str nm ": " nm)) names))
+             body (str/replace js #"export\s*\{[^}]*\}" "")
+             ret (str/join ", " (map (fn [nm] (str nm ": " nm)) names))
              fn-text (str "(function(){\n" body "\nreturn {" ret "};\n})")
              f (js/eval fn-text)]
             (f)))
@@ -878,8 +877,8 @@
                                  (swap! reg assoc-in [ns-sym :vars nm :macro?] true))
                            (when (or (true? (:dynamic (meta nm)))
                                      (and (> (count (name nm)) 2)
-                                          (string/starts-with? (name nm) "*")
-                                          (string/ends-with? (name nm) "*")))
+                                          (str/starts-with? (name nm) "*")
+                                          (str/ends-with? (name nm) "*")))
                                  (swap! reg assoc-in [ns-sym :vars nm :dynamic?] true))
           ;; deftype/defrecord also export ->Name and map->Name
                            (when (contains? '#{deftype defrecord} head)
@@ -983,8 +982,8 @@
       :math-ceil js/Math.ceil
       :math-floor js/Math.floor
       :math-sqrt js/Math.sqrt
-      :upper-case (fn [s] (string/upper-case (str s)))
-      :lower-case (fn [s] (string/lower-case (str s)))
+      :upper-case (fn [s] (str/upper-case (str s)))
+      :lower-case (fn [s] (str/lower-case (str s)))
       :re-find-at re-find-at
       :re-match-full re-match-full
       :re-group-count re-group-count

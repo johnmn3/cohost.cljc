@@ -56,7 +56,7 @@
               ["node:os" :as os]
               ["node:path" :as path]
               ["node:worker_threads" :as wt]
-              [clojure.string :as string]
+              [clojure.string :as str]
               [cohost.adapter :as adapter]
               [cohost.atom :as atom-layer]
               [cohost.hosts.cljs :as cljs-host]
@@ -100,7 +100,7 @@
        (when (trace?)
     ;; synchronous: a worker's process.stderr drains through the core's
     ;; event loop, which an exiting core never runs again
-             (fs/writeSync 2 (str "cohost-realm[" (:realm @R) "]: " (string/join " " xs) "\n"))))
+             (fs/writeSync 2 (str "cohost-realm[" (:realm @R) "]: " (str/join " " xs) "\n"))))
 
 (defn available?
       "Eve hosting is in force in this realm."
@@ -131,6 +131,9 @@
                       (swap! dirs assoc k {:sabs m}))))
 
 (defn- drain-chan! []
+       ;; splint: the loop is the drain — recur, not a self-call, is
+       ;; the stack-safe spelling for an unbounded message stream.
+       #_{:splint/disable [lint/empty-loop-in-fn]}
        (loop []
              (when-let [r (wt/receiveMessageOnPort (chan))]
                        (note-sabs! (.-message r))
@@ -375,7 +378,7 @@
              src (fs/readFileSync script "utf8")
              root (-> script path/dirname path/dirname path/dirname)
              out (path/join (os/tmpdir) (str "cohost-realm-kernel-" js/process.pid ".js"))]
-            (fs/writeFileSync out (string/replace src "path.resolve(\".\")" (js/JSON.stringify root)))
+            (fs/writeFileSync out (str/replace src "path.resolve(\".\")" (js/JSON.stringify root)))
             out))
 
 (defn- env-data []
