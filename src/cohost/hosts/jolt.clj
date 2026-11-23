@@ -50,7 +50,7 @@
    ;; host-new lookup and apply per lazy seq. The wrapper is no ^:once fn: a
    ;; force after a failure calls the stock thunk again (itself ^:once, so it
    ;; sees its own cleared captures, as on the JVM)
-      :lazy-seq #_{:clj-kondo/ignore [:unresolved-symbol]} (fn [f] (make-lazy-seq (fn* [] (coll->cells (f)))))
+      :lazy-seq (fn [f] #_{:clj-kondo/ignore [:unresolved-symbol]} (make-lazy-seq (fn* [] (coll->cells (f)))))
       :delay #_{:splint/disable [lint/fn-wrapper]} (fn [f] (clojure.lang.Delay. f))
       :exception? (fn [x] (instance? Throwable x))
       :nano-time (fn [] (System/nanoTime))
@@ -68,14 +68,14 @@
       :index-of (fn [s sub from] (.indexOf s sub (int from)))
    ;; jolt's own transient? is one record test; its instance? of the interface
    ;; walks every registered class arm (a deftype implementing it still answers)
-      :transient? #_{:clj-kondo/ignore [:unresolved-symbol]} (fn [x] (or (transient? x) (instance? clojure.lang.ITransientCollection x)))
+      :transient? (fn [x] #_{:clj-kondo/ignore [:unresolved-symbol]} (or (transient? x) (instance? clojure.lang.ITransientCollection x)))
    ;; jolt's compiler ignores :inline; the codemod applies core.clj's
       :rewrite-inline? true
    ;; jolt's own predicates are one record or tag test each; its class walks the
    ;; registered class arms (0.3 µs for a transient, an atom)
    ;; (not vector? or fn?: jolt answers both for a deftype that implements
    ;; IPersistentVector or Fn, whose own members must still answer)
-      :host-data? #_{:clj-kondo/ignore [:unresolved-symbol]} (fn [x] (or (transient? x) (atom? x) (string? x) (number? x)
+      :host-data? (fn [x] #_{:clj-kondo/ignore [:unresolved-symbol]} (or (transient? x) (atom? x) (string? x) (number? x)
                                                                          (keyword? x) (symbol? x) (boolean? x)))
       :lazy-seq? (fn [x] (instance? clojure.lang.LazySeq x))
       :atom? (fn [x] (instance? clojure.lang.Atom x))
