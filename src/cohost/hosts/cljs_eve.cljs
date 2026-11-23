@@ -130,10 +130,10 @@
             (when-not (contains? @dirs k)
                       (swap! dirs assoc k {:sabs m}))))
 
+;; splint: the loop is the drain — recur, not a self-call, is the
+;; stack-safe spelling for an unbounded message stream.
+#_{:splint/disable [lint/empty-loop-in-fn]}
 (defn- drain-chan! []
-       ;; splint: the loop is the drain — recur, not a self-call, is
-       ;; the stack-safe spelling for an unbounded message stream.
-       #_{:splint/disable [lint/empty-loop-in-fn]}
        (loop []
              (when-let [r (wt/receiveMessageOnPort (chan))]
                        (note-sabs! (.-message r))

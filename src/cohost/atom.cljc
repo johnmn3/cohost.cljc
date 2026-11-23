@@ -252,6 +252,8 @@
                                        {:cohost.atom/error :missing-place :kind kind :key k}))))
        nil)
 
+;; splint: type truth table, same verdict as representable? above.
+#_{:splint/disable [lint/identical-branches]}
 (defn tier-representable?
       "What a shared (disk/net) tier can hold: Eve's codec data, and
    Eve values themselves at any depth (a swap fn receives the

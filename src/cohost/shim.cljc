@@ -1727,17 +1727,17 @@
              done (atom false)
              rf (xform (fn ([] nil) ([acc] acc) ([acc x] (swap! out conj x) acc)))
              finish! (fn [] (when-not @done (reset! done true) (rf nil)))
-             pull! (fn []
-                       ;; splint: the loop is the pull mechanism; recur
-                       ;; keeps it stack-safe where a self-call would not.
-                       #_{:splint/disable [lint/empty-loop-in-fn]}
-                       (loop []
-                             (when (and (empty? @out) (not @done))
-                                   (if (every? host/iter-has-next? its)
-                                       (let [r (apply rf nil (map host/iter-next! its))]
-                                            (when (h-reduced? r) (finish!))
-                                            (recur))
-                                       (finish!)))))
+             pull! ;; splint: the loop is the pull mechanism; recur keeps
+                       ;; it stack-safe where a self-call would not.
+             #_{:splint/disable [lint/empty-loop-in-fn]}
+             (fn []
+                 (loop []
+                       (when (and (empty? @out) (not @done))
+                             (if (every? host/iter-has-next? its)
+                                 (let [r (apply rf nil (map host/iter-next! its))]
+                                      (when (h-reduced? r) (finish!))
+                                      (recur))
+                                 (finish!)))))
              step (fn step []
                       (host/lazy-seq*
                        (fn []
@@ -2430,10 +2430,9 @@
                             (let [b2 (when (>= left 2) (ubyte bs (inc i)))
                                   b3 (when (>= left 3) (ubyte bs (+ i 2)))]
                                  (cond
-                                  (or (nil? b2) (not (cont-byte? b2)))
-                                  (do (emit-replacement! out) (recur (inc i)))
-                ;; an overlong pair (E0 80..9F): the lead alone is malformed
-                                  (and (= b 0xE0) (<= b2 0x9F))
+                                  (or (nil? b2) (not (cont-byte? b2))
+                                      ;; an overlong pair (E0 80..9F): the lead alone is malformed
+                                      (and (= b 0xE0) (<= b2 0x9F)))
                                   (do (emit-replacement! out) (recur (inc i)))
                 ;; an encoded surrogate (ED A0..BF): one replacement for
                 ;; the whole sequence the JDK counts -- three bytes when
@@ -2453,11 +2452,10 @@
                                   b3 (when (>= left 3) (ubyte bs (+ i 2)))
                                   b4 (when (>= left 4) (ubyte bs (+ i 3)))]
                                  (cond
-                                  (or (nil? b2) (not (cont-byte? b2)))
-                                  (do (emit-replacement! out) (recur (inc i)))
-                ;; overlong (F0 80..8F) or past U+10FFFF (F4 90..BF):
-                ;; the lead alone is malformed, the rest are strays
-                                  (or (and (= b 0xF0) (<= b2 0x8F))
+                                  (or (nil? b2) (not (cont-byte? b2))
+                                      ;; overlong (F0 80..8F) or past U+10FFFF (F4 90..BF):
+                                      ;; the lead alone is malformed, the rest are strays
+                                      (and (= b 0xF0) (<= b2 0x8F))
                                       (and (= b 0xF4) (>= b2 0x90)))
                                   (do (emit-replacement! out) (recur (inc i)))
                                   (or (nil? b3) (not (cont-byte? b3)))

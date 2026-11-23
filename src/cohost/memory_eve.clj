@@ -288,6 +288,10 @@
 ;; collection; any other value itself (host values are
 ;; flat-encoded by Eve's writer; nested Eve values nest).
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- analyzer-active?
        "True when the host analyzer is macroexpanding on this
    thread: a clojure.lang.Compiler macroexpand frame is on the
@@ -489,6 +493,10 @@
               'java.util.Comparator
               (list 'compare ['this 'a 'b] (list '.invoke 'this 'a 'b))])))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defmacro ^:private defwrapper
           "Emit the meta-wrapper deftype for one collection kind: the
    common delegation (count, seq, empty, equiv, hasheq, meta,
@@ -523,6 +531,10 @@
                          (~'hashCode [~'_] (.hasheq ^clojure.lang.IHashEq ~'root))
                          (~'toString [~'_] (str (canonicalize ~'root))))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defwrapper EveBackedVector :vector
             {:ifn {:one '(.nth ^clojure.lang.Indexed root (int (long k)))
                    :two '(.valAt ^clojure.lang.ILookup root k nf)}}
@@ -576,6 +588,10 @@
             (clear [_] (throw (UnsupportedOperationException.)))
             (set [_ _i _o] (throw (UnsupportedOperationException.))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defwrapper EveBackedMap :map
             {:ifn {:one '(.valAt ^clojure.lang.ILookup root k)
                    :two '(.valAt ^clojure.lang.ILookup root k nf)}}
@@ -599,6 +615,10 @@
             java.lang.Comparable
             (compareTo [this o] (memory/compare-values this o)))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defwrapper EveBackedSet :set
             {:ifn {:one '(.get ^clojure.lang.IPersistentSet root k)
                    :two '(let [v (.get ^clojure.lang.IPersistentSet root k)] (if (some? v) v nf))}}
@@ -616,6 +636,10 @@
             java.lang.Comparable
             (compareTo [this o] (memory/compare-values this o)))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defwrapper EveBackedList :list
             {:seq '(when (pos? (.count ^clojure.lang.Counted root)) this)}
             clojure.lang.ISeq
@@ -649,6 +673,13 @@
             :set (EveBackedSet. root m)
             :list (EveBackedList. root m)))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
+;; splint: the four branches differ by type hint on .-root, which
+;; selects the field; they are not identical branches.
+#_{:splint/disable [lint/identical-branches]}
 (defn root-of
       "The bare Eve root of a seam value (bare or wrapped)."
       [x]

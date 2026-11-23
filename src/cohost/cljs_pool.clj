@@ -165,6 +165,10 @@
                   :else (throw (ex-info (str "node realm eval failed: " (:error resp))
                                         {:js js :error (:error resp)}))))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- make-node-realm
        "Spawn the node realm process and answer its transport map (a
    boot-cljs realm: see eval-in). node-bin is the node executable.
@@ -198,6 +202,10 @@
                                  (.start))
                            (assoc state :eval! (fn [js] (node-eval! state js))))))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn node-sister
       "The node sister impl map for cohost.thread/runtime-executor.
    Boot options: cohost.boot-cljs/boot!'s, plus :node-bin (default
@@ -427,6 +435,10 @@
                       [(URLDecoder/decode k "UTF-8")
                        (URLDecoder/decode (or v "") "UTF-8")]))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- respond-bytes!
        [^HttpExchange ex status headers ^bytes bytes]
        (let [resp-headers (HttpExchange/.getResponseHeaders ex)]
@@ -449,6 +461,10 @@
        (respond-bytes! ex status headers
                        (when body (String/.getBytes body "UTF-8"))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- exchange-request
        "The request as a map: {:method :uri :query :headers :body :body-b64},
    header names lower-cased. :body is the request body as a UTF-8 string;
@@ -554,6 +570,10 @@
                              #_{:splint/disable [lint/catch-throwable]}
                              (catch Throwable _ nil)))))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- app-handler
        "The app endpoints, under cfg's header pipeline: the bootstream
    (at / and at its own name, with the realm script injected),
@@ -604,6 +624,10 @@
                              #_{:splint/disable [lint/catch-throwable]}
                              (catch Throwable _ nil)))))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- daemon-thread-factory
        [name-prefix]
        (let [n (atom 0)]
@@ -612,6 +636,10 @@
                               (doto (Thread. ^Runnable r (str name-prefix "-" (swap! n inc)))
                                     (.setDaemon true))))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn start-server!
       "Start the browser seat's web server on its own: the bootstream +
    static root + interop endpoints of `config` (:bootstream and
@@ -665,6 +693,10 @@
                             (when (java.io.File/.canExecute f) (java.io.File/.getPath f))))
              (str/split (or (System/getenv "PATH") "") #":")))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- find-chrome
        "The demo's discovery (capstone boot's find-tools): EVE_CHROME,
    else the first Chromium or Chrome found -- the fixed install
@@ -759,6 +791,10 @@
                        :else (throw (ex-info (str "browser realm eval failed: " (:error resp))
                                              {:js js :error (:error resp)}))))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- delete-tree!
        "Delete a directory tree, best effort."
        [^java.nio.file.Path p]

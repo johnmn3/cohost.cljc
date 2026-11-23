@@ -53,6 +53,10 @@
 
 (def shim-ns 'cohost.js-shim)
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- js-symbol
        "Rewrite one js/* symbol. Returns a symbol, or a (.-prop ...) form for
    a dotted name."
@@ -78,6 +82,10 @@
 
 (declare rewrite*)
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- dotted-js-head
        "When a list's head is a dotted js/* symbol (js/Promise.all -- not
    a constructor's trailing dot), the [root middle... method] name

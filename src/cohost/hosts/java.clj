@@ -51,6 +51,10 @@
                        (some? msg) (c1 msg)
                        :else (c0))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn exception-class
       "The class token of a host exception: its own class when the shim raises
    that class, else the nearest one the shim's class table has."
@@ -121,6 +125,10 @@
       'clojure.string/index-of str/index-of 'clojure.string/last-index-of str/last-index-of
       'clojure.string/split-lines str/split-lines})
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (def capabilities
      {:natives natives
    ;; the JVM and jolt name clojure.lang and java.* classes themselves

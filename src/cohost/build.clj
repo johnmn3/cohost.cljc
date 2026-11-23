@@ -70,6 +70,10 @@
                       (throw (ex-info (str "build: " (str/join " " cmd) " failed") {:out (:out r) :err (:err r)})))
             (:out r)))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- copy-tree!
        "Copy a directory's files, keeping their modification times: a host's
    bytecode cache (basilisp's .lpyc) is checked against its source's mtime."
@@ -100,6 +104,10 @@ fs.unlinkSync(cfg);
 process.exit(r.status === null ? 1 : r.status);
 ")
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- cljs-bundle [{:keys [main name]}]
        (let [home (cohost-home)
              out (io/file "target" name)
@@ -223,6 +231,10 @@ process.exit(r.status === null ? 1 : r.status);
                  "--out" (str (io/file work "src")) "--main" (str main))
             (str (io/file work "src"))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- cljw-snapshot
        "ClojureWasm: its native binary (`cljw build`) refuses cohost's code
    (UnsupportedValueTag), so the artifact ships the recorded boot as cljw
@@ -242,6 +254,10 @@ process.exit(r.status === null ? 1 : r.status);
                                  "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
                                  "exec cljw -cp \"$here/snapshot:$here/cohost/src\" -m cohost.app-main \"$@\"\n"))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- jolt-native
        "jolt's own AOT: the booted core, the libraries and the app's namespaces,
    recorded on jolt (dev/perf/snapshot_record.cljc), emitted as jolt modules
@@ -307,6 +323,10 @@ require_once __DIR__ . '/out/cohost/app_main.php';
 \\Phel::getDefinition('cohost.app_main', '-main')->__invoke(...array_slice($argv ?? [], 1));
 ")
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- phel-native
        "Phel's own AOT: the booted core, the libraries and the app's namespaces,
    recorded on Phel (dev/phel_snapshot_record.phel), emitted as Phel modules
@@ -375,6 +395,10 @@ require_once __DIR__ . '/out/cohost/app_main.php';
                      :main main :name "run" :target (str "target/" name)})
             (str "target/" name "/run")))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn build
       "Build the project for its target. opts: :main (the -main namespace, a
    symbol), :name (default: the directory's name), :target (default:

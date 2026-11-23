@@ -155,8 +155,16 @@
 
 (def ^:private last-match (volatile! nil))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- groups [m] (mapv (fn [i] (.group m i)) (range (inc (.groupCount m)))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- re-find-at [re s from]
        (let [[re0 s0 m0 end] @last-match
              m (if (and (identical? re re0) (identical? s s0) (<= end from)) m0 (re-matcher re s))]
@@ -169,6 +177,10 @@
                                [b e (groups m) nil]))
                       (do (vreset! last-match nil) nil)))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- re-match-full [re s]
        (let [m (re-matcher re s)]
             (when (.matches m) [0 (count s) (groups m) nil])))
@@ -307,6 +319,10 @@
 
 ;; ---------------------------------------------------------------------------
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (def adapter
      {:name :cljw
    ;; X3-1: the shim's MultiFn with its one-entry cache (adapter.cljc); bb

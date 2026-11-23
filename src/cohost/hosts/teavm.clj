@@ -55,6 +55,10 @@
                   (let [f (read {:eof ::eof :read-cond :allow} r)]
                        (when-not (= f ::eof) (cb f) (recur))))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (def adapter
      {:name :teavm
    ;; X3-1: the shim's MultiFn with its one-entry cache (adapter.cljc), as

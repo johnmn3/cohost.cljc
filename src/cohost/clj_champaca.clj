@@ -45,6 +45,10 @@
        []
        ((requiring-resolve 'champaca.api/save-cache!)))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- ensure!
        []
        (let [{:keys [status cfg]} @state]

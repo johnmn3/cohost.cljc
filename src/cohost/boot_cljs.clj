@@ -84,6 +84,10 @@
               (execute [_ args]
                        (goog-text (str (aget args 0))))))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn- timer-hooks
        "The realm's timer family, which a bare JS engine does not carry
    (setTimeout and kin are host functions, not ECMAScript): two host
@@ -138,6 +142,10 @@
           "  globalThis.clearInterval = function(id) { __cohostCancel(id); };\n"
           "}\n"))
 
+;; splint: prefer-method-values — the receivers here are host
+;; values (polyglot/realm/Eve/SCI) whose class is not static in
+;; this adapter; the (.method target) spelling is the honest one.
+#_{:splint/disable [lint/prefer-method-values]}
 (defn make-realm
       "A fresh GraalJS realm with the preamble run and Closure's base
    loaded (its dependency registry, deps.js, with it)."
