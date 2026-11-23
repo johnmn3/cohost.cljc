@@ -172,15 +172,15 @@
                                (log "JANK-EXE-CPP" (count objs) "objects (archive + record shared lib)")))
         ;; 1. cohost's namespaces, -O3 AOT objects (recompiled when stale)
                     (let [aot-out (sh! repo {} "bb" "-e" "(println (str \"AOT \" (load-file \"dev/perf/jank_aot_ensure.clj\")))")
-                          aot (abs repo (second (re-find #"(?m)^AOT (.*)$" aot-out)))]
+                          aot (abs repo (second (re-find #"(?m)^AOT (.*)$" aot-out))) out (apply sh! repo record-env (jank-bin)
+                                                                                                 (concat (when cpp ["-L" (abs work "record-lib") "-l" "cpp"])
+                                                                                                         ["--module-path" (str aot ":" (abs repo "src")) "run"
+                                                                                                          (abs repo "dev/perf/jank_snapshot_record.jank") "--" "--out" events "--lib" (str main)]
+                                                                                                         (mapcat (fn [r] ["--root" r]) roots)))]
           ;; 2. record the boot, the libraries and the app
-                         (let [out (apply sh! repo record-env (jank-bin)
-                                          (concat (when cpp ["-L" (abs work "record-lib") "-l" "cpp"])
-                                                  ["--module-path" (str aot ":" (abs repo "src")) "run"
-                                                   (abs repo "dev/perf/jank_snapshot_record.jank") "--" "--out" events "--lib" (str main)]
-                                                  (mapcat (fn [r] ["--root" r]) roots)))]
-                              (log (last (filter #(str/starts-with? % "SNAPSHOT-EVENTS") (str/split-lines out))))
-                              (doseq [l (filter #(str/starts-with? % "RECORD-LIB-ERROR") (str/split-lines out))] (log l))))
+
+                         (log (last (filter #(str/starts-with? % "SNAPSHOT-EVENTS") (str/split-lines out))))
+                         (doseq [l (filter #(str/starts-with? % "RECORD-LIB-ERROR") (str/split-lines out))] (log l)))
         ;; 3. the modules and the entry
                     (log (last (str/split-lines (sh! repo {} "bb" (abs repo "dev/perf/jank_snapshot_emit.clj")
                                                      "--events" events "--out" src "--main" (str main)))))

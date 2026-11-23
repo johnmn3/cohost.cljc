@@ -1524,15 +1524,15 @@
                   (memory/make-map (concat (if odd (butlast s) s) (mapcat seq (seq tail)))))
              (let [s (seq arr)
                    odd (odd? (count s))
-                   tail (when odd (RT-conj {} (last s)))]
+                   tail (when odd (RT-conj {} (last s))) kvs (concat (partition 2 (if odd (butlast s) s)) (seq tail))]
       ;; the tail's entries follow the pairs; each key keeps its first
       ;; position and its last value, in the host's array map, which keeps
       ;; that order at any size (assoc would make a hash map past 8 entries)
-                  (let [kvs (concat (partition 2 (if odd (butlast s) s)) (seq tail))]
-                       (if h-array-map
-                           (let [last-v (reduce (fn [m [k v]] (assoc m k v)) {} kvs)]
-                                (apply h-array-map (mapcat (fn [k] [k (get last-v k)]) (distinct (map first kvs)))))
-                           (reduce (fn [m [k v]] (assoc m k v)) {} kvs)))))))
+
+                  (if h-array-map
+                      (let [last-v (reduce (fn [m [k v]] (assoc m k v)) {} kvs)]
+                           (apply h-array-map (mapcat (fn [k] [k (get last-v k)]) (distinct (map first kvs)))))
+                      (reduce (fn [m [k v]] (assoc m k v)) {} kvs))))))
 (def PersistentArrayMap-createWithCheck PersistentHashMap-createWithCheck)
 (def PersistentHashSet-create (fn [coll] (if (memory/fill-on?) (memory/make-set coll) (set coll))))
 (def PersistentHashSet-createWithCheck
@@ -3281,9 +3281,7 @@
            ;; java.lang.Character.isWhitespace: the space, line and paragraph
            ;; separators but the non-breaking ones, plus \t \n VT \f \r FS GS RS US
               (fn [c] (let [n (code-of c)]
-                           (boolean (or (<= 9 n 13) (<= 28 n 32) (== n 0x1680) (<= 0x2000 n 0x2006)
-                                        (<= 0x2008 n 0x200A) (== n 0x2028) (== n 0x2029) (== n 0x205F)
-                                        (== n 0x3000)))))))
+                           (or (<= 9 n 13) (<= 28 n 32) (== n 0x1680) (<= 0x2000 n 0x2006) (<= 0x2008 n 0x200A) (== n 0x2028) (== n 0x2029) (== n 0x205F) (== n 0x3000))))))
 (defn- cased [f c] (let [s (char-str c) r (f s)] (if (= 1 (count r)) (first r) (first s))))
 ;; the classification defaults are the JVM's own categories, from the
 ;; generated tables (cohost.unicode-ranges): the ASCII-only digit test and
@@ -4623,8 +4621,7 @@
 (def -isBlank (fn [s] (= "" (strip* s true true))))
 (defn- char-fold [c] (h-char-code (first (h-lower-case (h-upper-case (str c))))))
 (def -equalsIgnoreCase (fn [s t] (let [s (nn s)]
-                                      (boolean (and (string? t) (= (count s) (count t))
-                                                    (every? true? (map (fn [a b] (or (= a b) (= (char-fold a) (char-fold b)))) s t)))))))
+                                      (and (string? t) (= (count s) (count t)) (every? true? (map (fn [a b] (or (= a b) (= (char-fold a) (char-fold b)))) s t))))))
 (def -compareToIgnoreCase (fn [s t] (let [s (nn s) t (nn t) n (min (count s) (count t))]
                                          (loop [i 0]
                                                (if (< i n)

@@ -17,7 +17,10 @@
    snapshot model."
     (:require [cohost.memory :as memory]
               [eve.deftype-proto.alloc :as alloc]
-              [eve.mem :as eve-mem]
+              ;; loaded for effect: eve.mem/value+sio->eve-bytes is
+              ;; reached by requiring-resolve below, which needs the
+              ;; namespace loaded; no var is referred through an alias
+              [eve.mem]
               [eve.vec :as eve-vec]
               [eve.map :as eve-map]
               [eve.set :as eve-set]

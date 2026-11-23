@@ -1881,37 +1881,37 @@
                                                      body' (if (and (:vector-rest-args? ctx) (symbol? rest-arg)
                                                                     (not= "_" (name rest-arg)))
                                                                [(apply list 'let* [rest-arg (list (shim-fn "RT-seq") rest-arg)] body')]
-                                                               body')]
-                                                    (let [arity (emit-arity nm one-arity? (return-hint fn-ret params) params body'
-                                                                            (when (and ptypes (empty? bs) (not (:loop-variadic-recur? ctx)))
-                                                                                  [ptypes tbody])
-                                                                            (when (and htypes (empty? bs) (not (:loop-variadic-recur? ctx))
-                                                                                       (not (and (:vector-rest-args? ctx) (symbol? rest-arg))))
-                                                                                  [htypes hbody]))
+                                                               body') arity (emit-arity nm one-arity? (return-hint fn-ret params) params body'
+                                                                                        (when (and ptypes (empty? bs) (not (:loop-variadic-recur? ctx)))
+                                                                                              [ptypes tbody])
+                                                                                        (when (and htypes (empty? bs) (not (:loop-variadic-recur? ctx))
+                                                                                                   (not (and (:vector-rest-args? ctx) (symbol? rest-arg))))
+                                                                                              [htypes hbody]))
                                          ;; U6-12: a self-recursive ^long arity in the numeric
                                          ;; subset gets a C++ twin, called under the long guard;
                                          ;; nil (an overflow) or a non-long argument runs the arity
-                                                          pn (mapv #(*plain* (bare-sym %)) params)
-                                                          f (when (and *cpp-twins* (host/cpp-twins?) one-arity? nm
-                                                                       (contains? #{nil 'long} (return-hint fn-ret params))
-                                                                       (seq params)
-                                                                       (every? #(and (symbol? %) (not= '& (*plain* %))
-                                                                                     (= 'long (primitive-hint (:tag (meta %)))))
-                                                                               params)
-                                                                       (mentions-sym? (*plain* (bare-sym nm)) body))
-                                                                  (twin-name nm))
-                                                          code (when f (twin-cpp nm pn f body))]
-                                                         (if-not code
-                                                                 arity
-                                                                 (let [_ (swap! *cpp-twins* conj code)
-                                                                       [ps & fs] arity
-                                                                       r (gensym "twin__")
-                                                                       call (apply list (symbol "cpp" (str f "_ns." f "_entry"))
-                                                                                   (map (fn [p] (list 'cpp/jank.runtime.to_int (bare-sym p))) params))]
-                                                                      (list ps (list 'let* [r (list 'if (apply list 'and (map #(kind-test 'long (bare-sym %)) params)) call nil)]
-                                                                                     (list 'if (list 'nil? r)
-                                                                                           (if (next fs) (apply list 'do fs) (first fs))
-                                                                                           r))))))))
+                                                     pn (mapv #(*plain* (bare-sym %)) params)
+                                                     f (when (and *cpp-twins* (host/cpp-twins?) one-arity? nm
+                                                                  (contains? #{nil 'long} (return-hint fn-ret params))
+                                                                  (seq params)
+                                                                  (every? #(and (symbol? %) (not= '& (*plain* %))
+                                                                                (= 'long (primitive-hint (:tag (meta %)))))
+                                                                          params)
+                                                                  (mentions-sym? (*plain* (bare-sym nm)) body))
+                                                             (twin-name nm))
+                                                     code (when f (twin-cpp nm pn f body))]
+
+                                                    (if-not code
+                                                            arity
+                                                            (let [_ (swap! *cpp-twins* conj code)
+                                                                  [ps & fs] arity
+                                                                  r (gensym "twin__")
+                                                                  call (apply list (symbol "cpp" (str f "_ns." f "_entry"))
+                                                                              (map (fn [p] (list 'cpp/jank.runtime.to_int (bare-sym p))) params))]
+                                                                 (list ps (list 'let* [r (list 'if (apply list 'and (map #(kind-test 'long (bare-sym %)) params)) call nil)]
+                                                                                (list 'if (list 'nil? r)
+                                                                                      (if (next fs) (apply list 'do fs) (first fs))
+                                                                                      r)))))))
                                            arities)))]
             (if (and nm (not (:named-fn*? ctx)))
                 (list 'letfn* [nm (apply list (carry-meta 'fn* (first form)) (if single? (first arities') arities'))] nm)
@@ -2080,13 +2080,12 @@
                                     [acc env])))
              [ts env'] (step nil)]
             (if (= h 'loop*)
-                (do
-                 (loop [ts ts env' env']
-                       (let [names (keep (fn [[b _]] (when (symbol? b) (*plain* (bare-sym b)))) pairs)
-                             rs (binding [*locals* (into *locals* names)] (recur-sites env' body))
-                             ts' (binding [*locals* (into *locals* names)]
-                                          (vec (map-indexed (fn [i t] (when (and t (every? (fn [[e args]] (= t (infer-num e (nth args i nil)))) rs)) t)) ts)))]
-                            (if (= ts' ts) [ts env'] (let [[ts2 e2] (step ts')] (recur ts2 e2))))))
+                (loop [ts ts env' env']
+                      (let [names (keep (fn [[b _]] (when (symbol? b) (*plain* (bare-sym b)))) pairs)
+                            rs (binding [*locals* (into *locals* names)] (recur-sites env' body))
+                            ts' (binding [*locals* (into *locals* names)]
+                                         (vec (map-indexed (fn [i t] (when (and t (every? (fn [[e args]] (= t (infer-num e (nth args i nil)))) rs)) t)) ts)))]
+                           (if (= ts' ts) [ts env'] (let [[ts2 e2] (step ts')] (recur ts2 e2)))))
                 [ts env'])))
 
 (defn- with-hinted-locals

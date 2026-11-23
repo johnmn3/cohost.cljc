@@ -72,3 +72,31 @@ cannot run Splint) · CLJ_CONFIG=/home/hatch/workspace/eve-env/cljconfig.
   unresolved-symbol breakdown decides which teaching entries this
   config actually needs; each adopted entry lands as a named
   exception in the config header, narcis-style.
+- Nov 22 evening — census committed (494bc78); baseline gate green
+  (85aaeb7); format pass committed with token-stream proof
+  (1bd088d) and re-gated green (0cf05b5).
+- Nov 22–23 — a box-wide EDQUOT ("Disk quota exceeded") episode
+  blocked ALL writes under /home/hatch for ~40 min (filesystem had
+  27G free; the quota is the overlay's, consumed outside this
+  lane; it cleared on its own, as an earlier ~10-min episode did).
+  Work continued in a /tmp scratch copy of the clone; verified
+  results were synced back file-by-file when the window reopened.
+- **K1 (kondo small classes) DONE, gate green.** redundant-let ×4
+  (mechanical merge of nested single-body lets — lane/merge_let.py,
+  dry-run-verified per site; comments preserved), redundant-do ×2,
+  redundant-declare ×2 (the duplicate pair in boot_cljs.clj; the
+  load-bearing pair at line 262 stays), redundant-nested-call ×2
+  (io.cljc str flattening), redundant-primitive-coercion ×3
+  (pool's runtime-alive? verified to always return a strict
+  boolean at its Eve definition before removing the coercion),
+  unused-namespace ×1 (memory_eve's eve.mem require made bare —
+  the namespace is loaded for effect: eve.mem/value+sio->eve-bytes
+  is reached by requiring-resolve). Recount: kondo 214 → 200,
+  all six classes zero. Boot gate on the batch tree: signature
+  identical (595/181/66/69/0, battery 221/221, libraries 62/62,
+  exit 0).
+- **Phantom banked:** build.clj:332 redundant-str-call — kondo
+  claims `(str work)` is redundant, but `work` is bound to
+  `(.getCanonicalFile (io/file ...))`, a java.io.File; the str is
+  the conversion. Code unchanged; the site gets a reasoned ignore
+  in the exceptions batch (info level; does not block exit 0).

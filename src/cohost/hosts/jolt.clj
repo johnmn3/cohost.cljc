@@ -32,7 +32,7 @@
                                      (refer 'clojure.core :only [sym])))
       :resolve-core (fn [sym] (get (ns-publics 'clojure.core) sym))
       :macro-var? (fn [v] (.isMacro v))
-      :mark-macro! (fn [v] (do (. v (setMacro)) (alter-meta! v assoc :macro true)) v)
+      :mark-macro! (fn [v] (. v (setMacro)) (alter-meta! v assoc :macro true) v)
       :var-raw-root (fn [v] (.getRawRoot v))
       :set-dynamic! (fn [v] (.setDynamic v) (alter-meta! v assoc :dynamic true) v)
       :dynamic-var? (fn [v] (boolean (or (.isDynamic v) (:dynamic (meta v)))))

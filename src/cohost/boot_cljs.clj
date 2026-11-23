@@ -356,9 +356,6 @@
 ;; already be provided. load-namespace! walks the graph from a root
 ;; namespace, resolving sources on the boot classpath.
 
-(declare compiler-env)
-(declare realm-envs)
-
 (defn ns-source
       "The classpath resource path of cljs namespace ns-sym's source: a
    .cljs file preferred over a .cljc, the preference cljs builds

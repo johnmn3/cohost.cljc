@@ -563,7 +563,7 @@
 (defn file
       "A java.io.File over a path string."
       ([path] (assoc (->FileValue (str path) nil) :cohost/kind ::file))
-      ([parent child] (assoc (->FileValue (str (str parent) "/" (str child)) (str parent))
+      ([parent child] (assoc (->FileValue (str parent "/" child) (str parent))
                              :cohost/kind ::file)))
 
 (defn file-path [f] (:path f))

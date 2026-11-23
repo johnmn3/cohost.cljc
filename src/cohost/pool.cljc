@@ -178,7 +178,7 @@
       "Is runtime rid lease-alive at now (ms)? A runtime whose lease lapsed
    covers nothing until it beats again."
       [h rid now]
-      (boolean (mt/runtime-alive? {:runtimes (runtimes h)} rid now)))
+      (mt/runtime-alive? {:runtimes (runtimes h)} rid now))
 
 (defn descriptors
       "Every descriptor in flight, as data: {id {:pool :state :needs :scope

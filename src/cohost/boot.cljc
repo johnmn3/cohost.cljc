@@ -1364,83 +1364,83 @@
                (vreset! rw/profile-branches nil)
                (vreset! rw/profile-macro-ns nil)
                (vreset! rw/profile-macro-n nil)))
-       (let [t-boot (when (profiling) (host/nano-time))]
-            (let [[ctx report] (boot-setup! root)]
+       (let [t-boot (when (profiling) (host/nano-time)) [ctx report] (boot-setup! root)]
+
      ;; the prelude: what the JVM runtime defines before core.clj loads
-                 (host/with-ns core-ns
-                               (fn []
-                                   (doseq [[sym dflt] policy/runtime-vars]
-                                          (when-not (take-from-host! report sym)
-                                                    (eval-form! ctx report (list 'def #?(:squint sym :default (with-meta sym {:dynamic true})) dflt) sym :replaced)))))
-                 (doseq [f files]
-                        (boot-file! ctx report (str root "/" f)))
+            (host/with-ns core-ns
+                          (fn []
+                              (doseq [[sym dflt] policy/runtime-vars]
+                                     (when-not (take-from-host! report sym)
+                                               (eval-form! ctx report (list 'def #?(:squint sym :default (with-meta sym {:dynamic true})) dflt) sym :replaced)))))
+            (doseq [f files]
+                   (boot-file! ctx report (str root "/" f)))
      ;; the companion files' names: the stock definition where it is plain
      ;; Clojure, else the host's, when it has them. The wall is one region:
      ;; its read, rewrite and eval stay in the :companion bucket.
-                 (host/with-ns core-ns
-                               (fn []
-                                   (let [run-companions
-                                         (fn []
-                                             (let [stock (into {} (mapcat (fn [[file nms]] (seq (companion-forms (str root "/" file) (set nms))))
-                                                                          (group-by #(get policy/companion-stock %)
-                                                                                    (filter #(contains? policy/companion-stock %) policy/companion-names))))]
-                                                  (doseq [nm (sort policy/companion-names)]
-                                                         (if (contains? policy/companion-stock nm)
-                                                             (if-let [form (get stock nm)]
-                                                                     (process-form! ctx report form)
-                                                                     (record! report :skipped {:name nm :reason :no-host-equivalent}))
-                                                             (when-not (or (and (host/io-handles) (host/interned-var core-ns nm))
-                                                                           (take-from-host! report nm))
-                                                                       (if-let [v (get (host/core-extras) nm)]
-                                                                               (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil)
-                                                                                   (snap! {:op :extra :sym nm}))
-                                                                               (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
-                                             (scan-macros! ctx))]
-                                        (if-not (profiling)
+            (host/with-ns core-ns
+                          (fn []
+                              (let [run-companions
+                                    (fn []
+                                        (let [stock (into {} (mapcat (fn [[file nms]] (seq (companion-forms (str root "/" file) (set nms))))
+                                                                     (group-by #(get policy/companion-stock %)
+                                                                               (filter #(contains? policy/companion-stock %) policy/companion-names))))]
+                                             (doseq [nm (sort policy/companion-names)]
+                                                    (if (contains? policy/companion-stock nm)
+                                                        (if-let [form (get stock nm)]
+                                                                (process-form! ctx report form)
+                                                                (record! report :skipped {:name nm :reason :no-host-equivalent}))
+                                                        (when-not (or (and (host/io-handles) (host/interned-var core-ns nm))
+                                                                      (take-from-host! report nm))
+                                                                  (if-let [v (get (host/core-extras) nm)]
+                                                                          (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil)
+                                                                              (snap! {:op :extra :sym nm}))
+                                                                          (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
+                                        (scan-macros! ctx))]
+                                   (if-not (profiling)
+                                           (run-companions)
+                                           (let [prev (:profile-bucket @state)
+                                                 t0 (host/nano-time)]
+                                                (swap! state assoc :profile-bucket :companion)
                                                 (run-companions)
-                                                (let [prev (:profile-bucket @state)
-                                                      t0 (host/nano-time)]
-                                                     (swap! state assoc :profile-bucket :companion)
-                                                     (run-companions)
-                                                     (swap! (:profile @state) assoc-in [:walls :companion] (- (host/nano-time) t0))
-                                                     (swap! state assoc :profile-bucket prev))))))
+                                                (swap! (:profile @state) assoc-in [:walls :companion] (- (host/nano-time) t0))
+                                                (swap! state assoc :profile-bucket prev))))))
      ;; Eve's thread layer fills the concurrency names this host's core
      ;; lacked (policy/thread-names) before libraries or user code can
      ;; call them; the scan then wraps the fill's macros (future,
      ;; pvalues) like any other booted macro
-                 (install-thread-layer! report)
+            (install-thread-layer! report)
      ;; Eve's atom layer (unit 5), when the boot opts ask for it:
      ;; the registry is minted and the booted namespaces published
      ;; before libraries or user code can intern or create atoms
-                 (install-atom-layer! ctx report eve-atoms)
-                 (install-http-layer! report)
-                 (install-shim-layer! report)
+            (install-atom-layer! ctx report eve-atoms)
+            (install-http-layer! report)
+            (install-shim-layer! report)
      ;; a host whose print/read machinery takes only its own handles: the
      ;; print-method / print-dup methods of core.clj's companion core_print
      ;; (after the shim layer: print-throwable calls its Throwable->map)
-                 (when (host/io-handles)
-                       (boot-print-file! ctx report (str root "/clojure/core_print.clj")))
-                 (install-io-layer! ctx report)
-                 (when (host/io-handles)
-                       (host/with-ns core-ns
-                                     (fn []
-                                         (io/install-print-vars!)
-                                         (eval-form! ctx report fast-pr-on-form 'pr-on :replaced)
-                                         (eval-form! ctx report fast-with-out-str-form 'with-out-str :replaced)
-                                         (eval-form! ctx report fast-prn-form 'prn :replaced))))
-                 (scan-macros! ctx)
-                 (install-host-reducers!)
-                 (install-eduction-reduce!)
-                 (reset! (:booted? ctx) true)
-                 (let [r (assoc @report
-                                :rewrite-misses (rw/misses ctx)
-                                :host-name (host/host-name)
-                                :eve-collections (:eve-collections @state))]
-                      (when t-boot
-                            (swap! (:profile @state) assoc :boot-wall (- (host/nano-time) t-boot)))
-                      (swap! state assoc :report r)
-                      (snap! {:op :end :data (snap-state r)})
-                      r)))))
+            (when (host/io-handles)
+                  (boot-print-file! ctx report (str root "/clojure/core_print.clj")))
+            (install-io-layer! ctx report)
+            (when (host/io-handles)
+                  (host/with-ns core-ns
+                                (fn []
+                                    (io/install-print-vars!)
+                                    (eval-form! ctx report fast-pr-on-form 'pr-on :replaced)
+                                    (eval-form! ctx report fast-with-out-str-form 'with-out-str :replaced)
+                                    (eval-form! ctx report fast-prn-form 'prn :replaced))))
+            (scan-macros! ctx)
+            (install-host-reducers!)
+            (install-eduction-reduce!)
+            (reset! (:booted? ctx) true)
+            (let [r (assoc @report
+                           :rewrite-misses (rw/misses ctx)
+                           :host-name (host/host-name)
+                           :eve-collections (:eve-collections @state))]
+                 (when t-boot
+                       (swap! (:profile @state) assoc :boot-wall (- (host/nano-time) t-boot)))
+                 (swap! state assoc :report r)
+                 (snap! {:op :end :data (snap-state r)})
+                 r))))
 
 (defn profile-section!
       "Run thunk in profile bucket k and record its wall time. A no-op addition
