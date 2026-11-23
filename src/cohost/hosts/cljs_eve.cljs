@@ -528,7 +528,7 @@
             ((thread/conveyed b (fn [] (apply f argv))))))
 
 (defn- run-and-publish! [t opts]
-       (let [{:keys [inbox outbox]} (:mail @R)
+       (let [{:keys [outbox]} (:mail @R)
              id (:id t)
              o (try {:ok (encode (run-task t opts))}
                     (catch :default e (error-outcome e)))

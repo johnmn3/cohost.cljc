@@ -1690,7 +1690,7 @@
    evaluates them as top-level forms, in the new namespace, before the
    next form. ns! collects these only under :cpp?; on every other host
    the clauses are dropped silently."
-       [target clauses]
+       [_target clauses]
        (doseq [[k & args] clauses]
               (case k
                     :include (doseq [h args]
@@ -2142,7 +2142,7 @@
 
 (defn snap-lib-begin!
       "A library module, first: what load-lib! does before the source."
-      [lib target path parent]
+      [lib target path _parent]
   ;; what is loading now (not the recorded parent: a module can load inside
   ;; another library's load at run time), restored by snap-lib-end!
       (swap! state update ::snap-outer (fnil conj []) (:loading @state))
@@ -2153,7 +2153,7 @@
 
 (defn snap-lib-end!
       "A library module, last: its load-lib! entry and the loader's state."
-      [lib entry data parent]
+      [lib entry data _parent]
       (snap-restore! data)
       (swap! state assoc-in [:libs lib] entry)
   ;; last/butlast, not peek/pop: Phel's pop is another fn (3 arguments)

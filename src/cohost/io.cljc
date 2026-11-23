@@ -1079,12 +1079,11 @@
   native, ~7x when compared to a single native prn). Other hosts still
   swap! a chunk vector and join once at read."
        [state k t]
-       (let [s (str t)
-             st @state
-             buf (get st k)]
-            #?(:clj (if (instance? StringBuilder buf)
-                        (do (.append ^StringBuilder buf s) nil)
-                        (swap! state update k text-buf-append s))
+       (let [s (str t)]
+            #?(:clj (let [buf (get @state k)]
+                         (if (instance? StringBuilder buf)
+                             (do (.append ^StringBuilder buf s) nil)
+                             (swap! state update k text-buf-append s)))
                :default (swap! state update k text-buf-append s))))
 
 (defn- writer-state-atom
@@ -1097,12 +1096,12 @@
                      :else (state-of w))
           :default (state-of w)))
 
-(defn- string-builder-under
-       "A StringWriter's buffer, when it lives on the record (JVM string-writer)."
-       [w]
-       #?(:clj (let [u (if (instance? WriterValue w) (.under ^WriterValue w) nil)]
-                    (when (instance? StringBuilder u) u))
-          :default nil))
+#?(:clj (defn- string-builder-under
+               "A StringWriter's buffer, when it lives on the record (JVM string-writer)."
+               [w]
+               (let [u (if (instance? WriterValue w) (.under ^WriterValue w) nil)]
+                    (when (instance? StringBuilder u) u)))
+   :default (defn- string-builder-under [_w] nil))
 
 (defn- append-text-slow!
        [w t]
@@ -1286,6 +1285,10 @@
                  (pr* x)
                  nil)))
 
+;; The flag params live in the :clj arm; the :default arm is nil
+;; (non-JVM seats route pr-on to the fallback — see "takes its
+;; :default (fallback) arm" above), so they read unused there.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn fast-pr-on!
       "Host-compiled pr-on for the common types. The earlier booted seat's
    (instance? clojure.lang.IPersistentMap x) went through the shim's
@@ -1682,13 +1685,15 @@
          :default
          (do #_{:clj-kondo/ignore [:unresolved-symbol]} (pop-thread-bindings) nil)))
 
-(defn append-newline!
-      "Write the platform newline to w. Layer writers use append-text!;
+#?(:clj (defn append-newline!
+              "Write the platform newline to w. Layer writers use append-text!;
    anything else (pretty-writer, a real java.io.Writer) uses .append."
-      [w]
-      #?(:clj (do (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+              [w]
+              (do (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
                       (append-text! w system-newline)
-                      (.append ^java.lang.Appendable w (str system-newline))) nil) :default nil))
+                      (.append ^java.lang.Appendable w (str system-newline)))
+                  nil))
+   :default (defn append-newline! [_w] nil))
 
 (defn flush-writer! [w]
   ;; A JVM StringWriter with its buffer on `under` has no state atom.
@@ -1705,22 +1710,24 @@
                      (:handle st) (host/io-flush! ((:handle st))))
                nil)))
 
-(defn flush-any!
-      "Flush w without re-reading *out*. Layer writers use flush-writer!;
+#?(:clj (defn flush-any!
+              "Flush w without re-reading *out*. Layer writers use flush-writer!;
    a java.io.Flushable gets .flush; anything else is a no-op."
-      [w]
-      #?(:clj (do (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+              [w]
+              (do (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
                       (flush-writer! w)
                       (when (instance? java.io.Flushable w)
-                            (.flush ^java.io.Flushable w))) nil) :default nil))
+                            (.flush ^java.io.Flushable w)))
+                  nil))
+   :default (defn flush-any! [_w] nil))
 
-(defn pr-on-any!
-      "Host pr-on of x onto an already-read writer w. Print flags are
+#?(:clj (defn pr-on-any!
+              "Host pr-on of x onto an already-read writer w. Print flags are
    snapshotted once per binding frame (not per nested value). A
    binding inside print-method / print-sequential changes the frame,
    so the next call sees the new values. *out* is not reread."
-      [x w]
-      #?(:clj (do (let [^objects snap (snapshot-print-flags)]
+              [x w]
+              (do (let [^objects snap (snapshot-print-flags)]
                        (if (aget snap 1)
                            (let [^clojure.lang.Var pdf (aget ^objects print-vs 9)]
                                 ((.deref pdf) x w))
@@ -1730,7 +1737,9 @@
                                         (aget snap 4)
                                         (aget snap 5)
                                         (aget snap 6)
-                                        fallback-print-method))) nil) :default nil))
+                                        fallback-print-method)))
+                  nil))
+   :default (defn pr-on-any! [_x _w] nil))
 
 (defn- current-out
        ^Object []
@@ -1745,16 +1754,15 @@
        #?(:clj (aget ^objects (snapshot-print-flags) 7)
           :default nil))
 
-(defn- needs-flush?
-       "prn's *flush-on-newline* flush. A StringWriter whose buffer is on
+#?(:clj (defn- needs-flush?
+               "prn's *flush-on-newline* flush. A StringWriter whose buffer is on
    `under` is a no-op in flush-writer!; skip the call."
-       [w]
-       #?(:clj
-          (if (and (instance? WriterValue w)
-                   (instance? StringBuilder (.under ^WriterValue w)))
-              false
-              (boolean (flush-on-newline?)))
-          :default (boolean (flush-on-newline?))))
+               [w]
+               (if (and (instance? WriterValue w)
+                        (instance? StringBuilder (.under ^WriterValue w)))
+                   false
+                   (boolean (flush-on-newline?))))
+   :default (defn- needs-flush? [_w] (boolean (flush-on-newline?))))
 
 (defn prn0!
       "0-arg prn: newline + optional flush, *out* read once."

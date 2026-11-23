@@ -266,7 +266,7 @@
 
 ;; get-thread-bindings: each var a frame binds, at its current (innermost) value
 (defn- thread-bindings []
-       (into {} (for [[ns nm :as k] (distinct (mapcat keys @binding-frames))]
+       (into {} (for [[ns nm] (distinct (mapcat keys @binding-frames))]
                      [(Var. (fn [] (js-path ns nm)) (symbol (str ns) (str nm)) nil) (js-path ns nm)])))
 
 (defn- thread-bound? [h]

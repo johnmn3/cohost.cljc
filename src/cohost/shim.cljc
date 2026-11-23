@@ -614,28 +614,29 @@
 ;; and it must not pay the capability map lookup per call either
 (def ^:private h-instance-desc (host/capability :instance-desc))
 
-(defn- jank-impl?
-       "On a :cohost-types host, does x's type implement k (:seq :get :assoc
+#?(:jank (defn- jank-impl?
+                "On a :cohost-types host, does x's type implement k (:seq :get :assoc
    :count :nth :conj :reduce :compare)? Never elsewhere."
-       [x k]
-       #?(:jank (boolean (and (h-cohost-inst? x)
-                              (when-let [d (h-instance-desc x)] (get d k))))
-          :default false))
+                [x k]
+                (boolean (and (h-cohost-inst? x)
+                              (when-let [d (h-instance-desc x)] (get d k)))))
+   :default (defn- jank-impl? [_x _k] false))
 
-(defn- cohost-inst?
-       "Is x a cohost type instance? On jank several of the host's own
+#?(:jank (defn- cohost-inst?
+                "Is x a cohost type instance? On jank several of the host's own
    predicates (coll?, associative?, sequential?, counted?, empty?) abort
    the process on such an object, so the shim asks this first."
-       [x]
-       #?(:jank (h-cohost-inst? x) :default false))
+                [x]
+                (h-cohost-inst? x))
+   :default (defn- cohost-inst? [_x] false))
 
-(defn- jank-head?
-       "On a :cohost-types host, did x's type name the class token among its
+#?(:jank (defn- jank-head?
+                "On a :cohost-types host, did x's type name the class token among its
    spec heads?"
-       [x token]
-       #?(:jank (boolean (and (h-cohost-inst? x)
-                              (when-let [d (h-instance-desc x)] (contains? (:heads d) token))))
-          :default false))
+                [x token]
+                (boolean (and (h-cohost-inst? x)
+                              (when-let [d (h-instance-desc x)] (contains? (:heads d) token)))))
+   :default (defn- jank-head? [_x _token] false))
 
 (defn- coll?*
        "coll? that is safe on a cohost type instance (the host's aborts on one):
@@ -1153,7 +1154,7 @@
 (def Numbers-gte >=)
 (def Numbers-equiv
      (fn ([] true)
-         ([x] true)
+         ([_x] true)
          ([x y] (== x y))
          ([x y & more] (and (== x y) (apply Numbers-equiv y more)))))
 (def Numbers-isZero zero?)
@@ -2510,7 +2511,7 @@
              "ISO-8859-1" (apply str (map (fn [i] (char-str (ubyte bs i)))
                                           (range off (+ off len))))))
 (defn- encode-utf8-bytes [s]
-       (let [units (map code-of (seq s)) n (count units)]
+       (let [units (map code-of (seq s))]
             (loop [us (seq units) out []]
                   (if (nil? us)
                       out
@@ -4346,11 +4347,14 @@
                          :else (name x))))
 (def -getMappings (host-fn 'ns-map (unsupported "ns-map")))
 (def -getAliases (host-fn 'ns-aliases (fn [_] {})))
-(def -addAlias (let [al (host-fn 'alias nil)]
-                    (fn [ns a target]
-                        #?(:cljs ((unsupported "alias"))
-                           :default (if al (binding [*ns* (host/the-ns* ns)] (al a (if (h-namespace? target) (host/ns-name* target) target)))
-                                        ((unsupported "alias")))))))
+;; on the cljs pass the body is the unsupported throw, so the let's
+;; al and the fn's params read unused there; they are the live
+;; bindings of the :default arm.
+(def -addAlias #_{:clj-kondo/ignore [:unused-binding]} (let [al (host-fn 'alias nil)]
+                                                            (fn [ns a target]
+                                                                #?(:cljs ((unsupported "alias"))
+                                                                   :default (if al (binding [*ns* (host/the-ns* ns)] (al a (if (h-namespace? target) (host/ns-name* target) target)))
+                                                                                ((unsupported "alias")))))))
 (def -removeAlias (host-fn 'ns-unalias (unsupported "ns-unalias")))
 (def -intern (fn [ns sym] (host/intern! ns sym nil)))
 (def -unmap (host-fn 'ns-unmap (unsupported "ns-unmap")))
@@ -4712,6 +4716,9 @@
                                        r (if (own? x) (host/invoke-member x m (into [a b c] more) absent) absent)]
                                       (if (identical? r absent) (apply f x a b c more) r))))))
 
+;; vars is unused on ClojureScript (see the docstring): the cljs
+;; arm reads the namespace object's property instead.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn shim-value
       "The value of the shim var named nm (a string). vars: (host/ns-interns-map
    'cohost.shim), unused on ClojureScript, where it is the namespace object's

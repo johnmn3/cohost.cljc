@@ -77,6 +77,10 @@
            (.update md bs)
            (apply str (map (fn [b] (format "%02x" b)) (.digest md)))))
 
+;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
+;; it); it has no cljs arm, so in kondo's cljs pass this def's
+;; #?-body reads empty and its params read unused.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn- file-bytes [f]
        #?(:clj (with-open [in (io/input-stream f)]
                           (let [out (java.io.ByteArrayOutputStream.)]
@@ -97,6 +101,10 @@
                   (.update md (file-bytes f)))
            (apply str (map (fn [b] (format "%02x" b)) (.digest md)))))
 
+;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
+;; it); it has no cljs arm, so in kondo's cljs pass this def's
+;; #?-body reads empty and its params read unused.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn artifact-dir
       "The artifact directory of a sister + stamp under the shared cache root."
       [sister stamp]
@@ -110,12 +118,24 @@
       [entry]
       (str (-> (str entry) (str/replace "-" "_") (str/replace "." "/")) "__init.class"))
 
+;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
+;; it); it has no cljs arm, so in kondo's cljs pass this def's
+;; #?-body reads empty and its params read unused.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn- path-exists? [f]
        #?(:clj (.exists (io/file f)) :bb (fs/exists? f)))
 
+;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
+;; it); it has no cljs arm, so in kondo's cljs pass this def's
+;; #?-body reads empty and its params read unused.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn- mkdirs [f]
        #?(:clj (.mkdirs (io/file f)) :bb (fs/create-dirs f)))
 
+;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
+;; it); it has no cljs arm, so in kondo's cljs pass this def's
+;; #?-body reads empty and its params read unused.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn- try-mkdir!
        "One lock-acquisition attempt: true when this process made the
    directory. A defn of its own, like path-exists? and mkdirs above, so
@@ -123,6 +143,10 @@
        [f]
        #?(:clj (.mkdir (io/file f)) :bb (.mkdir (java.io.File. f))))
 
+;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
+;; it); it has no cljs arm, so in kondo's cljs pass this def's
+;; #?-body reads empty and its params read unused.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn- delete-tree [f]
        #?(:clj (let [f (io/file f)]
                     (when (.isDirectory f)
@@ -130,6 +154,10 @@
                     (io/delete-file f true))
           :bb  (fs/delete-tree f)))
 
+;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
+;; it); it has no cljs arm, so in kondo's cljs pass this def's
+;; #?-body reads empty and its params read unused.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn- rename [from to]
        #?(:clj (.renameTo (io/file from) (io/file to))
           :bb  (fs/move from to)))

@@ -174,24 +174,24 @@
 
 (defn- read-string-lit [cs i]
   ;; i at the opening quote; returns [string next-i]
-       (let [n (count cs)]
-            (loop [j (inc i) sb []]
-                  (let [c (nth cs j)]
-                       (cond
-                        (= c "\"") [(apply str sb) (inc j)]
-                        (= c "\\")
-                        (let [e (nth cs (inc j))]
-                             (case e
-                                   "n" (recur (+ j 2) (conj sb "\n"))
-                                   "t" (recur (+ j 2) (conj sb "\t"))
-                                   "r" (recur (+ j 2) (conj sb "\r"))
-                                   "b" (recur (+ j 2) (conj sb "\b"))
-                                   "f" (recur (+ j 2) (conj sb "\f"))
-                                   "\\" (recur (+ j 2) (conj sb "\\"))
-                                   "\"" (recur (+ j 2) (conj sb "\""))
-                                   "u" (recur (+ j 6) (conj sb (js/String.fromCharCode (js/parseInt (apply str (subvec cs (+ j 2) (+ j 6))) 16))))
-                                   (recur (+ j 2) (conj sb e))))
-                        :else (recur (inc j) (conj sb c)))))))
+
+       (loop [j (inc i) sb []]
+             (let [c (nth cs j)]
+                  (cond
+                   (= c "\"") [(apply str sb) (inc j)]
+                   (= c "\\")
+                   (let [e (nth cs (inc j))]
+                        (case e
+                              "n" (recur (+ j 2) (conj sb "\n"))
+                              "t" (recur (+ j 2) (conj sb "\t"))
+                              "r" (recur (+ j 2) (conj sb "\r"))
+                              "b" (recur (+ j 2) (conj sb "\b"))
+                              "f" (recur (+ j 2) (conj sb "\f"))
+                              "\\" (recur (+ j 2) (conj sb "\\"))
+                              "\"" (recur (+ j 2) (conj sb "\""))
+                              "u" (recur (+ j 6) (conj sb (js/String.fromCharCode (js/parseInt (apply str (subvec cs (+ j 2) (+ j 6))) 16))))
+                              (recur (+ j 2) (conj sb e))))
+                   :else (recur (inc j) (conj sb c))))))
 
 (def ^:private char-names
      {"newline" "\n" "space" " " "tab" "\t" "return" "\r"
@@ -285,7 +285,7 @@
                    (let [[v j2] (read-form* cs j)]
                         (recur (skip-ws cs j2) (if (= v ::skip) acc (conj acc v))))))))
 
-(defn- read-reader-cond [cs i ns-sym in-coll?]
+(defn- read-reader-cond [cs i _ns-sym _in-coll?]
   ;; i at '#', next is '?'; returns [value next-i splicing?]
        (let [splicing? (= (nth cs (+ i 2)) "@")
              [form j] (read-form* cs (+ i (if splicing? 3 2)))
@@ -307,7 +307,7 @@
                                 (when (and (not nested?) (string/starts-with? s "%"))
                                       (swap! refs conj s)))
                            (seq? f) (let [nested?' (or nested? (= (first f) 'fn*) (and (seq? f) (symbol? (first f)) (= (str (first f)) "fn")))]
-                                         (doseq [e f] (walk e nested?)))
+                                         (doseq [e f] (walk e nested?')))
                            (coll? f) (doseq [e f] (walk e nested?))
                            :else nil))]
                    (walk form false)

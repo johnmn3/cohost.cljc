@@ -307,7 +307,7 @@
       "HttpClient.send: one round trip through Eve's leaf. The handler decides
    the body: ofString the text, ofByteArray / ofInputStream the bytes (on a
    host with byte streams), discarding nil."
-      [client req handler]
+      [_client req handler]
       (let [as (:as handler)
             want-bytes? (and (contains? #{:bytes :input-stream} as) (streams))
         ;; ofByteArray on a host without byte streams of its own: the body's

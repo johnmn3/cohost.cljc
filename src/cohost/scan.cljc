@@ -182,7 +182,7 @@
    conditional, its best-ranked branch in place (a #?@ branch's collection by
    its elements) and the rest blank; spans are [start end key] of each branch
    taken, in src's indices."
-       [src cs i ranking]
+       [_src cs i ranking]
        (let [splice? (= \@ (at cs (+ i 2)))
              end (form-end cs i)
              open (skip-ws cs (+ i (if splice? 3 2)))

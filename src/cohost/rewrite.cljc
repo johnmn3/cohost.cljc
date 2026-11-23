@@ -2812,7 +2812,7 @@
        "(defprotocol P (m [x] [x y] \"doc\") ...). On a :python host the receiver
    of every signature is named this: the host counts a protocol method's
    arity from it, and matches a reify / deftype member by that count."
-       [ctx [h nm & more]]
+       [_ctx [h nm & more]]
        (apply list h nm
               (map (fn [x]
                        (if (and (seq? x) (symbol? (first x)))

@@ -7,6 +7,9 @@
     #?(:clj (:require [eve.region :as region]
                       [eve.mem :as mem])))
 
+;; offset/length are used by the :clj arm (the only arm so far —
+;; see the docstring); they read unused in the other passes.
+#_{:clj-kondo/ignore [:unused-binding]}
 (defn read-bytes
       "The bytes of the region file at path, [offset, offset+length): the
    file mapped, the range read in place. Answers a byte array on the
