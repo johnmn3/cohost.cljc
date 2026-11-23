@@ -44,7 +44,8 @@
      java.nio.file (the fork's dependency analysis rejects
      File.toPath in this namespace -- registration landing, in-body
      build). The InputStream arm is the JVM shape unchanged."
-    (:require [cohost.adapter :as adapter]
+    (:require [clojure.string]
+              [cohost.adapter :as adapter]
               [cohost.hosts.java :as java]))
 
 (defn- read-forms [src cb]

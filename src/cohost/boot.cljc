@@ -1112,6 +1112,7 @@
    A collection that is IReduceInit but not IReduce reduces through the seq."
        []
        #?(:clj
+          #_{:clj-kondo/ignore [:unresolved-namespace]}
           (extend-type clojure.lang.IReduceInit
                        clojure.core.protocols/CollReduce
                        (coll-reduce

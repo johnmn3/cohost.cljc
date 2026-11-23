@@ -66,6 +66,10 @@
                                 (str (fs/home)))
                             ".cache" "cohost"))))
 
+;; MessageDigest is a JDK class and format is clojure.core/format:
+;; both resolve on the seats that load aot (clj and bb drivers);
+;; kondo flags them only in passes that never load this file.
+#_{:clj-kondo/ignore [:unresolved-namespace :unresolved-symbol]}
 (defn sha256-hex
       "The sha256 of a byte array, lowercase hex."
       [^bytes bs]
@@ -157,7 +161,7 @@
                                     (finally (delete-tree lock)))
                                dir)
                            (and (path-exists? lock)
-                                (> (- (System/currentTimeMillis)
+                                (> (- #_{:clj-kondo/ignore [:unresolved-namespace]} (System/currentTimeMillis)
                                       #?(:clj (.lastModified (io/file lock)) :bb (.lastModified (java.io.File. lock))))
                                    lock-timeout-ms))
                            (do (delete-tree lock) (recur waited))
@@ -165,4 +169,4 @@
                            (throw (ex-info (str "cohost.aot: timed out waiting for the " (name sister)
                                                 " AOT build lock " lock)
                                            {:sister sister :stamp stamp}))
-                           :else (do (Thread/sleep 500) (recur (+ waited 500)))))))))
+                           :else (do #_{:clj-kondo/ignore [:unresolved-namespace]} (Thread/sleep 500) (recur (+ waited 500)))))))))

@@ -2,7 +2,8 @@
     "JVM Clojure as a host: the reference adapter. Booting the stock core.clj on
    the JVM through cohost maps clojure.lang onto clojure.lang, which
    exercises the codemod, the policy and the boot with no host unknowns."
-    (:require [cohost.adapter :as adapter]
+    (:require [clojure.string]
+              [cohost.adapter :as adapter]
               [cohost.hosts.java :as java]))
 
 (defn- read-forms [src cb]

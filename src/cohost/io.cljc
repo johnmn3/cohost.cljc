@@ -378,6 +378,9 @@
                                           (char (+ 0xD800 (bit-shift-right v 10))))
                                      (char cp))))))))
 
+;; StringBuilder (the :default arm) is the class hosts' buffer;
+;; the squint pass has no such class — see the docstring.
+#_{:clj-kondo/ignore [:unresolved-symbol]}
 (defn- line-buffer
        "The read-line loops' accumulator: a StringBuilder on the class
    hosts. Squint's analyzer resolves no StringBuilder class and JS
@@ -1362,6 +1365,9 @@
 ;; 4 *print-namespace-maps*, 5 *print-meta*, 6 *print-readably*,
 ;; 7 *flush-on-newline*, 8 print-method, 9 print-dup
 
+;; ns-resolve is a var of the booted/JVM core this machinery runs
+;; against; cljs.core's static model has no such var.
+#_{:clj-kondo/ignore [:unresolved-symbol]}
 (defn- resolve-core-var [nm]
        (ns-resolve 'cohost.core nm))
 
@@ -1390,6 +1396,8 @@
            (aset vs 9 (resolve-core-var 'print-dup))
            nil))
 
+;; print-method: same booted-core var family as resolve-core-var.
+#_{:clj-kondo/ignore [:unresolved-symbol]}
 (defn- fallback-print-method [x w]
        (let [f (aget ^objects print-vs 8)]
             (if f (f x w) (print-method x w))))
@@ -1656,7 +1664,7 @@
                        (.set ^ThreadLocal out-save (cons neu (.get ^ThreadLocal out-save)))
                        nil)))
          :default
-         (do (push-thread-bindings {(out-var) s}) nil)))
+         (do #_{:clj-kondo/ignore [:unresolved-symbol]} (push-thread-bindings {(out-var) s}) nil)))
 
 (defn pop-out!
       []
@@ -1670,7 +1678,7 @@
                   (.set ^clojure.lang.Var (out-var) old))
               nil)
          :default
-         (do (pop-thread-bindings) nil)))
+         (do #_{:clj-kondo/ignore [:unresolved-symbol]} (pop-thread-bindings) nil)))
 
 (defn append-newline!
       "Write the platform newline to w. Layer writers use append-text!;

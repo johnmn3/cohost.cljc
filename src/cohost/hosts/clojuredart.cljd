@@ -1,5 +1,5 @@
 (ns cohost.hosts.clojuredart
-  "The ClojureDart adapter: cohost on ClojureDart 0.9 (Dart 3.14).
+    "The ClojureDart adapter: cohost on ClojureDart 0.9 (Dart 3.14).
    ClojureDart is compiled ahead of time: no eval, no runtime
    namespace registry, no read-string in cljd.core (the reader is
    cljd.reader's). What the stock adapter shape assumes from a
@@ -17,59 +17,65 @@
      program runs no bare top-level forms (the platform fact
      Bucket B measured for Eve), so a top-level (install! ...) in
      this file would never execute."
-  (:require [cohost.cljd-completion]
-            [cohost.adapter :as adapter]
-            [cohost.scan :as scan]
-            ["dart:io" :as io]
-            ["dart:math" :as math]))
+    (:require [cohost.cljd-completion]
+              [cohost.adapter :as adapter]
+              [cohost.scan :as scan]
+              ["dart:io" :as io]
+              ["dart:math" :as math]))
 
 (defn- unsupported [k]
-  (fn [& _]
-    (throw (ex-info (str "cohost: no " k " in a compiled ClojureDart program")
-                    {:cohost/unsupported k}))))
+       (fn [& _]
+           (throw (ex-info (str "cohost: no " k " in a compiled ClojureDart program")
+                           {:cohost/unsupported k}))))
 
 (defn- read-forms [src cb]
-  (let [cs (vec src) n (count cs)]
-    (loop [i (scan/skip-ws cs 0)]
-      (when (< i n)
-        (let [j (scan/form-end cs i)
-              f (cohost.cljd-completion/read-string (subs src i j))]
-          (when (some? f) (cb f))
-          (recur (scan/skip-ws cs j)))))))
+       (let [cs (vec src) n (count cs)]
+            (loop [i (scan/skip-ws cs 0)]
+                  (when (< i n)
+                        (let [j (scan/form-end cs i)
+                              f (cohost.cljd-completion/read-string (subs src i j))]
+                             (when (some? f) (cb f))
+                             (recur (scan/skip-ws cs j)))))))
 
+;; Stopwatch is dart:core's class, constructed the Dart way.
+#_{:clj-kondo/ignore [:unresolved-symbol]}
 (def ^:private stopwatch (doto (Stopwatch.) (.start)))
 
+;; The adapter table names cljd.core protocols (ITransientCollection,
+;; IAtom) and dart:core types (DateTime, int, double as namespaces):
+;; Dart host names kondo cannot resolve from Clojure sources.
+#_{:clj-kondo/ignore [:unresolved-symbol :unresolved-namespace]}
 (def adapter
-  {:name :cljd
-   :core-ns 'cljd.core
-   :catch-all 'dynamic
-   :read-forms read-forms
-   :ensure-bare-ns! (unsupported :ensure-bare-ns!)
-   :refer-from-core! (unsupported :refer-from-core!)
-   :resolve-core (unsupported :resolve-core)
-   :lazy-seq (fn [f] (lazy-seq (f)))
-   :delay (fn [f] (delay (f)))
-   :exception? (fn [x] (or (instance? Exception x) (instance? Error x) (some? (ex-data x))))
-   :transient? (fn [x] (satisfies? ITransientCollection x))
-   :lazy-seq? (fn [x] (let [t (str (.-runtimeType x))] (or (= "LazySeq" t) (.startsWith t "LazySeq<"))))
-   :atom? (fn [x] (satisfies? IAtom x))
+     {:name :cljd
+      :core-ns 'cljd.core
+      :catch-all 'dynamic
+      :read-forms read-forms
+      :ensure-bare-ns! (unsupported :ensure-bare-ns!)
+      :refer-from-core! (unsupported :refer-from-core!)
+      :resolve-core (unsupported :resolve-core)
+      :lazy-seq (fn [f] (lazy-seq (f)))
+      :delay (fn [f] (delay (f)))
+      :exception? (fn [x] (or (instance? Exception x) (instance? Error x) (some? (ex-data x))))
+      :transient? (fn [x] (satisfies? ITransientCollection x))
+      :lazy-seq? (fn [x] (let [t (str (.-runtimeType x))] (or (= "LazySeq" t) (.startsWith t "LazySeq<"))))
+      :atom? (fn [x] (satisfies? IAtom x))
    ;; measured/idiomatic overrides (optional caps)
-   :volatile? (fn [x] (volatile? x))
-   :delay? (fn [x] (delay? x))
-   :reduced? (fn [x] (reduced? x))
-   :exit (fn [code] (io/exit code))
-   :nano-time (fn [] (* 1000 (.-elapsedMicroseconds stopwatch)))
-   :current-time-millis (fn [] (.-millisecondsSinceEpoch (DateTime.now)))
-   :math-ceil (fn [x] (.ceil (double x)))
-   :math-floor (fn [x] (.floor (double x)))
-   :math-sqrt (fn [x] (math/sqrt (double x)))
-   :parse-long (fn [s] (int/tryParse s))
-   :parse-double (fn [s] (double/tryParse s))
-   :nan? (fn [x] (and (number? x) (.-isNaN (double x))))
-   :infinite? (fn [x] (and (number? x) (.-isInfinite (double x))))
-   :index-of (fn [s sub from] (.indexOf s sub from))
-   :thread-self (fn [] :main-isolate)})
+      :volatile? (fn [x] (volatile? x))
+      :delay? (fn [x] (delay? x))
+      :reduced? (fn [x] (reduced? x))
+      :exit (fn [code] (io/exit code))
+      :nano-time (fn [] (* 1000 (.-elapsedMicroseconds stopwatch)))
+      :current-time-millis (fn [] (.-millisecondsSinceEpoch (DateTime.now)))
+      :math-ceil (fn [x] (.ceil (double x)))
+      :math-floor (fn [x] (.floor (double x)))
+      :math-sqrt (fn [x] (math/sqrt (double x)))
+      :parse-long (fn [s] (int/tryParse s))
+      :parse-double (fn [s] (double/tryParse s))
+      :nan? (fn [x] (and (number? x) (.-isNaN (double x))))
+      :infinite? (fn [x] (and (number? x) (.-isInfinite (double x))))
+      :index-of (fn [s sub from] (.indexOf s sub from))
+      :thread-self (fn [] :main-isolate)})
 
 (defn install! []
-  (adapter/install! adapter)
-  true)
+      (adapter/install! adapter)
+      true)

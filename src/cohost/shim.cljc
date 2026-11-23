@@ -2038,7 +2038,7 @@
     ;; an atom (see -alter below), so the write is the swap! -alter
     ;; performs, spelled directly.
          #?(:squint (swap! (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v)
-            :default (alter (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v))
+            :default #_{:clj-kondo/ignore [:unresolved-symbol]} (alter (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v))
          v))
 
 (defn- strip-ns [named]
