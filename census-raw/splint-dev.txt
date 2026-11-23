@@ -1,0 +1,1902 @@
+WARNING: Proxy info is of authenticated type - discarding the user/pw as we do not support it!
+WARNING: Proxy info is of authenticated type - discarding the user/pw as we do not support it!
+dev/bench_programs.clj:199:10 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.pid (java.lang.ProcessHandle/current))
+Consider using:
+(CLASS/.pid (java.lang.ProcessHandle/current))
+
+dev/bench_programs.clj:447:44 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toURI (fs/file (fs/absolutize (str root "/page.html"))))
+Consider using:
+(CLASS/.toURI (fs/file (fs/absolutize (str root "/page.html"))))
+
+dev/bench_programs.clj:660:53 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/bench_programs.clj:671:53 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/bench_programs.clj:729:36 [style/prefer-clj-math] - Use the `clojure.math` function instead of interop.
+Math/exp
+Consider using:
+clojure.math/exp
+
+dev/bench_programs.clj:729:65 [style/prefer-clj-math] - Use the `clojure.math` function instead of interop.
+Math/log
+Consider using:
+clojure.math/log
+
+dev/bench_report.clj:42:64 [style/prefer-clj-math] - Use the `clojure.math` function instead of interop.
+Math/exp
+Consider using:
+clojure.math/exp
+
+dev/bench_report.clj:42:93 [style/prefer-clj-math] - Use the `clojure.math` function instead of interop.
+Math/log
+Consider using:
+clojure.math/log
+
+dev/bench_report.clj:43:74 [style/prefer-clj-math] - Use the `clojure.math` function instead of interop.
+Math/round
+Consider using:
+clojure.math/round
+
+dev/build_squint.clj:17:1 [naming/single-segment-namespace] - build-squint is a single segment. Consider adding an additional segment.
+(ns build-squint
+  (:require [babashka.fs :as fs] [babashka.process :as p] [clojure.string :as str]))
+
+dev/build_squint.clj:92:67 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toMillis (fs/last-modified-time f))
+Consider using:
+(CLASS/.toMillis (fs/last-modified-time f))
+
+dev/build_squint.clj:96:27 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toMillis (fs/last-modified-time "dev/build_squint.clj"))
+Consider using:
+(CLASS/.toMillis (fs/last-modified-time "dev/build_squint.clj"))
+
+dev/build_squint.clj:133:35 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toPath (fs/file f))
+Consider using:
+(CLASS/.toPath (fs/file f))
+
+dev/clj_body_test.clj:27:3 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.setExecutable (java.io.File. (str path)) true)
+Consider using:
+(CLASS/.setExecutable (java.io.File. (str path)) true)
+
+dev/clj_body_test.clj:541:5 [lint/identical-branches] - Two adjacent branches are identical
+((and (seq? form) (= 'quote (first form)))
+ []
+ (and (seq? form) (#{'clojure.core/quote} (first form)))
+ [])
+Consider using:
+((or (and (seq? form) (= 'quote (first form)))
+     (and (seq? form) (#{'clojure.core/quote} (first form))))
+ [])
+
+dev/clj_body_test.clj:612:13 [style/not-some-pred] - Use `not-any?` instead of recreating it.
+(not
+ (some #(str/includes? % "archive.ss") (cohost.clj-body/champaca-loaded-rels (str dir))))
+Consider using:
+(not-any?
+ #(str/includes? % "archive.ss")
+ (cohost.clj-body/champaca-loaded-rels (str dir)))
+
+dev/cljs_parity/app_cljc_check.clj:73:44 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (str "THREW: " (ex-message t)))
+
+dev/cljs_parity/app_cljc_check.clj:74:46 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (str "THREW: " (ex-message t)))
+
+dev/cljs_parity/browser_proof.clj:34:70 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getPath hf)
+Consider using:
+(CLASS/.getPath hf)
+
+dev/cljs_parity/browser_proof.clj:43:16 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toFile dir)
+Consider using:
+(CLASS/.toFile dir)
+
+dev/cljs_parity/browser_proof.clj:45:16 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toFile dir)
+Consider using:
+(CLASS/.toFile dir)
+
+dev/cljs_parity/browser_proof.clj:47:54 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toString dir)
+Consider using:
+(CLASS/.toString dir)
+
+dev/cljs_parity/browser_proof.clj:47:54 [style/tostring] - Use `str` instead of interop.
+(.toString dir)
+Consider using:
+(str dir)
+
+dev/cljs_parity/browser_proof.clj:58:8 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (str "THREW: " (ex-message t) " " (ex-message (ex-cause t))))
+
+dev/cljs_parity/browser_proof.clj:73:26 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (str "THREW: " (ex-message t)))
+
+dev/cljs_parity/browser_proof.clj:82:8 [style/eq-true] - Use `true?` instead of recreating it.
+(= true (sub 'cljs.user '(fn [] (aget js/global "crossOriginIsolated"))))
+Consider using:
+(true? (sub 'cljs.user '(fn [] (aget js/global "crossOriginIsolated"))))
+
+dev/cljs_parity/browser_proof.clj:84:8 [style/eq-true] - Use `true?` instead of recreating it.
+(= true (sub 'cljs.user '(fn [] (not (nil? (aget js/global "SharedArrayBuffer"))))))
+Consider using:
+(true? (sub 'cljs.user '(fn [] (not (nil? (aget js/global "SharedArrayBuffer"))))))
+
+dev/cljs_parity/browser_proof.clj:116:1 [style/def-fn] - Prefer `defn` instead of `def` wrapping `fn`.
+(def data-handler
+  (fn
+   [req]
+   (when (= "/data" (:uri req))
+     {:status 200, :headers {"Content-Type" "text/plain"}, :body "B-DATA"})))
+Consider using:
+(defn data-handler [req]
+  (when (= "/data" (:uri req))
+    {:status 200, :headers {"Content-Type" "text/plain"}, :body "B-DATA"}))
+
+dev/cljs_parity/browser_server_proof.clj:30:60 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getPath hf)
+Consider using:
+(CLASS/.getPath hf)
+
+dev/cljs_parity/browser_server_proof.clj:85:16 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toFile dir)
+Consider using:
+(CLASS/.toFile dir)
+
+dev/cljs_parity/browser_server_proof.clj:87:16 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toFile dir)
+Consider using:
+(CLASS/.toFile dir)
+
+dev/cljs_parity/browser_server_proof.clj:88:41 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toString dir)
+Consider using:
+(CLASS/.toString dir)
+
+dev/cljs_parity/browser_server_proof.clj:88:41 [style/tostring] - Use `str` instead of interop.
+(.toString dir)
+Consider using:
+(str dir)
+
+dev/cljs_parity/hiccup_smoke.clj:6:53 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.isNull v)
+Consider using:
+(CLASS/.isNull v)
+
+dev/cljs_parity/hiccup_smoke.clj:6:72 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.asString v)
+Consider using:
+(CLASS/.asString v)
+
+dev/cljs_parity/hiccup_smoke.clj:7:18 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (str "THREW: " (ex-message t)))
+
+dev/cljs_parity/macro_wrap_proof.clj:31:19 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t t)
+
+dev/cljs_parity/macro_wrap_proof.clj:35:32 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getCause t)
+Consider using:
+(CLASS/.getCause t)
+
+dev/cljs_parity/macro_wrap_proof.clj:37:16 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str chain)
+Consider using:
+(clojure.string/join chain)
+
+dev/cljs_parity/macro_wrap_proof.clj:55:19 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (str "THREW: " (ex-message t)))
+
+dev/cljs_parity/macro_wrap_proof.clj:56:34 [style/eq-true] - Use `true?` instead of recreating it.
+(= true loaded)
+Consider using:
+(true? loaded)
+
+dev/cljs_parity/macro_wrap_proof.clj:66:29 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (str "THREW: " (ex-message t)))
+
+dev/cljs_parity/proof.clj:8:18 [lint/let-when] - Use `when-let` instead of recreating it.
+(let [v (ev form)] (when v (.asString v)))
+Consider using:
+(when-let [v (ev form)] (.asString v))
+
+dev/cljs_parity/proof.clj:8:45 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.asString v)
+Consider using:
+(CLASS/.asString v)
+
+dev/cljs_parity/proof.clj:36:37 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (str "THREW: " (ex-message t)))
+
+dev/cljs_parity/seat_proof.clj:43:34 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (str "THREW: " (ex-message t)))
+
+dev/cljs_parity/string_require_test.cljs:1:1 [naming/single-segment-namespace] - string-require-test is a single segment. Consider adding an additional segment.
+(ns string-require-test
+  "A graph namespace in the shape of eve's node adapters: string\n   requires of node builtins (one plain name, one node:-prefixed),\n   used from ordinary defns. Loaded by string_require_proof.clj\n   through boot!'s :load-ns, never required from JVM code."
+  (:require ["crypto" :as nc] ["node:fs" :as fs]))
+
+dev/corpus_jvm.clj:20:26 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch
+ Throwable
+ e
+ (if (= expected :throws)
+   [:pass :threw]
+   [:error (str (.getName (class e)) ": " (.getMessage e))]))
+
+dev/corpus_jvm.clj:23:43 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getName (class e))
+Consider using:
+(CLASS/.getName (class e))
+
+dev/corpus_jvm.clj:23:69 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/debug_seam_check.clj:360:21 [style/eq-zero] - Use `zero?` instead of recreating it.
+(= 0 (:exit codegen))
+Consider using:
+(zero? (:exit codegen))
+
+dev/debug_seam_check.clj:362:21 [style/eq-zero] - Use `zero?` instead of recreating it.
+(= 0 (:exit profile-run))
+Consider using:
+(zero? (:exit profile-run))
+
+dev/eve-cljs/eve_cljs_probe.cljs:1:1 [naming/single-segment-namespace] - eve-cljs-probe is a single segment. Consider adding an additional segment.
+(ns eve-cljs-probe
+  "Step-1 proof for the cljs-dep lane: Eve is a dependency of cohost's\n  ClojureScript build. Requires Eve's atom root from the Eve git dep,\n  constructs a SharedArrayBuffer-backed Eve atom under Node, and\n  swap!/reset!/deref round-trips a value through it.\n\n  The recipe is Eve's own test surface (test/eve/batch4_validation_test.cljs):\n  eve.process-slab/init! creates the slab classes' SABs and regions;\n  eve.atom is the current SharedAtom root (the #eve/shared-atom type);\n  fresh-env resets the collection pools and binds the global domain.\n\n  Build + run (from the repo root, standard cohost env): see\n  doc/eve-cohost/CLJS-DEP-STATUS.md for the full command (the Eve\n  hosts.edn :cljs row paths and the node: foreign-lib bridges are part\n  of it; both are computed from dev/eve-cljs/eve_paths.clj)."
+  (:require [eve.atom :as a]
+            [eve.map :as sm]
+            [eve.process-slab :as ps]
+            [eve.sab :as sab]
+            [eve.set :as ss]
+            [eve.shared-atom :as sa]))
+
+dev/eve-cljs/eve_paths.clj:1:1 [naming/single-segment-namespace] - eve-paths is a single segment. Consider adding an additional segment.
+(ns eve-paths
+  "Computes the -Sdeps map that puts Eve's ClojureScript host row on the\n  classpath for cohost's cljs compiles.\n\n  Why this exists: Eve is a tools.deps git dep (see deps.edn :cljs alias),\n  but a dep contributes only its root :paths -- and Eve's root :paths are\n  its JVM host row. Eve's consumption contract (eve/hosts.edn, eve's\n  doc/adopter-tiers.md) is: a host is Eve's src plus one row of adapter\n  roots from hosts.edn, placed on the classpath after src. Eve's own\n  builds select the row through deps.edn aliases (:node-test), which a\n  consumer cannot select for a dependency. So cohost's cljs build\n  composes the row itself, from the pinned checkout's own hosts.edn --\n  the same composition Eve's bb.edn performs for its hosts\n  (bb classpath <host>: src + the hosts.edn roots, absolute).\n\n  The pin lives only in deps.edn; the checkout is located the way\n  tools.deps lays it out: $GITLIBS/libs/eve/eve/<sha> (GITLIBS env, else\n  ~/.gitlibs). If the checkout is missing, the dep has not been fetched\n  yet: run any clojure -Spath/-M:cljs once and retry."
+  (:require [clojure.edn :as edn] [clojure.java.io :as io] [clojure.string :as str]))
+
+dev/eve-cljs/eve_paths.clj:41:15 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.exists hosts-file)
+Consider using:
+(CLASS/.exists hosts-file)
+
+dev/eve_http_node.cljs:11:1 [naming/single-segment-namespace] - eve-http-node is a single segment. Consider adding an additional segment.
+(ns eve-http-node
+  (:require [cohost.hosts.auto]
+            [cohost.adapter :as host]
+            [cohost.boot :as boot]
+            [cohost.http-eve]
+            [cohost.ring]
+            [eve-http-programs]
+            ["fs" :as fs]))
+
+dev/eve_http_programs.cljc:4:1 [naming/single-segment-namespace] - eve-http-programs is a single segment. Consider adding an additional segment.
+(ns eve-http-programs (:require [clojure.string :as str]))
+
+dev/eve_http_seats.clj:15:1 [naming/single-segment-namespace] - eve-http-seats is a single segment. Consider adding an additional segment.
+(ns eve-http-seats
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [clojure.java.shell :as sh]
+            [ring.adapter.jetty]
+            [eve-http-programs :as programs]))
+
+dev/eve_http_seats.clj:40:8 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e [:error (str (.getMessage e))])
+
+dev/eve_http_seats.clj:40:40 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/eve_http_seats.clj:42:63 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getLocalPort s)
+Consider using:
+(CLASS/.getLocalPort s)
+
+dev/eve_http_seats.clj:56:11 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.start
+ (doto (ProcessBuilder. ["node" "target/eve-http-node/main.js" "serve" (str port)])
+       (.redirectErrorStream true)))
+Consider using:
+(CLASS/.start
+ (doto (ProcessBuilder. ["node" "target/eve-http-node/main.js" "serve" (str port)])
+       (.redirectErrorStream true)))
+
+dev/eve_http_seats.clj:57:21 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.redirectErrorStream true)
+Consider using:
+(CLASS/.redirectErrorStream true)
+
+dev/eve_http_seats.clj:58:24 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getInputStream p)
+Consider using:
+(CLASS/.getInputStream p)
+
+dev/eve_http_seats.clj:60:18 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.readLine rdr)
+Consider using:
+(CLASS/.readLine rdr)
+
+dev/eve_http_seats.clj:62:15 [style/prefer-clj-string] - Use the `clojure.string` function instead of interop.
+(.startsWith line "LISTENING")
+Consider using:
+(clojure.string/starts-with? line "LISTENING")
+
+dev/eve_http_seats.clj:67:68 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.header b k v)
+Consider using:
+(CLASS/.header b k v)
+
+dev/eve_http_seats.clj:70:11 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.method
+ b
+ method
+ (if body
+   (java.net.http.HttpRequest$BodyPublishers/ofString body)
+   (java.net.http.HttpRequest$BodyPublishers/noBody)))
+Consider using:
+(CLASS/.method
+ b
+ method
+ (if body
+   (java.net.http.HttpRequest$BodyPublishers/ofString body)
+   (java.net.http.HttpRequest$BodyPublishers/noBody)))
+
+dev/eve_http_seats.clj:73:11 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.send jdk-client (.build b) (java.net.http.HttpResponse$BodyHandlers/ofString))
+Consider using:
+(CLASS/.send jdk-client (.build b) (java.net.http.HttpResponse$BodyHandlers/ofString))
+
+dev/eve_http_seats.clj:73:55 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.build b)
+Consider using:
+(CLASS/.build b)
+
+dev/eve_http_seats.clj:74:11 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.headers r)
+Consider using:
+(CLASS/.headers r)
+
+dev/eve_http_seats.clj:75:6 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.statusCode r)
+Consider using:
+(CLASS/.statusCode r)
+
+dev/eve_http_seats.clj:75:52 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.orElse (.firstValue h "content-type") nil)
+Consider using:
+(CLASS/.orElse (.firstValue h "content-type") nil)
+
+dev/eve_http_seats.clj:75:61 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.firstValue h "content-type")
+Consider using:
+(CLASS/.firstValue h "content-type")
+
+dev/eve_http_seats.clj:75:98 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.orElse (.firstValue h "x-method") nil)
+Consider using:
+(CLASS/.orElse (.firstValue h "x-method") nil)
+
+dev/eve_http_seats.clj:75:107 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.firstValue h "x-method")
+Consider using:
+(CLASS/.firstValue h "x-method")
+
+dev/eve_http_seats.clj:75:139 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.body r)
+Consider using:
+(CLASS/.body r)
+
+dev/eve_http_seats.clj:79:42 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getLocalPort (first (.getConnectors jetty)))
+Consider using:
+(CLASS/.getLocalPort (first (.getConnectors jetty)))
+
+dev/eve_http_seats.clj:79:106 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getConnectors jetty)
+Consider using:
+(CLASS/.getConnectors jetty)
+
+dev/eve_http_seats.clj:103:1 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.stop jetty)
+Consider using:
+(CLASS/.stop jetty)
+
+dev/eve_http_seats.clj:104:1 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.destroy node-proc)
+Consider using:
+(CLASS/.destroy node-proc)
+
+dev/eve_probe.clj:43:16 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t {:out "", :err (str "RUNNER " (ex-message t))})
+
+dev/eve_probe_program.cljc:6:54 [style/plus-one] - Use `inc` instead of recreating it.
+(+ 1 2)
+Consider using:
+(inc 2)
+
+dev/eve_probe_program.cljc:11:53 [style/plus-one] - Use `inc` instead of recreating it.
+(+ 1 1)
+Consider using:
+(inc 1)
+
+dev/lint_reader_order.clj:26:20 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.indexOf ks k)
+Consider using:
+(CLASS/.indexOf ks k)
+
+dev/perf/jank_aot_ensure.clj:49:40 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toMillis (fs/last-modified-time p))
+Consider using:
+(CLASS/.toMillis (fs/last-modified-time p))
+
+dev/perf/jank_snapshot_cli.clj:60:49 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toMillis (fs/last-modified-time lock))
+Consider using:
+(CLASS/.toMillis (fs/last-modified-time lock))
+
+dev/perf/jank_snapshot_cli.clj:65:14 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.mkdir lock)
+Consider using:
+(CLASS/.mkdir lock)
+
+dev/perf/jank_snapshot_cli.clj:105:5 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.update d (.getBytes s "UTF-8"))
+Consider using:
+(CLASS/.update d (.getBytes s "UTF-8"))
+
+dev/perf/jank_snapshot_cli.clj:105:16 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getBytes s "UTF-8")
+Consider using:
+(CLASS/.getBytes s "UTF-8")
+
+dev/perf/jank_snapshot_cli.clj:106:5 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map #(format "%02x" (bit-and % 255)) (.digest d)))
+Consider using:
+(clojure.string/join (map #(format "%02x" (bit-and % 255)) (.digest d)))
+
+dev/perf/jank_snapshot_cli.clj:106:55 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.digest d)
+Consider using:
+(CLASS/.digest d)
+
+dev/perf/jank_snapshot_emit.clj:178:19 [lint/redundant-str-call] - Use the literal directly.
+(str "(cohost.boot/snap-thread-layer!)")
+Consider using:
+"(cohost.boot/snap-thread-layer!)"
+
+dev/perf/jank_snapshot_emit.clj:179:17 [lint/redundant-str-call] - Use the literal directly.
+(str "(cohost.boot/snap-http-layer!)")
+Consider using:
+"(cohost.boot/snap-http-layer!)"
+
+dev/perf/jank_snapshot_emit.clj:180:17 [lint/redundant-str-call] - Use the literal directly.
+(str "(cohost.boot/snap-shim-layer!)")
+Consider using:
+"(cohost.boot/snap-shim-layer!)"
+
+dev/perf/jank_snapshot_emit.clj:250:24 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (repeat pad "\n"))
+Consider using:
+(clojure.string/join (repeat pad "\n"))
+
+dev/perf/jank_snapshot_emit.clj:277:34 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.indexOf text (first cs) idx)
+Consider using:
+(CLASS/.indexOf text (first cs) idx)
+
+dev/perf/jank_snapshot_emit.clj:323:32 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map #(str " [" (module-ns %) "]") (libs-before module)))
+Consider using:
+(clojure.string/join (map #(str " [" (module-ns %) "]") (libs-before module)))
+
+dev/perf/jank_snapshot_emit.clj:327:23 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map #(str "(declare " % ")\n") (failed-def-names module)))
+Consider using:
+(clojure.string/join (map #(str "(declare " % ")\n") (failed-def-names module)))
+
+dev/perf/jank_snapshot_emit.clj:379:16 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map #(str " [" % "]") top))
+Consider using:
+(clojure.string/join (map #(str " [" % "]") top))
+
+dev/perf/jank_snapshot_emit.clj:384:14 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map #(str " [" % "]") top))
+Consider using:
+(clojure.string/join (map #(str " [" % "]") top))
+
+dev/perf/jank_snapshot_key.clj:47:64 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.toMillis (fs/last-modified-time snap-bin-path))
+Consider using:
+(CLASS/.toMillis (fs/last-modified-time snap-bin-path))
+
+dev/perf/lpy_snapshot_ensure.clj:46:3 [lint/let-if] - Use `if-let` instead of recreating it.
+(let [why (lpy-stale-reason (lpy-key))]
+  (if why
+    (do (println "LPY-SNAPSHOT-STALE" why "(bb boot:lpy-snapshot builds it)") nil)
+    (do (println "LPY-SNAPSHOT-FRESH") lpy-src)))
+Consider using:
+(if-let [why (lpy-stale-reason (lpy-key))]
+  (do (println "LPY-SNAPSHOT-STALE" why "(bb boot:lpy-snapshot builds it)") nil)
+  (do (println "LPY-SNAPSHOT-FRESH") lpy-src))
+
+dev/perf/phel_closure.clj:21:3 [lint/if-let-else-nil] - Use `when-let` instead of recreating it.
+(if-let [[n & more] (seq todo)]
+  (if (seen n)
+    (recur more seen)
+    (let [f (file-of n)]
+      (if-not f
+        (recur more (conj seen n))
+        (do (println n f) (recur (concat more (requires (ns-form f))) (conj seen n))))))
+  nil)
+Consider using:
+(when-let [[n & more] (seq todo)]
+  (if (seen n)
+    (recur more seen)
+    (let [f (file-of n)]
+      (if-not f
+        (recur more (conj seen n))
+        (do (println n f) (recur (concat more (requires (ns-form f))) (conj seen n)))))))
+
+dev/perf/sha256.clj:11:18 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.append sb (format "%02x" (bit-and x 255)))
+Consider using:
+(CLASS/.append sb (format "%02x" (bit-and x 255)))
+
+dev/perf/sha256.clj:17:8 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.digest (java.security.MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8"))
+Consider using:
+(CLASS/.digest
+ (java.security.MessageDigest/getInstance "SHA-256")
+ (.getBytes s "UTF-8"))
+
+dev/perf/sha256.clj:17:69 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getBytes s "UTF-8")
+Consider using:
+(CLASS/.getBytes s "UTF-8")
+
+dev/perf/sha256.clj:26:17 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.read in buf)
+Consider using:
+(CLASS/.read in buf)
+
+dev/perf/sha256.clj:27:26 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.update d buf 0 n)
+Consider using:
+(CLASS/.update d buf 0 n)
+
+dev/perf/sha256.clj:28:10 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.digest d)
+Consider using:
+(CLASS/.digest d)
+
+dev/perf/sha256.clj:33:3 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map (fn [f] (str (sha256-file f) "  " f "\n")) files))
+Consider using:
+(clojure.string/join (map (fn [f] (str (sha256-file f) "  " f "\n")) files))
+
+dev/research/a4/leaves.clj:7:11 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (repeat 1000000 \a))
+Consider using:
+(clojure.string/join (repeat 1000000 \a))
+
+dev/research/a4/leaves.clj:19:97 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str ["a" nil 'b 2])
+Consider using:
+(clojure.string/join ["a" nil 'b 2])
+
+dev/research/a4/leaves.clj:29:34 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str strs)
+Consider using:
+(clojure.string/join strs)
+
+dev/research/a5-8/loops.clj:4:60 [style/eq-zero] - Use `zero?` instead of recreating it.
+(= i 0)
+Consider using:
+(zero? i)
+
+dev/research/a5/int_arith.clj:4:4 [style/plus-one] - Use `inc` instead of recreating it.
+(+ 2147483647 1)
+Consider using:
+(inc 2147483647)
+
+dev/research/a5/int_arith.clj:4:64 [style/minus-one] - Use `dec` instead of recreating it.
+(- -2147483648 1)
+Consider using:
+(dec -2147483648)
+
+dev/research/a5/int_arith.clj:6:76 [style/plus-one] - Use `inc` instead of recreating it.
+(+ x 1)
+Consider using:
+(inc x)
+
+dev/research/a5/int_arith.clj:7:9 [style/plus-one] - Use `inc` instead of recreating it.
+(+ 9223372036854775807 1)
+Consider using:
+(inc 9223372036854775807)
+
+dev/research/a5/int_arith.clj:7:76 [style/plus-one] - Use `inc` instead of recreating it.
+(+ 1 2)
+Consider using:
+(inc 2)
+
+dev/research/a5/int_arith.clj:26:18 [style/plus-one] - Use `inc` instead of recreating it.
+(+ 2147483647 1)
+Consider using:
+(inc 2147483647)
+
+dev/research/a5/int_arith.clj:26:63 [style/plus-one] - Use `inc` instead of recreating it.
+(+ 2147483647 1)
+Consider using:
+(inc 2147483647)
+
+dev/research/a5/int_arith.clj:33:64 [style/plus-one] - Use `inc` instead of recreating it.
+(+ s 1)
+Consider using:
+(inc s)
+
+dev/research/a6/dispatch_parts.clj:2:1 [style/defmulti-arglists] - Specify the :arglists to help documentation and tooling.
+(defmulti pkind (fn [x] (mod x 3)))
+
+dev/research/a6/dispatch_parts.clj:6:1 [style/defmulti-arglists] - Specify the :arglists to help documentation and tooling.
+(defmulti pk1 (fn [x] 0))
+
+dev/research/a6/dispatch_parts.clj:8:1 [style/defmulti-arglists] - Specify the :arglists to help documentation and tooling.
+(defmulti pkid identity)
+
+dev/research/a6/dispatch_parts.clj:10:1 [style/def-fn] - Prefer `defn` instead of `def` wrapping `fn`.
+(def dfn (fn [x] (mod x 3)))
+Consider using:
+(defn dfn [x] (mod x 3))
+
+dev/research/a6/dispatch_parts.clj:11:1 [style/def-fn] - Prefer `defn` instead of `def` wrapping `fn`.
+(def meth (fn [x] (* 2 x)))
+Consider using:
+(defn meth [x] (* 2 x))
+
+dev/research/a6/dispatch_probe.clj:4:1 [style/defmulti-arglists] - Specify the :arglists to help documentation and tooling.
+(defmulti pkind (fn [x] (mod x 3)))
+
+dev/research/a6/json_conj_edges.clj:3:14 [style/conj-vector] - Use `vector` instead of recreating it.
+(conj [] 1 2 3)
+Consider using:
+(vector 1 2 3)
+
+dev/research/a6/json_probe.clj:14:81 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str ["\"" "ab" "\":" "x" ","])
+Consider using:
+(clojure.string/join ["\"" "ab" "\":" "x" ","])
+
+dev/research/a6/json_probe.clj:15:85 [style/conj-vector] - Use `vector` instead of recreating it.
+(conj [] ",")
+Consider using:
+(vector ",")
+
+dev/research/a6/json_probe.clj:20:85 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str [\a \b \c \d])
+Consider using:
+(clojure.string/join [\a \b \c \d])
+
+dev/research/a6/json_stages.clj:30:3 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (chunks x))
+Consider using:
+(clojure.string/join (chunks x))
+
+dev/research/a6/json_stages.clj:43:8 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str out)
+Consider using:
+(clojure.string/join out)
+
+dev/research/a6/p_nbody.clj:19:1 [naming/lisp-case] - Prefer kebab-case over other cases for top-level definitions.
+(def __core-run run)
+Consider using:
+(def core-run run)
+
+dev/research/a6/p_nbody.clj:22:73 [style/prefer-clj-math] - Use the `clojure.math` function instead of interop.
+Math/sqrt
+Consider using:
+clojure.math/sqrt
+
+dev/research/a6/pipeline_edges.clj:3:73 [style/single-key-in] - Use `get` instead of recreating it.
+(get-in nil [:a])
+Consider using:
+(get nil :a)
+
+dev/research/a6/pipeline_edges.clj:3:159 [style/single-key-in] - Use `get` instead of recreating it.
+(get-in "abc" [1])
+Consider using:
+(get "abc" 1)
+
+dev/research/a6/pipeline_edges.clj:3:214 [style/single-key-in] - Use `get` instead of recreating it.
+(get-in {nil 5} [nil])
+Consider using:
+(get {nil 5} nil)
+
+dev/research/a6/pipeline_edges.clj:4:51 [style/single-key-in] - Use `get` instead of recreating it.
+(get-in {:a false} [:a] :nf)
+Consider using:
+(get {:a false} :a :nf)
+
+dev/research/a6/pipeline_edges.clj:4:80 [style/single-key-in] - Use `get` instead of recreating it.
+(get-in {:a nil} [:a] :nf)
+Consider using:
+(get {:a nil} :a :nf)
+
+dev/research/a6/pipeline_edges.clj:4:164 [style/single-key-in] - Use `get` instead of recreating it.
+(get-in nil [:x] :nf)
+Consider using:
+(get nil :x :nf)
+
+dev/research/a6/pipeline_edges.clj:5:74 [style/single-key-in] - Use `assoc` instead of recreating it.
+(assoc-in nil [:a] 1)
+Consider using:
+(assoc nil :a 1)
+
+dev/research/a6/pipeline_edges.clj:5:154 [style/single-key-in] - Use `assoc` instead of recreating it.
+(assoc-in (sorted-map :b 1) [:a] 0)
+Consider using:
+(assoc (sorted-map :b 1) :a 0)
+
+dev/research/a6/pipeline_edges.clj:6:20 [style/single-key-in] - Use `assoc` instead of recreating it.
+(assoc-in [1 2] [5] 0)
+Consider using:
+(assoc [1 2] 5 0)
+
+dev/research/a6/pipeline_edges.clj:7:90 [style/single-key-in] - Use `update` instead of recreating it.
+(update-in {:a 1} [:a] + 1 2)
+Consider using:
+(update {:a 1} :a + 1 2)
+
+dev/research/a6/pipeline_edges.clj:7:120 [style/single-key-in] - Use `update` instead of recreating it.
+(update-in {:a 1} [:a] + 1 2 3)
+Consider using:
+(update {:a 1} :a + 1 2 3)
+
+dev/research/a6/pipeline_edges.clj:7:152 [style/single-key-in] - Use `update` instead of recreating it.
+(update-in {:a 1} [:a] + 1 2 3 4)
+Consider using:
+(update {:a 1} :a + 1 2 3 4)
+
+dev/research/a6/pipeline_edges.clj:7:186 [style/single-key-in] - Use `update` instead of recreating it.
+(update-in {:a 1} [:a] + 1 2 3 4 5)
+Consider using:
+(update {:a 1} :a + 1 2 3 4 5)
+
+dev/research/a6/pipeline_edges.clj:7:222 [style/single-key-in] - Use `update` instead of recreating it.
+(update-in {:a 1} [:a] + 1 2 3 4 5 6)
+Consider using:
+(update {:a 1} :a + 1 2 3 4 5 6)
+
+dev/research/a6/pipeline_edges.clj:7:260 [style/single-key-in] - Use `update` instead of recreating it.
+(update-in nil [:a] (fnil inc 0))
+Consider using:
+(update nil :a (fnil inc 0))
+
+dev/research/a6/pipeline_edges.clj:8:163 [style/single-key-in] - Use `assoc` instead of recreating it.
+(assoc-in (->PeR 1 2) [:c] 3)
+Consider using:
+(assoc (->PeR 1 2) :c 3)
+
+dev/research/a7/bt_split.clj:3:17 [lint/if-nil-else] - Use `when-not` instead of recreating it.
+(if (zero? d) nil (let [d (dec d)] [(build d) (build d)]))
+Consider using:
+(when-not (zero? d) (let [d (dec d)] [(build d) (build d)]))
+
+dev/research/a7/eq_edges.clj:4:17 [style/eq-nil] - Use `nil?` instead of recreating it.
+(= nil nil)
+Consider using:
+(nil? nil)
+
+dev/research/a7/eq_edges.clj:4:29 [style/eq-nil] - Use `nil?` instead of recreating it.
+(= nil false)
+Consider using:
+(nil? false)
+
+dev/research/a7/eq_edges.clj:4:29 [style/eq-false] - Use `false?` instead of recreating it.
+(= nil false)
+Consider using:
+(false? nil)
+
+dev/research/a7/eq_edges.clj:4:43 [style/eq-false] - Use `false?` instead of recreating it.
+(= false false)
+Consider using:
+(false? false)
+
+dev/research/a7/eq_edges.clj:4:59 [style/eq-true] - Use `true?` instead of recreating it.
+(= true (= 1 1))
+Consider using:
+(true? (= 1 1))
+
+dev/research/a7/eq_edges.clj:4:76 [style/eq-zero] - Use `zero?` instead of recreating it.
+(= nil 0)
+Consider using:
+(zero? nil)
+
+dev/research/a7/eq_edges.clj:4:76 [style/eq-nil] - Use `nil?` instead of recreating it.
+(= nil 0)
+Consider using:
+(nil? 0)
+
+dev/research/harness.clj:4:1 [naming/lisp-case] - Prefer kebab-case over other cases for top-level definitions.
+(def __sink (volatile! 0))
+Consider using:
+(def sink (volatile! 0))
+
+dev/research/harness.clj:5:1 [naming/lisp-case] - Prefer kebab-case over other cases for top-level definitions.
+(defn __eat [r] (vreset! __sink (+ @__sink (if (number? r) r (count (str r))))) r)
+Consider using:
+(defn eat [r] (vreset! __sink (+ @__sink (if (number? r) r (count (str r))))) r)
+
+dev/research/harness.clj:6:1 [naming/lisp-case] - Prefer kebab-case over other cases for top-level definitions.
+(defn __time-ns [f]
+  (let [t0 (System/nanoTime), r (f), t1 (System/nanoTime)] (__eat r) [(- t1 t0) r]))
+Consider using:
+(defn time-ns [f]
+  (let [t0 (System/nanoTime), r (f), t1 (System/nanoTime)] (__eat r) [(- t1 t0) r]))
+
+dev/research/harness.clj:20:30 [style/apply-str-interpose] - Use `clojure.string/join` instead of recreating it.
+(apply str (interpose " " (map first rs)))
+Consider using:
+(clojure.string/join " " (map first rs))
+
+dev/research/p11_protocol.clj:17:1 [style/defmulti-arglists] - Specify the :arglists to help documentation and tooling.
+(defmulti kind (fn [x] (mod x 3)))
+
+dev/research/p11_protocol.clj:20:1 [style/defmulti-arglists] - Specify the :arglists to help documentation and tooling.
+(defmulti kind3 (fn [x] (mod x 3)))
+
+dev/research/p13_format.clj:5:38 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map (fn [i] (format "%05d|%s" i "x")) (range 5000)))
+Consider using:
+(clojure.string/join (map (fn [i] (format "%05d|%s" i "x")) (range 5000)))
+
+dev/research/p2_call_path.clj:7:1 [style/defmulti-arglists] - Specify the :arglists to help documentation and tooling.
+(defmulti mm (fn [x] 0))
+
+dev/research/p3_gc_alloc.clj:3:3 [lint/if-nil-else] - Use `when-not` instead of recreating it.
+(if (zero? d) nil (let [d (dec d)] [(build d) (build d)]))
+Consider using:
+(when-not (zero? d) (let [d (dec d)] [(build d) (build d)]))
+
+dev/research/p5_seqs.clj:5:8 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map (fn [i] (nth "acgt" (mod i 4))) (range n)))
+Consider using:
+(clojure.string/join (map (fn [i] (nth "acgt" (mod i 4))) (range n)))
+
+dev/research/p5_seqs.clj:16:27 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map str (range 10000)))
+Consider using:
+(clojure.string/join (map str (range 10000)))
+
+dev/research/p6_cohost_fib.clj:16:1 [style/def-fn] - Prefer `defn` instead of `def` wrapping `fn`.
+(def fib-fn-def
+  (fn fib-fn-def [n] (if (< n 2) n (+ (fib-fn-def (dec n)) (fib-fn-def (- n 2))))))
+Consider using:
+(defn fib-fn-def
+  fib-fn-def
+  [n]
+  (if (< n 2) n (+ (fib-fn-def (dec n)) (fib-fn-def (- n 2)))))
+
+dev/research/p6_cohost_fib.clj:18:1 [style/def-fn] - Prefer `defn` instead of `def` wrapping `fn`.
+(def fib-host-ops-fn-def
+  (fn
+   fib-host-ops-fn-def
+   [n]
+   (if (clojure.core/< n 2)
+     n
+     (clojure.core/+
+      (fib-host-ops-fn-def (clojure.core/dec n))
+      (fib-host-ops-fn-def (clojure.core/- n 2))))))
+Consider using:
+(defn fib-host-ops-fn-def
+  fib-host-ops-fn-def
+  [n]
+  (if (clojure.core/< n 2)
+    n
+    (clojure.core/+
+     (fib-host-ops-fn-def (clojure.core/dec n))
+     (fib-host-ops-fn-def (clojure.core/- n 2)))))
+
+dev/research/u4/num_edges_cohost.clj:224:15 [style/eq-nil] - Use `nil?` instead of recreating it.
+(= nil 1)
+Consider using:
+(nil? 1)
+
+dev/research/u4/num_edges_jvm.clj:1:41 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e# (str "EX " (.getSimpleName (class e#))))
+
+dev/research/u4/num_edges_jvm.clj:1:72 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getSimpleName (class e#))
+Consider using:
+(CLASS/.getSimpleName (class e#))
+
+dev/research/u6-10/loops.clj:5:11 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (repeat 1000000 \a))
+Consider using:
+(clojure.string/join (repeat 1000000 \a))
+
+dev/research/u6-10/loops.clj:19:71 [style/neg-checks] - Use `neg?` instead of recreating it.
+(< i 0)
+Consider using:
+(neg? i)
+
+dev/research/x1/p14_hinted.clj:5:49 [style/minus-one] - Use `dec` instead of recreating it.
+(- n 1)
+Consider using:
+(dec n)
+
+dev/research/x1/p14_hinted.clj:6:55 [style/minus-one] - Use `dec` instead of recreating it.
+(- n 1)
+Consider using:
+(dec n)
+
+dev/research/x1/p14_hinted.clj:7:51 [style/minus-one] - Use `dec` instead of recreating it.
+(- n 1)
+Consider using:
+(dec n)
+
+dev/research/x1/p14_hinted.clj:8:59 [style/minus-one] - Use `dec` instead of recreating it.
+(- n 1)
+Consider using:
+(dec n)
+
+dev/research/x1/p14_hinted.clj:10:23 [lint/if-not-both] - Use `if-not` instead of recreating it.
+(if (not (< y x))
+  z
+  (tak-dec (tak-dec (dec x) y z) (tak-dec (dec y) z x) (tak-dec (dec z) x y)))
+Consider using:
+(if-not (< y x)
+  z
+  (tak-dec (tak-dec (dec x) y z) (tak-dec (dec y) z x) (tak-dec (dec z) x y)))
+
+dev/research/x1/p14_hinted.clj:11:25 [lint/if-not-both] - Use `if-not` instead of recreating it.
+(if (not (< y x))
+  z
+  (tak-minus (tak-minus (- x 1) y z) (tak-minus (- y 1) z x) (tak-minus (- z 1) x y)))
+Consider using:
+(if-not (< y x)
+  z
+  (tak-minus (tak-minus (- x 1) y z) (tak-minus (- y 1) z x) (tak-minus (- z 1) x y)))
+
+dev/research/x1/p14_hinted.clj:11:67 [style/minus-one] - Use `dec` instead of recreating it.
+(- x 1)
+Consider using:
+(dec x)
+
+dev/research/x1/p14_hinted.clj:11:91 [style/minus-one] - Use `dec` instead of recreating it.
+(- y 1)
+Consider using:
+(dec y)
+
+dev/research/x1/p14_hinted.clj:11:115 [style/minus-one] - Use `dec` instead of recreating it.
+(- z 1)
+Consider using:
+(dec z)
+
+dev/research/x1/p14_hinted.clj:12:43 [lint/if-not-both] - Use `if-not` instead of recreating it.
+(if (not (< y x))
+  z
+  (tak-param (tak-param (- x 1) y z) (tak-param (- y 1) z x) (tak-param (- z 1) x y)))
+Consider using:
+(if-not (< y x)
+  z
+  (tak-param (tak-param (- x 1) y z) (tak-param (- y 1) z x) (tak-param (- z 1) x y)))
+
+dev/research/x1/p14_hinted.clj:12:85 [style/minus-one] - Use `dec` instead of recreating it.
+(- x 1)
+Consider using:
+(dec x)
+
+dev/research/x1/p14_hinted.clj:12:109 [style/minus-one] - Use `dec` instead of recreating it.
+(- y 1)
+Consider using:
+(dec y)
+
+dev/research/x1/p14_hinted.clj:12:133 [style/minus-one] - Use `dec` instead of recreating it.
+(- z 1)
+Consider using:
+(dec z)
+
+dev/research/x1/p14_hinted.clj:13:48 [lint/if-not-both] - Use `if-not` instead of recreating it.
+(if (not (< y x))
+  z
+  (tak-both (tak-both (- x 1) y z) (tak-both (- y 1) z x) (tak-both (- z 1) x y)))
+Consider using:
+(if-not (< y x)
+  z
+  (tak-both (tak-both (- x 1) y z) (tak-both (- y 1) z x) (tak-both (- z 1) x y)))
+
+dev/research/x1/p14_hinted.clj:13:88 [style/minus-one] - Use `dec` instead of recreating it.
+(- x 1)
+Consider using:
+(dec x)
+
+dev/research/x1/p14_hinted.clj:13:111 [style/minus-one] - Use `dec` instead of recreating it.
+(- y 1)
+Consider using:
+(dec y)
+
+dev/research/x1/p14_hinted.clj:13:134 [style/minus-one] - Use `dec` instead of recreating it.
+(- z 1)
+Consider using:
+(dec z)
+
+dev/research/x1/p14_hinted.clj:14:52 [lint/if-not-both] - Use `if-not` instead of recreating it.
+(if (not (< y x))
+  z
+  (tak-both-dec
+   (tak-both-dec (dec x) y z)
+   (tak-both-dec (dec y) z x)
+   (tak-both-dec (dec z) x y)))
+Consider using:
+(if-not (< y x)
+  z
+  (tak-both-dec
+   (tak-both-dec (dec x) y z)
+   (tak-both-dec (dec y) z x)
+   (tak-both-dec (dec z) x y)))
+
+dev/research/x1/p15_hinted2.clj:35:18 [lint/if-nil-else] - Use `when-not` instead of recreating it.
+(if (zero? d) nil (let [d (dec d)] [(bt-dec d) (bt-dec d)]))
+Consider using:
+(when-not (zero? d) (let [d (dec d)] [(bt-dec d) (bt-dec d)]))
+
+dev/research/x1/p15_hinted2.clj:36:20 [lint/if-nil-else] - Use `when-not` instead of recreating it.
+(if (zero? d) nil (let [d (- d 1)] [(bt-minus d) (bt-minus d)]))
+Consider using:
+(when-not (zero? d) (let [d (- d 1)] [(bt-minus d) (bt-minus d)]))
+
+dev/research/x1/p15_hinted2.clj:36:46 [style/minus-one] - Use `dec` instead of recreating it.
+(- d 1)
+Consider using:
+(dec d)
+
+dev/research/x1/p15_hinted2.clj:37:26 [lint/if-nil-else] - Use `when-not` instead of recreating it.
+(if (zero? d) nil (let [d (- d 1)] [(bt-param d) (bt-param d)]))
+Consider using:
+(when-not (zero? d) (let [d (- d 1)] [(bt-param d) (bt-param d)]))
+
+dev/research/x1/p15_hinted2.clj:37:52 [style/minus-one] - Use `dec` instead of recreating it.
+(- d 1)
+Consider using:
+(dec d)
+
+dev/research/x1/p15_hinted2.clj:38:30 [lint/if-nil-else] - Use `when-not` instead of recreating it.
+(if (zero? d) nil (let [d (dec d)] [(bt-param-dec d) (bt-param-dec d)]))
+Consider using:
+(when-not (zero? d) (let [d (dec d)] [(bt-param-dec d) (bt-param-dec d)]))
+
+dev/research/x4_format.clj:3:21 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map (fn [i] (format "%05d|%s" i "x")) (range 5000)))
+Consider using:
+(clojure.string/join (map (fn [i] (format "%05d|%s" i "x")) (range 5000)))
+
+dev/research/x4_noise.clj:4:27 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map str (range 20000)))
+Consider using:
+(clojure.string/join (map str (range 20000)))
+
+dev/research/x4_parts.clj:17:27 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map str (range 20000)))
+Consider using:
+(clojure.string/join (map str (range 20000)))
+
+dev/research/x4_parts.clj:20:27 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str strs)
+Consider using:
+(clojure.string/join strs)
+
+dev/squint_stage.clj:58:1 [naming/single-segment-namespace] - squint-stage is a single segment. Consider adding an additional segment.
+(ns squint-stage
+  (:require [babashka.fs :as fs] [clojure.string :as str] [clojure.walk :as walk]))
+
+dev/squint_stage.clj:89:14 [lint/into-literal] - Use `set` instead of recreating it.
+(into
+ #{}
+ (mapcat
+  (fn
+   [c]
+   (if (and (seq? c) (= :refer-clojure (first c)))
+     (mapcat (fn [[k v]] (if (= :exclude k) v [])) (partition 2 (rest c)))
+     []))
+  clauses))
+Consider using:
+(set
+ (mapcat
+  (fn
+   [c]
+   (if (and (seq? c) (= :refer-clojure (first c)))
+     (mapcat (fn [[k v]] (if (= :exclude k) v [])) (partition 2 (rest c)))
+     []))
+  clauses))
+
+dev/squint_stage.clj:132:3 [lint/into-literal] - Use `set` instead of recreating it.
+(into
+ #{}
+ (mapcat
+  (fn
+   [c]
+   (if (and (seq? c) (= :require (first c)))
+     (mapcat
+      (fn
+       [spec]
+       (if (vector? spec)
+         (mapcat
+          (fn [[k v]] (if (and (= :refer k) (sequential? v)) v []))
+          (partition 2 (rest spec)))
+         []))
+      (rest c))
+     []))
+  (ns-clauses nsform)))
+Consider using:
+(set
+ (mapcat
+  (fn
+   [c]
+   (if (and (seq? c) (= :require (first c)))
+     (mapcat
+      (fn
+       [spec]
+       (if (vector? spec)
+         (mapcat
+          (fn [[k v]] (if (and (= :refer k) (sequential? v)) v []))
+          (partition 2 (rest spec)))
+         []))
+      (rest c))
+     []))
+  (ns-clauses nsform)))
+
+dev/squint_stage.clj:146:3 [lint/into-literal] - Use `set` instead of recreating it.
+(into
+ #{}
+ (keep
+  (fn
+   [f]
+   (when (and (seq? f)
+              (#{'def 'defn 'defn- 'defmacro 'defonce} (first f))
+              (symbol? (second f)))
+     (second f)))
+  forms))
+Consider using:
+(set
+ (keep
+  (fn
+   [f]
+   (when (and (seq? f)
+              (#{'def 'defn 'defn- 'defmacro 'defonce} (first f))
+              (symbol? (second f)))
+     (second f)))
+  forms))
+
+dev/squint_stage.clj:220:17 [lint/identical-branches] - Two adjacent branches are identical
+((seq? x) (run! walk x) (vector? x) (run! walk x))
+Consider using:
+((or (seq? x) (vector? x)) (run! walk x))
+
+dev/squint_stage.clj:395:26 [style/prefer-condp] - Prefer condp when predicate and arguments are the same
+(cond
+  (= :refer-macros k) []
+  (= :refer k) [:refer (vec (distinct (concat v rm)))]
+  :else [k v])
+Consider using:
+(condp = k :refer-macros [] :refer [:refer (vec (distinct (concat v rm)))] [k v])
+
+dev/target_audit_bb_bench.clj:7:1 [naming/single-segment-namespace] - target-audit-bb-bench is a single segment. Consider adding an additional segment.
+(ns target-audit-bb-bench
+  (:require [eve.atom :as ea] [eve.map :as em] [eve.vec :as ev]))
+
+dev/u2-pmap-diag6.clj:12:72 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getName (Thread/currentThread))
+Consider using:
+(CLASS/.getName (Thread/currentThread))
+
+dev/u2-pmap-diag6.clj:14:23 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.put ids wrapped id)
+Consider using:
+(CLASS/.put ids wrapped id)
+
+dev/u2-pmap-diag6.clj:15:54 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getName (Thread/currentThread))
+Consider using:
+(CLASS/.getName (Thread/currentThread))
+
+dev/u2-pmap-diag6.clj:22:52 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.get ids v)
+Consider using:
+(CLASS/.get ids v)
+
+dev/u2-pmap-diag6.clj:22:65 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getName (Thread/currentThread))
+Consider using:
+(CLASS/.getName (Thread/currentThread))
+
+dev/u2-pmap-diag6.clj:26:19 [lint/fn-wrapper] - No need to wrap function. Clojure supports first-class functions.
+(fn [s] (inc s))
+Consider using:
+inc
+
+dev/u2-pmap-diag6.clj:31:31 [style/filter-complement] - Use `remove` instead of recreating it.
+(filter (fn [f] (not (t/future-done? f))) futs)
+Consider using:
+(remove t/future-done? futs)
+
+dev/u2-restart-check.clj:9:19 [lint/fn-wrapper] - No need to wrap function. Clojure supports first-class functions.
+(fn [s] (inc s))
+Consider using:
+inc
+
+dev/u4_probe10.clj:10:17 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe10.clj:10:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe11.clj:10:17 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe11.clj:10:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe14.clj:10:17 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe14.clj:10:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe15.clj:5:40 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe15.clj:5:71 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe15.clj:7:40 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe15.clj:7:71 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe15.clj:9:41 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe15.clj:9:72 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe15.clj:11:43 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe15.clj:11:74 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe15.clj:13:42 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe15.clj:13:73 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe18.clj:7:42 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe18.clj:7:73 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe18.clj:9:43 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe18.clj:9:74 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe18.clj:11:55 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe18.clj:11:86 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe18.clj:13:41 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe18.clj:13:72 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe19.clj:6:41 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe19.clj:6:72 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe19.clj:7:47 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.write w (pr-str (cohost.memory-eve/canonicalize x)))
+Consider using:
+(CLASS/.write w (pr-str (cohost.memory-eve/canonicalize x)))
+
+dev/u4_probe19.clj:8:47 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.write w (pr-str (cohost.memory-eve/canonicalize x)))
+Consider using:
+(CLASS/.write w (pr-str (cohost.memory-eve/canonicalize x)))
+
+dev/u4_probe19.clj:11:15 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe19.clj:11:46 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe19.clj:14:15 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe19.clj:14:46 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe20.clj:11:17 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe20.clj:11:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe21.clj:13:17 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe21.clj:13:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe22.clj:10:17 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe22.clj:10:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe24.clj:7:52 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe24.clj:7:96 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe25.clj:6:6 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch
+ Throwable
+ e
+ (println "ERR" (.getMessage e))
+ (doseq [el (take 12 (.getStackTrace e))] (println "  " el)))
+
+dev/u4_probe25.clj:7:23 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe25.clj:8:28 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getStackTrace e)
+Consider using:
+(CLASS/.getStackTrace e)
+
+dev/u4_probe26.clj:9:32 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getName %1#)
+Consider using:
+(CLASS/.getName %1#)
+
+dev/u4_probe27.clj:8:24 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe27.clj:8:55 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe28.clj:4:37 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getInterfaces clojure.lang.IReduceInit)
+Consider using:
+(CLASS/.getInterfaces clojure.lang.IReduceInit)
+
+dev/u4_probe29.clj:5:1 [style/def-fn] - Prefer `defn` instead of `def` wrapping `fn`.
+(def f (fn [x] (+ x 1)))
+Consider using:
+(defn f [x] (+ x 1))
+
+dev/u4_probe29.clj:5:16 [style/plus-one] - Use `inc` instead of recreating it.
+(+ x 1)
+Consider using:
+(inc x)
+
+dev/u4_probe30.clj:2:31 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.exists (java.io.File. "../eve/src"))
+Consider using:
+(CLASS/.exists (java.io.File. "../eve/src"))
+
+dev/u4_probe30.clj:3:34 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getCanonicalPath (java.io.File. "../eve/src"))
+Consider using:
+(CLASS/.getCanonicalPath (java.io.File. "../eve/src"))
+
+dev/u4_probe31.clj:7:23 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe31.clj:7:67 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe32.clj:6:6 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch
+ Throwable
+ e
+ (println "ERR" (type e) (.getMessage e))
+ (doseq [el (take 10 (.getStackTrace e))] (println "  " el)))
+
+dev/u4_probe32.clj:7:32 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe32.clj:8:28 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getStackTrace e)
+Consider using:
+(CLASS/.getStackTrace e)
+
+dev/u4_probe33.clj:7:23 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe33.clj:7:67 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe34.clj:8:73 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe34.clj:8:104 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe34.clj:9:69 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe34.clj:9:113 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe34.clj:11:108 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe34.clj:11:139 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe35.clj:9:59 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe35.clj:9:90 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe35.clj:11:35 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch
+ Throwable
+ e
+ (str "ERR " (type e) " " (.getMessage e) " data:" (pr-str (ex-data e))))
+
+dev/u4_probe35.clj:11:79 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe36.clj:7:23 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe36.clj:7:67 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe37.clj:8:23 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe37.clj:8:67 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe38.clj:10:51 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe38.clj:10:95 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe38.clj:11:63 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe38.clj:11:107 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe38.clj:12:41 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe38.clj:12:85 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe39.clj:7:23 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (type e) " " (.getMessage e)))
+
+dev/u4_probe39.clj:7:67 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe40.clj:6:6 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (println "require ERR" (.getMessage e)))
+
+dev/u4_probe40.clj:6:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe40.clj:8:6 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch
+ Throwable
+ e
+ (println "index-of ERR" (.getMessage e))
+ (doseq [el (take 8 (.getStackTrace e))] (println "  " el))
+ (when (.getCause e) (println "cause:" (.getMessage (.getCause e)))))
+
+dev/u4_probe40.clj:9:32 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe40.clj:10:27 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getStackTrace e)
+Consider using:
+(CLASS/.getStackTrace e)
+
+dev/u4_probe40.clj:11:14 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getCause e)
+Consider using:
+(CLASS/.getCause e)
+
+dev/u4_probe40.clj:11:46 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage (.getCause e))
+Consider using:
+(CLASS/.getMessage (.getCause e))
+
+dev/u4_probe40.clj:11:59 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getCause e)
+Consider using:
+(CLASS/.getCause e)
+
+dev/u4_probe40.clj:13:6 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch
+ Throwable
+ e
+ (println "re-matcher ERR" (.getMessage e))
+ (when (.getCause e) (println "cause:" (.getMessage (.getCause e)))))
+
+dev/u4_probe40.clj:14:34 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe40.clj:15:14 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getCause e)
+Consider using:
+(CLASS/.getCause e)
+
+dev/u4_probe40.clj:15:46 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage (.getCause e))
+Consider using:
+(CLASS/.getMessage (.getCause e))
+
+dev/u4_probe40.clj:15:59 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getCause e)
+Consider using:
+(CLASS/.getCause e)
+
+dev/u4_probe41.clj:6:6 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch
+ Throwable
+ e
+ (let [c (.getCause e)]
+   (println "ERR" (.getMessage e))
+   (println "cause:" (type c) (.getMessage c))
+   (doseq [el (take 22 (.getStackTrace c))] (println "  " el))))
+
+dev/u4_probe41.clj:7:16 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getCause e)
+Consider using:
+(CLASS/.getCause e)
+
+dev/u4_probe41.clj:8:25 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe41.clj:9:37 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage c)
+Consider using:
+(CLASS/.getMessage c)
+
+dev/u4_probe41.clj:10:30 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getStackTrace c)
+Consider using:
+(CLASS/.getStackTrace c)
+
+dev/u4_probe43.clj:7:23 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe43.clj:7:54 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe44.clj:6:26 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe44.clj:6:57 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe44.clj:8:6 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (println "upper-case ERR" (.getMessage e)))
+
+dev/u4_probe44.clj:8:51 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe44.clj:10:6 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch
+ Throwable
+ e
+ (let [c (.getCause e)]
+   (println "index-of ERR" (.getMessage e))
+   (println "cause:" (.getMessage c))
+   (doseq [el (take 14 (.getStackTrace c))] (println "  " el))))
+
+dev/u4_probe44.clj:11:16 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getCause e)
+Consider using:
+(CLASS/.getCause e)
+
+dev/u4_probe44.clj:12:34 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe44.clj:13:28 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage c)
+Consider using:
+(CLASS/.getMessage c)
+
+dev/u4_probe44.clj:14:30 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getStackTrace c)
+Consider using:
+(CLASS/.getStackTrace c)
+
+dev/u4_probe45.clj:7:23 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe45.clj:7:54 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe46.clj:7:22 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str (type e) " " (.getMessage e)))
+
+dev/u4_probe46.clj:7:59 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe6.clj:28:61 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe7.clj:8:17 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe7.clj:8:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe8.clj:11:17 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe8.clj:11:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4_probe9.clj:10:17 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4_probe9.clj:10:48 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u4r_probe.clj:11:19 [style/prefer-clj-string] - Use the `clojure.string` function instead of interop.
+(.split (System/getProperty "java.class.path") ":")
+Consider using:
+(clojure.string/split (System/getProperty "java.class.path") ":")
+
+dev/u4r_probe.clj:14:21 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getClassLoader clojure.core.Eduction)
+Consider using:
+(CLASS/.getClassLoader clojure.core.Eduction)
+
+dev/u4r_probe.clj:15:21 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getCodeSource (.getProtectionDomain clojure.core.Eduction))
+Consider using:
+(CLASS/.getCodeSource (.getProtectionDomain clojure.core.Eduction))
+
+dev/u4r_probe.clj:15:37 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getProtectionDomain clojure.core.Eduction)
+Consider using:
+(CLASS/.getProtectionDomain clojure.core.Eduction)
+
+dev/u4r_probe.clj:27:5 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable t (println " HOST-CAUGHT:" (.getName (class t)) (.getMessage t)))
+
+dev/u4r_probe.clj:28:32 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getName (class t))
+Consider using:
+(CLASS/.getName (class t))
+
+dev/u4r_probe.clj:28:53 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage t)
+Consider using:
+(CLASS/.getMessage t)
+
+dev/u4r_probe27.clj:9:24 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "ERR " (.getMessage e)))
+
+dev/u4r_probe27.clj:9:55 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getMessage e)
+Consider using:
+(CLASS/.getMessage e)
+
+dev/u5/census.clj:26:15 [lint/identical-branches] - Two adjacent branches are identical
+((= form :splint-auto-current/eof) out (= form :splint-auto-current/err) out)
+Consider using:
+((or (= form :splint-auto-current/eof) (= form :splint-auto-current/err)) out)
+
+dev/u5/census.clj:28:39 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getLineNumber r)
+Consider using:
+(CLASS/.getLineNumber r)
+
+dev/u5/census.clj:45:24 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.isFile %1#)
+Consider using:
+(CLASS/.isFile %1#)
+
+dev/u5/census.clj:46:51 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getName %1#)
+Consider using:
+(CLASS/.getName %1#)
+
+dev/u5/census.clj:47:21 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getPath %1#)
+Consider using:
+(CLASS/.getPath %1#)
+
+dev/u5/probe0.clj:15:38 [lint/fn-wrapper] - No need to wrap function. Clojure supports first-class functions.
+(fn [x] (inc x))
+Consider using:
+inc
+
+dev/u5/probe0.clj:15:61 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "THROW " (ex-message e)))
+
+dev/u5/probe0.clj:16:48 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "THROW " (ex-message e)))
+
+dev/u5/probe0.clj:19:77 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "THROW " (ex-message e)))
+
+dev/u5/probe0.clj:20:37 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "THROW " (ex-message e)))
+
+dev/u5/probe0.clj:23:92 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "THROW " (ex-message e)))
+
+dev/u5/probe0.clj:26:57 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "THROW " (ex-message e)))
+
+dev/u5/probe0.clj:36:129 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (str "THROW " (.getSimpleName (class e)) " " (ex-message e)))
+
+dev/u5/probe0.clj:36:162 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.getSimpleName (class e))
+Consider using:
+(CLASS/.getSimpleName (class e))
+
+dev/u7/convey.clj:36:43 [lint/catch-throwable] - Throwable is too broad to safely catch.
+(catch Throwable e (:cohost.atom/error (ex-data e)))
+
+dev/u7/two_proc.clj:41:20 [style/apply-str] - Use `clojure.string/join` instead of recreating it.
+(apply str (map (fn [b] (format "%02x" (bit-and b 255))) raw))
+Consider using:
+(clojure.string/join (map (fn [b] (format "%02x" (bit-and b 255))) raw))
+
+dev/u7/two_proc.clj:72:14 [lint/prefer-method-values] - Prefer uniform Class/member syntax instead of traditional interop.
+(.halt (Runtime/getRuntime) 0)
+Consider using:
+(CLASS/.halt (Runtime/getRuntime) 0)
+
+dev/u8/u8_worker_probe.cljs:1:1 [naming/single-segment-namespace] - u8-worker-probe is a single segment. Consider adding an additional segment.
+(ns u8-worker-probe
+  "Unit 8 de-risk probe: one Eve in-process (SAB) atom domain shared by the\n   main realm and a worker realm started through Eve's own Node thread\n   adapter (eve.thread-host fat-kernel mesh). The worker joins the SAME\n   domain from the SharedArrayBuffers handed to it (Eve's slab handover:\n   process-slab/init-worker-slabs! + the domain root/reader-map SABs) and\n   both realms swap one atom concurrently; the final value must be exact."
+  (:require ["node:worker_threads" :as wt]
+            [eve.atom :as a]
+            [eve.deftype-proto.alloc :as alloc]
+            [eve.deftype-proto.wasm :as wasm]
+            [eve.process-slab :as ps]
+            [eve.region :as region]
+            [eve.thread-host :as th]))
+
+Linting took 9331ms, checked 165 files, 369 style warnings

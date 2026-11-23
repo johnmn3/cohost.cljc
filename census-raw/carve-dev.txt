@@ -1,0 +1,31 @@
+WARNING: Proxy info is of authenticated type - discarding the user/pw as we do not support it!
+WARNING: Proxy info is of authenticated type - discarding the user/pw as we do not support it!
+[clj-kondo] WARNING: error while checking types:  java.lang.ClassCastException clojure.lang.PersistentHashSet cannot be cast to clojure.lang.Named
+[clj-kondo] WARNING: error while checking types:  java.lang.ClassCastException clojure.lang.PersistentHashSet cannot be cast to clojure.lang.Named
+dev/cli-demo/src/demo/main.cljc:24:1 demo.main/run
+dev/cli-demo/src/seam/badmacro.cljc:6:1 seam.badmacro/use-it
+dev/cli-demo/src/seam/ok.cljc:3:1 seam.ok/run
+dev/cli-demo/src/seam/throwmacro.cljc:7:1 seam.throwmacro/use-it
+dev/cljs_parity/proof/wrap_macros.cljc:19:1 proof.wrap-macros/shim-compiled
+dev/cljs_parity/proof/wrap_macros.cljc:24:1 proof.wrap-macros/shim-process
+dev/cljs_parity/proof/wrap_macros.cljc:29:1 proof.wrap-macros/make-err
+dev/cljs_parity/proof/wrap_macros.cljc:34:1 proof.wrap-macros/pos-inf
+dev/cljs_parity/string_require_test.cljs:9:1 string-require-test/sha256-hex
+dev/cljs_parity/string_require_test.cljs:14:1 string-require-test/fs-there?
+dev/cljs_parity/string_require_test.cljs:21:1 string-require-test/promise-sum!
+dev/eve-cljs/eve_paths.clj:49:1 eve-paths/eve-cljs-build-sdeps
+dev/perf/jank_snapshot_cli.clj:80:1 user/jank-cli-launch
+dev/perf/jank_snapshot_cli.clj:119:1 user/jank-project-launch
+dev/perf/jank_snapshot_key.clj:134:1 user/fresh-path
+dev/perf/lpy_snapshot_ensure.clj:45:1 user/lpy-fresh-src
+dev/perf/lpy_snapshot_ensure.clj:51:1 user/lpy-ensure!
+dev/perf/sha256.clj:14:1 cohost.dev.sha256/sha256-hex
+dev/perf/sha256.clj:30:1 cohost.dev.sha256/sha256sum-listing
+dev/research/a5-8/loops.clj:3:1 user/dbl
+dev/research/a5-8/loops.clj:4:1 user/kw
+dev/research/a5-8/loops.clj:5:1 user/ok
+dev/research/a5-8/loops.clj:8:1 user/mixed
+dev/research/p2_call_path.clj:2:24 research.p2-other/id1
+dev/u4_probe18.clj:5:1 user/elist
+dev/u5/probe0.clj:6:1 user/d2
+dev/u8/u8_worker_probe.cljs:27:1 u8-worker-probe/worker-entry
