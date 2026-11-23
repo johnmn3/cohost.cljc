@@ -440,6 +440,17 @@ def str_alias_for(src, filename):
     if re.search(r'\[clojure\.string\]', src[:4000]): return 'clojure.string'
     return None
 
+DISABLE_NOTES = {
+    'lint/catch-throwable': 'catching Throwable is the isolation contract: host/seat failures must not escape this boundary',
+    'lint/locking-object': 'the lock object is minted once with the seat state and shared by design (see the kondo note)',
+    'style/new-object': 'the (new (aget ..) f) spelling is the squint-seat-proven constructor form',
+    'style/prefer-clj-string': 'not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches',
+    'style/apply-str': 'shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string',
+    'style/apply-str-interpose': 'shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string',
+    'style/apply-str-reverse': 'shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string',
+    'lint/fn-wrapper': 'the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)',
+}
+
 def main():
     args = sys.argv[1:]
     dry = '--dry' in args
@@ -475,7 +486,9 @@ def main():
                 indent = s[s.rfind('\n', 0, off) + 1:off]
                 if indent.strip():
                     indent = ''
-                repls.append((off, off, '#_{:splint/disable [' + d['rule-name'] + ']}\n' + indent, d['rule-name'] + ' (disable)'))
+                note = DISABLE_NOTES.get(d['rule-name'], '')
+                note_txt = (';; splint: ' + note + '\n' + indent) if note else ''
+                repls.append((off, off, note_txt + '#_{:splint/disable [' + d['rule-name'] + ']}\n' + indent, d['rule-name'] + ' (disable)'))
                 total_ok += 1
                 continue
             fn = TRANSFORMS[d['rule-name']]

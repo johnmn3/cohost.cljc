@@ -40,7 +40,9 @@
          #{}))
 
 (defn- ns-obj [ns-sym]
-       (apply gobj/getValueByKeys js/goog.global (.split (munge (str ns-sym)) ".")))
+       (apply gobj/getValueByKeys js/goog.global ;; splint: not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches
+              #_{:splint/disable [style/prefer-clj-string]}
+              (.split (munge (str ns-sym)) ".")))
 
 (defn- js-path [ns-sym nm]
        (gobj/get (ns-obj ns-sym) (munge (str nm))))
@@ -629,7 +631,9 @@
              (::ana/namespaces @st)))
 
 (defn- protocol-prefix [ns-sym nm]
-       (str (.replace (str ns-sym) (js/RegExp. "\\." "g") "$") "$" nm "$"))
+       (str ;; splint: not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches
+        #_{:splint/disable [style/prefer-clj-string]}
+        (.replace (str ns-sym) (js/RegExp. "\\." "g") "$") "$" nm "$"))
 
 (defn- extend*
        "clojure.core/extend: (extend type-or-base proto method-map & more)."
@@ -803,7 +807,11 @@
             (when-let [m (.exec g s)] (match-vec m))))
 
 (defn- re-match-full [re s]
-       (when-let [m (.exec (js/RegExp. (str "^(?:" (.-source re) ")$") (str (.replace (.replace (.-flags re) "g" "") "d" "") "d")) s)]
+       (when-let [m (.exec (js/RegExp. (str "^(?:" (.-source re) ")$") (str ;; splint: not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches
+                                                                        #_{:splint/disable [style/prefer-clj-string]}
+                                                                        (.replace ;; splint: not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches
+                                                                         #_{:splint/disable [style/prefer-clj-string]}
+                                                                         (.replace (.-flags re) "g" "") "d" "") "d")) s)]
                  (match-vec m)))
 
 (defn- re-group-count [re] (dec (.-length (.exec (js/RegExp. (str (.-source re) "|")) ""))))

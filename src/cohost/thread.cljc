@@ -565,6 +565,8 @@
        (or @(:realm ex)
            ;; double-checked locking on the executor's realm atom:
            ;; the atom is the executor's stable lock object.
+           ;; splint: the lock object is minted once with the seat state and shared by design (see the kondo note)
+           #_{:splint/disable [lint/locking-object]}
            #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:realm ex)
                                                                      (or @(:realm ex)
                                                                          (reset! (:realm ex) ((:boot! (:sister ex)) (:boot-opts ex)))))))

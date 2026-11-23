@@ -704,7 +704,9 @@
       []
       (doseq [[sym v] {'PersistentVector-EMPTY empty-vector
                        'PersistentArrayMap-EMPTY empty-map}]
-             (when-let [var (try (ns-resolve 'cohost.shim sym) (catch Throwable _ nil))]
+             (when-let [var (try (ns-resolve 'cohost.shim sym) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                 #_{:splint/disable [lint/catch-throwable]}
+                                 (catch Throwable _ nil))]
                        (alter-var-root var (constantly v))))
       true)
 

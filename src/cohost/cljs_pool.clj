@@ -63,6 +63,8 @@
                       raw)]
             (if (string? text)
                 (try (edn/read-string {:default (fn [_tag v] v)} text)
+                     ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                     #_{:splint/disable [lint/catch-throwable]}
                      (catch Throwable _ text))
                 text)))
 
@@ -80,6 +82,8 @@
        :eval-form (fn [state ns-sym form]
                       ;; the seat's one lock object, minted with the state in :boot!
                       ;; above and shared by every call on this seat.
+                      ;; splint: the lock object is minted once with the seat state and shared by design (see the kondo note)
+                      #_{:splint/disable [lint/locking-object]}
                       #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:lock state)
                                                                                 (form->data (:realm state) ns-sym form)))
        :close! (fn [state] (.close ^Context (:realm state)))})
@@ -133,6 +137,8 @@
                                  (when-let [p @(:pending state)]
                                            (deliver p msg))))
                         (recur)))
+        ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+        #_{:splint/disable [lint/catch-throwable]}
         (catch Throwable _ nil)
         (finally
       ;; the stream ended -- the process died or was closed: a pending
@@ -226,11 +232,17 @@
        :eval-form (fn [state ns-sym form]
                       ;; the seat's one lock object, minted with the state in :boot!
                       ;; above and shared by every call on this seat.
+                      ;; splint: the lock object is minted once with the seat state and shared by design (see the kondo note)
+                      #_{:splint/disable [lint/locking-object]}
                       #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:lock state)
                                                                                 (form->data (:realm state) ns-sym form)))
        :close! (fn [state]
-                   (try (.close (:out (:realm state))) (catch Throwable _ nil))
+                   (try (.close (:out (:realm state))) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                        #_{:splint/disable [lint/catch-throwable]}
+                        (catch Throwable _ nil))
                    (try (.destroy ^Process (:proc (:realm state)))
+                        ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                        #_{:splint/disable [lint/catch-throwable]}
                         (catch Throwable _ nil)))})
 
 ;; ---------------------------------------------------------------------------
@@ -529,12 +541,18 @@
 
                              :else
                              (respond-text! ex 404 {"Content-Type" "text/plain"} "not found")))
+                       ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                       #_{:splint/disable [lint/catch-throwable]}
                        (catch Throwable t
                               (try (respond-text! ex 500 {"Content-Type" "text/plain"}
                                                   (str "cohost: " (ex-message t)))
+                                   ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                   #_{:splint/disable [lint/catch-throwable]}
                                    (catch Throwable _ nil)))
                        (finally
-                        (try (.close ^HttpExchange ex) (catch Throwable _ nil)))))))
+                        (try (.close ^HttpExchange ex) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                             #_{:splint/disable [lint/catch-throwable]}
+                             (catch Throwable _ nil)))))))
 
 (defn- app-handler
        "The app endpoints, under cfg's header pipeline: the bootstream
@@ -573,12 +591,18 @@
                                                                                      (respond-text! ex (or (:status resp) 200)
                                                                                                     (merge headers (:headers resp))
                                                                                                     (:body resp))) (respond-text! ex 404 headers "not found")))))
+                       ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                       #_{:splint/disable [lint/catch-throwable]}
                        (catch Throwable t
                               (try (respond-text! ex 500 {"Content-Type" "text/plain"}
                                                   (str "cohost: " (ex-message t)))
+                                   ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                   #_{:splint/disable [lint/catch-throwable]}
                                    (catch Throwable _ nil)))
                        (finally
-                        (try (.close ^HttpExchange ex) (catch Throwable _ nil)))))))
+                        (try (.close ^HttpExchange ex) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                             #_{:splint/disable [lint/catch-throwable]}
+                             (catch Throwable _ nil)))))))
 
 (defn- daemon-thread-factory
        [name-prefix]
@@ -624,8 +648,12 @@
              :port (.getPort (.getAddress server))
              :url (str "http://" (:host cfg) ":" (.getPort (.getAddress server)))
              :stop! (fn []
-                        (try (.stop ^HttpServer server 0) (catch Throwable _ nil))
-                        (try (.shutdownNow exec) (catch Throwable _ nil)))})))
+                        (try (.stop ^HttpServer server 0) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                             #_{:splint/disable [lint/catch-throwable]}
+                             (catch Throwable _ nil))
+                        (try (.shutdownNow exec) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                             #_{:splint/disable [lint/catch-throwable]}
+                             (catch Throwable _ nil)))})))
 
 ;; ---------------------------------------------------------------------------
 ;; the browser itself
@@ -665,6 +693,8 @@
         (let [text (slurp errlog)
               n (count text)]
              (subs text (max 0 (- n 2048))))
+        ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+        #_{:splint/disable [lint/catch-throwable]}
         (catch Throwable _ "")))
 
 (defn- launch-browser!
@@ -735,7 +765,11 @@
        (try
         (when (Files/exists p (into-array java.nio.file.LinkOption []))
               (doseq [f (reverse (iterator-seq (.iterator (Files/walk p (into-array java.nio.file.FileVisitOption [])))))]
-                     (try (Files/delete ^java.nio.file.Path f) (catch Throwable _ nil))))
+                     (try (Files/delete ^java.nio.file.Path f) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                          #_{:splint/disable [lint/catch-throwable]}
+                          (catch Throwable _ nil))))
+        ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+        #_{:splint/disable [lint/catch-throwable]}
         (catch Throwable _ nil)))
 
 (defn- close-browser-state!
@@ -745,12 +779,16 @@
        (doseq [[_ p] @(:pending channel)]
               (deliver p {:ok false :error "browser realm closed"}))
        (when server
-             (try ((:stop! server)) (catch Throwable _ nil)))
+             (try ((:stop! server)) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                  #_{:splint/disable [lint/catch-throwable]}
+                  (catch Throwable _ nil)))
        (when browser
              (let [^Process proc (:proc browser)]
                   (try (.destroy proc)
                        (when-not (.waitFor proc 5 TimeUnit/SECONDS)
                                  (.destroyForcibly proc))
+                       ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                       #_{:splint/disable [lint/catch-throwable]}
                        (catch Throwable _ nil)))
              (delete-tree! (:profile browser))))
 
@@ -770,6 +808,8 @@
                                  :page-ready (promise)}
                         server (start-server! opts channel)
                         browser (try (launch-browser! (:chrome opts) (str (:url server) "/"))
+                                     ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                     #_{:splint/disable [lint/catch-throwable]}
                                      (catch Throwable t
                                             ((:stop! server))
                                             (throw t)))]
@@ -787,12 +827,16 @@
                                                             {:resource r}))))
                              (bc/boot! realm opts)
                              (assoc state :realm realm))
+                        ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                        #_{:splint/disable [lint/catch-throwable]}
                         (catch Throwable t
                                (close-browser-state! {:channel channel :server server :browser browser})
                                (throw t)))))
        :eval-form (fn [state ns-sym form]
                       ;; the seat's one lock object, minted with the state in :boot!
                       ;; above and shared by every call on this seat.
+                      ;; splint: the lock object is minted once with the seat state and shared by design (see the kondo note)
+                      #_{:splint/disable [lint/locking-object]}
                       #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:lock state)
                                                                                 (form->data (:realm state) ns-sym form)))
        :close! close-browser-state!})

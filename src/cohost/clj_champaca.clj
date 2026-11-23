@@ -52,6 +52,8 @@
                   (throw (ex-info (:error @state) {:cohost/clj-body :champaca})))
             (when-not (= :booted status)
                       (if-not (try (require 'champaca.api) true
+                                   ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                   #_{:splint/disable [lint/catch-throwable]}
                                    (catch Throwable e
                                           (swap! state assoc :status :missing
                                                  :error (str "cohost: this jolt process's :clj leg needs champaca.api, and it did not load ("

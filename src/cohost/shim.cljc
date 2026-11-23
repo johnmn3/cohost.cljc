@@ -741,7 +741,9 @@
       'java.lang.Runnable fn?
       'java.util.concurrent.Callable fn?
       'java.util.concurrent.Future (constantly false)
-      'java.lang.Class #(class-token? %)
+      'java.lang.Class ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+      #_{:splint/disable [lint/fn-wrapper]}
+      #(class-token? %)
       'java.lang.Throwable h-exception?
       'java.lang.Object some?})
 
@@ -814,7 +816,9 @@
           :default (host/intern! 'cohost.shim (symbol d) v)))
 
 (defn- token-name [prefix c]
-       (str prefix (apply str (map (fn [ch] (let [ch (str ch)] (if (= "." ch) "_" ch))) (str c)))))
+       (str prefix ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+            #_{:splint/disable [style/apply-str]}
+            (apply str (map (fn [ch] (let [ch (str ch)] (if (= "." ch) "_" ch))) (str c)))))
 
 (defn- instance-fn
        "instance-of? for the one class token c, its predicate looked up once."
@@ -1500,6 +1504,8 @@
          (let [s (str s) n (count s)]
               (loop [i 0 out []]
                     (if (>= i n)
+                        ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                        #_{:splint/disable [style/apply-str]}
                         (apply str out)
                         (if-let [t (some (fn [t] (when (and (<= (+ i (count t)) n) (= t (subs s i (+ i (count t))))) t)) demunge-tokens)]
                                 (recur (+ i (count t)) (conj out (get demunge-map t)))
@@ -2405,6 +2411,8 @@
        (let [out (transient []) end (+ off len)]
             (loop [i off]
                   (if (>= i end)
+                      ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                      #_{:splint/disable [style/apply-str]}
                       (apply str (persistent! out))
                       (let [b (ubyte bs i) left (- end i)]
                            (cond
@@ -2478,8 +2486,12 @@
                               (+ (ubyte bs i) (bit-shift-left (ubyte bs (inc i)) 8))))]
             (loop [i off]
                   (cond
-                   (>= i end) (apply str (persistent! out))
-                   (= i (dec end)) (do (emit-replacement! out) (apply str (persistent! out)))
+                   (>= i end) ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                   #_{:splint/disable [style/apply-str]}
+                   (apply str (persistent! out))
+                   (= i (dec end)) (do (emit-replacement! out) ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                       #_{:splint/disable [style/apply-str]}
+                                       (apply str (persistent! out)))
                    :else
                    (let [u (unit i)]
                         (cond
@@ -2510,11 +2522,15 @@
                           (if (and (>= len 2) (= (ubyte bs off) 0xFE) (= (ubyte bs (inc off)) 0xFF))
                               (decode-utf16 bs (+ off 2) (- len 2) true)
                               (decode-utf16 bs off len true)))
-             "US-ASCII" (apply str (map (fn [i] (let [b (ubyte bs i)]
-                                                     (if (< b 0x80) (char-str b) (char-str 0xFFFD))))
-                                        (range off (+ off len))))
-             "ISO-8859-1" (apply str (map (fn [i] (char-str (ubyte bs i)))
-                                          (range off (+ off len))))))
+             "US-ASCII" ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+             #_{:splint/disable [style/apply-str]}
+             (apply str (map (fn [i] (let [b (ubyte bs i)]
+                                          (if (< b 0x80) (char-str b) (char-str 0xFFFD))))
+                             (range off (+ off len))))
+             "ISO-8859-1" ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+             #_{:splint/disable [style/apply-str]}
+             (apply str (map (fn [i] (char-str (ubyte bs i)))
+                             (range off (+ off len))))))
 (defn- encode-utf8-bytes [s]
        (let [units (map code-of (seq s))]
             (loop [us (seq units) out []]
@@ -2577,20 +2593,26 @@
                 (h-sb? x) (h-sb-str x)
                 (arr? x)
                 (case (array-kind x)
-                      :chars (apply str (map char-str (seq x)))
+                      :chars ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                      #_{:splint/disable [style/apply-str]}
+                      (apply str (map char-str (seq x)))
                       :bytes (decode-bytes x 0 (count x) "UTF-8")
                       (str x))
                 :else (str x)))
          ([bs cs]
           (cond (arr? bs)
                 (case (array-kind bs)
-                      :chars (apply str (map char-str (seq bs)))
+                      :chars ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                      #_{:splint/disable [style/apply-str]}
+                      (apply str (map char-str (seq bs)))
                       (decode-bytes bs 0 (count bs) (need-charset cs)))
                 :else (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of bs) " cannot be cast to class [B")))))
          ([a off len] (new-String a off len "UTF-8"))
          ([bs off len cs]
           (case (array-kind bs)
-                :chars (apply str (map char-str (take len (drop off (seq bs)))))
+                :chars ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                #_{:splint/disable [style/apply-str]}
+                (apply str (map char-str (take len (drop off (seq bs)))))
                 (decode-bytes bs off len (need-charset cs))))))
 (def String-getBytes
      (fn ([s] (string->byte-array s "UTF-8"))
@@ -2990,6 +3012,8 @@
                    (fn [r & args]
                        (io/unread! r (if (number? (first args))
                                          (char-str (first args))
+                                         ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                         #_{:splint/disable [style/apply-str]}
                                          (apply str (map char-str (seq (first args)))))))}))
 (def -available (http-member "available" (io-kind-table io/input-stream-kinds io/available)))
 
@@ -3025,6 +3049,8 @@
             (cond (string? x) (if off (subs x off (+ off len)) x)
                   (arr? x) (let [xs (if off (take len (drop off (seq x))) (seq x))]
                                 (if (= :chars (array-kind x))
+                                    ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                    #_{:splint/disable [style/apply-str]}
                                     (apply str (map char-str xs))
                                     (let [v (vec xs)] (decode-bytes (Numbers-byte_array v) 0 (count v) "UTF-8"))))
                   (number? x) (char-str (bit-and x 0xFFFF))
@@ -3126,6 +3152,8 @@
                 "0"
                 (loop [v (if (neg? x) (Numbers-minusP x) x) acc ()]
                       (if (zero? v)
+                          ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                          #_{:splint/disable [style/apply-str]}
                           (apply str (if (neg? x) (cons "-" acc) acc))
                           (recur (quot v radix) (cons (nth radix-digits (rem v radix)) acc)))))))
 (defn- unsigned [x bits]
@@ -3147,7 +3175,9 @@
 (def Long-signum (fn [x] (cond (pos? x) 1 (neg? x) -1 :else 0)))
 (def Integer-signum Long-signum)
 (def Double-toString (fn [x] (if (and h-double-str (float? x)) (h-double-str x) (str x))))
-(def String-join (fn [sep coll] (apply str (interpose sep coll))))
+(def String-join (fn [sep coll] ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                     #_{:splint/disable [style/apply-str-interpose]}
+                     (apply str (interpose sep coll))))
 ;; :glj arm (measured 2026-11-12, go-bodies Tail B closer): glojure's
 ;; compiler emits a direct runtime division for (/ 1.0 0.0) in compiled
 ;; code, bypassing the glj adapter's IEEE var-root wrapper for
@@ -3518,6 +3548,8 @@
        (let [repl (str repl) n (count repl) gc (dec (count groups))]
             (loop [i 0 out []]
                   (if (>= i n)
+                      ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                      #_{:splint/disable [style/apply-str]}
                       (apply str out)
                       (let [c (str (nth repl i))]
                            (cond
@@ -3591,9 +3623,13 @@
                                    out)))))))
 
 (def Pattern-quote
-     (fn [s] (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "^" "$" "." "|" "?" "*" "+" "(" ")" "[" "]" "{" "}"} c) (str "\\" c) c))) (str s)))))
+     (fn [s] ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+         #_{:splint/disable [style/apply-str]}
+         (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "^" "$" "." "|" "?" "*" "+" "(" ")" "[" "]" "{" "}"} c) (str "\\" c) c))) (str s)))))
 (def Matcher-quoteReplacement
-     (fn [s] (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "$"} c) (str "\\" c) c))) (str s)))))
+     (fn [s] ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+         #_{:splint/disable [style/apply-str]}
+         (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "$"} c) (str "\\" c) c))) (str s)))))
 (def UUID-randomUUID (host-fn 'random-uuid (unsupported "random-uuid")))
 (def UUID-fromString (host-fn 'parse-uuid (unsupported "parse-uuid")))
 (def Class-forName symbol)
@@ -3795,7 +3831,9 @@
 
 (defn- cal-pad [n w]
        (let [s (str n) missing (- w (count s))]
-            (if (pos? missing) (str (apply str (repeat missing "0")) s) s)))
+            (if (pos? missing) (str ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                #_{:splint/disable [style/apply-str]}
+                                (apply str (repeat missing "0")) s) s)))
 
 (defn- sdf-format
        "SimpleDateFormat.format over the pattern subset the shim answers:
@@ -3887,7 +3925,9 @@
                            :else (count (nn x)))))
 (def -getBytes (fn ([s] (String-getBytes s)) ([s cs] (String-getBytes s cs))))
 (def -reverse (fn [x] (if (h-sb? x)
-                          (h-sb-append! (h-string-builder) (apply str (reverse (h-sb-str x))))
+                          (h-sb-append! (h-string-builder) ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                        #_{:splint/disable [style/apply-str-reverse]}
+                                        (apply str (reverse (h-sb-str x))))
                           (reverse x))))
 (def -toUpperCase (fn [s] (h-upper-case (nn s))))
 (def -toLowerCase (fn [s] (h-lower-case (nn s))))
@@ -3941,6 +3981,8 @@
                            (loop [from 0 out []]
                                  (let [i (h-index-of s t from)]
                                       (if (neg? i)
+                                          ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                          #_{:splint/disable [style/apply-str]}
                                           (apply str (conj out (subs s from)))
                                           (recur (+ i (count t)) (conj out (subs s from i) r)))))))))
 (def -size -count)
@@ -4585,6 +4627,8 @@
                                                    (- (count s) (count t)))))))
 (def -repeat (fn [s n] (let [s (nn s)]
                             (when (neg? n) (throw (host/ex* 'java.lang.IllegalArgumentException (str "count is negative: " n))))
+                            ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                            #_{:splint/disable [style/apply-str]}
                             (apply str (repeat n s)))))
 (def -codePointAt (fn [s i] (let [s (nn s) n (count s)]
                                  (when-not (< -1 i n)
@@ -4865,7 +4909,9 @@
 ;; for a missing argument or width, an unknown conversion, a precision a
 ;; conversion takes none of, and an argument of the wrong kind.
 
-(defn- zeros [n] (apply str (repeat n "0")))
+(defn- zeros [n] ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+       #_{:splint/disable [style/apply-str]}
+       (apply str (repeat n "0")))
 (defn- digit-val [c] (- (h-char-code c) 48))
 (defn- small-int [t]
        (let [neg (= "-" (subs t 0 1)) t (if (contains? #{"-" "+"} (subs t 0 1)) (subs t 1) t)]
@@ -4931,6 +4977,8 @@
 
 (defn- group-thousands [ds]
        (let [n (count ds)]
+            ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+            #_{:splint/disable [style/apply-str]}
             (apply str (map-indexed (fn [i c] (if (and (pos? i) (zero? (mod (- n i) 3))) (str "," c) (str c))) ds))))
 
 (defn- java-hash
@@ -4949,6 +4997,8 @@
              ex (fn [k msg] (host/ex* k msg))]
             (loop [i 0 out [] ordinary 0 prev nil]
                   (if (>= i n)
+                      ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                      #_{:splint/disable [style/apply-str]}
                       (apply str out)
                       (let [c (at i)]
                            (if (not= c "%")
@@ -5045,8 +5095,12 @@
                                                                                              (let [m (if (neg? x10) (- x10) x10)] (if (< m 10) (str "0" m) (str m)))))))))))
                                      body (if upper? (h-upper-case body) body)
                                      body (cond (nil? width) body
-                                                (contains? flags "-") (str body (apply str (repeat (- width (count body)) " ")))
-                                                :else (str (apply str (repeat (- width (count body)) " ")) body))]
+                                                (contains? flags "-") (str body ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                                                           #_{:splint/disable [style/apply-str]}
+                                                                           (apply str (repeat (- width (count body)) " ")))
+                                                :else (str ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                                       #_{:splint/disable [style/apply-str]}
+                                                       (apply str (repeat (- width (count body)) " ")) body))]
                                     (recur (inc cj) (conj out body) ordinary prev))))))))
 
 (def public-names

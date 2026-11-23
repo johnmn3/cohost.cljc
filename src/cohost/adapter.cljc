@@ -349,19 +349,29 @@ namespace cohost_err {
 (defn- build-defaults
        "Generic implementations, in plain Clojure where the dialect has the pieces."
        []
-       {:slurp #?(:cljs (unsupported :slurp) :cljd (unsupported :slurp) :default (fn [path] (slurp path)))
+       {:slurp ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        #?(:cljs (unsupported :slurp) :cljd (unsupported :slurp) :default (fn [path] (slurp path)))
         :spit #?(:cljs (unsupported :spit) :cljd (unsupported :spit) :default (fn [path s] (spit path s)))
         :read-string #?(:cljs (unsupported :read-string) :phel (unsupported :read-string) :cljd (fn ([s] (read-string s)) ([s _opts] (read-string s))) :default (fn ([s] (read-string s)) ([s opts] (read-string opts s))))
         :with-ns #?(:cljs (unsupported :with-ns) :phel (unsupported :with-ns) :cljd (unsupported :with-ns) :default (fn [ns-sym thunk] (binding [*ns* (the-ns ns-sym)] (thunk))))
-        :eval #?(:cljs (unsupported :eval) :default (fn [form] (eval form)))
+        :eval ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        #?(:cljs (unsupported :eval) :default (fn [form] (eval form)))
         :error-message generic-error-message
-        :ns-interns #?(:cljs (unsupported :ns-interns) :cljd (unsupported :ns-interns) :default (fn [ns-sym] (ns-interns ns-sym)))
+        :ns-interns ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        #?(:cljs (unsupported :ns-interns) :cljd (unsupported :ns-interns) :default (fn [ns-sym] (ns-interns ns-sym)))
         :interned-var (fn [ns-sym sym] (get ((cap :ns-interns) ns-sym) sym))
         :ns-public-names #?(:cljs (unsupported :ns-public-names) :cljd (unsupported :ns-public-names) :default (fn [ns-sym] (set (keys (ns-publics ns-sym)))))
         :intern! #?(:cljs (unsupported :intern!) :cljd (unsupported :intern!) :default (fn [ns-sym sym val] (intern ns-sym sym val)))
         :refer-all! #?(:cljs (unsupported :refer-all!) :phel (unsupported :refer-all!) :cljd (unsupported :refer-all!) :default (fn [into-ns from-ns] (binding [*ns* (the-ns into-ns)] (refer from-ns))))
-        :var-get #?(:cljs (fn [h] (deref h)) :cljd (fn [h] (deref h)) :default (fn [h] (var-get h)))
-        :var-raw-root #?(:cljs (fn [h] (deref h)) :cljd (fn [h] (deref h)) :default (fn [h] (var-get h)))
+        :var-get ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        #?(:cljs (fn [h] (deref h)) :cljd (fn [h] (deref h)) :default (fn [h] (var-get h)))
+        :var-raw-root ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        #?(:cljs (fn [h] (deref h)) :cljd (fn [h] (deref h)) :default (fn [h] (var-get h)))
         :var-meta meta
         :alter-var-meta! #?(:cljs (unsupported :alter-var-meta!) :cljd (unsupported :alter-var-meta!) :default (fn [h f & args] (apply alter-meta! h f args)))
         :alter-var-root! #?(:cljs (unsupported :alter-var-root!) :default (fn [h f] (alter-var-root h f)))
@@ -369,13 +379,17 @@ namespace cohost_err {
         :mark-macro! #?(:cljs (unsupported :mark-macro!) :cljd (unsupported :mark-macro!) :default (fn [h] (alter-meta! h assoc :macro true) h))
         :var-ns (fn [h] (:ns (meta h)))
         :var-sym (fn [h] (:name (meta h)))
-        :var? #?(:cljd (fn [_] false) :default (fn [x] (var? x)))
+        :var? ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        #?(:cljd (fn [_] false) :default (fn [x] (var? x)))
         :namespace? (fn [_] false)
         :dynamic-var? (fn [h] (true? (:dynamic (meta h))))
         :set-dynamic! #?(:cljs (unsupported :set-dynamic!) :cljd (unsupported :set-dynamic!) :default (fn [h] (alter-meta! h assoc :dynamic true) h))
         :var-bound? #?(:cljs (fn [_] true) :cljd (fn [h] (try-all (fn [] ((cap :var-get) h) true) (fn [_] false))) :default (fn [h] (try-all (fn [] (var-get h) true) (fn [_] false))))
         :var-thread-bound? (fn [_] false)
-        :push-thread-bindings! #?(:cljs (unsupported :push-thread-bindings!) :phel (unsupported :push-thread-bindings!) :lg (unsupported :push-thread-bindings!) :cljrs (unsupported :push-thread-bindings!) :cljd (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
+        :push-thread-bindings! ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        #?(:cljs (unsupported :push-thread-bindings!) :phel (unsupported :push-thread-bindings!) :lg (unsupported :push-thread-bindings!) :cljrs (unsupported :push-thread-bindings!) :cljd (unsupported :push-thread-bindings!) :default (fn [m] (push-thread-bindings m)))
         :pop-thread-bindings! #?(:cljs (unsupported :pop-thread-bindings!) :phel (unsupported :pop-thread-bindings!) :lg (unsupported :pop-thread-bindings!) :cljrs (unsupported :pop-thread-bindings!) :cljd (unsupported :pop-thread-bindings!) :default (fn [] (pop-thread-bindings)))
         :binding-style :push-pop
         :with-thread-bindings! (fn [m thunk]
@@ -398,7 +412,9 @@ namespace cohost_err {
         :native-static nil
         :var-set! (fn [h v] ((cap :alter-var-root!) h (constantly v)) v)
         :current-ns #?(:cljs (unsupported :current-ns) :phel (unsupported :current-ns) :default (fn [] (symbol (str (ns-name *ns*)))))
-        :macroexpand-1 #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :cljd (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
+        :macroexpand-1 ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        #?(:cljs (unsupported :macroexpand-1) :cljrs (unsupported :macroexpand-1) :cljd (unsupported :macroexpand-1) :default (fn [form] (macroexpand-1 form)))
         :refer! #?(:cljs (unsupported :refer!) :phel (unsupported :refer!) :cljd (unsupported :refer!)
                    :default (fn [into-ns from-ns {:keys [only exclude rename]}]
                                 (binding [*ns* (the-ns into-ns)]
@@ -413,7 +429,9 @@ namespace cohost_err {
                                           (set! *ns* (the-ns ns-sym))
                                           (alter-var-root #'*ns* (constantly (the-ns ns-sym)))))
                             :cljs (unsupported :set-current-ns!) :phel (unsupported :set-current-ns!) :cljd (unsupported :set-current-ns!) :jank (fn [ns-sym] (in-ns ns-sym)) :default (fn [ns-sym] (set! *ns* (the-ns ns-sym))))
-        :require-host! #?(:cljs (unsupported :require-host!) :phel (unsupported :require-host!) :cljd (unsupported :require-host!) :default (fn [lib] (require lib)))
+        :require-host! ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        #?(:cljs (unsupported :require-host!) :phel (unsupported :require-host!) :cljd (unsupported :require-host!) :default (fn [lib] (require lib)))
         :add-module-path! (fn [_path] nil)
         :core-extras {}
         :host-type nil
@@ -537,8 +555,10 @@ namespace cohost_err {
         :exception-message ex-message
         :exception-cause ex-cause
         :ex-trace (fn [_e] [])
-        :to-array (fn [coll] #?(:clje (throw (ex-info "cohost: this host provides no :to-array" {:capability :to-array}))
-                                :default (to-array coll)))
+        :to-array ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+        #_{:splint/disable [lint/fn-wrapper]}
+        (fn [coll] #?(:clje (throw (ex-info "cohost: this host provides no :to-array" {:capability :to-array}))
+                      :default (to-array coll)))
         :sort-array! (unsupported :sort-array!)
         :array? nil
         :close! (fn [_] nil)

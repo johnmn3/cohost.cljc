@@ -66,7 +66,9 @@
       ;; dotted: js/Number.POSITIVE_INFINITY -> (.-POSITIVE_INFINITY
       ;; cohost.js-shim/Number); deeper chains nest.
              (str/includes? nm ".")
-             (let [parts (.split nm "\\.")]
+             (let [parts ;; splint: not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches
+                   #_{:splint/disable [style/prefer-clj-string]}
+                   (.split nm "\\.")]
                   (reduce (fn [acc part] (list (symbol (str ".-" part)) acc))
                           (symbol (str shim-ns) (aget parts 0))
                           (drop 1 parts)))
@@ -84,6 +86,8 @@
        (when (and (symbol? head) (= "js" (namespace head)))
              (let [nm (name head)]
                   (when (and (str/includes? nm ".") (not (str/ends-with? nm ".")))
+                        ;; splint: not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches
+                        #_{:splint/disable [style/prefer-clj-string]}
                         (.split nm "\\.")))))
 
 (defn- rewrite-list [mode form]
@@ -132,10 +136,14 @@
                                        form)
                     (seq? form) (rewrite-list mode form)
                     (vector? form) (mapv #(rewrite* mode %) form)
-                    (map? form) (into (try (empty form) (catch Throwable _ {}))
+                    (map? form) (into (try (empty form) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                           #_{:splint/disable [lint/catch-throwable]}
+                                           (catch Throwable _ {}))
                                       (map (fn [[k v]] [(rewrite* mode k) (rewrite* mode v)]))
                                       form)
-                    (set? form) (into (try (empty form) (catch Throwable _ #{}))
+                    (set? form) (into (try (empty form) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                           #_{:splint/disable [lint/catch-throwable]}
+                                           (catch Throwable _ #{}))
                                       (map #(rewrite* mode %))
                                       form)
                     :else form)]

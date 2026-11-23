@@ -962,7 +962,11 @@
             (when-let [m (.exec g s)] (match-vec m))))
 
 (defn- re-match-full [re s]
-       (when-let [m (.exec (js/RegExp. (str "^(?:" (.-source re) ")$") (str (.replace (.replace (.-flags re) "g" "") "d" "") "d")) s)]
+       (when-let [m (.exec (js/RegExp. (str "^(?:" (.-source re) ")$") (str ;; splint: not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches
+                                                                        #_{:splint/disable [style/prefer-clj-string]}
+                                                                        (.replace ;; splint: not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches
+                                                                         #_{:splint/disable [style/prefer-clj-string]}
+                                                                         (.replace (.-flags re) "g" "") "d" "") "d")) s)]
                  (match-vec m)))
 
 (defn- re-group-count [re] (dec (.-length (.exec (js/RegExp. (str (.-source re) "|")) ""))))
@@ -982,8 +986,12 @@
    ;; squint core's own classes (its LazySeq widens instanceof to
    ;; every lazy cell; a transient is whatever carries the
    ;; ITransientCollection -conj! slot)
-      :lazy-seq (fn [f] (new (aget sqcore "LazySeq") f))
-      :delay (fn [f] (new (aget sqcore "Delay") f))
+      :lazy-seq (fn [f] ;; splint: the (new (aget ..) f) spelling is the squint-seat-proven constructor form
+                    #_{:splint/disable [style/new-object]}
+                    (new (aget sqcore "LazySeq") f))
+      :delay (fn [f] ;; splint: the (new (aget ..) f) spelling is the squint-seat-proven constructor form
+                 #_{:splint/disable [style/new-object]}
+                 (new (aget sqcore "Delay") f))
       :exception? (fn [x] (instance? js/Error x))
       :transient? (fn [x] (and (some? x)
                                (some? (aget x (aget sqcore "ITransientCollection__conj_BANG_")))))
@@ -1024,7 +1032,9 @@
    ;; constant-time array read the cap contract promises; the
    ;; elements are UTF-16 units, so indices stay aligned with
    ;; the string's own (subs, last-index-of).
-      :string-chars (fn [s] (.split s ""))
+      :string-chars (fn [s] ;; splint: not equivalent: .split/.replace take a regex string with JS semantics; clojure.string/split wants a Pattern and replace differs on string matches
+                        #_{:splint/disable [style/prefer-clj-string]}
+                        (.split s ""))
       :plain-symbol (fn [x] x)
       :with-ns (fn [ns-sym thunk]
                    (let [old @cur-ns]

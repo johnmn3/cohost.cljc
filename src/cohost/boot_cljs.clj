@@ -107,6 +107,8 @@
                                    id (swap! counter inc)
                                    task (reify Runnable
                                                (run [_] (try (.execute f (object-array 0))
+                                                             ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                                             #_{:splint/disable [lint/catch-throwable]}
                                                              (catch Throwable _ nil))))
                                    fut (if (= kind "interval")
                                            (.scheduleAtFixedRate ^ScheduledExecutorService exec task ms ms TimeUnit/MILLISECONDS)
@@ -311,6 +313,8 @@
                                              (when (wrap-macros-enabled? realm)
                                                    (wrap-loaded-macros!))
                                              (let [ast (try (ana/analyze env form nil compiler-opts)
+                                                            ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                                            #_{:splint/disable [lint/catch-throwable]}
                                                             (catch Throwable t
                                                                    (throw (ex-info (str "analysis failed in " name ": " (pr-str form))
                                                                                    {:resource name :form form} t))))
@@ -318,6 +322,8 @@
                                                   (when (and hooks (= :ns (:op ast)) (:before-ns hooks))
                                                         ((:before-ns hooks) (:name ast)))
                                                   (try (eval-in realm js)
+                                                       ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                                       #_{:splint/disable [lint/catch-throwable]}
                                                        (catch Throwable t
                                                               (throw (ex-info (str "realm eval failed in " name ": " (pr-str form))
                                                                               {:resource name :form form :js js} t))))
@@ -376,6 +382,8 @@
    The source is read at :cljs features, as the analyzer reads it."
        [text]
        (let [form (try (reader/read-string {:eof ::eof :read-cond :allow :features #{:cljs}} text)
+                       ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                       #_{:splint/disable [lint/catch-throwable]}
                        (catch Throwable _ nil))]
             (when (and (seq? form) (= 'ns (first form)))
                   (->> (rest form)

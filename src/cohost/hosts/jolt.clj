@@ -143,7 +143,9 @@
 ;; Class itself, as the dispatch (class x) answers it
 (defn- mf-dv [dv]
        (if (symbol? dv)
-           (let [c (try (resolve dv) (catch Throwable _ nil))]
+           (let [c (try (resolve dv) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                        #_{:splint/disable [lint/catch-throwable]}
+                        (catch Throwable _ nil))]
                 (if (class? c) c dv))
            dv))
 

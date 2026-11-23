@@ -172,7 +172,9 @@
    ;; cohost.http's bodies as java.io's own byte streams (unit 9): a body a
    ;; program reads through slurp, clojure.java.io or .read is the host's
    ;; InputStream, as the JDK's HttpURLConnection hands it out
-      :byte-streams (fn [] {:input (fn [^bytes bs] (java.io.ByteArrayInputStream. bs))
+      :byte-streams (fn [] {:input ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+                            #_{:splint/disable [lint/fn-wrapper]}
+                            (fn [^bytes bs] (java.io.ByteArrayInputStream. bs))
                             :output (fn [] (java.io.ByteArrayOutputStream.))
                             :output-bytes (fn [^java.io.ByteArrayOutputStream o] (.toByteArray o))
                             :bytes? bytes?

@@ -35,9 +35,15 @@
       'java.lang.ArrayIndexOutOfBoundsException [#(ArrayIndexOutOfBoundsException.) #(ArrayIndexOutOfBoundsException. ^String %) nil]
       'java.lang.StringIndexOutOfBoundsException [#(StringIndexOutOfBoundsException.) #(StringIndexOutOfBoundsException. ^String %) nil]
       'java.lang.InterruptedException [#(InterruptedException.) #(InterruptedException. ^String %) nil]
-      'java.util.NoSuchElementException [#(java.util.NoSuchElementException.) #(java.util.NoSuchElementException. ^String %) nil]
-      'java.util.ConcurrentModificationException [#(java.util.ConcurrentModificationException.) #(java.util.ConcurrentModificationException. ^String %) #(java.util.ConcurrentModificationException. %1 %2)]
-      'java.io.IOException [#(java.io.IOException.) #(java.io.IOException. ^String %) #(java.io.IOException. %1 %2)]})
+      'java.util.NoSuchElementException [#(java.util.NoSuchElementException.) ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+                                         #_{:splint/disable [lint/fn-wrapper]}
+                                         #(java.util.NoSuchElementException. ^String %) nil]
+      'java.util.ConcurrentModificationException [#(java.util.ConcurrentModificationException.) ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+                                                  #_{:splint/disable [lint/fn-wrapper]}
+                                                  #(java.util.ConcurrentModificationException. ^String %) #(java.util.ConcurrentModificationException. %1 %2)]
+      'java.io.IOException [#(java.io.IOException.) ;; splint: the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)
+                            #_{:splint/disable [lint/fn-wrapper]}
+                            #(java.io.IOException. ^String %) #(java.io.IOException. %1 %2)]})
 
 (defn- new-exception [klass msg cause]
        (when-let [[c0 c1 c2] (get exception-ctors klass)]
@@ -118,7 +124,9 @@
 (def capabilities
      {:natives natives
    ;; the JVM and jolt name clojure.lang and java.* classes themselves
-      :host-class (fn [token] (let [c (try (resolve token) (catch Throwable _ nil))] (when (class? c) c)))
+      :host-class (fn [token] (let [c (try (resolve token) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                                           #_{:splint/disable [lint/catch-throwable]}
+                                           (catch Throwable _ nil))] (when (class? c) c)))
    ;; interop the shim lacks is the host's own
       :interop-passthrough? true
    ;; deftype and defrecord instances, reify objects: their own members first
