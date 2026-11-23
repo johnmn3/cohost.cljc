@@ -4,8 +4,8 @@
    a region file (decoded samples, frames); a consumer reads the bytes
    it needs at their offset, without the file's value ever becoming an
    atom's root. The machinery is Eve's region substrate, hosted here."
-    (:require #?@(:clj [[eve.region :as region]
-                        [eve.mem :as mem]])))
+    #?(:clj (:require [eve.region :as region]
+                      [eve.mem :as mem])))
 
 (defn read-bytes
       "The bytes of the region file at path, [offset, offset+length): the

@@ -2579,73 +2579,53 @@
 (def String-getBytes
      (fn ([s] (string->byte-array s "UTF-8"))
          ([s cs] (string->byte-array s cs))))
-;; java.net.URLEncoder / URLDecoder: application/x-www-form-urlencoded
-;; over the shim's codecs. The charset is validated first, so an
-;; unknown name is the JVM's UnsupportedEncodingException at this
-;; door too (the corpus's named-encodings row checks all four doors).
-(def ^:private hex-digits "0123456789ABCDEF")
-(defn- url-safe-char? [u]
-       (or (<= 48 u 57) (<= 65 u 90) (<= 97 u 122)
-           (== u 46) (== u 45) (== u 42) (== u 95)))
-(def URLEncoder-encode
-     (fn ([s] (URLEncoder-encode s "UTF-8"))
-         ([s enc]
-          (let [cs (need-charset enc)
-                out (transient [])]
-               (loop [us (seq s)]
-                     (if (nil? us)
-                         (apply str (persistent! out))
-                         (let [u (code-of (first us))]
-                              (cond
-                               (url-safe-char? u)
-                               (do (conj! out (char-str u)) (recur (next us)))
-                               (== u 32)
-                               (do (conj! out "+") (recur (next us)))
-                               (<= 0xD800 u 0xDBFF)
-                               (let [pair (if (second us)
-                                              (str (char-str u) (char-str (code-of (second us))))
-                                              (char-str u))]
-                                    (doseq [b (encode-string-bytes pair cs)]
-                                           (conj! out "%" (subs hex-digits (bit-shift-right b 4) (inc (bit-shift-right b 4)))
-                                                  (subs hex-digits (bit-and b 15) (inc (bit-and b 15)))))
-                                    (recur (nnext us)))
-                               :else
-                               (do (doseq [b (encode-string-bytes (char-str u) cs)]
-                                          (conj! out "%" (subs hex-digits (bit-shift-right b 4) (inc (bit-shift-right b 4)))
-                                                 (subs hex-digits (bit-and b 15) (inc (bit-and b 15)))))
-                                   (recur (next us)))))))))))
-(defn- bytes-of-unsigned [us]
-       (Numbers-byte_array (mapv (fn [u] (if (> u 127) (- u 256) u)) us)))
-(defn- hex-val [ch]
-       (let [u (code-of ch)]
-            (cond (<= 48 u 57) (- u 48)
-                  (<= 65 u 70) (+ 10 (- u 65))
-                  (<= 97 u 102) (+ 10 (- u 97))
+;; java.net.URLEncoder / URLDecoder, over url-encode / url-decode.
+;; The charset argument is accepted and UTF-8 is used throughout.
+;; (An earlier pair of implementations that validated and honored
+;; the charset stood here and again below; the ones below were the
+;; live definitions and are the ones kept, moved up so every use
+;; resolves — see the syntax lane's STATUS.md.)
+(defn- url-encode
+       "URLEncoder.encode(s, \"UTF-8\"): the JVM's form encoding."
+       [s]
+       (let [sb (h-string-builder)]
+            (doseq [c (str s)]
+                   (let [code (code-of c)]
+                        (cond (or (<= 48 code 57) (<= 65 code 90) (<= 97 code 122)
+                                  (contains? #{\. \- \* \_} c))
+                              (h-sb-append! sb c)
+                              (= c \space) (h-sb-append! sb \+)
+                              :else (doseq [b (io/utf8-encode (str c))]
+                                           (h-sb-append! sb \%)
+                                           (h-sb-append! sb (nth "0123456789ABCDEF" (bit-shift-right b 4)))
+                                           (h-sb-append! sb (nth "0123456789ABCDEF" (bit-and b 15)))))))
+            (h-sb-str sb)))
+
+(defn- hex-val [c]
+       (let [code (code-of c)]
+            (cond (<= 48 code 57) (- code 48)
+                  (<= 65 code 70) (+ 10 (- code 65))
+                  (<= 97 code 102) (+ 10 (- code 97))
                   :else -1)))
-(def URLDecoder-decode
-     (fn ([s] (URLDecoder-decode s "UTF-8"))
-         ([s enc]
-          (let [cs (need-charset enc)
-                out (transient [])]
-               (loop [i 0 bytes []]
-                     (if (>= i (count s))
-                         (do (when (seq bytes)
-                                   (conj! out (decode-bytes (bytes-of-unsigned bytes) 0 (count bytes) cs)))
-                             (apply str (persistent! out)))
-                         (let [ch (nth s i) u (code-of ch)]
-                              (cond
-                               (== u 37)
-                               (let [h1 (when (< (inc i) (count s)) (hex-val (nth s (inc i))))
-                                     h2 (when (< (+ i 2) (count s)) (hex-val (nth s (+ i 2))))]
-                                    (if (and h1 h2 (>= h1 0) (>= h2 0))
-                                        (recur (+ i 3) (conj bytes (+ (bit-shift-left h1 4) h2)))
-                                        (throw (host/ex* 'java.lang.IllegalArgumentException "URLDecoder: Illegal trailing escape (%) pattern"))))
-                               :else
-                               (do (when (seq bytes)
-                                         (conj! out (decode-bytes (bytes-of-unsigned bytes) 0 (count bytes) cs))
-                                         (loop [] nil))
-                                   (conj! out (if (== u 43) " " (char-str u)))
-                                   (recur (inc i) []))))))))))
+
+(defn- url-decode
+       "URLDecoder.decode(s, \"UTF-8\")."
+       [s]
+       (let [s (str s) n (count s)]
+            (loop [i 0 bytes []]
+                  (if (>= i n)
+                      (io/utf8-decode bytes)
+                      (let [c (nth s i)]
+                           (cond (= c \+) (recur (inc i) (conj bytes 32))
+                                 (and (= c \%) (< (+ i 2) n)
+                                      (not (neg? (hex-val (nth s (inc i)))))
+                                      (not (neg? (hex-val (nth s (+ i 2))))))
+                                 (recur (+ i 3) (conj bytes (+ (* 16 (hex-val (nth s (inc i))))
+                                                               (hex-val (nth s (+ i 2))))))
+                                 :else (recur (inc i) (into bytes (io/utf8-encode (str c))))))))))
+
+(def URLEncoder-encode (fn [s _cs] (url-encode s)))
+(def URLDecoder-decode (fn [s _cs] (url-decode s)))
 
 ;; ---------------------------------------------------------------------------
 ;; java.net's HTTP surface (Eve-in-cohost unit 9): HttpClient, HttpRequest,
@@ -2716,7 +2696,7 @@
 (def -getScheme (http-member "getScheme" {:cohost.http/uri (fn [u] (:scheme u))}))
 (def -getProtocol (http-member "getProtocol" {:cohost.http/url (fn [u] (:scheme u))}))
 (def -getHost (http-member "getHost" (http-locator (fn [u] (if (= :cohost.http/url (:cohost/kind u)) (or (:host u) "") (:host u))))))
-(def -getPort (http-member "getPort" (http-locator (fn [u] (:port u)))))
+
 ;; a lookup, not a case: jank 0.1 cannot compile a case on string constants
 ;; with a default whose branches are integer literals -- each branch assigns a
 ;; C++ int to the case's oref result ("no viable overloaded '='",
@@ -2814,48 +2794,6 @@
                (string? x) (host/try-all (fn [] (http/new-url x))
                                          (fn [_] (http/new-url (file-url-string x))))
                :else (miss! [:static 'clojure.lang.RT 'toUrl]))))
-
-(defn- url-encode
-       "URLEncoder.encode(s, \"UTF-8\"): the JVM's form encoding."
-       [s]
-       (let [sb (h-string-builder)]
-            (doseq [c (str s)]
-                   (let [code (code-of c)]
-                        (cond (or (<= 48 code 57) (<= 65 code 90) (<= 97 code 122)
-                                  (contains? #{\. \- \* \_} c))
-                              (h-sb-append! sb c)
-                              (= c \space) (h-sb-append! sb \+)
-                              :else (doseq [b (io/utf8-encode (str c))]
-                                           (h-sb-append! sb \%)
-                                           (h-sb-append! sb (nth "0123456789ABCDEF" (bit-shift-right b 4)))
-                                           (h-sb-append! sb (nth "0123456789ABCDEF" (bit-and b 15)))))))
-            (h-sb-str sb)))
-
-(defn- hex-val [c]
-       (let [code (code-of c)]
-            (cond (<= 48 code 57) (- code 48)
-                  (<= 65 code 70) (+ 10 (- code 65))
-                  (<= 97 code 102) (+ 10 (- code 97))
-                  :else -1)))
-
-(defn- url-decode
-       "URLDecoder.decode(s, \"UTF-8\")."
-       [s]
-       (let [s (str s) n (count s)]
-            (loop [i 0 bytes []]
-                  (if (>= i n)
-                      (io/utf8-decode bytes)
-                      (let [c (nth s i)]
-                           (cond (= c \+) (recur (inc i) (conj bytes 32))
-                                 (and (= c \%) (< (+ i 2) n)
-                                      (not (neg? (hex-val (nth s (inc i)))))
-                                      (not (neg? (hex-val (nth s (+ i 2))))))
-                                 (recur (+ i 3) (conj bytes (+ (* 16 (hex-val (nth s (inc i))))
-                                                               (hex-val (nth s (+ i 2))))))
-                                 :else (recur (inc i) (into bytes (io/utf8-encode (str c))))))))))
-
-(def URLEncoder-encode (fn [s _cs] (url-encode s)))
-(def URLDecoder-decode (fn [s _cs] (url-decode s)))
 
 (defn- as-file-value
        "A File value from a File value, a path string, or a host's own file
@@ -3041,7 +2979,7 @@
 
 ;; the boot's class loader (io/resource): the standin answers every
 ;; lookup with nil -- not found, as stock answers an absent name.
-(def -getContextClassLoader (fn [_] io/class-loader))
+
 (def -getResource (http-member "getResource" {:cohost.io/class-loader (fn [_ _] nil)}))
 (def -getResourceAsStream (http-member "getResourceAsStream" {:cohost.io/class-loader (fn [_ _] nil)}))
 (def -toByteArray
@@ -3093,16 +3031,16 @@
 (def -setUseCaches (http-member "setUseCaches" {:cohost.http/connection (fn [c v] (http/conn-set! c :use-caches (boolean v)))}))
 (def -connect (http-member "connect" {:cohost.http/connection (fn [c] (http/conn-response c) nil)}))
 (def -disconnect (http-member "disconnect" {:cohost.http/connection (fn [_c] nil)}))
-(def -getOutputStream (http-member "getOutputStream" {:cohost.http/connection http/conn-output-stream}))
+
 (def -getResponseCode (http-member "getResponseCode" {:cohost.http/connection (fn [c] (:status (http/conn-response c)))}))
 (def -getResponseMessage (http-member "getResponseMessage" {:cohost.http/connection (fn [c] (get http/reason-phrases (:status (http/conn-response c))))}))
 (def -getInputStream (http-member "getInputStream" {:cohost.http/connection http/conn-input-stream
                                                     :cohost.io/socket (fn [s] (io/socket-input s))}))
-(def -getOutputStream (http-member "getOutputStream" {:cohost.io/socket (fn [s] (io/socket-output s))}))
+(def -getOutputStream (http-member "getOutputStream" {:cohost.http/connection http/conn-output-stream :cohost.io/socket (fn [s] (io/socket-output s))}))
 (def -accept (http-member "accept" {:cohost.io/server-socket (fn [s] (io/accept! s))}))
 (def -getLocalPort (http-member "getLocalPort" {:cohost.io/server-socket (fn [s] (io/server-port s))
                                                 :cohost.io/socket (fn [s] (io/socket-local-port s))}))
-(def -getPort (http-member "getPort" {:cohost.io/socket (fn [s] (io/socket-port s))}))
+(def -getPort (http-member "getPort" (assoc (http-locator (fn [u] (:port u))) :cohost.io/socket (fn [s] (io/socket-port s)))))
 (def -isClosed (http-member "isClosed" {:cohost.io/server-socket (fn [s] (io/server-closed? s))
                                         :cohost.io/socket (fn [s] (io/socket-closed? s))}))
 (def -getErrorStream (http-member "getErrorStream" {:cohost.http/connection http/conn-error-stream}))
@@ -4218,8 +4156,7 @@
      (fn ([] {:cohost/kind :cohost.shim/classloader :parent nil})
          ([parent] {:cohost/kind :cohost.shim/classloader :parent parent})))
 (def ^:private context-classloaders (atom {}))
-(def -getContextClassLoader
-     (http-member "getContextClassLoader" {:cohost.thread/thread (fn [x] (get @context-classloaders x))}))
+(def -getContextClassLoader (http-member "getContextClassLoader" {:cohost.thread/thread (fn [x] (get @context-classloaders x)) :cohost.io/class-loader (fn [_] io/class-loader)}))
 (def -setContextClassLoader
      (http-member "setContextClassLoader" {:cohost.thread/thread (fn [x ccl] (swap! context-classloaders assoc x ccl) nil)}))
 (def -atLineStart (http-member "atLineStart" {:cohost.io/pushback-reader (fn [_] true)}))

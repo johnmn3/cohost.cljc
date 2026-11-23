@@ -112,6 +112,13 @@
 (defn- mkdirs [f]
        #?(:clj (.mkdirs (io/file f)) :bb (fs/create-dirs f)))
 
+(defn- try-mkdir!
+       "One lock-acquisition attempt: true when this process made the
+   directory. A defn of its own, like exists? and mkdirs above, so
+   the ensure! cond test is one form on every platform."
+       [f]
+       #?(:clj (.mkdir (io/file f)) :bb (.mkdir (java.io.File. f))))
+
 (defn- delete-tree [f]
        #?(:clj (let [f (io/file f)]
                     (when (.isDirectory f)
@@ -145,7 +152,7 @@
                     (loop [waited 0]
                           (cond
                            (empty? (missing)) dir
-                           #?(:clj (.mkdir (io/file lock)) :bb (.mkdir (java.io.File. lock)))
+                           (try-mkdir! lock)
                            (do (try (build! dir (missing))
                                     (finally (delete-tree lock)))
                                dir)

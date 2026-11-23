@@ -100,3 +100,49 @@ cannot run Splint) · CLJ_CONFIG=/home/hatch/workspace/eve-env/cljconfig.
   `(.getCanonicalFile (io/file ...))`, a java.io.File; the str is
   the conversion. Code unchanged; the site gets a reasoned ignore
   in the exceptions batch (info level; does not block exit 0).
+
+## REAL DEFECT FOUND + FIXED — shim http-member duplicate defs (Nov 23, ~12:55 AM ET)
+Provenance: tree = this branch at the formatted tree (base origin main
+1db42b2); tools = clj-kondo 2026.10.26, JVM boot (clojure 1.12.0,
+bb 1.13.230); repro = fabricated layer values driven through the
+booted cohost.shim (probe-members.sh/.log in this clone).
+
+`cohost.shim/http-member` returns a NEW dispatch fn per call and a
+second `def` of the same name REPLACES the var — three member vars
+were defined twice with DISJOINT kind tables, so the first table's
+kinds silently lost the member:
+- `-getPort`: URI/URL table (http-locator) shadowed by the socket
+  table. PROVEN BROKEN pre-fix: -getPort on {:cohost/kind
+  :cohost.http/uri :port 8080} and on a :cohost.http/url value both
+  threw "cohost.shim: no shim for [:method getPort]"; control
+  (-getScheme, single def) answered "https".
+- `-getOutputStream`: connection table shadowed by the socket table
+  (same shape, found by reading; fixed identically).
+- `-getContextClassLoader`: the classloader standin's def shadowed
+  by the thread table (same shape; fixed identically).
+Fix (this batch): each pair merged into ONE def whose table carries
+both sections' kinds — the shape -getInputStream/-getLocalPort
+already used in the same file. Post-fix probe: :uri-port 8080,
+:url-port 9090, control "https". Boot gate on the batch tree: GREEN — boot-k2.log carries the
+baseline-identical signature (595 stock / 181 host / 66 natives /
+69 skipped / 0 errors), battery 221/221, libraries 62/62,
+BOOT-K2-EXIT=0.
+
+Also in this batch: the dead first URLEncoder/URLDecoder
+implementations (shadowed by the live delegating defs) deleted with
+their orphaned helpers (bytes-of-unsigned, hex-val def1,
+url-safe-char?, hex-digits); the live codec block moved ABOVE its
+first use (-getQuery) since deleting the dead def exposed a
+use-before-def the dead def had been masking — the boot gate is the
+proof the file still loads. NOTE for cohost owners (not changed
+here): the live codec IGNORES the charset argument (always UTF-8,
+no validation), contradicting the deleted section comment's claim
+that an unknown charset throws UnsupportedEncodingException "at
+this door"; restoring validation is a behavior decision for the
+owners, not a lint fix. region.cljc ns restructured (conditional
+require clause) and aot.cljc lock test hoisted into try-mkdir!
+(both were reader-conditional form-count phantoms in passes that
+never load the files).
+
+Kondo after this batch: 186 total (79E/101W/6I) — redefined-var
+shim sites zero, unused-value 14 -> 8, loop-without-recur 2 -> 1.
