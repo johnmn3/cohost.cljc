@@ -754,12 +754,8 @@
                                                 check (when v
                                                             (host/try-all (fn [] (if (v value) :ok :invalid))
                                                                           (fn [e] e)))]
-                                               (cond (nil? check) {:value value}
-                                                     (= :ok check) {:value value}
-                                                     (= :invalid check)
-                                                     {:error (host/ex* 'java.lang.IllegalStateException
-                                                                       "Invalid reference state" nil)}
-                                                     :else {:error check})))]
+                                               (cond (or (nil? check) (= :ok check)) {:value value} (= :invalid check) {:error (host/ex* 'java.lang.IllegalStateException
+                                                                                                                                         "Invalid reference state" nil)} :else {:error check})))]
                              (if (:error verdict)
                                  (when (action-failed! ag (:error verdict)) (recur))
                                  (do (reset! (:state ag) (:value verdict))

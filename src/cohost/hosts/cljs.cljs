@@ -545,24 +545,9 @@
    class; the message decides the class token."
        [e]
        (let [m (str (.-message e))]
-            (cond (some? (.-cohost$class e)) (.-cohost$class e)
-          ;; tools.reader's errors: the JVM reader's classes
-                  (= :reader-exception (:type (ex-data e)))
-                  (cond (re-find #"^Invalid number" m) 'NumberFormatException
-                        (re-find #"[Dd]uplicate key" m) 'IllegalArgumentException
-                        :else 'RuntimeException)
-                  (instance? js/RangeError e) 'StackOverflowError
-                  (instance? js/TypeError e) (if (re-find #"null|undefined" m) 'NullPointerException 'ClassCastException)
-                  (instance? js/SyntaxError e) 'IllegalArgumentException
-                  (re-find #"^No item \d+ in|^Index out of bounds|^Index \d+ out of bounds" m) 'IndexOutOfBoundsException
-                  (re-find #"^Assert failed" m) 'AssertionError
-                  (re-find #"^Divide by zero" m) 'ArithmeticException
-          ;; (count 1): the JVM's "count not supported on this type"
-                  (re-find #"^No protocol method ICounted\.-count" m) 'UnsupportedOperationException
-                  (re-find #"[Nn]ot supported|cannot be transient|Can't create empty" m) 'UnsupportedOperationException
-                  (re-find #"^Invalid arity|^Duplicate key|^Vector arg to map conj|^Wrong number of args|is not ISeqable$|^No protocol method|^No matching clause" m) 'IllegalArgumentException
-                  (re-find #"^Transient used after persistent|^Can't dynamically bind|^Validator rejected reference state|^Can't pop empty" m) 'IllegalStateException
-                  :else 'RuntimeException)))
+            (cond (some? (.-cohost$class e)) (.-cohost$class e) (= :reader-exception (:type (ex-data e))) (cond (re-find #"^Invalid number" m) 'NumberFormatException
+                                                                                                                (re-find #"[Dd]uplicate key" m) 'IllegalArgumentException
+                                                                                                                :else 'RuntimeException) (instance? js/RangeError e) 'StackOverflowError (instance? js/TypeError e) (if (re-find #"null|undefined" m) 'NullPointerException 'ClassCastException) (instance? js/SyntaxError e) 'IllegalArgumentException (re-find #"^No item \d+ in|^Index out of bounds|^Index \d+ out of bounds" m) 'IndexOutOfBoundsException (re-find #"^Assert failed" m) 'AssertionError (re-find #"^Divide by zero" m) 'ArithmeticException (or (re-find #"^No protocol method ICounted\.-count" m) (re-find #"[Nn]ot supported|cannot be transient|Can't create empty" m)) 'UnsupportedOperationException (re-find #"^Invalid arity|^Duplicate key|^Vector arg to map conj|^Wrong number of args|is not ISeqable$|^No protocol method|^No matching clause" m) 'IllegalArgumentException (re-find #"^Transient used after persistent|^Can't dynamically bind|^Validator rejected reference state|^Can't pop empty" m) 'IllegalStateException :else 'RuntimeException)))
 
 (defn- slurp* [path]
        (if (exists? js/require)

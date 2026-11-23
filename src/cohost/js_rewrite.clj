@@ -92,29 +92,15 @@
 
 (defn- rewrite-list [mode form]
        (let [head (first form)]
-            (cond
-             (= 'quote head) form
-             (= 'var head) form
-      ;; a dotted js/* head: a method call on the global (see the
-      ;; namespace docstring). Rebuild as (.method target args...)
-      ;; over the chain minus its last segment, each argument
-      ;; rewritten as usual.
-             (dotted-js-head head)
-             (let [parts (dotted-js-head head)
-                   target (reduce (fn [acc part] (list (symbol (str ".-" part)) acc))
-                                  (symbol (str shim-ns) (aget parts 0))
-                                  (drop 1 (butlast parts)))]
-                  (apply list (symbol (str "." (last parts))) target
-                         (map #(rewrite* mode %) (rest form))))
-      ;; (js* "template" expr...): the template is always verbatim.
-      ;; Source mode rewrites the argument expressions; expansion
-      ;; mode leaves the whole form alone (see the docstring: in an
-      ;; expansion the arguments are the compiler's own references).
-             (= 'js* head) (if (= :expansion mode)
-                               form
-                               (apply list 'js* (second form)
-                                      (map #(rewrite* mode %) (drop 2 form))))
-             :else (apply list (map #(rewrite* mode %) form)))))
+            (cond (or (= 'quote head) (= 'var head)) form (dotted-js-head head) (let [parts (dotted-js-head head)
+                                                                                      target (reduce (fn [acc part] (list (symbol (str ".-" part)) acc))
+                                                                                                     (symbol (str shim-ns) (aget parts 0))
+                                                                                                     (drop 1 (butlast parts)))]
+                                                                                     (apply list (symbol (str "." (last parts))) target
+                                                                                            (map #(rewrite* mode %) (rest form)))) (= 'js* head) (if (= :expansion mode)
+                                                                                                                                                     form
+                                                                                                                                                     (apply list 'js* (second form)
+                                                                                                                                                            (map #(rewrite* mode %) (drop 2 form)))) :else (apply list (map #(rewrite* mode %) form)))))
 
 (defn- rewrite*
        [mode form]

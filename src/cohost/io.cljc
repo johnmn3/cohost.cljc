@@ -810,9 +810,7 @@
        nil)
 
 (defn reader-closed? [r]
-      (if (is? ::pushback-reader r)
-          (:closed? @(state-of r))
-          (:closed? @(state-of r))))
+      (:closed? @(state-of r)))
 
 (defn- socket-backed?
        "True when r's content is a socket reader's, under any wrappers:
@@ -820,11 +818,7 @@
    content is its under's."
        [r]
        (loop [x r]
-             (cond (nil? x) false
-                   (is? ::socket-reader x) true
-                   (is? ::host-reader x) true
-                   (or (is? ::buffered-reader x) (is? ::pushback-reader x)) (recur (under-of x))
-                   :else false)))
+             (cond (nil? x) false (or (is? ::socket-reader x) (is? ::host-reader x)) true (or (is? ::buffered-reader x) (is? ::pushback-reader x)) (recur (under-of x)) :else false)))
 
 (defn read-char!
       "Reader.read: the next char (a Character), or -1 at the end, as
@@ -1078,9 +1072,11 @@
    Keyword valAt on the record (WriterValue.valAt was a measurable leaf
    in the F1 ARM6 sample)."
        [w]
-       #?(:clj (cond (instance? WriterValue w) (.state ^WriterValue w)
-                     (instance? BufferedWriterValue w) (.state ^BufferedWriterValue w)
-                     :else (state-of w))
+       #?(:clj ;; splint: the WriterValue/BufferedWriterValue branches differ by type hint, not by result form
+          #_{:splint/disable [lint/identical-branches]}
+          (cond (instance? WriterValue w) (.state ^WriterValue w)
+                (instance? BufferedWriterValue w) (.state ^BufferedWriterValue w)
+                :else (state-of w))
           :default (state-of w)))
 
 #?(:clj (defn- string-builder-under
@@ -1296,47 +1292,36 @@
                          (pr-on-into-sb! x sb w print-level print-length print-namespace-maps
                                          print-meta print-readably fallback)
                          (letfn [(pr* [x]
-                                      (cond
-                                       (instance? clojure.lang.Keyword x) (append-text! w (str x))
-                                       (instance? Long x) (append-text! w (str x))
-                                       (nil? x) (append-text! w "nil")
-                                       (instance? Boolean x) (append-text! w (if x "true" "false"))
-                                       (instance? String x)
-                                       (write-printed-string! w x (boolean print-readably))
-                                       (and (instance? clojure.lang.IPersistentMap x)
-                                            (not (instance? clojure.lang.IRecord x))
-                                            (not print-level)
-                                            (not print-length)
-                                            (or (not print-namespace-maps)
-                                                (let [e (first x)]
-                                                     (or (nil? e)
-                                                         (let [k (key e)]
-                                                              (not (and (or (keyword? k) (symbol? k))
-                                                                        (namespace k)))))))
-                                            (not (and (meta x) print-meta print-readably)))
-                                       (do (append-text! w "{")
-                                           (when-let [xs (seq x)]
-                                                     (loop [e (first xs) n (next xs)]
-                                                           (pr* (key e))
-                                                           (append-text! w " ")
-                                                           (pr* (val e))
-                                                           (when n
-                                                                 (append-text! w ", ")
-                                                                 (recur (first n) (next n)))))
-                                           (append-text! w "}"))
-                                       (and (instance? clojure.lang.IPersistentVector x)
-                                            (not print-level)
-                                            (not print-length)
-                                            (not (and (meta x) print-meta print-readably)))
-                                       (do (append-text! w "[")
-                                           (let [n (count x)]
-                                                (loop [i 0]
-                                                      (when (< i n)
-                                                            (when (pos? i) (append-text! w " "))
-                                                            (pr* (nth x i))
-                                                            (recur (unchecked-inc i)))))
-                                           (append-text! w "]"))
-                                       :else (fallback x w)))]
+                                      (cond (or (instance? clojure.lang.Keyword x) (instance? Long x)) (append-text! w (str x)) (nil? x) (append-text! w "nil") (instance? Boolean x) (append-text! w (if x "true" "false")) (instance? String x) (write-printed-string! w x (boolean print-readably)) (and (instance? clojure.lang.IPersistentMap x)
+                                                                                                                                                                                                                                                                                                            (not (instance? clojure.lang.IRecord x))
+                                                                                                                                                                                                                                                                                                            (not print-level)
+                                                                                                                                                                                                                                                                                                            (not print-length)
+                                                                                                                                                                                                                                                                                                            (or (not print-namespace-maps)
+                                                                                                                                                                                                                                                                                                                (let [e (first x)]
+                                                                                                                                                                                                                                                                                                                     (or (nil? e)
+                                                                                                                                                                                                                                                                                                                         (let [k (key e)]
+                                                                                                                                                                                                                                                                                                                              (not (and (or (keyword? k) (symbol? k))
+                                                                                                                                                                                                                                                                                                                                        (namespace k)))))))
+                                                                                                                                                                                                                                                                                                            (not (and (meta x) print-meta print-readably))) (do (append-text! w "{")
+                                                                                                                                                                                                                                                                                                                                                                (when-let [xs (seq x)]
+                                                                                                                                                                                                                                                                                                                                                                          (loop [e (first xs) n (next xs)]
+                                                                                                                                                                                                                                                                                                                                                                                (pr* (key e))
+                                                                                                                                                                                                                                                                                                                                                                                (append-text! w " ")
+                                                                                                                                                                                                                                                                                                                                                                                (pr* (val e))
+                                                                                                                                                                                                                                                                                                                                                                                (when n
+                                                                                                                                                                                                                                                                                                                                                                                      (append-text! w ", ")
+                                                                                                                                                                                                                                                                                                                                                                                      (recur (first n) (next n)))))
+                                                                                                                                                                                                                                                                                                                                                                (append-text! w "}")) (and (instance? clojure.lang.IPersistentVector x)
+                                                                                                                                                                                                                                                                                                                                                                                           (not print-level)
+                                                                                                                                                                                                                                                                                                                                                                                           (not print-length)
+                                                                                                                                                                                                                                                                                                                                                                                           (not (and (meta x) print-meta print-readably))) (do (append-text! w "[")
+                                                                                                                                                                                                                                                                                                                                                                                                                                               (let [n (count x)]
+                                                                                                                                                                                                                                                                                                                                                                                                                                                    (loop [i 0]
+                                                                                                                                                                                                                                                                                                                                                                                                                                                          (when (< i n)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                (when (pos? i) (append-text! w " "))
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                (pr* (nth x i))
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                (recur (unchecked-inc i)))))
+                                                                                                                                                                                                                                                                                                                                                                                                                                               (append-text! w "]")) :else (fallback x w)))]
                                 (pr* x)
                                 nil)))
          :default (do (fallback x w) nil)))

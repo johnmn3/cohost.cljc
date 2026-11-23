@@ -240,6 +240,11 @@
 
 (declare wrapped? wrap unwrap root-of value?*)
 
+;; splint: this cond is a type truth table — one row per type the
+;; codec holds, adjacent rows sharing a result by design. The
+;; one-row-per-type layout is the documentation; merging rows into
+;; or-chains would hide which types are in.
+#_{:splint/disable [lint/identical-branches]}
 (defn representable?
       "True when v can be written by Eve's JVM codec (eve.mem's
    value->eve-bytes / value+sio->eve-bytes universe): nil,

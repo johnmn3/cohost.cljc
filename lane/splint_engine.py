@@ -129,12 +129,12 @@ def head_sym(node):
         return node.children[0].text
     return None
 
-def find_at(nodes, offset):
+def find_at(nodes, offset, parent=None):
     for nd in nodes:
         if nd.start == offset:
-            return nd
+            return nd, parent
         if nd.children and nd.start < offset < nd.end:
-            r = find_at(nd.children, offset)
+            r = find_at(nd.children, offset, nd)
             if r is not None:
                 return r
     return None
@@ -406,6 +406,51 @@ def t_if_same_truthy(s, node, ctx):
             return '(or ' + raw(s, test) + ' ' + raw(s, b) + ')'
     return None
 
+def t_identical_branches(s, node, ctx):
+    """node is a TEST inside a cond. Merge every maximal run of
+    adjacent clauses in that cond whose results are raw-equal into
+    one (or t1 t2 ...) clause. Refuses if a comment sits inside any
+    merged span (comments are not nodes and would be lost)."""
+    if node.kind == 'list' and head_sym(node) == 'if':
+        r = t_if_same_branches(s, node, ctx)
+        if r is not None:
+            ctx['parent'] = None  # replace the if node itself
+            return r
+    parent = ctx.get('parent')
+    if parent is None or parent.kind != 'list' or head_sym(parent) != 'cond':
+        return None
+    clauses = parent.children[1:]
+    if len(clauses) % 2 != 0:
+        return None
+    pairs = [(clauses[i], clauses[i+1]) for i in range(0, len(clauses), 2)]
+    out = []
+    changed = False
+    i = 0
+    while i < len(pairs):
+        j = i
+        while j + 1 < len(pairs) and raw(s, pairs[j+1][1]) == raw(s, pairs[i][1]):
+            j += 1
+        if j > i:
+            span = s[pairs[i][0].start:pairs[j][1].end]
+            if ';;' in span or '#_' in span:
+                return None
+            tests = ' '.join(raw(s, p[0]) for p in pairs[i:j+1])
+            out.append('(or ' + tests + ') ' + raw(s, pairs[i][1]))
+            changed = True
+        else:
+            out.append(raw(s, pairs[i][0]) + ' ' + raw(s, pairs[i][1]))
+        i = j + 1
+    if not changed:
+        return None
+    return '(cond ' + ' '.join(out) + ')'
+
+def t_if_same_branches(s, node, ctx):
+    if node.kind == 'list' and head_sym(node) == 'if' and len(node.children) == 4:
+        a, b = node.children[2], node.children[3]
+        if raw(s, a) == raw(s, b):
+            return raw(s, a)
+    return None
+
 TRANSFORMS = {
     'lint/fn-wrapper': t_fn_wrapper,
     'lint/redundant-call': t_redundant_call,
@@ -431,6 +476,7 @@ TRANSFORMS = {
     'style/next-next': t_next_next,
     'lint/loop-empty-when': t_loop_empty_when,
     'lint/if-same-truthy': t_if_same_truthy,
+    'lint/identical-branches': t_identical_branches,
 }
 
 def str_alias_for(src, filename):
@@ -479,7 +525,9 @@ def main():
         repls = []  # (start, end, newtext, rule)
         for d in ds:
             off = offset_of(s, d['line'], d['column'])
-            node = find_at(tops, off)
+            found = find_at(tops, off)
+            node = found[0] if found else None
+            parent = found[1] if found else None
             if node is None:
                 print(f'  NONODE {filename}:{d["line"]} {d["rule-name"]}'); total_skip += 1; continue
             if d['rule-name'] in disable_rules:
@@ -492,6 +540,9 @@ def main():
                 total_ok += 1
                 continue
             fn = TRANSFORMS[d['rule-name']]
+            ctx['parent'] = parent
+            if d['rule-name'] == 'lint/identical-branches' and node.kind == 'list' and head_sym(node) == 'cond':
+                ctx['parent'] = node
             try:
                 new = fn(s, node, ctx)
             except Exception as e:
@@ -501,7 +552,8 @@ def main():
                 print(f'  SKIP {filename}:{d["line"]} {d["rule-name"]} :: {raw(s, node)[:70]!r}')
                 total_skip += 1
             else:
-                repls.append((node.start, node.end, new, d['rule-name']))
+                target = ctx['parent'] if (d['rule-name'] == 'lint/identical-branches' and ctx.get('parent') is not None) else node
+                repls.append((target.start, target.end, new, d['rule-name']))
                 total_ok += 1
         if not repls:
             continue

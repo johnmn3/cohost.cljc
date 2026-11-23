@@ -137,6 +137,11 @@
                           (when-let [p (:eve-value? f)]
                                     (p v)))))
 
+;; splint: this cond is a type truth table — one row per type the
+;; codec holds, adjacent rows sharing a result by design. The
+;; one-row-per-type layout is the documentation; merging rows into
+;; or-chains would hide which types are in.
+#_{:splint/disable [lint/identical-branches]}
 (defn representable? [v]
       (cond (nil? v) true
             (boolean? v) true

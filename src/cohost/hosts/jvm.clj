@@ -51,9 +51,11 @@
       :io-handles {:out (fn [] *out*) :err (fn [] *err*) :in (fn [] *in*)
                    :write! (fn [^java.io.Writer h ^String s] (.write h s))
                    :flush! (fn [^java.io.Writer h] (.flush h))
-                   :read-line (fn [h] (if (instance? clojure.lang.LineNumberingPushbackReader h)
-                                          (.readLine ^clojure.lang.LineNumberingPushbackReader h)
-                                          (.readLine ^java.io.BufferedReader h)))}
+                   :read-line (fn [h] ;; splint: the two branches differ by type hint, which selects the readLine overload
+                                  #_{:splint/disable [lint/identical-branches]}
+                                  (if (instance? clojure.lang.LineNumberingPushbackReader h)
+                                      (.readLine ^clojure.lang.LineNumberingPushbackReader h)
+                                      (.readLine ^java.io.BufferedReader h)))}
       :core-ns 'clojure.core
       :catch-all 'Throwable
       :read-forms read-forms

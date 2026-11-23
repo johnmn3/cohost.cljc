@@ -2254,13 +2254,9 @@
        (let [h (deref hierarchy)
              best (reduce (fn [best e]
                               (let [k (first e)]
-                                   (cond (not (h-isa? h dv k)) best
-                                         (nil? best) e
-                                         (mf-dominates? prefers h k (key best)) e
-                                         (mf-dominates? prefers h (key best) k) best
-                                         :else (throw (host/ex* 'IllegalArgumentException
-                                                                (str "Multiple methods in multimethod '" name "' match dispatch value: " dv
-                                                                     " -> " k " and " (key best) ", and neither is preferred"))))))
+                                   (cond (not (h-isa? h dv k)) best (or (nil? best) (mf-dominates? prefers h k (key best))) e (mf-dominates? prefers h (key best) k) best :else (throw (host/ex* 'IllegalArgumentException
+                                                                                                                                                                                                 (str "Multiple methods in multimethod '" name "' match dispatch value: " dv
+                                                                                                                                                                                                      " -> " k " and " (key best) ", and neither is preferred"))))))
                      ;; (seq: Phel's reduce over a map walks its values)
                           nil (seq methods))]
             (if best (val best) (get methods default))))
@@ -2442,9 +2438,7 @@
                                   (and (= b 0xED) (>= b2 0xA0))
                                   (do (emit-replacement! out)
                                       (recur (+ i (if (and b3 (cont-byte? b3)) 3 2))))
-                                  (nil? b3)
-                                  (do (emit-replacement! out) (recur (+ i 2)))
-                                  (not (cont-byte? b3))
+                                  (or (nil? b3) (not (cont-byte? b3)))
                                   (do (emit-replacement! out) (recur (+ i 2)))
                                   :else
                                   (do (emit-cp! out (+ (bit-shift-left (bit-and b 0x0F) 12)
@@ -2463,13 +2457,9 @@
                                   (or (and (= b 0xF0) (<= b2 0x8F))
                                       (and (= b 0xF4) (>= b2 0x90)))
                                   (do (emit-replacement! out) (recur (inc i)))
-                                  (nil? b3)
+                                  (or (nil? b3) (not (cont-byte? b3)))
                                   (do (emit-replacement! out) (recur (+ i 2)))
-                                  (not (cont-byte? b3))
-                                  (do (emit-replacement! out) (recur (+ i 2)))
-                                  (nil? b4)
-                                  (do (emit-replacement! out) (recur (+ i 3)))
-                                  (not (cont-byte? b4))
+                                  (or (nil? b4) (not (cont-byte? b4)))
                                   (do (emit-replacement! out) (recur (+ i 3)))
                                   :else
                                   (do (emit-cp! out (+ (bit-shift-left (bit-and b 0x07) 18)
@@ -3611,10 +3601,7 @@
             (loop [index 0 out []]
                   (if (m-find mt)
                       (let [[b e] (m-match mt)]
-                           (cond
-                            (and limited? (>= (count out) (dec limit))) (recur index out)
-                            (and (zero? index) (= index b) (= b e)) (recur index out)
-                            :else (recur e (conj out (subs s index b)))))
+                           (cond (or (and limited? (>= (count out) (dec limit))) (and (zero? index) (= index b) (= b e))) (recur index out) :else (recur e (conj out (subs s index b)))))
                       (if (and (zero? index) (empty? out))
                           [s]
                           (let [out (if (or (not limited?) (< (count out) limit)) (conj out (subs s index)) out)]
@@ -3808,9 +3795,7 @@
 
 (def -setTimeZone
      (fn [x tz]
-         (cond (gregcal? x) (do (swap! (:state x) assoc :tz tz) nil)
-               (sdfval? x) (do (swap! (:state x) assoc :tz tz) nil)
-               :else (miss! [:method 'setTimeZone]))))
+         (cond (or (gregcal? x) (sdfval? x)) (do (swap! (:state x) assoc :tz tz) nil) :else (miss! [:method 'setTimeZone]))))
 
 (def -setNanos
      (fn [x n]
@@ -4355,8 +4340,11 @@
                        (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (seq (::more (meta s))) :else (next s)))))
 ;; Named.getName; a non-Named value is the JVM's ClassCastException (nil: NPE);
 ;; a host class object (from `class` of a record) prints its name
-(def -getName (fn [x] (cond (io/is? :cohost.io/file x) (file-name-of (io/file-path x))
-                            (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: getName for class clojure.lang.Var"))
+(def -getName (fn [x] ;; splint: the symbol and keyword arms differ inside a reader
+                            ;; conditional (the :lg arm rewrites the symbol first)
+                  #_{:splint/disable [lint/identical-branches]}
+                  (cond (io/is? :cohost.io/file x) (file-name-of (io/file-path x))
+                        (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: getName for class clojure.lang.Var"))
                             ;; a qualified class token in class position
                             ;; (Var.getTag's answer): its name is the full
                             ;; string. An unqualified symbol -- core's sigs
@@ -4367,21 +4355,21 @@
                             ;; the load (its compiler resolves the tag
                             ;; from the name), so there the arm never
                             ;; fires and symbols keep the name part.
-                            #?(:lg false :default (and (class-token? x) (namespace x))) (str x)
-                            (h-namespace? x) (host/ns-name* x)
-                            (symbol? x) (name #?(:lg (host/plain-symbol x) :default x))
-                            (keyword? x) (name x)
-                            (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
-                            (or (string? x) (number? x) (boolean? x) (coll?* x))
-                            (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Named x)))
+                        #?(:lg false :default (and (class-token? x) (namespace x))) (str x)
+                        (h-namespace? x) (host/ns-name* x)
+                        (symbol? x) (name #?(:lg (host/plain-symbol x) :default x))
+                        (keyword? x) (name x)
+                        (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
+                        (or (string? x) (number? x) (boolean? x) (coll?* x))
+                        (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Named x)))
                             ;; a host Class object (Var.getTag's answer):
                             ;; its name is its print minus the class prefix.
                             ;; (No class-of call here: -getName is on the
                             ;; loader's own path and class-of can throw for
                             ;; values this arm used to pass to (str x).)
-                            (let [n (str x)] (and (>= (count n) 7) (= "class " (subs n 0 6)) (not (neg? (h-index-of (subs n 6) "." 0)))))
-                            (subs (str x) 6)
-                            :else (str x))))
+                        (let [n (str x)] (and (>= (count n) 7) (= "class " (subs n 0 6)) (not (neg? (h-index-of (subs n 6) "." 0)))))
+                        (subs (str x) 6)
+                        :else (str x))))
 (def -getNamespace #?(:lg (fn [x] (namespace (host/plain-symbol x))) :default namespace))
 (def -getSimpleName (fn [x] (let [n (if (symbol? x) (name (canon x)) (pr-str x))
                                   i (max (host/last-index-of* n ".") (host/last-index-of* n "$") (host/last-index-of* n "/"))]

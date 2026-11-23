@@ -294,11 +294,7 @@
              [form j] (read-form* cs (+ i (if splicing? 3 2)))
              pairs (partition 2 form)
              chosen (loop [ps pairs]
-                          (cond
-                           (empty? ps) ::skip
-                           (contains? (set ranking) (ffirst ps)) (second (first ps))
-                           (= (ffirst ps) :default) (second (first ps))
-                           :else (recur (rest ps))))]
+                          (cond (empty? ps) ::skip (or (contains? (set ranking) (ffirst ps)) (= (ffirst ps) :default)) (second (first ps)) :else (recur (rest ps))))]
             [chosen j splicing?]))
 
 (defn- collect-percent-refs [form]
@@ -395,7 +391,7 @@
                   (= c "^")
                   (let [[m j] (read-form* cs (inc i))
                         [f j2] (read-form* cs j)
-                        mm (cond (keyword? m) {m true} (symbol? m) {:tag m} (string? m) {:tag m} :else m)]
+                        mm (cond (keyword? m) {m true} (or (symbol? m) (string? m)) {:tag m} :else m)]
                        [(with-meta* f mm) j2])
                   (= c "\\")
                   (let [j (token-end cs (inc i))
@@ -447,18 +443,12 @@
         :else #{}))
 
 (defn- qualify-sym [ns-sym locals s]
-       (cond
-        (not (symbol? s)) s
-        (contains? locals s) s
-        (contains? special-forms s) s
-        (namespace s)
-        (let [a (symbol (namespace s))]
-             (cond
-              (= a 'clojure.core) (symbol "cohost.core" (name s))
-              (= (str a) (str ns-sym)) s
-              (get-in @reg [ns-sym :aliases a]) (symbol (str (get-in @reg [ns-sym :aliases a])) (name s))
-              :else s))
-        :else (or (resolve-unqualified ns-sym s) s)))
+       (cond (or (not (symbol? s)) (contains? locals s) (contains? special-forms s)) s (namespace s) (let [a (symbol (namespace s))]
+                                                                                                          (cond
+                                                                                                           (= a 'clojure.core) (symbol "cohost.core" (name s))
+                                                                                                           (= (str a) (str ns-sym)) s
+                                                                                                           (get-in @reg [ns-sym :aliases a]) (symbol (str (get-in @reg [ns-sym :aliases a])) (name s))
+                                                                                                           :else s)) :else (or (resolve-unqualified ns-sym s) s)))
 
 (defn- qualify [form ns-sym locals]
        (cond
@@ -613,22 +603,11 @@
         (instance? js/RegExp form)
         (str "(js/RegExp. \"" (escape-string (.-source form)) "\" \"" (escape-string (.-flags form)) "\")")
         (string? form)
-        (cond quoted? form
-              (contains? locals form) form
-              (string/includes? form "/")
-          ;; a qualified symbol whose name part is not a plain
-          ;; identifier (an operator: +, *, ...) compiles to
-          ;; garbage -- squint emits (1 cohost.core/+ 2) for
-          ;; cohost.core/+ -- while the munged dotted path
-          ;; (cohost.core._PLUS_) compiles to the ns object's
-          ;; slot, where the value actually lives.
-              (let [i (.lastIndexOf form "/")
-                    nm (subs form (inc i))]
-                   (if (re-matches #"[A-Za-z0-9_$\-]+" nm)
-                       form
-                       (str (subs form 0 i) "." (munge-name nm))))
-              (contains? special-forms form) form
-              :else form)
+        (cond (or quoted? (contains? locals form)) form (string/includes? form "/") (let [i (.lastIndexOf form "/")
+                                                                                          nm (subs form (inc i))]
+                                                                                         (if (re-matches #"[A-Za-z0-9_$\-]+" nm)
+                                                                                             form
+                                                                                             (str (subs form 0 i) "." (munge-name nm)))) (or (contains? special-forms form) :else) form)
         (seq? form)
         (if (empty? form)
             "()"
