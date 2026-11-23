@@ -189,6 +189,70 @@ citing this. Also banked: :config-in does not govern
 redefined-var (ns-analysis emission); stacked #_ ignores do not
 compose — combine linters in ONE discard.
 
-REMAINING: Splint (1,546 own at census), Carve (962), step-6
-gates (dprint config+docs pass, .githooks/pre-commit, kondo cache
-refresh commit, fmt no-op proof), RETRO.md, push.
+## SPLINT CAMPAIGN COMPLETE (Nov 23)
+
+Splint over src: 0 warnings over 52 files (census 1,546; recount
+at campaign start 1,534). Batches S1-S7, every batch boot-gated
+green at the baseline signature. Shape of the work: S1/S1b
+mechanical transforms driven by Splint's own JSON diagnostics
+(lane/splint_engine.py); S2 contract disables with the reason at
+the site (Throwable-catching is the host isolation contract; the
+shim cannot depend on the clojure.string it substrates); S3
+identical-branches (real merges + type-hint/truth-table site
+exceptions); S4 tail (str alias fleet-wide, cond->condp where one
+predicate shape is shared); S5 prefer-method-values — 129 sites
+rewritten where the receiver class is provable from local
+evidence, 202 unprovable (host/polyglot/realm/Eve values)
+annotated at their enclosing def; S6 def-fn — 326 converted to
+defn, delta is var metadata only; S7 the mirror exceptions —
+lisp-case 326 + def-fn 51 annotated at the def with the law in
+each mirror file's header (shim names are what cohost.rewrite
+maps stock interop to; js_shim names are JS globals).
+
+Two Splint defects proven (see RETRO): prefer-clj-math suggests
+non-existent kebab-less names (clojure.math/toRadians for the
+real to-radians, 16 hand-corrected); fn-wrapper suggests bare
+constructor symbols that do not compile as values (5 sites
+reverted with site disables; method values Class/.method DO
+compile and run, proven on the plain clojure route).
+
+## CARVE CAMPAIGN COMPLETE (Nov 23)
+
+Carve over src: exit 0 (census 962 -> 956 at the S7 tip). Triage:
+952 public, 2 private, 2 reader-conditional defs; ZERO vars dead.
+The 2 private findings (shim h-cohost-inst?/h-instance-desc) are
+used only inside :jank reader-conditional arms — carve's bundled
+kondo 2023.01.20 has no jank pass (the K8 false positive again,
+grep-proven). The rest is public surface reached by name:
+rewrite maps stock interop to cohost.shim/<name> by name, boot
+installs/reads shim vars by name (shim/shim-value), adapters are
+selected by name, the remainder is library API consumed
+downstream. .carve/ignore carries all 956, grouped by mechanism
+with the reason in the group header.
+
+Carve-tool defect proven en route: a #_{:clj-kondo/ignore}
+discard sitting as a map VALUE crashes carve's kondo transit
+writer ("Not supported: class clojure.core$vec"); bisected to
+the discard-in-map-value shape (the same discard in a fn body is
+fine). Three such discards in jolt's adapter map moved inside
+their fn bodies — same target, same precision.
+
+## STEP 6 GATES (Nov 23)
+
+- bb lint exit 0 at the tip: kondo 0/0, splint 0 warnings,
+  carve exit 0, cljfmt check clean, dprint check clean.
+- dprint.json added as its own commit (fleet pin
+  npm:@dprint/markdown@0.29.0); docs pass separate (88 md files).
+- .githooks/pre-commit installed (cljfmt check + clj-kondo on
+  staged Clojure files) and enabled in this clone.
+- cljfmt fix twice over src: both runs no-ops (format of record
+  is stable).
+- Kondo cache refreshed over the current tree + real classpath
+  and committed.
+- Final boot gate at the tip GREEN: 595 stock / 181 host / 66
+  natives / 69 skipped / 0 errors, battery 221/221, libraries
+  62/62 — identical to the pre-campaign baseline.
+
+REMAINING: RETRO.md, push syntax/formalization-1 (never merge to
+main; the vendored-tree exclusion proposal in CENSUS.md awaits
+the coordinator's decision).
