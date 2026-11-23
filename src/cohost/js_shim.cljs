@@ -34,7 +34,7 @@
 (ns cohost.js-shim
   ;; require is this shim's own var below (the realm's node require),
   ;; not cljs.core's
-  (:refer-clojure :exclude [require]))
+    (:refer-clojure :exclude [require]))
 
 ;; ---------------------------------------------------------------------------
 ;; errors: core.cljs's throw sites construct these (Error 122x in the

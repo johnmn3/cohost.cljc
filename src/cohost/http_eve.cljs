@@ -1,5 +1,5 @@
 (ns cohost.http-eve
-  "ClojureScript-seat hosting for cohost.http (MEMORY-PLAN.md, unit 9), the
+    "ClojureScript-seat hosting for cohost.http (MEMORY-PLAN.md, unit 9), the
    counterpart of cohost/http_eve.clj: Eve's own HTTP layer for Node --
    eve.http over Node's fetch on a worker thread, the caller parked on
    Atomics.wait (synchronous, as every host's eve.http is), and
@@ -11,21 +11,21 @@
    Bodies stay text on this seat (the adapter gives no :byte-streams):
    a URL's InputStream is cohost.http's own stream value, and the boot's
    http fill gives the core the slurp this host's core lacks."
-  (:require [cohost.adapter :as adapter]
-            [cohost.http :as http]
-            [eve.http :as eve-http]
-            [eve.http-server :as eve-http-server]))
+    (:require [cohost.adapter :as adapter]
+              [cohost.http :as http]
+              [eve.http :as eve-http]
+              [eve.http-server :as eve-http-server]))
 
 (defrecord Locator [scheme user-info host port path query fragment raw]
   ;; a URL / URI is its text to str, as java.net's are
-  Object
-  (toString [_] (str raw)))
+           Object
+           (toString [_] (str raw)))
 
 (defn install!
-  "Install Eve's http leaves over the current host adapter."
-  []
-  (adapter/install! (assoc (adapter/current)
-                           :http-request eve-http/request
-                           :http-serve eve-http-server/serve!
-                           :http-value map->Locator))
-  (http/available?))
+      "Install Eve's http leaves over the current host adapter."
+      []
+      (adapter/install! (assoc (adapter/current)
+                               :http-request eve-http/request
+                               :http-serve eve-http-server/serve!
+                               :http-value map->Locator))
+      (http/available?))

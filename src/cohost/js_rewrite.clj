@@ -1,5 +1,5 @@
 (ns cohost.js-rewrite
-  "Turn the js/* interop of a stock cljs form into cohost.js-shim
+    "Turn the js/* interop of a stock cljs form into cohost.js-shim
    references, the way cohost.rewrite turns JVM interop into cohost.shim
    calls for the clj boot:
 
@@ -53,66 +53,66 @@
 (def shim-ns 'cohost.js-shim)
 
 (defn- js-symbol
-  "Rewrite one js/* symbol. Returns a symbol, or a (.-prop ...) form for
+       "Rewrite one js/* symbol. Returns a symbol, or a (.-prop ...) form for
    a dotted name."
-  [sym]
-  (let [nm (name sym)]
-    (cond
+       [sym]
+       (let [nm (name sym)]
+            (cond
       ;; constructor: js/Error. -> cohost.js-shim/Error.
-      (.endsWith nm ".")
-      (symbol (str shim-ns) nm)
+             (.endsWith nm ".")
+             (symbol (str shim-ns) nm)
 
       ;; dotted: js/Number.POSITIVE_INFINITY -> (.-POSITIVE_INFINITY
       ;; cohost.js-shim/Number); deeper chains nest.
-      (.contains nm ".")
-      (let [parts (.split nm "\\.")]
-        (reduce (fn [acc part] (list (symbol (str ".-" part)) acc))
-                (symbol (str shim-ns) (aget parts 0))
-                (drop 1 parts)))
+             (.contains nm ".")
+             (let [parts (.split nm "\\.")]
+                  (reduce (fn [acc part] (list (symbol (str ".-" part)) acc))
+                          (symbol (str shim-ns) (aget parts 0))
+                          (drop 1 parts)))
 
-      :else
-      (symbol (str shim-ns) nm))))
+             :else
+             (symbol (str shim-ns) nm))))
 
 (declare rewrite*)
 
 (defn- dotted-js-head
-  "When a list's head is a dotted js/* symbol (js/Promise.all -- not
+       "When a list's head is a dotted js/* symbol (js/Promise.all -- not
    a constructor's trailing dot), the [root middle... method] name
    parts; else nil."
-  [head]
-  (when (and (symbol? head) (= "js" (namespace head)))
-    (let [nm (name head)]
-      (when (and (.contains nm ".") (not (.endsWith nm ".")))
-        (.split nm "\\.")))))
+       [head]
+       (when (and (symbol? head) (= "js" (namespace head)))
+             (let [nm (name head)]
+                  (when (and (.contains nm ".") (not (.endsWith nm ".")))
+                        (.split nm "\\.")))))
 
 (defn- rewrite-list [mode form]
-  (let [head (first form)]
-    (cond
-      (= 'quote head) form
-      (= 'var head) form
+       (let [head (first form)]
+            (cond
+             (= 'quote head) form
+             (= 'var head) form
       ;; a dotted js/* head: a method call on the global (see the
       ;; namespace docstring). Rebuild as (.method target args...)
       ;; over the chain minus its last segment, each argument
       ;; rewritten as usual.
-      (dotted-js-head head)
-      (let [parts (dotted-js-head head)
-            target (reduce (fn [acc part] (list (symbol (str ".-" part)) acc))
-                           (symbol (str shim-ns) (aget parts 0))
-                           (drop 1 (butlast parts)))]
-        (apply list (symbol (str "." (last parts))) target
-               (map #(rewrite* mode %) (rest form))))
+             (dotted-js-head head)
+             (let [parts (dotted-js-head head)
+                   target (reduce (fn [acc part] (list (symbol (str ".-" part)) acc))
+                                  (symbol (str shim-ns) (aget parts 0))
+                                  (drop 1 (butlast parts)))]
+                  (apply list (symbol (str "." (last parts))) target
+                         (map #(rewrite* mode %) (rest form))))
       ;; (js* "template" expr...): the template is always verbatim.
       ;; Source mode rewrites the argument expressions; expansion
       ;; mode leaves the whole form alone (see the docstring: in an
       ;; expansion the arguments are the compiler's own references).
-      (= 'js* head) (if (= :expansion mode)
-                      form
-                      (apply list 'js* (second form)
-                             (map #(rewrite* mode %) (drop 2 form))))
-      :else (apply list (map #(rewrite* mode %) form)))))
+             (= 'js* head) (if (= :expansion mode)
+                               form
+                               (apply list 'js* (second form)
+                                      (map #(rewrite* mode %) (drop 2 form))))
+             :else (apply list (map #(rewrite* mode %) form)))))
 
 (defn- rewrite*
-  [mode form]
+       [mode form]
   ;; metadata is captured BEFORE the rebuild and reattached after:
   ;; on an expansion it is semantic, not decoration -- the
   ;; deftype/extend-type macros mark the method fn forms they
@@ -124,33 +124,33 @@
   ;; declaration -- a wrapping boot died on core.cljs's MultiFn that
   ;; way. On source forms the same preservation keeps the reader's
   ;; line/column data, which the old walker also silently dropped.
-  (let [m (meta form)
-        form' (cond
-                (symbol? form) (if (= "js" (namespace form))
-                                 (js-symbol form)
-                                 form)
-                (seq? form) (rewrite-list mode form)
-                (vector? form) (mapv #(rewrite* mode %) form)
-                (map? form) (into (try (empty form) (catch Throwable _ {}))
-                                  (map (fn [[k v]] [(rewrite* mode k) (rewrite* mode v)]))
-                                  form)
-                (set? form) (into (try (empty form) (catch Throwable _ #{}))
-                                  (map #(rewrite* mode %))
-                                  form)
-                :else form)]
-    (if (and m (instance? clojure.lang.IObj form'))
-      (with-meta form' (rewrite* mode m))
-      form')))
+       (let [m (meta form)
+             form' (cond
+                    (symbol? form) (if (= "js" (namespace form))
+                                       (js-symbol form)
+                                       form)
+                    (seq? form) (rewrite-list mode form)
+                    (vector? form) (mapv #(rewrite* mode %) form)
+                    (map? form) (into (try (empty form) (catch Throwable _ {}))
+                                      (map (fn [[k v]] [(rewrite* mode k) (rewrite* mode v)]))
+                                      form)
+                    (set? form) (into (try (empty form) (catch Throwable _ #{}))
+                                      (map #(rewrite* mode %))
+                                      form)
+                    :else form)]
+            (if (and m (instance? clojure.lang.IObj form'))
+                (with-meta form' (rewrite* mode m))
+                form')))
 
 (defn rewrite
-  "Rewrite one read form (see the namespace docstring for the rules)."
-  [form]
-  (rewrite* :source form))
+      "Rewrite one read form (see the namespace docstring for the rules)."
+      [form]
+      (rewrite* :source form))
 
 (defn rewrite-expansion
-  "Rewrite one macro expansion: like rewrite, but a js* form is
+      "Rewrite one macro expansion: like rewrite, but a js* form is
    returned verbatim -- in expansion position js* is the compiler's
    contract, and its js/ arguments name namespace objects, not
    globals."
-  [form]
-  (rewrite* :expansion form))
+      [form]
+      (rewrite* :expansion form))

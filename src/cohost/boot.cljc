@@ -11,16 +11,16 @@
 ;; The result is a report: how many forms booted, which were taken from the
 ;; host, which were skipped, and every form that failed with its error.
 (ns cohost.boot
-  (:require [cohost.adapter :as host]
-            [cohost.rewrite :as rw]
-            [cohost.shim :as shim]
-            [cohost.policy :as policy]
-            [cohost.memory :as memory]
-            [cohost.thread :as thread]
-            [cohost.atom :as atom-layer]
-            [cohost.http :as http]
-            [cohost.io :as io]
-            [cohost.scan :as scan]))
+    (:require [cohost.adapter :as host]
+              [cohost.rewrite :as rw]
+              [cohost.shim :as shim]
+              [cohost.policy :as policy]
+              [cohost.memory :as memory]
+              [cohost.thread :as thread]
+              [cohost.atom :as atom-layer]
+              [cohost.http :as http]
+              [cohost.io :as io]
+              [cohost.scan :as scan]))
 
 (def core-ns "The namespace the stock core.clj boots into." 'cohost.core)
 ;; the session's user namespace is `user`, as a REPL's is -- except on
@@ -43,55 +43,55 @@
 (def ^:private prof+
   ;; jank's + wraps at 32 bits, so the timers sum with +'; basilisp has no +'
   ;; (its + is Python's unbounded int)
-  #?(:lpy + :cljs + :default +'))
+     #?(:lpy + :cljs + :default +'))
 
 (defn- profile-add! [k dt]
-  (when (and (profiling) dt)
-    (let [bucket (or (:profile-bucket @state) :core)]
-      (swap! (:profile @state) update-in [:phases bucket k] (fn [n] (prof+ (or n 0) dt))))))
+       (when (and (profiling) dt)
+             (let [bucket (or (:profile-bucket @state) :core)]
+                  (swap! (:profile @state) update-in [:phases bucket k] (fn [n] (prof+ (or n 0) dt))))))
 
 (defn- profile-form! [ns-sym form name rewrite-dt eval-dt]
-  (when (and (profiling) (or (and rewrite-dt (pos? rewrite-dt)) (and eval-dt (pos? eval-dt))))
-    (let [h (when (seq? form) (first form))]
-      (swap! (:profile @state) update :forms conj
-             {:ns (str ns-sym)
-              :head (if (symbol? h) (str h) "-")
-              :name (str (or name "-"))
-              :rewrite (or rewrite-dt 0)
-              :eval (or eval-dt 0)
-              :bucket (or (:profile-bucket @state) :core)}))))
+       (when (and (profiling) (or (and rewrite-dt (pos? rewrite-dt)) (and eval-dt (pos? eval-dt))))
+             (let [h (when (seq? form) (first form))]
+                  (swap! (:profile @state) update :forms conj
+                         {:ns (str ns-sym)
+                          :head (if (symbol? h) (str h) "-")
+                          :name (str (or name "-"))
+                          :rewrite (or rewrite-dt 0)
+                          :eval (or eval-dt 0)
+                          :bucket (or (:profile-bucket @state) :core)}))))
 
 (defn- prof
-  "Call thunk. When profiling, add its :nano-time to phase key k."
-  [k thunk]
-  (if-not (profiling)
-    (thunk)
-    (let [t0 (host/nano-time)
-          v (thunk)
-          t1 (host/nano-time)]
-      (profile-add! k (- t1 t0))
-      v)))
+       "Call thunk. When profiling, add its :nano-time to phase key k."
+       [k thunk]
+       (if-not (profiling)
+               (thunk)
+               (let [t0 (host/nano-time)
+                     v (thunk)
+                     t1 (host/nano-time)]
+                    (profile-add! k (- t1 t0))
+                    v)))
 
 (defn- read-prof
-  "read-forms. When profiling, the time between forms (the read) is :read;
+       "read-forms. When profiling, the time between forms (the read) is :read;
    the callback's time is not."
-  ([src cb] (read-prof src cb nil))
-  ([src cb path]
-   (if-not (profiling)
-     (host/read-forms src cb path)
-     (let [mark (volatile! (host/nano-time))]
-       (host/read-forms src
-                        (fn [form]
-                          (let [now (host/nano-time)]
-                            (profile-add! :read (- now @mark))
-                            (cb form)
-                            (vreset! mark (host/nano-time))))
-                        path)
-       (profile-add! :read (- (host/nano-time) @mark))))))
+       ([src cb] (read-prof src cb nil))
+       ([src cb path]
+        (if-not (profiling)
+                (host/read-forms src cb path)
+                (let [mark (volatile! (host/nano-time))]
+                     (host/read-forms src
+                                      (fn [form]
+                                          (let [now (host/nano-time)]
+                                               (profile-add! :read (- now @mark))
+                                               (cb form)
+                                               (vreset! mark (host/nano-time))))
+                                      path)
+                     (profile-add! :read (- (host/nano-time) @mark))))))
 
 (defn- short-form [form]
-  (let [s (pr-str form)]
-    (if (> (count s) 200) (str (subs s 0 200) " ...") s)))
+       (let [s (pr-str form)]
+            (if (> (count s) 200) (str (subs s 0 200) " ...") s)))
 
 (defn- error-message [e] (host/error-message e))
 
@@ -99,7 +99,7 @@
 ;; macros: rewrite what they emit
 
 (defn- expand-error
-  "A throw out of a macro fn, rethrown as clojure.main's macroexpansion
+       "A throw out of a macro fn, rethrown as clojure.main's macroexpansion
    error. The codemod expands macros itself (this wrapper, and the
    rewrite's :expand-macro), so no host compiler ever wraps the throw
    with the call's attribution; the phase data rides the new ex-info
@@ -107,21 +107,21 @@
    is what prints), and the CLI's triage renders the phase. A throw
    already carrying the phase (a nested expansion, wrapped on its way
    out of the inner macro) passes through untouched."
-  [macro-sym form e]
-  (if (= :macroexpansion (:clojure.error/phase (ex-data e)))
-    e
+       [macro-sym form e]
+       (if (= :macroexpansion (:clojure.error/phase (ex-data e)))
+           e
     ;; host/ex-info*, not plain ex-info: in cohost's own compiled code
     ;; the plain reference reaches the host's native constructor, and
     ;; jank's rejects a nil message (a native std::exception out of the
     ;; handler -- the attribution died there, check #13 on jank). The
     ;; adapter's cap is the nil-safe construction every host routes
     ;; through (jank's stores "" and marks it :cohost/nil-message).
-    (host/ex-info* nil
-             (cond-> {:clojure.error/phase :macroexpansion
-                      :clojure.error/symbol macro-sym}
-               (:file (meta form)) (assoc :clojure.error/source (:file (meta form)))
-               (:line (meta form)) (assoc :clojure.error/line (:line (meta form))))
-             e)))
+           (host/ex-info* nil
+                          (cond-> {:clojure.error/phase :macroexpansion
+                                   :clojure.error/symbol macro-sym}
+                                  (:file (meta form)) (assoc :clojure.error/source (:file (meta form)))
+                                  (:line (meta form)) (assoc :clojure.error/line (:line (meta form))))
+                          e)))
 
 (defn wrap-macro [ctx f macro-sym]
   ;; args: &form and &env, then the macro's own. basilisp passes &env first:
@@ -131,61 +131,61 @@
   ;; named like a core fn is no call of the core fn. A throw from the macro
   ;; fn itself is a failed expansion: it leaves here as the macroexpansion
   ;; error (expand-error), attributed to this call.
-  (fn [& args] (let [[a b & more] args
-                     [form env] (if (and (map? a) (not (map? b))) [b a] [a b])
-                     out (host/try-all (fn [] (apply f form env more))
-                                       (fn [e] (throw (expand-error macro-sym form e))))]
-                 (if host/*raw-macro-output* out (host/code-form (rw/rewrite ctx out {:locals (host/env-locals env)}))))))
+      (fn [& args] (let [[a b & more] args
+                         [form env] (if (and (map? a) (not (map? b))) [b a] [a b])
+                         out (host/try-all (fn [] (apply f form env more))
+                                           (fn [e] (throw (expand-error macro-sym form e))))]
+                        (if host/*raw-macro-output* out (host/code-form (rw/rewrite ctx out {:locals (host/env-locals env)}))))))
 
 (defn ^:export rewrite-output
-  "Rewrite a macro's expansion with the current boot's ctx. Hosts whose macro
+      "Rewrite a macro's expansion with the current boot's ctx. Hosts whose macro
    fns cannot be replaced after definition (:macro-wrap-style :source) get
    this call compiled into every stock macro's body instead."
-  ([form] (rewrite-output form nil))
-  ([form env]
+      ([form] (rewrite-output form nil))
+      ([form env]
    ;; env: the macro's &env, whose locals the expansion's rewrite knows
-   (if-let [c (and (not host/*raw-macro-output*) (ctx))] (host/code-form (rw/rewrite c form {:locals (host/env-locals env)})) form)))
+       (if-let [c (and (not host/*raw-macro-output*) (ctx))] (host/code-form (rw/rewrite c form {:locals (host/env-locals env)})) form)))
 
 (defn- wrap-defmacro-source
-  "`(defmacro name doc? attr? params body...)` -> the same macro whose every
+       "`(defmacro name doc? attr? params body...)` -> the same macro whose every
    arity returns (rewrite-output <body>)."
-  [form]
-  (if-not (and (seq? form) (= 'defmacro (first form)))
-    form
-    (let [[_ nm & more] form
-          [doc more] (if (string? (first more)) [(first more) (rest more)] [nil more])
-          [attrs more] (if (map? (first more)) [(first more) (rest more)] [nil more])
-          arities (if (vector? (first more)) [more] more)
-          arities' (map (fn [[params & body]]
+       [form]
+       (if-not (and (seq? form) (= 'defmacro (first form)))
+               form
+               (let [[_ nm & more] form
+                     [doc more] (if (string? (first more)) [(first more) (rest more)] [nil more])
+                     [attrs more] (if (map? (first more)) [(first more) (rest more)] [nil more])
+                     arities (if (vector? (first more)) [more] more)
+                     arities' (map (fn [[params & body]]
                           ;; &env: the locals the expansion's rewrite knows
-                          (list params (list (host/rewrite-output-ref) (apply list 'do body) '&env)))
-                        arities)]
-      (apply list 'defmacro nm (concat (when doc [doc]) (when attrs [attrs])
-                                       (if (vector? (first more)) (first arities') arities'))))))
+                                       (list params (list (host/rewrite-output-ref) (apply list 'do body) '&env)))
+                                   arities)]
+                    (apply list 'defmacro nm (concat (when doc [doc]) (when attrs [attrs])
+                                                     (if (vector? (first more)) (first arities') arities'))))))
 
 (def ^:private defn-heads (set '[defn defn-]))
 (def ^:private inline-def-heads (set '[defn defn- def]))
 
 (defn- may-make-macro?
-  "Can evaluating form create a macro or change one? A defmacro; a def of a
+       "Can evaluating form create a macro or change one? A defmacro; a def of a
    `^:macro` name or of one core.clj turns into a macro with setMacro; and
    any form that is not a def at all (`(. (var x) (setMacro))`, alter-meta!,
    a do, a macro call). Other defs (defn, defmulti, defprotocol ...) cannot,
    so the scan after them would find nothing."
-  [form]
-  (or (not (seq? form))
-      (let [h (first form)]
-        (or (not (contains? policy/def-heads h))
-            (= 'defmacro h)
-            (let [nm (second form)
+       [form]
+       (or (not (seq? form))
+           (let [h (first form)]
+                (or (not (contains? policy/def-heads h))
+                    (= 'defmacro h)
+                    (let [nm (second form)
                   ;; defn's attr-maps: after the docstring, and at the end
-                  more (nnext form)
-                  more (if (string? (first more)) (rest more) more)]
-              (and (symbol? nm)
-                   (or (:macro (meta nm)) (contains? policy/setmacro-defined nm)
-                       (and (contains? defn-heads h)
-                            (or (and (map? (first more)) (:macro (first more)))
-                                (and (map? (last more)) (:macro (last more))))))))))))
+                          more (nnext form)
+                          more (if (string? (first more)) (rest more) more)]
+                         (and (symbol? nm)
+                              (or (:macro (meta nm)) (contains? policy/setmacro-defined nm)
+                                  (and (contains? defn-heads h)
+                                       (or (and (map? (first more)) (:macro (first more)))
+                                           (and (map? (last more)) (:macro (last more))))))))))))
 
 ;; Record mode for the AOT snapshot. nil unless boot! was given {:record? true}.
 ;; Defined above the first use: jank's analyzer does not resolve a var whose
@@ -194,145 +194,145 @@
 (def snapshot-log (atom nil))
 
 (defn snapshot-events
-  "The vector of events from the current {:record? true} boot, or nil."
-  []
-  @snapshot-log)
+      "The vector of events from the current {:record? true} boot, or nil."
+      []
+      @snapshot-log)
 
 (defn snapshot-stop!
-  "End record mode: -> the events recorded, and record nothing more."
-  []
-  (let [ev @snapshot-log] (reset! snapshot-log nil) ev))
+      "End record mode: -> the events recorded, and record nothing more."
+      []
+      (let [ev @snapshot-log] (reset! snapshot-log nil) ev))
 
 (defn snapshot-start!
-  "Record mode from here on, after a boot (a project's snapshot records what
+      "Record mode from here on, after a boot (a project's snapshot records what
    it loads on top of a booted, or snapshot-booted, core)."
-  []
-  (reset! snapshot-log []))
+      []
+      (reset! snapshot-log []))
 
 (def ^:private snap-drop-meta
-  "Reader metadata the host adds again when it reads the snapshot's source.
+     "Reader metadata the host adds again when it reads the snapshot's source.
    Position meta is NOT dropped (U4c): the snapshot's reader adds the
    GENERATED module's positions, so dropping the recorded ones left AOT
    frames and source maps citing generated files and lines. Kept, the
    recorded form's own positions reach the emitter, which also writes
    each form at its original line (dev/perf/jank_snapshot_emit.clj)."
-  #{})
+     #{})
 
 (defn- snap-encode
-  "form with every metadata map made data: {:cohost.snap/meta m
+       "form with every metadata map made data: {:cohost.snap/meta m
    :cohost.snap/val x}, since a host's printer may drop metadata (jank's
    ignores *print-meta*). The emitter turns it back into reader metadata.
    A regex is {:cohost.snap/regex source}: a host's printer may write it as
    bare text (Phel's prints its source unquoted)."
-  [x]
-  (let [enc (fn [y] (cond (host/regex? y) {:cohost.snap/regex (host/re-source y)}
-                          (map? y) (into {} (map (fn [[k v]] [(snap-encode k) (snap-encode v)]) y))
-                          (vector? y) (mapv snap-encode y)
-                          (set? y) (set (map snap-encode y))
-                          (seq? y) (apply list (map snap-encode y))
-                          :else y))
-        m (when (or (symbol? x) (coll? x)) (meta x))
-        m (when m (let [m' (apply dissoc m snap-drop-meta)] (when (seq m') m')))
-        v (enc x)]
-    (if m {:cohost.snap/meta (snap-encode m) :cohost.snap/val v} v)))
+       [x]
+       (let [enc (fn [y] (cond (host/regex? y) {:cohost.snap/regex (host/re-source y)}
+                               (map? y) (into {} (map (fn [[k v]] [(snap-encode k) (snap-encode v)]) y))
+                               (vector? y) (mapv snap-encode y)
+                               (set? y) (set (map snap-encode y))
+                               (seq? y) (apply list (map snap-encode y))
+                               :else y))
+             m (when (or (symbol? x) (coll? x)) (meta x))
+             m (when m (let [m' (apply dissoc m snap-drop-meta)] (when (seq m') m')))
+             v (enc x)]
+            (if m {:cohost.snap/meta (snap-encode m) :cohost.snap/val v} v)))
 
 (declare snap!)
 (defn- snap-declare!
-  "A form that failed may still have interned its name (jank's analyzer
+       "A form that failed may still have interned its name (jank's analyzer
    interns a def's var before the body fails): later forms refer to that
    var, so the snapshot declares it too."
-  [ns-sym nm]
-  (when (and @snapshot-log (symbol? nm) (nil? (namespace nm))
-             (host/try-all (fn [] (some? (host/interned-var ns-sym nm))) (fn [_] false)))
-    (snap! {:op :declare :ns ns-sym :sym nm})))
+       [ns-sym nm]
+       (when (and @snapshot-log (symbol? nm) (nil? (namespace nm))
+                  (host/try-all (fn [] (some? (host/interned-var ns-sym nm))) (fn [_] false)))
+             (snap! {:op :declare :ns ns-sym :sym nm})))
 
 (def ^:private snap-load-scoped
-  "The vars a library's load binds (with-load-bindings): a top-level set! of
+     "The vars a library's load binds (with-load-bindings): a top-level set! of
    one changes nothing after the load, and a replay outside that binding
    could not set! it, so it is not recorded."
-  #{'*warn-on-reflection* '*unchecked-math*})
+     #{'*warn-on-reflection* '*unchecked-math*})
 
 (defn- snap-skip-form?
-  [form]
-  (and (seq? form) (= 'set! (first form)) (symbol? (second form))
-       (contains? snap-load-scoped (symbol (name (second form))))))
+       [form]
+       (and (seq? form) (= 'set! (first form)) (symbol? (second form))
+            (contains? snap-load-scoped (symbol (name (second form))))))
 
 (defn- snap-module
-  "The namespace of the snapshot module an event belongs to: the library
+       "The namespace of the snapshot module an event belongs to: the library
    being loaded, else the core."
-  []
-  (or (:loading @state) (symbol "clojure.core")))
+       []
+       (or (:loading @state) (symbol "clojure.core")))
 
 (defn- snap! [event]
-  (when @snapshot-log
-    (let [event (assoc event :module (snap-module))]
-      (swap! snapshot-log conj event)
-      (when-let [f (host/snapshot-emit)]
-        (when (fn? f) (f event))))))
+       (when @snapshot-log
+             (let [event (assoc event :module (snap-module))]
+                  (swap! snapshot-log conj event)
+                  (when-let [f (host/snapshot-emit)]
+                            (when (fn? f) (f event))))))
 
 (defn- scan-macros!
-  "Promote `^:macro` defs the host did not treat as macros, and wrap every
+       "Promote `^:macro` defs the host did not treat as macros, and wrap every
    not-yet-wrapped macro of ns-sym so its output goes through the codemod."
-  ([ctx] (scan-macros! ctx core-ns))
-  ([ctx ns-sym]
-   (prof :scan
-     (fn []
-       (doseq [[sym v] (host/ns-interns-map ns-sym)]
-         (let [m (host/var-meta v)
-               mark? (and (:macro m) (not (host/macro-var? v)))
-               _ (when mark? (host/mark-macro! v))
+       ([ctx] (scan-macros! ctx core-ns))
+       ([ctx ns-sym]
+        (prof :scan
+              (fn []
+                  (doseq [[sym v] (host/ns-interns-map ns-sym)]
+                         (let [m (host/var-meta v)
+                               mark? (and (:macro m) (not (host/macro-var? v)))
+                               _ (when mark? (host/mark-macro! v))
                ;; after the marking: a macro marked here is wrapped in the
                ;; same pass (the next form may call it)
-               wrap? (and (host/macro-var? v) (not (:cohost/wrapped m)))]
-           (when wrap?
-             (when (= :root (host/macro-wrap-style))
-               (host/set-var-root! v (fn [f] (wrap-macro ctx f (symbol (str ns-sym) (str sym))))))
-             (host/alter-var-meta! v assoc :cohost/wrapped true))
-           (when (and @snapshot-log (or mark? wrap?))
-             (snap! {:op :scan :ns ns-sym :sym sym}))))))))
+                               wrap? (and (host/macro-var? v) (not (:cohost/wrapped m)))]
+                              (when wrap?
+                                    (when (= :root (host/macro-wrap-style))
+                                          (host/set-var-root! v (fn [f] (wrap-macro ctx f (symbol (str ns-sym) (str sym))))))
+                                    (host/alter-var-meta! v assoc :cohost/wrapped true))
+                              (when (and @snapshot-log (or mark? wrap?))
+                                    (snap! {:op :scan :ns ns-sym :sym sym}))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; eval
 
 (defn- host-aliases
-  "{shim name -> the host core's symbol} for the shim statics whose value is
+       "{shim name -> the host core's symbol} for the shim statics whose value is
    the host core's own fn (RT-first is first, Numbers-add is +): the codemod
    names the host's fn, which the host's compiler may inline, rather than the
    shim var that holds it. Public, non-macro host vars only; the symbol is
    marked so the codemod does not read it as the stock core's. Where several
    host names hold the one fn (jolt's + is its +'), the shortest name wins:
    the plain name is the one a host compiler inlines."
-  [shim-names]
-  (let [core (host/core-ns-sym)
+       [shim-names]
+       (let [core (host/core-ns-sym)
         ;; where the host's own compiler applies :inline (the JVM), a host fn
         ;; with one is not named: its expansion would read *unchecked-math* where
         ;; the static (Numbers.add) is always checked
-        own-inline? (not (host/rewrite-inline?))
-        better? (fn [a b] (let [na (name a) nb (name b)]
-                            (or (< (count na) (count nb))
-                                (and (= (count na) (count nb)) (neg? (compare na nb))))))
-        by-fn (reduce (fn [m [sym h]]
-                        (let [v (host/try-all (fn [] (when-not (or (host/macro-var? h) (:private (host/var-meta h))
-                                                                   (and own-inline? (:inline (host/var-meta h))))
-                                                       (host/var-root h))))]
-                          (if (and (fn? v) (or (not (contains? m v)) (better? sym (get m v)))) (assoc m v sym) m)))
+             own-inline? (not (host/rewrite-inline?))
+             better? (fn [a b] (let [na (name a) nb (name b)]
+                                    (or (< (count na) (count nb))
+                                        (and (= (count na) (count nb)) (neg? (compare na nb))))))
+             by-fn (reduce (fn [m [sym h]]
+                               (let [v (host/try-all (fn [] (when-not (or (host/macro-var? h) (:private (host/var-meta h))
+                                                                          (and own-inline? (:inline (host/var-meta h))))
+                                                                      (host/var-root h))))]
+                                    (if (and (fn? v) (or (not (contains? m v)) (better? sym (get m v)))) (assoc m v sym) m)))
                       ;; seq: Phel's reduce over a map walks its values
-                      {} (seq (host/ns-interns-map core)))
-        vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))]
-    (into {} (keep (fn [s]
-                     (let [nm (str s)]
+                           {} (seq (host/ns-interns-map core)))
+             vars #?(:cljs nil :default (host/ns-interns-map 'cohost.shim))]
+            (into {} (keep (fn [s]
+                               (let [nm (str s)]
                        ;; statics, not instance methods (-m) or their dispatchers (dot$m)
-                       (when (and (not= "-" (subs nm 0 1)) (not= "dot$" (subs nm 0 (min 4 (count nm)))))
-                         (let [v (shim/shim-value vars nm)
-                               hs (when (fn? v) (get by-fn v))]
-                           (when hs
-                             [nm (with-meta (symbol (str core) (str hs)) {:cohost/host true})])))))
-                   shim-names))))
+                                    (when (and (not= "-" (subs nm 0 1)) (not= "dot$" (subs nm 0 (min 4 (count nm)))))
+                                          (let [v (shim/shim-value vars nm)
+                                                hs (when (fn? v) (get by-fn v))]
+                                               (when hs
+                                                     [nm (with-meta (symbol (str core) (str hs)) {:cohost/host true})])))))
+                           shim-names))))
 
 (declare ensure-macro-wrapped!)
 
 (defn- head-resolver
-  "(fn [sym]) -> the var sym names in the namespace being compiled, or nil:
+       "(fn [sym]) -> the var sym names in the namespace being compiled, or nil:
    the codemod tells a core fn it may inline, and a macro whose expansion it
    rewrites, from a namespace's own name. A resolved macro the loader never
    scan-wrapped (one interned by a host-native load \u2014 Eve's jank
@@ -344,151 +344,151 @@
    no setMacro its analyzer resolves \u2014 measured: (. (var x) (setMacro))
    is an unresolved C++ symbol there), so :cohost/wrapped must not depend
    on which load path interned the var."
-  []
-  (let [resolve* (or (get (host/core-extras) 'ns-resolve)
-                     (some-> (host/resolve-core 'ns-resolve) host/var-root))]
-    (when resolve*
-      (fn [sym]
-        (host/try-all (fn [] (let [v (resolve* (host/current-ns) sym)]
-                               (when (host/var?* v)
-                                 (ensure-macro-wrapped! v)
-                                 v))))))))
+       []
+       (let [resolve* (or (get (host/core-extras) 'ns-resolve)
+                          (some-> (host/resolve-core 'ns-resolve) host/var-root))]
+            (when resolve*
+                  (fn [sym]
+                      (host/try-all (fn [] (let [v (resolve* (host/current-ns) sym)]
+                                                (when (host/var?* v)
+                                                      (ensure-macro-wrapped! v)
+                                                      v))))))))
 
 (defn- var-meta*
-  "A resolved var's metadata (a ClojureScript Var object carries its own)."
-  [v]
-  (merge (host/try-all (fn [] (host/var-meta v)))
-         (meta v)))
+       "A resolved var's metadata (a ClojureScript Var object carries its own)."
+       [v]
+       (merge (host/try-all (fn [] (host/var-meta v)))
+              (meta v)))
 
 (defn- stock-name
-  "(fn [v]) -> v's name when v is a var of the booted core, else nil."
-  []
-  (let [core (name core-ns)]
-    (fn [v] (when (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (host/ns-name* x) x))))
-              (symbol (name (host/var-sym v)))))))
+       "(fn [v]) -> v's name when v is a var of the booted core, else nil."
+       []
+       (let [core (name core-ns)]
+            (fn [v] (when (= core (let [x (host/var-ns v)] (str (if (host/namespace? x) (host/ns-name* x) x))))
+                          (symbol (name (host/var-sym v)))))))
 
 (defn- ensure-macro-wrapped!
-  "Wrap a macro var scan-macros! never reached, exactly as it would have:
+       "Wrap a macro var scan-macros! never reached, exactly as it would have:
    under :root wrap-style the var's root becomes the codemod-wrapped macro
    fn, and its meta gains :cohost/wrapped, so rewritten-macro? honors it.
    A no-op for vars already wrapped, for the host's own vars, and for
    non-macros. Called from head-resolver, the one place every macro head
    the codemod judges passes through."
-  [v]
-  (let [m (var-meta* v)]
-    (when (and (:macro m) (not (:cohost/wrapped m)) (not (:cohost/host m)))
-      (let [ns-name (let [x (host/var-ns v)] (if (host/namespace? x) (host/ns-name* x) x))
-            macro-sym (symbol (str ns-name) (str (host/var-sym v)))]
-        (when (= :root (host/macro-wrap-style))
-          (when-let [c (ctx)]
-            (host/set-var-root! v (fn [f] (wrap-macro c f macro-sym)))))
-        (host/alter-var-meta! v assoc :cohost/wrapped true)
-        (when @snapshot-log (snap! {:op :scan :ns ns-name :sym (host/var-sym v)})))))
-  v)
+       [v]
+       (let [m (var-meta* v)]
+            (when (and (:macro m) (not (:cohost/wrapped m)) (not (:cohost/host m)))
+                  (let [ns-name (let [x (host/var-ns v)] (if (host/namespace? x) (host/ns-name* x) x))
+                        macro-sym (symbol (str ns-name) (str (host/var-sym v)))]
+                       (when (= :root (host/macro-wrap-style))
+                             (when-let [c (ctx)]
+                                       (host/set-var-root! v (fn [f] (wrap-macro c f macro-sym)))))
+                       (host/alter-var-meta! v assoc :cohost/wrapped true)
+                       (when @snapshot-log (snap! {:op :scan :ns ns-name :sym (host/var-sym v)})))))
+       v)
 
 (defn- rewritten-macro?
-  "Is v a macro whose expansion the codemod rewrites: one cohost wrapped
+       "Is v a macro whose expansion the codemod rewrites: one cohost wrapped
    (stock or user), not the host's own? Its arguments are walked without
    inlining, which its expansion's rewrite applies."
-  [v]
-  (let [m (var-meta* v)]
-    (boolean (and (or (:macro m) (host/macro-var? v)) (:cohost/wrapped m) (not (:cohost/host m))))))
+       [v]
+       (let [m (var-meta* v)]
+            (boolean (and (or (:macro m) (host/macro-var? v)) (:cohost/wrapped m) (not (:cohost/host m))))))
 
 (defn- inline-fn
-  "On a host whose compiler ignores :inline: (fn [v arity]) -> the :inline fn
+       "On a host whose compiler ignores :inline: (fn [v arity]) -> the :inline fn
    of the core fn v, when it covers the arity; else nil."
-  []
-  (when (host/rewrite-inline?)
-    (let [core-name (stock-name)]
-      (fn [v n]
-        (when-let [nm (core-name v)]
-          (let [m (var-meta* v)
-                [f ar] (if (fn? (:inline m))
-                         [(:inline m) (:inline-arities m)]
-                         (get (:inlines @state) nm))]
-            (when (and (fn? f) (or (nil? ar) (ar n))) f)))))))
+       []
+       (when (host/rewrite-inline?)
+             (let [core-name (stock-name)]
+                  (fn [v n]
+                      (when-let [nm (core-name v)]
+                                (let [m (var-meta* v)
+                                      [f ar] (if (fn? (:inline m))
+                                                 [(:inline m) (:inline-arities m)]
+                                                 (get (:inlines @state) nm))]
+                                     (when (and (fn? f) (or (nil? ar) (ar n))) f)))))))
 
 (defn make-ctx
-  "The codemod's context for this host: which shim vars exist, the host's
+      "The codemod's context for this host: which shim vars exist, the host's
    catch-all, its compile-style facts, and the per-namespace facts (current
    namespace, imports, renamed stock libraries, extend-position types)."
-  []
-  (let [shim-names (let [names (host/ns-public-names 'cohost.shim)
+      []
+      (let [shim-names (let [names (host/ns-public-names 'cohost.shim)
                          ;; a stub that only throws is no shim where the
                          ;; host has the real thing
-                         names (if (host/interop-passthrough?)
-                                 (let [vs (host/ns-interns-map 'cohost.shim)]
-                                   (into #{} (remove #(shim/stub? (some-> (get vs %) host/var-root))) names))
-                                 (set names))]
+                             names (if (host/interop-passthrough?)
+                                       (let [vs (host/ns-interns-map 'cohost.shim)]
+                                            (into #{} (remove #(shim/stub? (some-> (get vs %) host/var-root))) names))
+                                       (set names))]
                      ;; a prebuilt dispatcher per instance method: dot$m, and a
                      ;; checkcast per checked class: cast$token
-                     (-> names
-                         (into (shim/install-dots!
-                                (filter #(let [s (str %)] (and (= "-" (subs s 0 1)) (> (count s) 1))) names)))
-                         (into (shim/install-casts!
-                                (map (fn [c] [(rw/cast-name c) c]) (distinct (vals rw/checked-hints)))))))]
-  (rw/make-ctx {:def-tag? (contains? #{:clj :jolt :cljs} (host/host-name))
-                :shim-names shim-names
-                :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
-                :instance-fn (if-not @snapshot-log
-                               shim/install-is!
-                               (fn [c]
-                                 (let [d (shim/install-is! c)]
-                                   (snap! {:op :is :class c})
-                                   d)))
-                :missing-dot (if-not @snapshot-log
-                               shim/install-missing-dot!
-                               (fn [m]
-                                 (let [d (shim/install-missing-dot! m)]
-                                   (snap! {:op :dot :method m})
-                                   d)))
-                :resolve-head (head-resolver)
-                :stock-name (stock-name)
-                :rewritten-macro? rewritten-macro?
-                :inline-fn (inline-fn)
-                :catch-all (host/catch-all-sym)
-                :try-all host/try-all
-                :core-ns (name core-ns)
-                :shim-ref (host/shim-ref)
-                :loop-variadic-recur? (host/loop-variadic-recur?)
-                :loop-int-init (host/loop-int-init)
+                            (-> names
+                                (into (shim/install-dots!
+                                       (filter #(let [s (str %)] (and (= "-" (subs s 0 1)) (> (count s) 1))) names)))
+                                (into (shim/install-casts!
+                                       (map (fn [c] [(rw/cast-name c) c]) (distinct (vals rw/checked-hints)))))))]
+           (rw/make-ctx {:def-tag? (contains? #{:clj :jolt :cljs} (host/host-name))
+                         :shim-names shim-names
+                         :host-aliases (when (host/host-aliases?) (host-aliases shim-names))
+                         :instance-fn (if-not @snapshot-log
+                                              shim/install-is!
+                                              (fn [c]
+                                                  (let [d (shim/install-is! c)]
+                                                       (snap! {:op :is :class c})
+                                                       d)))
+                         :missing-dot (if-not @snapshot-log
+                                              shim/install-missing-dot!
+                                              (fn [m]
+                                                  (let [d (shim/install-missing-dot! m)]
+                                                       (snap! {:op :dot :method m})
+                                                       d)))
+                         :resolve-head (head-resolver)
+                         :stock-name (stock-name)
+                         :rewritten-macro? rewritten-macro?
+                         :inline-fn (inline-fn)
+                         :catch-all (host/catch-all-sym)
+                         :try-all host/try-all
+                         :core-ns (name core-ns)
+                         :shim-ref (host/shim-ref)
+                         :loop-variadic-recur? (host/loop-variadic-recur?)
+                         :loop-int-init (host/loop-int-init)
                 ;; A5: with :loop-int-init, + - * of native longs are the host's own
-                :native-int-aliases (when (host/loop-int-init)
-                                      (let [core (host/core-ns-sym)]
-                                        (into {} (map (fn [[nm op]] [nm (with-meta (symbol (str core) op) {:cohost/host true})]))
-                                              [["Numbers-add" "+"] ["Numbers-minus" "-"] ["Numbers-multiply" "*"]])))
-                :named-fn*? (host/named-fn*?)
-                :plain-symbol host/plain-symbol
-                :special-forms (host/special-forms)
-                :binding-style (host/binding-style)
-                :vector-rest-args? (host/vector-rest-args?)
-                :def-meta (host/def-meta)
-                :strip-inline? (host/strip-inline?)
-                :current-ns host/current-ns
-                :host-type (host/host-type-fn)
-                :expand-macro (host/expand-macro-fn)
-                :expand-spec-heads? (host/expand-spec-heads?)
-                :per-arity-impls? (= :per-arity (host/protocol-impl-style))
-                :python-methods? (= :python (host/type-method-style))
-                :move-methods? (= :protocols (host/type-method-style))
-                :cohost-types? (= :cohost-types (host/type-method-style))
-                :syntax-quote-source? (host/syntax-quote-source?)
-                :loop-rebind-shadow? (host/loop-rebind-shadow?)
-                :host-method host/host-method
-                :var-form (fn [x] (when (host/var?* x)
-                                    (let [n (host/var-ns x) n (if (host/namespace? n) (host/ns-name* n) n)]
-                                      (list 'var (symbol (str n) (str (host/var-sym x)))))))
-                :passthrough? (host/interop-passthrough?)
-                :record? shim/record?*
-                :protocol-var? host/protocol-var?
-                :interned? (fn [s] (let [n (host/current-ns)]
-                                     (boolean (and n (host/try-all (fn [] (some? (host/interned-var n s)))
-                                                                   (fn [_] false))))))})))
+                         :native-int-aliases (when (host/loop-int-init)
+                                                   (let [core (host/core-ns-sym)]
+                                                        (into {} (map (fn [[nm op]] [nm (with-meta (symbol (str core) op) {:cohost/host true})]))
+                                                              [["Numbers-add" "+"] ["Numbers-minus" "-"] ["Numbers-multiply" "*"]])))
+                         :named-fn*? (host/named-fn*?)
+                         :plain-symbol host/plain-symbol
+                         :special-forms (host/special-forms)
+                         :binding-style (host/binding-style)
+                         :vector-rest-args? (host/vector-rest-args?)
+                         :def-meta (host/def-meta)
+                         :strip-inline? (host/strip-inline?)
+                         :current-ns host/current-ns
+                         :host-type (host/host-type-fn)
+                         :expand-macro (host/expand-macro-fn)
+                         :expand-spec-heads? (host/expand-spec-heads?)
+                         :per-arity-impls? (= :per-arity (host/protocol-impl-style))
+                         :python-methods? (= :python (host/type-method-style))
+                         :move-methods? (= :protocols (host/type-method-style))
+                         :cohost-types? (= :cohost-types (host/type-method-style))
+                         :syntax-quote-source? (host/syntax-quote-source?)
+                         :loop-rebind-shadow? (host/loop-rebind-shadow?)
+                         :host-method host/host-method
+                         :var-form (fn [x] (when (host/var?* x)
+                                                 (let [n (host/var-ns x) n (if (host/namespace? n) (host/ns-name* n) n)]
+                                                      (list 'var (symbol (str n) (str (host/var-sym x)))))))
+                         :passthrough? (host/interop-passthrough?)
+                         :record? shim/record?*
+                         :protocol-var? host/protocol-var?
+                         :interned? (fn [s] (let [n (host/current-ns)]
+                                                 (boolean (and n (host/try-all (fn [] (some? (host/interned-var n s)))
+                                                                               (fn [_] false))))))})))
 
 (defonce ^:private pending-host-forms
   ;; Forms a directive owes the eval loop: evaluated as top-level forms,
   ;; in the namespace the directive left, before the next form is read.
-  (atom []))
+         (atom []))
 
 (declare eval-top)
 (declare load-relative!)
@@ -497,108 +497,108 @@
 (declare directive!)
 
 (defn eval-in
-  "Rewrite `form` and eval it with *ns* bound to `ns-sym`. A top-level `do`
+      "Rewrite `form` and eval it with *ns* bound to `ns-sym`. A top-level `do`
    is evaluated one form at a time, as the JVM compiler does, so a macro
    defined in it is a macro for the forms after it; macros defined this way
    are wrapped like the stock ones, so what they emit is rewritten too.
    Top-level `ns`, `in-ns`, `require`, `use`, `import` and `refer-clojure`
    go through cohost's loader (stock libraries in their own namespaces)."
-  [ns-sym form]
-  (let [c (or (ctx) (let [c (make-ctx)] (swap! state assoc :ctx c) c))]
-    (first (eval-top c ns-sym form))))
+      [ns-sym form]
+      (let [c (or (ctx) (let [c (make-ctx)] (swap! state assoc :ctx c) c))]
+           (first (eval-top c ns-sym form))))
 
 (defn- twin-forms
-  "U6-12b: the top-level forms a rewritten form stands for: a C++ twin's
+       "U6-12b: the top-level forms a rewritten form stands for: a C++ twin's
    (do (cpp/raw ...) ... def) is its forms, in order (each its own top-level
    form for the snapshot's modules too, so the cpp/raw is compiled before the
    def that names it); anything else is itself."
-  [rewritten]
-  (if (and (seq? rewritten) (= 'do (first rewritten)) (next rewritten)
-           (let [x (second rewritten)] (and (seq? x) (= 'cpp/raw (first x)))))
-    (rest rewritten)
-    [rewritten]))
+       [rewritten]
+       (if (and (seq? rewritten) (= 'do (first rewritten)) (next rewritten)
+                (let [x (second rewritten)] (and (seq? x) (= 'cpp/raw (first x)))))
+           (rest rewritten)
+           [rewritten]))
 
 (defn- eval-rewritten
-  "host/eval-form of a rewritten form. U6-12: a (do (cpp/raw ...) ... form)
+       "host/eval-form of a rewritten form. U6-12: a (do (cpp/raw ...) ... form)
    the codemod made for a C++ twin is evaluated one form at a time, so the
    cpp/raw declarations exist before the form naming them is analyzed (jank
    analyzes a whole do first)."
-  [rewritten]
-  (loop [fs (seq (twin-forms rewritten)) v nil]
-    (if fs (recur (next fs) (host/eval-form (first fs))) v)))
+       [rewritten]
+       (loop [fs (seq (twin-forms rewritten)) v nil]
+             (if fs (recur (next fs) (host/eval-form (first fs))) v)))
 
 (defn- eval-in*
-  "-> [value namespace-after]. lib? (a library's top-level form): scan for new
+       "-> [value namespace-after]. lib? (a library's top-level form): scan for new
    macros only after a form that can make one; the loader scans once more
    when the library is done. Otherwise after every form."
-  [c ns-sym form lib?]
-  (host/with-ns ns-sym
-    (fn [] (if-let [d (directive form)]
-             (let [r (directive! d)
-                   _ (snap! {:op :directive :ns ns-sym :d d})
-                   fs (seq @pending-host-forms)
-                   _ (when fs (reset! pending-host-forms []))]
-               (loop [r r fs fs]
-                 (if fs
-                   (recur (eval-top c (second r) (first fs) lib?) (next fs))
-                   r)))
-             (let [form' (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
-                   v (if-not (profiling)
-                       (let [rewritten (rw/rewrite c form')
-                             v (eval-rewritten rewritten)]
-                         (when (and @snapshot-log (not (snap-skip-form? form'))) (doseq [f (twin-forms rewritten)] (snap! {:op :form :ns ns-sym :form (snap-encode f)})))
-                         v)
-                       (let [t0 (host/nano-time)
-                             rewritten (rw/rewrite c form')
-                             t1 (host/nano-time)
-                             v (eval-rewritten rewritten)
-                             t2 (host/nano-time)]
-                         (when (and @snapshot-log (not (snap-skip-form? form'))) (doseq [f (twin-forms rewritten)] (snap! {:op :form :ns ns-sym :form (snap-encode f)})))
-                         (profile-add! :rewrite (- t1 t0))
-                         (profile-add! :eval (- t2 t1))
-                         (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form)))
-                                        (- t1 t0) (- t2 t1))
-                         v))]
-               (host/after-eval form' ns-sym)
-               (when (or (not lib?) (may-make-macro? form))
-                 (scan-macros! c ns-sym))
-               [v (host/current-ns)])))))
+       [c ns-sym form lib?]
+       (host/with-ns ns-sym
+                     (fn [] (if-let [d (directive form)]
+                                    (let [r (directive! d)
+                                          _ (snap! {:op :directive :ns ns-sym :d d})
+                                          fs (seq @pending-host-forms)
+                                          _ (when fs (reset! pending-host-forms []))]
+                                         (loop [r r fs fs]
+                                               (if fs
+                                                   (recur (eval-top c (second r) (first fs) lib?) (next fs))
+                                                   r)))
+                                    (let [form' (if (= :source (host/macro-wrap-style)) (wrap-defmacro-source form) form)
+                                          v (if-not (profiling)
+                                                    (let [rewritten (rw/rewrite c form')
+                                                          v (eval-rewritten rewritten)]
+                                                         (when (and @snapshot-log (not (snap-skip-form? form'))) (doseq [f (twin-forms rewritten)] (snap! {:op :form :ns ns-sym :form (snap-encode f)})))
+                                                         v)
+                                                    (let [t0 (host/nano-time)
+                                                          rewritten (rw/rewrite c form')
+                                                          t1 (host/nano-time)
+                                                          v (eval-rewritten rewritten)
+                                                          t2 (host/nano-time)]
+                                                         (when (and @snapshot-log (not (snap-skip-form? form'))) (doseq [f (twin-forms rewritten)] (snap! {:op :form :ns ns-sym :form (snap-encode f)})))
+                                                         (profile-add! :rewrite (- t1 t0))
+                                                         (profile-add! :eval (- t2 t1))
+                                                         (profile-form! ns-sym form (or (policy/form-name form) (when (seq? form) (first form)))
+                                                                        (- t1 t0) (- t2 t1))
+                                                         v))]
+                                         (host/after-eval form' ns-sym)
+                                         (when (or (not lib?) (may-make-macro? form))
+                                               (scan-macros! c ns-sym))
+                                         [v (host/current-ns)])))))
 
 (def ^:private host-def-heads
-  "The host's own macros that intern vars (the codemod never sees their defs)."
-  #{"defprotocol" "deftype" "defrecord"})
+     "The host's own macros that intern vars (the codemod never sees their defs)."
+     #{"defprotocol" "deftype" "defrecord"})
 
 (defn- mark-host-defs!
-  "On a host whose vars compile to direct references unless marked
+       "On a host whose vars compile to direct references unless marked
    (:def-meta, basilisp), the vars a host macro just interned get the mark too,
    so with-redefs of a protocol method reaches callers compiled after it."
-  [ns-sym before]
-  (when-let [dm (host/def-meta)]
-    (doseq [[sym h] (host/ns-interns-map ns-sym) :when (not (contains? before sym))]
-      (host/alter-var-meta! h merge dm))))
+       [ns-sym before]
+       (when-let [dm (host/def-meta)]
+                 (doseq [[sym h] (host/ns-interns-map ns-sym) :when (not (contains? before sym))]
+                        (host/alter-var-meta! h merge dm))))
 
 (defn- eval-top
-  "-> [value namespace-after]; a `do` one form at a time, each in the
+       "-> [value namespace-after]; a `do` one form at a time, each in the
    namespace the one before it left."
-  ([c ns-sym form] (eval-top c ns-sym form false))
-  ([c ns-sym form lib?]
-   (if (and (seq? form) (= 'do (first form)) (next form))
-     (loop [ns ns-sym fs (seq (rest form)) v nil]
-       (if fs
-         (let [[v ns'] (eval-top c ns (first fs) lib?)] (recur ns' (next fs) v))
-         [v ns]))
-     (let [before (when (and (host/def-meta) (seq? form) (symbol? (first form))
-                             (contains? host-def-heads (name (first form))))
-                    (set (keys (host/ns-interns-map ns-sym))))
+       ([c ns-sym form] (eval-top c ns-sym form false))
+       ([c ns-sym form lib?]
+        (if (and (seq? form) (= 'do (first form)) (next form))
+            (loop [ns ns-sym fs (seq (rest form)) v nil]
+                  (if fs
+                      (let [[v ns'] (eval-top c ns (first fs) lib?)] (recur ns' (next fs) v))
+                      [v ns]))
+            (let [before (when (and (host/def-meta) (seq? form) (symbol? (first form))
+                                    (contains? host-def-heads (name (first form))))
+                               (set (keys (host/ns-interns-map ns-sym))))
            ;; A :clj arm routed to an in-process body is a marker the
            ;; scanner wrote. The host calls that body; the booted core
            ;; never sees the arm.
-           r (if (and (seq? form) (= 'cohost.clj-champaca/eval-arm! (first form))
-                      (string? (second form)) @scan/clj-arm-eval)
-               [(@scan/clj-arm-eval (second form)) ns-sym]
-               (eval-in* c ns-sym form lib?))]
-       (when before (mark-host-defs! ns-sym before))
-       r))))
+                  r (if (and (seq? form) (= 'cohost.clj-champaca/eval-arm! (first form))
+                             (string? (second form)) @scan/clj-arm-eval)
+                        [(@scan/clj-arm-eval (second form)) ns-sym]
+                        (eval-in* c ns-sym form lib?))]
+                 (when before (mark-host-defs! ns-sym before))
+                 r))))
 
 (defn eval-in-core [form] (eval-in core-ns form))
 
@@ -606,320 +606,320 @@
 ;; the boot
 
 (defn- record! [report k entry]
-  (swap! report (fn [r] (-> r (update k inc) (update :entries conj (assoc entry :status k))))))
+       (swap! report (fn [r] (-> r (update k inc) (update :entries conj (assoc entry :status k))))))
 
 (defn- stock-ns
-  "A namespace name as booted code knows it: clojure.core is cohost.core, a
+       "A namespace name as booted code knows it: clojure.core is cohost.core, a
    stock library clojure.X the namespace it booted into."
-  [x]
-  (if-not (symbol? x)
-    x
-    (let [n (str x)]
-      (if (= n "clojure.core")
-        core-ns
-        (if-let [m (some-> (ctx) :renames deref (get n))] (symbol m) x)))))
+       [x]
+       (if-not (symbol? x)
+               x
+               (let [n (str x)]
+                    (if (= n "clojure.core")
+                        core-ns
+                        (if-let [m (some-> (ctx) :renames deref (get n))] (symbol m) x)))))
 
 (defn- stock-sym [x]
-  (if (and (symbol? x) (namespace x)) (symbol (str (stock-ns (symbol (namespace x)))) (name x)) x))
+       (if (and (symbol? x) (namespace x)) (symbol (str (stock-ns (symbol (namespace x)))) (name x)) x))
 
 (def ^:private ns-arg-fns
-  "Host fns naming a namespace, or a var by its qualified name: a clojure.*
+     "Host fns naming a namespace, or a var by its qualified name: a clojure.*
    name reaches what the stock library booted into."
-  {'find-ns :ns 'the-ns :ns 'ns-publics :ns 'ns-interns :ns 'ns-map :ns 'ns-aliases :ns 'ns-refers :ns
-   'ns-imports :ns 'ns-resolve :ns 'resolve :sym 'requiring-resolve :sym})
+     {'find-ns :ns 'the-ns :ns 'ns-publics :ns 'ns-interns :ns 'ns-map :ns 'ns-aliases :ns 'ns-refers :ns
+      'ns-imports :ns 'ns-resolve :ns 'resolve :sym 'requiring-resolve :sym})
 
 (defn- ns-arg-wrap [nm f]
-  (case (get ns-arg-fns nm)
-    :ns (fn ([x] (f (stock-ns x)))
-          ([x y] (f (stock-ns x) (stock-sym y)))
-          ([x y & more] (apply f (stock-ns x) (stock-sym y) (map stock-sym more))))
-    :sym (fn ([] (f))
-           ([a] (f (stock-sym a)))
-           ([a b] (f (stock-sym a) (stock-sym b)))
-           ([a b & more] (apply f (stock-sym a) (stock-sym b) (map stock-sym more))))
-    f))
+       (case (get ns-arg-fns nm)
+             :ns (fn ([x] (f (stock-ns x)))
+                     ([x y] (f (stock-ns x) (stock-sym y)))
+                     ([x y & more] (apply f (stock-ns x) (stock-sym y) (map stock-sym more))))
+             :sym (fn ([] (f))
+                      ([a] (f (stock-sym a)))
+                      ([a b] (f (stock-sym a) (stock-sym b)))
+                      ([a b & more] (apply f (stock-sym a) (stock-sym b) (map stock-sym more))))
+             f))
 
 (defn- note-host-dynamic!
-  "A name cohost.core takes from the host: when the host's var of that name is
+       "A name cohost.core takes from the host: when the host's var of that name is
    dynamic (hv, or looked up when nil), every namespace that refers the core
    refers that var too (refer-core!)."
-  [nm hv]
-  (when (some-> (or hv (host/resolve-core nm)) host/dynamic-var?)
-    (swap! state update :host-dynamic (fn [v] (if (some #(= nm %) v) v (conj (or v []) nm))))))
+       [nm hv]
+       (when (some-> (or hv (host/resolve-core nm)) host/dynamic-var?)
+             (swap! state update :host-dynamic (fn [v] (if (some #(= nm %) v) v (conj (or v []) nm))))))
 
 (declare take-from-host*)
 (defn- take-from-host!
-  "Give cohost.core the host core's `nm`. Dynamic vars are referred (the
+       "Give cohost.core the host core's `nm`. Dynamic vars are referred (the
    var identity matters for binding); everything else is interned as a copy,
    so a stock macro's syntax-quoted `cohost.core/pr-str` resolves. Host
    macros are interned with their macro status and never wrapped. Returns true
    when the host had it; false means the caller boots the stock definition.
    A name in the boot's :host-lacks set is treated as one the host lacks:
    the exercise path for a fill (the thread layer's, a host bring-up's)."
-  [report nm]
-  (when-not (contains? (:host-lacks @state) nm)
-    (let [r (take-from-host* report nm)]
-      (when r (snap! {:op :host :sym nm}))
-      r)))
+       [report nm]
+       (when-not (contains? (:host-lacks @state) nm)
+                 (let [r (take-from-host* report nm)]
+                      (when r (snap! {:op :host :sym nm}))
+                      r)))
 
 (defn- take-from-host*
-  [report nm]
-  (boolean
-   (if-let [v (get (host/core-extras) nm)]
+       [report nm]
+       (boolean
+        (if-let [v (get (host/core-extras) nm)]
      ;; the adapter's own definition of a name the host's core lacks or has
      ;; only at compile time (ClojureScript's resolve is a macro)
-     (do (host/intern! core-ns nm (ns-arg-wrap nm v))
-         (record! report :host {:name nm})
-         (note-host-dynamic! nm nil)
-         true)
-     (when-let [hv (host/resolve-core nm)]
-       (host/try-all
-        (fn []
-          (if (host/dynamic-var? hv)
-            (do (host/refer-from-core! core-ns nm)
-                (note-host-dynamic! nm hv)
-                (when-let [c (ctx)] (swap! (:host-referred c) conj nm)))
-            (let [v (host/intern! core-ns nm (ns-arg-wrap nm (host/var-root hv)))
-                  hm (host/var-meta hv)
+                (do (host/intern! core-ns nm (ns-arg-wrap nm v))
+                    (record! report :host {:name nm})
+                    (note-host-dynamic! nm nil)
+                    true)
+                (when-let [hv (host/resolve-core nm)]
+                          (host/try-all
+                           (fn []
+                               (if (host/dynamic-var? hv)
+                                   (do (host/refer-from-core! core-ns nm)
+                                       (note-host-dynamic! nm hv)
+                                       (when-let [c (ctx)] (swap! (:host-referred c) conj nm)))
+                                   (let [v (host/intern! core-ns nm (ns-arg-wrap nm (host/var-root hv)))
+                                         hm (host/var-meta hv)
                   ;; marked first: ClojureScript moves a macro to its $macros
                   ;; namespace, where the meta must land
-                  v (if (host/macro-var? hv) (host/mark-macro! v) v)
-                  kept (merge (select-keys hm [:doc :arglists :private])
-                              {:cohost/host true :cohost/wrapped true})]
-              (host/alter-var-meta! v merge kept)))
-          (record! report :host {:name nm})
-          true)
-        (fn [_] false))))))
+                                         v (if (host/macro-var? hv) (host/mark-macro! v) v)
+                                         kept (merge (select-keys hm [:doc :arglists :private])
+                                                     {:cohost/host true :cohost/wrapped true})]
+                                        (host/alter-var-meta! v merge kept)))
+                               (record! report :host {:name nm})
+                               true)
+                           (fn [_] false))))))
 
 (defn- prepare
-  "Source-level adjustments before the codemod: self-referential macro
+       "Source-level adjustments before the codemod: self-referential macro
    redefinitions become direct defs; on :defmacro-style hosts the bootstrap
    macro defs become defmacro forms."
-  [form]
-  (let [form (if (and (seq? form) (= 'defmacro (first form))
-                      (contains? policy/self-referential-macros (second form)))
-               (policy/direct-macro-def form)
-               form)
-        form (policy/adapt-macro-def form (host/macro-def-style))]
-    (if (= :source (host/macro-wrap-style))
-      (wrap-defmacro-source form)
-      form)))
+       [form]
+       (let [form (if (and (seq? form) (= 'defmacro (first form))
+                           (contains? policy/self-referential-macros (second form)))
+                      (policy/direct-macro-def form)
+                      form)
+             form (policy/adapt-macro-def form (host/macro-def-style))]
+            (if (= :source (host/macro-wrap-style))
+                (wrap-defmacro-source form)
+                form)))
 
 (defn- inline-forms
-  "[name inline-form arities-form] of a defn or def whose metadata carries
+       "[name inline-form arities-form] of a defn or def whose metadata carries
    :inline (core.clj's + is `(defn + {:inline (nary-inline 'add ...)} ...)`)."
-  [form]
-  (when (and (seq? form) (contains? inline-def-heads (first form)) (symbol? (second form)))
-    (let [nm (second form)
-          more (nnext form)
-          more (if (string? (first more)) (rest more) more)
-          attrs (merge (meta nm) (when (and (not= 'def (first form)) (map? (first more))) (first more)))]
-      (when (contains? attrs :inline)
-        [nm (:inline attrs) (:inline-arities attrs)]))))
+       [form]
+       (when (and (seq? form) (contains? inline-def-heads (first form)) (symbol? (second form)))
+             (let [nm (second form)
+                   more (nnext form)
+                   more (if (string? (first more)) (rest more) more)
+                   attrs (merge (meta nm) (when (and (not= 'def (first form)) (map? (first more))) (first more)))]
+                  (when (contains? attrs :inline)
+                        [nm (:inline attrs) (:inline-arities attrs)]))))
 
 (defn- capture-inline!
-  "For the codemod's inlining (inline-fn): a host whose var metadata holds
+       "For the codemod's inlining (inline-fn): a host whose var metadata holds
    :inline as the unevaluated form (ClojureScript's analyzer, basilisp's
    stripped meta) gets core.clj's :inline fn for nm evaluated once here. The
    first inline def tells which kind of host this is."
-  [ctx form]
-  (when-let [[nm inl ar] (and (host/rewrite-inline?) (not (false? (:capture-inline? @state))) (inline-forms form))]
-    (when (nil? (:capture-inline? @state))
-      (swap! state assoc :capture-inline?
-             (not (fn? (some-> (host/interned-var core-ns nm) host/var-meta :inline)))))
-    (when (:capture-inline? @state)
-      (host/try-all (fn [] (let [rewritten (rw/rewrite ctx (list 'vector inl ar))
-                                 [f a] (host/eval-form rewritten)]
-                             (when (fn? f)
-                               (swap! state assoc-in [:inlines nm] [f a])
-                               (when @snapshot-log (snap! {:op :inline :sym nm :form (snap-encode rewritten)})))))))))
+       [ctx form]
+       (when-let [[nm inl ar] (and (host/rewrite-inline?) (not (false? (:capture-inline? @state))) (inline-forms form))]
+                 (when (nil? (:capture-inline? @state))
+                       (swap! state assoc :capture-inline?
+                              (not (fn? (some-> (host/interned-var core-ns nm) host/var-meta :inline)))))
+                 (when (:capture-inline? @state)
+                       (host/try-all (fn [] (let [rewritten (rw/rewrite ctx (list 'vector inl ar))
+                                                  [f a] (host/eval-form rewritten)]
+                                                 (when (fn? f)
+                                                       (swap! state assoc-in [:inlines nm] [f a])
+                                                       (when @snapshot-log (snap! {:op :inline :sym nm :form (snap-encode rewritten)})))))))))
 
 (defn- eval-form! [ctx report form name status]
-  (host/try-all
-   (fn []
-     (if-not (profiling)
-       (let [rewritten (rw/rewrite ctx (prepare form))]
-         (host/eval-form rewritten)
-         (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode rewritten)}))
-         (host/after-eval form core-ns)
-         (capture-inline! ctx form))
-       (let [t0 (host/nano-time)
-             prepared (prepare form)
-             rewritten (rw/rewrite ctx prepared)
-             t1 (host/nano-time)
-             _ (host/eval-form rewritten)
-             _ (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode rewritten)}))
-             t2 (host/nano-time)
-             _ (host/after-eval form core-ns)
-             _ (capture-inline! ctx form)
-             t3 (host/nano-time)]
-         (profile-add! :rewrite (- t1 t0))
-         (profile-add! :eval (prof+ (- t2 t1) (- t3 t2)))
-         (profile-form! core-ns form name (- t1 t0) (- t2 t1))))
-     (record! report status {:name name}))
-   (fn [e]
-     (snap-declare! core-ns name)
-     (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
+       (host/try-all
+        (fn []
+            (if-not (profiling)
+                    (let [rewritten (rw/rewrite ctx (prepare form))]
+                         (host/eval-form rewritten)
+                         (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode rewritten)}))
+                         (host/after-eval form core-ns)
+                         (capture-inline! ctx form))
+                    (let [t0 (host/nano-time)
+                          prepared (prepare form)
+                          rewritten (rw/rewrite ctx prepared)
+                          t1 (host/nano-time)
+                          _ (host/eval-form rewritten)
+                          _ (when @snapshot-log (snap! {:op :form :ns core-ns :form (snap-encode rewritten)}))
+                          t2 (host/nano-time)
+                          _ (host/after-eval form core-ns)
+                          _ (capture-inline! ctx form)
+                          t3 (host/nano-time)]
+                         (profile-add! :rewrite (- t1 t0))
+                         (profile-add! :eval (prof+ (- t2 t1) (- t3 t2)))
+                         (profile-form! core-ns form name (- t1 t0) (- t2 t1))))
+            (record! report status {:name name}))
+        (fn [e]
+            (snap-declare! core-ns name)
+            (record! report :error {:name name :error (error-message e) :form (short-form form)}))))
 
 (def verbose? (atom false))
 
 (def ^:private native-heads
-  "The def forms a native can stand in for: fns (a macro has no native)."
-  (set '[def defn defn- defonce definline]))
+     "The def forms a native can stand in for: fns (a macro has no native)."
+     (set '[def defn defn- defonce definline]))
 
 ;; defined with install-atom-layer! below; native-of consults it
 (declare atom-surface-names)
 
 (defn- native-of
-  "The adapter's native (adapter :natives) for the def form `form` of library
+       "The adapter's native (adapter :natives) for the def form `form` of library
    lib (a string: \"clojure.core\", \"clojure.string\"): [value host-var-or-nil],
    or nil when there is none."
-  [lib form]
-  (let [nm (policy/form-name form)]
-    (when (and (symbol? nm) (contains? native-heads (policy/form-head form))
+       [lib form]
+       (let [nm (policy/form-name form)]
+            (when (and (symbol? nm) (contains? native-heads (policy/form-head form))
                ;; unit 5: with the atom fill in force, a native must
                ;; not stand in for an atom-surface name -- the host's
                ;; swap! casts its receiver, and a layer atom is a
                ;; value behind the facade. The stock definition,
                ;; which dispatches through the shim, boots instead.
-               (not (and (:eve-atoms @state) (contains? atom-surface-names nm))))
-      (when-let [impl (get (host/natives) (symbol lib (name nm)))]
-        (if (= :host impl)
-          (when-let [hv (and (= lib "clojure.core") (host/resolve-core nm))]
-            (when-not (host/macro-var? hv) [(host/var-root hv) hv]))
-          [impl nil])))))
+                       (not (and (:eve-atoms @state) (contains? atom-surface-names nm))))
+                  (when-let [impl (get (host/natives) (symbol lib (name nm)))]
+                            (if (= :host impl)
+                                (when-let [hv (and (= lib "clojure.core") (host/resolve-core nm))]
+                                          (when-not (host/macro-var? hv) [(host/var-root hv) hv]))
+                                [impl nil])))))
 
 (defn- def-form-meta
-  "The documentation the stock def form gives its var: :doc, :arglists (type
+       "The documentation the stock def form gives its var: :doc, :arglists (type
    hints dropped) and :added, as core.clj writes them."
-  [form]
-  (let [[h nm & more] form
-        [doc more] (if (string? (first more)) [(first more) (rest more)] [nil more])
-        [attrs more] (if (and (not= 'def h) (map? (first more))) [(first more) (rest more)] [nil more])
-        plain (fn [params] (mapv #(if (symbol? %) (with-meta % nil) %) params))
-        arglists (when (contains? defn-heads h)
-                   (if (vector? (first more))
-                     (list (plain (first more)))
-                     (seq (map (comp plain first) (filter #(and (seq? %) (vector? (first %))) more)))))]
-    (cond-> (select-keys (merge (meta nm) attrs) [:doc :added])
-      doc (assoc :doc doc)
-      arglists (assoc :arglists arglists))))
+       [form]
+       (let [[h nm & more] form
+             [doc more] (if (string? (first more)) [(first more) (rest more)] [nil more])
+             [attrs more] (if (and (not= 'def h) (map? (first more))) [(first more) (rest more)] [nil more])
+             plain (fn [params] (mapv #(if (symbol? %) (with-meta % nil) %) params))
+             arglists (when (contains? defn-heads h)
+                            (if (vector? (first more))
+                                (list (plain (first more)))
+                                (seq (map (comp plain first) (filter #(and (seq? %) (vector? (first %))) more)))))]
+            (cond-> (select-keys (merge (meta nm) attrs) [:doc :added])
+                    doc (assoc :doc doc)
+                    arglists (assoc :arglists arglists))))
 
 (defn- intern-native!
-  "Intern a native as ns-sym/nm in place of the stock def form, marked
+       "Intern a native as ns-sym/nm in place of the stock def form, marked
    :cohost/native, with the stock definition's documentation (else the host
    var's, for a :host native)."
-  [ns-sym nm [v hv] form lib]
+       [ns-sym nm [v hv] form lib]
   ;; the name without the form's reader metadata (unevaluated: an :arglists
   ;; of (quote ...) the JVM compiler would read as the arglists)
-  (let [h (host/intern! ns-sym (symbol (name nm)) v)
-        meta-map (merge (when hv (select-keys (host/var-meta hv) [:doc :arglists]))
-                        (def-form-meta form)
-                        {:cohost/native true :cohost/wrapped true})]
-    (host/alter-var-meta! h merge meta-map)
-    (snap! {:op :native :ns ns-sym :sym nm :lib lib
-            :meta (select-keys meta-map [:doc :arglists :cohost/native :cohost/wrapped])})
-    h))
+       (let [h (host/intern! ns-sym (symbol (name nm)) v)
+             meta-map (merge (when hv (select-keys (host/var-meta hv) [:doc :arglists]))
+                             (def-form-meta form)
+                             {:cohost/native true :cohost/wrapped true})]
+            (host/alter-var-meta! h merge meta-map)
+            (snap! {:op :native :ns ns-sym :sym nm :lib lib
+                    :meta (select-keys meta-map [:doc :arglists :cohost/native :cohost/wrapped])})
+            h))
 
 (def ^:private policy-lists
-  "This boot's policy lists (policy/lists of the host), computed once per boot."
-  (atom nil))
+     "This boot's policy lists (policy/lists of the host), computed once per boot."
+     (atom nil))
 
 (defn- process-form!
-  "Decide, then evaluate or take from the host. New macros are wrapped right
+       "Decide, then evaluate or take from the host. New macros are wrapped right
    after a form that can make one (may-make-macro?); a form taken from the
    host or skipped evaluates nothing, and take-from-host! marks what it
    interns itself."
-  [ctx report form]
-  (let [{:keys [action reason replacement] nm :name}
-        (policy/decide form (host/host-name) (or @policy-lists (policy/lists (host/host-name))))
-        _ (when @verbose? (println (str "  [" (name action) "] " nm)))
-        def-form (if (= :replace action) replacement form)
-        native (when (contains? #{:eval :replace} action) (native-of "clojure.core" def-form))
-        evaluated (case (if native :native action)
-                    :native (do (intern-native! core-ns nm native def-form "clojure.core") (record! report :native {:name nm}) nil)
-                    :skip (do (record! report :skipped {:name nm :reason reason}) nil)
-                    :host (when-not (take-from-host! report nm)
-                            (if (or (contains? policy/host-only-names nm)
-                                    (contains? policy/thread-names nm))
-                              (do (record! report :skipped {:name nm :reason :no-host-equivalent}) nil)
-                              (do (eval-form! ctx report form nm :ok) form)))
-                    :replace (do (eval-form! ctx report replacement nm :replaced) replacement)
-                    (do (eval-form! ctx report form nm :ok) form))]
-    (when (and (some? evaluated) (may-make-macro? evaluated))
-      (scan-macros! ctx))))
+       [ctx report form]
+       (let [{:keys [action reason replacement] nm :name}
+             (policy/decide form (host/host-name) (or @policy-lists (policy/lists (host/host-name))))
+             _ (when @verbose? (println (str "  [" (name action) "] " nm)))
+             def-form (if (= :replace action) replacement form)
+             native (when (contains? #{:eval :replace} action) (native-of "clojure.core" def-form))
+             evaluated (case (if native :native action)
+                             :native (do (intern-native! core-ns nm native def-form "clojure.core") (record! report :native {:name nm}) nil)
+                             :skip (do (record! report :skipped {:name nm :reason reason}) nil)
+                             :host (when-not (take-from-host! report nm)
+                                             (if (or (contains? policy/host-only-names nm)
+                                                     (contains? policy/thread-names nm))
+                                                 (do (record! report :skipped {:name nm :reason :no-host-equivalent}) nil)
+                                                 (do (eval-form! ctx report form nm :ok) form)))
+                             :replace (do (eval-form! ctx report replacement nm :replaced) replacement)
+                             (do (eval-form! ctx report form nm :ok) form))]
+            (when (and (some? evaluated) (may-make-macro? evaluated))
+                  (scan-macros! ctx))))
 
 (defn- scan-string-end
-  "cs (n characters) from i, just inside a string literal -> past its
+       "cs (n characters) from i, just inside a string literal -> past its
    closing quote (n when it has none)."
-  [cs n i]
-  (loop [i i]
-    (if (>= i n)
-      n
-      (let [c (nth cs i)]
-        (if (= c \\) (recur (+ i 2)) (if (= c \") (inc i) (recur (inc i))))))))
+       [cs n i]
+       (loop [i i]
+             (if (>= i n)
+                 n
+                 (let [c (nth cs i)]
+                      (if (= c \\) (recur (+ i 2)) (if (= c \") (inc i) (recur (inc i))))))))
 
 (defn- scan-line-end
-  "cs (n characters) from i -> past the next newline (n when none)."
-  [cs n i]
-  (loop [i i]
-    (if (>= i n) n (if (= (nth cs i) \newline) (inc i) (recur (inc i))))))
+       "cs (n characters) from i -> past the next newline (n when none)."
+       [cs n i]
+       (loop [i i]
+             (if (>= i n) n (if (= (nth cs i) \newline) (inc i) (recur (inc i))))))
 
 (defn strip-string-tags
-  "Delete `^\"...\"` type hints (JVM array class names) from source text,
+      "Delete `^\"...\"` type hints (JVM array class names) from source text,
    outside string, regex and character literals and comments: some host
    readers reject string metadata, and the rewriter drops :tag anyway."
-  [src]
-  (let [last-tag (host/last-index-of* src "^\"")
-        n (count src)
-        cs (host/string-chars src)]
+      [src]
+      (let [last-tag (host/last-index-of* src "^\"")
+            n (count src)
+            cs (host/string-chars src)]
     ;; The scan is one call per file, its loop written in special forms and
     ;; its strings and comments skipped by fns of their own: clojurust's
     ;; evaluator runs a fn's first call unlowered and expands a macro there
     ;; again on every pass (a cond loop over core.clj's 140,000 characters
     ;; ran past 13 minutes; doc/REPORT.md).
-    (loop [i 0 start 0 out []]
+           (loop [i 0 start 0 out []]
       ;; past the last ^" nothing more is cut (most sources have none)
-      (if (or (>= i n) (> i last-tag))
-        (if (empty? out) src (apply str (conj out (subs src start n))))
-        (let [c (nth cs i)]
-          (if (= c \\)
-            (recur (+ i 2) start out)
-            (if (= c \;)
-              (recur (scan-line-end cs n (inc i)) start out)
-              (if (= c \")
-                (recur (scan-string-end cs n (inc i)) start out)
-                (if (and (= c \^) (< (inc i) n) (= (nth cs (inc i)) \"))
-                  (let [j (scan-string-end cs n (+ i 2))]
-                    (recur j j (conj out (subs src start i))))
-                  (recur (inc i) start out))))))))))
+                 (if (or (>= i n) (> i last-tag))
+                     (if (empty? out) src (apply str (conj out (subs src start n))))
+                     (let [c (nth cs i)]
+                          (if (= c \\)
+                              (recur (+ i 2) start out)
+                              (if (= c \;)
+                                  (recur (scan-line-end cs n (inc i)) start out)
+                                  (if (= c \")
+                                      (recur (scan-string-end cs n (inc i)) start out)
+                                      (if (and (= c \^) (< (inc i) n) (= (nth cs (inc i)) \"))
+                                          (let [j (scan-string-end cs n (+ i 2))]
+                                               (recur j j (conj out (subs src start i))))
+                                          (recur (inc i) start out))))))))))
 
 (defn- scan-regex-body
-  "The body of a regex literal whose opening quote is at i-1, translated:
+       "The body of a regex literal whose opening quote is at i-1, translated:
    a possessive + (one directly after +, *, ? or }) outside a character
    class and unescaped is dropped. -> [body changed? index past the
    closing quote]."
-  [cs n i]
-  (loop [j i prev nil in-class? false out [] changed? false]
-    (if (>= j n)
-      [(apply str out) changed? j]
-      (let [c (nth cs j)]
-        (cond (= c \\) (recur (+ j 2) nil in-class? (conj out c (nth cs (min (dec n) (inc j)))) changed?)
-              (and (= c \") (not in-class?)) [(apply str out) changed? (inc j)]
-              (= c \[) (recur (inc j) c true (conj out c) changed?)
-              (= c \]) (recur (inc j) c false (conj out c) changed?)
-              (and (= c \+) (not in-class?) (contains? #{\+ \* \? \}} prev))
-              (recur (inc j) prev in-class? out true)
-              :else (recur (inc j) c in-class? (conj out c) changed?))))))
+       [cs n i]
+       (loop [j i prev nil in-class? false out [] changed? false]
+             (if (>= j n)
+                 [(apply str out) changed? j]
+                 (let [c (nth cs j)]
+                      (cond (= c \\) (recur (+ j 2) nil in-class? (conj out c (nth cs (min (dec n) (inc j)))) changed?)
+                            (and (= c \") (not in-class?)) [(apply str out) changed? (inc j)]
+                            (= c \[) (recur (inc j) c true (conj out c) changed?)
+                            (= c \]) (recur (inc j) c false (conj out c) changed?)
+                            (and (= c \+) (not in-class?) (contains? #{\+ \* \? \}} prev))
+                            (recur (inc j) prev in-class? out true)
+                            :else (recur (inc j) c in-class? (conj out c) changed?))))))
 
 (defn- symbol-char? [c]
-  (let [u (int c)]
-    (or (and (>= u 65) (<= u 90)) (and (>= u 97) (<= u 122))
-        (and (>= u 48) (<= u 57))
-        (contains? #{\_ \- \* \+ \! \? \< \> \= \. \/} c))))
+       (let [u (int c)]
+            (or (and (>= u 65) (<= u 90)) (and (>= u 97) (<= u 122))
+                (and (>= u 48) (<= u 57))
+                (contains? #{\_ \- \* \+ \! \? \< \> \= \. \/} c))))
 
 (defn- bridge-regex-literals
-  "Source spellings a host reader rejects, rewritten before the read,
+       "Source spellings a host reader rejects, rewritten before the read,
    for hosts whose reader is not Java-faithful (adapter
    :regex-possessive?): possessive quantifiers in regex literals
    become the plain greedy ones (a pattern using one otherwise fails
@@ -930,50 +930,50 @@
    is spelled (var ~sym), which reads identically. Outside regex
    literals and that sequence the text is untouched, and a source
    with nothing to translate comes back as itself."
-  [src]
-  (if (host/regex-possessive?)
-    src
-    (let [n (count src)
-          cs (host/string-chars src)]
-      (loop [i 0 start 0 out nil]
-        (if (>= i n)
-          (if (nil? out) src (apply str (conj out (subs src start n))))
-          (let [c (nth cs i)]
-            (cond (= c \;) (recur (scan-line-end cs n (inc i)) start out)
-                  (= c \") (recur (scan-string-end cs n (inc i)) start out)
-                  (= c \\) (recur (min n (+ i 2)) start out)
-                  (and (= c \#) (< (inc i) n) (= (nth cs (inc i)) \"))
-                  (let [[body changed? j] (scan-regex-body cs n (+ i 2))]
-                    (if changed?
-                      (recur j j (conj (or out []) (subs src start i) "#\"" body "\""))
-                      (recur j start out)))
-                  (and (= c \#) (< (+ i 3) n)
-                       (= (nth cs (inc i)) \')
-                       (= (nth cs (+ i 2)) \~)
-                       (symbol-char? (nth cs (+ i 3))))
-                  (let [j (loop [j (+ i 3)]
-                            (if (and (< j n) (symbol-char? (nth cs j)))
-                              (recur (inc j))
-                              j))]
-                    (recur j j (conj (or out []) (subs src start i)
-                                     "(var ~" (subs src (+ i 3) j) ")")))
-                  :else (recur (inc i) start out))))))))
+       [src]
+       (if (host/regex-possessive?)
+           src
+           (let [n (count src)
+                 cs (host/string-chars src)]
+                (loop [i 0 start 0 out nil]
+                      (if (>= i n)
+                          (if (nil? out) src (apply str (conj out (subs src start n))))
+                          (let [c (nth cs i)]
+                               (cond (= c \;) (recur (scan-line-end cs n (inc i)) start out)
+                                     (= c \") (recur (scan-string-end cs n (inc i)) start out)
+                                     (= c \\) (recur (min n (+ i 2)) start out)
+                                     (and (= c \#) (< (inc i) n) (= (nth cs (inc i)) \"))
+                                     (let [[body changed? j] (scan-regex-body cs n (+ i 2))]
+                                          (if changed?
+                                              (recur j j (conj (or out []) (subs src start i) "#\"" body "\""))
+                                              (recur j start out)))
+                                     (and (= c \#) (< (+ i 3) n)
+                                          (= (nth cs (inc i)) \')
+                                          (= (nth cs (+ i 2)) \~)
+                                          (symbol-char? (nth cs (+ i 3))))
+                                     (let [j (loop [j (+ i 3)]
+                                                   (if (and (< j n) (symbol-char? (nth cs j)))
+                                                       (recur (inc j))
+                                                       j))]
+                                          (recur j j (conj (or out []) (subs src start i)
+                                                           "(var ~" (subs src (+ i 3) j) ")")))
+                                     :else (recur (inc i) start out))))))))
 
 (defn- bridge-source
-  "The source text a stock file is read from: string-tag stripping and,
+       "The source text a stock file is read from: string-tag stripping and,
    on hosts whose regex dialect needs it, the regex bridge."
-  [src]
-  (bridge-regex-literals (strip-string-tags src)))
+       [src]
+       (bridge-regex-literals (strip-string-tags src)))
 
 (defn boot-file!
-  "Boot one source file (a path) into cohost.core."
-  [ctx report path]
-  (let [src (if (profiling)
-              (prof :read #(bridge-source (host/slurp-file path)))
-              (bridge-source (host/slurp-file path)))]
-    (host/with-ns core-ns
-      (fn [] (read-prof src (fn [form] (process-form! ctx report form)))
-        (scan-macros! ctx)))))
+      "Boot one source file (a path) into cohost.core."
+      [ctx report path]
+      (let [src (if (profiling)
+                    (prof :read #(bridge-source (host/slurp-file path)))
+                    (bridge-source (host/slurp-file path)))]
+           (host/with-ns core-ns
+                         (fn [] (read-prof src (fn [form] (process-form! ctx report form)))
+                             (scan-macros! ctx)))))
 
 ;; ---------------------------------------------------------------------------
 ;; the print/read stack on a host with :io-handles (adapter.cljc): core.clj's
@@ -985,30 +985,30 @@
 ;; them, in every extent -- they read the var, not the host's print frame.
 
 (defn- boot-print-file!
-  "Evaluate core_print.clj's print-method / print-dup forms into cohost.core
+       "Evaluate core_print.clj's print-method / print-dup forms into cohost.core
    (policy/decide-print-form); the file's other forms are not evaluated."
-  [ctx report path]
-  (let [src (bridge-source (host/slurp-file path))]
-    (host/with-ns core-ns
-      (fn [] (read-prof src (fn [form]
-                              (let [{:keys [action] nm :name} (policy/decide-print-form form)]
-                                (if (= :eval action)
-                                  (eval-form! ctx report form nm :ok)
-                                  (record! report :skipped {:name nm :reason :print-file})))))
-        (scan-macros! ctx)))))
+       [ctx report path]
+       (let [src (bridge-source (host/slurp-file path))]
+            (host/with-ns core-ns
+                          (fn [] (read-prof src (fn [form]
+                                                    (let [{:keys [action] nm :name} (policy/decide-print-form form)]
+                                                         (if (= :eval action)
+                                                             (eval-form! ctx report form nm :ok)
+                                                             (record! report :skipped {:name nm :reason :print-file})))))
+                              (scan-macros! ctx)))))
 
 (def ^:private io-reader-forms
-  [['read '(def read (fn ([] (cohost.shim/core-read *in*))
-                         ([a] (cohost.shim/core-read a))
-                         ([a b] (cohost.shim/core-read a b))
-                         ([a b c] (cohost.shim/core-read a b c))
-                         ([a b c d] (cohost.shim/core-read a b c d))))]
-   ['read+string '(def read+string (fn ([] (cohost.shim/core-read+string *in*))
-                                       ([a] (cohost.shim/core-read+string a))
-                                       ([a b] (cohost.shim/core-read+string a b))
-                                       ([a b c] (cohost.shim/core-read+string a b c))
-                                       ([a b c d] (cohost.shim/core-read+string a b c d))))]
-   ['read-line '(def read-line (fn [] (cohost.io/read-line! *in*)))]])
+     [['read '(def read (fn ([] (cohost.shim/core-read *in*))
+                            ([a] (cohost.shim/core-read a))
+                            ([a b] (cohost.shim/core-read a b))
+                            ([a b c] (cohost.shim/core-read a b c))
+                            ([a b c d] (cohost.shim/core-read a b c d))))]
+      ['read+string '(def read+string (fn ([] (cohost.shim/core-read+string *in*))
+                                          ([a] (cohost.shim/core-read+string a))
+                                          ([a b] (cohost.shim/core-read+string a b))
+                                          ([a b c] (cohost.shim/core-read+string a b c))
+                                          ([a b c d] (cohost.shim/core-read+string a b c d))))]
+      ['read-line '(def read-line (fn [] (cohost.io/read-line! *in*)))]])
 
 ;; F1 print-loop: the previous in-core seat still used the shim's
 ;; instance? (instance_fn / token-isa? / class-of) for every cond clause.
@@ -1019,10 +1019,10 @@
 ;; print-dup fallback. Records, print-dup, *print-level*/length /
 ;; qualified namespace-maps / meta still go to print-method.
 (def ^:private fast-pr-on-form
-  '(def pr-on
-     (fn [x w]
-       (cohost.io/pr-on-any! x w)
-       nil)))
+     '(def pr-on
+           (fn [x w]
+               (cohost.io/pr-on-any! x w)
+               nil)))
 
 ;; with-out-str setup was a top ARM1 leaf: booted (binding [*out* s#]) went
 ;; through shimmed Var/pushThreadBindings → adapter cap (~25-29% of ARM1
@@ -1030,169 +1030,166 @@
 ;; The installed macro uses the host string-writer, host push/pop of
 ;; cohost.core/*out*, and writer-string — no shim hops, no (str writer).
 (def ^:private fast-with-out-str-form
-  '(defmacro with-out-str
-     [& body]
-     `(let [s# (cohost.io/string-writer)]
-        (cohost.io/push-out! s#)
-        (try
-          ~@body
-          (cohost.io/writer-string s#)
-          (finally
-            (cohost.io/pop-out!))))))
+     '(defmacro with-out-str
+                [& body]
+                `(let [s# (cohost.io/string-writer)]
+                      (cohost.io/push-out! s#)
+                      (try
+                       ~@body
+                       (cohost.io/writer-string s#)
+                       (finally
+                        (cohost.io/pop-out!))))))
 
 ;; Stock prn is only variadic, so even (prn x) does (apply pr more). The
 ;; booted apply path (_applyTo / shim$dot) sat on every ARM sample. A
 ;; 1-arg arity calls pr-on directly, then a host newline + optional flush.
 (def ^:private fast-prn-form
-  '(def prn
-     (fn
-       ([] (cohost.io/prn0!))
-       ([x] (cohost.io/prn1! x))
-       ([x & more] (cohost.io/prn*! x more)))))
-
+     '(def prn
+           (fn
+            ([] (cohost.io/prn0!))
+            ([x] (cohost.io/prn1! x))
+            ([x & more] (cohost.io/prn*! x more)))))
 
 (defn install-io-layer!
-  "Give cohost.core's *out*, *err* and *in* their roots on a host with
+      "Give cohost.core's *out*, *err* and *in* their roots on a host with
    :io-handles: a writer over the host's out / err leaf, and stdin's reader
    as a pushback reader (the LineNumberingPushbackReader the JVM gives *in*)
    over the in leaf. Other hosts are untouched (their *out* is the host's)."
-  [ctx report]
-  (when (host/io-handles)
-    (snap! {:op :io-layer})
-    (doseq [[nm v] [['*out* (io/host-writer (fn [] (host/io-handle :out)))]
-                    ['*err* (io/host-writer (fn [] (host/io-handle :err)))]
-                    ['*in* (io/pushback-reader (io/host-reader (fn [] (host/io-handle :in))))]]]
-      (when-let [h (host/interned-var core-ns nm)]
-        (host/set-var-root! h (constantly v))
-        (record! report :replaced {:name nm :reason :io-layer})))
+      [ctx report]
+      (when (host/io-handles)
+            (snap! {:op :io-layer})
+            (doseq [[nm v] [['*out* (io/host-writer (fn [] (host/io-handle :out)))]
+                            ['*err* (io/host-writer (fn [] (host/io-handle :err)))]
+                            ['*in* (io/pushback-reader (io/host-reader (fn [] (host/io-handle :in))))]]]
+                   (when-let [h (host/interned-var core-ns nm)]
+                             (host/set-var-root! h (constantly v))
+                             (record! report :replaced {:name nm :reason :io-layer})))
     ;; the shim's reader fills read *in* through the adapter's var-get, which
     ;; on let-go does not see a binding made on another thread (a layer
     ;; Thread's goroutine: measured, M3 [4 1]); booted code's own reference
     ;; to *in* does. Their no-stream arities are booted here over it.
-    (host/with-ns core-ns
-      (fn []
-        (doseq [[nm form] io-reader-forms]
-          (eval-form! ctx report form nm :replaced)))))
-  report)
-
-
+            (host/with-ns core-ns
+                          (fn []
+                              (doseq [[nm form] io-reader-forms]
+                                     (eval-form! ctx report form nm :replaced)))))
+      report)
 
 (defn- companion-forms
-  "{name form}: the first top-level form defining each of names in the file
+       "{name form}: the first top-level form defining each of names in the file
    at path, read once (the file's other forms are not evaluated)."
-  [path names]
-  (let [found (atom {})]
-    (host/try-all (fn [] (let [src (if (profiling)
-                                      (prof :read #(bridge-source (host/slurp-file path)))
-                                      (bridge-source (host/slurp-file path)))]
-                           (read-prof src (fn [form] (let [nm (policy/form-name form)]
-                                                       (when (and (contains? names nm) (not (contains? @found nm)))
-                                                         (swap! found assoc nm form))))))))
-    @found))
+       [path names]
+       (let [found (atom {})]
+            (host/try-all (fn [] (let [src (if (profiling)
+                                               (prof :read #(bridge-source (host/slurp-file path)))
+                                               (bridge-source (host/slurp-file path)))]
+                                      (read-prof src (fn [form] (let [nm (policy/form-name form)]
+                                                                     (when (and (contains? names nm) (not (contains? @found nm)))
+                                                                           (swap! found assoc nm form))))))))
+            @found))
 
 (defn- boot-setup!
-  "What boot! does before core.clj's first form (the snapshot's replay does
+       "What boot! does before core.clj's first form (the snapshot's replay does
    it too): cohost.core, the codemod's ctx, the hooks. -> [ctx report]."
-  [root]
-  (host/ensure-bare-ns! core-ns)
-  (let [ctx (if (profiling) (prof :setup #(make-ctx)) (make-ctx))
-        report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
-    (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks)) (some? (host/io-handles))))
-    (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
-           :libs {(symbol "clojure.core") {:ns core-ns :status :loaded}})
+       [root]
+       (host/ensure-bare-ns! core-ns)
+       (let [ctx (if (profiling) (prof :setup #(make-ctx)) (make-ctx))
+             report (atom {:ok 0 :replaced 0 :host 0 :native 0 :skipped 0 :error 0 :entries []})]
+            (reset! policy-lists (policy/lists (host/host-name) (some? (host/chunks)) (some? (host/io-handles))))
+            (swap! state assoc :ctx ctx :root root :host-dynamic [] :inlines {} :capture-inline? nil
+                   :libs {(symbol "clojure.core") {:ns core-ns :status :loaded}})
     ;; (eval form) evaluates in the namespace the caller runs in, as on the JVM
-    (reset! shim/eval-hook (fn [form] (eval-in (host/current-ns) form)))
-    (reset! shim/eval-top-hook (fn [ns-sym form] (eval-top ctx ns-sym form)))
-    (reset! shim/load-hook load-relative!)
-    [ctx report]))
+            (reset! shim/eval-hook (fn [form] (eval-in (host/current-ns) form)))
+            (reset! shim/eval-top-hook (fn [ns-sym form] (eval-top ctx ns-sym form)))
+            (reset! shim/load-hook load-relative!)
+            [ctx report]))
 
 (defn- install-eduction-reduce!
-  "IReduceInit's 1-arity coll-reduce casts its collection to IReduce.
+       "IReduceInit's 1-arity coll-reduce casts its collection to IReduce.
    Eduction is IReduceInit and not IReduce. pref keeps the first of two
    unrelated interfaces, and that order is Class identity-hash order, which
    follows which classes loaded first. cohost's AOT classes on the classpath
    change that order, the cast wins, and (reduce f (eduction ...)) throws.
    A collection that is IReduceInit but not IReduce reduces through the seq."
-  []
-  #?(:clj
-     (extend-type clojure.lang.IReduceInit
-       clojure.core.protocols/CollReduce
-       (coll-reduce
-         ([coll f]
-          (if (instance? clojure.lang.IReduce coll)
-            (.reduce ^clojure.lang.IReduce coll f)
-            (let [s (seq coll)]
-              (if s
-                (clojure.core.protocols/internal-reduce (next s) f (first s))
-                (f)))))
-         ([coll f val]
-          (.reduce ^clojure.lang.IReduceInit coll f val))))
-     :default nil))
+       []
+       #?(:clj
+          (extend-type clojure.lang.IReduceInit
+                       clojure.core.protocols/CollReduce
+                       (coll-reduce
+                        ([coll f]
+                         (if (instance? clojure.lang.IReduce coll)
+                             (.reduce ^clojure.lang.IReduce coll f)
+                             (let [s (seq coll)]
+                                  (if s
+                                      (clojure.core.protocols/internal-reduce (next s) f (first s))
+                                      (f)))))
+                        ([coll f val]
+                         (.reduce ^clojure.lang.IReduceInit coll f val))))
+          :default nil))
 
 (defn- install-host-reducers!
-  "reduce with core's + or * hands the host its own (shim/host-reducers)."
-  []
-  (shim/set-host-reducers!
-   (into {} (keep (fn [nm]
-                    (let [sv (some-> (host/interned-var core-ns nm) host/var-root)
-                          hv (some-> (host/resolve-core nm) host/var-root)]
-                      (when (and (fn? sv) (fn? hv) (not (identical? sv hv)))
-                        [sv hv])))
+       "reduce with core's + or * hands the host its own (shim/host-reducers)."
+       []
+       (shim/set-host-reducers!
+        (into {} (keep (fn [nm]
+                           (let [sv (some-> (host/interned-var core-ns nm) host/var-root)
+                                 hv (some-> (host/resolve-core nm) host/var-root)]
+                                (when (and (fn? sv) (fn? hv) (not (identical? sv hv)))
+                                      [sv hv])))
                   ;; (A5: not where the shim's Numbers-add / multiply are the adapter's
                   ;; checked fns, i.e. the host's own + * are wrong past 2^31)
-                  (filter (fn [nm] (if (= '+ nm) (= shim/Numbers-add (some-> (host/resolve-core '+) host/var-root))
-                                     (= shim/Numbers-multiply (some-> (host/resolve-core '*) host/var-root))))
-                          '[+ *])))))
+                       (filter (fn [nm] (if (= '+ nm) (= shim/Numbers-add (some-> (host/resolve-core '+) host/var-root))
+                                            (= shim/Numbers-multiply (some-> (host/resolve-core '*) host/var-root))))
+                               '[+ *])))))
 
 (defn- snap-state
-  "The boot's state a snapshot restores as data at the end of a module: the
+       "The boot's state a snapshot restores as data at the end of a module: the
    report, and what the codemod's ctx and the loader collected."
-  [report]
-  (let [c (ctx)]
-    {:report report
-     :host-dynamic (:host-dynamic @state)
-     :capture-inline? (:capture-inline? @state)
-     :imports @(:imports c)
-     :renames @(:renames c)
-     :user-types @(:user-types c)
-     :host-referred @(:host-referred c)
-     :loader-nses @(:loader-nses c)}))
+       [report]
+       (let [c (ctx)]
+            {:report report
+             :host-dynamic (:host-dynamic @state)
+             :capture-inline? (:capture-inline? @state)
+             :imports @(:imports c)
+             :renames @(:renames c)
+             :user-types @(:user-types c)
+             :host-referred @(:host-referred c)
+             :loader-nses @(:loader-nses c)}))
 
 (defn install-thread-layer!
-  "Fill the concurrency names (policy/thread-names) the boot left
+      "Fill the concurrency names (policy/thread-names) the boot left
    uninterned -- the host's core had none of its own -- from Eve's
    thread layer (cohost.thread), when this host gives the layer its
    leaves. Runs after the companions and before the libraries, so
    library code calling future/agent at load time finds them. Each
    fill is recorded as a replacement; hosts with their own concurrency
    names, and hosts with no thread layer, are untouched."
-  [report]
-  (when (thread/available?)
+      [report]
+      (when (thread/available?)
     ;; The fills intern fn values directly -- no form is evaluated, so
     ;; the snapshot recorder sees nothing of them. Record the fill
     ;; itself, or a snapshot replay restores a core without the thread
     ;; family (measured, unit 2: bin/cohost :jank from the snapshot
     ;; could not resolve `future`).
-    (snap! {:op :thread-layer})
-    (doseq [[nm v] thread/core-impls]
-      (when-not (host/interned-var core-ns nm)
-        (host/intern! core-ns nm v)
-        (record! report :replaced {:name nm :reason :thread-layer})))
-    (doseq [[nm f] thread/core-macros]
-      (when-not (host/interned-var core-ns nm)
-        (host/intern! core-ns nm f)
-        (host/mark-macro! (host/interned-var core-ns nm))
-        (record! report :replaced {:name nm :reason :thread-layer})))
+            (snap! {:op :thread-layer})
+            (doseq [[nm v] thread/core-impls]
+                   (when-not (host/interned-var core-ns nm)
+                             (host/intern! core-ns nm v)
+                             (record! report :replaced {:name nm :reason :thread-layer})))
+            (doseq [[nm f] thread/core-macros]
+                   (when-not (host/interned-var core-ns nm)
+                             (host/intern! core-ns nm f)
+                             (host/mark-macro! (host/interned-var core-ns nm))
+                             (record! report :replaced {:name nm :reason :thread-layer})))
     ;; unit 8: a seat with realms (cljs on Node with Eve hosting) gets
     ;; the form-carrying future's entry, outside core (core's publics
     ;; stay stock's); the future fill expands to it on that seat only
-    (when (host/capability :realm-submit)
-      (host/ensure-bare-ns! 'cohost.realm)
-      (host/intern! 'cohost.realm 'future-form-call thread/future-form-call)))
-  report)
+            (when (host/capability :realm-submit)
+                  (host/ensure-bare-ns! 'cohost.realm)
+                  (host/intern! 'cohost.realm 'future-form-call thread/future-form-call)))
+      report)
 
 (def ^:private atom-surface-names
-  "The clojure.core names whose host versions would bypass the
+     "The clojure.core names whose host versions would bypass the
    shim for a layer atom -- the host's swap!/reset!/add-watch
    cast the receiver to IAtom/IRef, and a layer atom is a value
    behind the facade, not a host Atom. With the atom fill in
@@ -1200,11 +1197,11 @@
    exercise mechanism), so the booted definitions -- which call
    through the shim's method dispatch -- serve layer atoms and
    host atoms alike."
-  '#{swap! reset! compare-and-set! swap-vals! reset-vals!
-     add-watch remove-watch set-validator! get-validator})
+     '#{swap! reset! compare-and-set! swap-vals! reset-vals!
+        add-watch remove-watch set-validator! get-validator})
 
 (defn install-atom-layer!
-  "Turn on Eve's atom layer (cohost.atom, unit 5) for the booted
+      "Turn on Eve's atom layer (cohost.atom, unit 5) for the booted
    program, when the boot opts ask for it (:eve-atoms) and this
    seat's Eve hosting is installed (cohost.atom-eve/install!).
    Mints the registry atom in its startup domain, publishes the
@@ -1214,46 +1211,46 @@
    Eve-backed and its later interns and root writes publish as
    they happen. Default boots never pass the opt; the standing
    batteries are untouched."
-  [ctx report eve-atoms]
-  (when eve-atoms
-    (when-not (atom-layer/available?)
-      (throw (host/ex* 'java.lang.IllegalStateException
-                       "boot :eve-atoms needs the seat's Eve hosting installed first (cohost.atom-eve/install!)")))
-    (atom-layer/registry-atom)
-    (atom-layer/set-fill! true)
-    (let [nses (into #{core-ns user-ns}
-                     (map (fn [n] (symbol n)))
-                     @(:loader-nses ctx))]
-      (doseq [ns-sym nses]
-        (atom-layer/publish-namespace! ns-sym)))
-    (record! report :replaced {:name 'eve-atoms :reason :atom-layer}))
-  report)
+      [ctx report eve-atoms]
+      (when eve-atoms
+            (when-not (atom-layer/available?)
+                      (throw (host/ex* 'java.lang.IllegalStateException
+                                       "boot :eve-atoms needs the seat's Eve hosting installed first (cohost.atom-eve/install!)")))
+            (atom-layer/registry-atom)
+            (atom-layer/set-fill! true)
+            (let [nses (into #{core-ns user-ns}
+                             (map (fn [n] (symbol n)))
+                             @(:loader-nses ctx))]
+                 (doseq [ns-sym nses]
+                        (atom-layer/publish-namespace! ns-sym)))
+            (record! report :replaced {:name 'eve-atoms :reason :atom-layer}))
+      report)
 
 (defn install-http-layer!
-  "Fill the names the boot left uninterned that Eve's HTTP layer
+      "Fill the names the boot left uninterned that Eve's HTTP layer
    (cohost.http/core-impls: slurp) answers, when this seat gives the
    layer its leaves: a host whose core has no slurp reads a URL's body
    through Eve. Hosts with their own slurp (the JVM, where clojure.java.io
    reaches the layer instead) and seats without the leaves are untouched."
-  [report]
-  (when (http/available?)
-    (snap! {:op :http-layer})
-    (doseq [[nm v] http/core-impls]
-      (when-not (host/interned-var core-ns nm)
-        (host/intern! core-ns nm v)
-        (record! report :replaced {:name nm :reason :http-layer}))))
-  report)
+      [report]
+      (when (http/available?)
+            (snap! {:op :http-layer})
+            (doseq [[nm v] http/core-impls]
+                   (when-not (host/interned-var core-ns nm)
+                             (host/intern! core-ns nm v)
+                             (record! report :replaced {:name nm :reason :http-layer}))))
+      report)
 
 (defn install-shim-layer!
-  "Fill the reader / exception names the host's core left uninterned
+      "Fill the reader / exception names the host's core left uninterned
    (read, read+string, load-reader, read-line, line-seq,
    Throwable->map, PrintWriter-on, the locking macro) from the shim
    layer's portable implementations over the io layer. Hosts whose
    core has its own are untouched: a fill interns only a name that
    is not already interned."
-  [report]
-  (snap! {:op :shim-layer})
-  (doseq [[nm v] shim/core-fills]
+      [report]
+      (snap! {:op :shim-layer})
+      (doseq [[nm v] shim/core-fills]
     ;; load is fill-wins even where the host supplied one: the host's
     ;; load resolves a relative path against the BOOTED namespace
     ;; name (cohost.pprint -> cohost/pprint/...), but a stock
@@ -1284,32 +1281,32 @@
     ;; leave the name interned but UNBOUND -- measured on jank, stock
     ;; report-error died "Invalid call to var_unbound_root" -- and only
     ;; the fill can bind it
-    (when (or (contains? #{'load 'read 'read+string 'Throwable->map} nm)
-              (and (= 'requiring-resolve nm) (some? (host/io-handles)))
-              (contains? (set (host/core-lacks)) nm)
-              (not (host/interned-var core-ns nm)))
-      (host/intern! core-ns nm v)
-      (record! report :replaced {:name nm :reason :shim-layer})))
-  (doseq [[nm f] shim/core-fill-macros]
-    (when-not (host/interned-var core-ns nm)
-      (host/intern! core-ns nm f)
-      (host/mark-macro! (host/interned-var core-ns nm))
-      (record! report :replaced {:name nm :reason :shim-layer})))
+             (when (or (contains? #{'load 'read 'read+string 'Throwable->map} nm)
+                       (and (= 'requiring-resolve nm) (some? (host/io-handles)))
+                       (contains? (set (host/core-lacks)) nm)
+                       (not (host/interned-var core-ns nm)))
+                   (host/intern! core-ns nm v)
+                   (record! report :replaced {:name nm :reason :shim-layer})))
+      (doseq [[nm f] shim/core-fill-macros]
+             (when-not (host/interned-var core-ns nm)
+                       (host/intern! core-ns nm f)
+                       (host/mark-macro! (host/interned-var core-ns nm))
+                       (record! report :replaced {:name nm :reason :shim-layer})))
   ;; namespaces created before this install (the user namespace, any
   ;; library already loaded) hold a snapshot of the core's refers:
   ;; refer the filled names into them, or the names resolve in
   ;; libraries loaded later but not in the session namespace
   ;; (measured: (resolve 'flush) false in user, true in libraries).
-  (let [filled (into (set (keys shim/core-fills)) (keys shim/core-fill-macros))]
-    (when (seq filled)
-      (doseq [ns-sym (into [(symbol (str user-ns))]
-                           (map (fn [n] (symbol n)))
-                           @(:loader-nses (ctx)))]
-        (host/try-all (fn [] (host/refer! ns-sym core-ns {:only (vec filled)}))))))
-  report)
+      (let [filled (into (set (keys shim/core-fills)) (keys shim/core-fill-macros))]
+           (when (seq filled)
+                 (doseq [ns-sym (into [(symbol (str user-ns))]
+                                      (map (fn [n] (symbol n)))
+                                      @(:loader-nses (ctx)))]
+                        (host/try-all (fn [] (host/refer! ns-sym core-ns {:only (vec filled)}))))))
+      report)
 
 (defn install-collection-fill!
-  "Decide and install the Eve collection fill (unit 4) for this
+      "Decide and install the Eve collection fill (unit 4) for this
    boot, before the prelude: with the fill in force, the shim's
    collection creators answer Eve-backed values and the two
    EMPTY statics the core reads directly are Eve's empties.
@@ -1319,25 +1316,25 @@
    :clj seat today) and off everywhere else; a seat with no Eve
    hosting cannot take the fill (no counterparts). Records
    :eve-collections :on/:off in the boot state for the report."
-  [eve-collections]
-  (memory/set-fill! false)
-  (let [forced (some? eve-collections)
-        want (if forced (boolean eve-collections) (= :clj (host/host-name)))]
-    (when want
-      (when-not (memory/hosting-registered?)
-        (host/try-all (fn [] (host/eval-form '(require (quote cohost.memory-eve))))))
-      (if (memory/hosting-registered?)
-        (do (memory/install-fill!)
-            (memory/set-fill! true))
-        (when forced
-          (throw (ex-info "cohost.boot: :eve-collections is NOT-YET on this seat -- no Eve hosting loads here"
-                          {:type :cohost.boot/eve-collections-not-yet
-                           :host (host/host-name)})))))
-    (swap! state assoc :eve-collections (if (memory/fill-on?) :on :off)))
-  nil)
+      [eve-collections]
+      (memory/set-fill! false)
+      (let [forced (some? eve-collections)
+            want (if forced (boolean eve-collections) (= :clj (host/host-name)))]
+           (when want
+                 (when-not (memory/hosting-registered?)
+                           (host/try-all (fn [] (host/eval-form '(require (quote cohost.memory-eve))))))
+                 (if (memory/hosting-registered?)
+                     (do (memory/install-fill!)
+                         (memory/set-fill! true))
+                     (when forced
+                           (throw (ex-info "cohost.boot: :eve-collections is NOT-YET on this seat -- no Eve hosting loads here"
+                                           {:type :cohost.boot/eve-collections-not-yet
+                                            :host (host/host-name)})))))
+           (swap! state assoc :eve-collections (if (memory/fill-on?) :on :off)))
+      nil)
 
 (defn boot!
-  "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
+      "Boot core.clj. opts: :root -- the directory holding clojure/core.clj
    (default resources/cohost/clojure-1.12.0); :files -- paths under it;
    :profile? -- record phase timers (off unless true; the off path does not
    call :nano-time); :host-lacks -- names to boot as if the host lacked
@@ -1346,342 +1343,342 @@
    (unit 5; needs the seat's Eve hosting installed);
    :eve-collections -- force the Eve collection fill on (true) or
    off (false); absent, it is the seat's default (unit 4)."
-  ([] (boot! {}))
-  ([{:keys [root files verbose profile? record? host-lacks eve-atoms eve-collections] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
-   (reset! verbose? (boolean verbose))
-   (reset! snapshot-log (when record? []))
-   (swap! state assoc :eve-atoms (boolean eve-atoms)
-                      :host-lacks (into (set host-lacks)
-                                        (concat (host/core-lacks)
-                                                (when (host/io-handles) policy/io-owned-lacks)
-                                                (when eve-atoms atom-surface-names))))
-   (install-collection-fill! eve-collections)
-   (snap! {:op :begin :opts {:root root :files files}})
-   (if profile?
-     (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
-         (vreset! rw/profile-branches {})
-         (vreset! rw/profile-child 0)
-         (vreset! rw/profile-macro-ns {})
-         (vreset! rw/profile-macro-n {}))
-     (do (swap! state dissoc :profile :profile-bucket)
-         (vreset! rw/profile-branches nil)
-         (vreset! rw/profile-macro-ns nil)
-         (vreset! rw/profile-macro-n nil)))
-   (let [t-boot (when (profiling) (host/nano-time))]
-   (let [[ctx report] (boot-setup! root)]
+      ([] (boot! {}))
+      ([{:keys [root files verbose profile? record? host-lacks eve-atoms eve-collections] :or {root "resources/cohost/clojure-1.12.0" files ["clojure/core.clj"]}}]
+       (reset! verbose? (boolean verbose))
+       (reset! snapshot-log (when record? []))
+       (swap! state assoc :eve-atoms (boolean eve-atoms)
+              :host-lacks (into (set host-lacks)
+                                (concat (host/core-lacks)
+                                        (when (host/io-handles) policy/io-owned-lacks)
+                                        (when eve-atoms atom-surface-names))))
+       (install-collection-fill! eve-collections)
+       (snap! {:op :begin :opts {:root root :files files}})
+       (if profile?
+           (do (swap! state assoc :profile (atom {:phases {} :forms [] :walls {}}) :profile-bucket :core)
+               (vreset! rw/profile-branches {})
+               (vreset! rw/profile-child 0)
+               (vreset! rw/profile-macro-ns {})
+               (vreset! rw/profile-macro-n {}))
+           (do (swap! state dissoc :profile :profile-bucket)
+               (vreset! rw/profile-branches nil)
+               (vreset! rw/profile-macro-ns nil)
+               (vreset! rw/profile-macro-n nil)))
+       (let [t-boot (when (profiling) (host/nano-time))]
+            (let [[ctx report] (boot-setup! root)]
      ;; the prelude: what the JVM runtime defines before core.clj loads
-     (host/with-ns core-ns
-       (fn []
-         (doseq [[sym dflt] policy/runtime-vars]
-           (when-not (take-from-host! report sym)
-             (eval-form! ctx report (list 'def #?(:squint sym :default (with-meta sym {:dynamic true})) dflt) sym :replaced)))))
-     (doseq [f files]
-       (boot-file! ctx report (str root "/" f)))
+                 (host/with-ns core-ns
+                               (fn []
+                                   (doseq [[sym dflt] policy/runtime-vars]
+                                          (when-not (take-from-host! report sym)
+                                                    (eval-form! ctx report (list 'def #?(:squint sym :default (with-meta sym {:dynamic true})) dflt) sym :replaced)))))
+                 (doseq [f files]
+                        (boot-file! ctx report (str root "/" f)))
      ;; the companion files' names: the stock definition where it is plain
      ;; Clojure, else the host's, when it has them. The wall is one region:
      ;; its read, rewrite and eval stay in the :companion bucket.
-     (host/with-ns core-ns
-       (fn []
-         (let [run-companions
-               (fn []
-                 (let [stock (into {} (mapcat (fn [[file nms]] (seq (companion-forms (str root "/" file) (set nms))))
-                                              (group-by #(get policy/companion-stock %)
-                                                        (filter #(contains? policy/companion-stock %) policy/companion-names))))]
-                   (doseq [nm (sort policy/companion-names)]
-                     (if (contains? policy/companion-stock nm)
-                       (if-let [form (get stock nm)]
-                         (process-form! ctx report form)
-                         (record! report :skipped {:name nm :reason :no-host-equivalent}))
-                       (when-not (or (and (host/io-handles) (host/interned-var core-ns nm))
-                                     (take-from-host! report nm))
-                         (if-let [v (get (host/core-extras) nm)]
-                           (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil)
-                               (snap! {:op :extra :sym nm}))
-                           (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
-                 (scan-macros! ctx))]
-           (if-not (profiling)
-             (run-companions)
-             (let [prev (:profile-bucket @state)
-                   t0 (host/nano-time)]
-               (swap! state assoc :profile-bucket :companion)
-               (run-companions)
-               (swap! (:profile @state) assoc-in [:walls :companion] (- (host/nano-time) t0))
-               (swap! state assoc :profile-bucket prev))))))
+                 (host/with-ns core-ns
+                               (fn []
+                                   (let [run-companions
+                                         (fn []
+                                             (let [stock (into {} (mapcat (fn [[file nms]] (seq (companion-forms (str root "/" file) (set nms))))
+                                                                          (group-by #(get policy/companion-stock %)
+                                                                                    (filter #(contains? policy/companion-stock %) policy/companion-names))))]
+                                                  (doseq [nm (sort policy/companion-names)]
+                                                         (if (contains? policy/companion-stock nm)
+                                                             (if-let [form (get stock nm)]
+                                                                     (process-form! ctx report form)
+                                                                     (record! report :skipped {:name nm :reason :no-host-equivalent}))
+                                                             (when-not (or (and (host/io-handles) (host/interned-var core-ns nm))
+                                                                           (take-from-host! report nm))
+                                                                       (if-let [v (get (host/core-extras) nm)]
+                                                                               (do (host/intern! core-ns nm v) (record! report :host {:name nm}) (note-host-dynamic! nm nil)
+                                                                                   (snap! {:op :extra :sym nm}))
+                                                                               (record! report :skipped {:name nm :reason :no-host-equivalent}))))))
+                                             (scan-macros! ctx))]
+                                        (if-not (profiling)
+                                                (run-companions)
+                                                (let [prev (:profile-bucket @state)
+                                                      t0 (host/nano-time)]
+                                                     (swap! state assoc :profile-bucket :companion)
+                                                     (run-companions)
+                                                     (swap! (:profile @state) assoc-in [:walls :companion] (- (host/nano-time) t0))
+                                                     (swap! state assoc :profile-bucket prev))))))
      ;; Eve's thread layer fills the concurrency names this host's core
      ;; lacked (policy/thread-names) before libraries or user code can
      ;; call them; the scan then wraps the fill's macros (future,
      ;; pvalues) like any other booted macro
-     (install-thread-layer! report)
+                 (install-thread-layer! report)
      ;; Eve's atom layer (unit 5), when the boot opts ask for it:
      ;; the registry is minted and the booted namespaces published
      ;; before libraries or user code can intern or create atoms
-     (install-atom-layer! ctx report eve-atoms)
-     (install-http-layer! report)
-     (install-shim-layer! report)
+                 (install-atom-layer! ctx report eve-atoms)
+                 (install-http-layer! report)
+                 (install-shim-layer! report)
      ;; a host whose print/read machinery takes only its own handles: the
      ;; print-method / print-dup methods of core.clj's companion core_print
      ;; (after the shim layer: print-throwable calls its Throwable->map)
-     (when (host/io-handles)
-       (boot-print-file! ctx report (str root "/clojure/core_print.clj")))
-     (install-io-layer! ctx report)
-     (when (host/io-handles)
-       (host/with-ns core-ns
-         (fn []
-           (io/install-print-vars!)
-           (eval-form! ctx report fast-pr-on-form 'pr-on :replaced)
-           (eval-form! ctx report fast-with-out-str-form 'with-out-str :replaced)
-           (eval-form! ctx report fast-prn-form 'prn :replaced))))
-     (scan-macros! ctx)
-     (install-host-reducers!)
-     (install-eduction-reduce!)
-     (reset! (:booted? ctx) true)
-     (let [r (assoc @report
-                    :rewrite-misses (rw/misses ctx)
-                    :host-name (host/host-name)
-                    :eve-collections (:eve-collections @state))]
-       (when t-boot
-         (swap! (:profile @state) assoc :boot-wall (- (host/nano-time) t-boot)))
-       (swap! state assoc :report r)
-       (snap! {:op :end :data (snap-state r)})
-       r)))))
+                 (when (host/io-handles)
+                       (boot-print-file! ctx report (str root "/clojure/core_print.clj")))
+                 (install-io-layer! ctx report)
+                 (when (host/io-handles)
+                       (host/with-ns core-ns
+                                     (fn []
+                                         (io/install-print-vars!)
+                                         (eval-form! ctx report fast-pr-on-form 'pr-on :replaced)
+                                         (eval-form! ctx report fast-with-out-str-form 'with-out-str :replaced)
+                                         (eval-form! ctx report fast-prn-form 'prn :replaced))))
+                 (scan-macros! ctx)
+                 (install-host-reducers!)
+                 (install-eduction-reduce!)
+                 (reset! (:booted? ctx) true)
+                 (let [r (assoc @report
+                                :rewrite-misses (rw/misses ctx)
+                                :host-name (host/host-name)
+                                :eve-collections (:eve-collections @state))]
+                      (when t-boot
+                            (swap! (:profile @state) assoc :boot-wall (- (host/nano-time) t-boot)))
+                      (swap! state assoc :report r)
+                      (snap! {:op :end :data (snap-state r)})
+                      r)))))
 
 (defn profile-section!
-  "Run thunk in profile bucket k and record its wall time. A no-op addition
+      "Run thunk in profile bucket k and record its wall time. A no-op addition
    when profiling is off: thunk still runs."
-  [k thunk]
-  (if-not (profiling)
-    (thunk)
-    (let [prev (:profile-bucket @state)]
-      (swap! state assoc :profile-bucket k)
-      (let [t0 (host/nano-time)
-            v (thunk)
-            dt (- (host/nano-time) t0)]
-        (swap! (:profile @state) assoc-in [:walls k] dt)
-        (swap! state assoc :profile-bucket (or prev :core))
-        v))))
+      [k thunk]
+      (if-not (profiling)
+              (thunk)
+              (let [prev (:profile-bucket @state)]
+                   (swap! state assoc :profile-bucket k)
+                   (let [t0 (host/nano-time)
+                         v (thunk)
+                         dt (- (host/nano-time) t0)]
+                        (swap! (:profile @state) assoc-in [:walls k] dt)
+                        (swap! state assoc :profile-bucket (or prev :core))
+                        v))))
 
 (defn- profile-top [forms k n]
-  (take n (sort-by k (fn [a b] (compare b a)) forms)))
+       (take n (sort-by k (fn [a b] (compare b a)) forms)))
 
 (defn- print-split!
-  "Top n forms in bucket, ranked by rank-key. Each line is codemod ns then eval ns."
-  [forms bucket rank-key n]
-  (let [rows (profile-top (filter (fn [f] (= bucket (:bucket f))) forms) rank-key n)]
-    (doseq [[i f] (map-indexed vector rows)]
-      (println (str "PROFILE-SPLIT " (name bucket) " " (name rank-key) " " (inc i)
-                    " " (:ns f) " " (:head f) " " (:name f)
-                    " " (:rewrite f) " " (:eval f))))))
+       "Top n forms in bucket, ranked by rank-key. Each line is codemod ns then eval ns."
+       [forms bucket rank-key n]
+       (let [rows (profile-top (filter (fn [f] (= bucket (:bucket f))) forms) rank-key n)]
+            (doseq [[i f] (map-indexed vector rows)]
+                   (println (str "PROFILE-SPLIT " (name bucket) " " (name rank-key) " " (inc i)
+                                 " " (:ns f) " " (:head f) " " (:name f)
+                                 " " (:rewrite f) " " (:eval f))))))
 
 (defn print-profile!
-  "Print the boot profile. Phases partition the measured total: core reading,
+      "Print the boot profile. Phases partition the measured total: core reading,
    codemod, eval, scan-macros!, setup (make-ctx), the companion-file wall,
    the library-phase wall, and the unaccounted remainder. PROFILE-SPLIT lines
    are the top 20 forms of the core and library phases, once by codemod time
    and once by eval time; each line prints both."
-  []
-  (when-let [a (:profile @state)]
-    (let [p @a
-          core (get-in p [:phases :core])
-          read (get core :read 0)
-          rewrite (get core :rewrite 0)
-          ev (get core :eval 0)
-          scan (get core :scan 0)
-          setup (get core :setup 0)
-          companion (get-in p [:walls :companion] 0)
-          library (get-in p [:walls :library] 0)
-          boot-wall (or (:boot-wall p) 0)
-          total (prof+ boot-wall library)
-          named (prof+ read rewrite ev scan setup companion library)
-          other (- total named)
-          rows [["reading" read] ["codemod" rewrite] ["eval" ev] ["scan-macros" scan]
-                ["setup" setup] ["companion" companion] ["library" library] ["other" other]]
-          pct (fn [n] (if (pos? total) (/ (* 100.0 n) total) 0.0))
-          forms (:forms p)]
-      (println (str "PROFILE-TOTAL " total))
-      (doseq [[k n] rows]
-        (println (str "PROFILE-PHASE " k " " n " " (pct n))))
-      (println (str "PROFILE-SUM " (prof+ named other)))
-      (print-split! forms :core :rewrite 20)
-      (print-split! forms :core :eval 20)
-      (print-split! forms :library :rewrite 20)
-      (print-split! forms :library :eval 20)
-      (when-let [m @rw/profile-branches]
-        (let [rows (sort-by val (fn [a b] (compare b a)) m)
-              tot (reduce (fn [a [_ n]] (prof+ a n)) 0 rows)]
-          (println (str "PROFILE-BRANCH-SUM " tot))
-          (doseq [[k n] rows]
-            (println (str "PROFILE-BRANCH " (name k) " " n " "
-                          (if (pos? tot) (/ (* 100.0 n) tot) 0.0)))))
-      (when-let [mm @rw/profile-macro-ns]
-        (let [counts (or @rw/profile-macro-n {})
-              rows (take 20 (sort-by val (fn [a b] (compare b a)) mm))]
-          (doseq [[i [nm n]] (map-indexed vector rows)]
-            (println (str "PROFILE-MACRO " (inc i) " " nm " " n " " (get counts nm 0))))))))))
+      []
+      (when-let [a (:profile @state)]
+                (let [p @a
+                      core (get-in p [:phases :core])
+                      read (get core :read 0)
+                      rewrite (get core :rewrite 0)
+                      ev (get core :eval 0)
+                      scan (get core :scan 0)
+                      setup (get core :setup 0)
+                      companion (get-in p [:walls :companion] 0)
+                      library (get-in p [:walls :library] 0)
+                      boot-wall (or (:boot-wall p) 0)
+                      total (prof+ boot-wall library)
+                      named (prof+ read rewrite ev scan setup companion library)
+                      other (- total named)
+                      rows [["reading" read] ["codemod" rewrite] ["eval" ev] ["scan-macros" scan]
+                            ["setup" setup] ["companion" companion] ["library" library] ["other" other]]
+                      pct (fn [n] (if (pos? total) (/ (* 100.0 n) total) 0.0))
+                      forms (:forms p)]
+                     (println (str "PROFILE-TOTAL " total))
+                     (doseq [[k n] rows]
+                            (println (str "PROFILE-PHASE " k " " n " " (pct n))))
+                     (println (str "PROFILE-SUM " (prof+ named other)))
+                     (print-split! forms :core :rewrite 20)
+                     (print-split! forms :core :eval 20)
+                     (print-split! forms :library :rewrite 20)
+                     (print-split! forms :library :eval 20)
+                     (when-let [m @rw/profile-branches]
+                               (let [rows (sort-by val (fn [a b] (compare b a)) m)
+                                     tot (reduce (fn [a [_ n]] (prof+ a n)) 0 rows)]
+                                    (println (str "PROFILE-BRANCH-SUM " tot))
+                                    (doseq [[k n] rows]
+                                           (println (str "PROFILE-BRANCH " (name k) " " n " "
+                                                         (if (pos? tot) (/ (* 100.0 n) tot) 0.0)))))
+                               (when-let [mm @rw/profile-macro-ns]
+                                         (let [counts (or @rw/profile-macro-n {})
+                                               rows (take 20 (sort-by val (fn [a b] (compare b a)) mm))]
+                                              (doseq [[i [nm n]] (map-indexed vector rows)]
+                                                     (println (str "PROFILE-MACRO " (inc i) " " nm " " n " " (get counts nm 0))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; using it
 
 (defn- refer-core!
-  "Make ns-sym see cohost.core, as `(:refer-clojure ...)` says: opts
+       "Make ns-sym see cohost.core, as `(:refer-clojure ...)` says: opts
    :exclude, :only, :rename. The host's dynamic vars are referred from the
    host's core, not interned, so they are referred one by one."
-  [ns-sym {:keys [exclude only rename] :as opts}]
-  (if (or exclude only rename)
-    (host/refer! ns-sym core-ns opts)
-    (host/refer-all! ns-sym core-ns))
-  (let [skip (set exclude) keep (when only (set only))]
-    (doseq [nm (:host-dynamic @state)
-            :when (and (not (contains? skip nm)) (or (nil? keep) (contains? keep nm)))]
-      (host/try-all (fn [] (host/refer-from-core! ns-sym nm)))))
-  ns-sym)
+       [ns-sym {:keys [exclude only rename] :as opts}]
+       (if (or exclude only rename)
+           (host/refer! ns-sym core-ns opts)
+           (host/refer-all! ns-sym core-ns))
+       (let [skip (set exclude) keep (when only (set only))]
+            (doseq [nm (:host-dynamic @state)
+                    :when (and (not (contains? skip nm)) (or (nil? keep) (contains? keep nm)))]
+                   (host/try-all (fn [] (host/refer-from-core! ns-sym nm)))))
+       ns-sym)
 
 (def ^:private session-ns
-  "The namespace the last eval-str left current, as a REPL's would be; nil
+     "The namespace the last eval-str left current, as a REPL's would be; nil
    until an evaluation moves it (user)."
-  (atom nil))
+     (atom nil))
 
 (defn make-user-ns!
-  "A namespace that sees only cohost.core (plus special forms)."
-  ([] (make-user-ns! user-ns))
-  ([ns-sym]
-   (when (= ns-sym user-ns) (reset! session-ns nil))
-   (host/ensure-bare-ns! ns-sym)
-   (refer-core! ns-sym {})))
+      "A namespace that sees only cohost.core (plus special forms)."
+      ([] (make-user-ns! user-ns))
+      ([ns-sym]
+       (when (= ns-sym user-ns) (reset! session-ns nil))
+       (host/ensure-bare-ns! ns-sym)
+       (refer-core! ns-sym {})))
 
 ;; ---------------------------------------------------------------------------
 ;; libraries: each in its own namespace, as the JVM's loader does
 
 (defn source-roots
-  "Directories searched for a library's source, in order."
-  []
-  (or (:roots @state) [(or (:root @state) "resources/cohost/clojure-1.12.0")]))
+      "Directories searched for a library's source, in order."
+      []
+      (or (:roots @state) [(or (:root @state) "resources/cohost/clojure-1.12.0")]))
 
 (defn add-source-root! [dir] (swap! state assoc :roots (conj (vec (source-roots)) dir)))
 
 (defn- lib-path
-  "clojure.core.reducers -> clojure/core/reducers; my-lib.core -> my_lib/core"
-  [lib]
-  (apply str (map (fn [c] (let [c (str c)] (cond (= c ".") "/" (= c "-") "_" :else c))) (str lib))))
+       "clojure.core.reducers -> clojure/core/reducers; my-lib.core -> my_lib/core"
+       [lib]
+       (apply str (map (fn [c] (let [c (str c)] (cond (= c ".") "/" (= c "-") "_" :else c))) (str lib))))
 
 (defn- try-slurp [path]
-  (host/try-all (fn [] (host/slurp-file path))))
+       (host/try-all (fn [] (host/slurp-file path))))
 
 (defn- find-source
-  "[path src] of lib's file: in each source root in turn, the extension whose
+       "[path src] of lib's file: in each source root in turn, the extension whose
    reader-conditional key this target ranks first (cohost.scan/source-exts:
    .clj, then .cljc, on every target today -- as the JVM loads)."
-  [lib]
-  (let [exts (scan/source-exts (scan/ranking (:name (host/current))))]
-    (some (fn [root]
-            (some (fn [ext] (let [p (str root "/" (lib-path lib) ext)]
-                              (when-let [src (try-slurp p)] [p src])))
-                  exts))
-          (source-roots))))
+       [lib]
+       (let [exts (scan/source-exts (scan/ranking (:name (host/current))))]
+            (some (fn [root]
+                      (some (fn [ext] (let [p (str root "/" (lib-path lib) ext)]
+                                           (when-let [src (try-slurp p)] [p src])))
+                            exts))
+                  (source-roots))))
 
 (defn stock-ns-name
-  "The namespace a stock library boots into. clojure.X becomes cohost.X,
+      "The namespace a stock library boots into. clojure.X becomes cohost.X,
    as clojure.core became cohost.core: the host has a clojure.X of its
    own that its runtime may rely on. Any other library keeps its name."
-  [lib]
-  (let [s (str lib)]
-    (cond (= s "clojure.core") core-ns
-          (and (> (count s) 8) (= "clojure." (subs s 0 8))) (symbol (str "cohost." (subs s 8)))
-          :else (symbol s))))
+      [lib]
+      (let [s (str lib)]
+           (cond (= s "clojure.core") core-ns
+                 (and (> (count s) 8) (= "clojure." (subs s 0 8))) (symbol (str "cohost." (subs s 8)))
+                 :else (symbol s))))
 
 (defn- unquote* [x] (if (and (seq? x) (= 'quote (first x))) (second x) x))
 
 (def ^:private directive-heads (set '[ns in-ns require use import refer-clojure alias]))
 
 (defn- directive
-  "A top-level loader form -> [head args], when every argument is literal."
-  [form]
-  (when (and (seq? form) (symbol? (first form)))
-    (let [h (first form)
-          hn (symbol (name h))]
-      (when (and (contains? directive-heads hn)
-                 (or (nil? (namespace h)) (contains? #{"clojure.core" (str core-ns)} (namespace h))))
-        (let [args (rest form)
-              literal? (fn [x] (or (symbol? x) (keyword? x) (string? x) (vector? x) (map? x)
-                                   (and (seq? x) (or (= 'quote (first x)) (not (symbol? (first x)))
-                                                     (= hn 'ns)))))]
-          (when (or (= hn 'ns) (every? literal? args))
-            [hn (if (= hn 'ns) args (map unquote* args))]))))))
+       "A top-level loader form -> [head args], when every argument is literal."
+       [form]
+       (when (and (seq? form) (symbol? (first form)))
+             (let [h (first form)
+                   hn (symbol (name h))]
+                  (when (and (contains? directive-heads hn)
+                             (or (nil? (namespace h)) (contains? #{"clojure.core" (str core-ns)} (namespace h))))
+                        (let [args (rest form)
+                              literal? (fn [x] (or (symbol? x) (keyword? x) (string? x) (vector? x) (map? x)
+                                                   (and (seq? x) (or (= 'quote (first x)) (not (symbol? (first x)))
+                                                                     (= hn 'ns)))))]
+                             (when (or (= hn 'ns) (every? literal? args))
+                                   [hn (if (= hn 'ns) args (map unquote* args))]))))))
 
 (defn- note!
-  "Record a library-load event under the library being loaded."
-  [k entry]
-  (when-let [lib (:loading @state)]
-    (swap! state update-in [:libs lib]
-           (fn [e] (-> e (update k (fnil inc 0)) (update :entries (fnil conj []) (assoc entry :status k)))))))
+       "Record a library-load event under the library being loaded."
+       [k entry]
+       (when-let [lib (:loading @state)]
+                 (swap! state update-in [:libs lib]
+                        (fn [e] (-> e (update k (fnil inc 0)) (update :entries (fnil conj []) (assoc entry :status k)))))))
 
 (declare load-lib!)
 (declare refer-lib!)
 
 (defn- import! [ns-sym specs]
-  (let [pairs (mapcat (fn [spec]
-                        (cond (symbol? spec)
-                              (let [s (str spec) i (loop [i (dec (count s))] (cond (neg? i) -1 (= "." (str (nth s i))) i :else (recur (dec i))))]
-                                [[(symbol (subs s (inc i))) spec]])
-                              (sequential? spec)
-                              (let [[pkg & classes] spec]
-                                (map (fn [c] [c (symbol (str pkg "." c))]) classes))
-                              :else nil))
-                      specs)]
-    (swap! (:imports (ctx)) update (str ns-sym) merge (into {} pairs))))
+       (let [pairs (mapcat (fn [spec]
+                               (cond (symbol? spec)
+                                     (let [s (str spec) i (loop [i (dec (count s))] (cond (neg? i) -1 (= "." (str (nth s i))) i :else (recur (dec i))))]
+                                          [[(symbol (subs s (inc i))) spec]])
+                                     (sequential? spec)
+                                     (let [[pkg & classes] spec]
+                                          (map (fn [c] [c (symbol (str pkg "." c))]) classes))
+                                     :else nil))
+                           specs)]
+            (swap! (:imports (ctx)) update (str ns-sym) merge (into {} pairs))))
 
 (defn- libspecs
-  "require/use arguments -> [[lib opts-map] ...]: symbols, [lib & opts],
+       "require/use arguments -> [[lib opts-map] ...]: symbols, [lib & opts],
    prefix lists (prefix lib-or-spec ...); flags (:reload ...) ignored."
-  [args]
-  (mapcat (fn [a]
-            (cond (symbol? a) [[a {}]]
+       [args]
+       (mapcat (fn [a]
+                   (cond (symbol? a) [[a {}]]
                   ;; [lib & opts]: a vector whose second element, if any, is an
                   ;; option keyword; else a prefix list written as a vector
-                  (and (vector? a) (or (nil? (second a)) (keyword? (second a))))
-                  [[(first a) (apply hash-map (rest a))]]
-                  (and (or (seq? a) (vector? a)) (symbol? (first a)))
-                  (let [prefix (str (first a))]
-                    (map (fn [x] (if (vector? x)
-                                   [(symbol (str prefix "." (first x))) (apply hash-map (rest x))]
-                                   [(symbol (str prefix "." x)) {}]))
-                         (rest a)))
-                  :else nil))
-          args))
+                         (and (vector? a) (or (nil? (second a)) (keyword? (second a))))
+                         [[(first a) (apply hash-map (rest a))]]
+                         (and (or (seq? a) (vector? a)) (symbol? (first a)))
+                         (let [prefix (str (first a))]
+                              (map (fn [x] (if (vector? x)
+                                               [(symbol (str prefix "." (first x))) (apply hash-map (rest x))]
+                                               [(symbol (str prefix "." x)) {}]))
+                                   (rest a)))
+                         :else nil))
+               args))
 
 (defn- require! [ns-sym args use?]
   ;; :reload and :reload-all: the named libraries load again (their
   ;; dependencies are not reloaded by :reload-all here)
-  (when (some #{:reload :reload-all} args)
-    (doseq [[lib] (libspecs args)]
-      (when (get-in @state [:libs (symbol (str lib)) :path])
-        (swap! state update :libs dissoc (symbol (str lib))))))
-  (doseq [[lib {:keys [as as-alias refer only exclude rename]}] (libspecs args)]
-    (if as-alias
+       (when (some #{:reload :reload-all} args)
+             (doseq [[lib] (libspecs args)]
+                    (when (get-in @state [:libs (symbol (str lib)) :path])
+                          (swap! state update :libs dissoc (symbol (str lib))))))
+       (doseq [[lib {:keys [as as-alias refer only exclude rename]}] (libspecs args)]
+              (if as-alias
       ;; (alias as-alias (create-ns lib)) without loading it, as the JVM does;
       ;; a later require boots the library into the same namespace
-      (let [target (or (get-in @state [:libs lib :ns]) (stock-ns-name lib))]
-        (when-not (get-in @state [:libs lib])
-          (host/ensure-bare-ns! target)
-          (when (not= (str target) (str lib)) (swap! (:renames (ctx)) assoc (str lib) (str target))))
-        (host/alias! ns-sym as-alias target))
-      (let [target (load-lib! lib ns-sym)]
-        (when as (host/alias! ns-sym as target))
-        (cond
-          (= refer :all) (refer-lib! ns-sym target {:rename rename})
-          (sequential? refer) (refer-lib! ns-sym target {:only refer :rename rename})
-          use? (refer-lib! ns-sym target {:only only :exclude exclude :rename rename}))))))
+                  (let [target (or (get-in @state [:libs lib :ns]) (stock-ns-name lib))]
+                       (when-not (get-in @state [:libs lib])
+                                 (host/ensure-bare-ns! target)
+                                 (when (not= (str target) (str lib)) (swap! (:renames (ctx)) assoc (str lib) (str target))))
+                       (host/alias! ns-sym as-alias target))
+                  (let [target (load-lib! lib ns-sym)]
+                       (when as (host/alias! ns-sym as target))
+                       (cond
+                        (= refer :all) (refer-lib! ns-sym target {:rename rename})
+                        (sequential? refer) (refer-lib! ns-sym target {:only refer :rename rename})
+                        use? (refer-lib! ns-sym target {:only only :exclude exclude :rename rename}))))))
 
 (defn- refer-lib! [ns-sym target opts]
-  (if (= target core-ns)
-    (refer-core! ns-sym opts)
+       (if (= target core-ns)
+           (refer-core! ns-sym opts)
     ;; opts without its nil options, by key: Phel's remove over a map walks
     ;; its values, not [k v] entries ((into {} (remove (comp nil? val) opts))
     ;; made {a b} of :refer [a b] there -- no :only, every public name referred)
-    (host/refer! ns-sym target (reduce (fn [m k] (let [v (get opts k)] (if (nil? v) m (assoc m k v))))
-                                       {} (keys opts)))))
+           (host/refer! ns-sym target (reduce (fn [m k] (let [v (get opts k)] (if (nil? v) m (assoc m k v))))
+                                              {} (keys opts)))))
 
 (defn- pass-cpp-clauses!
-  "The C++ passthrough's ns clauses, handed to the host that takes them:
+       "The C++ passthrough's ns clauses, handed to the host that takes them:
    an :include header becomes a (cpp/raw \"#include <h>\") form -- a ./
    name is quoted instead, as the host's include macro spells it -- and
    a :refer-global becomes a clojure.core/refer-global call. They are
@@ -1692,79 +1689,79 @@
    evaluates them as top-level forms, in the new namespace, before the
    next form. ns! collects these only under :cpp?; on every other host
    the clauses are dropped silently."
-  [target clauses]
-  (doseq [[k & args] clauses]
-    (case k
-      :include (doseq [h args]
-                 (swap! pending-host-forms conj
-                        (list 'cpp/raw (if (and (>= (count h) 2) (= "./" (subs h 0 2)))
-                                         (str "#include \"" h "\"")
-                                         (str "#include <" h ">")))))
-      :refer-global (swap! pending-host-forms conj (cons 'clojure.core/refer-global args)))))
+       [target clauses]
+       (doseq [[k & args] clauses]
+              (case k
+                    :include (doseq [h args]
+                                    (swap! pending-host-forms conj
+                                           (list 'cpp/raw (if (and (>= (count h) 2) (= "./" (subs h 0 2)))
+                                                              (str "#include \"" h "\"")
+                                                              (str "#include <" h ">")))))
+                    :refer-global (swap! pending-host-forms conj (cons 'clojure.core/refer-global args)))))
 
 (defn- ns! [nm clauses]
-  (let [nm (unquote* nm)
-        target (if-let [m (get @(:renames (ctx)) (str nm))] (symbol m) nm)
+       (let [nm (unquote* nm)
+             target (if-let [m (get @(:renames (ctx)) (str nm))] (symbol m) nm)
         ;; (ns name docstring? attr-map? references*): the namespace's metadata
-        doc (when (string? (first clauses)) (first clauses))
-        attrs (first (filter map? (take 2 clauses)))
-        ns-meta (merge (meta nm) attrs (when doc {:doc doc}))
-        clauses (filter sequential? clauses)
-        cpp-clauses (when (host/cpp?) (filter #(contains? #{:include :refer-global} (first %)) clauses))
-        rc (some #(when (= :refer-clojure (first %)) (apply hash-map (rest %))) clauses)]
-    (host/ensure-bare-ns! target)
-    #?(:cljs nil
-       :default (when (seq ns-meta)
-                  (host/try-all (fn [] (alter-meta! (host/the-ns* target) merge ns-meta)))))
-    (swap! (:loader-nses (ctx)) conj (str target))
-    (refer-core! target (or rc {}))
-    (host/set-current-ns! target)
-    (doseq [[k & args] clauses]
-      (case k
-        :require (require! target args false)
-        :use (require! target args true)
-        :import (import! target args)
-        nil))
-    (when cpp-clauses (pass-cpp-clauses! target cpp-clauses))
-    target))
+             doc (when (string? (first clauses)) (first clauses))
+             attrs (first (filter map? (take 2 clauses)))
+             ns-meta (merge (meta nm) attrs (when doc {:doc doc}))
+             clauses (filter sequential? clauses)
+             cpp-clauses (when (host/cpp?) (filter #(contains? #{:include :refer-global} (first %)) clauses))
+             rc (some #(when (= :refer-clojure (first %)) (apply hash-map (rest %))) clauses)]
+            (host/ensure-bare-ns! target)
+            #?(:cljs nil
+               :default (when (seq ns-meta)
+                              (host/try-all (fn [] (alter-meta! (host/the-ns* target) merge ns-meta)))))
+            (swap! (:loader-nses (ctx)) conj (str target))
+            (refer-core! target (or rc {}))
+            (host/set-current-ns! target)
+            (doseq [[k & args] clauses]
+                   (case k
+                         :require (require! target args false)
+                         :use (require! target args true)
+                         :import (import! target args)
+                         nil))
+            (when cpp-clauses (pass-cpp-clauses! target cpp-clauses))
+            target))
 
 (defn- directive!
-  "-> [nil namespace-after]"
-  [[h args]]
-  (let [cur (host/current-ns)]
-    (case h
+       "-> [nil namespace-after]"
+       [[h args]]
+       (let [cur (host/current-ns)]
+            (case h
       ;; the JVM's ns macro conj's the lib onto *loaded-libs*, so a later
       ;; (require 'lib) of a namespace a file or session made with ns is a
       ;; no-op; here the loader's record is that list (measured on jank: a
       ;; two-ns script's (:require [its-first-ns]) went looking for a file
       ;; -- "The module `deftype-perf.bench-rt` could not be found"). A
       ;; library being loaded already has its record (:loading) and keeps it.
-      ns (let [after (ns! (first args) (rest args))
-               lib (first args)]
-           (when (and (symbol? lib) (nil? (get-in @state [:libs lib])))
-             (swap! state assoc-in [:libs lib] {:ns after :status :loaded}))
-           [nil after])
-      in-ns (let [t (first args)
-                  t (if-let [m (get @(:renames (ctx)) (str t))] (symbol m) t)
-                  found (host/try-all (fn [] (shim/Namespace-find t)))]
+                  ns (let [after (ns! (first args) (rest args))
+                           lib (first args)]
+                          (when (and (symbol? lib) (nil? (get-in @state [:libs lib])))
+                                (swap! state assoc-in [:libs lib] {:ns after :status :loaded}))
+                          [nil after])
+                  in-ns (let [t (first args)
+                              t (if-let [m (get @(:renames (ctx)) (str t))] (symbol m) t)
+                              found (host/try-all (fn [] (shim/Namespace-find t)))]
               ;; an existing namespace is entered as it is; a new one is bare
-              (when-not (or (some? found) (contains? (:libs @state) t)) (host/ensure-bare-ns! t))
-              (host/set-current-ns! t)
-              [(or found (host/try-all (fn [] (shim/Namespace-find t)))) t])
-      require (do (require! cur args false) [nil cur])
-      use (do (require! cur args true) [nil cur])
-      import (do (import! cur args) [nil cur])
-      refer-clojure (do (refer-core! cur (apply hash-map args)) [nil cur])
+                             (when-not (or (some? found) (contains? (:libs @state) t)) (host/ensure-bare-ns! t))
+                             (host/set-current-ns! t)
+                             [(or found (host/try-all (fn [] (shim/Namespace-find t)))) t])
+                  require (do (require! cur args false) [nil cur])
+                  use (do (require! cur args true) [nil cur])
+                  import (do (import! cur args) [nil cur])
+                  refer-clojure (do (refer-core! cur (apply hash-map args)) [nil cur])
       ;; (alias 'c 'clojure.core): the target as the loader booted it
-      alias (let [[a t] args
-                  t (cond (= t (symbol "clojure.core")) core-ns
-                          (get-in @state [:libs t :ns]) (get-in @state [:libs t :ns])
-                          :else (if-let [m (get @(:renames (ctx)) (str t))] (symbol m) t))]
-              (host/alias! cur a t)
-              [nil cur]))))
+                  alias (let [[a t] args
+                              t (cond (= t (symbol "clojure.core")) core-ns
+                                      (get-in @state [:libs t :ns]) (get-in @state [:libs t :ns])
+                                      :else (if-let [m (get @(:renames (ctx)) (str t))] (symbol m) t))]
+                             (host/alias! cur a t)
+                             [nil cur]))))
 
 (defn install-runtime-loader!
-  "Unit 8 (cljs seat): require and use called as functions -- anywhere a
+      "Unit 8 (cljs seat): require and use called as functions -- anywhere a
    top-level directive is not, inside a try or a fn -- load through this
    loader, as the directive does. ClojureScript's own require, which the
    seat took from its host, compiles to goog.require, which finds no
@@ -1777,263 +1774,263 @@
    every project namespace (measured: \"Could not locate seam/ok__init.class
    ... on classpath\"). Called by the entry points after boot (cohost.cli
    on every seat, the cljs entry points)."
-  []
-  (host/intern! core-ns 'require (fn [& args] (require! (host/current-ns) args false) nil))
-  (host/intern! core-ns 'use (fn [& args] (require! (host/current-ns) args true) nil))
-  nil)
+      []
+      (host/intern! core-ns 'require (fn [& args] (require! (host/current-ns) args false) nil))
+      (host/intern! core-ns 'use (fn [& args] (require! (host/current-ns) args true) nil))
+      nil)
 
 (defn- core-var [sym]
-  (or (host/interned-var core-ns sym) (host/resolve-core sym)))
+       (or (host/interned-var core-ns sym) (host/resolve-core sym)))
 
 (defn- with-load-bindings
-  "The JVM's load binds *warn-on-reflection* and *unchecked-math* (a library
+       "The JVM's load binds *warn-on-reflection* and *unchecked-math* (a library
    may set! them) and *ns*."
-  [thunk]
-  (let [bs (into {} (keep (fn [s]
-                            (let [v (core-var s)]
-                              (when (and v (host/dynamic-var? v))
-                                [v (host/var-root v)])))
-                          '[*warn-on-reflection* *unchecked-math*]))]
-    (if (seq bs)
-      (host/with-thread-bindings! bs thunk)
-      (thunk))))
+       [thunk]
+       (let [bs (into {} (keep (fn [s]
+                                   (let [v (core-var s)]
+                                        (when (and v (host/dynamic-var? v))
+                                              [v (host/var-root v)])))
+                               '[*warn-on-reflection* *unchecked-math*]))]
+            (if (seq bs)
+                (host/with-thread-bindings! bs thunk)
+                (thunk))))
 
 (defn- load-relative!
-  "One clojure.core/load path from booted code (shim/load-hook): a
+       "One clojure.core/load path from booted code (shim/load-hook): a
    leading / is absolute against the source roots; a bare path is
    relative to the loading namespace's package root, stock's rule
    (clojure.pprint loading \"pprint/utilities\" finds
    clojure/pprint/utilities). The file loads into the current
    namespace with load-source!'s tolerance. -> true when found."
-  [p]
-  (let [cur (str (host/current-ns))
-        stock (if (and (> (count cur) 7) (= "cohost." (subs cur 0 7)))
-                (str "clojure." (subs cur 7))
-                cur)
-        base (loop [i (dec (count stock))]
-               (cond (neg? i) ""
-                     (= \. (nth stock i))
-                     (str (apply str (map (fn [c] (if (= c \.) \/ c)) (subs stock 0 i))) "/")
-                     :else (recur (dec i))))
-        res (if (and (pos? (count p)) (= "/" (subs p 0 1))) (subs p 1) (str base p))
-        lib (symbol (apply str (map (fn [c] (if (= c \/) \. c)) res)))
-        exts (scan/source-exts (scan/ranking (:name (host/current))))]
-    (boolean
-      (some (fn [root]
-              (some (fn [ext]
-                      (let [path (str root "/" res ext)]
-                        (when-let [src (try-slurp path)]
-                          (load-source! lib src (host/current-ns) path)
-                          true)))
-                    exts))
-            (into [(:root @state)] (source-roots))))))
+       [p]
+       (let [cur (str (host/current-ns))
+             stock (if (and (> (count cur) 7) (= "cohost." (subs cur 0 7)))
+                       (str "clojure." (subs cur 7))
+                       cur)
+             base (loop [i (dec (count stock))]
+                        (cond (neg? i) ""
+                              (= \. (nth stock i))
+                              (str (apply str (map (fn [c] (if (= c \.) \/ c)) (subs stock 0 i))) "/")
+                              :else (recur (dec i))))
+             res (if (and (pos? (count p)) (= "/" (subs p 0 1))) (subs p 1) (str base p))
+             lib (symbol (apply str (map (fn [c] (if (= c \/) \. c)) res)))
+             exts (scan/source-exts (scan/ranking (:name (host/current))))]
+            (boolean
+             (some (fn [root]
+                       (some (fn [ext]
+                                 (let [path (str root "/" res ext)]
+                                      (when-let [src (try-slurp path)]
+                                                (load-source! lib src (host/current-ns) path)
+                                                true)))
+                             exts))
+                   (into [(:root @state)] (source-roots))))))
 
 (defn- load-source!
-  "Every top-level form of a library, read and evaluated one at a time in the
+       "Every top-level form of a library, read and evaluated one at a time in the
    namespace its (ns ...) form makes current; a form that fails is recorded
    and the load goes on, as the core boot does. -> the first failure's
    exception when the library is not a stock one (its source is not under
    the boot's stock root), else nil: load-lib! rethrows it, so user code
    fails at load with the host's original diagnostic, as the JVM's loader
    fails. Stock libraries keep the record-and-continue tolerance."
-  ([lib src] (load-source! lib src nil nil))
-  ([lib src from-ns] (load-source! lib src from-ns nil))
-  ([lib src from-ns path]
-   (let [c (ctx)
-         root (:root @state)
-         stock? (boolean (and path root (>= (count path) (count root))
-                              (= (subs path 0 (count root)) root)))
-         first-error (atom nil)]
-     (with-load-bindings
-       (fn []
-         (host/with-ns (or from-ns core-ns)
-           (fn []
-             (read-prof
-              (if (profiling) (prof :read #(bridge-source src)) (bridge-source src))
-              (fn [form]
-                (let [cur (host/current-ns)
-                      {:keys [action replacement] nm :name} (policy/decide-lib form lib)]
-                  (when @verbose? (println (str "  [" (name action) "] " lib " " nm)))
-                  (host/try-all
-                   (fn []
-                     (case (if (and (= :eval action) (native-of (str lib) form)) :native action)
-                       :skip (note! :skipped {:name nm})
-                       :native (do (intern-native! cur nm (native-of (str lib) form) form (str lib)) (note! :native {:name nm}))
-                       (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form) true)]
-                         (when (not= ns' cur) (host/set-current-ns! ns'))
-                         (note! :ok {:name nm}))))
-                   (fn [e]
-                     (snap-declare! cur nm)
-                     (when (and (not stock?) (nil? @first-error)) (reset! first-error e))
-                     (note! :error {:name nm :error (error-message e) :form (short-form form)})))))
-              path)
+       ([lib src] (load-source! lib src nil nil))
+       ([lib src from-ns] (load-source! lib src from-ns nil))
+       ([lib src from-ns path]
+        (let [c (ctx)
+              root (:root @state)
+              stock? (boolean (and path root (>= (count path) (count root))
+                                   (= (subs path 0 (count root)) root)))
+              first-error (atom nil)]
+             (with-load-bindings
+              (fn []
+                  (host/with-ns (or from-ns core-ns)
+                                (fn []
+                                    (read-prof
+                                     (if (profiling) (prof :read #(bridge-source src)) (bridge-source src))
+                                     (fn [form]
+                                         (let [cur (host/current-ns)
+                                               {:keys [action replacement] nm :name} (policy/decide-lib form lib)]
+                                              (when @verbose? (println (str "  [" (name action) "] " lib " " nm)))
+                                              (host/try-all
+                                               (fn []
+                                                   (case (if (and (= :eval action) (native-of (str lib) form)) :native action)
+                                                         :skip (note! :skipped {:name nm})
+                                                         :native (do (intern-native! cur nm (native-of (str lib) form) form (str lib)) (note! :native {:name nm}))
+                                                         (let [[_ ns'] (eval-top c cur (if (= :replace action) replacement form) true)]
+                                                              (when (not= ns' cur) (host/set-current-ns! ns'))
+                                                              (note! :ok {:name nm}))))
+                                               (fn [e]
+                                                   (snap-declare! cur nm)
+                                                   (when (and (not stock?) (nil? @first-error)) (reset! first-error e))
+                                                   (note! :error {:name nm :error (error-message e) :form (short-form form)})))))
+                                     path)
              ;; a macro some form made by a side effect is wrapped now
-             (scan-macros! c (host/current-ns))
-             @first-error)))))))
+                                    (scan-macros! c (host/current-ns))
+                                    @first-error)))))))
 
 (defn- lib-fill
-  "{name fn} a layer gives library lib in place of its source, where this
+       "{name fn} a layer gives library lib in place of its source, where this
    seat has no source for it and no java.* surface of its own (the JVM and
    jolt keep their own clojure.java.io), or nil. cohost.http fills
    clojure.java.io when Eve's HTTP leaves are in."
-  [lib]
-  (when (and (not (host/interop-passthrough?)) (http/available?))
-    (get http/lib-fills lib)))
+       [lib]
+       (when (and (not (host/interop-passthrough?)) (http/available?))
+             (get http/lib-fills lib)))
 
 (defn install-lib-fill!
-  "Intern lib's fill into the namespace lib boots into, as a loaded library
+      "Intern lib's fill into the namespace lib boots into, as a loaded library
    (its references renamed to that namespace). -> the namespace."
-  ([lib] (install-lib-fill! lib (get http/lib-fills lib)))
-  ([lib fill]
-   (let [target (stock-ns-name lib)]
-     (snap! {:op :lib-fill :lib lib})
-     (host/ensure-bare-ns! target)
-     (doseq [[nm f] fill] (host/intern! target nm f))
-     (swap! (:renames (ctx)) assoc (str lib) (str target))
-     (swap! (:loader-nses (ctx)) conj (str target))
-     (swap! state assoc-in [:libs lib] {:ns target :status :layer :ok (count fill) :error 0 :skipped 0})
-     target)))
+      ([lib] (install-lib-fill! lib (get http/lib-fills lib)))
+      ([lib fill]
+       (let [target (stock-ns-name lib)]
+            (snap! {:op :lib-fill :lib lib})
+            (host/ensure-bare-ns! target)
+            (doseq [[nm f] fill] (host/intern! target nm f))
+            (swap! (:renames (ctx)) assoc (str lib) (str target))
+            (swap! (:loader-nses (ctx)) conj (str target))
+            (swap! state assoc-in [:libs lib] {:ns target :status :layer :ok (count fill) :error 0 :skipped 0})
+            target)))
 
 (defn snap-lib-fill!
-  "install-lib-fill! of the recorded boot."
-  [lib]
-  (install-lib-fill! lib)
-  nil)
+      "install-lib-fill! of the recorded boot."
+      [lib]
+      (install-lib-fill! lib)
+      nil)
 
 (defn load-lib!
-  "Load lib (a symbol) once: its source from a source root, booted into its own
+      "Load lib (a symbol) once: its source from a source root, booted into its own
    namespace, or else the host's own require. -> the namespace to alias."
-  ([lib] (load-lib! lib nil))
-  ([lib from-ns]
-   (let [lib (symbol (str lib))]
-     (if-let [e (get-in @state [:libs lib])]
-       (:ns e)
-       (if-let [m (get (:snapshot-libs @state) lib)]
+      ([lib] (load-lib! lib nil))
+      ([lib from-ns]
+       (let [lib (symbol (str lib))]
+            (if-let [e (get-in @state [:libs lib])]
+                    (:ns e)
+                    (if-let [m (get (:snapshot-libs @state) lib)]
          ;; a snapshot's compiled module of the library: loading it replays
          ;; the load (snap-lib-begin! ... snap-lib-end!)
-         (do (host/require-host! m)
-             (or (get-in @state [:libs lib :ns])
-                 (throw (host/ex* 'java.lang.Exception (str "snapshot module " m " did not load " lib)))))
-       (if-let [[path src] (find-source lib)]
-         (let [target (stock-ns-name lib)
-               outer (:loading @state)
-               forget! (fn [] (swap! state update :libs dissoc lib) (swap! (:renames (ctx)) dissoc (str lib)))]
-           (snap! {:op :lib-begin :lib lib :target target :path path :parent outer})
-           (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
-           (swap! (:renames (ctx)) assoc (str lib) (str target))
-           (swap! state assoc :loading lib)
-           (let [first-err (try (host/try-all (fn [] (load-source! lib src from-ns path))
-                                              (fn [e] (forget!) (snap! {:op :lib-fail :lib lib}) (throw e)))
-                                (finally (swap! state assoc :loading outer)))]
+                            (do (host/require-host! m)
+                                (or (get-in @state [:libs lib :ns])
+                                    (throw (host/ex* 'java.lang.Exception (str "snapshot module " m " did not load " lib)))))
+                            (if-let [[path src] (find-source lib)]
+                                    (let [target (stock-ns-name lib)
+                                          outer (:loading @state)
+                                          forget! (fn [] (swap! state update :libs dissoc lib) (swap! (:renames (ctx)) dissoc (str lib)))]
+                                         (snap! {:op :lib-begin :lib lib :target target :path path :parent outer})
+                                         (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
+                                         (swap! (:renames (ctx)) assoc (str lib) (str target))
+                                         (swap! state assoc :loading lib)
+                                         (let [first-err (try (host/try-all (fn [] (load-source! lib src from-ns path))
+                                                                            (fn [e] (forget!) (snap! {:op :lib-fail :lib lib}) (throw e)))
+                                                              (finally (swap! state assoc :loading outer)))]
              ;; a non-stock library whose load recorded a failure (see
              ;; load-source!) fails the load with that failure, as the
              ;; JVM's loader would; the lib is forgotten, as on a throw
-             (when first-err
-               (forget!)
-               (snap! {:op :lib-fail :lib lib})
-               (throw first-err)))
-           (when-not (contains? @(:loader-nses (ctx)) (str target))
-             (forget!)
-             (snap! {:op :lib-fail :lib lib})
-             (throw (host/ex* 'java.lang.Exception (str "namespace '" lib "' not found after loading '/" (lib-path lib) "'"))))
-           (swap! state assoc-in [:libs lib :status] :loaded)
-           (swap! state assoc :loading lib)
-           (snap! {:op :lib-end :lib lib :entry (get-in @state [:libs lib]) :data (snap-state nil)})
-           (swap! state assoc :loading outer)
+                                              (when first-err
+                                                    (forget!)
+                                                    (snap! {:op :lib-fail :lib lib})
+                                                    (throw first-err)))
+                                         (when-not (contains? @(:loader-nses (ctx)) (str target))
+                                                   (forget!)
+                                                   (snap! {:op :lib-fail :lib lib})
+                                                   (throw (host/ex* 'java.lang.Exception (str "namespace '" lib "' not found after loading '/" (lib-path lib) "'"))))
+                                         (swap! state assoc-in [:libs lib :status] :loaded)
+                                         (swap! state assoc :loading lib)
+                                         (snap! {:op :lib-end :lib lib :entry (get-in @state [:libs lib]) :data (snap-state nil)})
+                                         (swap! state assoc :loading outer)
            ;; unit 5: the loaded namespace's interns join the
            ;; registry (a no-op unless the atom fill is in force)
-           (atom-layer/publish-namespace! target)
-           target)
-         (if-let [fill (lib-fill lib)]
-           (install-lib-fill! lib fill)
-           (do (host/require-host! lib)
-               (swap! state assoc-in [:libs lib] {:ns lib :status :host})
-               lib))))))))
+                                         (atom-layer/publish-namespace! target)
+                                         target)
+                                    (if-let [fill (lib-fill lib)]
+                                            (install-lib-fill! lib fill)
+                                            (do (host/require-host! lib)
+                                                (swap! state assoc-in [:libs lib] {:ns lib :status :host})
+                                                lib))))))))
 
 (defn lib-report
-  "{lib {:ns :status :ok :error :skipped :entries}} of every library loaded."
-  []
-  (dissoc (:libs @state) (symbol "clojure.core")))
+      "{lib {:ns :status :ok :error :skipped :entries}} of every library loaded."
+      []
+      (dissoc (:libs @state) (symbol "clojure.core")))
 
 (defn print-lib-report [lib]
-  (let [{:keys [ns status ok error skipped native entries]} (get (:libs @state) (symbol (str lib)))]
-    (println (str "  " lib " -> " ns " (" (name (or status :absent)) "): "
-                  (or ok 0) " forms evaluated, " (when native (str native " natives, "))
-                  (or skipped 0) " skipped, " (or error 0) " errors"))
-    (doseq [e entries :when (= :error (:status e))]
-      (println (str "     - " (:name e) ": " (:error e))))))
+      (let [{:keys [ns status ok error skipped native entries]} (get (:libs @state) (symbol (str lib)))]
+           (println (str "  " lib " -> " ns " (" (name (or status :absent)) "): "
+                         (or ok 0) " forms evaluated, " (when native (str native " natives, "))
+                         (or skipped 0) " skipped, " (or error 0) " errors"))
+           (doseq [e entries :when (= :error (:status e))]
+                  (println (str "     - " (:name e) ": " (:error e))))))
 
 (defn read-in
-  "Read `src` (one form) with *ns* bound to `ns-sym`, so syntax-quote resolves
+      "Read `src` (one form) with *ns* bound to `ns-sym`, so syntax-quote resolves
    against the stock names."
-  [ns-sym src]
-  (host/with-ns ns-sym (fn [] (host/read-string* src))))
+      [ns-sym src]
+      (host/with-ns ns-sym (fn [] (host/read-string* src))))
 
 (defn eval-str
-  "Read and eval every form of source text, each in the namespace the one
+      "Read and eval every form of source text, each in the namespace the one
    before it left -- starting where the last eval-str ended (cohost.user at
    first), as a REPL session does; -> the last value. opts {:session? false}
    evaluates in user without moving the session; {:on-value f} calls
    (f value ns) after each form, with the namespace it left."
-  ([src] (eval-str src nil))
-  ([src opts]
-   (let [c (or (ctx) (let [c (make-ctx)] (swap! state assoc :ctx c) c))
-         session? (not (false? (:session? opts)))
-         ns0 (if session? (or @session-ns user-ns) user-ns)
+      ([src] (eval-str src nil))
+      ([src opts]
+       (let [c (or (ctx) (let [c (make-ctx)] (swap! state assoc :ctx c) c))
+             session? (not (false? (:session? opts)))
+             ns0 (if session? (or @session-ns user-ns) user-ns)
          ;; [last value, current namespace]: each form is read after the one
          ;; before it ran, in the namespace it left (::kw after an ns form)
-         at (atom [nil ns0])
+             at (atom [nil ns0])
          ;; U6-9 (b): :static-types :unit -- this source text is one compilation
          ;; unit; its defns' parameter kinds from their call sites (a read
          ;; failure types nothing)
-         unit (when (or (= :unit (host/static-types)) (and (= :unit @rw/static-types) (host/static-types)))
-                (host/try-all
-                 (fn []
-                   (let [forms (atom [])]
-                     (host/with-ns ns0
-                       (fn []
-                         (host/read-forms src (fn [f] (swap! forms conj f)))
-                         (rw/unit-param-kinds @forms
-                                              (fn [h] (boolean (when-let [v ((:resolve-head c) h)]
-                                                                 (host/macro-var? v)))))))))
-                 (fn [_] nil)))]
-     (binding [rw/*unit-params* unit]
-     (try
-       (host/with-ns ns0
-         (fn []
-           (host/read-forms src (fn [form]
-                                  (let [[_ ns] @at
-                                        [v ns'] (eval-top c ns form)]
-                                    (when (not= ns' ns) (host/set-current-ns! ns'))
-                                    (reset! at [v ns'])
-                                    (when-let [f (:on-value opts)] (f v ns')))))))
-       (first @at)
-       (finally (when session? (reset! session-ns (second @at)))))))))
+             unit (when (or (= :unit (host/static-types)) (and (= :unit @rw/static-types) (host/static-types)))
+                        (host/try-all
+                         (fn []
+                             (let [forms (atom [])]
+                                  (host/with-ns ns0
+                                                (fn []
+                                                    (host/read-forms src (fn [f] (swap! forms conj f)))
+                                                    (rw/unit-param-kinds @forms
+                                                                         (fn [h] (boolean (when-let [v ((:resolve-head c) h)]
+                                                                                                    (host/macro-var? v)))))))))
+                         (fn [_] nil)))]
+            (binding [rw/*unit-params* unit]
+                     (try
+                      (host/with-ns ns0
+                                    (fn []
+                                        (host/read-forms src (fn [form]
+                                                                 (let [[_ ns] @at
+                                                                       [v ns'] (eval-top c ns form)]
+                                                                      (when (not= ns' ns) (host/set-current-ns! ns'))
+                                                                      (reset! at [v ns'])
+                                                                      (when-let [f (:on-value opts)] (f v ns')))))))
+                      (first @at)
+                      (finally (when session? (reset! session-ns (second @at)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; report
 
 (defn print-report [{:keys [host-name ok replaced skipped error entries rewrite-misses] :as r}]
-  (let [from-host (:host r)
-        natives (or (:native r) 0)
-        total (+ ok replaced from-host natives skipped error)]
-    (println (str "cohost.boot on " (name host-name) ": " total " top-level forms"))
-    (println (str "  booted as stock: " (+ ok replaced) "   from host: " from-host
-                  (when (pos? natives) (str "   natives: " natives))
-                  "   skipped: " skipped "   errors: " error))
-    (when (pos? error)
-      (println "  errors:")
-      (doseq [e (filter #(= :error (:status %)) entries)]
-        (println (str "   - " (:name e) ": " (:error e)))
-        (println (str "       " (:form e)))))
-    (when (seq rewrite-misses)
-      (println "  interop the shim lacks (rewrite-time):")
-      (doseq [[k n] (sort-by (comp str key) rewrite-misses)]
-        (println (str "   - " (pr-str k) " x" n))))
-    (let [rm (shim/runtime-misses*)]
-      (when (seq rm)
-        (println "  shim misses hit at runtime:")
-        (doseq [[k n] rm] (println (str "   - " (pr-str k) " x" n)))))))
+      (let [from-host (:host r)
+            natives (or (:native r) 0)
+            total (+ ok replaced from-host natives skipped error)]
+           (println (str "cohost.boot on " (name host-name) ": " total " top-level forms"))
+           (println (str "  booted as stock: " (+ ok replaced) "   from host: " from-host
+                         (when (pos? natives) (str "   natives: " natives))
+                         "   skipped: " skipped "   errors: " error))
+           (when (pos? error)
+                 (println "  errors:")
+                 (doseq [e (filter #(= :error (:status %)) entries)]
+                        (println (str "   - " (:name e) ": " (:error e)))
+                        (println (str "       " (:form e)))))
+           (when (seq rewrite-misses)
+                 (println "  interop the shim lacks (rewrite-time):")
+                 (doseq [[k n] (sort-by (comp str key) rewrite-misses)]
+                        (println (str "   - " (pr-str k) " x" n))))
+           (let [rm (shim/runtime-misses*)]
+                (when (seq rm)
+                      (println "  shim misses hit at runtime:")
+                      (doseq [[k n] rm] (println (str "   - " (pr-str k) " x" n)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; the AOT snapshot's replay (jank-FAST Step 6 stage 2)
@@ -2048,145 +2045,145 @@
 (def ^:private snap-report (atom nil))
 
 (defn snap-begin!
-  "A snapshot's cohost.core module, first: what boot! does before core.clj.
+      "A snapshot's cohost.core module, first: what boot! does before core.clj.
    libs: {lib module} of the snapshot's library modules (load-lib! requires
    the module instead of loading the source)."
-  [{:keys [root]} libs]
-  (reset! verbose? false)
-  (reset! snapshot-log nil)
-  (swap! state dissoc :profile :profile-bucket)
-  (let [[_ report] (boot-setup! root)]
-    (reset! snap-report report)
-    (swap! state assoc :snapshot-libs libs)
-    nil))
+      [{:keys [root]} libs]
+      (reset! verbose? false)
+      (reset! snapshot-log nil)
+      (swap! state dissoc :profile :profile-bucket)
+      (let [[_ report] (boot-setup! root)]
+           (reset! snap-report report)
+           (swap! state assoc :snapshot-libs libs)
+           nil))
 
 (defn snap-take! "take-from-host! of nm, as the boot did." [nm]
-  (take-from-host! @snap-report nm)
-  nil)
+      (take-from-host! @snap-report nm)
+      nil)
 
 (defn snap-extra! "A companion name from the adapter's core-extras." [nm]
-  (host/intern! core-ns nm (get (host/core-extras) nm))
-  (note-host-dynamic! nm nil)
-  nil)
+      (host/intern! core-ns nm (get (host/core-extras) nm))
+      (note-host-dynamic! nm nil)
+      nil)
 
 (defn snap-scan! "scan-macros! of ns-sym." [ns-sym]
-  (scan-macros! (ctx) ns-sym)
-  nil)
+      (scan-macros! (ctx) ns-sym)
+      nil)
 
 (defn snap-thread-layer!
-  "install-thread-layer! of the recorded boot: the fills interned fn
+      "install-thread-layer! of the recorded boot: the fills interned fn
    values (no forms), so the replay redoes the fill itself. The
    report snap-end! restores is the recorded one, so the replay's
    own record! calls into the snapshot report are not what prints."
-  []
-  (install-thread-layer! @snap-report)
-  nil)
+      []
+      (install-thread-layer! @snap-report)
+      nil)
 
 (defn snap-http-layer!
-  "install-http-layer! of the recorded boot (as snap-thread-layer!)."
-  []
-  (install-http-layer! @snap-report)
-  nil)
+      "install-http-layer! of the recorded boot (as snap-thread-layer!)."
+      []
+      (install-http-layer! @snap-report)
+      nil)
 
 (defn snap-shim-layer!
-  "install-shim-layer! of the recorded boot (as snap-thread-layer!):
+      "install-shim-layer! of the recorded boot (as snap-thread-layer!):
    without it a snapshot-restored core lacks the shim's core fills
    (read, in-ns, Throwable->map, PrintWriter-on, ...)."
-  []
-  (install-shim-layer! @snap-report)
-  nil)
+      []
+      (install-shim-layer! @snap-report)
+      nil)
 
 (defn snap-is! "The shim's instance test for class token c." [c]
-  (shim/install-is! c)
-  nil)
+      (shim/install-is! c)
+      nil)
 
 (defn snap-dot! "The shim's dispatcher for a method it lacks." [m]
-  (shim/install-missing-dot! m)
-  nil)
+      (shim/install-missing-dot! m)
+      nil)
 
 (defn snap-native!
-  "A native the boot interned in place of a stock def form: the adapter's
+      "A native the boot interned in place of a stock def form: the adapter's
    :natives entry for lib/nm (the host core's own var root for :host, else
    the adapter's fn), as intern-native! found it, with the recorded meta."
-  [ns-sym nm lib m]
-  (let [impl (get (host/natives) (symbol lib (name nm)))
-        v (if (= :host impl) (host/var-root (host/resolve-core nm)) impl)
-        h (host/intern! ns-sym (symbol (name nm)) v)]
-    (host/alter-var-meta! h merge m)
-    nil))
+      [ns-sym nm lib m]
+      (let [impl (get (host/natives) (symbol lib (name nm)))
+            v (if (= :host impl) (host/var-root (host/resolve-core nm)) impl)
+            h (host/intern! ns-sym (symbol (name nm)) v)]
+           (host/alter-var-meta! h merge m)
+           nil))
 
 (defn snap-inline! "The :inline fn the codemod applies for nm: [f arities]." [nm v]
-  (swap! state assoc-in [:inlines nm] v)
-  nil)
+      (swap! state assoc-in [:inlines nm] v)
+      nil)
 
 (defn snap-directive! "A loader directive, as eval-in* ran it." [d]
-  (directive! d)
-  nil)
+      (directive! d)
+      nil)
 
 (defn- snap-restore! [{:keys [host-dynamic capture-inline? imports renames user-types host-referred loader-nses]}]
-  (let [c (ctx)]
-    (swap! state assoc :host-dynamic host-dynamic :capture-inline? capture-inline?)
-    (swap! (:imports c) merge imports)
-    (swap! (:renames c) merge renames)
-    (swap! (:user-types c) into user-types)
-    (swap! (:host-referred c) into host-referred)
-    (swap! (:loader-nses c) into loader-nses)))
+       (let [c (ctx)]
+            (swap! state assoc :host-dynamic host-dynamic :capture-inline? capture-inline?)
+            (swap! (:imports c) merge imports)
+            (swap! (:renames c) merge renames)
+            (swap! (:user-types c) into user-types)
+            (swap! (:host-referred c) into host-referred)
+            (swap! (:loader-nses c) into loader-nses)))
 
 (defn snap-end!
-  "A snapshot's cohost.core module, last: what boot! does after core.clj,
+      "A snapshot's cohost.core module, last: what boot! does after core.clj,
    and its report."
-  [data]
-  (install-host-reducers!)
-  (install-eduction-reduce!)
-  (snap-restore! data)
-  (reset! (:booted? (ctx)) true)
-  (swap! state assoc :report (:report data) :snapshot? true)
-  nil)
+      [data]
+      (install-host-reducers!)
+      (install-eduction-reduce!)
+      (snap-restore! data)
+      (reset! (:booted? (ctx)) true)
+      (swap! state assoc :report (:report data) :snapshot? true)
+      nil)
 
 (defn snap-lib-begin!
-  "A library module, first: what load-lib! does before the source."
-  [lib target path parent]
+      "A library module, first: what load-lib! does before the source."
+      [lib target path parent]
   ;; what is loading now (not the recorded parent: a module can load inside
   ;; another library's load at run time), restored by snap-lib-end!
-  (swap! state update ::snap-outer (fnil conj []) (:loading @state))
-  (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
-  (swap! (:renames (ctx)) assoc (str lib) (str target))
-  (swap! state assoc :loading lib)
-  nil)
+      (swap! state update ::snap-outer (fnil conj []) (:loading @state))
+      (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
+      (swap! (:renames (ctx)) assoc (str lib) (str target))
+      (swap! state assoc :loading lib)
+      nil)
 
 (defn snap-lib-end!
-  "A library module, last: its load-lib! entry and the loader's state."
-  [lib entry data parent]
-  (snap-restore! data)
-  (swap! state assoc-in [:libs lib] entry)
+      "A library module, last: its load-lib! entry and the loader's state."
+      [lib entry data parent]
+      (snap-restore! data)
+      (swap! state assoc-in [:libs lib] entry)
   ;; last/butlast, not peek/pop: Phel's pop is another fn (3 arguments)
-  (let [outer (last (::snap-outer @state))]
-    (swap! state (fn [st] (-> st (assoc :loading outer) (update ::snap-outer #(vec (butlast %)))))))
-  nil)
+      (let [outer (last (::snap-outer @state))]
+           (swap! state (fn [st] (-> st (assoc :loading outer) (update ::snap-outer #(vec (butlast %)))))))
+      nil)
 
 (defn register-snapshot-libs!
-  "A project snapshot's entry: {lib module} of its library modules, which
+      "A project snapshot's entry: {lib module} of its library modules, which
    load-lib! then requires instead of loading the sources."
-  [libs]
-  (swap! state update :snapshot-libs merge libs)
-  nil)
+      [libs]
+      (swap! state update :snapshot-libs merge libs)
+      nil)
 
 (defn snapshot-report
-  "The report of the boot a loaded snapshot restored, or nil."
-  []
-  (when (:snapshot? @state) (:report @state)))
+      "The report of the boot a loaded snapshot restored, or nil."
+      []
+      (when (:snapshot? @state) (:report @state)))
 
 (defn boot-from-snapshot!
-  "boot! from a snapshot: require its cohost.core module (it replays the
+      "boot! from a snapshot: require its cohost.core module (it replays the
    recorded boot and restores its state) unless one is loaded. root: the
    stock root later loads read (the snapshot recorded the one it was built
    with, relative to the repo). The caller checked that the snapshot on the
    module path is fresh (jank: dev/perf/jank_snapshot_cli.clj). -> the
    boot's report."
-  [{:keys [root]}]
-  (when-not (snapshot-report) (host/require-host! core-ns))
-  (let [r (snapshot-report)]
-    (when-not r
-      (throw (host/ex* 'java.lang.Exception (str core-ns " loaded, but it is not a snapshot"))))
-    (when root (swap! state assoc :root root))
-    r))
+      [{:keys [root]}]
+      (when-not (snapshot-report) (host/require-host! core-ns))
+      (let [r (snapshot-report)]
+           (when-not r
+                     (throw (host/ex* 'java.lang.Exception (str core-ns " loaded, but it is not a snapshot"))))
+           (when root (swap! state assoc :root root))
+           r))

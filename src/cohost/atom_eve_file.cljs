@@ -1,5 +1,5 @@
 (ns cohost.atom-eve-file
-  "Multi-bodied cohost: the squint seat's Eve hosting over a
+    "Multi-bodied cohost: the squint seat's Eve hosting over a
    shared FILE domain — the same shape as the JVM seat's
    atom_eve_file.clj and the ClojureDart/BEAM seat files, with
    the differences the squint seat forces:
@@ -21,148 +21,148 @@
    An atom's name is the minting body's own mint ordinal
    (cohost.atom/<shard>-<slot>), so the nth atom of a program is
    the same shared atom on every body."
-  (:require [cohost.atom :as atom-layer]
-            [eve.atom :as eve-atom]
-            [eve.host :as eve-host]
-            [eve.host-init :as eve-init]
-            [eve.codec :as codec]
-            [eve.crypto :as crypto]
-            [eve.int32 :as i32]
-            [eve.thread-host :as eve-thread-host]
-            [eve.deftype-proto.serialize :as ser]
-            [eve.deftype-proto.data :as eve-data]))
+    (:require [cohost.atom :as atom-layer]
+              [eve.atom :as eve-atom]
+              [eve.host :as eve-host]
+              [eve.host-init :as eve-init]
+              [eve.codec :as codec]
+              [eve.crypto :as crypto]
+              [eve.int32 :as i32]
+              [eve.thread-host :as eve-thread-host]
+              [eve.deftype-proto.serialize :as ser]
+              [eve.deftype-proto.data :as eve-data]))
 
 (defonce ^:private hosting
-  (atom {:dir nil :registry nil :registry-domain nil
-         :minted 0 :shards []}))
+         (atom {:dir nil :registry nil :registry-domain nil
+                :minted 0 :shards []}))
 
 (def ^:private slots-per-domain 255)
 
 (defn- pad4 [n]
-  (let [s (str n)]
-    (str (apply str (repeat (- 4 (count s)) "0")) s)))
+       (let [s (str n)]
+            (str (apply str (repeat (- 4 (count s)) "0")) s)))
 
 (defn- shard-path [dir index]
-  (str dir "/prog-" (pad4 index)))
+       (str dir "/prog-" (pad4 index)))
 
 (defn- open-shard! [dir index]
-  (let [path (shard-path dir index)
-        d (eve-atom/persistent-atom-domain path)]
-    {:index index :path path :domain d :minted 0}))
+       (let [path (shard-path dir index)
+             d (eve-atom/persistent-atom-domain path)]
+            {:index index :path path :domain d :minted 0}))
 
 (defn- shard! [index]
-  (or (some (fn [s] (when (= index (:index s)) s)) (:shards @hosting))
-      (let [s (open-shard! (:dir @hosting) index)]
-        (swap! hosting update :shards conj s)
-        s)))
+       (or (some (fn [s] (when (= index (:index s)) s)) (:shards @hosting))
+           (let [s (open-shard! (:dir @hosting) index)]
+                (swap! hosting update :shards conj s)
+                s)))
 
 (defn- make-eve-atom [slab-init]
-  (let [n (:minted @hosting)
-        index (inc (quot n slots-per-domain))
-        s (shard! index)]
-    (swap! hosting (fn [h]
-                     (-> h
-                         (update :minted inc)
-                         (update :shards
-                                 (fn [ss] (mapv (fn [x] (if (= index (:index x)) (update x :minted inc) x)) ss))))))
-    (eve-atom/lookup-or-create-mmap-atom!
-     (:domain s)
-     (str "cohost.atom/" index "-" (rem n slots-per-domain))
-     slab-init)))
+       (let [n (:minted @hosting)
+             index (inc (quot n slots-per-domain))
+             s (shard! index)]
+            (swap! hosting (fn [h]
+                               (-> h
+                                   (update :minted inc)
+                                   (update :shards
+                                           (fn [ss] (mapv (fn [x] (if (= index (:index x)) (update x :minted inc) x)) ss))))))
+            (eve-atom/lookup-or-create-mmap-atom!
+             (:domain s)
+             (str "cohost.atom/" index "-" (rem n slots-per-domain))
+             slab-init)))
 
 (defn- registry-eve-atom []
-  (or (:registry @hosting)
-      (let [dir (:dir @hosting)
-            dom (eve-atom/persistent-atom-domain (str dir "/registry"))
-            ra (eve-atom/lookup-or-create-mmap-atom!
-                dom "cohost.registry/table" {})]
-        (swap! hosting assoc :registry-domain dom :registry ra)
-        ra)))
+       (or (:registry @hosting)
+           (let [dir (:dir @hosting)
+                 dom (eve-atom/persistent-atom-domain (str dir "/registry"))
+                 ra (eve-atom/lookup-or-create-mmap-atom!
+                     dom "cohost.registry/table" {})]
+                (swap! hosting assoc :registry-domain dom :registry ra)
+                ra)))
 
 (defn- disk-handle [m init]
-  (let [d (eve-atom/persistent-atom-domain (:eve/path m))]
-    (eve-atom/lookup-or-create-mmap-atom! d (:eve/name m) init)))
+       (let [d (eve-atom/persistent-atom-domain (:eve/path m))]
+            (eve-atom/lookup-or-create-mmap-atom! d (:eve/name m) init)))
 
 (defn- make-tier-atom [kind m init]
-  (case kind
-    :disk (disk-handle m init)
-    :net (throw (ex-info "cohost.atom-eve-file: the :net tier is not seated on :squint"
-                         {:tier :net :seat :squint}))))
+       (case kind
+             :disk (disk-handle m init)
+             :net (throw (ex-info "cohost.atom-eve-file: the :net tier is not seated on :squint"
+                                  {:tier :net :seat :squint}))))
 
 (defonce ^:private eve-inited (atom false))
 
 (defn install!
-  "Register this seat's file-domain Eve factory with the portable
+      "Register this seat's file-domain Eve factory with the portable
    layer. Takes the root directory: (install! {:dir \"/path/base\"}).
    Returns true."
-  [{:keys [dir]}]
-  (assert (string? dir) "cohost.atom-eve-file/install! needs {:dir <string>}")
-  (when-not @eve-inited
-    (eve-init/init!)
-    (reset! eve-inited true))
-  (swap! hosting assoc :dir dir)
-  (atom-layer/install-factory! {:make-atom make-eve-atom
-                                :make-tier-atom make-tier-atom
-                                :frame-atom (fn [h] (eve-atom/meta-atom h {}))
-                                :registry-atom registry-eve-atom
-                                :swap-eve! (fn [h f & args] (apply eve-host/swap! h f args))
-                                :reset-eve! (fn [h v] (eve-host/reset! h v))
-                                :eve-value? (fn [v]
-                                              (satisfies? eve-data/IEveRoot v))})
-  true)
+      [{:keys [dir]}]
+      (assert (string? dir) "cohost.atom-eve-file/install! needs {:dir <string>}")
+      (when-not @eve-inited
+                (eve-init/init!)
+                (reset! eve-inited true))
+      (swap! hosting assoc :dir dir)
+      (atom-layer/install-factory! {:make-atom make-eve-atom
+                                    :make-tier-atom make-tier-atom
+                                    :frame-atom (fn [h] (eve-atom/meta-atom h {}))
+                                    :registry-atom registry-eve-atom
+                                    :swap-eve! (fn [h f & args] (apply eve-host/swap! h f args))
+                                    :reset-eve! (fn [h v] (eve-host/reset! h v))
+                                    :eve-value? (fn [v]
+                                                    (satisfies? eve-data/IEveRoot v))})
+      true)
 
 (defn close-hosting!
-  "Release every domain this hosting opened in this process.
+      "Release every domain this hosting opened in this process.
    Files stay; this process's atoms are invalid afterwards."
-  []
-  (let [s @hosting]
-    (doseq [sh (:shards s)]
-      (eve-atom/close-atom-domain! (:domain sh)))
-    (when-let [d (:registry-domain s)]
-      (eve-atom/close-atom-domain! d))
-    (reset! hosting {:dir (:dir s) :registry nil :registry-domain nil :minted 0 :shards []})
-    true))
+      []
+      (let [s @hosting]
+           (doseq [sh (:shards s)]
+                  (eve-atom/close-atom-domain! (:domain sh)))
+           (when-let [d (:registry-domain s)]
+                     (eve-atom/close-atom-domain! d))
+           (reset! hosting {:dir (:dir s) :registry nil :registry-domain nil :minted 0 :shards []})
+           true))
 
 (defn- digest-words
-  "eve.digest/compute-digest, spelled from its public parts. The
+       "eve.digest/compute-digest, spelled from its public parts. The
    digest fn is private in eve.digest, and squint does not export
    private vars (the compiled module keeps it module-local, so the
    direct call the other seats make is not a function here). This
    is the same computation: SHA-256 over the value's canonical
    codec bytes under a shared write, packed as 8 little-endian i32
    words; nil when the content has no canonical bytes."
-  [v]
-  (let [[ok? words]
-        (eve-thread-host/attempt
-         (fn []
-           (let [bs (binding [ser/*shared-write* true]
-                      (codec/value->eve-bytes v))
-                 raw (crypto/sha256 (mapv (fn [b] (bit-and b 0xFF)) bs))
-                 ubs (mapv (fn [b] (bit-and b 0xFF)) raw)]
-             (mapv (fn [i]
-                     (let [o (* 4 i)]
-                       (i32/i32 (bit-or (nth ubs o)
-                                        (bit-shift-left (nth ubs (+ o 1)) 8)
-                                        (bit-shift-left (nth ubs (+ o 2)) 16)
-                                        (bit-shift-left (nth ubs (+ o 3)) 24)))))
-                   (range 8)))))]
-    (when ok? words)))
+       [v]
+       (let [[ok? words]
+             (eve-thread-host/attempt
+              (fn []
+                  (let [bs (binding [ser/*shared-write* true]
+                                    (codec/value->eve-bytes v))
+                        raw (crypto/sha256 (mapv (fn [b] (bit-and b 0xFF)) bs))
+                        ubs (mapv (fn [b] (bit-and b 0xFF)) raw)]
+                       (mapv (fn [i]
+                                 (let [o (* 4 i)]
+                                      (i32/i32 (bit-or (nth ubs o)
+                                                       (bit-shift-left (nth ubs (+ o 1)) 8)
+                                                       (bit-shift-left (nth ubs (+ o 2)) 16)
+                                                       (bit-shift-left (nth ubs (+ o 3)) 24)))))
+                             (range 8)))))]
+            (when ok? words)))
 
 (defn root-digests
-  "The two digests of a layer atom's current Eve root: :seal and
+      "The two digests of a layer atom's current Eve root: :seal and
    :sha256 (SHA-256 over the root's canonical codec bytes)."
-  [a]
-  (let [h (atom-layer/eve-handle a)]
-    {:seal (eve-atom/seal h)
-     :sha256 (digest-words @h)}))
+      [a]
+      (let [h (atom-layer/eve-handle a)]
+           {:seal (eve-atom/seal h)
+            :sha256 (digest-words @h)}))
 
 (defn hosting-state
-  "Domain counts for probes and the report."
-  []
-  (let [s @hosting]
-    {:dir (:dir s)
-     :registry? (some? (:registry s))
-     :shards (mapv (fn [sh] {:index (:index sh)
-                             :path (:path sh)
-                             :atoms (:minted sh)})
-                   (:shards s))}))
+      "Domain counts for probes and the report."
+      []
+      (let [s @hosting]
+           {:dir (:dir s)
+            :registry? (some? (:registry s))
+            :shards (mapv (fn [sh] {:index (:index sh)
+                                    :path (:path sh)
+                                    :atoms (:minted sh)})
+                          (:shards s))}))

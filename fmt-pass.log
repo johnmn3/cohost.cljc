@@ -1,0 +1,59 @@
+WARNING: Proxy info is of authenticated type - discarding the user/pw as we do not support it!
+WARNING: Proxy info is of authenticated type - discarding the user/pw as we do not support it!
+Reformatted src/cohost/adapter.cljc
+Reformatted src/cohost/aot.cljc
+Reformatted src/cohost/atom.cljc
+Reformatted src/cohost/atom_eve.clj
+Reformatted src/cohost/atom_eve_file.cljs
+Reformatted src/cohost/battery.cljc
+Reformatted src/cohost/bench.cljc
+Reformatted src/cohost/boot.cljc
+Reformatted src/cohost/boot_cljs.clj
+Reformatted src/cohost/build.clj
+Reformatted src/cohost/build_jank.clj
+Reformatted src/cohost/cli.cljc
+Reformatted src/cohost/clj_champaca.clj
+Reformatted src/cohost/cljs_pool.clj
+Reformatted src/cohost/corpus.cljc
+Reformatted src/cohost/corpus_report.cljc
+Reformatted src/cohost/eve_bridge.cljc
+Reformatted src/cohost/hosts/auto.cljc
+Reformatted src/cohost/hosts/cljs.cljs
+Reformatted src/cohost/hosts/cljs_eve.cljs
+Reformatted src/cohost/hosts/cljs_realm.cljs
+Reformatted src/cohost/hosts/cljw.clj
+Reformatted src/cohost/hosts/java.clj
+Reformatted src/cohost/hosts/jolt.clj
+Reformatted src/cohost/hosts/jvm.clj
+Reformatted src/cohost/hosts/squint.cljs
+Reformatted src/cohost/hosts/teavm.clj
+Reformatted src/cohost/http.cljc
+Reformatted src/cohost/http_eve.clj
+Reformatted src/cohost/http_eve.cljs
+Reformatted src/cohost/io.cljc
+Reformatted src/cohost/js_rewrite.clj
+Reformatted src/cohost/js_shim.cljs
+Reformatted src/cohost/lib_battery.cljc
+Reformatted src/cohost/memory.cljc
+Reformatted src/cohost/memory_eve.clj
+Reformatted src/cohost/net.cljc
+Reformatted src/cohost/policy.cljc
+Reformatted src/cohost/pool.cljc
+Reformatted src/cohost/region.cljc
+Reformatted src/cohost/rewrite.cljc
+Reformatted src/cohost/ring.cljc
+Reformatted src/cohost/run.cljc
+Reformatted src/cohost/run_browser.cljs
+Reformatted src/cohost/scan.cljc
+Reformatted src/cohost/sci_pool.clj
+Reformatted src/cohost/shim.cljc
+Reformatted src/cohost/shim_names.clj
+Reformatted src/cohost/squint_main.cljs
+Reformatted src/cohost/thread.cljc
+Reformatted src/cohost/thread_host.cljs
+Reformatted src/cohost/unicode_ranges.cljc
+FMT-EXIT=0
+WARNING: Proxy info is of authenticated type - discarding the user/pw as we do not support it!
+WARNING: Proxy info is of authenticated type - discarding the user/pw as we do not support it!
+All source files formatted correctly
+FMT-CHECK-AFTER=0

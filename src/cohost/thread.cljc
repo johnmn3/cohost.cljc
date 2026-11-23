@@ -1,5 +1,5 @@
 (ns cohost.thread
-  "Eve's thread layer, hosted in cohost: the one implementation of threads,
+    "Eve's thread layer, hosted in cohost: the one implementation of threads,
    executors, futures, promises, latches and agents that sits behind
    cohost's Java shim (java.lang.Thread, java.util.concurrent, clojure.lang
    .Agent) and fills the clojure.core concurrency names on hosts whose core
@@ -18,218 +18,218 @@
    dispatches its Thread/Future/CountDownLatch members and deref on the
    tag (see cohost.shim). Equality is the map's, not identity's; that is a
    known distance from the Java classes, noted in the unit report."
-  (:refer-clojure :exclude [future-call future-done? future-cancel future-cancelled?
-                            release-pending-sends await1 shutdown-agents agent-error
-                            agent-errors clear-agent-errors restart-agent set-error-mode!
-                            error-mode set-error-handler! error-handler pmap])
-  (:require [cohost.adapter :as host]))
+    (:refer-clojure :exclude [future-call future-done? future-cancel future-cancelled?
+                              release-pending-sends await1 shutdown-agents agent-error
+                              agent-errors clear-agent-errors restart-agent set-error-mode!
+                              error-mode set-error-handler! error-handler pmap])
+    (:require [cohost.adapter :as host]))
 
 (defn- long-ms
-  "x as the host's long count of milliseconds (or a latch count):
+       "x as the host's long count of milliseconds (or a latch count):
    the (long ...) cast where the host core spells one. On :clje
    there is no long cast — numbers are exact there (integers are
    bignums; a float deadline still compares correctly) — so x
    passes through."
-  [x] #?(:clje x :default (long x)))
+       [x] #?(:clje x :default (long x)))
 
 ;; ---------------------------------------------------------------------------
 ;; leaves and registry
 
 (defn available?
-  "True when the installed host adapter gives the layer its leaves."
-  []
-  (boolean (host/capability :thread-spawn)))
+      "True when the installed host adapter gives the layer its leaves."
+      []
+      (boolean (host/capability :thread-spawn)))
 
 (defonce ^:private registry
   ;; every piece of layer state that is not inside a value of its own lives
   ;; in this one atom: the thread table, the two agent executors, the
   ;; shutdown flag, the id sequence
-  (atom {:next-id 1
-         :by-handle {}
-         :send-executor nil
-         :send-off-executor nil
-         :shutdown false}))
+         (atom {:next-id 1
+                :by-handle {}
+                :send-executor nil
+                :send-off-executor nil
+                :shutdown false}))
 
 (defn- next-id! []
-  (:next-id (swap! registry update :next-id inc)))
+       (:next-id (swap! registry update :next-id inc)))
 
 (defn- empty-queue []
-  (or ((host/capability :empty-queue))
+       (or ((host/capability :empty-queue))
       ;; a host with no persistent queue of its own (jank) gets the
       ;; layer's two-list queue: a tagged map, :front a list whose head
       ;; is the oldest item, :back a list holding newer items reversed.
       ;; A pure value, like the host's queue: a swap! may retry under
       ;; contention and must see the same queue each time.
-      {:cohost/kind ::queue :front () :back ()}))
+           {:cohost/kind ::queue :front () :back ()}))
 
 (defn- queue-value? [q] (and (map? q) (= ::queue (:cohost/kind q))))
 
 (defn- q-norm
-  "Restore the two-list invariant: :front is non-empty when the queue is."
-  [q]
-  (if (and (empty? (:front q)) (seq (:back q)))
-    (assoc q :front (reverse (:back q)) :back ())
-    q))
+       "Restore the two-list invariant: :front is non-empty when the queue is."
+       [q]
+       (if (and (empty? (:front q)) (seq (:back q)))
+           (assoc q :front (reverse (:back q)) :back ())
+           q))
 
 (defn- q-conj [q item]
-  (if (queue-value? q)
-    (q-norm (assoc q :back (conj (:back q) item)))
-    (conj q item)))
+       (if (queue-value? q)
+           (q-norm (assoc q :back (conj (:back q) item)))
+           (conj q item)))
 
 (defn- q-peek [q]
-  (if (queue-value? q)
-    (first (:front (q-norm q)))
-    (peek q)))
+       (if (queue-value? q)
+           (first (:front (q-norm q)))
+           (peek q)))
 
 (defn- q-pop [q]
-  (if (queue-value? q)
-    (let [q (q-norm q)] (assoc q :front (rest (:front q))))
-    (pop q)))
+       (if (queue-value? q)
+           (let [q (q-norm q)] (assoc q :front (rest (:front q))))
+           (pop q)))
 
 (defn- q-empty? [q]
-  (if (queue-value? q)
-    (and (empty? (:front q)) (empty? (:back q)))
-    (empty? q)))
+       (if (queue-value? q)
+           (and (empty? (:front q)) (empty? (:back q)))
+           (empty? q)))
 
 (defn- claim!
-  "Atomically take the head item of queue atom q; nil when empty."
-  [q]
-  (let [got (atom ::none)]
-    (swap! q (fn [qq]
+       "Atomically take the head item of queue atom q; nil when empty."
+       [q]
+       (let [got (atom ::none)]
+            (swap! q (fn [qq]
                ;; reset on every run: a swap! retry whose predecessor
                ;; was discarded must not leak that run's head -- the
                ;; item would be delivered twice (measured, unit 2)
-               (reset! got ::none)
-               (if (q-empty? qq)
-                 qq
-                 (do (reset! got (q-peek qq)) (q-pop qq)))))
-    (let [v @got] (when-not (= ::none v) v))))
+                         (reset! got ::none)
+                         (if (q-empty? qq)
+                             qq
+                             (do (reset! got (q-peek qq)) (q-pop qq)))))
+            (let [v @got] (when-not (= ::none v) v))))
 
 (defn now-ms
-  "The wall clock in milliseconds, the clock the layer's leases and
+      "The wall clock in milliseconds, the clock the layer's leases and
    deadlines read -- the portable answer to a host's now, for programs
    the layer serves."
-  [] (host/current-time-millis))
+      [] (host/current-time-millis))
 
 (defn sleep-ms!
-  "Sleep ms milliseconds: a wait on a doorbell nothing rings."
-  [ms]
-  (when (and (some? ms) (pos? ms)) (host/doorbell-wait (host/doorbell) ms))
-  nil)
+      "Sleep ms milliseconds: a wait on a doorbell nothing rings."
+      [ms]
+      (when (and (some? ms) (pos? ms)) (host/doorbell-wait (host/doorbell) ms))
+      nil)
 
 ;; ---------------------------------------------------------------------------
 ;; threads
 
 (defn- register-thread! [rec handle]
-  (swap! registry assoc-in [:by-handle handle] rec)
-  rec)
+       (swap! registry assoc-in [:by-handle handle] rec)
+       rec)
 
 (defn spawn
-  "Run f on a new host thread as a layer thread; the layer Thread value.
+      "Run f on a new host thread as a layer thread; the layer Thread value.
    f runs with no conveyed bindings: conveyance is the caller's business
    (future-call and the agent machinery capture and restore their own).
    The 2-arity carries m as the thread's Clojure metadata -- an executor
    spawns its workers with its own metadata, so a worker thread answers
    (meta t) with the runtime it was constructed over, exactly as its
    executor does."
-  ([f] (spawn f nil))
-  ([f m]
-   (let [state (atom :new)
-         bell (host/doorbell)
-         rec0 {:cohost/kind ::thread
-               :id (next-id!)
-               :name (atom nil)
-               :daemon (atom false)
-               :state state
-               :bell bell
-               :runnable f
-               :handle (atom nil)}
-         rec (if (some? m) (with-meta rec0 m) rec0)]
-    (if-let [h (host/thread-spawn
-                (fn []
-                  (register-thread! rec (host/thread-self))
-                  (reset! state :running)
-                  (try (f)
-                       (finally
-                         (reset! state :done)
-                         (host/doorbell-signal bell)))))]
-      (do (reset! (:handle rec) h) rec)
-      (throw (host/ex* 'java.lang.IllegalStateException
-                       "cohost: this host provides no thread-spawn" nil))))))
-
-(defn start-thread!
-  "The shim's Thread.start: spawn the thread value's runnable."
-  [t]
-  (when (= :new @(:state t))
-    (let [f (:runnable t)
-          state (:state t)
-          bell (:bell t)]
-      (if-let [h (host/thread-spawn
-                  (fn []
-                    (register-thread! t (host/thread-self))
-                    (reset! state :running)
-                    (try (f)
-                         (finally
-                           (reset! state :done)
-                           (host/doorbell-signal bell)))))]
-        (reset! (:handle t) h)
-        (throw (host/ex* 'java.lang.IllegalStateException
-                         "cohost: this host provides no thread-spawn" nil)))))
-  t)
-
-(defn new-thread
-  "The shim's java.lang.Thread constructor value: an unstarted thread over
-   runnable f (a fn of no args), named nm when given."
-  ([f] (new-thread f nil))
-  ([f nm]
-   {:cohost/kind ::thread
-    :id (next-id!)
-    :name (atom nm)
-    :daemon (atom false)
-    :state (atom :new)
-    :bell (host/doorbell)
-    :runnable f
-    :handle (atom nil)}))
-
-(defn current-thread
-  "The layer Thread value for the running thread. A thread the layer did
-   not spawn gets a stable synthetic record, so Thread/currentThread has
-   one answer per host thread."
-  []
-  (let [h (host/thread-self)]
-    (or (get (:by-handle @registry) h)
-        (let [rec {:cohost/kind ::thread
+      ([f] (spawn f nil))
+      ([f m]
+       (let [state (atom :new)
+             bell (host/doorbell)
+             rec0 {:cohost/kind ::thread
                    :id (next-id!)
                    :name (atom nil)
                    :daemon (atom false)
-                   :state (atom :running)
-                   :bell (host/doorbell)
-                   :runnable nil
-                   :handle (atom h)}]
-          (register-thread! rec h)))))
+                   :state state
+                   :bell bell
+                   :runnable f
+                   :handle (atom nil)}
+             rec (if (some? m) (with-meta rec0 m) rec0)]
+            (if-let [h (host/thread-spawn
+                        (fn []
+                            (register-thread! rec (host/thread-self))
+                            (reset! state :running)
+                            (try (f)
+                                 (finally
+                                  (reset! state :done)
+                                  (host/doorbell-signal bell)))))]
+                    (do (reset! (:handle rec) h) rec)
+                    (throw (host/ex* 'java.lang.IllegalStateException
+                                     "cohost: this host provides no thread-spawn" nil))))))
+
+(defn start-thread!
+      "The shim's Thread.start: spawn the thread value's runnable."
+      [t]
+      (when (= :new @(:state t))
+            (let [f (:runnable t)
+                  state (:state t)
+                  bell (:bell t)]
+                 (if-let [h (host/thread-spawn
+                             (fn []
+                                 (register-thread! t (host/thread-self))
+                                 (reset! state :running)
+                                 (try (f)
+                                      (finally
+                                       (reset! state :done)
+                                       (host/doorbell-signal bell)))))]
+                         (reset! (:handle t) h)
+                         (throw (host/ex* 'java.lang.IllegalStateException
+                                          "cohost: this host provides no thread-spawn" nil)))))
+      t)
+
+(defn new-thread
+      "The shim's java.lang.Thread constructor value: an unstarted thread over
+   runnable f (a fn of no args), named nm when given."
+      ([f] (new-thread f nil))
+      ([f nm]
+       {:cohost/kind ::thread
+        :id (next-id!)
+        :name (atom nm)
+        :daemon (atom false)
+        :state (atom :new)
+        :bell (host/doorbell)
+        :runnable f
+        :handle (atom nil)}))
+
+(defn current-thread
+      "The layer Thread value for the running thread. A thread the layer did
+   not spawn gets a stable synthetic record, so Thread/currentThread has
+   one answer per host thread."
+      []
+      (let [h (host/thread-self)]
+           (or (get (:by-handle @registry) h)
+               (let [rec {:cohost/kind ::thread
+                          :id (next-id!)
+                          :name (atom nil)
+                          :daemon (atom false)
+                          :state (atom :running)
+                          :bell (host/doorbell)
+                          :runnable nil
+                          :handle (atom h)}]
+                    (register-thread! rec h)))))
 
 (defn set-daemon!
-  "Thread.setDaemon on a thread value: record the flag. No host leaf
+      "Thread.setDaemon on a thread value: record the flag. No host leaf
    consumes it yet -- layer threads end with their work and the seats'
    processes exit explicitly -- but the call is part of Thread's
    surface (clojure.core.server's thread macro makes it on every
    start), so it is answered, not refused."
-  [t b]
-  (when-let [d (:daemon t)] (reset! d (boolean b)))
-  t)
+      [t b]
+      (when-let [d (:daemon t)] (reset! d (boolean b)))
+      t)
 
 (defn daemon? [t] (boolean @(:daemon t)))
 
 (defn thread-alive? [t] (= :running @(:state t)))
 
 (defn join-thread
-  "Wait for thread t to finish; with timeout-ms, false when it passes."
-  ([t] (host/doorbell-wait (:bell t) nil) true)
-  ([t timeout-ms]
-   (if (= :done @(:state t))
-     true
-     (let [signalled (host/doorbell-wait (:bell t) timeout-ms)]
-       (boolean (and signalled (= :done @(:state t))))))))
+      "Wait for thread t to finish; with timeout-ms, false when it passes."
+      ([t] (host/doorbell-wait (:bell t) nil) true)
+      ([t timeout-ms]
+       (if (= :done @(:state t))
+           true
+           (let [signalled (host/doorbell-wait (:bell t) timeout-ms)]
+                (boolean (and signalled (= :done @(:state t))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; executors
@@ -240,63 +240,63 @@
 ;; enqueued between the claim check and the wait.
 
 (defn- executor-meta
-  "The Clojure metadata an executor is constructed with: the runtime its
+       "The Clojure metadata an executor is constructed with: the runtime its
    threads are constructed over, and the domain when construction names
    one. This is the spec's executor metadata -- it rides the value as
    metadata, read with (meta ex); it is not a namespace of its own and
    no program names it to construct or submit anything."
-  [runtime opts]
-  (cond-> {:cohost/runtime runtime}
-    (and (map? opts) (contains? opts :domain))
-    (assoc :cohost/domain (:domain opts))))
+       [runtime opts]
+       (cond-> {:cohost/runtime runtime}
+               (and (map? opts) (contains? opts :domain))
+               (assoc :cohost/domain (:domain opts))))
 
 (defn new-executor
-  "kind :pooled (size workers, for futures and send) or :solo (one worker,
+      "kind :pooled (size workers, for futures and send) or :solo (one worker,
    for send-off). Also the value behind the shim's Executors factories.
    Its threads are constructed over the hosting runtime itself, and
    (meta ex) says so."
-  [kind size]
-  (with-meta
-    {:cohost/kind ::executor
-     :kind kind
-     :size (if (= kind :solo) 1 (max 1 size))
-     :queue (atom (empty-queue))
-     :ctl (atom {:running 0 :shutdown false :bell (host/doorbell)})}
-    (executor-meta (host/host-name) nil)))
+      [kind size]
+      (with-meta
+       {:cohost/kind ::executor
+        :kind kind
+        :size (if (= kind :solo) 1 (max 1 size))
+        :queue (atom (empty-queue))
+        :ctl (atom {:running 0 :shutdown false :bell (host/doorbell)})}
+       (executor-meta (host/host-name) nil)))
 
 (declare run-worker)
 
 (defn- item-thunk
-  "A queue item as the thunk the worker runs: host items are thunks
+       "A queue item as the thunk the worker runs: host items are thunks
    already; a runtime executor's items are realm items (maps whose :run
    is the thunk that enters the realm — see the runtime section)."
-  [item]
-  (if (and (map? item) (= ::realm-item (:cohost/kind item)))
-    (:run item)
-    item))
+       [item]
+       (if (and (map? item) (= ::realm-item (:cohost/kind item)))
+           (:run item)
+           item))
 
 (defn- ensure-workers! [ex]
-  (let [ctl (:ctl ex)]
-    (loop []
-      (let [c @ctl]
-        (when (and (not (:shutdown c)) (< (:running c) (:size ex)))
-          (when (compare-and-set! ctl c (update c :running inc))
-            (spawn (fn [] (run-worker ex)) (meta ex))
-            (recur)))))))
+       (let [ctl (:ctl ex)]
+            (loop []
+                  (let [c @ctl]
+                       (when (and (not (:shutdown c)) (< (:running c) (:size ex)))
+                             (when (compare-and-set! ctl c (update c :running inc))
+                                   (spawn (fn [] (run-worker ex)) (meta ex))
+                                   (recur)))))))
 
 (defn- signal-workers! [ex]
-  (let [old (atom nil)]
-    (swap! (:ctl ex) (fn [c] (reset! old (:bell c)) (assoc c :bell (host/doorbell))))
-    (when @old (host/doorbell-signal @old))))
+       (let [old (atom nil)]
+            (swap! (:ctl ex) (fn [c] (reset! old (:bell c)) (assoc c :bell (host/doorbell))))
+            (when @old (host/doorbell-signal @old))))
 
 (defn- run-worker [ex]
-  (try
-    (loop []
-      (let [item (claim! (:queue ex))]
-        (cond (some? item)
-              (do (host/try-all (item-thunk item))
-                  (recur))
-              (:shutdown @(:ctl ex)) nil
+       (try
+        (loop []
+              (let [item (claim! (:queue ex))]
+                   (cond (some? item)
+                         (do (host/try-all (item-thunk item))
+                             (recur))
+                         (:shutdown @(:ctl ex)) nil
               ;; wait on the current generation bell: a submit after
               ;; the claim swaps and signals the bell it replaces, and
               ;; the signal is sticky, so no wakeup is missed; the
@@ -304,55 +304,55 @@
               ;; here as a guard and discarded what it claimed -- a
               ;; submit landing between the two claims lost its item;
               ;; measured, unit 2.)
-              :else (do (host/doorbell-wait (:bell @(:ctl ex)) 100)
-                        (recur)))))
-    (finally
-      (swap! (:ctl ex) update :running dec))))
+                         :else (do (host/doorbell-wait (:bell @(:ctl ex)) 100)
+                                   (recur)))))
+        (finally
+         (swap! (:ctl ex) update :running dec))))
 
 (defn submit!
-  "Enqueue thunk on executor ex; returns the thunk's future when fut is
+      "Enqueue thunk on executor ex; returns the thunk's future when fut is
    given (executor submit), else the executor."
-  ([ex thunk] (submit! ex thunk nil))
-  ([ex thunk fut]
-   (when (= :runtime (:kind ex))
-     (throw (host/ex* 'java.lang.IllegalStateException
-                      "cohost: a runtime executor takes forms, not closures (submit-form / submit-call)" nil)))
-   (when (:shutdown @(:ctl ex))
-     (throw (host/ex* 'java.util.concurrent.RejectedExecutionException
-                      "cohost: executor is shut down" nil)))
-   (swap! (:queue ex) q-conj thunk)
-   (ensure-workers! ex)
-   (signal-workers! ex)
-   (or fut ex)))
+      ([ex thunk] (submit! ex thunk nil))
+      ([ex thunk fut]
+       (when (= :runtime (:kind ex))
+             (throw (host/ex* 'java.lang.IllegalStateException
+                              "cohost: a runtime executor takes forms, not closures (submit-form / submit-call)" nil)))
+       (when (:shutdown @(:ctl ex))
+             (throw (host/ex* 'java.util.concurrent.RejectedExecutionException
+                              "cohost: executor is shut down" nil)))
+       (swap! (:queue ex) q-conj thunk)
+       (ensure-workers! ex)
+       (signal-workers! ex)
+       (or fut ex)))
 
 (defn shutdown-executor! [ex]
-  (swap! (:ctl ex) assoc :shutdown true)
-  (signal-workers! ex)
-  (when (= :runtime (:kind ex))
-    (when-let [st @(:realm ex)]
-      (when-let [close! (:close! (:sister ex))] (close! st))
-      (reset! (:realm ex) nil)))
-  ex)
+      (swap! (:ctl ex) assoc :shutdown true)
+      (signal-workers! ex)
+      (when (= :runtime (:kind ex))
+            (when-let [st @(:realm ex)]
+                      (when-let [close! (:close! (:sister ex))] (close! st))
+                      (reset! (:realm ex) nil)))
+      ex)
 
 (defn send-executor
-  "The executor behind future and send: a pooled executor, created on
+      "The executor behind future and send: a pooled executor, created on
    first use. Stock Clojure's is an unbounded cached pool; the layer's is
    bounded (8 workers) by design -- the queue is unbounded, so work is
    never refused, only its concurrency is capped."
-  []
-  (or (:send-executor @registry)
-      (let [ex (new-executor :pooled 8)]
-        (swap! registry assoc :send-executor ex)
-        (:send-executor @registry))))
+      []
+      (or (:send-executor @registry)
+          (let [ex (new-executor :pooled 8)]
+               (swap! registry assoc :send-executor ex)
+               (:send-executor @registry))))
 
 (defn send-off-executor
-  "The executor behind send-off: one worker, so send-off actions run
+      "The executor behind send-off: one worker, so send-off actions run
    serially, as stock's solo executor runs them."
-  []
-  (or (:send-off-executor @registry)
-      (let [ex (new-executor :solo 1)]
-        (swap! registry assoc :send-off-executor ex)
-        (:send-off-executor @registry))))
+      []
+      (or (:send-off-executor @registry)
+          (let [ex (new-executor :solo 1)]
+               (swap! registry assoc :send-off-executor ex)
+               (:send-off-executor @registry))))
 
 (defn set-send-executor! [ex] (swap! registry assoc :send-executor ex) ex)
 (defn set-send-off-executor! [ex] (swap! registry assoc :send-off-executor ex) ex)
@@ -373,18 +373,18 @@
 (defn set-capture-hook! [f] (reset! capture-hook f) nil)
 
 (defn apply-capture-hook
-  "The bindings map b as the hook (if any) answers it."
-  [b]
-  (if-let [h @capture-hook] (h b) b))
+      "The bindings map b as the hook (if any) answers it."
+      [b]
+      (if-let [h @capture-hook] (h b) b))
 
 (defn capture-bindings [] (apply-capture-hook (host/thread-bindings)))
 
 (defn conveyed
-  "Wrap f so it runs with the captured bindings map b restored."
-  [b f]
-  (if (seq b)
-    (fn [] (host/with-thread-bindings! b f))
-    f))
+      "Wrap f so it runs with the captured bindings map b restored."
+      [b f]
+      (if (seq b)
+          (fn [] (host/with-thread-bindings! b f))
+          f))
 
 ;; ---------------------------------------------------------------------------
 ;; futures and promises
@@ -397,43 +397,43 @@
 (defn agent-value? [x] (and (map? x) (= ::agent (:cohost/kind x))))
 
 (defn- new-future* []
-  {:cohost/kind ::future :state (atom {:status :pending}) :bell (host/doorbell)})
+       {:cohost/kind ::future :state (atom {:status :pending}) :bell (host/doorbell)})
 
 (defn completed-future
-  "A layer future already holding outcome ({:status :done :value v} or
+      "A layer future already holding outcome ({:status :done :value v} or
    {:status :error :error e}): what an asynchronous call answers on a host
    with no thread layer, where the work ran on the caller's thread."
-  [outcome]
-  {:cohost/kind ::future :state (atom outcome) :bell nil})
+      [outcome]
+      {:cohost/kind ::future :state (atom outcome) :bell nil})
 
 (defn- complete-future! [fut outcome]
-  (let [won (atom false)]
-    (swap! (:state fut)
-           (fn [s] (if (= :pending (:status s))
-                     (do (reset! won true) outcome)
-                     s)))
-    (when @won (host/doorbell-signal (:bell fut)))
-    @won))
+       (let [won (atom false)]
+            (swap! (:state fut)
+                   (fn [s] (if (= :pending (:status s))
+                               (do (reset! won true) outcome)
+                               s)))
+            (when @won (host/doorbell-signal (:bell fut)))
+            @won))
 
 (defn submit-future
-  "ExecutorService.submit: run f (a Callable/Runnable value: a fn of no
+      "ExecutorService.submit: run f (a Callable/Runnable value: a fn of no
    args) on executor ex; the future of its outcome. No bindings are
    conveyed -- conveyance is future-call's and the agents' business,
    as on the JVM."
-  [ex f]
-  (let [fut (new-future*)]
-    (submit! ex (fn []
-                  (host/try-all
-                   (fn [] (complete-future! fut {:status :done :value (f)}))
-                   (fn [e] (complete-future! fut {:status :error :error e}))))
-             fut)
-    fut))
+      [ex f]
+      (let [fut (new-future*)]
+           (submit! ex (fn []
+                           (host/try-all
+                            (fn [] (complete-future! fut {:status :done :value (f)}))
+                            (fn [e] (complete-future! fut {:status :error :error e}))))
+                    fut)
+           fut))
 
 (defn future-call
-  "clojure.core/future-call over the layer: run f on the send executor
+      "clojure.core/future-call over the layer: run f on the send executor
    with the caller's bindings conveyed; a future value."
-  [f]
-  (submit-future (send-executor) (conveyed (capture-bindings) f)))
+      [f]
+      (submit-future (send-executor) (conveyed (capture-bindings) f)))
 
 ;; Unit 8: the form-carrying future. On a seat with more than one realm
 ;; (the cljs Node seat with Eve hosting: worker heaps meeting this one at
@@ -447,80 +447,80 @@
 ;; realm that ran it; when it cannot cross, the closure runs here, on
 ;; this realm's threads, exactly as future-call runs it.
 (defn future-form-call
-  "future-call for a form-carrying future: ns-sym the namespace the
+      "future-call for a form-carrying future: ns-sym the namespace the
    form was written in, form (fn [locals] body), args the locals'
    values, f the same body as a closure."
-  [ns-sym form args f]
-  (if-let [submit (host/capability :realm-submit)]
-    (let [fut (new-future*)]
-      (if (submit {:ns ns-sym :form form :args args :frame (capture-bindings)
-                   :future fut
-                   :complete (fn [outcome] (complete-future! fut outcome))})
-        fut
-        (future-call f)))
-    (future-call f)))
+      [ns-sym form args f]
+      (if-let [submit (host/capability :realm-submit)]
+              (let [fut (new-future*)]
+                   (if (submit {:ns ns-sym :form form :args args :frame (capture-bindings)
+                                :future fut
+                                :complete (fn [outcome] (complete-future! fut outcome))})
+                       fut
+                       (future-call f)))
+              (future-call f)))
 
 (defn future-done? [fut] (not= :pending (:status @(:state fut))))
 (defn future-cancelled? [fut] (= :cancelled (:status @(:state fut))))
 
 (defn future-cancel
-  "Cancel while still pending (the layer does not interrupt a running
+      "Cancel while still pending (the layer does not interrupt a running
    task; stock's cancel with mayInterruptIfRunning does -- a named
    distance). True when this call cancelled it."
-  [fut]
-  (boolean (complete-future! fut {:status :cancelled})))
+      [fut]
+      (boolean (complete-future! fut {:status :cancelled})))
 
 (defn- cancelled-ex []
-  (host/ex* 'java.util.concurrent.CancellationException "future cancelled" nil))
+       (host/ex* 'java.util.concurrent.CancellationException "future cancelled" nil))
 
 (defn deref-future
-  "Blocking deref of a layer future or promise; the timeout form returns
+      "Blocking deref of a layer future or promise; the timeout form returns
    timeout-val when the deadline passes."
-  ([fut] (deref-future fut nil nil false))
-  ([fut timeout-ms timeout-val]
-   (deref-future fut timeout-ms timeout-val true))
-  ([fut timeout-ms timeout-val timed?]
-   (let [deadline (when timed? (+ (now-ms) (long-ms timeout-ms)))]
-     (loop []
-       (let [s @(:state fut)]
-         (case (:status s)
-           :done (:value s)
-           :error (throw (:error s))
-           :cancelled (throw (cancelled-ex))
+      ([fut] (deref-future fut nil nil false))
+      ([fut timeout-ms timeout-val]
+       (deref-future fut timeout-ms timeout-val true))
+      ([fut timeout-ms timeout-val timed?]
+       (let [deadline (when timed? (+ (now-ms) (long-ms timeout-ms)))]
+            (loop []
+                  (let [s @(:state fut)]
+                       (case (:status s)
+                             :done (:value s)
+                             :error (throw (:error s))
+                             :cancelled (throw (cancelled-ex))
            ;; :pending
-           (if timed?
-             (let [remaining (- deadline (now-ms))]
-               (if (<= remaining 0)
-                 timeout-val
-                 (do (host/doorbell-wait (:bell fut) remaining) (recur))))
-             (do (host/doorbell-wait (:bell fut) nil) (recur)))))))))
+                             (if timed?
+                                 (let [remaining (- deadline (now-ms))]
+                                      (if (<= remaining 0)
+                                          timeout-val
+                                          (do (host/doorbell-wait (:bell fut) remaining) (recur))))
+                                 (do (host/doorbell-wait (:bell fut) nil) (recur)))))))))
 
 (defn new-promise []
-  {:cohost/kind ::promise :state (atom {:status :pending}) :bell (host/doorbell)})
+      {:cohost/kind ::promise :state (atom {:status :pending}) :bell (host/doorbell)})
 
 (defn deliver-promise
-  "clojure.core/deliver: the first delivery wins; returns the promise."
-  [p v]
-  (complete-future! p {:status :done :value v})
-  p)
+      "clojure.core/deliver: the first delivery wins; returns the promise."
+      [p v]
+      (complete-future! p {:status :done :value v})
+      p)
 
 (defn deref-blocking
-  "The shim's deref for layer futures and promises."
-  ([x] (deref-future x))
-  ([x timeout-ms timeout-val] (deref-future x timeout-ms timeout-val)))
+      "The shim's deref for layer futures and promises."
+      ([x] (deref-future x))
+      ([x timeout-ms timeout-val] (deref-future x timeout-ms timeout-val)))
 
 (defn get-future
-  "java.util.concurrent.Future.get for a layer future or promise: the
+      "java.util.concurrent.Future.get for a layer future or promise: the
    timed form throws TimeoutException when the deadline passes (stock
    core's deref-future catches exactly that to yield its timeout-val).
    With arguments the first is read as a millisecond timeout; the
    TimeUnit argument is not modeled."
-  ([fut] (deref-future fut))
-  ([fut timeout-ms & _unit]
-   (let [v (deref-future fut timeout-ms ::timed-out)]
-     (if (= ::timed-out v)
-       (throw (host/ex* 'java.util.concurrent.TimeoutException "future get timed out" nil))
-       v))))
+      ([fut] (deref-future fut))
+      ([fut timeout-ms & _unit]
+       (let [v (deref-future fut timeout-ms ::timed-out)]
+            (if (= ::timed-out v)
+                (throw (host/ex* 'java.util.concurrent.TimeoutException "future get timed out" nil))
+                v))))
 
 ;; ---------------------------------------------------------------------------
 ;; runtime executors
@@ -540,95 +540,95 @@
 ;; the single-thread pool is the :solo shape with a realm behind it.
 
 (defn runtime-executor
-  "An executor of `size` workers whose work runs in the sister runtime
+      "An executor of `size` workers whose work runs in the sister runtime
    `sister` (an impl map, see the section comment). `opts` are the
    sister's boot options (source roots, namespaces to load, features),
    handed to its :boot! on the first submission. The runtime it is
    constructed over rides as the executor's Clojure metadata:
    (meta ex) answers {:cohost/runtime sister}, plus :cohost/domain
    when opts name one."
-  [sister size opts]
-  (with-meta
-    {:cohost/kind ::executor
-     :kind :runtime
-     :size (max 1 size)
-     :queue (atom (empty-queue))
-     :ctl (atom {:running 0 :shutdown false :bell (host/doorbell)})
-     :sister sister
-     :realm (atom nil)
-     :boot-opts opts}
-    (executor-meta sister opts)))
+      [sister size opts]
+      (with-meta
+       {:cohost/kind ::executor
+        :kind :runtime
+        :size (max 1 size)
+        :queue (atom (empty-queue))
+        :ctl (atom {:running 0 :shutdown false :bell (host/doorbell)})
+        :sister sister
+        :realm (atom nil)
+        :boot-opts opts}
+       (executor-meta sister opts)))
 
 (defn- realm-state!
-  "The executor's booted sister state, booting on first use."
-  [ex]
-  (or @(:realm ex)
-      (locking (:realm ex)
-        (or @(:realm ex)
-            (reset! (:realm ex) ((:boot! (:sister ex)) (:boot-opts ex)))))))
+       "The executor's booted sister state, booting on first use."
+       [ex]
+       (or @(:realm ex)
+           (locking (:realm ex)
+                    (or @(:realm ex)
+                        (reset! (:realm ex) ((:boot! (:sister ex)) (:boot-opts ex)))))))
 
 (defn submit-form
-  "Run `form` in namespace `ns-sym` inside the runtime executor ex's
+      "Run `form` in namespace `ns-sym` inside the runtime executor ex's
    realm, applied to `args`: the realm evaluates (apply form args) with
    form read in ns-sym, and the layer future holds its value. Arguments
    and results are data crossing by value (see the section comment);
    the form-carrying sibling of submit-future."
-  [ex ns-sym form & args]
-  (when-not (= :runtime (:kind ex))
-    (throw (host/ex* 'java.lang.IllegalStateException
-                     "cohost: submit-form needs a runtime executor (runtime-executor)" nil)))
-  (when (:shutdown @(:ctl ex))
-    (throw (host/ex* 'java.util.concurrent.RejectedExecutionException
-                      "cohost: executor is shut down" nil)))
-  (let [fut (new-future*)
-        state (realm-state! ex)
-        eval-form (:eval-form (:sister ex))]
-    (swap! (:queue ex) q-conj
-           {:cohost/kind ::realm-item
-            :run (fn []
-                   (host/try-all
-                    (fn [] (complete-future! fut {:status :done
-                                                  :value (eval-form state ns-sym
-                                                                    (list 'apply form (list 'quote (vec args))))}))
-                    (fn [e] (complete-future! fut {:status :error :error e}))))})
-    (ensure-workers! ex)
-    (signal-workers! ex)
-    fut))
+      [ex ns-sym form & args]
+      (when-not (= :runtime (:kind ex))
+                (throw (host/ex* 'java.lang.IllegalStateException
+                                 "cohost: submit-form needs a runtime executor (runtime-executor)" nil)))
+      (when (:shutdown @(:ctl ex))
+            (throw (host/ex* 'java.util.concurrent.RejectedExecutionException
+                             "cohost: executor is shut down" nil)))
+      (let [fut (new-future*)
+            state (realm-state! ex)
+            eval-form (:eval-form (:sister ex))]
+           (swap! (:queue ex) q-conj
+                  {:cohost/kind ::realm-item
+                   :run (fn []
+                            (host/try-all
+                             (fn [] (complete-future! fut {:status :done
+                                                           :value (eval-form state ns-sym
+                                                                             (list 'apply form (list 'quote (vec args))))}))
+                             (fn [e] (complete-future! fut {:status :error :error e}))))})
+           (ensure-workers! ex)
+           (signal-workers! ex)
+           fut))
 
 (defn submit-call
-  "submit-form with a named entry point: (submit-call ex 'some.ns/f 1 2)
+      "submit-form with a named entry point: (submit-call ex 'some.ns/f 1 2)
    runs some.ns/f on 1 and 2 in ex's realm; a layer future of the value."
-  [ex qsym & args]
-  (apply submit-form ex (symbol (namespace qsym)) qsym args))
+      [ex qsym & args]
+      (apply submit-form ex (symbol (namespace qsym)) qsym args))
 
 ;; ---------------------------------------------------------------------------
 ;; CountDownLatch
 
 (defn new-latch [n]
-  {:cohost/kind ::latch :count (atom (max 0 (long-ms n))) :bell (host/doorbell)})
+      {:cohost/kind ::latch :count (atom (max 0 (long-ms n))) :bell (host/doorbell)})
 
 (defn latch-count [l] @(:count l))
 
 (defn count-down
-  "Decrement; at zero the latch opens for every current and future wait."
-  [l]
-  (let [c (swap! (:count l) (fn [c] (max 0 (dec c))))]
-    (when (zero? c) (host/doorbell-signal (:bell l)))
-    nil))
+      "Decrement; at zero the latch opens for every current and future wait."
+      [l]
+      (let [c (swap! (:count l) (fn [c] (max 0 (dec c))))]
+           (when (zero? c) (host/doorbell-signal (:bell l)))
+           nil))
 
 (defn await-latch
-  "True when the latch opened; the timeout form returns false when the
+      "True when the latch opened; the timeout form returns false when the
    deadline passes first."
-  ([l] (await-latch l nil) true)
-  ([l timeout-ms]
-   (let [deadline (when (some? timeout-ms) (+ (now-ms) (long-ms timeout-ms)))]
-     (loop []
-       (cond (zero? @(:count l)) true
-             (and deadline (>= (now-ms) deadline)) false
-             :else (do (host/doorbell-wait (:bell l)
-                                           (when deadline
-                                             (max 0 (- deadline (now-ms)))))
-                       (recur)))))))
+      ([l] (await-latch l nil) true)
+      ([l timeout-ms]
+       (let [deadline (when (some? timeout-ms) (+ (now-ms) (long-ms timeout-ms)))]
+            (loop []
+                  (cond (zero? @(:count l)) true
+                        (and deadline (>= (now-ms) deadline)) false
+                        :else (do (host/doorbell-wait (:bell l)
+                                                      (when deadline
+                                                            (max 0 (- deadline (now-ms)))))
+                                  (recur)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; agents
@@ -641,197 +641,197 @@
 ;; action ends, as stock's nested sends are.
 
 (def ^:dynamic *pending-sends*
-  "While an agent action runs on this thread: an atom of the sends it has
+     "While an agent action runs on this thread: an atom of the sends it has
    made, held until the action ends (or release-pending-sends flushes)."
-  nil)
+     nil)
 
 (defn new-agent [init opts]
-  (let [mode (or (:error-mode opts) :continue)]
-    (when-not (contains? #{:fail :continue} mode)
-      (throw (host/ex* 'java.lang.IllegalArgumentException
-                       (str "error-mode must be :fail or :continue, was " mode) nil)))
-    {:cohost/kind ::agent
-     :state (atom init)
-     :errors (atom [])
-     :queue (atom (empty-queue))
-     :ctl (atom {:queued false
-                 :failed nil
-                 :mode mode
-                 :handler (:error-handler opts)
-                 :validator (:validator opts)})}))
+      (let [mode (or (:error-mode opts) :continue)]
+           (when-not (contains? #{:fail :continue} mode)
+                     (throw (host/ex* 'java.lang.IllegalArgumentException
+                                      (str "error-mode must be :fail or :continue, was " mode) nil)))
+           {:cohost/kind ::agent
+            :state (atom init)
+            :errors (atom [])
+            :queue (atom (empty-queue))
+            :ctl (atom {:queued false
+                        :failed nil
+                        :mode mode
+                        :handler (:error-handler opts)
+                        :validator (:validator opts)})}))
 
 (declare drain kick!)
 
 (defn- enqueue-action! [ag action]
-  (swap! (:queue ag) q-conj action)
-  (kick! ag))
+       (swap! (:queue ag) q-conj action)
+       (kick! ag))
 
 (defn- kick! [ag]
-  (let [won (atom false)]
-    (swap! (:ctl ag) (fn [c] (if (:queued c)
-                               c
-                               (do (reset! won true) (assoc c :queued true)))))
-    (when @won
-      (let [ex (or (:executor (q-peek @(:queue ag))) (send-executor))]
-        (submit! ex (fn [] (drain ag ex)))))))
+       (let [won (atom false)]
+            (swap! (:ctl ag) (fn [c] (if (:queued c)
+                                         c
+                                         (do (reset! won true) (assoc c :queued true)))))
+            (when @won
+                  (let [ex (or (:executor (q-peek @(:queue ag))) (send-executor))]
+                       (submit! ex (fn [] (drain ag ex)))))))
 
 (defn- release-held! [held]
-  (doseq [action held] (enqueue-action! (:ag action) action)))
+       (doseq [action held] (enqueue-action! (:ag action) action)))
 
 (defn release-pending-sends
-  "clojure.lang.Agent/releasePendingSends and core's
+      "clojure.lang.Agent/releasePendingSends and core's
    release-pending-sends: flush the sends the running action has held;
    the count flushed (0 outside an action)."
-  []
-  (if *pending-sends*
-    (let [held @*pending-sends*]
-      (reset! *pending-sends* [])
-      (release-held! held)
-      (count held))
-    0))
+      []
+      (if *pending-sends*
+          (let [held @*pending-sends*]
+               (reset! *pending-sends* [])
+               (release-held! held)
+               (count held))
+          0))
 
 (def ^:private agent-var
   ;; the handle of cohost.core/*agent*, resolved on first use: an action
   ;; runs with *agent* bound to its agent, over whatever was captured
-  (atom nil))
+     (atom nil))
 
 (defn- agent-var-handle []
-  (or @agent-var
+       (or @agent-var
       ;; *agent* reaches cohost.core as a refer of the host core's var
       ;; (the prelude refers dynamic vars rather than interning copies),
       ;; so the interns map misses it: the host core's var IS the handle
-      (let [v (or (host/interned-var 'cohost.core '*agent*)
-                  (host/resolve-core '*agent*))]
-        (when v (reset! agent-var v))
-        v)))
+           (let [v (or (host/interned-var 'cohost.core '*agent*)
+                       (host/resolve-core '*agent*))]
+                (when v (reset! agent-var v))
+                v)))
 
 (defn- run-action
-  "Run one action against the agent's state; {:value v} or {:error e}.
+       "Run one action against the agent's state; {:value v} or {:error e}.
    The action's held sends are released either way."
-  [ag action]
-  (let [pending (atom [])
-        bindings (if-let [h (agent-var-handle)]
-                   (assoc (:bindings action) h ag)
-                   (:bindings action))
-        outcome (binding [*pending-sends* pending]
-                  (let [run (fn [] (apply (:f action) @(:state ag) (:args action)))]
-                    (host/try-all (fn [] {:value ((conveyed bindings run))})
-                                  (fn [e] {:error e}))))]
-    (release-held! @pending)
-    outcome))
+       [ag action]
+       (let [pending (atom [])
+             bindings (if-let [h (agent-var-handle)]
+                              (assoc (:bindings action) h ag)
+                              (:bindings action))
+             outcome (binding [*pending-sends* pending]
+                              (let [run (fn [] (apply (:f action) @(:state ag) (:args action)))]
+                                   (host/try-all (fn [] {:value ((conveyed bindings run))})
+                                                 (fn [e] {:error e}))))]
+            (release-held! @pending)
+            outcome))
 
 (defn- action-failed!
-  "Record an action's error; call the handler; in :fail mode stop the
+       "Record an action's error; call the handler; in :fail mode stop the
    agent (its queued actions wait for restart-agent). True to keep draining."
-  [ag error]
-  (swap! (:errors ag) conj error)
-  (let [ctl @(:ctl ag)]
-    (when-let [h (:handler ctl)]
-      (host/try-all (fn [] (h ag error))))
-    (if (= :fail (:mode ctl))
-      (do (swap! (:ctl ag) assoc :failed error :queued false) false)
-      true)))
+       [ag error]
+       (swap! (:errors ag) conj error)
+       (let [ctl @(:ctl ag)]
+            (when-let [h (:handler ctl)]
+                      (host/try-all (fn [] (h ag error))))
+            (if (= :fail (:mode ctl))
+                (do (swap! (:ctl ag) assoc :failed error :queued false) false)
+                true)))
 
 (defn- drain [ag ex]
-  (loop []
-    (let [action (claim! (:queue ag))]
-      (cond (nil? action)
-            (do (swap! (:ctl ag) assoc :queued false)
+       (loop []
+             (let [action (claim! (:queue ag))]
+                  (cond (nil? action)
+                        (do (swap! (:ctl ag) assoc :queued false)
                 ;; an enqueue between the empty claim and the flag clear
                 ;; saw :queued true and did not kick: kick for it
-                (when-not (q-empty? @(:queue ag)) (kick! ag)))
-            (:failed @(:ctl ag))
-            (swap! (:ctl ag) assoc :queued false)
-            :else
-            (let [{:keys [value error]} (run-action ag action)
-                  verdict (if error
-                            {:error error}
-                            (let [v (:validator @(:ctl ag))
-                                  check (when v
-                                          (host/try-all (fn [] (if (v value) :ok :invalid))
-                                                        (fn [e] e)))]
-                              (cond (nil? check) {:value value}
-                                    (= :ok check) {:value value}
-                                    (= :invalid check)
-                                    {:error (host/ex* 'java.lang.IllegalStateException
-                                                      "Invalid reference state" nil)}
-                                    :else {:error check})))]
-              (if (:error verdict)
-                (when (action-failed! ag (:error verdict)) (recur))
-                (do (reset! (:state ag) (:value verdict))
+                            (when-not (q-empty? @(:queue ag)) (kick! ag)))
+                        (:failed @(:ctl ag))
+                        (swap! (:ctl ag) assoc :queued false)
+                        :else
+                        (let [{:keys [value error]} (run-action ag action)
+                              verdict (if error
+                                          {:error error}
+                                          (let [v (:validator @(:ctl ag))
+                                                check (when v
+                                                            (host/try-all (fn [] (if (v value) :ok :invalid))
+                                                                          (fn [e] e)))]
+                                               (cond (nil? check) {:value value}
+                                                     (= :ok check) {:value value}
+                                                     (= :invalid check)
+                                                     {:error (host/ex* 'java.lang.IllegalStateException
+                                                                       "Invalid reference state" nil)}
+                                                     :else {:error check})))]
+                             (if (:error verdict)
+                                 (when (action-failed! ag (:error verdict)) (recur))
+                                 (do (reset! (:state ag) (:value verdict))
                     ;; hand off when the next action names another executor
-                    (let [nxt (q-peek @(:queue ag))]
-                      (if (and nxt (:executor nxt) (not (identical? (:executor nxt) ex)))
-                        (do (swap! (:ctl ag) assoc :queued false) (kick! ag))
-                        (recur))))))))))
+                                     (let [nxt (q-peek @(:queue ag))]
+                                          (if (and nxt (:executor nxt) (not (identical? (:executor nxt) ex)))
+                                              (do (swap! (:ctl ag) assoc :queued false) (kick! ag))
+                                              (recur))))))))))
 
 (defn dispatch!
-  "The send machinery: capture the caller's bindings, hold the action
+      "The send machinery: capture the caller's bindings, hold the action
    when the caller is itself running an action, else enqueue it."
-  [ag f args ex]
-  (when (:shutdown @registry)
-    (throw (host/ex* 'java.lang.IllegalStateException
-                     "cohost: agents are shut down" nil)))
-  (when (:failed @(:ctl ag))
-    (throw (host/ex* 'java.lang.IllegalStateException "Agent is failed" nil)))
-  (let [action {:ag ag :f f :args args :bindings (capture-bindings) :executor ex}]
-    (if *pending-sends*
-      (swap! *pending-sends* conj action)
-      (enqueue-action! ag action))
-    ag))
+      [ag f args ex]
+      (when (:shutdown @registry)
+            (throw (host/ex* 'java.lang.IllegalStateException
+                             "cohost: agents are shut down" nil)))
+      (when (:failed @(:ctl ag))
+            (throw (host/ex* 'java.lang.IllegalStateException "Agent is failed" nil)))
+      (let [action {:ag ag :f f :args args :bindings (capture-bindings) :executor ex}]
+           (if *pending-sends*
+               (swap! *pending-sends* conj action)
+               (enqueue-action! ag action))
+           ag))
 
 (defn await1
-  "Enqueue the latch action behind everything already queued on ag;
+      "Enqueue the latch action behind everything already queued on ag;
    the latch (stock returns a java.util.concurrent.CountDownLatch)."
-  [ag]
-  (let [l (new-latch 1)]
-    (enqueue-action! ag {:ag ag
-                         :f (fn [s] (count-down l) s)
-                         :args []
-                         :bindings nil
-                         :executor (send-executor)})
-    l))
+      [ag]
+      (let [l (new-latch 1)]
+           (enqueue-action! ag {:ag ag
+                                :f (fn [s] (count-down l) s)
+                                :args []
+                                :bindings nil
+                                :executor (send-executor)})
+           l))
 
 (defn shutdown-agents []
-  (swap! registry assoc :shutdown true)
-  (doseq [ex [(:send-executor @registry) (:send-off-executor @registry)] :when ex]
-    (shutdown-executor! ex))
-  nil)
+      (swap! registry assoc :shutdown true)
+      (doseq [ex [(:send-executor @registry) (:send-off-executor @registry)] :when ex]
+             (shutdown-executor! ex))
+      nil)
 
 (defn agent-state
-  "An agent's current state: what deref of the agent reads."
-  [ag]
-  @(:state ag))
+      "An agent's current state: what deref of the agent reads."
+      [ag]
+      @(:state ag))
 
 (defn agent-error [ag] (:failed @(:ctl ag)))
 (defn agent-errors [ag] @(:errors ag))
 
 (defn clear-agent-errors [ag]
-  (when (:failed @(:ctl ag))
-    (throw (host/ex* 'java.lang.IllegalStateException
-                     "agent is failed; use restart-agent" nil)))
-  (reset! (:errors ag) [])
-  ag)
+      (when (:failed @(:ctl ag))
+            (throw (host/ex* 'java.lang.IllegalStateException
+                             "agent is failed; use restart-agent" nil)))
+      (reset! (:errors ag) [])
+      ag)
 
 (defn restart-agent [ag new-state clear-actions?]
-  (when-not (:failed @(:ctl ag))
-    (throw (host/ex* 'java.lang.IllegalStateException "Agent is not failed" nil)))
-  (when-let [v (:validator @(:ctl ag))]
-    (when-not (v new-state)
-      (throw (host/ex* 'java.lang.IllegalStateException "Invalid reference state" nil))))
-  (reset! (:state ag) new-state)
-  (reset! (:errors ag) [])
-  (swap! (:ctl ag) assoc :failed nil)
-  (when clear-actions? (reset! (:queue ag) (empty-queue)))
-  (when-not (q-empty? @(:queue ag)) (kick! ag))
-  ag)
+      (when-not (:failed @(:ctl ag))
+                (throw (host/ex* 'java.lang.IllegalStateException "Agent is not failed" nil)))
+      (when-let [v (:validator @(:ctl ag))]
+                (when-not (v new-state)
+                          (throw (host/ex* 'java.lang.IllegalStateException "Invalid reference state" nil))))
+      (reset! (:state ag) new-state)
+      (reset! (:errors ag) [])
+      (swap! (:ctl ag) assoc :failed nil)
+      (when clear-actions? (reset! (:queue ag) (empty-queue)))
+      (when-not (q-empty? @(:queue ag)) (kick! ag))
+      ag)
 
 (defn set-error-mode! [ag mode]
-  (when-not (contains? #{:fail :continue} mode)
-    (throw (host/ex* 'java.lang.IllegalArgumentException
-                     (str "error-mode must be :fail or :continue, was " mode) nil)))
-  (swap! (:ctl ag) assoc :mode mode)
-  ag)
+      (when-not (contains? #{:fail :continue} mode)
+                (throw (host/ex* 'java.lang.IllegalArgumentException
+                                 (str "error-mode must be :fail or :continue, was " mode) nil)))
+      (swap! (:ctl ag) assoc :mode mode)
+      ag)
 
 (defn error-mode [ag] (:mode @(:ctl ag)))
 (defn set-error-handler! [ag h] (swap! (:ctl ag) assoc :handler h) ag)
@@ -841,23 +841,23 @@
 ;; pmap / pcalls / pvalues over layer futures
 
 (defn pmap*
-  "clojure.core/pmap in the layer's shape: futures started over the
+      "clojure.core/pmap in the layer's shape: futures started over the
    colls, results derefed in order, the future window bounded by the
    pool size + 2 as stock bounds it by the processor count + 2."
-  [f & colls]
-  (let [n (+ 2 (:size (send-executor)))
-        rets (apply map (fn [& xs]
+      [f & colls]
+      (let [n (+ 2 (:size (send-executor)))
+            rets (apply map (fn [& xs]
                           ;; form-carrying (unit 8): f crosses by its var's
                           ;; name, xs as values, where the seat has realms
-                          (future-form-call 'user '(fn [f xs] (apply f xs)) [f xs]
-                                            (fn [] (apply f xs))))
-                    colls)
-        step (fn step [vs fs]
-               (lazy-seq
-                (if-let [s (seq fs)]
-                  (cons (deref-future (first vs)) (step (rest vs) (rest s)))
-                  (map deref-future vs))))]
-    (step rets (drop n rets))))
+                                (future-form-call 'user '(fn [f xs] (apply f xs)) [f xs]
+                                                  (fn [] (apply f xs))))
+                        colls)
+            step (fn step [vs fs]
+                     (lazy-seq
+                      (if-let [s (seq fs)]
+                              (cons (deref-future (first vs)) (step (rest vs) (rest s)))
+                              (map deref-future vs))))]
+           (step rets (drop n rets))))
 
 (defn pcalls* [& fns] (pmap* (fn [f] (f)) fns))
 
@@ -867,73 +867,73 @@
 ;; during the stock boot, then filled from here)
 
 (defn- free-locals
-  "The locals of a macro env that body names (eve.thread's free-locals,
+       "The locals of a macro env that body names (eve.thread's free-locals,
    cljs-thread's leaf-symbol analysis), for a ClojureScript compiler's
    env (:locals) and an env whose keys are the locals."
-  [env body]
-  (let [syms (set (filter symbol? (tree-seq coll? seq body)))
-        ks (if (map? (:locals env)) (keys (:locals env)) (when (map? env) (keys env)))]
-    (vec (distinct (filter (fn [k] (and (symbol? k) (nil? (namespace k)) (contains? syms k))) ks)))))
+       [env body]
+       (let [syms (set (filter symbol? (tree-seq coll? seq body)))
+             ks (if (map? (:locals env)) (keys (:locals env)) (when (map? env) (keys env)))]
+            (vec (distinct (filter (fn [k] (and (symbol? k) (nil? (namespace k)) (contains? syms k))) ks)))))
 
 (defn- future-macro [_form env & body]
-  (if (host/capability :realm-submit)
+       (if (host/capability :realm-submit)
     ;; unit 8: the form travels with the closure (future-form-call)
-    (let [ls (free-locals env body)
-          ns-sym (or (when (map? (:ns env)) (:name (:ns env))) (symbol "user"))]
-      (list 'cohost.realm/future-form-call
-            (list 'quote ns-sym)
-            (list 'quote (list 'fn ls (cons 'do body)))
-            ls
-            (cons 'fn (cons [] body))))
-    (list 'cohost.core/future-call (cons 'fn (cons [] body)))))
+           (let [ls (free-locals env body)
+                 ns-sym (or (when (map? (:ns env)) (:name (:ns env))) (symbol "user"))]
+                (list 'cohost.realm/future-form-call
+                      (list 'quote ns-sym)
+                      (list 'quote (list 'fn ls (cons 'do body)))
+                      ls
+                      (cons 'fn (cons [] body))))
+           (list 'cohost.core/future-call (cons 'fn (cons [] body)))))
 
 (defn- pvalues-macro [_form _env & exprs]
-  (cons 'cohost.core/pcalls (map (fn [e] (list 'fn [] e)) exprs)))
+       (cons 'cohost.core/pcalls (map (fn [e] (list 'fn [] e)) exprs)))
 
 (defn build-core-impls
-  "The thread fills, name -> impl fn; boot interns them into cohost.core.
+      "The thread fills, name -> impl fn; boot interns them into cohost.core.
    Built by a call: on :clje a top-level def's value is embedded as a
    literal by the loader, and a map holding anonymous fns is not one
    (the same rule as cohost.adapter's defaults table)."
-  []
-  {'promise new-promise
-   'deliver deliver-promise
-   'future-call future-call
-   'future-done? future-done?
-   'future-cancel future-cancel
-   'future-cancelled? future-cancelled?
-   'future? future-value?
-   'agent (fn [state & {:keys [meta validator error-handler error-mode]}]
-            (let [ag (new-agent state {:validator validator
-                                       :error-handler error-handler
-                                       :error-mode error-mode})]
-              (if meta (with-meta ag meta) ag)))
-   'send (fn [ag f & args] (dispatch! ag f args (send-executor)))
-   'send-off (fn [ag f & args] (dispatch! ag f args (send-off-executor)))
-   'send-via (fn [ex ag f & args] (dispatch! ag f args ex))
-   'set-agent-send-executor! (fn [ex] (set-send-executor! ex) nil)
-   'set-agent-send-off-executor! (fn [ex] (set-send-off-executor! ex) nil)
-   'release-pending-sends release-pending-sends
-   'agent-error agent-error
-   'restart-agent (fn [ag new-state & {:keys [clear-actions] :or {clear-actions true}}]
-                    (restart-agent ag new-state clear-actions))
-   'set-error-handler! set-error-handler!
-   'error-handler error-handler
-   'set-error-mode! set-error-mode!
-   'error-mode error-mode
-   'agent-errors agent-errors
-   'clear-agent-errors clear-agent-errors
-   'shutdown-agents shutdown-agents
-   'await (fn [& agents] (doseq [l (map await1 agents)] (await-latch l)) nil)
-   'await-for (fn [timeout-ms & agents]
-                (let [latches (mapv await1 agents)]
-                  (loop [ls latches]
-                    (cond (empty? ls) true
-                          (await-latch (first ls) timeout-ms) (recur (rest ls))
-                          :else false))))
-   'await1 await1
-   'pmap pmap*
-   'pcalls pcalls*})
+      []
+      {'promise new-promise
+       'deliver deliver-promise
+       'future-call future-call
+       'future-done? future-done?
+       'future-cancel future-cancel
+       'future-cancelled? future-cancelled?
+       'future? future-value?
+       'agent (fn [state & {:keys [meta validator error-handler error-mode]}]
+                  (let [ag (new-agent state {:validator validator
+                                             :error-handler error-handler
+                                             :error-mode error-mode})]
+                       (if meta (with-meta ag meta) ag)))
+       'send (fn [ag f & args] (dispatch! ag f args (send-executor)))
+       'send-off (fn [ag f & args] (dispatch! ag f args (send-off-executor)))
+       'send-via (fn [ex ag f & args] (dispatch! ag f args ex))
+       'set-agent-send-executor! (fn [ex] (set-send-executor! ex) nil)
+       'set-agent-send-off-executor! (fn [ex] (set-send-off-executor! ex) nil)
+       'release-pending-sends release-pending-sends
+       'agent-error agent-error
+       'restart-agent (fn [ag new-state & {:keys [clear-actions] :or {clear-actions true}}]
+                          (restart-agent ag new-state clear-actions))
+       'set-error-handler! set-error-handler!
+       'error-handler error-handler
+       'set-error-mode! set-error-mode!
+       'error-mode error-mode
+       'agent-errors agent-errors
+       'clear-agent-errors clear-agent-errors
+       'shutdown-agents shutdown-agents
+       'await (fn [& agents] (doseq [l (map await1 agents)] (await-latch l)) nil)
+       'await-for (fn [timeout-ms & agents]
+                      (let [latches (mapv await1 agents)]
+                           (loop [ls latches]
+                                 (cond (empty? ls) true
+                                       (await-latch (first ls) timeout-ms) (recur (rest ls))
+                                       :else false))))
+       'await1 await1
+       'pmap pmap*
+       'pcalls pcalls*})
 
 ;; On :clje the var root cannot be the table (see build-core-impls);
 ;; it stays nil there and boot's interning doseq is the call site
@@ -942,6 +942,6 @@
    :default (def core-impls (build-core-impls)))
 
 (def core-macros
-  "The fill's macros, name -> macro fn; boot marks them after interning."
-  {'future future-macro
-   'pvalues pvalues-macro})
+     "The fill's macros, name -> macro fn; boot marks them after interning."
+     {'future future-macro
+      'pvalues pvalues-macro})

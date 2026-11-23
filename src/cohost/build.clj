@@ -28,63 +28,63 @@
 ;;          to run it; rebuilt when stale (its build state: target/<name>/cohost-build)
 ;;   other  "build: not yet on <target>"
 (ns cohost.build
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.java.shell :as sh]
-            [clojure.string :as str]))
+    (:require [clojure.edn :as edn]
+              [clojure.java.io :as io]
+              [clojure.java.shell :as sh]
+              [clojure.string :as str]))
 
 (defn- cohost-home
-  "The cohost checkout: COHOST_HOME (bin/cohost exports it), else the
+       "The cohost checkout: COHOST_HOME (bin/cohost exports it), else the
    directory this file was loaded from."
-  []
-  (or (System/getenv "COHOST_HOME")
-      (some-> (io/resource "cohost/build.clj") io/file .getParentFile .getParentFile .getParentFile str)))
+       []
+       (or (System/getenv "COHOST_HOME")
+           (some-> (io/resource "cohost/build.clj") io/file .getParentFile .getParentFile .getParentFile str)))
 
 (defn- project-target [opts]
-  (let [f (io/file "deps.edn")
-        t (or (:target opts)
-              (when (.exists f) (:cohost/target (edn/read-string {:default tagged-literal} (slurp f))))
-              :jank)]
-    (keyword (str/replace (name t) #"^:" ""))))
+       (let [f (io/file "deps.edn")
+             t (or (:target opts)
+                   (when (.exists f) (:cohost/target (edn/read-string {:default tagged-literal} (slurp f))))
+                   :jank)]
+            (keyword (str/replace (name t) #"^:" ""))))
 
 (defn- build-api [sym] (requiring-resolve (symbol "clojure.tools.build.api" (name sym))))
 
 (declare write-run!)
 
 (defn- jvm-uber [{:keys [main name] :as _opts}]
-  (let [basis ((build-api 'create-basis) {:project "deps.edn"})
-        class-dir "target/classes"
-        jar (str "target/" name "/" name ".jar")]
-    ((build-api 'delete) {:path "target"})
-    ((build-api 'copy-dir) {:src-dirs (:paths basis) :target-dir class-dir})
-    ((build-api 'compile-clj) {:basis basis :class-dir class-dir :ns-compile [main]})
-    ((build-api 'uber) {:class-dir class-dir :uber-file jar :basis basis :main 'clojure.main})
-    ((build-api 'delete) {:path class-dir})
-    (write-run! (str "target/" name)
-                (str "#!/bin/sh\n# run [args...]: " main "'s -main (made by cohost.build)\n"
-                     "exec java -jar \"$(cd \"$(dirname \"$0\")\" && pwd)/" name ".jar\" -m " main " \"$@\"\n"))))
+       (let [basis ((build-api 'create-basis) {:project "deps.edn"})
+             class-dir "target/classes"
+             jar (str "target/" name "/" name ".jar")]
+            ((build-api 'delete) {:path "target"})
+            ((build-api 'copy-dir) {:src-dirs (:paths basis) :target-dir class-dir})
+            ((build-api 'compile-clj) {:basis basis :class-dir class-dir :ns-compile [main]})
+            ((build-api 'uber) {:class-dir class-dir :uber-file jar :basis basis :main 'clojure.main})
+            ((build-api 'delete) {:path class-dir})
+            (write-run! (str "target/" name)
+                        (str "#!/bin/sh\n# run [args...]: " main "'s -main (made by cohost.build)\n"
+                             "exec java -jar \"$(cd \"$(dirname \"$0\")\" && pwd)/" name ".jar\" -m " main " \"$@\"\n"))))
 
 (defn- sh! [dir & cmd]
-  (let [r (apply sh/sh (concat cmd [:dir dir]))]
-    (when-not (zero? (:exit r))
-      (throw (ex-info (str "build: " (str/join " " cmd) " failed") {:out (:out r) :err (:err r)})))
-    (:out r)))
+       (let [r (apply sh/sh (concat cmd [:dir dir]))]
+            (when-not (zero? (:exit r))
+                      (throw (ex-info (str "build: " (str/join " " cmd) " failed") {:out (:out r) :err (:err r)})))
+            (:out r)))
 
 (defn- copy-tree!
-  "Copy a directory's files, keeping their modification times: a host's
+       "Copy a directory's files, keeping their modification times: a host's
    bytecode cache (basilisp's .lpyc) is checked against its source's mtime."
-  [from to]
-  (doseq [f (file-seq (io/file from)) :when (.isFile f)]
-    (let [rel (subs (.getPath f) (inc (count (.getPath (io/file from)))))
-          out (io/file to rel)]
-      (io/make-parents out)
-      (java.nio.file.Files/copy (.toPath f) (.toPath out)
-                                (into-array java.nio.file.CopyOption
-                                            [java.nio.file.StandardCopyOption/REPLACE_EXISTING
-                                             java.nio.file.StandardCopyOption/COPY_ATTRIBUTES])))))
+       [from to]
+       (doseq [f (file-seq (io/file from)) :when (.isFile f)]
+              (let [rel (subs (.getPath f) (inc (count (.getPath (io/file from)))))
+                    out (io/file to rel)]
+                   (io/make-parents out)
+                   (java.nio.file.Files/copy (.toPath f) (.toPath out)
+                                             (into-array java.nio.file.CopyOption
+                                                         [java.nio.file.StandardCopyOption/REPLACE_EXISTING
+                                                          java.nio.file.StandardCopyOption/COPY_ATTRIBUTES])))))
 
 (def ^:private run-js
-  "// run.js: node run.js args... -> the project's -main on cohost's ClojureScript host
+     "// run.js: node run.js args... -> the project's -main on cohost's ClojureScript host
 const fs = require('fs'), os = require('os'), path = require('path'), cp = require('child_process');
 const here = __dirname;
 const meta = JSON.parse(fs.readFileSync(path.join(here, 'bundle.json'), 'utf8'));
@@ -92,7 +92,7 @@ const s = x => JSON.stringify(x);
 const edn = '{:stock-root ' + s(path.join(here, 'stock')) +
   ' :roots [' + meta.roots.map(r => s(path.join(here, r))).join(' ') + ']' +
   ' :cwd ' + s(process.cwd()) +
-  ' :args ["-m" ' + s(meta.main) + ' ' + process.argv.slice(2).map(s).join(' ') + ']}';
+  ' :args [" -m " ' + s(meta.main) + ' ' + process.argv.slice(2).map(s).join(' ') + ']}';
 const cfg = path.join(os.tmpdir(), 'cohost-run-' + process.pid + '.edn');
 fs.writeFileSync(cfg, edn);
 const r = cp.spawnSync('node', [path.join('target', 'cljs-cli', 'main.js'), cfg], {cwd: here, stdio: 'inherit'});
@@ -101,16 +101,16 @@ process.exit(r.status === null ? 1 : r.status);
 ")
 
 (defn- cljs-bundle [{:keys [main name]}]
-  (let [home (cohost-home)
-        out (io/file "target" name)
+       (let [home (cohost-home)
+             out (io/file "target" name)
         ;; the source roots, resolved as `cohost :cljs` resolves them (jars extracted)
-        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":cljs" "-Spath")) #":")
+             roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":cljs" "-Spath")) #":")
         ;; cohost's ClojureScript host build is a cohost.aot artifact in
         ;; the shared cache (bin/cohost's ensure-cljs-build!);
         ;; -Sbuild-dir ensures it and prints its directory
-        built (str/trim (sh! "." (str home "/bin/cohost") ":cljs" "-Sbuild-dir"))]
-    (sh! "." "rm" "-rf" (str out))
-    (copy-tree! built (io/file out "target/cljs-cli"))
+             built (str/trim (sh! "." (str home "/bin/cohost") ":cljs" "-Sbuild-dir"))]
+            (sh! "." "rm" "-rf" (str out))
+            (copy-tree! built (io/file out "target/cljs-cli"))
     ;; The copied bootstrap recorded the artifact dir relative to the
     ;; cohost repo (bin/cohost's launch cwd); in the bundle the same
     ;; tree sits at target/cljs-cli under the bundle's own cwd, and
@@ -118,171 +118,171 @@ process.exit(r.status === null ? 1 : r.status);
     ;; recorded string occurs only in main.js (its two bootstrap
     ;; requires); if it is absent, the bootstrap's shape changed and
     ;; the bundle would break silently, so refuse.
-    (let [main-js (io/file out "target/cljs-cli/main.js")
-          recorded (str (.relativize (.toPath (.getCanonicalFile (io/file home)))
-                                      (.toPath (.getCanonicalFile (io/file built)))))
-          s (slurp main-js)]
-      (when-not (str/includes? s recorded)
-        (throw (ex-info (str "build: the cljs bootstrap does not record " recorded
-                             " — its shape changed; the bundle cannot re-record it")
-                        {:built built})))
-      (spit main-js (str/replace s recorded "target/cljs-cli")))
-    (copy-tree! (str home "/resources/cohost/clojure-1.12.0") (io/file out "stock"))
-    (let [names (map-indexed (fn [i r] (str "roots/" i "-" (.getName (io/file r)))) roots)]
-      (doseq [[r n] (map vector roots names)] (copy-tree! r (io/file out n)))
-      (spit (io/file out "bundle.json")
-            (str "{\"main\": " (pr-str (str main)) ", \"roots\": [" (str/join ", " (map pr-str names)) "]}")))
-    (spit (io/file out "run.js") run-js)
-    (write-run! out "#!/bin/sh\n# run [args...] (made by cohost.build)\nexec node \"$(cd \"$(dirname \"$0\")\" && pwd)/run.js\" \"$@\"\n")))
+            (let [main-js (io/file out "target/cljs-cli/main.js")
+                  recorded (str (.relativize (.toPath (.getCanonicalFile (io/file home)))
+                                             (.toPath (.getCanonicalFile (io/file built)))))
+                  s (slurp main-js)]
+                 (when-not (str/includes? s recorded)
+                           (throw (ex-info (str "build: the cljs bootstrap does not record " recorded
+                                                " — its shape changed; the bundle cannot re-record it")
+                                           {:built built})))
+                 (spit main-js (str/replace s recorded "target/cljs-cli")))
+            (copy-tree! (str home "/resources/cohost/clojure-1.12.0") (io/file out "stock"))
+            (let [names (map-indexed (fn [i r] (str "roots/" i "-" (.getName (io/file r)))) roots)]
+                 (doseq [[r n] (map vector roots names)] (copy-tree! r (io/file out n)))
+                 (spit (io/file out "bundle.json")
+                       (str "{\"main\": " (pr-str (str main)) ", \"roots\": [" (str/join ", " (map pr-str names)) "]}")))
+            (spit (io/file out "run.js") run-js)
+            (write-run! out "#!/bin/sh\n# run [args...] (made by cohost.build)\nexec node \"$(cd \"$(dirname \"$0\")\" && pwd)/run.js\" \"$@\"\n")))
 
 (defn- bundle-sources!
-  "Copy the stock sources and the project's source roots (as `cohost :<t>
+       "Copy the stock sources and the project's source roots (as `cohost :<t>
    -Spath` resolves them: jars extracted) into out; -> the roots' paths
    relative to out."
-  [home t out]
-  (let [roots (str/split (str/trim (sh! "." (str home "/bin/cohost") (str ":" (name t)) "-Spath")) #":")
-        names (map-indexed (fn [i r] (str "roots/" i "-" (.getName (io/file r)))) roots)]
-    (copy-tree! (str home "/resources/cohost/clojure-1.12.0") (io/file out "stock"))
-    (doseq [[r n] (map vector roots names)] (copy-tree! r (io/file out n)))
-    names))
+       [home t out]
+       (let [roots (str/split (str/trim (sh! "." (str home "/bin/cohost") (str ":" (name t)) "-Spath")) #":")
+             names (map-indexed (fn [i r] (str "roots/" i "-" (.getName (io/file r)))) roots)]
+            (copy-tree! (str home "/resources/cohost/clojure-1.12.0") (io/file out "stock"))
+            (doseq [[r n] (map vector roots names)] (copy-tree! r (io/file out n)))
+            names))
 
 (defn- launcher
-  "The bundle's `run`: writes the config cohost.cli reads (absolute paths
+       "The bundle's `run`: writes the config cohost.cli reads (absolute paths
    from its own directory, the arguments as EDN strings) and runs launch,
    a shell command line ending in the config path."
-  [main roots launch & [extra-cfg]]
-  (str "#!/bin/sh\n"
-       "# run [args...]: " main "'s -main on cohost (made by cohost.build)\n"
-       "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
-       "q() { printf '\"%s\"' \"$(printf '%s' \"$1\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\"; }\n"
-       "args=''; for a in \"$@\"; do args=\"$args $(q \"$a\")\"; done\n"
-       "roots=''; for r in " (str/join " " roots) "; do roots=\"$roots $(q \"$here/$r\")\"; done\n"
-       "cfg=$(mktemp \"${TMPDIR:-/tmp}/cohost-run-XXXXXX\")\n"
-       "printf '{:stock-root %s :roots [%s] :cwd %s :args [\"-m\" %s%s]" (or extra-cfg "") "}' "
-       "\"$(q \"$here/stock\")\" \"$roots\" \"$(q \"$PWD\")\" \"$(q " (pr-str (str main)) ")\" \"$args\" > \"$cfg\"\n"
-       launch " \"$cfg\"\n"
-       "code=$?\nrm -f \"$cfg\"\nexit $code\n"))
+       [main roots launch & [extra-cfg]]
+       (str "#!/bin/sh\n"
+            "# run [args...]: " main "'s -main on cohost (made by cohost.build)\n"
+            "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
+            "q() { printf '\"%s\"' \"$(printf '%s' \"$1\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\"; }\n"
+            "args=''; for a in \"$@\"; do args=\"$args $(q \"$a\")\"; done\n"
+            "roots=''; for r in " (str/join " " roots) "; do roots=\"$roots $(q \"$here/$r\")\"; done\n"
+            "cfg=$(mktemp \"${TMPDIR:-/tmp}/cohost-run-XXXXXX\")\n"
+            "printf '{:stock-root %s :roots [%s] :cwd %s :args [\"-m\" %s%s]" (or extra-cfg "") "}' "
+            "\"$(q \"$here/stock\")\" \"$roots\" \"$(q \"$PWD\")\" \"$(q " (pr-str (str main)) ")\" \"$args\" > \"$cfg\"\n"
+            launch " \"$cfg\"\n"
+            "code=$?\nrm -f \"$cfg\"\nexit $code\n"))
 
 (defn- write-run! [out text]
-  (let [f (io/file out "run")]
-    (spit f text)
-    (.setExecutable f true false)
-    (str f)))
+       (let [f (io/file out "run")]
+            (spit f text)
+            (.setExecutable f true false)
+            (str f)))
 
 (def ^:private script-launch
   ;; as bin/cohost launches each host, from the bundle's copy of cohost
-  {:cljw "cljw -cp \"$here/cohost/src\" -m cohost.cli"
-   :lg "lg -source-paths \"$here/cohost/src\" \"$here/cohost/dev/lg_cli.lg\""
-   :lpy "basilisp run -p \"$here/cohost/src\" -c \"(require 'cohost.cli) (cohost.cli/-main \\\"$cfg\\\")\" #"
+     {:cljw "cljw -cp \"$here/cohost/src\" -m cohost.cli"
+      :lg "lg -source-paths \"$here/cohost/src\" \"$here/cohost/dev/lg_cli.lg\""
+      :lpy "basilisp run -p \"$here/cohost/src\" -c \"(require 'cohost.cli) (cohost.cli/-main \\\"$cfg\\\")\" #"
    ;; Phel reads phel-config.php from its working directory; cohost.cli moves to :cwd
-   :phel "cd \"$here/cohost\" && phel run dev/phel_cli.phel"})
+      :phel "cd \"$here/cohost\" && phel run dev/phel_cli.phel"})
 
 (defn- script-bundle [t {:keys [main name]}]
-  (let [home (cohost-home)
-        out (io/file "target" name)]
-    (sh! "." "rm" "-rf" (str out))
-    (let [roots (bundle-sources! home t out)]
-      (copy-tree! (str home "/src") (io/file out "cohost/src"))
-      (doseq [f ["dev/lg_cli.lg" "dev/phel_cli.phel" "phel-config.php"]]
-        (io/make-parents (io/file out "cohost" f))
-        (io/copy (io/file home f) (io/file out "cohost" f)))
-      (write-run! out (launcher main roots (script-launch t))))))
+       (let [home (cohost-home)
+             out (io/file "target" name)]
+            (sh! "." "rm" "-rf" (str out))
+            (let [roots (bundle-sources! home t out)]
+                 (copy-tree! (str home "/src") (io/file out "cohost/src"))
+                 (doseq [f ["dev/lg_cli.lg" "dev/phel_cli.phel" "phel-config.php"]]
+                        (io/make-parents (io/file out "cohost" f))
+                        (io/copy (io/file home f) (io/file out "cohost" f)))
+                 (write-run! out (launcher main roots (script-launch t))))))
 
 (defn- lpy-native
-  "basilisp's own compiled form: the booted core's cached boot (lane D's D-6:
+       "basilisp's own compiled form: the booted core's cached boot (lane D's D-6:
    the recorded boot emitted as .lpy modules, with the .lpyc bytecode basilisp
    compiled for them) ships in the bundle, and run boots from it, as
    `cohost :lpy` does, instead of from Clojure's source."
-  [{:keys [main name]}]
-  (let [home (cohost-home)
-        out (io/file "target" name)
-        r (sh! home "bb" "-e" "(load-file \"dev/perf/lpy_snapshot_ensure.clj\") (println \"LPY-SRC\" ((resolve (quote lpy-ensure!))))")
-        snap (some #(second (re-matches #"LPY-SRC (.+)" %)) (str/split-lines r))]
-    (when-not snap (throw (ex-info "build: basilisp's cached boot did not build" {:out r})))
-    (sh! "." "rm" "-rf" (str out))
-    (let [roots (bundle-sources! home :lpy out)]
-      (copy-tree! (str home "/src") (io/file out "cohost/src"))
-      (copy-tree! (str (io/file home snap)) (io/file out "cohost/snapshot"))
-      (write-run! out (launcher main roots
-                                (str "basilisp run -p \"$here/cohost/snapshot\" -p \"$here/cohost/src\""
-                                     " -c \"(require 'cohost.cli) (cohost.cli/-main \\\"$cfg\\\")\" #")
-                                " :snapshot? true")))))
+       [{:keys [main name]}]
+       (let [home (cohost-home)
+             out (io/file "target" name)
+             r (sh! home "bb" "-e" "(load-file \"dev/perf/lpy_snapshot_ensure.clj\") (println \"LPY-SRC\" ((resolve (quote lpy-ensure!))))")
+             snap (some #(second (re-matches #"LPY-SRC (.+)" %)) (str/split-lines r))]
+            (when-not snap (throw (ex-info "build: basilisp's cached boot did not build" {:out r})))
+            (sh! "." "rm" "-rf" (str out))
+            (let [roots (bundle-sources! home :lpy out)]
+                 (copy-tree! (str home "/src") (io/file out "cohost/src"))
+                 (copy-tree! (str (io/file home snap)) (io/file out "cohost/snapshot"))
+                 (write-run! out (launcher main roots
+                                           (str "basilisp run -p \"$here/cohost/snapshot\" -p \"$here/cohost/src\""
+                                                " -c \"(require 'cohost.cli) (cohost.cli/-main \\\"$cfg\\\")\" #")
+                                           " :snapshot? true")))))
 
 (defn- record-and-emit!
-  "Record a boot on host t with the app's source roots and main namespace
+       "Record a boot on host t with the app's source roots and main namespace
    (dev/perf/snapshot_record.cljc), and emit it as t's modules under
    work/src, cohost.app-main among them (boot from them, call main's -main).
    cmd: the host command that runs a script with cohost's src on its path,
    as a vector ending where the script goes."
-  [home t main work record-cmd]
-  (let [events (str (io/file work "events.edn"))
-        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") (str ":" (name t)) "-Spath")) #":")]
-    (apply sh! home (concat (record-cmd "dev/perf/snapshot_record.cljc")
-                            ["--out" events] (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
-    (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" (name t) "--events" events
-         "--out" (str (io/file work "src")) "--main" (str main))
-    (str (io/file work "src"))))
+       [home t main work record-cmd]
+       (let [events (str (io/file work "events.edn"))
+             roots (str/split (str/trim (sh! "." (str home "/bin/cohost") (str ":" (name t)) "-Spath")) #":")]
+            (apply sh! home (concat (record-cmd "dev/perf/snapshot_record.cljc")
+                                    ["--out" events] (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
+            (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" (name t) "--events" events
+                 "--out" (str (io/file work "src")) "--main" (str main))
+            (str (io/file work "src"))))
 
 (defn- cljw-snapshot
-  "ClojureWasm: its native binary (`cljw build`) refuses cohost's code
+       "ClojureWasm: its native binary (`cljw build`) refuses cohost's code
    (UnsupportedValueTag), so the artifact ships the recorded boot as cljw
    modules (the core, the libraries, the app) and runs cohost.app-main from
    them: no boot from Clojure's source."
-  [{:keys [main name]}]
-  (let [home (cohost-home)
-        out (io/file "target" name)
-        work (.getCanonicalFile (io/file "target" "cohost-cljw-build"))]
-    (sh! "." "rm" "-rf" (str out) (str work))
-    (.mkdirs work)
-    (let [src (record-and-emit! home :cljw main work (fn [script] ["cljw" script "-cp" "src"]))]
-      (copy-tree! src (io/file out "snapshot"))
-      (copy-tree! (str home "/src") (io/file out "cohost/src")))
-    (sh! "." "rm" "-rf" (str work))
-    (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main on cohost (made by cohost.build)\n"
-                         "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
-                         "exec cljw -cp \"$here/snapshot:$here/cohost/src\" -m cohost.app-main \"$@\"\n"))))
+       [{:keys [main name]}]
+       (let [home (cohost-home)
+             out (io/file "target" name)
+             work (.getCanonicalFile (io/file "target" "cohost-cljw-build"))]
+            (sh! "." "rm" "-rf" (str out) (str work))
+            (.mkdirs work)
+            (let [src (record-and-emit! home :cljw main work (fn [script] ["cljw" script "-cp" "src"]))]
+                 (copy-tree! src (io/file out "snapshot"))
+                 (copy-tree! (str home "/src") (io/file out "cohost/src")))
+            (sh! "." "rm" "-rf" (str work))
+            (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main on cohost (made by cohost.build)\n"
+                                 "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
+                                 "exec cljw -cp \"$here/snapshot:$here/cohost/src\" -m cohost.app-main \"$@\"\n"))))
 
 (defn- jolt-native
-  "jolt's own AOT: the booted core, the libraries and the app's namespaces,
+       "jolt's own AOT: the booted core, the libraries and the app's namespaces,
    recorded on jolt (dev/perf/snapshot_record.cljc), emitted as jolt modules
    (dev/perf/jank_snapshot_emit.clj --host jolt --main: cohost.app-main boots
    from them and calls the app's -main) and compiled by `jolt build` (release
    mode: direct-linked, whole-program inference) into one native binary,
    target/<name>/run. Nothing is read from source at run time; jolt is not
    needed to run it."
-  [{:keys [main name]}]
-  (let [home (cohost-home)
-        out (io/file "target" name)
-        work (.getCanonicalFile (io/file "target" "cohost-jolt-build"))
-        events (str (io/file work "events.edn"))
+       [{:keys [main name]}]
+       (let [home (cohost-home)
+             out (io/file "target" name)
+             work (.getCanonicalFile (io/file "target" "cohost-jolt-build"))
+             events (str (io/file work "events.edn"))
         ;; the source roots, resolved as `cohost :jolt` resolves them (jars extracted)
-        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jolt" "-Spath")) #":")]
-    (sh! "." "rm" "-rf" (str out) (str work))
-    (.mkdirs work)
-    (apply sh! home "jolt" "-Scp" "src" "dev/perf/snapshot_record.cljc" "--" "--out" events
-           (concat (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
-    (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "jolt" "--events" events
-         "--out" (str (io/file work "src")) "--main" (str main))
+             roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jolt" "-Spath")) #":")]
+            (sh! "." "rm" "-rf" (str out) (str work))
+            (.mkdirs work)
+            (apply sh! home "jolt" "-Scp" "src" "dev/perf/snapshot_record.cljc" "--" "--out" events
+                   (concat (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
+            (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "jolt" "--events" events
+                 "--out" (str (io/file work "src")) "--main" (str main))
     ;; jolt build reads deps.edn :paths (its -Scp is not honored by build)
-    (spit (io/file work "deps.edn") (pr-str {:paths [(str (io/file work "src")) (str home "/src")]}))
-    (sh! (str work) "jolt" "build" "-m" "cohost.app-main" "-o" "run")
-    (.mkdirs out)
-    (io/copy (io/file work "run") (io/file out "run"))
-    (.setExecutable (io/file out "run") true false)
-    (sh! "." "rm" "-rf" (str work))
-    (str out "/run")))
+            (spit (io/file work "deps.edn") (pr-str {:paths [(str (io/file work "src")) (str home "/src")]}))
+            (sh! (str work) "jolt" "build" "-m" "cohost.app-main" "-o" "run")
+            (.mkdirs out)
+            (io/copy (io/file work "run") (io/file out "run"))
+            (.setExecutable (io/file out "run") true false)
+            (sh! "." "rm" "-rf" (str work))
+            (str out "/run")))
 
 (defn- phel-runtime
-  "[php phar] from the phel on PATH (dev/install/phel.sh writes it as
+       "[php phar] from the phel on PATH (dev/install/phel.sh writes it as
    `exec <php> <phel.phar> \"$@\"`)."
-  []
-  (let [w (str/trim (sh! "." "sh" "-c" "command -v phel"))
-        [_ php phar] (re-find #"exec\s+(\S+)\s+(\S+\.phar)" (slurp w))]
-    (when-not phar (throw (ex-info (str "build: cannot find phel.phar in " w) {})))
-    [php phar]))
+       []
+       (let [w (str/trim (sh! "." "sh" "-c" "command -v phel"))
+             [_ php phar] (re-find #"exec\s+(\S+)\s+(\S+\.phar)" (slurp w))]
+            (when-not phar (throw (ex-info (str "build: cannot find phel.phar in " w) {})))
+            [php phar]))
 
 (def ^:private phel-config
-  "<?php
+     "<?php
 // written by cohost.build: the modules cohost.app-main reaches, compiled by phel build
 ini_set('precision', '-1');
 use Phel\\Config\\PhelConfig;
@@ -294,7 +294,7 @@ return PhelConfig::forProject(ProjectLayout::Flat)
 ")
 
 (def ^:private phel-run-php
-  "<?php
+     "<?php
 // run.php args...: the app's -main, from the compiled modules (made by cohost.build)
 ini_set('precision', '-1');
 require 'phar://' . __DIR__ . '/phel.phar/vendor/autoload.php';
@@ -308,7 +308,7 @@ require_once __DIR__ . '/out/cohost/app_main.php';
 ")
 
 (defn- phel-native
-  "Phel's own AOT: the booted core, the libraries and the app's namespaces,
+       "Phel's own AOT: the booted core, the libraries and the app's namespaces,
    recorded on Phel (dev/phel_snapshot_record.phel), emitted as Phel modules
    (--host phel --main: cohost.app-main boots from them and calls the app's
    -main), and the namespaces cohost.app-main reaches compiled to PHP by
@@ -321,79 +321,79 @@ require_once __DIR__ . '/out/cohost/app_main.php';
    - -O 0: -O 2 does not finish on these modules (doc/AOT-PLAN.md).
    - PHP's stack: 1 GB for run (only what is used is touched): freeing a
      million-element lazy seq recurses in PHP, past 64 MB; 8 MB segfaults sooner."
-  [{:keys [main name]}]
-  (let [home (cohost-home)
-        out (io/file "target" name)
-        work (.getCanonicalFile (io/file "target" "cohost-phel-build"))
-        events (str (io/file work "events.edn"))
-        modules (str (io/file work "modules"))
-        [php phar] (phel-runtime)
-        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":phel" "-Spath")) #":")
-        big-stack (fn [& cmd] (apply sh! (str work) "bash" "-c" (str "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec \"$@\"") "phel-build" cmd))]
-    (sh! "." "rm" "-rf" (str out) (str work))
-    (.mkdirs work)
+       [{:keys [main name]}]
+       (let [home (cohost-home)
+             out (io/file "target" name)
+             work (.getCanonicalFile (io/file "target" "cohost-phel-build"))
+             events (str (io/file work "events.edn"))
+             modules (str (io/file work "modules"))
+             [php phar] (phel-runtime)
+             roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":phel" "-Spath")) #":")
+             big-stack (fn [& cmd] (apply sh! (str work) "bash" "-c" (str "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec \"$@\"") "phel-build" cmd))]
+            (sh! "." "rm" "-rf" (str out) (str work))
+            (.mkdirs work)
     ;; record from the checkout: its phel-config.php lists src
-    (apply sh! home "bash" "-c" "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec phel run dev/phel_snapshot_record.phel \"$@\"" "phel-record"
-           "--out" events (concat (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
-    (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "phel" "--events" events "--out" modules "--main" (str main))
-    (let [closure (sh! home "bb" "dev/perf/phel_closure.clj" "cohost.app-main" modules (str home "/src"))]
-      (doseq [[_ f] (map #(str/split % #" " 2) (str/split-lines (str/trim closure)))]
-        (let [rel (cond (str/starts-with? f modules) (subs f (inc (count modules)))
-                        :else (subs f (inc (count (str home "/src")))))]
-          (io/make-parents (io/file work "closure" rel))
-          (io/copy (io/file f) (io/file work "closure" rel)))))
-    (io/copy (io/file home "src/cohost/hosts/phel_host.php") (io/file work "closure/cohost/hosts/phel_host.php"))
-    (spit (io/file work "phel-config.php") phel-config)
-    (big-stack php phar "build" "--no-cache" "-O" "0")
-    (.mkdirs out)
-    (copy-tree! (io/file work "out") (io/file out "out"))
-    (doseq [f (file-seq (io/file out "out")) :when (.isFile f)]
-      (cond (str/ends-with? (.getName f) ".phel") (.delete f)
-            (str/ends-with? (.getName f) ".php")
-            (let [t (slurp f)]
-              (when (str/starts-with? t "<?php declare(strict_types=1);\n")
-                (spit f (str "<?php\n" (subs t (count "<?php declare(strict_types=1);\n"))))))))
-    (io/copy (io/file home "src/cohost/hosts/phel_host.php") (io/file out "out/cohost/hosts/phel_host.php"))
-    (io/copy (io/file phar) (io/file out "phel.phar"))
-    (spit (io/file out "run.php") phel-run-php)
-    (sh! "." "rm" "-rf" (str work))
-    (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main, Phel compiled to PHP (made by cohost.build)\n"
-                         "ulimit -s 1048576 2>/dev/null\n"
-                         "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
+            (apply sh! home "bash" "-c" "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec phel run dev/phel_snapshot_record.phel \"$@\"" "phel-record"
+                   "--out" events (concat (mapcat (fn [r] ["--root" r]) roots) ["--lib" (str main)]))
+            (sh! home "bb" "dev/perf/jank_snapshot_emit.clj" "--host" "phel" "--events" events "--out" modules "--main" (str main))
+            (let [closure (sh! home "bb" "dev/perf/phel_closure.clj" "cohost.app-main" modules (str home "/src"))]
+                 (doseq [[_ f] (map #(str/split % #" " 2) (str/split-lines (str/trim closure)))]
+                        (let [rel (cond (str/starts-with? f modules) (subs f (inc (count modules)))
+                                        :else (subs f (inc (count (str home "/src")))))]
+                             (io/make-parents (io/file work "closure" rel))
+                             (io/copy (io/file f) (io/file work "closure" rel)))))
+            (io/copy (io/file home "src/cohost/hosts/phel_host.php") (io/file work "closure/cohost/hosts/phel_host.php"))
+            (spit (io/file work "phel-config.php") phel-config)
+            (big-stack php phar "build" "--no-cache" "-O" "0")
+            (.mkdirs out)
+            (copy-tree! (io/file work "out") (io/file out "out"))
+            (doseq [f (file-seq (io/file out "out")) :when (.isFile f)]
+                   (cond (str/ends-with? (.getName f) ".phel") (.delete f)
+                         (str/ends-with? (.getName f) ".php")
+                         (let [t (slurp f)]
+                              (when (str/starts-with? t "<?php declare(strict_types=1);\n")
+                                    (spit f (str "<?php\n" (subs t (count "<?php declare(strict_types=1);\n"))))))))
+            (io/copy (io/file home "src/cohost/hosts/phel_host.php") (io/file out "out/cohost/hosts/phel_host.php"))
+            (io/copy (io/file phar) (io/file out "phel.phar"))
+            (spit (io/file out "run.php") phel-run-php)
+            (sh! "." "rm" "-rf" (str work))
+            (write-run! out (str "#!/bin/sh\n# run [args...]: " main "'s -main, Phel compiled to PHP (made by cohost.build)\n"
+                                 "ulimit -s 1048576 2>/dev/null\n"
+                                 "here=$(cd \"$(dirname \"$0\")\" && pwd)\n"
                          ;; OPcache's file cache (filled by the first run) and the tracing JIT;
                          ;; PHP ignores them where OPcache is not installed
-                         "mkdir -p \"$here/.opcache\" 2>/dev/null\n"
-                         "exec " php " -d opcache.enable_cli=1 -d opcache.file_cache=\"$here/.opcache\" -d opcache.file_cache_only=1"
-                         " -d opcache.jit=tracing -d opcache.jit_buffer_size=64M \"$here/run.php\" \"$@\"\n"))))
+                                 "mkdir -p \"$here/.opcache\" 2>/dev/null\n"
+                                 "exec " php " -d opcache.enable_cli=1 -d opcache.file_cache=\"$here/.opcache\" -d opcache.file_cache_only=1"
+                                 " -d opcache.jit=tracing -d opcache.jit_buffer_size=64M \"$here/run.php\" \"$@\"\n"))))
 
 (defn- jank-exe [{:keys [main name]}]
-  (let [home (cohost-home)
+       (let [home (cohost-home)
         ;; the source roots, resolved as `cohost :jank` resolves them (jars extracted)
-        roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jank" "-Spath")) #":")
-        build! (requiring-resolve 'cohost.build-jank/build!)]
-    (build! {:repo home :project (.getCanonicalPath (io/file ".")) :roots roots
-             :main main :name "run" :target (str "target/" name)})
-    (str "target/" name "/run")))
+             roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jank" "-Spath")) #":")
+             build! (requiring-resolve 'cohost.build-jank/build!)]
+            (build! {:repo home :project (.getCanonicalPath (io/file ".")) :roots roots
+                     :main main :name "run" :target (str "target/" name)})
+            (str "target/" name "/run")))
 
 (defn build
-  "Build the project for its target. opts: :main (the -main namespace, a
+      "Build the project for its target. opts: :main (the -main namespace, a
    symbol), :name (default: the directory's name), :target (default:
    :cohost/target in deps.edn, else :jvm)."
-  [opts]
-  (let [opts (merge {:name (.getName (.getCanonicalFile (io/file ".")))} opts)
-        t (project-target opts)]
-    (when-not (:main opts) (throw (ex-info "build: :main (the -main namespace) is required" {})))
-    (let [run (case t
-      :jvm (jvm-uber opts)
-      :cljs (cljs-bundle opts)
-      :jolt (jolt-native opts)
-      :lpy (lpy-native opts)
-      :cljw (cljw-snapshot opts)
-      :lg (script-bundle t opts)
-      :phel (phel-native opts)
-      :jank (jank-exe opts)
-      (do (println (str "build: not yet on " t))
-          (throw (ex-info (str "build: not yet on " t) {:target t}))))]
+      [opts]
+      (let [opts (merge {:name (.getName (.getCanonicalFile (io/file ".")))} opts)
+            t (project-target opts)]
+           (when-not (:main opts) (throw (ex-info "build: :main (the -main namespace) is required" {})))
+           (let [run (case t
+                           :jvm (jvm-uber opts)
+                           :cljs (cljs-bundle opts)
+                           :jolt (jolt-native opts)
+                           :lpy (lpy-native opts)
+                           :cljw (cljw-snapshot opts)
+                           :lg (script-bundle t opts)
+                           :phel (phel-native opts)
+                           :jank (jank-exe opts)
+                           (do (println (str "build: not yet on " t))
+                               (throw (ex-info (str "build: not yet on " t) {:target t}))))]
       ;; every target's artifact: target/<name>/run args... runs -main
-      (println (str "build: " run))
-      run)))
+                (println (str "build: " run))
+                run)))
