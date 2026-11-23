@@ -1711,8 +1711,7 @@
              cpp-clauses (when (host/cpp?) (filter #(contains? #{:include :refer-global} (first %)) clauses))
              rc (some #(when (= :refer-clojure (first %)) (apply hash-map (rest %))) clauses)]
             (host/ensure-bare-ns! target)
-            #?(:cljs nil
-               :default (when (seq ns-meta)
+            #?(:default (when (seq ns-meta)
                               (host/try-all (fn [] (alter-meta! (host/the-ns* target) merge ns-meta)))))
             (swap! (:loader-nses (ctx)) conj (str target))
             (refer-core! target (or rc {}))

@@ -658,15 +658,15 @@
           (let [b (read-byte! in)]
                (if (neg? b)
                    [-1 []]
-                   (loop [out [b]]
-                         (let [st @(state-of in) p @(:pipe st) pos (:pos st)
-                               avail (- (count (:bytes p)) pos)]
-                              (if (and (pos? avail) (< (count out) len))
-                                  (let [take (min avail (- len (count out)))]
-                                       (swap! (state-of in) update :pos + take)
-                                       [(+ (count out) take)
-                                        (into out (subvec (:bytes p) pos (+ pos take)))])
-                                  [(count out) out])))))
+                   (let [out [b]
+                         st @(state-of in) p @(:pipe st) pos (:pos st)
+                         avail (- (count (:bytes p)) pos)]
+                        (if (and (pos? avail) (< (count out) len))
+                            (let [take (min avail (- len (count out)))]
+                                 (swap! (state-of in) update :pos + take)
+                                 [(+ (count out) take)
+                                  (into out (subvec (:bytes p) pos (+ pos take)))])
+                            [(count out) out]))))
           (read-bytes-whole! in len)))
 
 (defn- read-bytes-whole!
@@ -1158,7 +1158,9 @@
       "The writer's accumulated text. On the JVM a StringWriter's buffer is
    `.toString` of the StringBuilder on the record, no atom deref."
       [w]
-      (if-let [sb (string-builder-under w)]
+      ;; string-builder-under is nil off the JVM seat by design (its
+      ;; :default arm is nil): the else branch is the live one there.
+      (if-let [sb #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w)]
               #?(:clj (.toString ^StringBuilder sb) :default (text-buf-str sb))
               (let [st @(writer-state-atom w)]
                    (if (:out st)
@@ -1173,7 +1175,7 @@
       "Object.toString of a layer writer: a StringWriter's text, else the
    class's name and an identity hash, as the JVM's."
       [w]
-      (if-let [sb (string-builder-under w)]
+      (if-let [sb #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w)]
               #?(:clj (.toString ^StringBuilder sb) :default (text-buf-str sb))
               (if (is? ::string-writer w)
                   (written-text w)
@@ -1684,16 +1686,13 @@
       "Write the platform newline to w. Layer writers use append-text!;
    anything else (pretty-writer, a real java.io.Writer) uses .append."
       [w]
-      #?(:clj
-         (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
-             (append-text! w system-newline)
-             (.append ^java.lang.Appendable w (str system-newline)))
-         :default nil)
-      nil)
+      #?(:clj (do (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+                      (append-text! w system-newline)
+                      (.append ^java.lang.Appendable w (str system-newline))) nil) :default nil))
 
 (defn flush-writer! [w]
   ;; A JVM StringWriter with its buffer on `under` has no state atom.
-      (if (string-builder-under w)
+      (if #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w)
           nil
           (let [st @(state-of w)]
                (cond (= ::sink (:cohost/kind w))
@@ -1710,13 +1709,10 @@
       "Flush w without re-reading *out*. Layer writers use flush-writer!;
    a java.io.Flushable gets .flush; anything else is a no-op."
       [w]
-      #?(:clj
-         (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
-             (flush-writer! w)
-             (when (instance? java.io.Flushable w)
-                   (.flush ^java.io.Flushable w)))
-         :default nil)
-      nil)
+      #?(:clj (do (if (or (instance? WriterValue w) (instance? BufferedWriterValue w))
+                      (flush-writer! w)
+                      (when (instance? java.io.Flushable w)
+                            (.flush ^java.io.Flushable w))) nil) :default nil))
 
 (defn pr-on-any!
       "Host pr-on of x onto an already-read writer w. Print flags are
@@ -1724,20 +1720,17 @@
    binding inside print-method / print-sequential changes the frame,
    so the next call sees the new values. *out* is not reread."
       [x w]
-      #?(:clj
-         (let [^objects snap (snapshot-print-flags)]
-              (if (aget snap 1)
-                  (let [^clojure.lang.Var pdf (aget ^objects print-vs 9)]
-                       ((.deref pdf) x w))
-                  (fast-pr-on! x w
-                               (aget snap 2)
-                               (aget snap 3)
-                               (aget snap 4)
-                               (aget snap 5)
-                               (aget snap 6)
-                               fallback-print-method)))
-         :default nil)
-      nil)
+      #?(:clj (do (let [^objects snap (snapshot-print-flags)]
+                       (if (aget snap 1)
+                           (let [^clojure.lang.Var pdf (aget ^objects print-vs 9)]
+                                ((.deref pdf) x w))
+                           (fast-pr-on! x w
+                                        (aget snap 2)
+                                        (aget snap 3)
+                                        (aget snap 4)
+                                        (aget snap 5)
+                                        (aget snap 6)
+                                        fallback-print-method))) nil) :default nil))
 
 (defn- current-out
        ^Object []
@@ -1798,7 +1791,7 @@
            nil))
 
 (defn close-writer! [w]
-      (if (string-builder-under w)
+      (if #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w)
           nil
           (when-not (:closed? @(state-of w))
                     (flush-writer! w)

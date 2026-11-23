@@ -1428,9 +1428,12 @@
   ;; (ClojureScript's ns-unmap is a compile-time macro: its locals stay)
      (let [unmap #?(:cljs nil :default (host-fn 'ns-unmap nil))]
           (fn []
-              (when (and unmap (pos? @live-locals))
+              ;; unmap is nil-bound on the cljs pass by design (see the
+              ;; let above): the when is the live check on seats whose
+              ;; host provides ns-unmap, a no-op where it does not.
+              (when #_{:clj-kondo/ignore [:constant-condition]} (and unmap (pos? @live-locals))
                     (let [left (reduce (fn [n [sym v]]
-                                           (if (host/var-thread-bound? v) (inc n) (do (unmap @locals-ns sym) n)))
+                                           (if (host/var-thread-bound? v) (inc n) (do #_{:clj-kondo/ignore [:type-mismatch]} (unmap @locals-ns sym) n)))
                                        0 (seq (host/ns-interns-map @locals-ns)))]
                          (reset! live-locals left))))))
 (def Var-popThreadBindings
@@ -2400,7 +2403,10 @@
                       (let [b (ubyte bs i) left (- end i)]
                            (cond
                             (< b 0x80)
-                            (do (conj! out (char-str b)) (recur (inc i)))
+                            ;; out is the loop's transient accumulator, mutated in place;
+                            ;; conj! returns the same transient, so the
+                            ;; discarded return is the design.
+                            #_{:clj-kondo/ignore [:unused-value]} (do (conj! out (char-str b)) (recur (inc i)))
                             (<= 0xC2 b 0xDF)
                             (if (and (>= left 2) (cont-byte? (ubyte bs (inc i))))
                                 (do (emit-cp! out (+ (bit-shift-left (bit-and b 0x1F) 6)
@@ -2484,7 +2490,8 @@
                          (<= 0xDC00 u 0xDFFF)
                          (do (emit-replacement! out) (recur (+ i 2)))
                          :else
-                         (do (conj! out (char-str u)) (recur (+ i 2)))))))))
+                         ;; same transient-accumulator idiom as the decoder above.
+                         #_{:clj-kondo/ignore [:unused-value]} (do (conj! out (char-str u)) (recur (+ i 2)))))))))
 (defn- decode-bytes
        "bs[off, off+len) decoded in the canonical charset cs-name."
        [bs off len cs-name]

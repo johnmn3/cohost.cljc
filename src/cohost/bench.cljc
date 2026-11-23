@@ -89,8 +89,7 @@
   ;; self-hosted ClojureScript: declared from cljs.user, as the adapter declares
   ;; its own namespaces, with the $macros companion its eval aliases each new
   ;; def into
-       #?(:cljs (host/with-ns 'cljs.user (fn [] (host/eval-form (list 'ns (symbol (str host-ns "$macros"))))))
-          :default nil)
+       #?(:cljs (host/with-ns 'cljs.user (fn [] (host/eval-form (list 'ns (symbol (str host-ns "$macros")))))))
        (host/with-ns #?(:cljs 'cljs.user :default (host/core-ns-sym))
                      (fn [] (host/eval-form (list 'ns host-ns (apply list :require requires)))))
   ;; A namespace the host's own ns form creates refers the host's core.

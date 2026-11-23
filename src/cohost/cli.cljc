@@ -72,8 +72,7 @@
     ;; finds its files from the process's directory, Phel its config): the
     ;; project directory travels in the config
                      #?(:cljs (when (:cwd cfg) (js/process.chdir (:cwd cfg)))
-                        :phel (when (:cwd cfg) (php/chdir (:cwd cfg)))
-                        :default nil)
+                        :phel (when (:cwd cfg) (php/chdir (:cwd cfg))))
     ;; :snapshot? -- the launcher found a fresh snapshot of the booted core on
     ;; the module path (jank: bin/cohost through dev/perf/jank_snapshot_cli.clj)
                      (let [report (if (:snapshot? cfg)
