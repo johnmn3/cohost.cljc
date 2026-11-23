@@ -34,9 +34,14 @@ cannot run Splint) · CLJ_CONFIG=/home/hatch/workspace/eve-env/cljconfig.
       .clj-kondo/config.edn, .splint.edn, AGENTS.md verbatim); fleet bb
       tasks merged into bb.edn adapted to src/ paths; kondo cache
       generated over the real classpath (clojure -Spath -M:eve).
-- [ ] 2. Census (kondo / Splint / Carve / cljfmt) — own vs vendored
-      counted separately → CENSUS.md.
-- [ ] 3. Baseline gate before formatting: bb boot:jvm + repo tests.
+- [x] 2. Census (kondo / Splint / Carve / cljfmt) — own vs vendored
+      counted separately → CENSUS.md (own: kondo 214, Splint 1,546,
+      Carve 962, cljfmt 52/52; vendored: kondo 540, Splint 2,502,
+      Carve 383, cljfmt 53/53, exclude-with-reason proposal written).
+- [x] 3. Baseline gate before formatting: bb boot:jvm GREEN at the
+      untouched tree — boot line "595 stock / 181 host / 66 natives /
+      69 skipped / 0 errors", battery 221/221, libraries 62/62 across
+      12 clojure.* libraries, exit 0 (boot-baseline.log).
 - [ ] 4. Format pass over own sources, own commit; gate again.
 - [ ] 5. Fix campaign by rule class, pipeline edits, gate per batch.
 - [ ] 6. Gates on: bb lint exit 0 (5 legs incl. dprint), pre-commit
