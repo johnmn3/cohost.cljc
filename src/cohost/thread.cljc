@@ -563,9 +563,11 @@
        "The executor's booted sister state, booting on first use."
        [ex]
        (or @(:realm ex)
-           (locking (:realm ex)
-                    (or @(:realm ex)
-                        (reset! (:realm ex) ((:boot! (:sister ex)) (:boot-opts ex)))))))
+           ;; double-checked locking on the executor's realm atom:
+           ;; the atom is the executor's stable lock object.
+           #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:realm ex)
+                                                                     (or @(:realm ex)
+                                                                         (reset! (:realm ex) ((:boot! (:sister ex)) (:boot-opts ex)))))))
 
 (defn submit-form
       "Run `form` in namespace `ns-sym` inside the runtime executor ex's

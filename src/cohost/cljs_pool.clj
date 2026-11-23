@@ -78,8 +78,10 @@
                        (bc/boot! ctx opts)
                        {:realm ctx :lock (Object.)}))
        :eval-form (fn [state ns-sym form]
-                      (locking (:lock state)
-                               (form->data (:realm state) ns-sym form)))
+                      ;; the seat's one lock object, minted with the state in :boot!
+                      ;; above and shared by every call on this seat.
+                      #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:lock state)
+                                                                                (form->data (:realm state) ns-sym form)))
        :close! (fn [state] (.close ^Context (:realm state)))})
 
 ;; ---------------------------------------------------------------------------
@@ -222,8 +224,10 @@
                                                                (remove #{'eve.type-readers 'eve.flat.sister} nss)))))
                        {:realm realm :lock (Object.)}))
        :eval-form (fn [state ns-sym form]
-                      (locking (:lock state)
-                               (form->data (:realm state) ns-sym form)))
+                      ;; the seat's one lock object, minted with the state in :boot!
+                      ;; above and shared by every call on this seat.
+                      #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:lock state)
+                                                                                (form->data (:realm state) ns-sym form)))
        :close! (fn [state]
                    (try (.close (:out (:realm state))) (catch Throwable _ nil))
                    (try (.destroy ^Process (:proc (:realm state)))
@@ -796,8 +800,10 @@
                                (close-browser-state! {:channel channel :server server :browser browser})
                                (throw t)))))
        :eval-form (fn [state ns-sym form]
-                      (locking (:lock state)
-                               (form->data (:realm state) ns-sym form)))
+                      ;; the seat's one lock object, minted with the state in :boot!
+                      ;; above and shared by every call on this seat.
+                      #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:lock state)
+                                                                                (form->data (:realm state) ns-sym form)))
        :close! (fn [state] (close-browser-state! state))})
 
 ;; ---------------------------------------------------------------------------

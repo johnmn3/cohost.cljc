@@ -48,6 +48,10 @@
      the JVM seat does not route through the shim; unit 4's
      Eve-backed collections are where nested values meet this layer
      again."
+    ;; this namespace defines its own equiv and hasheq below (the
+    ;; seam's equality contract); the exclude is what makes those
+    ;; defs the referred ones.
+    #_{:clj-kondo/ignore [:unresolved-excluded-var]}
     (:refer-clojure :exclude [equiv hasheq]))
 
 (defn eve-value?

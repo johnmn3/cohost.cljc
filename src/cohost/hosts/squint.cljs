@@ -41,6 +41,10 @@
               ["node:fs" :as fs]
               ["squint-cljs/core.js" :as sqcore]
               ["squint-cljs" :as squint-compiler])
+    ;; read-string / ns-interns name capabilities in the adapter
+    ;; table below, not vars of this namespace; the exclude keeps
+    ;; cljs.core's vars of those names un-referred here.
+    #_{:clj-kondo/ignore [:unresolved-excluded-var :unused-excluded-var]}
     (:refer-clojure :exclude [read-string ns-interns]))
 
 ;; ---------------------------------------------------------------------
@@ -80,7 +84,6 @@
 (defn- var-value [ns-sym sym] (aget (ns-obj! ns-sym) (munge-name sym)))
 (defn- set-var-value! [ns-sym sym v] (aset (ns-obj! ns-sym) (munge-name sym) v))
 
-(defn- entry [ns-sym] (get @reg ns-sym))
 (defn- var-entry [ns-sym sym] (get-in @reg [ns-sym :vars sym]))
 
 (defn- ensure-ns!
@@ -830,10 +833,6 @@
 
 ;; ---------------------------------------------------------------------
 ;; chunk eval
-
-(defonce ^:private chunk-dir
-         (str (try (.-COHOST_SQUINT_CHUNKDIR js/process.env) (catch :default _ nil))
-              ""))
 
 (defn- compile-js [src]
   ;; compileString's return shape at the pin (0.16.213): the JS

@@ -20,7 +20,6 @@
    registry), hosted here the way cohost hosts Eve everywhere: the Eve
    names stay on this side of the wall, and the program's side is
    clojure-shaped throughout."
-    (:refer-clojure :exclude [swap!])
     (:require [clojure.core :as core]
               [eve.atom :as ea]
               [eve.deftype-proto.data :as ed]

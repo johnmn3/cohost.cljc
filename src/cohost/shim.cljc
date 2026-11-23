@@ -607,11 +607,19 @@
 ;; read once at load (as h-host-data? reads its capability below): the
 ;; guard on every RT-count/conj/nth/assoc and interface test must not pay
 ;; a capability map lookup plus a descriptor build per call
+;; Read by the :jank-gated predicates below (jank-impl?,
+;; cohost-inst?, jank-head?); kondo has no jank pass, so the
+;; uses are invisible to it.
+#_{:clj-kondo/ignore [:unused-private-var]}
 (def ^:private h-cohost-inst? (host/capability :cohost-inst?))
 
 ;; :instance-desc's capability fn, likewise read once: the descriptor
 ;; path itself stays for values that ARE instances (protocol dispatch),
 ;; and it must not pay the capability map lookup per call either
+;; Read by the :jank-gated predicates below (jank-impl?,
+;; cohost-inst?, jank-head?); kondo has no jank pass, so the
+;; uses are invisible to it.
+#_{:clj-kondo/ignore [:unused-private-var]}
 (def ^:private h-instance-desc (host/capability :instance-desc))
 
 #?(:jank (defn- jank-impl?
@@ -3190,7 +3198,7 @@
                            (if (or (< v lo) (> v hi)) (throw (nfe s radix)) v))))))
 (def ^:private lmin long-min-value)
 (def ^:private lmax 9223372036854775807)
-(defn- parse-long-strict [s] (parse-radix s 10 lmin lmax))
+
 (declare Math-pow)
 (defn- parse-hex-double [sign ip fp ex]
        (let [mant (reduce (fn [acc c] (Numbers-addP (Numbers-multiplyP acc 16) (digit-of c 16))) 0 (str ip fp))

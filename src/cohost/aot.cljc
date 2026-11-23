@@ -154,14 +154,6 @@
                     (io/delete-file f true))
           :bb  (fs/delete-tree f)))
 
-;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
-;; it); it has no cljs arm, so in kondo's cljs pass this def's
-;; #?-body reads empty and its params read unused.
-#_{:clj-kondo/ignore [:unused-binding]}
-(defn- rename [from to]
-       #?(:clj (.renameTo (io/file from) (io/file to))
-          :bb  (fs/move from to)))
-
 (defn ensure!
       "The artifact dir for a basis, compiling on first run whatever entries it lacks.
 

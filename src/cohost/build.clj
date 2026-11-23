@@ -329,7 +329,7 @@ require_once __DIR__ . '/out/cohost/app_main.php';
              modules (str (io/file work "modules"))
              [php phar] (phel-runtime)
              roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":phel" "-Spath")) #":")
-             big-stack (fn [& cmd] (apply sh! (str work) "bash" "-c" (str "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec \"$@\"") "phel-build" cmd))]
+             big-stack (fn [& cmd] (apply sh! (str work) "bash" "-c" "ulimit -s 65536 2>/dev/null || ulimit -s hard; exec \"$@\"" "phel-build" cmd))]
             (sh! "." "rm" "-rf" (str out) (str work))
             (.mkdirs work)
     ;; record from the checkout: its phel-config.php lists src

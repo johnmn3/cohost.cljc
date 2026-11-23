@@ -161,3 +161,30 @@ shim sites zero, unused-value 14 -> 8, loop-without-recur 2 -> 1.
   clean. Provenance: same tree/tools as defect #1; repro was the
   require itself, before (throws) and after (loads).
 - K3 boot gate GREEN (BOOT-K3-EXIT=0, baseline signature).
+
+## KONDO CAMPAIGN COMPLETE (Nov 23, ~3:05 AM ET)
+clj-kondo over src: 0 errors / 0 warnings / 0 infos (census was
+214: 80E/123W/11I). Batches K1-K8, every batch boot-gated green at
+the baseline signature (595/181/66/69/0, battery 221/221,
+libraries 62/62). Real defects found by the campaign so far:
+#1 shim http-member duplicate defs (-getPort/-getOutputStream/
+-getContextClassLoader kind tables shadowed; probe-proven),
+#2 cohost.build uncompilable (bare quotes in the run-js string),
+#3 squint qualify 4-arity call, #4 squint fn-walk nested?' never
+passed down. Dead private vars deleted with zero repo-wide uses
+(aot/rename, atom/unsupported-type-error?, squint/entry,
+squint/chunk-dir, io/append-buf-in-place!, shim/parse-long-strict).
+
+Kondo mechanism banked (minimal repro): a def whose VALUE is a
+reader conditional, used only inside reader-conditional arms,
+still draws unused-private-var — kondo 2026.10.26 does not credit
+the conditional use (repro: 4-line .cljc, def #?(:clj (System/..)
+:default "y") + use in a #?(:clj ..) arm -> flagged). io's
+system-newline/out-save/fallback-print-method carry ignores
+citing this. Also banked: :config-in does not govern
+redefined-var (ns-analysis emission); stacked #_ ignores do not
+compose — combine linters in ONE discard.
+
+REMAINING: Splint (1,546 own at census), Carve (962), step-6
+gates (dprint config+docs pass, .githooks/pre-commit, kondo cache
+refresh commit, fmt no-op proof), RETRO.md, push.

@@ -1072,20 +1072,6 @@
 (defn buffered-writer [w]
       (if (writer-value? w) (value ::buffered-writer (state-of w)) w))
 
-(defn- append-buf-in-place!
-       "Grow a buffer. On the JVM a StringBuilder is mutated in place so a
-  tight prn loop does not swap! a new state map on every write (the
-  remaining F1 print-loop tax after the str-concat fix: ARM6 was ~4x
-  native, ~7x when compared to a single native prn). Other hosts still
-  swap! a chunk vector and join once at read."
-       [state k t]
-       (let [s (str t)]
-            #?(:clj (let [buf (get @state k)]
-                         (if (instance? StringBuilder buf)
-                             (do (.append ^StringBuilder buf s) nil)
-                             (swap! state update k text-buf-append s)))
-               :default (swap! state update k text-buf-append s))))
-
 (defn- writer-state-atom
        "The writer's state atom. On the JVM a type-hinted field read avoids
    Keyword valAt on the record (WriterValue.valAt was a measurable leaf
@@ -1354,6 +1340,12 @@
                                 nil)))
          :default (do (fallback x w) nil)))
 
+;; Used from the :clj arms of the print machinery below. Kondo
+;; does not credit a use inside a reader conditional against a
+;; def whose value is itself a reader conditional (minimal repro
+;; in the syntax lane's STATUS.md), so the linter's unused-var
+;; warning for this def is a proven false positive.
+#_{:clj-kondo/ignore [:unused-private-var]}
 (def ^:private system-newline
      #?(:clj (or (System/getProperty "line.separator") "\n")
         :default "\n"))
@@ -1402,7 +1394,10 @@
            nil))
 
 ;; print-method: same booted-core var family as resolve-core-var.
-#_{:clj-kondo/ignore [:unresolved-symbol]}
+;; The unused-private-var warning is the same proven false
+;; positive as system-newline above: called from pr-on-any!'s
+;; :clj arm only.
+#_{:clj-kondo/ignore [:unresolved-symbol :unused-private-var]}
 (defn- fallback-print-method [x w]
        (let [f (aget ^objects print-vs 8)]
             (if f (f x w) (print-method x w))))
@@ -1638,6 +1633,12 @@
                          (.set ^ThreadLocal flag-snap snap)
                          snap))))))
 
+;; Used from the :clj arms of the print machinery below. Kondo
+;; does not credit a use inside a reader conditional against a
+;; def whose value is itself a reader conditional (minimal repro
+;; in the syntax lane's STATUS.md), so the linter's unused-var
+;; warning for this def is a proven false positive.
+#_{:clj-kondo/ignore [:unused-private-var]}
 (def ^:private out-save
      #?(:clj (ThreadLocal.)
         :default nil))

@@ -171,10 +171,6 @@
       (or (representable? v)
           (eve-typed? v)))
 
-(defn- unsupported-type-error? [e]
-       (let [m (host/error-message e)]
-            (and (string? m) (not (neg? (host/index-of m "unsupported type" 0))))))
-
 (defn- publish-refused-error?
        "Eve refused the publish: a type its codec cannot hold, or
    an Eve value from a different slab domain. Either way the
