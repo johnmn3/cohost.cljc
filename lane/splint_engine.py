@@ -495,6 +495,7 @@ DISABLE_NOTES = {
     'style/apply-str-interpose': 'shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string',
     'style/apply-str-reverse': 'shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string',
     'lint/fn-wrapper': 'the eta-expansion is load-bearing (late var resolution during staged boot, or a constructor, which is not a value here)',
+    'style/def-fn': 'the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here',
 }
 
 def main():

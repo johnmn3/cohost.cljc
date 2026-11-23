@@ -676,10 +676,9 @@
 ;; splint: prefer-method-values — the receivers here are host
 ;; values (polyglot/realm/Eve/SCI) whose class is not static in
 ;; this adapter; the (.method target) spelling is the honest one.
-#_{:splint/disable [lint/prefer-method-values]}
 ;; splint: the four branches differ by type hint on .-root, which
 ;; selects the field; they are not identical branches.
-#_{:splint/disable [lint/identical-branches]}
+#_{:splint/disable [lint/prefer-method-values lint/identical-branches]}
 (defn root-of
       "The bare Eve root of a seam value (bare or wrapped)."
       [x]

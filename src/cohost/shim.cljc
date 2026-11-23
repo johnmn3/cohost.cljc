@@ -16,6 +16,12 @@
 ;; from what it has (iterators, chunk buffers, class tokens, JVM exception
 ;; classes). A member missing here is reported, not papered over: the rewriter
 ;; emits `missing-*`, which throws when reached.
+;;
+;; Lint note (syntax formalization): the names in this file are the
+;; contract the rewrite maps to, so they keep their JVM spelling —
+;; every non-kebab-case def carries a #_{:splint/disable
+;; [naming/lisp-case]} at the def. Renaming a var here breaks the
+;; mirror, it does not tidy it.
 (ns cohost.shim
   ;; the shim asks the adapter for its capabilities as it loads: a host whose
   ;; loader orders a namespace's requires itself (Phel) installs it first
@@ -923,6 +929,8 @@
                 :default layer-conj))
 ;; on a :cohost-types host, count and nth of an instance are the
 ;; descriptor's (jank's own panic on an unknown type); the JVM's messages
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def RT-count #?(:jank (fn [x] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                        (if-let [f (:count d)] (f x)
                                                (throw (host/ex* 'java.lang.UnsupportedOperationException (str "count not supported on this type: " (:name d)))))
@@ -931,6 +939,8 @@
                                  ;; walks them), so a string counts by its seq
                                        (if (string? x) (count (seq x)) (count x))))
                  :default (fn [x] (if (transient-value? x) (memory/t-count x) (count x)))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def RT-nth #?(:jank (fn ([x i] (if-let [d (and (h-cohost-inst? x) (h-instance-desc x))]
                                         (if-let [f (:nth d)] (f x i)
                                                 (throw (host/ex* 'java.lang.UnsupportedOperationException (str "nth not supported on this type: " (:name d)))))
@@ -954,6 +964,8 @@
                                             :else (nth x i nf))))))
 ;; Phel's get reads any other object as a PHP array, which throws: the JVM's
 ;; get answers not-found for what is no lookup
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def RT-get
      #?(:phel (let [lookup? (fn [m] (or (not (php/is_object m)) (php/is_a m "ArrayAccess") (set? m) (seq? m)
                                         (php/is_a m "Phel\\Lang\\Collections\\HashSet\\TransientHashSetInterface")))]
@@ -967,6 +979,8 @@
                                      :else (get m k nf))))))
 ;; a record on Phel is a struct, which holds its fields alone: a key outside
 ;; them makes a map of its fields and that key (on the JVM, a record still)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def ^:private assoc*
      #?(:phel (fn [m k v] (if (and (host-record? m) (not (contains? m k))) (assoc (into {} (seq m)) k v) (assoc m k v)))
      ;; a cohost type instance: jank's assoc panics on its type
@@ -984,6 +998,8 @@
                                    (memory/eve-backed? m) (memory/assoc-checked m k v)
                                    :else (assoc m k v)))))
 (def RT-assoc assoc*)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def RT-dissoc #?(:jank (fn [m & ks] (if-let [d (and (h-cohost-inst? m) (h-instance-desc m))]
                                              (if-let [f (:dissoc d)] (reduce f m ks)
                                                      (throw (host/ex* 'java.lang.ClassCastException (str "class " (:name d) " cannot be cast to class clojure.lang.IPersistentMap"))))
@@ -993,12 +1009,16 @@
                                                              (str "class " (memory/transient-class-token m)
                                                                   " cannot be cast to class clojure.lang.IPersistentMap")))
                                             (apply dissoc m ks)))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def RT-contains #?(:jank (fn [coll k] (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                                                (some? (if-let [f (:find d)] (f coll k) (when-let [g (:get d)] (g coll k))))
                                                (contains? coll k)))
                     :default (fn [coll k] (cond (transient-value? coll) (memory/t-contains? coll k)
                                                 (memory/eve-backed? coll) (memory/lookup-contains? coll k)
                                                 :else (contains? coll k)))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def RT-find #?(:jank (fn [coll k] (if-let [d (and (h-cohost-inst? coll) (h-instance-desc coll))]
                                            (if-let [f (:find d)] (f coll k)
                                                    (when-let [g (:get d)] (let [v (g coll k ::absent)] (when (not= ::absent v) [k v]))))
@@ -1009,6 +1029,8 @@
 (def RT-keys keys)
 (def RT-vals vals)
 (defn RT-peek [x] (if (transient-value? x) (memory/t-peek x) (peek x)))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def RT-pop #?(:phel (fn [coll] (pop coll))
                :default (fn [coll] (if (transient-value? coll)
                                        (throw (host/ex* 'java.lang.ClassCastException
@@ -1023,12 +1045,15 @@
                             (if (memory/fill-on?)
                                 (memory/make-vector (if arr (first xs) xs))
                                 (if arr (vec (first xs)) (vec xs)))))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-toArray to-array*)
 ;; seqToTypedArray with a component type: the host's own typed array where
 ;; the host makes one and the type names a host class its elements are (the JVM seat: a varargs call such as stock main's
 ;; Files/createTempFile ... (into-array FileAttribute []) needs the
 ;; FileAttribute[] its signature names; an Object[] there is a
 ;; ClassCastException), else the shim's array
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [naming/lisp-case style/def-fn]}
 (def RT-seqToTypedArray
      (let [typed (host-fn 'into-array nil)]
           (fn ([s] (to-array* s))
@@ -1040,13 +1065,16 @@
                           (if (and c (every? (fn [x] (or (nil? x) (instance? c x))) s))
                               (typed c s)
                               (to-array* s)))))))
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-object_array [n-or-seq] (if (number? n-or-seq) (to-array* (repeat n-or-seq nil)) (to-array* n-or-seq)))
 (def RT-alength #?(:phel count :default (host-fn 'alength count))) ; (Phel's takes a PHP array)
 (def RT-aclone #?(:phel (fn [a] (to-array* (seq a))) :default (host-fn 'aclone (fn [a] (to-array (seq a))))))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-booleanCast boolean)
 ;; (int \\a) is the char's code; where chars are one-character strings the
 ;; host's int would parse the string instead
 (defn- char-aware [f] (fn [x] (if (h-char? x) (h-char-code x) (f x))))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-intCast #?(:jank (let [c (char-aware (host-fn 'int (fn [x] (int x))))]
                            ;; A5-2: jank's int keeps a long past i32 ((int 2147483648) is
                            ;; 2147483648); RT.intCast throws, as the JVM's does: a long is
@@ -1058,11 +1086,17 @@
                                                           (host/ex* 'java.lang.IllegalArgumentException (str "Value out of range for int: " (if (and h-double-str (float? x)) (h-double-str x) x)))))
                                                r))))
                    :default (char-aware (host-fn 'int int))))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-longCast (char-aware (host-fn 'long (host-fn 'int identity))))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-doubleCast (host-fn 'double (host-fn 'float identity)))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-floatCast (host-fn 'float identity))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-charCast (host-fn 'char identity))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-byteCast (host-fn 'byte (host-fn 'int identity)))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-shortCast (host-fn 'short (host-fn 'int identity)))
 ;; (int) / (long) / (byte) / (short) of the JVM: a double truncates and
 ;; saturates (NaN is 0), an integer keeps its low bits
@@ -1071,48 +1105,65 @@
 (defn- int-bits [x] (cond (h-char? x) (h-char-code x)
                           (integer? x) x
                           :else (d2l (RT-doubleCast x) -2147483648 2147483647)))
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-uncheckedIntCast [x] (wrap32 (int-bits x)))
 (defn- char-cce [] (host/ex* 'java.lang.ClassCastException "class java.lang.Character cannot be cast to class java.lang.Number"))
 ;; Long/MIN_VALUE. A jank object turns the literal -9223372036854775808 into a
 ;; garbage double (doc/upstream/jank-10-aot-long-min-literal.md). Subtracting
 ;; one from the next long is the same value, and the object keeps it.
 (def ^:private long-min-value (dec -9223372036854775807))
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-uncheckedLongCast [x] (cond (h-char? x) (throw (char-cce))
                                      (integer? x) x
                                      :else (d2l (RT-doubleCast x) long-min-value 9223372036854775807)))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-uncheckedDoubleCast RT-doubleCast)
 
+#_{:splint/disable [naming/lisp-case]}
 (def RT-uncheckedFloatCast RT-floatCast)
+#_{:splint/disable [naming/lisp-case]}
 (def RT-uncheckedCharCast RT-charCast)
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-uncheckedByteCast [x] (when (h-char? x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 128) 255) 128))
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-uncheckedShortCast [x] (when (h-char? x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 32768) 65535) 32768))
 (declare matcher?)
 ;; RT.canSeq: seqs, colls, strings, nil, arrays; not the shim's iterator or
 ;; matcher (records here, but no Seqable on the JVM)
 (def ^:private h-seqable? (host-fn 'seqable? nil))
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-canSeq [x] (and (not (host/iter? x)) (not (matcher? x))
                          (or (host/seqable?* x) (arr? x) (host/mlist? x)
                                 ;; a Seqable or Iterable object of another type: the host's seqable?
                              (boolean (and h-seqable? (not (builtin? x)) (h-seqable? x))))))
 (defn RT-iter [coll] (if (host/iter? coll) coll (host/iter coll)))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-isReduced (host-fn 'reduced? (unsupported "reduced?")))
 (def ^:private id-counter (atom 0))
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-nextID [] (swap! id-counter inc))
 (def load-hook (atom nil))
 (defn RT-load [path & _] (if-let [f @load-hook] (f path) (throw (ex-info "cohost.shim: no loader bound" {:path path}))))
 ;; the host's read-string when it has one; else the adapter's reader (a host
 ;; with no read-string of its own, like ClojureScript, still reads)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [naming/lisp-case style/def-fn]}
 (def RT-readString (let [rs (host-fn 'read-string nil)]
                         (fn ([s] (if rs (rs s) (host/read-string* s {})))
                             ([s opts] (if rs (rs opts s) (host/read-string* s opts))))))
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-baseLoader [] nil)
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-addURL [& _] nil)
 ;; RT.chunkIteratorSeq: nil for an exhausted iterator (so `(sequence xf [])`
 ;; is `()` and `iterator-seq` of nothing is nil), else a lazy seq over it
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [naming/lisp-case style/def-fn]}
 (def RT-chunkIteratorSeq
      (fn chunk-iterator-seq [it]
          (when (host/iter-has-next? it)
                (host/lazy-seq* (fn [] (cons (host/iter-next! it) (chunk-iterator-seq it)))))))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-printString pr-str)
 
 ;; ---------------------------------------------------------------------------
@@ -1123,6 +1174,7 @@
 #?(:jank (def ^:private jank-int-arith
               (fn [nm] (some-> (resolve (symbol "cohost.hosts.jank-host" nm)) var-get))))
 (def Numbers-add #?(:jank (or (jank-int-arith "num-add") +) :default +))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-addP (host-fn '+' +))
 ;; on jank the wrapper IS the host's - with an extra hop: it checks
 ;; nothing (the host's - throws on nil and on a non-number, as the JVM's
@@ -1132,10 +1184,14 @@
 ;; max/min stay: jank's min answers the number for (min 1 ##NaN) where
 ;; the JVM's static answers NaN. (A5: where unpatched jank's - wraps at 32
 ;; bits, the adapter's checked num-minus instead, and host-aliases does not fire.)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Numbers-minus #?(:jank (or (jank-int-arith "num-minus") -)
                       :default (fn ([x] (- x)) ([x y] (- x y)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-minusP (host-fn '-' -))
 (def Numbers-multiply #?(:jank (or (jank-int-arith "num-multiply") *) :default *))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-multiplyP (host-fn '*' *))
 ;; a double divided by zero is an infinity or NaN, as IEEE 754 and the JVM
 ;; say (jolt's / as a value and basilisp's Python division throw instead)
@@ -1149,26 +1205,37 @@
 ;; an exact zero divisor is the JVM's ArithmeticException "Divide by zero",
 ;; not the host's own error (PHP's "Division by zero", Python's
 ;; ZeroDivisionError)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Numbers-divide (let [h #?(:jank (or (jank-int-arith "num-divide") /) :default /)] (fn [x y] (if (zero? y)
                                                                                                      (if (or (float? x) (float? y)) (ieee-div-zero x y) (throw (divide-by-zero)))
                                                                                                      (h x y)))))
 (def Numbers-inc inc)
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-incP (host-fn 'inc' inc))
 (def Numbers-dec dec)
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-decP (host-fn 'dec' dec))
 (def Numbers-lt <)
 (def Numbers-lte <=)
 (def Numbers-gt >)
 (def Numbers-gte >=)
 (defn Numbers-equiv ([] true) ([_x] true) ([x y] (== x y)) ([x y & more] (and (== x y) (apply Numbers-equiv y more))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-isZero zero?)
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-isPos pos?)
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-isNeg neg?)
 ;; Numbers.quotient / remainder check the divisor for every operand type
 ;; (jank, A5-2: the adapter's i64 num-quotient / num-remainder where jank's own
 ;; are wrong: i32 traps on apt, an integer quot of a double)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Numbers-quotient (let [q #?(:jank (or (jank-int-arith "num-quotient") quot) :default quot)]
                            (fn [x y] (if (zero? y) (throw (divide-by-zero)) (q x y)))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Numbers-remainder (let [r #?(:jank (or (jank-int-arith "num-remainder") rem) :default rem)]
                             (fn [x y] (if (zero? y) (throw (divide-by-zero)) (r x y)))))
 ;; Numbers.max / min: a NaN argument wins; a tie is the second argument
@@ -1180,32 +1247,56 @@
 (defn Numbers-or [x y] (bit-or x y))
 (defn Numbers-xor [x y] (bit-xor x y))
 (def Numbers-not bit-not)
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-andNot (host-fn 'bit-and-not (fn [x y] (bit-and x (bit-not y)))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-shiftLeft [x y] (bit-shift-left x y))
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-shiftRight [x y] (bit-shift-right x y))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-unsignedShiftRight (host-fn 'unsigned-bit-shift-right (fn [x y] (bit-shift-right x y))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-clearBit (host-fn 'bit-clear (fn [x n] (bit-and x (bit-not (bit-shift-left 1 n))))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-setBit (host-fn 'bit-set (fn [x n] (bit-or x (bit-shift-left 1 n)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-flipBit (host-fn 'bit-flip (fn [x n] (bit-xor x (bit-shift-left 1 n)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-testBit (host-fn 'bit-test (fn [x n] (not (zero? (bit-and x (bit-shift-left 1 n)))))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-unchecked_add (host-fn 'unchecked-add +))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-unchecked_negate (host-fn 'unchecked-negate -))
 ;; Numbers.unchecked_minus(x) is unchecked-negate's: the host's
 ;; unchecked-subtract has no 1-arity on every host (the JVM's has only [x y])
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [naming/lisp-case style/def-fn]}
 (def Numbers-unchecked_minus (let [sub (host-fn 'unchecked-subtract -)]
                                   (fn ([x] (Numbers-unchecked_negate x)) ([x y] (sub x y)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-unchecked_multiply (host-fn 'unchecked-multiply *))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-unchecked_inc (host-fn 'unchecked-inc inc))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-unchecked_dec (host-fn 'unchecked-dec dec))
 ;; the int family is 32-bit two's complement arithmetic (wrap32, above)
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-unchecked_int_divide [x y] (wrap32 (quot (wrap32 x) (wrap32 y))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-unchecked_int_add [x y] (wrap32 (+ (wrap32 x) (wrap32 y))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-unchecked_int_subtract [x y] (wrap32 (- (wrap32 x) (wrap32 y))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-unchecked_int_multiply [x y] (wrap32 (* (wrap32 x) (wrap32 y))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-unchecked_int_inc [x] (wrap32 (inc (wrap32 x))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-unchecked_int_dec [x] (wrap32 (dec (wrap32 x))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-unchecked_int_negate [x] (wrap32 (- (wrap32 x))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Numbers-unchecked_int_remainder [x y] (rem (wrap32 x) (wrap32 y)))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-toBigInt (host-fn 'bigint identity))
 
 ;; a ^long / ^double RETURN on the JVM is the unchecked cast, not the
@@ -1229,6 +1320,7 @@
 (defn prim-ret-double [x] (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot cast null to a primitive double"))
                                 (number? x) (RT-doubleCast x)
                                 :else (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.Number x)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-toBigDecimal (host-fn 'bigdec identity))
 (def Numbers-rationalize (host-fn 'rationalize identity))
 (def Numbers-booleans identity)
@@ -1247,6 +1339,7 @@
            ([size init-or-seq] (if (or (coll? init-or-seq) (string? init-or-seq))
                                    (to-array* (take size (concat (map cast init-or-seq) (repeat zero))))
                                    (to-array* (repeat size (cast init-or-seq)))))))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-boolean_array (typed-array false boolean))
 ;; byte and char arrays come from the host's own makers where the
 ;; host has them (jolt, the JVM, jank): a generic object array is
@@ -1262,14 +1355,23 @@
                                               (map cast size-or-seq))))
                         ([size init-or-seq] (fallback size init-or-seq)))
                     fallback)))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-byte_array (host-typed-array 'byte-array 0 RT-byteCast))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-char_array (host-typed-array 'char-array (RT-charCast 0) RT-charCast))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-short_array (typed-array 0 RT-shortCast))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-float_array (typed-array 0.0 RT-floatCast))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-int_array (typed-array 0 RT-intCast))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-double_array (typed-array 0.0 RT-doubleCast))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-long_array (typed-array 0 RT-longCast))
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-isNaN h-nan?)
+#_{:splint/disable [naming/lisp-case]}
 (def Numbers-isInfinite h-infinite?)
 
 ;; ---------------------------------------------------------------------------
@@ -1301,9 +1403,13 @@
 (declare -kvreduce)
 (defn protocols-kv-reduce [coll f init] (-kvreduce coll f init))
 (defn protocols-iterator-reduce! ([it f] (reduce f (RT-chunkIteratorSeq it))) ([it f init] (reduce f init (RT-chunkIteratorSeq it))))
+#_{:splint/disable [naming/lisp-case]}
 (def RT-REQUIRE_LOCK (atom ::require-lock))
+#_{:splint/disable [naming/lisp-case]}
 (def TimeUnit-MILLISECONDS :milliseconds)
+#_{:splint/disable [naming/lisp-case]}
 (def TimeUnit-SECONDS :seconds)
+#_{:splint/disable [naming/lisp-case]}
 (def TimeUnit-NANOSECONDS :nanoseconds)
 
 ;; let-go: a symbol carrying metadata is a wrapper no symbol equals, whose name
@@ -1319,6 +1425,8 @@
 ;; seam identity (unit 3): when either side is an Eve-backed stand-in,
 ;; equiv is the value layer's contract (canonical forms equal); every
 ;; other value keeps the host's own answer
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Util-equiv #?(:lg (fn [a b] (let [a (host/plain-symbol a) b (host/plain-symbol b) r (lg-own a "equals" [b])]
                                       (if (identical? r absent) (= a b) (boolean r))))
                    :default (fn [a b] (if (or (memory/eve-value? a) (memory/eve-value? b)
@@ -1335,8 +1443,11 @@
 ;; in 32-bit int arithmetic (0x9e3779b9 as an int)
 (declare -hashCode)
 (defn Util-hash [x] (if (nil? x) 0 (-hashCode x)))
+#_{:splint/disable [naming/lisp-case]}
 (defn Util-hashCombine [seed h] (let [seed (wrap32 seed)]
                                      (bit-xor seed (wrap32 (+ (wrap32 h) -1640531527 (wrap32 (bit-shift-left seed 6)) (bit-shift-right seed 2))))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Util-hasheq #?(:lg (fn [x] (let [x (host/plain-symbol x) r (lg-own x "hashCode" [])]
                                      (if (identical? r absent) (hash x) r)))
                     :default (fn [x] (if (or (memory/eve-value? x) (memory/eve-backed? x))
@@ -1344,9 +1455,13 @@
                                          (hash x)))))
 ;; JVM keywords are interned, so equal keywords are identical; a host that
 ;; does not intern them (ClojureScript) answers by equality for keywords
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Util-identical (let [h (host-fn 'identical? (fn [a b] (identical? a b)))]
                          (fn [a b] (or (h a b) (and (keyword? a) (keyword? b) (= a b))))))
+#_{:splint/disable [naming/lisp-case]}
 (def Util-classOf class-of)
+#_{:splint/disable [naming/lisp-case]}
 (def Util-isInteger integer?)
 
 ;; ---------------------------------------------------------------------------
@@ -1365,16 +1480,23 @@
                                   (memory/resolve-resident (val e))]))
                  (seq m))
            m))
+#_{:splint/disable [naming/lisp-case]}
 (defn Var-pushThreadBindings [m] (host/push-thread-bindings! (bindings-map m)))
 (declare Var-popThreadBindings)
 ;; unit 7: core's binding-conveyor-fn captures through here; the thread
 ;; layer's capture hook (cross-process frames through a shared atom) applies
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [naming/lisp-case style/def-fn]}
 (def Var-getThreadBindings (let [base (host-fn 'get-thread-bindings (fn [] (host/thread-bindings)))]
                                 (fn [] (thread/apply-capture-hook (base)))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Var-cloneThreadBindingFrame [] nil)
+#_{:splint/disable [naming/lisp-case]}
 (defn Var-resetThreadBindingFrame [_] nil)
 ;; Var.intern(ns, sym) creates the namespace and leaves the var unbound (the
 ;; host's 2-arity intern); Var.intern(ns, sym, root) binds it
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Var-intern (let [in (host-fn 'intern nil) cn (host-fn 'create-ns (fn [_] nil))
                       nn (host-fn 'ns-name identity)
                       ns-sym (fn [ns] (if (h-namespace? ns) (nn ns) ns))]
@@ -1415,6 +1537,8 @@
 ;; anonymous vars, so one is interned under a fresh name in a scratch namespace
 ;; and made dynamic, which is what pushThreadBindings asks of it.
 (def ^:private locals-ns (delay (host/ensure-bare-ns! 'cohost.locals) 'cohost.locals))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def ^:private var-create* (let [in (host-fn 'intern nil)]
                                 (fn var-create
                                     ([] (host/set-dynamic! (if in
@@ -1426,6 +1550,8 @@
 ;; this thread holds it (the var object stays usable)
 (def ^:private live-locals (atom 0))
 (defn Var-create [& args] (swap! live-locals inc) (apply var-create* args))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def ^:private unmap-dead-locals!
   ;; (ClojureScript's ns-unmap is a compile-time macro: its locals stay)
      (let [unmap #?(:cljs nil :default (host-fn 'ns-unmap nil))]
@@ -1438,6 +1564,7 @@
                                            (if (host/var-thread-bound? v) (inc n) (do #_{:clj-kondo/ignore [:type-mismatch]} (unmap @locals-ns sym) n)))
                                        0 (seq (host/ns-interns-map @locals-ns)))]
                          (reset! live-locals left))))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Var-popThreadBindings [] (host/pop-thread-bindings!) (unmap-dead-locals!))
 ;; a pushThreadBindings ... (try ... (finally popThreadBindings)) pair as one
 ;; call: what the codemod writes where the host's bindings are scoped only
@@ -1449,13 +1576,18 @@
 (defn Keyword-intern ([x] (if (symbol? x)
                               (let [x #?(:lg (host/plain-symbol x) :default x)] (keyword (namespace x) (name x)))
                               (keyword x))) ([ns n] (keyword ns n)))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Keyword-find (let [fk (host-fn 'find-keyword nil)]
                        (fn ([x] (if fk (if (symbol? x) (fk (namespace x) (name x)) (fk x)) (Keyword-intern x)))
                            ([ns n] (if fk (fk ns n) (keyword ns n))))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Symbol-intern #?(:lg (fn ([s] (symbol (host/plain-symbol s))) ([ns n] (symbol ns n)))
                       :default (fn ([s] (symbol s)) ([ns n] (symbol ns n)))))
 (defn Symbol-create ([s] (symbol nil s)) ([ns n] (symbol ns n)))
 (def Namespace-find (host-fn 'find-ns (unsupported "find-ns")))
+#_{:splint/disable [naming/lisp-case]}
 (def Namespace-findOrCreate (host-fn 'create-ns (unsupported "create-ns")))
 (def Namespace-all (host-fn 'all-ns (fn [] [])))
 (def Namespace-remove (host-fn 'remove-ns (unsupported "remove-ns")))
@@ -1471,6 +1603,8 @@
 ;; macroexpand-1 is the macro's own expansion: the codemod's rewrite of it is
 ;; for the compiler, which expands the form again when it is evaluated
 (defn Compiler-macroexpand1 [form] (binding [host/*raw-macro-output* true] (host/macroexpand-1* form)))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [naming/lisp-case style/def-fn]}
 (def Compiler-maybeResolveIn (let [r (host-fn 'ns-resolve nil)] (fn [ns sym] (if r (r ns sym) (get (host/ns-interns-map ns) sym)))))
 (def Compiler-specials
      (set '[def if do let* loop* recur fn* quote var throw try catch finally monitor-enter monitor-exit
@@ -1493,10 +1627,14 @@
                                           (if-let [t (some (fn [t] (when (and (<= (+ i (count t)) n) (= t (subs s i (+ i (count t))))) t)) demunge-tokens)]
                                                   (recur (+ i (count t)) (conj out (get demunge-map t)))
                                                   (recur (inc i) (conj out (subs s i (inc i)))))))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Compiler_HostExpr-maybeClass [& _] nil)
+#_{:splint/disable [naming/lisp-case]}
 (defn Compiler_HostExpr-maybeSpecialTag [& _] nil)
+#_{:splint/disable [naming/lisp-case]}
 (defn Reflector-prepRet [_c x] x)
 (defn Agent-shutdown [] (when (thread/available?) (thread/shutdown-agents)) nil)
+#_{:splint/disable [naming/lisp-case]}
 (defn Agent-releasePendingSends [] (if (thread/available?) (thread/release-pending-sends) 0))
 
 ;; ---------------------------------------------------------------------------
@@ -1505,15 +1643,21 @@
 ;; the collection fill (unit 4): with the fill in force the
 ;; creators answer Eve-backed values through the layer; a seat
 ;; with no Eve hosting registered never has the fill in force
+#_{:splint/disable [naming/lisp-case]}
 (defn PersistentList-creator [& xs] (if (memory/fill-on?) (memory/make-list xs) (apply list xs)))
+#_{:splint/disable [naming/lisp-case]}
 (defn PersistentHashMap-create [kvs] (if (memory/fill-on?) (memory/make-map (seq kvs)) (apply hash-map (seq kvs))))
+#_{:splint/disable [naming/lisp-case]}
 (defn PersistentHashMap-createWithCheck [kvs] (let [ks (take-nth 2 (seq kvs))]
                                                    (when (not= (count ks) (count (set ks)))
                                                          (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies ks)))))))
                                                    (if (memory/fill-on?) (memory/make-map (seq kvs)) (apply hash-map (seq kvs)))))
+#_{:splint/disable [naming/lisp-case]}
 (def PersistentArrayMap-EMPTY {})
+#_{:splint/disable [naming/lisp-case]}
 (defn PersistentArrayMap-create [m] (if (memory/fill-on?) (memory/make-map-from m) (into {} m)))
 (def ^:private h-array-map (host-fn 'array-map nil))
+#_{:splint/disable [naming/lisp-case]}
 (defn PersistentArrayMap-createAsIfByAssoc [arr] (if (memory/fill-on?)
                                                      (let [s (seq arr)
                                                            odd (odd? (count s))
@@ -1530,30 +1674,42 @@
                                                               (let [last-v (reduce (fn [m [k v]] (assoc m k v)) {} kvs)]
                                                                    (apply h-array-map (mapcat (fn [k] [k (get last-v k)]) (distinct (map first kvs)))))
                                                               (reduce (fn [m [k v]] (assoc m k v)) {} kvs)))))
+#_{:splint/disable [naming/lisp-case]}
 (def PersistentArrayMap-createWithCheck PersistentHashMap-createWithCheck)
+#_{:splint/disable [naming/lisp-case]}
 (defn PersistentHashSet-create [coll] (if (memory/fill-on?) (memory/make-set coll) (set coll)))
+#_{:splint/disable [naming/lisp-case]}
 (defn PersistentHashSet-createWithCheck [coll] (let [s (seq coll)]
                                                     (when (not= (count s) (count (set s)))
                                                           (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies s)))))))
                                                     (if (memory/fill-on?) (memory/make-set s) (set s))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [naming/lisp-case style/def-fn]}
 (def PersistentTreeMap-create
      (let [sm (host-fn 'sorted-map nil) smb (host-fn 'sorted-map-by nil)]
           (fn ([kvs] (if sm (apply sm (seq kvs)) ((unsupported "sorted-map"))))
               ([cmp kvs] (if smb (apply smb cmp (seq kvs)) ((unsupported "sorted-map-by")))))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [naming/lisp-case style/def-fn]}
 (def PersistentTreeSet-create
      (let [ss (host-fn 'sorted-set nil) ssb (host-fn 'sorted-set-by nil)]
           (fn ([coll] (if ss (apply ss (seq coll)) ((unsupported "sorted-set"))))
               ([cmp coll] (if ssb (apply ssb cmp (seq coll)) ((unsupported "sorted-set-by")))))))
+#_{:splint/disable [naming/lisp-case]}
 (defn LazilyPersistentVector-create [coll] (if (memory/fill-on?) (memory/make-vector coll) (vec coll)))
 ;; createOwning(Object... items): called from Clojure with one array, the items
+#_{:splint/disable [naming/lisp-case]}
 (defn LazilyPersistentVector-createOwning [arr] (if (memory/fill-on?) (memory/make-vector arr) (vec arr)))
+#_{:splint/disable [naming/lisp-case]}
 (defn MapEntry-create [k v] (first (hash-map k v)))
+#_{:splint/disable [naming/lisp-case]}
 (def new-MapEntry MapEntry-create)
 
 ;; static fields a program may set! (clojure.lang.RT/checkSpecAsserts)
 (def ^:private statics (atom {"RT-checkSpecAsserts" false}))
 (defn static-get [nm] (get @statics nm))
 (defn static-set! [nm v] (swap! statics assoc nm v) v)
+#_{:splint/disable [naming/lisp-case]}
 (defn EdnReader-readString [s opts] (host/edn-read-string opts s))
 
 ;; clojure.lang.EdnReader/read over a PushbackReader of the io layer:
@@ -1657,6 +1813,7 @@
                          v (scan-form! sb)]
                         (if (= ::eof v) ::eof (h-sb-string sb))))))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn EdnReader-read [r opts] (cond (io/is? :cohost.io/pushback-reader r)
                                     (let [text (edn-scan! r)]
                                          (if (= ::eof text)
@@ -1665,7 +1822,9 @@
                                                  (throw (host/ex* 'java.io.IOException "EOF while reading")))
                                              (host/edn-read-string opts text)))
                                     :else (miss! [:static 'clojure.lang.EdnReader 'read])))
+#_{:splint/disable [naming/lisp-case]}
 (defn PersistentVector-create [coll] (if (memory/fill-on?) (memory/make-vector coll) (vec coll)))
+#_{:splint/disable [naming/lisp-case]}
 (def PersistentVector-EMPTY [])
 ;; the seq classes' creates delegate to the host's own fns, bound at
 ;; shim load before the stock core overlays them (the pattern
@@ -1674,19 +1833,28 @@
 ;; Iterate, Repeat on the JVM-shaped hosts) gives the stock core
 ;; those classes too, where the stock fns' own seqs are generic
 ;; (M-11, the corpus' seq-type-model rows)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Range-create
      (let [h-range (host-fn 'range nil)]
           (fn ([end] (if h-range (h-range end) (range end)))
               ([start end] (if h-range (h-range start end) (range start end)))
               ([start end step] (if h-range (h-range start end step) (range start end step))))))
+#_{:splint/disable [naming/lisp-case]}
 (def LongRange-create Range-create)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Repeat-create
      (let [h-repeat (host-fn 'repeat nil)]
           (fn ([x] (if h-repeat (h-repeat x) (repeat x)))
               ([n x] (if h-repeat (h-repeat n x) (repeat n x))))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Cycle-create
      (let [h-cycle (host-fn 'cycle nil)]
           (fn [coll] (if h-cycle (h-cycle coll) (cycle coll)))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def Iterate-create
      (let [h-iterate (host-fn 'iterate nil)]
           (fn [f x] (if h-iterate (h-iterate f x) (iterate f x)))))
@@ -1719,12 +1887,19 @@
                                       (swap! out subvec 1)
                                       (cons x (step)))))))]
             (step)))
+#_{:splint/disable [naming/lisp-case]}
 (defn TransformerIterator-create [xform it] (host/iter (xform-seq xform [it])))
+#_{:splint/disable [naming/lisp-case]}
 (defn TransformerIterator-createMulti [xform its] (host/iter (xform-seq xform (vec its))))
+#_{:splint/disable [naming/lisp-case]}
 (def Murmur3-hashOrdered (host-fn 'hash-ordered-coll (fn [coll] (hash (vec coll)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Murmur3-hashUnordered (host-fn 'hash-unordered-coll (fn [coll] (hash (set coll)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Murmur3-mixCollHash (host-fn 'mix-collection-hash (fn [h _n] h)))
+#_{:splint/disable [naming/lisp-case]}
 (def BigInt-fromBigInteger identity)
+#_{:splint/disable [naming/lisp-case]}
 (def BigInt-valueOf (host-fn 'bigint identity))
 
 ;; ------------------------------------------------------------------
@@ -1808,16 +1983,16 @@
              (io/input-stream-value? x) (io/input-stream-reader x)
              :else (throw (host/ex* 'java.lang.IllegalArgumentException (str "clojure.core read: not a reader of this layer: " (class-of x))))))
 
-(defn- layer-read ([] (layer-read (core-var-value '*in*))) ([opts stream]
-                                                            (if (map? opts)
-                                                                (let [[f _] (read-one (as-reader stream))]
-                                                                     (if (= ::eof f)
-                                                                         (let [e (:eof opts :eofthrow)]
-                                                                              (if (= :eofthrow e)
-                                                                                  (throw (host/ex* 'java.io.EOFException "EOF while reading"))
-                                                                                  e))
-                                                                         f))
-                                                                (throw (host/ex* 'java.lang.IllegalArgumentException "read's two-argument form takes an opts map and a stream")))) ([stream] (layer-read stream true nil)) ([stream eof-error? eof-value] (layer-read stream eof-error? eof-value false)) ([stream eof-error? eof-value _recursive?]
+(defn- layer-read ([] (layer-read (core-var-value '*in*))) ([stream] (layer-read stream true nil)) ([opts stream]
+                                                                                                    (if (map? opts)
+                                                                                                        (let [[f _] (read-one (as-reader stream))]
+                                                                                                             (if (= ::eof f)
+                                                                                                                 (let [e (:eof opts :eofthrow)]
+                                                                                                                      (if (= :eofthrow e)
+                                                                                                                          (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+                                                                                                                          e))
+                                                                                                                 f))
+                                                                                                        (throw (host/ex* 'java.lang.IllegalArgumentException "read's two-argument form takes an opts map and a stream")))) ([stream eof-error? eof-value] (layer-read stream eof-error? eof-value false)) ([stream eof-error? eof-value _recursive?]
                                                                                                                                                                                                                                                                                                            (let [[f _] (read-one (as-reader stream))]
                                                                                                                                                                                                                                                                                                                 (if (= ::eof f)
                                                                                                                                                                                                                                                                                                                     (if eof-error?
@@ -1825,16 +2000,16 @@
                                                                                                                                                                                                                                                                                                                         eof-value)
                                                                                                                                                                                                                                                                                                                     f))))
 
-(defn- layer-read+string ([] (layer-read+string (core-var-value '*in*))) ([opts stream]
-                                                                          (if (map? opts)
-                                                                              (let [[f text] (read-one (as-reader stream))]
-                                                                                   (if (= ::eof f)
-                                                                                       (let [e (:eof opts :eofthrow)]
-                                                                                            (if (= :eofthrow e)
-                                                                                                (throw (host/ex* 'java.io.EOFException "EOF while reading"))
-                                                                                                [e text]))
-                                                                                       [f text]))
-                                                                              (throw (host/ex* 'java.lang.IllegalArgumentException "read+string's two-argument form takes an opts map and a stream")))) ([stream] (layer-read+string stream true nil)) ([stream eof-error? eof-value] (layer-read+string stream eof-error? eof-value false)) ([stream eof-error? eof-value _recursive?]
+(defn- layer-read+string ([] (layer-read+string (core-var-value '*in*))) ([stream] (layer-read+string stream true nil)) ([opts stream]
+                                                                                                                         (if (map? opts)
+                                                                                                                             (let [[f text] (read-one (as-reader stream))]
+                                                                                                                                  (if (= ::eof f)
+                                                                                                                                      (let [e (:eof opts :eofthrow)]
+                                                                                                                                           (if (= :eofthrow e)
+                                                                                                                                               (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+                                                                                                                                               [e text]))
+                                                                                                                                      [f text]))
+                                                                                                                             (throw (host/ex* 'java.lang.IllegalArgumentException "read+string's two-argument form takes an opts map and a stream")))) ([stream eof-error? eof-value] (layer-read+string stream eof-error? eof-value false)) ([stream eof-error? eof-value _recursive?]
                                                                                                                                                                                                                                                                                                                                               (let [[f text] (read-one (as-reader stream))]
                                                                                                                                                                                                                                                                                                                                                    (if (= ::eof f)
                                                                                                                                                                                                                                                                                                                                                        (if eof-error?
@@ -1912,6 +2087,7 @@
                                            (some? (ex-data root)) (assoc :data (ex-data root))
                                            (some? phase) (assoc :phase phase))))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn core-PrintWriter-on "clojure.core/PrintWriter-on [flush-fn close-fn autoflush?]: flush-fn of
    the text written since the last flush, at each flush; close-fn (when not
    nil) at close. (autoflush? is the PrintWriter's println/printf/format
@@ -2043,12 +2219,17 @@
 
 ;; clojure.lang.LispReader/read: read's own dispatch (core-read: a layer
 ;; reader through the io layer, a host reader through the host's read)
+#_{:splint/disable [naming/lisp-case]}
 (defn LispReader-read ([rdr opts] (core-read opts rdr)) ([rdr eof-error? eof-val _recursive?] (core-read rdr eof-error? eof-val)))
+#_{:splint/disable [naming/lisp-case]}
 (def TaggedLiteral-create (host-fn 'tagged-literal (fn [tag form] {:tag tag :form form})))
+#_{:splint/disable [naming/lisp-case]}
 (def ReaderConditional-create (host-fn 'reader-conditional (fn [form splicing?] {:form form :splicing? splicing?})))
 (def Delay-force (host-fn 'force (fn [x] (if (h-delay? x) (deref x) x))))
+#_{:splint/disable [naming/lisp-case]}
 (def PersistentQueue-EMPTY (host/empty-queue))
 
+#_{:splint/disable [naming/lisp-case]}
 (def new-LazySeq (host/capability :lazy-seq))   ; per lazy cell: no accessor lookup
 (def new-Delay (host/capability :delay))
 (defn new-Atom ([x] (if (atom-fill?) (atom-layer/make-atom x) (host/atom* x))) ([x m] (if (atom-fill?) (atom-layer/make-atom x {:meta m}) (host/atom* x m))))
@@ -2063,6 +2244,8 @@
 ;; decimal or ratio (the JVM's doubles and floats, by exclusion -- no
 ;; class token, which jank cannot resolve in this file); for long-kind?,
 ;; the host's integer? with bigints excluded (below).
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def long-kind?
   ;; integer? alone is not the test: it is true of a bigint too, and a
   ;; bigint out of long range must reach the conversion, whose cast
@@ -2089,6 +2272,7 @@
        (in-tx!)
        (when-not (contains? @tx r) (swap! tx assoc r @r))
        (f))
+#_{:splint/disable [naming/lisp-case]}
 (defn LockingTransaction-runInTransaction [f] (if (some? @tx)
                                                   (f)
                                                   (do (reset! tx {})
@@ -2099,6 +2283,7 @@
                                                                                   (doseq [[r v] written] (reset! r v)))
                                                                              (throw e)))
                                                            (finally (reset! tx nil))))))
+#_{:splint/disable [naming/lisp-case]}
 (defn LockingTransaction-isRunning [] (some? @tx))
 (def new-Agent (host-fn 'agent (fn [state] (thread-layer "agent" (fn [] (thread/new-agent state {}))))))
 ;; clojure.lang.MultiFn, stock: the state (name, dispatch fn, default,
@@ -2107,6 +2292,8 @@
 ;; argument's isa, the dominant one by prefers or isa, ambiguity an error.
 (def ^:private h-host-isa? (host-fn 'isa? nil))
 ;; a host class value: what `class` returns for a type user code defined
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def ^:private host-class-value?
      #?(:cljs (fn [x] (and (fn? x) (true? (.-cljs$lang$type x))))
         :lpy (fn [x] (instance? python/type x))
@@ -2205,6 +2392,7 @@
                      (reset! mc [st href h (if m {dv m} {})])
                      m))))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn new-MultiFn [name dispatch-fn default hierarchy] (let [state (atom {:name name :dispatch-fn dispatch-fn :default default :hierarchy hierarchy :methods {} :prefers {}})
                                                              no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))
                                                              mc (when h-mm-cache? (atom nil))]
@@ -2238,6 +2426,7 @@
                                                                ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
                                                                                     (if m (apply m a b c more) (no-method dv)))))))))
 (defn new-Object [] (atom ::object))
+#_{:splint/disable [naming/lisp-case]}
 (def new-ExceptionInfo host/ex-info*)
 ;; (Exception.) (Exception. msg) (Exception. cause) (Exception. msg cause)
 (defn- ex-ctor [klass]
@@ -2245,20 +2434,33 @@
            ([x] (if (h-exception? x) (host/ex* klass (str x) x) (host/ex* klass x)))
            ([msg cause] (host/ex* klass msg cause))))
 (def new-Exception (ex-ctor 'java.lang.Exception))
+#_{:splint/disable [naming/lisp-case]}
 (def new-RuntimeException (ex-ctor 'java.lang.RuntimeException))
 (def new-Error (ex-ctor 'java.lang.Error))
 (def new-Throwable (ex-ctor 'java.lang.Throwable))
+#_{:splint/disable [naming/lisp-case]}
 (def new-AssertionError (ex-ctor 'java.lang.AssertionError))
+#_{:splint/disable [naming/lisp-case]}
 (def new-IllegalArgumentException (ex-ctor 'java.lang.IllegalArgumentException))
+#_{:splint/disable [naming/lisp-case]}
 (def new-IllegalStateException (ex-ctor 'java.lang.IllegalStateException))
+#_{:splint/disable [naming/lisp-case]}
 (def new-UnsupportedOperationException (ex-ctor 'java.lang.UnsupportedOperationException))
+#_{:splint/disable [naming/lisp-case]}
 (def new-ArithmeticException (ex-ctor 'java.lang.ArithmeticException))
+#_{:splint/disable [naming/lisp-case]}
 (def new-ClassCastException (ex-ctor 'java.lang.ClassCastException))
+#_{:splint/disable [naming/lisp-case]}
 (def new-IndexOutOfBoundsException (ex-ctor 'java.lang.IndexOutOfBoundsException))
+#_{:splint/disable [naming/lisp-case]}
 (def new-NumberFormatException (ex-ctor 'java.lang.NumberFormatException))
+#_{:splint/disable [naming/lisp-case]}
 (def new-InterruptedException (ex-ctor 'java.lang.InterruptedException))
+#_{:splint/disable [naming/lisp-case]}
 (def new-IllegalAccessError (ex-ctor 'java.lang.IllegalAccessError))
+#_{:splint/disable [naming/lisp-case]}
 (def new-NullPointerException (ex-ctor 'java.lang.NullPointerException))
+#_{:splint/disable [naming/lisp-case]}
 (def new-Compiler_CompilerException (ex-ctor 'clojure.lang.Compiler$CompilerException))
 (defn- code-of [c] (if (number? c) c (h-char-code c)))
 (defn- char-str [c] (str (if (number? c) (RT-charCast c) c)))
@@ -2290,9 +2492,11 @@
 (defn- need-charset [cs]
        (or (charset-canonical cs)
            (throw (host/ex* 'java.io.UnsupportedEncodingException (str cs)))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Charset-forName [n] (if (charset-canonical n)
                               (->Charset (charset-canonical n))
                               (throw (host/ex* 'java.io.UnsupportedEncodingException (str n)))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Charset-defaultCharset [] (->Charset "UTF-8"))
 (defn- ubyte [bs i] (bit-and (nth bs i) 0xFF))
 (defn- emit-cp! [out cp]
@@ -2497,6 +2701,7 @@
                                                                                                                                                                                                                                #_{:splint/disable [style/apply-str]}
                                                                                                                                                                                                                                (apply str (map char-str (take len (drop off (seq bs)))))
                                                                                                                                                                                                                                (decode-bytes bs off len (need-charset cs)))))
+#_{:splint/disable [naming/lisp-case]}
 (defn String-getBytes ([s] (string->byte-array s "UTF-8")) ([s cs] (string->byte-array s cs)))
 ;; java.net.URLEncoder / URLDecoder, over url-encode / url-decode.
 ;; The charset argument is accepted and UTF-8 is used throughout.
@@ -2596,15 +2801,25 @@
    cohost.http's and cannot dispatch there, a named boundary)."
       [token]
       (io/dispatch-class token))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpClient-newHttpClient (http-ctor 'java.net.http.HttpClient "newHttpClient" http/new-client))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpClient-newBuilder (http-ctor 'java.net.http.HttpClient "newBuilder" http/new-client-builder))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpRequest-newBuilder (http-ctor 'java.net.http.HttpRequest "newBuilder" http/new-request-builder))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpRequest_BodyPublishers-ofString (http-ctor 'java.net.http.HttpRequest$BodyPublishers "ofString" (fn [s & _cs] (http/publisher-of-string s))))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpRequest_BodyPublishers-ofByteArray (http-ctor 'java.net.http.HttpRequest$BodyPublishers "ofByteArray" http/publisher-of-bytes))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpRequest_BodyPublishers-noBody (http-ctor 'java.net.http.HttpRequest$BodyPublishers "noBody" http/publisher-none))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpResponse_BodyHandlers-ofString (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofString" (fn [& _cs] (http/handler-of :string))))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpResponse_BodyHandlers-ofByteArray (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofByteArray" (fn [] (http/handler-of :bytes))))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpResponse_BodyHandlers-ofInputStream (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofInputStream" (fn [] (http/handler-of :input-stream))))
+#_{:splint/disable [naming/lisp-case]}
 (def HttpResponse_BodyHandlers-discarding (http-ctor 'java.net.http.HttpResponse$BodyHandlers "discarding" (fn [] (http/handler-of :discard))))
 
 (defn- http-locator [f] {:cohost.http/uri f :cohost.http/url f})
@@ -2705,6 +2920,7 @@
       [p]
       (str "file:" (if (and (pos? (count p)) (not= \/ (nth p 0))) "/" "") p))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn RT-toUrl [x] (cond (io/is? :cohost.io/file x) (http/new-url (file-url-string (io/file-path x)))
                          (string? x) (host/try-all (fn [] (http/new-url x))
                                                    (fn [_] (http/new-url (file-url-string x))))
@@ -2732,8 +2948,11 @@
                                                              "/" child))))
 
 (def File-separator "/")
+#_{:splint/disable [naming/lisp-case]}
 (def File-separatorChar \/)
+#_{:splint/disable [naming/lisp-case]}
 (def File-pathSeparator ":")
+#_{:splint/disable [naming/lisp-case]}
 (def File-pathSeparatorChar \:)
 
 (defn- file-parent-of [p]
@@ -2782,40 +3001,62 @@
 
 (defn- ints->signed [bs] (mapv (fn [b] (if (> b 127) (- b 256) b)) bs))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn new-FileInputStream [f] (io/file-input-stream (as-file-value f)))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-FileOutputStream ([f] (io/file-output-stream (as-file-value f) false)) ([f append?] (io/file-output-stream (as-file-value f) (boolean append?))))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-ByteArrayInputStream [bs] (io/byte-input-stream (host-bytes->ints bs)))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-ByteArrayOutputStream [] (io/byte-output-stream))
+#_{:splint/disable [naming/lisp-case]}
 (def new-StringReader io/string-reader)
+#_{:splint/disable [naming/lisp-case]}
 (defn new-StringWriter ([] (io/string-writer)) ([_n] (io/string-writer)))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-CharArrayReader [cs] (io/char-array-reader (seq cs)))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-InputStreamReader ([in] (if (io/is? :cohost.io/socket-input in)
                                       (io/socket-reader in)
                                       (io/input-stream-reader in))) ([in cs] (utf8-only! cs)
                                                                              (if (io/is? :cohost.io/socket-input in)
                                                                                  (io/socket-reader in)
                                                                                  (io/input-stream-reader in))))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-OutputStreamWriter ([out] (io/output-stream-writer out)) ([out cs] (utf8-only! cs) (io/output-stream-writer out)))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-BufferedReader ([r] (io/buffered-reader r)) ([r _sz] (io/buffered-reader r)))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-BufferedWriter ([w] (io/buffered-writer w)) ([w _sz] (io/buffered-writer w)))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-BufferedInputStream ([in] (io/buffered-input-stream in)) ([in _sz] (io/buffered-input-stream in)))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-BufferedOutputStream ([out] (io/buffered-output-stream out)) ([out _sz] (io/buffered-output-stream out)))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-PushbackReader ([r] (io/pushback-reader r)) ([r _sz] (io/pushback-reader r)))
 ;; clojure.lang.LineNumberingPushbackReader: the layer's pushback reader
 ;; (its line number and string capture read off its state: io/line-number)
+#_{:splint/disable [naming/lisp-case]}
 (defn new-LineNumberingPushbackReader ([r] (io/pushback-reader r)) ([r _n] (io/pushback-reader r)))
 ;; java.net sockets: the io layer's in-process loopback
+#_{:splint/disable [naming/lisp-case]}
 (defn new-ServerSocket ([] (io/listen! 0)) ([port] (io/listen! port)) ([port _backlog] (io/listen! port)) ([port _backlog _addr] (io/listen! port)))
 (defn new-Socket ([] (io/unconnected-socket)) ([host port] (io/connect! (if (io/inet-address? host) (io/inet-host host) host) port)))
+#_{:splint/disable [naming/lisp-case]}
 (defn InetAddress-getByName [h] {:cohost/kind :cohost.io/inet-address :host (or h "localhost")})
+#_{:splint/disable [naming/lisp-case]}
 (defn InetAddress-getLoopbackAddress [] {:cohost/kind :cohost.io/inet-address :host "localhost"})
+#_{:splint/disable [naming/lisp-case]}
 (defn InetAddress-getLocalHost [] {:cohost/kind :cohost.io/inet-address :host "localhost"})
+#_{:splint/disable [naming/lisp-case]}
 (defn new-FileReader [f] (io/file-reader (as-file-value f)))
 ;; Compiler.loadFile(path): stock clojure.main's load-script (a script path,
 ;; -i) -- the JVM passes it through; elsewhere the file's forms are read and
 ;; evaluated through the boot, as load-reader does (measured on jank:
 ;; `bin/cohost :jank script.clj` died in script-opt with no shim for it)
+#_{:splint/disable [naming/lisp-case]}
 (defn Compiler-loadFile [path] (core-load-reader (new-LineNumberingPushbackReader (new-FileReader path))))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-FileWriter ([f] (io/file-writer (as-file-value f) false)) ([f append?] (io/file-writer (as-file-value f) (boolean append?))))
 
 (defn- io-read-fn
@@ -2947,17 +3188,25 @@
 (def -getURL (http-member "getURL" {:cohost.http/connection :url}))
 
 ;; StringBuilder() / (int capacity) / (CharSequence s); StringBuffer is the same here
+#_{:splint/disable [naming/lisp-case]}
 (defn new-StringBuilder ([] (h-string-builder)) ([s] (cond (number? s) (h-string-builder)
                                                            (nil? s) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"String.length()\" because \"str\" is null"))
                                                            :else (h-sb-append! (h-string-builder) s))))
+#_{:splint/disable [naming/lisp-case]}
 (def new-StringBuffer new-StringBuilder)
+#_{:splint/disable [naming/lisp-case]}
 (def new-BigDecimal (host-fn 'bigdec identity))
+#_{:splint/disable [naming/lisp-case]}
 (def new-BigInteger (host-fn 'bigint identity))
+#_{:splint/disable [naming/lisp-case]}
 (def new-ChunkBuffer (if-let [f (:chunk-buffer hc)] f (fn [_capacity] (host/mutable-list))))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-ArrayList ([] (host/mutable-list)) ([n-or-coll] (let [l (host/mutable-list)] (when (coll?* n-or-coll) (swap! (:state l) into n-or-coll)) l)))
+#_{:splint/disable [naming/lisp-case]}
 (def new-LinkedList new-ArrayList)
 ;; ChunkedCons: the seq is chunk ++ more; the chunk and the rest ride its
 ;; metadata, so chunk-first sees the whole chunk and chunk-rest the rest
+#_{:splint/disable [naming/lisp-case]}
 (def new-ChunkedCons (or (:chunk-cons hc)
                          (fn [chunk more] (with-meta (concat (seq chunk) more) {::chunk chunk ::more more}))))
 (defn chunked-cons? [x] (and (seq? x) (map? (meta x)) (contains? (meta x) ::chunk)))
@@ -2965,12 +3214,18 @@
 ;; layer (cohost.thread) wherever the host gives the layer its leaves;
 ;; where it does not, they throw the unsupported error the stubs threw.
 (defn new-Thread [& args] (thread-layer "java.lang.Thread" (fn [] (apply thread/new-thread args))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [naming/lisp-case style/def-fn]}
 (def Thread-currentThread
      (let [sentinel (atom ::current-thread)]
           (fn [] (if (thread/available?) (thread/current-thread) sentinel))))
+#_{:splint/disable [naming/lisp-case]}
 (defn new-CountDownLatch [n] (thread-layer "CountDownLatch" (fn [] (thread/new-latch n))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Executors-newFixedThreadPool [n] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :pooled n))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Executors-newCachedThreadPool [] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :pooled 8))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Executors-newSingleThreadExecutor [] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :solo 1))))
 
 ;; ---------------------------------------------------------------------------
@@ -2978,7 +3233,9 @@
 
 (def Boolean-TRUE true)
 (def Boolean-FALSE false)
+#_{:splint/disable [naming/lisp-case]}
 (def Integer-MAX_VALUE 2147483647)
+#_{:splint/disable [naming/lisp-case]}
 (def Integer-MIN_VALUE -2147483648)
 (def Integer-TYPE 'int)
 (def Long-TYPE 'long)
@@ -2988,13 +3245,21 @@
 (def Double-TYPE 'double)
 (def Character-TYPE 'char)
 (def Boolean-TYPE 'boolean)
+#_{:splint/disable [naming/lisp-case]}
 (def Long-MAX_VALUE 9223372036854775807)
+#_{:splint/disable [naming/lisp-case]}
 (def Long-MIN_VALUE long-min-value)
+#_{:splint/disable [naming/lisp-case]}
 (def Double-NaN (host/parse-double* "NaN"))
+#_{:splint/disable [naming/lisp-case]}
 (def Double-MAX_VALUE 1.7976931348623157E308)
+#_{:splint/disable [naming/lisp-case]}
 (def Double-MIN_VALUE 4.9E-324)
+#_{:splint/disable [naming/lisp-case]}
 (def Double-MIN_NORMAL 2.2250738585072014E-308)
+#_{:splint/disable [naming/lisp-case]}
 (def Float-MAX_VALUE 3.4028234663852886E38)
+#_{:splint/disable [naming/lisp-case]}
 (def Float-MIN_VALUE 1.401298464324817E-45)
 ;; Long.toString(x, radix) / toHexString & co: the JVM's digits (the unsigned
 ;; forms read a negative number as its two's complement)
@@ -3011,22 +3276,33 @@
                           (recur (quot v radix) (cons (nth radix-digits (rem v radix)) acc)))))))
 (defn- unsigned [x bits]
        (if (neg? x) (Numbers-addP x (if (= bits 32) 4294967296 18446744073709551616)) x))
+#_{:splint/disable [naming/lisp-case]}
 (defn Long-toString ([x] (str x)) ([x radix] (radix-str x radix)))
+#_{:splint/disable [naming/lisp-case]}
 (def Integer-toString Long-toString)
+#_{:splint/disable [naming/lisp-case]}
 (defn Integer-toHexString [x] (radix-str (unsigned x 32) 16))
+#_{:splint/disable [naming/lisp-case]}
 (defn Integer-toOctalString [x] (radix-str (unsigned x 32) 8))
+#_{:splint/disable [naming/lisp-case]}
 (defn Integer-toBinaryString [x] (radix-str (unsigned x 32) 2))
+#_{:splint/disable [naming/lisp-case]}
 (defn Long-toHexString [x] (radix-str (unsigned x 64) 16))
+#_{:splint/disable [naming/lisp-case]}
 (defn Long-toOctalString [x] (radix-str (unsigned x 64) 8))
+#_{:splint/disable [naming/lisp-case]}
 (defn Long-toBinaryString [x] (radix-str (unsigned x 64) 2))
 (defn- pop-count [x bits] (loop [v (unsigned x bits) c 0] (if (zero? v) c (recur (quot v 2) (+ c (rem v 2))))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Long-bitCount [x] (pop-count x 64))
+#_{:splint/disable [naming/lisp-case]}
 (defn Integer-bitCount [x] (pop-count x 32))
 (defn Long-compare [a b] (compare a b))
 (def Integer-compare Long-compare)
 (def Double-compare Long-compare)
 (defn Long-signum [x] (cond (pos? x) 1 (neg? x) -1 :else 0))
 (def Integer-signum Long-signum)
+#_{:splint/disable [naming/lisp-case]}
 (defn Double-toString [x] (if (and h-double-str (float? x)) (h-double-str x) (str x)))
 (defn String-join [sep coll] #_{:splint/disable [style/apply-str-interpose]} (apply str (interpose sep coll)))
 ;; :glj arm (measured 2026-11-12, go-bodies Tail B closer): glojure's
@@ -3034,11 +3310,15 @@
 ;; code, bypassing the glj adapter's IEEE var-root wrapper for
 ;; clojure.core// — the def panics "divide by zero" while this ns
 ;; loads, before boot. The static field is the same value, no division.
+#_{:splint/disable [naming/lisp-case]}
 (def Double-POSITIVE_INFINITY #?(:glj Double/POSITIVE_INFINITY :default (/ 1.0 0.0)))
+#_{:splint/disable [naming/lisp-case]}
 (def Double-NEGATIVE_INFINITY #?(:glj Double/NEGATIVE_INFINITY :default (/ -1.0 0.0)))
 ;; Float's: core_print's Float method compares with them (the layer has one
 ;; floating type, so a float is a double here)
+#_{:splint/disable [naming/lisp-case]}
 (def Float-POSITIVE_INFINITY Double-POSITIVE_INFINITY)
+#_{:splint/disable [naming/lisp-case]}
 (def Float-NEGATIVE_INFINITY Double-NEGATIVE_INFINITY)
 ;; Double.isNaN / Float.isNaN, the instance methods (core_print's Double method)
 (defn -isNaN [x] (boolean (h-nan? x)))
@@ -3093,24 +3373,37 @@
                 (if-let [[_ sign ip fp ex] (re-matches #"\s*([+-]?)0[xX]([0-9a-fA-F]*)\.?([0-9a-fA-F]*)[pP]([+-]?\d+)[fFdD]?\s*" s)]
                         (if (and (empty? ip) (empty? fp)) (throw (nfe s)) (parse-hex-double sign ip fp ex))
                         (throw (nfe s))))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Integer-parseInt ([s] (parse-radix s 10 -2147483648 2147483647)) ([s radix] (parse-radix s radix -2147483648 2147483647)))
+#_{:splint/disable [naming/lisp-case]}
 (defn Long-parseLong ([s] (parse-radix s 10 lmin lmax)) ([s radix] (parse-radix s radix lmin lmax)))
+#_{:splint/disable [naming/lisp-case]}
 (defn Integer-valueOf ([x] (if (string? x) (Integer-parseInt x) (RT-intCast x))) ([s radix] (Integer-parseInt s radix)))
+#_{:splint/disable [naming/lisp-case]}
 (defn Long-valueOf ([x] (if (string? x) (Long-parseLong x) (RT-longCast x))) ([s radix] (Long-parseLong s radix)))
+#_{:splint/disable [naming/lisp-case]}
 (defn Math-toIntExact [x] (if (or (< x -2147483648) (> x 2147483647))
                               (throw (host/ex* 'java.lang.ArithmeticException "integer overflow"))
                               x))
+#_{:splint/disable [naming/lisp-case]}
 (def BigInteger-valueOf (host-fn 'biginteger identity))
+#_{:splint/disable [naming/lisp-case]}
 (defn Double-valueOf [x] (if (string? x) (parse-double-strict x) (RT-doubleCast x)))
+#_{:splint/disable [naming/lisp-case]}
 (def Double-parseDouble parse-double-strict)
 (declare nn)
+#_{:splint/disable [naming/lisp-case]}
 (defn Double-isNaN [x] (h-nan? (nn x)))
+#_{:splint/disable [naming/lisp-case]}
 (defn Double-isInfinite [x] (h-infinite? (nn x)))
+#_{:splint/disable [naming/lisp-case]}
 (defn Boolean-parseBoolean [s] (and (string? s) (= "true" (h-lower-case s))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Boolean-valueOf [x] (if (string? x) (Boolean-parseBoolean x) (boolean x)))
 ;; Character: a char or an int code point; the host's own statics where the
 ;; adapter names them (:java-statics), else these, over the char code
 (defn- jstatic [nm dflt] (get (host/java-statics) nm dflt))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-isWhitespace
      (jstatic 'Character/isWhitespace
            ;; java.lang.Character.isWhitespace: the space, line and paragraph
@@ -3123,16 +3416,26 @@
 ;; the case-difference letter heuristic these replace called a caseless
 ;; letter (e.g. U+65E5) not a letter and an Nd digit outside 0-9 (e.g.
 ;; U+0663) not a digit, where the JVM's Character says both are.
+#_{:splint/disable [naming/lisp-case]}
 (def Character-isDigit (jstatic 'Character/isDigit (fn [c] (unicode/in-ranges? unicode/digit-ranges (code-of c)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-isLetter (jstatic 'Character/isLetter (fn [c] (unicode/in-ranges? unicode/letter-ranges (code-of c)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-isLetterOrDigit (jstatic 'Character/isLetterOrDigit (fn [c] (or (Character-isLetter c) (Character-isDigit c)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-isAlphabetic (jstatic 'Character/isAlphabetic (fn [c] (unicode/in-ranges? unicode/alphabetic-ranges (code-of c)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-isUpperCase (jstatic 'Character/isUpperCase (fn [c] (unicode/in-ranges? unicode/upper-ranges (code-of c)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-isLowerCase (jstatic 'Character/isLowerCase (fn [c] (unicode/in-ranges? unicode/lower-ranges (code-of c)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-toUpperCase (jstatic 'Character/toUpperCase (fn [c] (let [r (cased host/upper-case c)] (if (number? c) (h-char-code r) r)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-toLowerCase (jstatic 'Character/toLowerCase (fn [c] (let [r (cased host/lower-case c)] (if (number? c) (h-char-code r) r)))))
 (def Character-digit (jstatic 'Character/digit (fn [c radix] (or (digit-of (if (number? c) (RT-charCast c) c) radix) -1))))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-getNumericValue (jstatic 'Character/getNumericValue (fn [c] (or (digit-of (if (number? c) (RT-charCast c) c) 36) -1))))
+#_{:splint/disable [naming/lisp-case]}
 (def Character-forDigit (jstatic 'Character/forDigit (fn [d radix] (if (and (<= 2 radix 36) (< -1 d radix)) (nth radix-digits d) (RT-charCast 0)))))
 ;; java.lang.Math: the host's own functions where it has them (the adapter's
 ;; :math map, by JVM name), else these, which follow the JVM's definitions
@@ -3179,13 +3482,20 @@
 (def Math-log1p (math-fn 'log1p (unsupported-math "log1p")))
 (def Math-IEEEremainder (math-fn 'IEEEremainder (unsupported-math "IEEEremainder")))
 (def Math-ulp (math-fn 'ulp (unsupported-math "ulp")))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-nextUp (math-fn 'nextUp (unsupported-math "nextUp")))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-nextDown (math-fn 'nextDown (unsupported-math "nextDown")))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-nextAfter (math-fn 'nextAfter (unsupported-math "nextAfter")))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-getExponent (math-fn 'getExponent (unsupported-math "getExponent")))
 (def Math-scalb (math-fn 'scalb (unsupported-math "scalb")))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-copySign (math-fn 'copySign (unsupported-math "copySign")))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-toRadians (math-fn 'toRadians (fn [a] (* (double a) (/ Math-PI 180.0)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-toDegrees (math-fn 'toDegrees (fn [a] (* (double a) (/ 180.0 Math-PI)))))
 (def Math-signum (math-fn 'signum (fn [a] (cond (h-nan? a) a (pos? a) 1.0 (neg? a) -1.0 :else a))))
 (def Math-rint (math-fn 'rint (fn [a] (let [f (Math-floor a) d (- a f)]
@@ -3197,15 +3507,25 @@
                                               (h-infinite? a) (if (pos? a) 9223372036854775807 long-min-value)
                                               :else (let [a (double a) f (Math-floor a)]
                                                          (long (if (>= (- a f) 0.5) (+ f 1.0) f)))))))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-floorDiv (math-fn 'floorDiv (fn [a b] (let [q (quot a b)] (if (and (not= (neg? a) (neg? b)) (not= (* q b) a)) (dec q) q)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-floorMod (math-fn 'floorMod (fn [a b] (- a (* b (Math-floorDiv a b))))))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-addExact (math-fn 'addExact (fn [a b] (exact (+ a b)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-subtractExact (math-fn 'subtractExact (fn [a b] (exact (- a b)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-multiplyExact (math-fn 'multiplyExact (fn [a b] (exact (* a b)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-incrementExact (math-fn 'incrementExact (fn [a] (exact (inc a)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-decrementExact (math-fn 'decrementExact (fn [a] (exact (dec a)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Math-negateExact (math-fn 'negateExact (fn [a] (exact (- a)))))
+#_{:splint/disable [naming/lisp-case]}
 (def System-nanoTime (host/capability :nano-time))
+#_{:splint/disable [naming/lisp-case]}
 (def System-currentTimeMillis host/current-time-millis)
 (def System-exit host/exit)
 (def ^:private system-properties
@@ -3220,46 +3540,63 @@
    line.separator once at boot (system-newline, newline's text)."
      {"line.separator" "\n"})
 
+#_{:splint/disable [naming/lisp-case]}
 (defn System-getProperty ([k] (get @system-properties k (get property-defaults k))) ([k dflt] (get @system-properties k (get property-defaults k dflt))))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn System-setProperty [k v] (let [old (get @system-properties k)]
                                     (swap! system-properties assoc k v)
                                     old))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn System-clearProperty [k] (let [old (get @system-properties k)]
                                     (swap! system-properties dissoc k)
                                     old))
 ;; System.lineSeparator(): the line.separator property, as the JVM answers
 ;; it (stock clojure.main's report-error prints with it)
+#_{:splint/disable [naming/lisp-case]}
 (defn System-lineSeparator [] (System-getProperty "line.separator"))
+#_{:splint/disable [naming/lisp-case]}
 (def System-identityHashCode hash)
 ;; String.format(fmt, Object... args): core.clj's format passes one array
 (declare jformat)
 (defn String-format [fmt & args] (let [args (if (and (= 1 (count args)) (arr? (first args))) (seq (first args)) args)]
                                       (if-let [f (host/format-fn)] (apply f fmt args) (jformat fmt args))))
+#_{:splint/disable [naming/lisp-case]}
 (defn String-valueOf [x] (if (nil? x) "null" (str x)))
 ;; String.CASE_INSENSITIVE_ORDER compares upper- then lower-cased characters
+#_{:splint/disable [naming/lisp-case]}
 (defn String-CASE_INSENSITIVE_ORDER [a b] (let [f (fn [s] (h-lower-case (h-upper-case (str s))))] (compare (f a) (f b))))
+#_{:splint/disable [naming/lisp-case]}
 (def Array-getLength count)
 (defn- aioobe [i n] (host/ex* 'java.lang.ArrayIndexOutOfBoundsException (str "Index " i " out of bounds for length " n)))
 (defn Array-get [a i] (let [n (count a)] (if (and (<= 0 i) (< i n)) #?(:phel (aget a i) :default (nth a i)) (throw (aioobe i n)))))
 ;; (make-array Integer/TYPE n) is zero-filled, a class token fills with nil;
 ;; (make-array t d0 d1 ...) passes its dimensions as an array: nested arrays
+#_{:splint/disable [naming/lisp-case]}
 (defn Array-newInstance [t n] (let [zero (get '{int 0 long 0 short 0 byte 0 double 0.0 float 0.0 boolean false} t)
                                     build (fn build [[d & more]]
                                               (to-array* (if (seq more) (repeatedly d #(build more)) (repeat d zero))))]
                                    (if (number? n) (build [n]) (build (vec n)))))
 (defn Array-set [a i v] (let [n (count a)] (if (and (<= 0 i) (< i n)) (aset a i v) (throw (aioobe i n)))))
+#_{:splint/disable [naming/lisp-case]}
 (def Array-setInt Array-set)
+#_{:splint/disable [naming/lisp-case]}
 (def Array-setLong Array-set)
+#_{:splint/disable [naming/lisp-case]}
 (def Array-setBoolean Array-set)
+#_{:splint/disable [naming/lisp-case]}
 (def Array-setFloat Array-set)
 ;; RT.aget / RT.aset: what aget's and aset's :inline expand to
 (def RT-aget Array-get)
 (defn RT-aset [a i v] (Array-set a i v) v)
+#_{:splint/disable [naming/lisp-case]}
 (def Array-setDouble Array-set)
+#_{:splint/disable [naming/lisp-case]}
 (def Array-setShort Array-set)
+#_{:splint/disable [naming/lisp-case]}
 (def Array-setByte Array-set)
+#_{:splint/disable [naming/lisp-case]}
 (def Array-setChar Array-set)
 ;; java.util.Comparator over a Clojure fn (AFunction.compare): a boolean
 ;; result means "less than" when true, else the reverse call decides.
@@ -3298,6 +3635,7 @@
 (def Collections-shuffle (unsupported "Collections/shuffle"))
 ;; Collections.reverseOrder(): the host's own where it has java.util, else a
 ;; comparator fn that reverses compare (or the comparator given)
+#_{:splint/disable [naming/lisp-case]}
 (def Collections-reverseOrder (jstatic 'Collections/reverseOrder
                                        (fn ([] (fn [a b] (compare b a)))
                                            ([c] (let [c (as-comparator c)] (fn [a b] (c b a)))))))
@@ -3459,9 +3797,13 @@
                                    out)))))))
 
 (defn Pattern-quote [s] #_{:splint/disable [style/apply-str]} (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "^" "$" "." "|" "?" "*" "+" "(" ")" "[" "]" "{" "}"} c) (str "\\" c) c))) (str s))))
+#_{:splint/disable [naming/lisp-case]}
 (defn Matcher-quoteReplacement [s] #_{:splint/disable [style/apply-str]} (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "$"} c) (str "\\" c) c))) (str s))))
+#_{:splint/disable [naming/lisp-case]}
 (def UUID-randomUUID (host-fn 'random-uuid (unsupported "random-uuid")))
+#_{:splint/disable [naming/lisp-case]}
 (def UUID-fromString (host-fn 'parse-uuid (unsupported "parse-uuid")))
+#_{:splint/disable [naming/lisp-case]}
 (def Class-forName symbol)
 
 ;; ---------------------------------------------------------------------------
@@ -3504,6 +3846,7 @@
        [s]
        (reduce (fn [a c] (+ (* a 10) (- (int c) (int \0)))) 0 s))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn TimeZone-getTimeZone [id] (let [id (str id)]
                                      (if (and (> (count id) 4) (= "GMT" (subs id 0 3))
                                               (contains? #{\+ \-} (nth id 3)))
@@ -3578,6 +3921,7 @@
                                        14 (mod rem 1000)}
                               :tz tz}))))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn new-GregorianCalendar ([] (cal-from-millis (System-currentTimeMillis) utc-tz)) ([y mo d] (new-GregorianCalendar y mo d 0 0 0)) ([y mo d h mi] (new-GregorianCalendar y mo d h mi 0)) ([y mo d h mi s]
                                                                                                                                                                                             (->GregCal (atom {:fields {1 y 2 mo 5 d 11 h 12 mi 13 s 14 0}
                                                                                                                                                                                                               :tz utc-tz}))))
@@ -3587,26 +3931,37 @@
 (defn new-Timestamp [ms] (let [frac (- ms (* (cal-fdiv ms 1000) 1000))]
                               (->TimestampVal (atom {:millis ms :nanos (* frac 1000000)}))))
 
+#_{:splint/disable [naming/lisp-case]}
 (defn new-SimpleDateFormat [pattern] (->SDFVal (atom {:pattern (str pattern) :tz utc-tz})))
 
 ;; Calendar's field constants, as the JVM numbers them
 (def Calendar-ERA 0)
 (def Calendar-YEAR 1)
 (def Calendar-MONTH 2)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-WEEK_OF_YEAR 3)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-WEEK_OF_MONTH 4)
 (def Calendar-DATE 5)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-DAY_OF_MONTH 5)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-DAY_OF_YEAR 6)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-DAY_OF_WEEK 7)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-DAY_OF_WEEK_IN_MONTH 8)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-AM_PM 9)
 (def Calendar-HOUR 10)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-HOUR_OF_DAY 11)
 (def Calendar-MINUTE 12)
 (def Calendar-SECOND 13)
 (def Calendar-MILLISECOND 14)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-ZONE_OFFSET 15)
+#_{:splint/disable [naming/lisp-case]}
 (def Calendar-DST_OFFSET 16)
 
 (defn -getTime [x] (cond (gregcal? x) (->DateVal (cal-millis x))
@@ -3791,6 +4146,8 @@
 ;; Sorted.entryKey: a tree map's entry key, a tree set's element itself
 (defn -entryKey [coll e] (if (map? coll) (key e) e))
 ;; Sorted.seqFrom(key, ascending): the entries from key on, in that direction
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -seqFrom (let [ss (host-fn 'subseq nil) rs (host-fn 'rsubseq nil)]
                    (fn [sc k ascending?]
                        (cond (and ascending? ss) (ss sc >= k)
@@ -3878,6 +4235,8 @@
 (defn -containsKey [x k] (cond (transient-value? x) (memory/t-contains? x k)
                                (memory/eve-backed? x) (memory/lookup-contains? x k)
                                :else (contains? x k)))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -peek #?(:jank (fn [x] (if (cohost-inst? x)
                                 (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
                                 (peek x)))
@@ -3893,6 +4252,8 @@
                       :else (host/meta* x)))
 ;; let-go: a symbol given no metadata is the bare symbol (with-meta makes a
 ;; wrapper no symbol equals, even of none)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -withMeta #?(:lg (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m))))
                   ;; a cohost type instance's meta is its own slot, which
                   ;; jank's with-meta cannot reach (it panics on the type)
@@ -3911,6 +4272,8 @@
 (defn -alterMeta [x f args] (if (atom-layer/atom-value? x)
                                 (atom-layer/alter-meta-atom x f args)
                                 (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args)))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -resetMeta (let [rm (host-fn 'reset-meta! (fn [x m] (host-alter-meta! x (constantly m))))]
                      (fn [x m] (let [m (host-meta (meta-map m))]
                                     (if (atom-layer/atom-value? x)
@@ -3959,6 +4322,7 @@
 ;; CAS-acquire with a brief-wait spin, reentrant for the holding
 ;; thread (Thread/currentThread is the owner identity). Fairness is
 ;; not honored. clojure.core.server's with-lock is the consumer.
+#_{:splint/disable [naming/lisp-case]}
 (defn new-ReentrantLock ([] {:cohost/kind :cohost.shim/reentrant-lock :state (atom {:owner nil :count 0})}) ([_fair?] {:cohost/kind :cohost.shim/reentrant-lock :state (atom {:owner nil :count 0})}))
 
 (defn- shim-wait-brief! []
@@ -3992,6 +4356,7 @@
 ;; wraps the thread's context classloader in one on entry, so the
 ;; value and the Thread accessors exist. The per-thread CCL lives in
 ;; a shim atom keyed by the thread value (its :id makes it unique).
+#_{:splint/disable [naming/lisp-case]}
 (defn new-DynamicClassLoader ([] {:cohost/kind :cohost.shim/classloader :parent nil}) ([parent] {:cohost/kind :cohost.shim/classloader :parent parent}))
 (def ^:private context-classloaders (atom {}))
 (def -getContextClassLoader (http-member "getContextClassLoader" {:cohost.thread/thread (fn [x] (get @context-classloaders x)) :cohost.io/class-loader (fn [_] io/class-loader)}))
@@ -4047,6 +4412,8 @@
                      (let [acc (f acc (nth c i))] (if (reduced? acc) acc (recur (inc i) acc)))
                      acc))))
 
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -kvreduce (let [rk (host-fn 'reduce-kv (fn [f init coll] (reduce (fn [acc [k v]] (f acc k v)) init coll)))] (fn [coll f init] (rk f init coll))))
 (def -equiv Util-equiv)
 (def -equals Util-equals)
@@ -4081,6 +4448,8 @@
        [t]
        (let [n (pr-str t) k (count n)]
             (if (and (> k 10) (= "<class '" (subs n 0 8)) (= "'>" (subs n (- k 2)))) (subs n 8 (- k 2)) n)))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -empty (let [h (host-fn 'empty (fn [coll] (cond (vector? coll) [] (map? coll) {} (set? coll) #{} :else ())))]
               ;; defrecord's empty throws (a record without its fields is no record)
                  (fn [coll]
@@ -4096,6 +4465,8 @@
                                        (throw (host/ex* 'java.lang.UnsupportedOperationException (str "Can't create empty: " (type-name (type coll)))))
                                        :else (h coll))))))
 ;; jank's rseq is a TODO stub; reversing is its whole content there
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -rseq #?(:jank (fn [coll] (seq (reverse coll)))
               :default (let [h (host-fn 'rseq nil)]
                             (fn [coll] (cond (transient-value? coll)
@@ -4113,10 +4484,16 @@
 ;; the transient seam (unit 4): persistent!/transient/conj! of a
 ;; layer value are the layer's guarded transients; every other
 ;; value keeps the host's own
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -persistent (let [h (host-fn 'persistent! (unsupported "persistent!"))]
                       (fn [x] (if (transient-value? x) (memory/t-persistent! x) (h x)))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -asTransient (let [h (host-fn 'transient (unsupported "transient"))]
                        (fn [x] (if (memory/eve-backed? x) (memory/as-transient x) (h x)))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -conj (let [h (host-fn 'conj! (unsupported "conj!"))]
                 (fn [t x] (if (transient-value? t) (memory/t-conj t x) (h t x)))))
 (def -add (if-let [append (:chunk-append hc)]
@@ -4126,10 +4503,16 @@
 (def -chunk (if-let [chunk (:chunk hc)]
                     (fn [buf] (if (host/mlist? buf) @(:state buf) (chunk buf)))
                     (fn [buf] @(:state buf))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -chunkedFirst (let [f (:chunk-first hc)]
                         (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (::chunk (meta s)) :else [(first s)]))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -chunkedMore (let [f (:chunk-rest hc)]
                        (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (or (::more (meta s)) ()) :else (rest s)))))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -chunkedNext (let [f (:chunk-next hc)]
                        (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (seq (::more (meta s))) :else (next s)))))
 ;; Named.getName; a non-Named value is the JVM's ClassCastException (nil: NPE);
@@ -4176,6 +4559,8 @@
 ;; on the cljs pass the body is the unsupported throw, so the let's
 ;; al and the fn's params read unused there; they are the live
 ;; bindings of the :default arm.
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -addAlias #_{:clj-kondo/ignore [:unused-binding]} (let [al (host-fn 'alias nil)]
                                                             (fn [ns a target]
                                                                 #?(:cljs ((unsupported "alias"))
@@ -4274,6 +4659,8 @@
 (defn -getValidator [a] (if (atom-layer/atom-value? a)
                             (atom-layer/get-validator-atom a)
                             (host-get-validator a)))
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -isRealized (let [host-realized (host-fn 'realized? nil)]
                       (fn [x] (cond (or (thread/future-value? x) (thread/promise-value? x)) (thread/future-done? x)
                                     host-realized (host-realized x)
@@ -4293,6 +4680,8 @@
 ;; slot) and LineNumberingPushbackReader's -- the io layer's reader's
 ;; line, else the target's own (a host LNPR: the JVM seat's *in*, which
 ;; stock main's REPL asks every read cycle)
+;; splint: the value is not a plain fn: it is chosen per platform by reader conditional, computed once by a let, or self-named for recursion — (def (fn)) is the honest shape here
+#_{:splint/disable [style/def-fn]}
 (def -getLineNumber
      (let [own (http-member "getLineNumber" {:cohost.io/pushback-reader io/line-number})]
           (fn [x] (if (vector? x) (nth x 3) (own x)))))
