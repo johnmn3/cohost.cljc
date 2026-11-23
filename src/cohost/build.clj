@@ -92,7 +92,7 @@ const s = x => JSON.stringify(x);
 const edn = '{:stock-root ' + s(path.join(here, 'stock')) +
   ' :roots [' + meta.roots.map(r => s(path.join(here, r))).join(' ') + ']' +
   ' :cwd ' + s(process.cwd()) +
-  ' :args [" -m " ' + s(meta.main) + ' ' + process.argv.slice(2).map(s).join(' ') + ']}';
+  ' :args [\" -m \" ' + s(meta.main) + ' ' + process.argv.slice(2).map(s).join(' ') + ']}';
 const cfg = path.join(os.tmpdir(), 'cohost-run-' + process.pid + '.edn');
 fs.writeFileSync(cfg, edn);
 const r = cp.spawnSync('node', [path.join('target', 'cljs-cli', 'main.js'), cfg], {cwd: here, stdio: 'inherit'});
