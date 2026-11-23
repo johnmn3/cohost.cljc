@@ -47,9 +47,12 @@ def convert(s, node):
     if not fch:
         return None
     private = False
+    meta_txt = None
     if meta is not None:
         if meta.text == ':private':
             private = True
+        elif meta.text.startswith(':'):
+            meta_txt = '^' + meta.text
         else:
             return None
     attr_txt = None
@@ -60,7 +63,7 @@ def convert(s, node):
         else:
             attr_txt = atext
     head = 'defn-' if private else 'defn'
-    parts = [head, name.text]
+    parts = [head, (meta_txt + ' ' if meta_txt else '') + name.text]
     if doc is not None:
         parts.append(E.raw(s, doc))
     if attr_txt is not None:

@@ -46,10 +46,7 @@
 (def ^:private h-transient? (host/capability :transient?))
 (def ^:private h-namespace? (host/capability :namespace?))
 (def ^:private host-atom? (host/capability :atom?))
-(def ^:private h-atom?
-  ;; the host's atoms, and Eve's (unit 5): a layer atom answers
-  ;; clojure.lang.Atom / IAtom / IAtom2 wherever the host's does
-     (fn [x] (or (atom-layer/atom-value? x) (host-atom? x))))
+(defn- h-atom? [x] (or (atom-layer/atom-value? x) (host-atom? x)))
 (def ^:private h-sb? (host/capability :sb?))
 (def ^:private h-var? (host/capability :var?))
 (def ^:private h-sorted? (host/capability :sorted?))
@@ -101,8 +98,7 @@
 ;; headers map) dies with "Cannot compare :cohost/kind to date" on the
 ;; Node seat, a ClassCastException on the JVM seat. Every shim dispatch
 ;; path asks this, never memory/transient-value? directly.
-(def ^:private transient-value?
-     (fn [x] (and (not (h-sorted? x)) (memory/transient-value? x))))
+(defn- transient-value? [x] (and (not (h-sorted? x)) (memory/transient-value? x)))
 
 ;; ---------------------------------------------------------------------------
 ;; misses
@@ -912,11 +908,11 @@
 (def RT-first first)
 (def RT-next next)
 (def RT-more rest)
-(def RT-seq (fn [x] (if (transient-value? x)
-                        (throw (host/ex* 'java.lang.ClassCastException
-                                         (str "class " (memory/transient-class-token x)
-                                              " cannot be cast to class clojure.lang.Seqable")))
-                        (seq x))))
+(defn RT-seq [x] (if (transient-value? x)
+                     (throw (host/ex* 'java.lang.ClassCastException
+                                      (str "class " (memory/transient-class-token x)
+                                           " cannot be cast to class clojure.lang.Seqable")))
+                     (seq x)))
 ;; (let-go's conj takes no map onto a map, nor nil, as the JVM's does)
 (def RT-conj #?(:lg (fn [coll x] (if (and (map? coll) (or (nil? x) (map? x))) (into coll x) (conj coll x)))
                 ;; a cohost type instance: jank's conj panics on its type
@@ -1012,7 +1008,7 @@
                                             :else (find coll k)))))
 (def RT-keys keys)
 (def RT-vals vals)
-(def RT-peek (fn [x] (if (transient-value? x) (memory/t-peek x) (peek x))))
+(defn RT-peek [x] (if (transient-value? x) (memory/t-peek x) (peek x)))
 (def RT-pop #?(:phel (fn [coll] (pop coll))
                :default (fn [coll] (if (transient-value? coll)
                                        (throw (host/ex* 'java.lang.ClassCastException
@@ -1023,10 +1019,10 @@
 (def ^:private arr? (or (host/array-fn) (host-fn 'array? (constantly false))))
 ;; RT/vector is the analyzer's vector-literal construction (a
 ;; vector form in code position): the fill's surface too (unit 4)
-(def RT-vector (fn [& xs] (let [arr (and (= 1 (count xs)) (arr? (first xs)))]
-                               (if (memory/fill-on?)
-                                   (memory/make-vector (if arr (first xs) xs))
-                                   (if arr (vec (first xs)) (vec xs))))))
+(defn RT-vector [& xs] (let [arr (and (= 1 (count xs)) (arr? (first xs)))]
+                            (if (memory/fill-on?)
+                                (memory/make-vector (if arr (first xs) xs))
+                                (if arr (vec (first xs)) (vec xs)))))
 (def RT-toArray to-array*)
 ;; seqToTypedArray with a component type: the host's own typed array where
 ;; the host makes one and the type names a host class its elements are (the JVM seat: a varargs call such as stock main's
@@ -1044,7 +1040,7 @@
                           (if (and c (every? (fn [x] (or (nil? x) (instance? c x))) s))
                               (typed c s)
                               (to-array* s)))))))
-(def RT-object_array (fn [n-or-seq] (if (number? n-or-seq) (to-array* (repeat n-or-seq nil)) (to-array* n-or-seq))))
+(defn RT-object_array [n-or-seq] (if (number? n-or-seq) (to-array* (repeat n-or-seq nil)) (to-array* n-or-seq)))
 (def RT-alength #?(:phel count :default (host-fn 'alength count))) ; (Phel's takes a PHP array)
 (def RT-aclone #?(:phel (fn [a] (to-array* (seq a))) :default (host-fn 'aclone (fn [a] (to-array (seq a))))))
 (def RT-booleanCast boolean)
@@ -1075,42 +1071,42 @@
 (defn- int-bits [x] (cond (h-char? x) (h-char-code x)
                           (integer? x) x
                           :else (d2l (RT-doubleCast x) -2147483648 2147483647)))
-(def RT-uncheckedIntCast (fn [x] (wrap32 (int-bits x))))
+(defn RT-uncheckedIntCast [x] (wrap32 (int-bits x)))
 (defn- char-cce [] (host/ex* 'java.lang.ClassCastException "class java.lang.Character cannot be cast to class java.lang.Number"))
 ;; Long/MIN_VALUE. A jank object turns the literal -9223372036854775808 into a
 ;; garbage double (doc/upstream/jank-10-aot-long-min-literal.md). Subtracting
 ;; one from the next long is the same value, and the object keeps it.
 (def ^:private long-min-value (dec -9223372036854775807))
-(def RT-uncheckedLongCast (fn [x] (cond (h-char? x) (throw (char-cce))
-                                        (integer? x) x
-                                        :else (d2l (RT-doubleCast x) long-min-value 9223372036854775807))))
+(defn RT-uncheckedLongCast [x] (cond (h-char? x) (throw (char-cce))
+                                     (integer? x) x
+                                     :else (d2l (RT-doubleCast x) long-min-value 9223372036854775807)))
 (def RT-uncheckedDoubleCast RT-doubleCast)
 
 (def RT-uncheckedFloatCast RT-floatCast)
 (def RT-uncheckedCharCast RT-charCast)
-(def RT-uncheckedByteCast (fn [x] (when (h-char? x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 128) 255) 128)))
-(def RT-uncheckedShortCast (fn [x] (when (h-char? x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 32768) 65535) 32768)))
+(defn RT-uncheckedByteCast [x] (when (h-char? x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 128) 255) 128))
+(defn RT-uncheckedShortCast [x] (when (h-char? x) (throw (char-cce))) (- (bit-and (+ (wrap32 (int-bits x)) 32768) 65535) 32768))
 (declare matcher?)
 ;; RT.canSeq: seqs, colls, strings, nil, arrays; not the shim's iterator or
 ;; matcher (records here, but no Seqable on the JVM)
 (def ^:private h-seqable? (host-fn 'seqable? nil))
-(def RT-canSeq (fn [x] (and (not (host/iter? x)) (not (matcher? x))
-                            (or (host/seqable?* x) (arr? x) (host/mlist? x)
+(defn RT-canSeq [x] (and (not (host/iter? x)) (not (matcher? x))
+                         (or (host/seqable?* x) (arr? x) (host/mlist? x)
                                 ;; a Seqable or Iterable object of another type: the host's seqable?
-                                (boolean (and h-seqable? (not (builtin? x)) (h-seqable? x)))))))
-(def RT-iter (fn [coll] (if (host/iter? coll) coll (host/iter coll))))
+                             (boolean (and h-seqable? (not (builtin? x)) (h-seqable? x))))))
+(defn RT-iter [coll] (if (host/iter? coll) coll (host/iter coll)))
 (def RT-isReduced (host-fn 'reduced? (unsupported "reduced?")))
 (def ^:private id-counter (atom 0))
-(def RT-nextID (fn [] (swap! id-counter inc)))
+(defn RT-nextID [] (swap! id-counter inc))
 (def load-hook (atom nil))
-(def RT-load (fn [path & _] (if-let [f @load-hook] (f path) (throw (ex-info "cohost.shim: no loader bound" {:path path})))))
+(defn RT-load [path & _] (if-let [f @load-hook] (f path) (throw (ex-info "cohost.shim: no loader bound" {:path path}))))
 ;; the host's read-string when it has one; else the adapter's reader (a host
 ;; with no read-string of its own, like ClojureScript, still reads)
 (def RT-readString (let [rs (host-fn 'read-string nil)]
                         (fn ([s] (if rs (rs s) (host/read-string* s {})))
                             ([s opts] (if rs (rs opts s) (host/read-string* s opts))))))
-(def RT-baseLoader (fn [] nil))
-(def RT-addURL (fn [& _] nil))
+(defn RT-baseLoader [] nil)
+(defn RT-addURL [& _] nil)
 ;; RT.chunkIteratorSeq: nil for an exhausted iterator (so `(sequence xf [])`
 ;; is `()` and `iterator-seq` of nothing is nil), else a lazy seq over it
 (def RT-chunkIteratorSeq
@@ -1164,11 +1160,7 @@
 (def Numbers-lte <=)
 (def Numbers-gt >)
 (def Numbers-gte >=)
-(def Numbers-equiv
-     (fn ([] true)
-         ([_x] true)
-         ([x y] (== x y))
-         ([x y & more] (and (== x y) (apply Numbers-equiv y more)))))
+(defn Numbers-equiv ([] true) ([_x] true) ([x y] (== x y)) ([x y & more] (and (== x y) (apply Numbers-equiv y more))))
 (def Numbers-isZero zero?)
 (def Numbers-isPos pos?)
 (def Numbers-isNeg neg?)
@@ -1180,17 +1172,17 @@
 (def Numbers-remainder (let [r #?(:jank (or (jank-int-arith "num-remainder") rem) :default rem)]
                             (fn [x y] (if (zero? y) (throw (divide-by-zero)) (r x y)))))
 ;; Numbers.max / min: a NaN argument wins; a tie is the second argument
-(def Numbers-max (fn [x y] (cond (h-nan? x) x (h-nan? y) y (> x y) x :else y)))
-(def Numbers-min (fn [x y] (cond (h-nan? x) x (h-nan? y) y (< x y) x :else y)))
+(defn Numbers-max [x y] (cond (h-nan? x) x (h-nan? y) y (> x y) x :else y))
+(defn Numbers-min [x y] (cond (h-nan? x) x (h-nan? y) y (< x y) x :else y))
 (def Numbers-abs (host-fn 'abs (fn [x] (if (neg? x) (- x) x))))
-(def Numbers-num (fn [x] (if (number? x) x (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.Number x))))))
-(def Numbers-and (fn [x y] (bit-and x y)))
-(def Numbers-or (fn [x y] (bit-or x y)))
-(def Numbers-xor (fn [x y] (bit-xor x y)))
+(defn Numbers-num [x] (if (number? x) x (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.Number x)))))
+(defn Numbers-and [x y] (bit-and x y))
+(defn Numbers-or [x y] (bit-or x y))
+(defn Numbers-xor [x y] (bit-xor x y))
 (def Numbers-not bit-not)
 (def Numbers-andNot (host-fn 'bit-and-not (fn [x y] (bit-and x (bit-not y)))))
-(def Numbers-shiftLeft (fn [x y] (bit-shift-left x y)))
-(def Numbers-shiftRight (fn [x y] (bit-shift-right x y)))
+(defn Numbers-shiftLeft [x y] (bit-shift-left x y))
+(defn Numbers-shiftRight [x y] (bit-shift-right x y))
 (def Numbers-unsignedShiftRight (host-fn 'unsigned-bit-shift-right (fn [x y] (bit-shift-right x y))))
 (def Numbers-clearBit (host-fn 'bit-clear (fn [x n] (bit-and x (bit-not (bit-shift-left 1 n))))))
 (def Numbers-setBit (host-fn 'bit-set (fn [x n] (bit-or x (bit-shift-left 1 n)))))
@@ -1206,14 +1198,14 @@
 (def Numbers-unchecked_inc (host-fn 'unchecked-inc inc))
 (def Numbers-unchecked_dec (host-fn 'unchecked-dec dec))
 ;; the int family is 32-bit two's complement arithmetic (wrap32, above)
-(def Numbers-unchecked_int_divide (fn [x y] (wrap32 (quot (wrap32 x) (wrap32 y)))))
-(def Numbers-unchecked_int_add (fn [x y] (wrap32 (+ (wrap32 x) (wrap32 y)))))
-(def Numbers-unchecked_int_subtract (fn [x y] (wrap32 (- (wrap32 x) (wrap32 y)))))
-(def Numbers-unchecked_int_multiply (fn [x y] (wrap32 (* (wrap32 x) (wrap32 y)))))
-(def Numbers-unchecked_int_inc (fn [x] (wrap32 (inc (wrap32 x)))))
-(def Numbers-unchecked_int_dec (fn [x] (wrap32 (dec (wrap32 x)))))
-(def Numbers-unchecked_int_negate (fn [x] (wrap32 (- (wrap32 x)))))
-(def Numbers-unchecked_int_remainder (fn [x y] (rem (wrap32 x) (wrap32 y))))
+(defn Numbers-unchecked_int_divide [x y] (wrap32 (quot (wrap32 x) (wrap32 y))))
+(defn Numbers-unchecked_int_add [x y] (wrap32 (+ (wrap32 x) (wrap32 y))))
+(defn Numbers-unchecked_int_subtract [x y] (wrap32 (- (wrap32 x) (wrap32 y))))
+(defn Numbers-unchecked_int_multiply [x y] (wrap32 (* (wrap32 x) (wrap32 y))))
+(defn Numbers-unchecked_int_inc [x] (wrap32 (inc (wrap32 x))))
+(defn Numbers-unchecked_int_dec [x] (wrap32 (dec (wrap32 x))))
+(defn Numbers-unchecked_int_negate [x] (wrap32 (- (wrap32 x))))
+(defn Numbers-unchecked_int_remainder [x y] (rem (wrap32 x) (wrap32 y)))
 (def Numbers-toBigInt (host-fn 'bigint identity))
 
 ;; a ^long / ^double RETURN on the JVM is the unchecked cast, not the
@@ -1230,13 +1222,13 @@
 ;; unchecked cast raises its own error type for a string (let-go's
 ;; "can't be coerced to double"), which a (catch ClassCastException)
 ;; in the program cannot see. The JVM's cast throws ClassCastException.
-(def prim-ret-long (fn [x] (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot cast null to a primitive long"))
-                                 (h-bigint? x) (wrap64 x)
-                                 (number? x) (RT-uncheckedLongCast x)
-                                 :else (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.Number x))))))
-(def prim-ret-double (fn [x] (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot cast null to a primitive double"))
-                                   (number? x) (RT-doubleCast x)
-                                   :else (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.Number x))))))
+(defn prim-ret-long [x] (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot cast null to a primitive long"))
+                              (h-bigint? x) (wrap64 x)
+                              (number? x) (RT-uncheckedLongCast x)
+                              :else (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.Number x)))))
+(defn prim-ret-double [x] (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot cast null to a primitive double"))
+                                (number? x) (RT-doubleCast x)
+                                :else (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.Number x)))))
 (def Numbers-toBigDecimal (host-fn 'bigdec identity))
 (def Numbers-rationalize (host-fn 'rationalize identity))
 (def Numbers-booleans identity)
@@ -1305,10 +1297,10 @@
                     :default (reduce f #?(:phel (if (map? coll) (seq coll) coll) :default coll))))
        ([f init coll] #?(:jank (@jank-reduce-init f init coll)
                          :default (reduce f init #?(:phel (if (map? coll) (seq coll) coll) :default coll)))))
-(def protocols-coll-reduce (fn ([coll f] (host-reduce (host-reducer f) coll)) ([coll f init] (host-reduce (host-reducer f) init coll))))
+(defn protocols-coll-reduce ([coll f] (host-reduce (host-reducer f) coll)) ([coll f init] (host-reduce (host-reducer f) init coll)))
 (declare -kvreduce)
-(def protocols-kv-reduce (fn [coll f init] (-kvreduce coll f init)))
-(def protocols-iterator-reduce! (fn ([it f] (reduce f (RT-chunkIteratorSeq it))) ([it f init] (reduce f init (RT-chunkIteratorSeq it)))))
+(defn protocols-kv-reduce [coll f init] (-kvreduce coll f init))
+(defn protocols-iterator-reduce! ([it f] (reduce f (RT-chunkIteratorSeq it))) ([it f init] (reduce f init (RT-chunkIteratorSeq it))))
 (def RT-REQUIRE_LOCK (atom ::require-lock))
 (def TimeUnit-MILLISECONDS :milliseconds)
 (def TimeUnit-SECONDS :seconds)
@@ -1336,16 +1328,15 @@
 (def Util-equals Util-equiv)
 ;; seam compare (unit 4): an Eve-backed side compares by the
 ;; layer's canonical forms; Eve's types implement no Comparable
-(def Util-compare (fn [a b] (if (or (memory/eve-backed? a) (memory/eve-backed? b))
-                                (memory/compare-values a b)
-                                (compare a b))))
+(defn Util-compare [a b] (if (or (memory/eve-backed? a) (memory/eve-backed? b))
+                             (memory/compare-values a b)
+                             (compare a b)))
 ;; Util.hash is Object.hashCode (nil is 0), not hasheq; hashCombine is boost's,
 ;; in 32-bit int arithmetic (0x9e3779b9 as an int)
 (declare -hashCode)
-(def Util-hash (fn [x] (if (nil? x) 0 (-hashCode x))))
-(def Util-hashCombine (fn [seed h]
-                          (let [seed (wrap32 seed)]
-                               (bit-xor seed (wrap32 (+ (wrap32 h) -1640531527 (wrap32 (bit-shift-left seed 6)) (bit-shift-right seed 2)))))))
+(defn Util-hash [x] (if (nil? x) 0 (-hashCode x)))
+(defn Util-hashCombine [seed h] (let [seed (wrap32 seed)]
+                                     (bit-xor seed (wrap32 (+ (wrap32 h) -1640531527 (wrap32 (bit-shift-left seed 6)) (bit-shift-right seed 2))))))
 (def Util-hasheq #?(:lg (fn [x] (let [x (host/plain-symbol x) r (lg-own x "hashCode" [])]
                                      (if (identical? r absent) (hash x) r)))
                     :default (fn [x] (if (or (memory/eve-value? x) (memory/eve-backed? x))
@@ -1374,14 +1365,14 @@
                                   (memory/resolve-resident (val e))]))
                  (seq m))
            m))
-(def Var-pushThreadBindings (fn [m] (host/push-thread-bindings! (bindings-map m))))
+(defn Var-pushThreadBindings [m] (host/push-thread-bindings! (bindings-map m)))
 (declare Var-popThreadBindings)
 ;; unit 7: core's binding-conveyor-fn captures through here; the thread
 ;; layer's capture hook (cross-process frames through a shared atom) applies
 (def Var-getThreadBindings (let [base (host-fn 'get-thread-bindings (fn [] (host/thread-bindings)))]
                                 (fn [] (thread/apply-capture-hook (base)))))
-(def Var-cloneThreadBindingFrame (fn [] nil))
-(def Var-resetThreadBindingFrame (fn [_] nil))
+(defn Var-cloneThreadBindingFrame [] nil)
+(defn Var-resetThreadBindingFrame [_] nil)
 ;; Var.intern(ns, sym) creates the namespace and leaves the var unbound (the
 ;; host's 2-arity intern); Var.intern(ns, sym, root) binds it
 (def Var-intern (let [in (host-fn 'intern nil) cn (host-fn 'create-ns (fn [_] nil))
@@ -1402,12 +1393,10 @@
                                             (atom-layer/publish-var-root! (ns-sym ns) sym val)
                                             r)))))
 (declare Namespace-find)
-(def Var-find (fn [sym]
-                  (when-not (namespace sym)
-                            (throw (host/ex* 'java.lang.IllegalArgumentException "Symbol must be namespace-qualified")))
-                  (let [ns (symbol (namespace sym))]
-                       (when (nil? (Namespace-find ns))
-                             (throw (host/ex* 'java.lang.IllegalArgumentException (str "No such namespace: " ns))))
+(defn Var-find [sym] (when-not (namespace sym)
+                               (throw (host/ex* 'java.lang.IllegalArgumentException "Symbol must be namespace-qualified"))) (let [ns (symbol (namespace sym))]
+                                                                                                                                 (when (nil? (Namespace-find ns))
+                                                                                                                                       (throw (host/ex* 'java.lang.IllegalArgumentException (str "No such namespace: " ns))))
                   ;; the mappings of the namespace OBJECT, interned
                   ;; entries only: Namespace-find + the ns-map host fn
                   ;; are the path the booted core itself walks, and on
@@ -1415,13 +1404,13 @@
                   ;; the by-symbol interns map and the host's the-ns
                   ;; resolve a different registry's vars, so Var/find
                   ;; was not identical (nor =) to (var sym)
-                       (let [nso (Namespace-find ns)
-                             nm (host-fn 'ns-map nil)
-                             v (when (and nso nm) (get (nm nso) (symbol (name sym))))]
-                            (if (and v (= ns (let [n (host/var-ns v)]
-                                                  (if (h-namespace? n) (host/ns-name* n) n))))
-                                v
-                                (get (host/ns-interns-map ns) (symbol (name sym))))))))
+                                                                                                                                 (let [nso (Namespace-find ns)
+                                                                                                                                       nm (host-fn 'ns-map nil)
+                                                                                                                                       v (when (and nso nm) (get (nm nso) (symbol (name sym))))]
+                                                                                                                                      (if (and v (= ns (let [n (host/var-ns v)]
+                                                                                                                                                            (if (h-namespace? n) (host/ns-name* n) n))))
+                                                                                                                                          v
+                                                                                                                                          (get (host/ns-interns-map ns) (symbol (name sym)))))))
 ;; Var.create(): an anonymous var (with-local-vars). The hosts have no
 ;; anonymous vars, so one is interned under a fresh name in a scratch namespace
 ;; and made dynamic, which is what pushThreadBindings asks of it.
@@ -1436,7 +1425,7 @@
 ;; cohost.locals, and leaves it when a binding frame pops and no binding in
 ;; this thread holds it (the var object stays usable)
 (def ^:private live-locals (atom 0))
-(def Var-create (fn [& args] (swap! live-locals inc) (apply var-create* args)))
+(defn Var-create [& args] (swap! live-locals inc) (apply var-create* args))
 (def ^:private unmap-dead-locals!
   ;; (ClojureScript's ns-unmap is a compile-time macro: its locals stay)
      (let [unmap #?(:cljs nil :default (host-fn 'ns-unmap nil))]
@@ -1449,10 +1438,7 @@
                                            (if (host/var-thread-bound? v) (inc n) (do #_{:clj-kondo/ignore [:type-mismatch]} (unmap @locals-ns sym) n)))
                                        0 (seq (host/ns-interns-map @locals-ns)))]
                          (reset! live-locals left))))))
-(def Var-popThreadBindings
-     (fn []
-         (host/pop-thread-bindings!)
-         (unmap-dead-locals!)))
+(defn Var-popThreadBindings [] (host/pop-thread-bindings!) (unmap-dead-locals!))
 ;; a pushThreadBindings ... (try ... (finally popThreadBindings)) pair as one
 ;; call: what the codemod writes where the host's bindings are scoped only
 ;; (:binding-style :with-bindings)
@@ -1460,16 +1446,15 @@
       (try (host/with-thread-bindings! (bindings-map m) f)
            (finally (unmap-dead-locals!))))
 
-(def Keyword-intern (fn ([x] (if (symbol? x)
-                                 (let [x #?(:lg (host/plain-symbol x) :default x)] (keyword (namespace x) (name x)))
-                                 (keyword x)))
-                        ([ns n] (keyword ns n))))
+(defn Keyword-intern ([x] (if (symbol? x)
+                              (let [x #?(:lg (host/plain-symbol x) :default x)] (keyword (namespace x) (name x)))
+                              (keyword x))) ([ns n] (keyword ns n)))
 (def Keyword-find (let [fk (host-fn 'find-keyword nil)]
                        (fn ([x] (if fk (if (symbol? x) (fk (namespace x) (name x)) (fk x)) (Keyword-intern x)))
                            ([ns n] (if fk (fk ns n) (keyword ns n))))))
 (def Symbol-intern #?(:lg (fn ([s] (symbol (host/plain-symbol s))) ([ns n] (symbol ns n)))
                       :default (fn ([s] (symbol s)) ([ns n] (symbol ns n)))))
-(def Symbol-create (fn ([s] (symbol nil s)) ([ns n] (symbol ns n))))
+(defn Symbol-create ([s] (symbol nil s)) ([ns n] (symbol ns n)))
 (def Namespace-find (host-fn 'find-ns (unsupported "find-ns")))
 (def Namespace-findOrCreate (host-fn 'create-ns (unsupported "create-ns")))
 (def Namespace-all (host-fn 'all-ns (fn [] [])))
@@ -1485,7 +1470,7 @@
 (def Compiler-load (unsupported "Compiler/load"))
 ;; macroexpand-1 is the macro's own expansion: the codemod's rewrite of it is
 ;; for the compiler, which expands the form again when it is evaluated
-(def Compiler-macroexpand1 (fn [form] (binding [host/*raw-macro-output* true] (host/macroexpand-1* form))))
+(defn Compiler-macroexpand1 [form] (binding [host/*raw-macro-output* true] (host/macroexpand-1* form)))
 (def Compiler-maybeResolveIn (let [r (host-fn 'ns-resolve nil)] (fn [ns sym] (if r (r ns sym) (get (host/ns-interns-map ns) sym)))))
 (def Compiler-specials
      (set '[def if do let* loop* recur fn* quote var throw try catch finally monitor-enter monitor-exit
@@ -1499,22 +1484,20 @@
       "_CARET_" "^" "_AMPERSAND_" "&" "_STAR_" "*" "_BAR_" "|" "_LBRACE_" "{" "_RBRACE_" "}"
       "_LBRACK_" "[" "_RBRACK_" "]" "_SLASH_" "/" "_BSLASH_" "\\" "_QMARK_" "?" "_" "-" "$" "/"})
 (def ^:private demunge-tokens (sort-by (comp - count) (keys demunge-map)))
-(def Compiler-demunge
-     (fn [s]
-         (let [s (str s) n (count s)]
-              (loop [i 0 out []]
-                    (if (>= i n)
+(defn Compiler-demunge [s] (let [s (str s) n (count s)]
+                                (loop [i 0 out []]
+                                      (if (>= i n)
                         ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-                        #_{:splint/disable [style/apply-str]}
-                        (apply str out)
-                        (if-let [t (some (fn [t] (when (and (<= (+ i (count t)) n) (= t (subs s i (+ i (count t))))) t)) demunge-tokens)]
-                                (recur (+ i (count t)) (conj out (get demunge-map t)))
-                                (recur (inc i) (conj out (subs s i (inc i))))))))))
-(def Compiler_HostExpr-maybeClass (fn [& _] nil))
-(def Compiler_HostExpr-maybeSpecialTag (fn [& _] nil))
-(def Reflector-prepRet (fn [_c x] x))
-(def Agent-shutdown (fn [] (when (thread/available?) (thread/shutdown-agents)) nil))
-(def Agent-releasePendingSends (fn [] (if (thread/available?) (thread/release-pending-sends) 0)))
+                                          #_{:splint/disable [style/apply-str]}
+                                          (apply str out)
+                                          (if-let [t (some (fn [t] (when (and (<= (+ i (count t)) n) (= t (subs s i (+ i (count t))))) t)) demunge-tokens)]
+                                                  (recur (+ i (count t)) (conj out (get demunge-map t)))
+                                                  (recur (inc i) (conj out (subs s i (inc i)))))))))
+(defn Compiler_HostExpr-maybeClass [& _] nil)
+(defn Compiler_HostExpr-maybeSpecialTag [& _] nil)
+(defn Reflector-prepRet [_c x] x)
+(defn Agent-shutdown [] (when (thread/available?) (thread/shutdown-agents)) nil)
+(defn Agent-releasePendingSends [] (if (thread/available?) (thread/release-pending-sends) 0))
 
 ;; ---------------------------------------------------------------------------
 ;; collections: statics and constructors
@@ -1522,46 +1505,37 @@
 ;; the collection fill (unit 4): with the fill in force the
 ;; creators answer Eve-backed values through the layer; a seat
 ;; with no Eve hosting registered never has the fill in force
-(def PersistentList-creator (fn [& xs] (if (memory/fill-on?) (memory/make-list xs) (apply list xs))))
-(def PersistentHashMap-create (fn [kvs] (if (memory/fill-on?) (memory/make-map (seq kvs)) (apply hash-map (seq kvs)))))
-(def PersistentHashMap-createWithCheck
-     (fn [kvs]
-         (let [ks (take-nth 2 (seq kvs))]
-              (when (not= (count ks) (count (set ks)))
-                    (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies ks)))))))
-              (if (memory/fill-on?) (memory/make-map (seq kvs)) (apply hash-map (seq kvs))))))
+(defn PersistentList-creator [& xs] (if (memory/fill-on?) (memory/make-list xs) (apply list xs)))
+(defn PersistentHashMap-create [kvs] (if (memory/fill-on?) (memory/make-map (seq kvs)) (apply hash-map (seq kvs))))
+(defn PersistentHashMap-createWithCheck [kvs] (let [ks (take-nth 2 (seq kvs))]
+                                                   (when (not= (count ks) (count (set ks)))
+                                                         (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies ks)))))))
+                                                   (if (memory/fill-on?) (memory/make-map (seq kvs)) (apply hash-map (seq kvs)))))
 (def PersistentArrayMap-EMPTY {})
-(def PersistentArrayMap-create (fn [m] (if (memory/fill-on?) (memory/make-map-from m) (into {} m))))
+(defn PersistentArrayMap-create [m] (if (memory/fill-on?) (memory/make-map-from m) (into {} m)))
 (def ^:private h-array-map (host-fn 'array-map nil))
-(def PersistentArrayMap-createAsIfByAssoc
-     (fn [arr]
-    ;; an odd count ends in a trailing element (1.11's trailing map for
-    ;; & {:keys ...}) taken as the JVM takes it, EMPTY.cons(x): nil adds
-    ;; nothing, a [k v] pair or a map its entries, anything else is an error
-         (if (memory/fill-on?)
-             (let [s (seq arr)
-                   odd (odd? (count s))
-                   tail (when odd (RT-conj {} (last s)))]
-                  (memory/make-map (concat (if odd (butlast s) s) (mapcat seq (seq tail)))))
-             (let [s (seq arr)
-                   odd (odd? (count s))
-                   tail (when odd (RT-conj {} (last s))) kvs (concat (partition 2 (if odd (butlast s) s)) (seq tail))]
+(defn PersistentArrayMap-createAsIfByAssoc [arr] (if (memory/fill-on?)
+                                                     (let [s (seq arr)
+                                                           odd (odd? (count s))
+                                                           tail (when odd (RT-conj {} (last s)))]
+                                                          (memory/make-map (concat (if odd (butlast s) s) (mapcat seq (seq tail)))))
+                                                     (let [s (seq arr)
+                                                           odd (odd? (count s))
+                                                           tail (when odd (RT-conj {} (last s))) kvs (concat (partition 2 (if odd (butlast s) s)) (seq tail))]
       ;; the tail's entries follow the pairs; each key keeps its first
       ;; position and its last value, in the host's array map, which keeps
       ;; that order at any size (assoc would make a hash map past 8 entries)
 
-                  (if h-array-map
-                      (let [last-v (reduce (fn [m [k v]] (assoc m k v)) {} kvs)]
-                           (apply h-array-map (mapcat (fn [k] [k (get last-v k)]) (distinct (map first kvs)))))
-                      (reduce (fn [m [k v]] (assoc m k v)) {} kvs))))))
+                                                          (if h-array-map
+                                                              (let [last-v (reduce (fn [m [k v]] (assoc m k v)) {} kvs)]
+                                                                   (apply h-array-map (mapcat (fn [k] [k (get last-v k)]) (distinct (map first kvs)))))
+                                                              (reduce (fn [m [k v]] (assoc m k v)) {} kvs)))))
 (def PersistentArrayMap-createWithCheck PersistentHashMap-createWithCheck)
-(def PersistentHashSet-create (fn [coll] (if (memory/fill-on?) (memory/make-set coll) (set coll))))
-(def PersistentHashSet-createWithCheck
-     (fn [coll]
-         (let [s (seq coll)]
-              (when (not= (count s) (count (set s)))
-                    (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies s)))))))
-              (if (memory/fill-on?) (memory/make-set s) (set s)))))
+(defn PersistentHashSet-create [coll] (if (memory/fill-on?) (memory/make-set coll) (set coll)))
+(defn PersistentHashSet-createWithCheck [coll] (let [s (seq coll)]
+                                                    (when (not= (count s) (count (set s)))
+                                                          (throw (host/ex* 'IllegalArgumentException (str "Duplicate key: " (some (fn [[k n]] (when (> n 1) k)) (seq (frequencies s)))))))
+                                                    (if (memory/fill-on?) (memory/make-set s) (set s))))
 (def PersistentTreeMap-create
      (let [sm (host-fn 'sorted-map nil) smb (host-fn 'sorted-map-by nil)]
           (fn ([kvs] (if sm (apply sm (seq kvs)) ((unsupported "sorted-map"))))
@@ -1570,17 +1544,17 @@
      (let [ss (host-fn 'sorted-set nil) ssb (host-fn 'sorted-set-by nil)]
           (fn ([coll] (if ss (apply ss (seq coll)) ((unsupported "sorted-set"))))
               ([cmp coll] (if ssb (apply ssb cmp (seq coll)) ((unsupported "sorted-set-by")))))))
-(def LazilyPersistentVector-create (fn [coll] (if (memory/fill-on?) (memory/make-vector coll) (vec coll))))
+(defn LazilyPersistentVector-create [coll] (if (memory/fill-on?) (memory/make-vector coll) (vec coll)))
 ;; createOwning(Object... items): called from Clojure with one array, the items
-(def LazilyPersistentVector-createOwning (fn [arr] (if (memory/fill-on?) (memory/make-vector arr) (vec arr))))
-(def MapEntry-create (fn [k v] (first (hash-map k v))))
+(defn LazilyPersistentVector-createOwning [arr] (if (memory/fill-on?) (memory/make-vector arr) (vec arr)))
+(defn MapEntry-create [k v] (first (hash-map k v)))
 (def new-MapEntry MapEntry-create)
 
 ;; static fields a program may set! (clojure.lang.RT/checkSpecAsserts)
 (def ^:private statics (atom {"RT-checkSpecAsserts" false}))
 (defn static-get [nm] (get @statics nm))
 (defn static-set! [nm v] (swap! statics assoc nm v) v)
-(def EdnReader-readString (fn [s opts] (host/edn-read-string opts s)))
+(defn EdnReader-readString [s opts] (host/edn-read-string opts s))
 
 ;; clojure.lang.EdnReader/read over a PushbackReader of the io layer:
 ;; scan exactly one form's text off the reader (strings, chars,
@@ -1683,17 +1657,15 @@
                          v (scan-form! sb)]
                         (if (= ::eof v) ::eof (h-sb-string sb))))))
 
-(def EdnReader-read
-     (fn [r opts]
-         (cond (io/is? :cohost.io/pushback-reader r)
-               (let [text (edn-scan! r)]
-                    (if (= ::eof text)
-                        (if (and (map? opts) (contains? opts :eof))
-                            (:eof opts)
-                            (throw (host/ex* 'java.io.IOException "EOF while reading")))
-                        (host/edn-read-string opts text)))
-               :else (miss! [:static 'clojure.lang.EdnReader 'read]))))
-(def PersistentVector-create (fn [coll] (if (memory/fill-on?) (memory/make-vector coll) (vec coll))))
+(defn EdnReader-read [r opts] (cond (io/is? :cohost.io/pushback-reader r)
+                                    (let [text (edn-scan! r)]
+                                         (if (= ::eof text)
+                                             (if (and (map? opts) (contains? opts :eof))
+                                                 (:eof opts)
+                                                 (throw (host/ex* 'java.io.IOException "EOF while reading")))
+                                             (host/edn-read-string opts text)))
+                                    :else (miss! [:static 'clojure.lang.EdnReader 'read])))
+(defn PersistentVector-create [coll] (if (memory/fill-on?) (memory/make-vector coll) (vec coll)))
 (def PersistentVector-EMPTY [])
 ;; the seq classes' creates delegate to the host's own fns, bound at
 ;; shim load before the stock core overlays them (the pattern
@@ -1747,8 +1719,8 @@
                                       (swap! out subvec 1)
                                       (cons x (step)))))))]
             (step)))
-(def TransformerIterator-create (fn [xform it] (host/iter (xform-seq xform [it]))))
-(def TransformerIterator-createMulti (fn [xform its] (host/iter (xform-seq xform (vec its)))))
+(defn TransformerIterator-create [xform it] (host/iter (xform-seq xform [it])))
+(defn TransformerIterator-createMulti [xform its] (host/iter (xform-seq xform (vec its))))
 (def Murmur3-hashOrdered (host-fn 'hash-ordered-coll (fn [coll] (hash (vec coll)))))
 (def Murmur3-hashUnordered (host-fn 'hash-unordered-coll (fn [coll] (hash (set coll)))))
 (def Murmur3-mixCollHash (host-fn 'mix-collection-hash (fn [h _n] h)))
@@ -1836,49 +1808,39 @@
              (io/input-stream-value? x) (io/input-stream-reader x)
              :else (throw (host/ex* 'java.lang.IllegalArgumentException (str "clojure.core read: not a reader of this layer: " (class-of x))))))
 
-(def ^:private layer-read
-     (fn ([] (layer-read (core-var-value '*in*)))
-         ([opts stream]
-          (if (map? opts)
-              (let [[f _] (read-one (as-reader stream))]
-                   (if (= ::eof f)
-                       (let [e (:eof opts :eofthrow)]
-                            (if (= :eofthrow e)
-                                (throw (host/ex* 'java.io.EOFException "EOF while reading"))
-                                e))
-                       f))
-              (throw (host/ex* 'java.lang.IllegalArgumentException "read's two-argument form takes an opts map and a stream"))))
-         ([stream] (layer-read stream true nil))
-         ([stream eof-error? eof-value] (layer-read stream eof-error? eof-value false))
-         ([stream eof-error? eof-value _recursive?]
-          (let [[f _] (read-one (as-reader stream))]
-               (if (= ::eof f)
-                   (if eof-error?
-                       (throw (host/ex* 'java.io.EOFException "EOF while reading"))
-                       eof-value)
-                   f)))))
+(defn- layer-read ([] (layer-read (core-var-value '*in*))) ([opts stream]
+                                                            (if (map? opts)
+                                                                (let [[f _] (read-one (as-reader stream))]
+                                                                     (if (= ::eof f)
+                                                                         (let [e (:eof opts :eofthrow)]
+                                                                              (if (= :eofthrow e)
+                                                                                  (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+                                                                                  e))
+                                                                         f))
+                                                                (throw (host/ex* 'java.lang.IllegalArgumentException "read's two-argument form takes an opts map and a stream")))) ([stream] (layer-read stream true nil)) ([stream eof-error? eof-value] (layer-read stream eof-error? eof-value false)) ([stream eof-error? eof-value _recursive?]
+                                                                                                                                                                                                                                                                                                           (let [[f _] (read-one (as-reader stream))]
+                                                                                                                                                                                                                                                                                                                (if (= ::eof f)
+                                                                                                                                                                                                                                                                                                                    (if eof-error?
+                                                                                                                                                                                                                                                                                                                        (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+                                                                                                                                                                                                                                                                                                                        eof-value)
+                                                                                                                                                                                                                                                                                                                    f))))
 
-(def ^:private layer-read+string
-     (fn ([] (layer-read+string (core-var-value '*in*)))
-         ([opts stream]
-          (if (map? opts)
-              (let [[f text] (read-one (as-reader stream))]
-                   (if (= ::eof f)
-                       (let [e (:eof opts :eofthrow)]
-                            (if (= :eofthrow e)
-                                (throw (host/ex* 'java.io.EOFException "EOF while reading"))
-                                [e text]))
-                       [f text]))
-              (throw (host/ex* 'java.lang.IllegalArgumentException "read+string's two-argument form takes an opts map and a stream"))))
-         ([stream] (layer-read+string stream true nil))
-         ([stream eof-error? eof-value] (layer-read+string stream eof-error? eof-value false))
-         ([stream eof-error? eof-value _recursive?]
-          (let [[f text] (read-one (as-reader stream))]
-               (if (= ::eof f)
-                   (if eof-error?
-                       (throw (host/ex* 'java.io.EOFException "EOF while reading"))
-                       [eof-value text])
-                   [f text])))))
+(defn- layer-read+string ([] (layer-read+string (core-var-value '*in*))) ([opts stream]
+                                                                          (if (map? opts)
+                                                                              (let [[f text] (read-one (as-reader stream))]
+                                                                                   (if (= ::eof f)
+                                                                                       (let [e (:eof opts :eofthrow)]
+                                                                                            (if (= :eofthrow e)
+                                                                                                (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+                                                                                                [e text]))
+                                                                                       [f text]))
+                                                                              (throw (host/ex* 'java.lang.IllegalArgumentException "read+string's two-argument form takes an opts map and a stream")))) ([stream] (layer-read+string stream true nil)) ([stream eof-error? eof-value] (layer-read+string stream eof-error? eof-value false)) ([stream eof-error? eof-value _recursive?]
+                                                                                                                                                                                                                                                                                                                                              (let [[f text] (read-one (as-reader stream))]
+                                                                                                                                                                                                                                                                                                                                                   (if (= ::eof f)
+                                                                                                                                                                                                                                                                                                                                                       (if eof-error?
+                                                                                                                                                                                                                                                                                                                                                           (throw (host/ex* 'java.io.EOFException "EOF while reading"))
+                                                                                                                                                                                                                                                                                                                                                           [eof-value text])
+                                                                                                                                                                                                                                                                                                                                                       [f text]))))
 
 ;; read and read+string as the booted core sees them: a stream of the io
 ;; layer (with-in-str's, LineNumberingPushbackReader.'s -- what stock
@@ -1899,37 +1861,26 @@
 (def core-read (read-dispatch layer-read 'read))
 (def core-read+string (read-dispatch layer-read+string 'read+string))
 
-(def core-load-reader
-  ;; with the boot's eval-top hook, each form is evaluated in the namespace
-  ;; the form before it left -- a file's (ns ...) applies to the forms after
-  ;; it, as the JVM's load binds *ns* -- and the caller's namespace is left as
-  ;; it was (measured on jank: a two-ns script's (def ...) after its second
-  ;; ns form landed in user, and #'that-ns/name could not be resolved)
-     (fn [rdr]
-         (let [r (as-reader rdr)]
-              (if-let [et (deref eval-top-hook)]
-                      (loop [ns (host/current-ns)]
-                            (let [[f _] (read-one r)]
-                                 (when (not= ::eof f)
-                                       (recur (second (et ns f))))))
-                      (loop []
-                            (let [[f _] (read-one r)]
-                                 (when (not= ::eof f)
-                                       ((deref eval-hook) f)
-                                       (recur))))))
-         nil))
+(defn core-load-reader [rdr] (let [r (as-reader rdr)]
+                                  (if-let [et (deref eval-top-hook)]
+                                          (loop [ns (host/current-ns)]
+                                                (let [[f _] (read-one r)]
+                                                     (when (not= ::eof f)
+                                                           (recur (second (et ns f))))))
+                                          (loop []
+                                                (let [[f _] (read-one r)]
+                                                     (when (not= ::eof f)
+                                                           ((deref eval-hook) f)
+                                                           (recur)))))) nil)
 
-(def core-read-line
-     (fn [] (let [in (core-var-value '*in*)]
-                 (when (io/reader-value? in) (io/read-line! in)))))
+(defn core-read-line [] (let [in (core-var-value '*in*)]
+                             (when (io/reader-value? in) (io/read-line! in))))
 
-(def core-line-seq
-     (fn [rdr]
-         (let [r (as-reader rdr)]
-              ((fn step []
-                   (lazy-seq
-                    (when-let [line (io/read-line! r)]
-                              (cons line (step)))))))))
+(defn core-line-seq [rdr] (let [r (as-reader rdr)]
+                               ((fn step []
+                                    (lazy-seq
+                                     (when-let [line (io/read-line! r)]
+                                               (cons line (step))))))))
 
 (defn- ste->vec [frame]
        [(symbol (str (display-class-name (nth frame 0)))) (symbol (str (nth frame 1)))
@@ -1942,148 +1893,106 @@
 ;; names, so stock main's ex-triage, which skips clojure.lang.* and the
 ;; core namespaces' frames, finds the user's frame: a booted
 ;; cohost.core$ex_info frame reads clojure.core$ex_info, as on the JVM.
-(def core-Throwable->map
-     (fn [t]
-         (let [chain (loop [e t seen #{} out []]
-                           (if (or (nil? e) (contains? seen e))
-                               out
-                               (recur (host/exception-cause e) (conj seen e) (conj out e))))
-               base (fn [e]
-                        (let [trace (host/ex-trace e)
-                              msg (host/exception-message e)]
-                             (cond-> {:type (symbol (str (class-of e)))}
-                                     (some? msg) (assoc :message msg)
-                                     (some? (ex-data e)) (assoc :data (ex-data e))
-                                     (seq trace) (assoc :at (ste->vec (first trace))))))
-               root (peek chain)
-               phase (get (ex-data t) :clojure.error/phase)]
-              (cond-> {:via (mapv base chain)
-                       :trace (mapv ste->vec (host/ex-trace root))}
-                      (some? (host/exception-message root)) (assoc :cause (host/exception-message root))
-                      (some? (ex-data root)) (assoc :data (ex-data root))
-                      (some? phase) (assoc :phase phase)))))
+(defn core-Throwable->map [t] (let [chain (loop [e t seen #{} out []]
+                                                (if (or (nil? e) (contains? seen e))
+                                                    out
+                                                    (recur (host/exception-cause e) (conj seen e) (conj out e))))
+                                    base (fn [e]
+                                             (let [trace (host/ex-trace e)
+                                                   msg (host/exception-message e)]
+                                                  (cond-> {:type (symbol (str (class-of e)))}
+                                                          (some? msg) (assoc :message msg)
+                                                          (some? (ex-data e)) (assoc :data (ex-data e))
+                                                          (seq trace) (assoc :at (ste->vec (first trace))))))
+                                    root (peek chain)
+                                    phase (get (ex-data t) :clojure.error/phase)]
+                                   (cond-> {:via (mapv base chain)
+                                            :trace (mapv ste->vec (host/ex-trace root))}
+                                           (some? (host/exception-message root)) (assoc :cause (host/exception-message root))
+                                           (some? (ex-data root)) (assoc :data (ex-data root))
+                                           (some? phase) (assoc :phase phase))))
 
-(def core-PrintWriter-on
-     "clojure.core/PrintWriter-on [flush-fn close-fn autoflush?]: flush-fn of
+(defn core-PrintWriter-on "clojure.core/PrintWriter-on [flush-fn close-fn autoflush?]: flush-fn of
    the text written since the last flush, at each flush; close-fn (when not
    nil) at close. (autoflush? is the PrintWriter's println/printf/format
    autoflush, which Clojure's printing never calls: its prn/println flush
-   by *flush-on-newline*.)"
-     (fn ([f] (core-PrintWriter-on f nil false))
-         ([f close-f] (core-PrintWriter-on f close-f false))
-         ([f close-f _autoflush?]
-          (io/sink-writer f close-f))))
+   by *flush-on-newline*.)" ([f] (core-PrintWriter-on f nil false)) ([f close-f] (core-PrintWriter-on f close-f false)) ([f close-f _autoflush?]
+                                                                                                                         (io/sink-writer f close-f)))
 
-(def core-in-ns
-     "clojure.core/in-ns for a host whose boot left it out: enter the
+(defn core-in-ns "clojure.core/in-ns for a host whose boot left it out: enter the
    namespace (a new one is created bare and given the booted core's
-   refers, as stock's in-ns refers clojure.core), and return it."
-     (fn [ns-sym]
-         (let [found (host/try-all (fn [] (Namespace-find ns-sym)))]
-              (when-not found
-                        (host/ensure-bare-ns! ns-sym)
-                        (host/refer-all! ns-sym 'cohost.core))
-              (host/set-current-ns! ns-sym)
-              (Namespace-find ns-sym))))
+   refers, as stock's in-ns refers clojure.core), and return it." [ns-sym] (let [found (host/try-all (fn [] (Namespace-find ns-sym)))]
+                                                                                (when-not found
+                                                                                          (host/ensure-bare-ns! ns-sym)
+                                                                                          (host/refer-all! ns-sym 'cohost.core))
+                                                                                (host/set-current-ns! ns-sym)
+                                                                                (Namespace-find ns-sym)))
 
-(def core-requiring-resolve
-     "clojure.core/requiring-resolve: require the symbol's namespace
-   through the booted core's require, then answer its var."
-     (fn [sym]
-         (let [ns-sym (symbol (namespace sym))]
+(defn core-requiring-resolve "clojure.core/requiring-resolve: require the symbol's namespace
+   through the booted core's require, then answer its var." [sym] (let [ns-sym (symbol (namespace sym))]
       ;; the BOOTED core's require (the host core's would load the
       ;; host's own copy of a stock library)
-              ((or (some-> (host/interned-var 'cohost.core 'require) (host/var-root))
-                   (core-var-value 'require)) ns-sym)
+                                                                       ((or (some-> (host/interned-var 'cohost.core 'require) (host/var-root))
+                                                                            (core-var-value 'require)) ns-sym)
       ;; a seat that boots stock namespaces under booted names (the JVM
       ;; seat: clojure.pprint -> cohost.pprint) answers through the
       ;; booted core's resolve, which maps the stock name
-              (or (host/try-all (fn [] (get (host/ns-interns-map ns-sym) (symbol (name sym)))))
-                  ((or (some-> (host/interned-var 'cohost.core 'resolve) (host/var-root))
-                       (core-var-value 'resolve)) sym)))))
+                                                                       (or (host/try-all (fn [] (get (host/ns-interns-map ns-sym) (symbol (name sym)))))
+                                                                           ((or (some-> (host/interned-var 'cohost.core 'resolve) (host/var-root))
+                                                                                (core-var-value 'resolve)) sym))))
 
-(def core-flush
-     "clojure.core/flush over the layer's writer, when *out* is one."
-     (fn [] (let [out (core-var-value '*out*)]
-                 (when (io/writer-value? out) (io/flush-writer! out)))
-         nil))
+(defn core-flush "clojure.core/flush over the layer's writer, when *out* is one." [] (let [out (core-var-value '*out*)]
+                                                                                          (when (io/writer-value? out) (io/flush-writer! out))) nil)
 
-(def core-load
-     "clojure.core/load over boot's source roots (see load-hook): the
+(defn core-load "clojure.core/load over boot's source roots (see load-hook): the
    stock sub-file loads -- pprint's (load \"pprint/utilities\"),
    reflect's (load \"reflect/java\") -- resolve against the loading
-   namespace's package, as RT.load resolves them."
-     (fn [& paths]
-         (doseq [p paths]
-                (when-not (@load-hook (str p))
-                          (throw (host/ex* 'java.io.FileNotFoundException
-                                           (str "Could not locate " p " on classpath.")))))
-         nil))
+   namespace's package, as RT.load resolves them." [& paths] (doseq [p paths]
+                                                                    (when-not (@load-hook (str p))
+                                                                              (throw (host/ex* 'java.io.FileNotFoundException
+                                                                                               (str "Could not locate " p " on classpath."))))) nil)
 
-(def core-StackTraceElement->vec
-     "core_print.clj's defn, a companion name: the shim's trace frames
-   already are [class method file line] vectors."
-     (fn [ste] (if (vector? ste) ste (ste->vec ste))))
+(defn core-StackTraceElement->vec "core_print.clj's defn, a companion name: the shim's trace frames
+   already are [class method file line] vectors." [ste] (if (vector? ste) ste (ste->vec ste)))
 
-(def core-create-struct
-     "A struct basis over plain maps: the basis records its keys;
-   instances are maps (keyword access is the struct access)."
-     (fn [& keys] {:cohost/struct-keys (vec keys)}))
+(defn core-create-struct "A struct basis over plain maps: the basis records its keys;
+   instances are maps (keyword access is the struct access)." [& keys] {:cohost/struct-keys (vec keys)})
 
-(def core-struct
-     (fn [basis & vals]
-         (with-meta (zipmap (:cohost/struct-keys basis) vals)
-                    {:cohost/struct-basis basis})))
+(defn core-struct [basis & vals] (with-meta (zipmap (:cohost/struct-keys basis) vals)
+                                            {:cohost/struct-basis basis}))
 
-(def core-struct-map
-     (fn [basis & kvs]
-         (with-meta (merge (zipmap (:cohost/struct-keys basis) (repeat nil))
-                           (apply hash-map kvs))
-                    {:cohost/struct-basis basis})))
+(defn core-struct-map [basis & kvs] (with-meta (merge (zipmap (:cohost/struct-keys basis) (repeat nil))
+                                                      (apply hash-map kvs))
+                                               {:cohost/struct-basis basis}))
 
-(def core-accessor
-     (fn [_basis k] (fn [m] (get m k))))
+(defn core-accessor [_basis k] (fn [m] (get m k)))
 
-(def core-get-field
-     "clojure.core/get-field of a proxy: the field in the map the
-   proxy's deref chain bottoms out in (@@this), as stock's."
-     (fn [p f]
-         (get (deref (if (proxy-value? p) (proxy-deref p) (deref p))) f)))
+(defn core-get-field "clojure.core/get-field of a proxy: the field in the map the
+   proxy's deref chain bottoms out in (@@this), as stock's." [p f] (get (deref (if (proxy-value? p) (proxy-deref p) (deref p))) f))
 
-(def core-set-field
-     "clojure.core/set-field of a proxy: assoc the field into the map
-   behind the proxy's deref method's ref (@this), as stock's."
-     (fn [p f v]
-    ;; squint: alter is a booted-core var, not a host-realm one, and
-    ;; its analyzer resolves no alter here; a Ref on this layer is
-    ;; an atom (see -alter below), so the write is the swap! -alter
-    ;; performs, spelled directly.
-         #?(:squint (swap! (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v)
-            :default #_{:clj-kondo/ignore [:unresolved-symbol]} (alter (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v))
-         v))
+(defn core-set-field "clojure.core/set-field of a proxy: assoc the field into the map
+   behind the proxy's deref method's ref (@this), as stock's." [p f v] #?(:squint (swap! (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v)
+                                                                          :default #_{:clj-kondo/ignore [:unresolved-symbol]} (alter (if (proxy-value? p) (proxy-deref p) (deref p)) assoc f v)) v)
 
 (defn- strip-ns [named]
        (if (symbol? named)
            (symbol nil (name named))
            (keyword nil (name named))))
 
-(def core-lift-ns
-     "core_print.clj's lift-ns, a companion form the boot's extraction
+(defn core-lift-ns "core_print.clj's lift-ns, a companion form the boot's extraction
    does not take; clojure.pprint's dispatch calls it as
-   #'clojure.core/lift-ns."
-     (fn [m]
-         (when (core-var-value '*print-namespace-maps*)
-               (loop [ns nil
-                      [[k v :as entry] & entries] (seq m)
-                      kvs []]
-                     (if entry
-                         (when (and (ident? k) (some? (namespace k)))
-                               (if ns
-                                   (when (= ns (namespace k))
-                                         (recur ns entries (conj kvs [(strip-ns k) v])))
-                                   (when-let [new-ns (namespace k)]
-                                             (recur new-ns entries (conj kvs [(strip-ns k) v])))))
-                         [ns kvs])))))
+   #'clojure.core/lift-ns." [m] (when (core-var-value '*print-namespace-maps*)
+                                      (loop [ns nil
+                                             [[k v :as entry] & entries] (seq m)
+                                             kvs []]
+                                            (if entry
+                                                (when (and (ident? k) (some? (namespace k)))
+                                                      (if ns
+                                                          (when (= ns (namespace k))
+                                                                (recur ns entries (conj kvs [(strip-ns k) v])))
+                                                          (when-let [new-ns (namespace k)]
+                                                                    (recur new-ns entries (conj kvs [(strip-ns k) v])))))
+                                                [ns kvs]))))
 
 (def core-fills
      "clojure.core names this layer supplies when the host's core lacks
@@ -2134,9 +2043,7 @@
 
 ;; clojure.lang.LispReader/read: read's own dispatch (core-read: a layer
 ;; reader through the io layer, a host reader through the host's read)
-(def LispReader-read
-     (fn ([rdr opts] (core-read opts rdr))
-         ([rdr eof-error? eof-val _recursive?] (core-read rdr eof-error? eof-val))))
+(defn LispReader-read ([rdr opts] (core-read opts rdr)) ([rdr eof-error? eof-val _recursive?] (core-read rdr eof-error? eof-val)))
 (def TaggedLiteral-create (host-fn 'tagged-literal (fn [tag form] {:tag tag :form form})))
 (def ReaderConditional-create (host-fn 'reader-conditional (fn [form splicing?] {:form form :splicing? splicing?})))
 (def Delay-force (host-fn 'force (fn [x] (if (h-delay? x) (deref x) x))))
@@ -2144,12 +2051,7 @@
 
 (def new-LazySeq (host/capability :lazy-seq))   ; per lazy cell: no accessor lookup
 (def new-Delay (host/capability :delay))
-(def new-Atom
-  ;; unit 5: with the atom fill in force, an Eve-backed atom
-  ;; (cohost.atom); the host's own atom otherwise
-     (fn
-      ([x] (if (atom-fill?) (atom-layer/make-atom x) (host/atom* x)))
-      ([x m] (if (atom-fill?) (atom-layer/make-atom x {:meta m}) (host/atom* x m)))))
+(defn new-Atom ([x] (if (atom-fill?) (atom-layer/make-atom x) (host/atom* x))) ([x m] (if (atom-fill?) (atom-layer/make-atom x {:meta m}) (host/atom* x m))))
 (def new-Volatile (host-fn 'volatile! (unsupported "volatile!")))
 (def new-Reduced (host-fn 'reduced (unsupported "reduced")))
 
@@ -2187,19 +2089,17 @@
        (in-tx!)
        (when-not (contains? @tx r) (swap! tx assoc r @r))
        (f))
-(def LockingTransaction-runInTransaction
-     (fn [f]
-         (if (some? @tx)
-             (f)
-             (do (reset! tx {})
-                 (try (host/try-all f
-                                    (fn [e]
-                                        (let [written @tx]
-                                             (reset! tx nil)
-                                             (doseq [[r v] written] (reset! r v)))
-                                        (throw e)))
-                      (finally (reset! tx nil)))))))
-(def LockingTransaction-isRunning (fn [] (some? @tx)))
+(defn LockingTransaction-runInTransaction [f] (if (some? @tx)
+                                                  (f)
+                                                  (do (reset! tx {})
+                                                      (try (host/try-all f
+                                                                         (fn [e]
+                                                                             (let [written @tx]
+                                                                                  (reset! tx nil)
+                                                                                  (doseq [[r v] written] (reset! r v)))
+                                                                             (throw e)))
+                                                           (finally (reset! tx nil))))))
+(defn LockingTransaction-isRunning [] (some? @tx))
 (def new-Agent (host-fn 'agent (fn [state] (thread-layer "agent" (fn [] (thread/new-agent state {}))))))
 ;; clojure.lang.MultiFn, stock: the state (name, dispatch fn, default,
 ;; hierarchy var, methods, prefers) rides in the fn's metadata, and dispatch
@@ -2305,41 +2205,39 @@
                      (reset! mc [st href h (if m {dv m} {})])
                      m))))
 
-(def new-MultiFn
-     (fn [name dispatch-fn default hierarchy]
-         (let [state (atom {:name name :dispatch-fn dispatch-fn :default default :hierarchy hierarchy :methods {} :prefers {}})
-               no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))
-               mc (when h-mm-cache? (atom nil))]
-              ((fn [f] (if fn-meta? (with-meta f {::multifn state}) (do (swap! mf-states assoc f state) f)))
+(defn new-MultiFn [name dispatch-fn default hierarchy] (let [state (atom {:name name :dispatch-fn dispatch-fn :default default :hierarchy hierarchy :methods {} :prefers {}})
+                                                             no-method (fn [dv] (throw (host/ex* 'IllegalArgumentException (str "No method in multimethod '" name "' for dispatch value: " dv))))
+                                                             mc (when h-mm-cache? (atom nil))]
+                                                            ((fn [f] (if fn-meta? (with-meta f {::multifn state}) (do (swap! mf-states assoc f state) f)))
         ;; the arity fns are chosen here, once: a host with a hit fn (jank's cpp/raw call)
         ;; tries it first; a host with the cache on and no hit fn goes straight to
         ;; mf-fast-method; with the cache off, mf-method; no host pays a no-op per call
-               (cond
-                h-mm-hit
-                (fn
-                 ([] (let [dv (dispatch-fn) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m) (no-method dv))))
-                 ([a] (let [dv (dispatch-fn a) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a) (no-method dv))))
-                 ([a b] (let [dv (dispatch-fn a b) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a b) (no-method dv))))
-                 ([a b c] (let [dv (dispatch-fn a b c) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a b c) (no-method dv))))
-                 ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))]
-                                      (if m (apply m a b c more) (no-method dv)))))
-                h-mm-cache?
-                (fn
-                 ([] (let [dv (dispatch-fn) m (mf-fast-method state mc dv)] (if m (m) (no-method dv))))
-                 ([a] (let [dv (dispatch-fn a) m (mf-fast-method state mc dv)] (if m (m a) (no-method dv))))
-                 ([a b] (let [dv (dispatch-fn a b) m (mf-fast-method state mc dv)] (if m (m a b) (no-method dv))))
-                 ([a b c] (let [dv (dispatch-fn a b c) m (mf-fast-method state mc dv)] (if m (m a b c) (no-method dv))))
-                 ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-fast-method state mc dv)]
-                                      (if m (apply m a b c more) (no-method dv)))))
-                :else
-                (fn
-                 ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
-                 ([a] (let [dv (dispatch-fn a) m (mf-method state dv)] (if m (m a) (no-method dv))))
-                 ([a b] (let [dv (dispatch-fn a b) m (mf-method state dv)] (if m (m a b) (no-method dv))))
-                 ([a b c] (let [dv (dispatch-fn a b c) m (mf-method state dv)] (if m (m a b c) (no-method dv))))
-                 ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
-                                      (if m (apply m a b c more) (no-method dv))))))))))
-(def new-Object (fn [] (atom ::object)))
+                                                             (cond
+                                                              h-mm-hit
+                                                              (fn
+                                                               ([] (let [dv (dispatch-fn) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m) (no-method dv))))
+                                                               ([a] (let [dv (dispatch-fn a) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a) (no-method dv))))
+                                                               ([a b] (let [dv (dispatch-fn a b) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a b) (no-method dv))))
+                                                               ([a b c] (let [dv (dispatch-fn a b c) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))] (if m (m a b c) (no-method dv))))
+                                                               ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (or (h-mm-hit mc state dv) (mf-fast-method state mc dv))]
+                                                                                    (if m (apply m a b c more) (no-method dv)))))
+                                                              h-mm-cache?
+                                                              (fn
+                                                               ([] (let [dv (dispatch-fn) m (mf-fast-method state mc dv)] (if m (m) (no-method dv))))
+                                                               ([a] (let [dv (dispatch-fn a) m (mf-fast-method state mc dv)] (if m (m a) (no-method dv))))
+                                                               ([a b] (let [dv (dispatch-fn a b) m (mf-fast-method state mc dv)] (if m (m a b) (no-method dv))))
+                                                               ([a b c] (let [dv (dispatch-fn a b c) m (mf-fast-method state mc dv)] (if m (m a b c) (no-method dv))))
+                                                               ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-fast-method state mc dv)]
+                                                                                    (if m (apply m a b c more) (no-method dv)))))
+                                                              :else
+                                                              (fn
+                                                               ([] (let [dv (dispatch-fn) m (mf-method state dv)] (if m (m) (no-method dv))))
+                                                               ([a] (let [dv (dispatch-fn a) m (mf-method state dv)] (if m (m a) (no-method dv))))
+                                                               ([a b] (let [dv (dispatch-fn a b) m (mf-method state dv)] (if m (m a b) (no-method dv))))
+                                                               ([a b c] (let [dv (dispatch-fn a b c) m (mf-method state dv)] (if m (m a b c) (no-method dv))))
+                                                               ([a b c & more] (let [dv (apply dispatch-fn a b c more) m (mf-method state dv)]
+                                                                                    (if m (apply m a b c more) (no-method dv)))))))))
+(defn new-Object [] (atom ::object))
 (def new-ExceptionInfo host/ex-info*)
 ;; (Exception.) (Exception. msg) (Exception. cause) (Exception. msg cause)
 (defn- ex-ctor [klass]
@@ -2392,11 +2290,10 @@
 (defn- need-charset [cs]
        (or (charset-canonical cs)
            (throw (host/ex* 'java.io.UnsupportedEncodingException (str cs)))))
-(def Charset-forName
-     (fn [n] (if (charset-canonical n)
-                 (->Charset (charset-canonical n))
-                 (throw (host/ex* 'java.io.UnsupportedEncodingException (str n))))))
-(def Charset-defaultCharset (fn [] (->Charset "UTF-8")))
+(defn Charset-forName [n] (if (charset-canonical n)
+                              (->Charset (charset-canonical n))
+                              (throw (host/ex* 'java.io.UnsupportedEncodingException (str n)))))
+(defn Charset-defaultCharset [] (->Charset "UTF-8"))
 (defn- ubyte [bs i] (bit-and (nth bs i) 0xFF))
 (defn- emit-cp! [out cp]
        (if (<= cp 0xFFFF)
@@ -2576,38 +2473,31 @@
        (when (pos? (count a))
              (let [e (nth a 0)]
                   (cond (h-char? e) :chars (number? e) :bytes :else nil))))
-(def new-String
-     (fn ([] "")
-         ([x]
-          (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"String(byte[])\" because \"bytes\" is null"))
-                (string? x) x
-                (h-sb? x) (h-sb-str x)
-                (arr? x)
-                (case (array-kind x)
-                      :chars ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-                      #_{:splint/disable [style/apply-str]}
-                      (apply str (map char-str (seq x)))
-                      :bytes (decode-bytes x 0 (count x) "UTF-8")
-                      (str x))
-                :else (str x)))
-         ([bs cs]
-          (cond (arr? bs)
-                (case (array-kind bs)
-                      :chars ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-                      #_{:splint/disable [style/apply-str]}
-                      (apply str (map char-str (seq bs)))
-                      (decode-bytes bs 0 (count bs) (need-charset cs)))
-                :else (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of bs) " cannot be cast to class [B")))))
-         ([a off len] (new-String a off len "UTF-8"))
-         ([bs off len cs]
-          (case (array-kind bs)
-                :chars ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-                #_{:splint/disable [style/apply-str]}
-                (apply str (map char-str (take len (drop off (seq bs)))))
-                (decode-bytes bs off len (need-charset cs))))))
-(def String-getBytes
-     (fn ([s] (string->byte-array s "UTF-8"))
-         ([s cs] (string->byte-array s cs))))
+(defn new-String ([] "") ([x]
+                          (cond (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"String(byte[])\" because \"bytes\" is null"))
+                                (string? x) x
+                                (h-sb? x) (h-sb-str x)
+                                (arr? x)
+                                (case (array-kind x)
+                                      :chars ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                      #_{:splint/disable [style/apply-str]}
+                                      (apply str (map char-str (seq x)))
+                                      :bytes (decode-bytes x 0 (count x) "UTF-8")
+                                      (str x))
+                                :else (str x))) ([bs cs]
+                                                 (cond (arr? bs)
+                                                       (case (array-kind bs)
+                                                             :chars ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                                             #_{:splint/disable [style/apply-str]}
+                                                             (apply str (map char-str (seq bs)))
+                                                             (decode-bytes bs 0 (count bs) (need-charset cs)))
+                                                       :else (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of bs) " cannot be cast to class [B"))))) ([a off len] (new-String a off len "UTF-8")) ([bs off len cs]
+                                                                                                                                                                                                                         (case (array-kind bs)
+                                                                                                                                                                                                                               :chars ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                                                                                                                                                                                                               #_{:splint/disable [style/apply-str]}
+                                                                                                                                                                                                                               (apply str (map char-str (take len (drop off (seq bs)))))
+                                                                                                                                                                                                                               (decode-bytes bs off len (need-charset cs)))))
+(defn String-getBytes ([s] (string->byte-array s "UTF-8")) ([s cs] (string->byte-array s cs)))
 ;; java.net.URLEncoder / URLDecoder, over url-encode / url-decode.
 ;; The charset argument is accepted and UTF-8 is used throughout.
 ;; (An earlier pair of implementations that validated and honored
@@ -2653,8 +2543,8 @@
                                                                (hex-val (nth s (+ i 2))))))
                                  :else (recur (inc i) (into bytes (io/utf8-encode (str c))))))))))
 
-(def URLEncoder-encode (fn [s _cs] (url-encode s)))
-(def URLDecoder-decode (fn [s _cs] (url-decode s)))
+(defn URLEncoder-encode [s _cs] (url-encode s))
+(defn URLDecoder-decode [s _cs] (url-decode s))
 
 ;; ---------------------------------------------------------------------------
 ;; java.net's HTTP surface (Eve-in-cohost unit 9): HttpClient, HttpRequest,
@@ -2717,9 +2607,7 @@
 (def HttpResponse_BodyHandlers-ofInputStream (http-ctor 'java.net.http.HttpResponse$BodyHandlers "ofInputStream" (fn [] (http/handler-of :input-stream))))
 (def HttpResponse_BodyHandlers-discarding (http-ctor 'java.net.http.HttpResponse$BodyHandlers "discarding" (fn [] (http/handler-of :discard))))
 
-(def ^:private http-locator
-  ;; URI and URL share their accessors
-     (fn [f] {:cohost.http/uri f :cohost.http/url f}))
+(defn- http-locator [f] {:cohost.http/uri f :cohost.http/url f})
 
 ;; URI / URL
 (def -getScheme (http-member "getScheme" {:cohost.http/uri :scheme}))
@@ -2817,12 +2705,10 @@
       [p]
       (str "file:" (if (and (pos? (count p)) (not= \/ (nth p 0))) "/" "") p))
 
-(def RT-toUrl
-     (fn [x]
-         (cond (io/is? :cohost.io/file x) (http/new-url (file-url-string (io/file-path x)))
-               (string? x) (host/try-all (fn [] (http/new-url x))
-                                         (fn [_] (http/new-url (file-url-string x))))
-               :else (miss! [:static 'clojure.lang.RT 'toUrl]))))
+(defn RT-toUrl [x] (cond (io/is? :cohost.io/file x) (http/new-url (file-url-string (io/file-path x)))
+                         (string? x) (host/try-all (fn [] (http/new-url x))
+                                                   (fn [_] (http/new-url (file-url-string x))))
+                         :else (miss! [:static 'clojure.lang.RT 'toUrl])))
 
 (defn- as-file-value
        "A File value from a File value, a path string, or a host's own file
@@ -2837,15 +2723,13 @@
                             (throw (host/ex* 'java.lang.ClassCastException
                                              (cast-message 'java.io.File x)))))))
 
-(def new-File
-     (fn ([p] (cond (io/is? :cohost.io/file p) p
-                    (and (map? p) (contains? #{:cohost.http/uri :cohost.http/url} (:cohost/kind p)))
-                    (io/file (:path p))
-                    :else (io/file p)))
-         ([parent child]
-          (io/file (str (if (io/is? :cohost.io/file parent)
-                            (io/file-path parent) parent)
-                        "/" child)))))
+(defn new-File ([p] (cond (io/is? :cohost.io/file p) p
+                          (and (map? p) (contains? #{:cohost.http/uri :cohost.http/url} (:cohost/kind p)))
+                          (io/file (:path p))
+                          :else (io/file p))) ([parent child]
+                                               (io/file (str (if (io/is? :cohost.io/file parent)
+                                                                 (io/file-path parent) parent)
+                                                             "/" child))))
 
 (def File-separator "/")
 (def File-separatorChar \/)
@@ -2898,62 +2782,41 @@
 
 (defn- ints->signed [bs] (mapv (fn [b] (if (> b 127) (- b 256) b)) bs))
 
-(def new-FileInputStream (fn [f] (io/file-input-stream (as-file-value f))))
-(def new-FileOutputStream
-     (fn ([f] (io/file-output-stream (as-file-value f) false))
-         ([f append?] (io/file-output-stream (as-file-value f) (boolean append?)))))
-(def new-ByteArrayInputStream (fn [bs] (io/byte-input-stream (host-bytes->ints bs))))
-(def new-ByteArrayOutputStream (fn [] (io/byte-output-stream)))
+(defn new-FileInputStream [f] (io/file-input-stream (as-file-value f)))
+(defn new-FileOutputStream ([f] (io/file-output-stream (as-file-value f) false)) ([f append?] (io/file-output-stream (as-file-value f) (boolean append?))))
+(defn new-ByteArrayInputStream [bs] (io/byte-input-stream (host-bytes->ints bs)))
+(defn new-ByteArrayOutputStream [] (io/byte-output-stream))
 (def new-StringReader io/string-reader)
-(def new-StringWriter (fn ([] (io/string-writer)) ([_n] (io/string-writer))))
-(def new-CharArrayReader (fn [cs] (io/char-array-reader (seq cs))))
-(def new-InputStreamReader
-     (fn ([in] (if (io/is? :cohost.io/socket-input in)
-                   (io/socket-reader in)
-                   (io/input-stream-reader in)))
-         ([in cs] (utf8-only! cs)
-                  (if (io/is? :cohost.io/socket-input in)
-                      (io/socket-reader in)
-                      (io/input-stream-reader in)))))
-(def new-OutputStreamWriter
-     (fn ([out] (io/output-stream-writer out))
-         ([out cs] (utf8-only! cs) (io/output-stream-writer out))))
-(def new-BufferedReader (fn ([r] (io/buffered-reader r)) ([r _sz] (io/buffered-reader r))))
-(def new-BufferedWriter (fn ([w] (io/buffered-writer w)) ([w _sz] (io/buffered-writer w))))
-(def new-BufferedInputStream (fn ([in] (io/buffered-input-stream in)) ([in _sz] (io/buffered-input-stream in))))
-(def new-BufferedOutputStream (fn ([out] (io/buffered-output-stream out)) ([out _sz] (io/buffered-output-stream out))))
-(def new-PushbackReader (fn ([r] (io/pushback-reader r)) ([r _sz] (io/pushback-reader r))))
+(defn new-StringWriter ([] (io/string-writer)) ([_n] (io/string-writer)))
+(defn new-CharArrayReader [cs] (io/char-array-reader (seq cs)))
+(defn new-InputStreamReader ([in] (if (io/is? :cohost.io/socket-input in)
+                                      (io/socket-reader in)
+                                      (io/input-stream-reader in))) ([in cs] (utf8-only! cs)
+                                                                             (if (io/is? :cohost.io/socket-input in)
+                                                                                 (io/socket-reader in)
+                                                                                 (io/input-stream-reader in))))
+(defn new-OutputStreamWriter ([out] (io/output-stream-writer out)) ([out cs] (utf8-only! cs) (io/output-stream-writer out)))
+(defn new-BufferedReader ([r] (io/buffered-reader r)) ([r _sz] (io/buffered-reader r)))
+(defn new-BufferedWriter ([w] (io/buffered-writer w)) ([w _sz] (io/buffered-writer w)))
+(defn new-BufferedInputStream ([in] (io/buffered-input-stream in)) ([in _sz] (io/buffered-input-stream in)))
+(defn new-BufferedOutputStream ([out] (io/buffered-output-stream out)) ([out _sz] (io/buffered-output-stream out)))
+(defn new-PushbackReader ([r] (io/pushback-reader r)) ([r _sz] (io/pushback-reader r)))
 ;; clojure.lang.LineNumberingPushbackReader: the layer's pushback reader
 ;; (its line number and string capture read off its state: io/line-number)
-(def new-LineNumberingPushbackReader
-     (fn ([r] (io/pushback-reader r)) ([r _n] (io/pushback-reader r))))
+(defn new-LineNumberingPushbackReader ([r] (io/pushback-reader r)) ([r _n] (io/pushback-reader r)))
 ;; java.net sockets: the io layer's in-process loopback
-(def new-ServerSocket
-     (fn ([] (io/listen! 0))
-         ([port] (io/listen! port))
-         ([port _backlog] (io/listen! port))
-         ([port _backlog _addr] (io/listen! port))))
-(def new-Socket
-     (fn ([] (io/unconnected-socket))
-         ([host port] (io/connect! (if (io/inet-address? host) (io/inet-host host) host) port))))
-(def InetAddress-getByName
-     (fn [h] {:cohost/kind :cohost.io/inet-address :host (or h "localhost")}))
-(def InetAddress-getLoopbackAddress
-     (fn [] {:cohost/kind :cohost.io/inet-address :host "localhost"}))
-(def InetAddress-getLocalHost
-     (fn [] {:cohost/kind :cohost.io/inet-address :host "localhost"}))
-(def new-FileReader (fn [f] (io/file-reader (as-file-value f))))
+(defn new-ServerSocket ([] (io/listen! 0)) ([port] (io/listen! port)) ([port _backlog] (io/listen! port)) ([port _backlog _addr] (io/listen! port)))
+(defn new-Socket ([] (io/unconnected-socket)) ([host port] (io/connect! (if (io/inet-address? host) (io/inet-host host) host) port)))
+(defn InetAddress-getByName [h] {:cohost/kind :cohost.io/inet-address :host (or h "localhost")})
+(defn InetAddress-getLoopbackAddress [] {:cohost/kind :cohost.io/inet-address :host "localhost"})
+(defn InetAddress-getLocalHost [] {:cohost/kind :cohost.io/inet-address :host "localhost"})
+(defn new-FileReader [f] (io/file-reader (as-file-value f)))
 ;; Compiler.loadFile(path): stock clojure.main's load-script (a script path,
 ;; -i) -- the JVM passes it through; elsewhere the file's forms are read and
 ;; evaluated through the boot, as load-reader does (measured on jank:
 ;; `bin/cohost :jank script.clj` died in script-opt with no shim for it)
-(def Compiler-loadFile
-  ;; over a LineNumberingPushbackReader, as the JVM's loadFile reads: the
-  ;; reader unreads (measured: a bare FileReader -> "Unread not permitted")
-     (fn [path] (core-load-reader (new-LineNumberingPushbackReader (new-FileReader path)))))
-(def new-FileWriter
-     (fn ([f] (io/file-writer (as-file-value f) false))
-         ([f append?] (io/file-writer (as-file-value f) (boolean append?)))))
+(defn Compiler-loadFile [path] (core-load-reader (new-LineNumberingPushbackReader (new-FileReader path))))
+(defn new-FileWriter ([f] (io/file-writer (as-file-value f) false)) ([f append?] (io/file-writer (as-file-value f) (boolean append?))))
 
 (defn- io-read-fn
        "Reader.read / InputStream.read in their three arities."
@@ -3084,15 +2947,14 @@
 (def -getURL (http-member "getURL" {:cohost.http/connection :url}))
 
 ;; StringBuilder() / (int capacity) / (CharSequence s); StringBuffer is the same here
-(def new-StringBuilder (fn ([] (h-string-builder))
-                           ([s] (cond (number? s) (h-string-builder)
-                                      (nil? s) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"String.length()\" because \"str\" is null"))
-                                      :else (h-sb-append! (h-string-builder) s)))))
+(defn new-StringBuilder ([] (h-string-builder)) ([s] (cond (number? s) (h-string-builder)
+                                                           (nil? s) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"String.length()\" because \"str\" is null"))
+                                                           :else (h-sb-append! (h-string-builder) s))))
 (def new-StringBuffer new-StringBuilder)
 (def new-BigDecimal (host-fn 'bigdec identity))
 (def new-BigInteger (host-fn 'bigint identity))
 (def new-ChunkBuffer (if-let [f (:chunk-buffer hc)] f (fn [_capacity] (host/mutable-list))))
-(def new-ArrayList (fn ([] (host/mutable-list)) ([n-or-coll] (let [l (host/mutable-list)] (when (coll?* n-or-coll) (swap! (:state l) into n-or-coll)) l))))
+(defn new-ArrayList ([] (host/mutable-list)) ([n-or-coll] (let [l (host/mutable-list)] (when (coll?* n-or-coll) (swap! (:state l) into n-or-coll)) l)))
 (def new-LinkedList new-ArrayList)
 ;; ChunkedCons: the seq is chunk ++ more; the chunk and the rest ride its
 ;; metadata, so chunk-first sees the whole chunk and chunk-rest the rest
@@ -3102,14 +2964,14 @@
 ;; Thread, CountDownLatch and the Executors factories are Eve's thread
 ;; layer (cohost.thread) wherever the host gives the layer its leaves;
 ;; where it does not, they throw the unsupported error the stubs threw.
-(def new-Thread (fn [& args] (thread-layer "java.lang.Thread" (fn [] (apply thread/new-thread args)))))
+(defn new-Thread [& args] (thread-layer "java.lang.Thread" (fn [] (apply thread/new-thread args))))
 (def Thread-currentThread
      (let [sentinel (atom ::current-thread)]
           (fn [] (if (thread/available?) (thread/current-thread) sentinel))))
-(def new-CountDownLatch (fn [n] (thread-layer "CountDownLatch" (fn [] (thread/new-latch n)))))
-(def Executors-newFixedThreadPool (fn [n] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :pooled n)))))
-(def Executors-newCachedThreadPool (fn [] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :pooled 8)))))
-(def Executors-newSingleThreadExecutor (fn [] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :solo 1)))))
+(defn new-CountDownLatch [n] (thread-layer "CountDownLatch" (fn [] (thread/new-latch n))))
+(defn Executors-newFixedThreadPool [n] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :pooled n))))
+(defn Executors-newCachedThreadPool [] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :pooled 8))))
+(defn Executors-newSingleThreadExecutor [] (thread-layer "java.util.concurrent.Executors" (fn [] (thread/new-executor :solo 1))))
 
 ;; ---------------------------------------------------------------------------
 ;; java.lang & java.util statics
@@ -3149,26 +3011,24 @@
                           (recur (quot v radix) (cons (nth radix-digits (rem v radix)) acc)))))))
 (defn- unsigned [x bits]
        (if (neg? x) (Numbers-addP x (if (= bits 32) 4294967296 18446744073709551616)) x))
-(def Long-toString (fn ([x] (str x)) ([x radix] (radix-str x radix))))
+(defn Long-toString ([x] (str x)) ([x radix] (radix-str x radix)))
 (def Integer-toString Long-toString)
-(def Integer-toHexString (fn [x] (radix-str (unsigned x 32) 16)))
-(def Integer-toOctalString (fn [x] (radix-str (unsigned x 32) 8)))
-(def Integer-toBinaryString (fn [x] (radix-str (unsigned x 32) 2)))
-(def Long-toHexString (fn [x] (radix-str (unsigned x 64) 16)))
-(def Long-toOctalString (fn [x] (radix-str (unsigned x 64) 8)))
-(def Long-toBinaryString (fn [x] (radix-str (unsigned x 64) 2)))
+(defn Integer-toHexString [x] (radix-str (unsigned x 32) 16))
+(defn Integer-toOctalString [x] (radix-str (unsigned x 32) 8))
+(defn Integer-toBinaryString [x] (radix-str (unsigned x 32) 2))
+(defn Long-toHexString [x] (radix-str (unsigned x 64) 16))
+(defn Long-toOctalString [x] (radix-str (unsigned x 64) 8))
+(defn Long-toBinaryString [x] (radix-str (unsigned x 64) 2))
 (defn- pop-count [x bits] (loop [v (unsigned x bits) c 0] (if (zero? v) c (recur (quot v 2) (+ c (rem v 2))))))
-(def Long-bitCount (fn [x] (pop-count x 64)))
-(def Integer-bitCount (fn [x] (pop-count x 32)))
-(def Long-compare (fn [a b] (compare a b)))
+(defn Long-bitCount [x] (pop-count x 64))
+(defn Integer-bitCount [x] (pop-count x 32))
+(defn Long-compare [a b] (compare a b))
 (def Integer-compare Long-compare)
 (def Double-compare Long-compare)
-(def Long-signum (fn [x] (cond (pos? x) 1 (neg? x) -1 :else 0)))
+(defn Long-signum [x] (cond (pos? x) 1 (neg? x) -1 :else 0))
 (def Integer-signum Long-signum)
-(def Double-toString (fn [x] (if (and h-double-str (float? x)) (h-double-str x) (str x))))
-(def String-join (fn [sep coll] ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-                     #_{:splint/disable [style/apply-str-interpose]}
-                     (apply str (interpose sep coll))))
+(defn Double-toString [x] (if (and h-double-str (float? x)) (h-double-str x) (str x)))
+(defn String-join [sep coll] #_{:splint/disable [style/apply-str-interpose]} (apply str (interpose sep coll)))
 ;; :glj arm (measured 2026-11-12, go-bodies Tail B closer): glojure's
 ;; compiler emits a direct runtime division for (/ 1.0 0.0) in compiled
 ;; code, bypassing the glj adapter's IEEE var-root wrapper for
@@ -3181,7 +3041,7 @@
 (def Float-POSITIVE_INFINITY Double-POSITIVE_INFINITY)
 (def Float-NEGATIVE_INFINITY Double-NEGATIVE_INFINITY)
 ;; Double.isNaN / Float.isNaN, the instance methods (core_print's Double method)
-(def -isNaN (fn [x] (boolean (h-nan? x))))
+(defn -isNaN [x] (boolean (h-nan? x)))
 ;; the JVM's number grammars: a host's parser is looser (parseInt "12abc" -> 12,
 ;; float("abc") raises ValueError), so the string is checked here first
 (defn- nfe
@@ -3233,21 +3093,21 @@
                 (if-let [[_ sign ip fp ex] (re-matches #"\s*([+-]?)0[xX]([0-9a-fA-F]*)\.?([0-9a-fA-F]*)[pP]([+-]?\d+)[fFdD]?\s*" s)]
                         (if (and (empty? ip) (empty? fp)) (throw (nfe s)) (parse-hex-double sign ip fp ex))
                         (throw (nfe s))))))
-(def Integer-parseInt (fn ([s] (parse-radix s 10 -2147483648 2147483647)) ([s radix] (parse-radix s radix -2147483648 2147483647))))
-(def Long-parseLong (fn ([s] (parse-radix s 10 lmin lmax)) ([s radix] (parse-radix s radix lmin lmax))))
-(def Integer-valueOf (fn ([x] (if (string? x) (Integer-parseInt x) (RT-intCast x))) ([s radix] (Integer-parseInt s radix))))
-(def Long-valueOf (fn ([x] (if (string? x) (Long-parseLong x) (RT-longCast x))) ([s radix] (Long-parseLong s radix))))
-(def Math-toIntExact (fn [x] (if (or (< x -2147483648) (> x 2147483647))
-                                 (throw (host/ex* 'java.lang.ArithmeticException "integer overflow"))
-                                 x)))
+(defn Integer-parseInt ([s] (parse-radix s 10 -2147483648 2147483647)) ([s radix] (parse-radix s radix -2147483648 2147483647)))
+(defn Long-parseLong ([s] (parse-radix s 10 lmin lmax)) ([s radix] (parse-radix s radix lmin lmax)))
+(defn Integer-valueOf ([x] (if (string? x) (Integer-parseInt x) (RT-intCast x))) ([s radix] (Integer-parseInt s radix)))
+(defn Long-valueOf ([x] (if (string? x) (Long-parseLong x) (RT-longCast x))) ([s radix] (Long-parseLong s radix)))
+(defn Math-toIntExact [x] (if (or (< x -2147483648) (> x 2147483647))
+                              (throw (host/ex* 'java.lang.ArithmeticException "integer overflow"))
+                              x))
 (def BigInteger-valueOf (host-fn 'biginteger identity))
-(def Double-valueOf (fn [x] (if (string? x) (parse-double-strict x) (RT-doubleCast x))))
+(defn Double-valueOf [x] (if (string? x) (parse-double-strict x) (RT-doubleCast x)))
 (def Double-parseDouble parse-double-strict)
 (declare nn)
-(def Double-isNaN (fn [x] (h-nan? (nn x))))
-(def Double-isInfinite (fn [x] (h-infinite? (nn x))))
-(def Boolean-parseBoolean (fn [s] (and (string? s) (= "true" (h-lower-case s)))))
-(def Boolean-valueOf (fn [x] (if (string? x) (Boolean-parseBoolean x) (boolean x))))
+(defn Double-isNaN [x] (h-nan? (nn x)))
+(defn Double-isInfinite [x] (h-infinite? (nn x)))
+(defn Boolean-parseBoolean [s] (and (string? s) (= "true" (h-lower-case s))))
+(defn Boolean-valueOf [x] (if (string? x) (Boolean-parseBoolean x) (boolean x)))
 ;; Character: a char or an int code point; the host's own statics where the
 ;; adapter names them (:java-statics), else these, over the char code
 (defn- jstatic [nm dflt] (get (host/java-statics) nm dflt))
@@ -3293,12 +3153,12 @@
 (def Math-abs Numbers-abs)
 ;; Math.max / min: NaN wins, and 0.0 is above -0.0
 (defn- neg-zero? [x] (and (float? x) (zero? x) (neg? (/ 1.0 x))))
-(def Math-max (fn [a b] (cond (h-nan? a) a (h-nan? b) b
-                              (and (zero? a) (zero? b) (float? a) (float? b)) (if (neg-zero? a) b a)
-                              :else (if (>= a b) a b))))
-(def Math-min (fn [a b] (cond (h-nan? a) a (h-nan? b) b
-                              (and (zero? a) (zero? b) (float? a) (float? b)) (if (neg-zero? a) a b)
-                              :else (if (<= a b) a b))))
+(defn Math-max [a b] (cond (h-nan? a) a (h-nan? b) b
+                           (and (zero? a) (zero? b) (float? a) (float? b)) (if (neg-zero? a) b a)
+                           :else (if (>= a b) a b)))
+(defn Math-min [a b] (cond (h-nan? a) a (h-nan? b) b
+                           (and (zero? a) (zero? b) (float? a) (float? b)) (if (neg-zero? a) a b)
+                           :else (if (<= a b) a b)))
 (def Math-sin (math-fn 'sin (unsupported-math "sin")))
 (def Math-cos (math-fn 'cos (unsupported-math "cos")))
 (def Math-tan (math-fn 'tan (unsupported-math "tan")))
@@ -3360,51 +3220,43 @@
    line.separator once at boot (system-newline, newline's text)."
      {"line.separator" "\n"})
 
-(def System-getProperty
-     (fn ([k] (get @system-properties k (get property-defaults k)))
-         ([k dflt] (get @system-properties k (get property-defaults k dflt)))))
+(defn System-getProperty ([k] (get @system-properties k (get property-defaults k))) ([k dflt] (get @system-properties k (get property-defaults k dflt))))
 
-(def System-setProperty
-     (fn [k v] (let [old (get @system-properties k)]
-                    (swap! system-properties assoc k v)
-                    old)))
+(defn System-setProperty [k v] (let [old (get @system-properties k)]
+                                    (swap! system-properties assoc k v)
+                                    old))
 
-(def System-clearProperty
-     (fn [k] (let [old (get @system-properties k)]
-                  (swap! system-properties dissoc k)
-                  old)))
+(defn System-clearProperty [k] (let [old (get @system-properties k)]
+                                    (swap! system-properties dissoc k)
+                                    old))
 ;; System.lineSeparator(): the line.separator property, as the JVM answers
 ;; it (stock clojure.main's report-error prints with it)
-(def System-lineSeparator (fn [] (System-getProperty "line.separator")))
+(defn System-lineSeparator [] (System-getProperty "line.separator"))
 (def System-identityHashCode hash)
 ;; String.format(fmt, Object... args): core.clj's format passes one array
 (declare jformat)
-(def String-format (fn [fmt & args]
-                       (let [args (if (and (= 1 (count args)) (arr? (first args))) (seq (first args)) args)]
-                            (if-let [f (host/format-fn)] (apply f fmt args) (jformat fmt args)))))
-(def String-valueOf (fn [x] (if (nil? x) "null" (str x))))
+(defn String-format [fmt & args] (let [args (if (and (= 1 (count args)) (arr? (first args))) (seq (first args)) args)]
+                                      (if-let [f (host/format-fn)] (apply f fmt args) (jformat fmt args))))
+(defn String-valueOf [x] (if (nil? x) "null" (str x)))
 ;; String.CASE_INSENSITIVE_ORDER compares upper- then lower-cased characters
-(def String-CASE_INSENSITIVE_ORDER
-     (fn [a b] (let [f (fn [s] (h-lower-case (h-upper-case (str s))))] (compare (f a) (f b)))))
+(defn String-CASE_INSENSITIVE_ORDER [a b] (let [f (fn [s] (h-lower-case (h-upper-case (str s))))] (compare (f a) (f b))))
 (def Array-getLength count)
 (defn- aioobe [i n] (host/ex* 'java.lang.ArrayIndexOutOfBoundsException (str "Index " i " out of bounds for length " n)))
-(def Array-get (fn [a i] (let [n (count a)] (if (and (<= 0 i) (< i n)) #?(:phel (aget a i) :default (nth a i)) (throw (aioobe i n))))))
+(defn Array-get [a i] (let [n (count a)] (if (and (<= 0 i) (< i n)) #?(:phel (aget a i) :default (nth a i)) (throw (aioobe i n)))))
 ;; (make-array Integer/TYPE n) is zero-filled, a class token fills with nil;
 ;; (make-array t d0 d1 ...) passes its dimensions as an array: nested arrays
-(def Array-newInstance
-     (fn [t n]
-         (let [zero (get '{int 0 long 0 short 0 byte 0 double 0.0 float 0.0 boolean false} t)
-               build (fn build [[d & more]]
-                         (to-array* (if (seq more) (repeatedly d #(build more)) (repeat d zero))))]
-              (if (number? n) (build [n]) (build (vec n))))))
-(def Array-set (fn [a i v] (let [n (count a)] (if (and (<= 0 i) (< i n)) (aset a i v) (throw (aioobe i n))))))
+(defn Array-newInstance [t n] (let [zero (get '{int 0 long 0 short 0 byte 0 double 0.0 float 0.0 boolean false} t)
+                                    build (fn build [[d & more]]
+                                              (to-array* (if (seq more) (repeatedly d #(build more)) (repeat d zero))))]
+                                   (if (number? n) (build [n]) (build (vec n)))))
+(defn Array-set [a i v] (let [n (count a)] (if (and (<= 0 i) (< i n)) (aset a i v) (throw (aioobe i n)))))
 (def Array-setInt Array-set)
 (def Array-setLong Array-set)
 (def Array-setBoolean Array-set)
 (def Array-setFloat Array-set)
 ;; RT.aget / RT.aset: what aget's and aset's :inline expand to
 (def RT-aget Array-get)
-(def RT-aset (fn [a i v] (Array-set a i v) v))
+(defn RT-aset [a i v] (Array-set a i v) v)
 (def Array-setDouble Array-set)
 (def Array-setShort Array-set)
 (def Array-setByte Array-set)
@@ -3437,16 +3289,12 @@
          ;; Phel has no ns-resolve: the adapter's own lookup
               :default (when-let [h (host/interned-var 'cohost.core 'compare)]
                                  (vreset! stock-compare-fn (host/var-root h))))))
-(def Arrays-sort (fn ([a] (host/sort-array! a compare))
-                   ;; jank (X4-1): the host's compare for the stock one; any other
-                   ;; fn unwrapped (the adapter reads its answer as compare-with
-                   ;; does); a Comparator that is no fn through compare-with
-                     ([a cmp] (host/sort-array! a #?(:jank (cond (identical? cmp (stock-compare)) compare
-                                                                 (fn? cmp) cmp
-                                                                 :else (as-comparator cmp))
-                                                     :default (if (and h-sort-host-compare? (identical? cmp (stock-compare)))
-                                                                  compare
-                                                                  (as-comparator cmp)))))))
+(defn Arrays-sort ([a] (host/sort-array! a compare)) ([a cmp] (host/sort-array! a #?(:jank (cond (identical? cmp (stock-compare)) compare
+                                                                                                 (fn? cmp) cmp
+                                                                                                 :else (as-comparator cmp))
+                                                                                     :default (if (and h-sort-host-compare? (identical? cmp (stock-compare)))
+                                                                                                  compare
+                                                                                                  (as-comparator cmp))))))
 (def Collections-shuffle (unsupported "Collections/shuffle"))
 ;; Collections.reverseOrder(): the host's own where it has java.util, else a
 ;; comparator fn that reverses compare (or the comparator given)
@@ -3610,14 +3458,8 @@
                                    (loop [out out] (if (and (seq out) (= "" (peek out))) (recur (pop out)) out))
                                    out)))))))
 
-(def Pattern-quote
-     (fn [s] ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-         #_{:splint/disable [style/apply-str]}
-         (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "^" "$" "." "|" "?" "*" "+" "(" ")" "[" "]" "{" "}"} c) (str "\\" c) c))) (str s)))))
-(def Matcher-quoteReplacement
-     (fn [s] ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-         #_{:splint/disable [style/apply-str]}
-         (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "$"} c) (str "\\" c) c))) (str s)))))
+(defn Pattern-quote [s] #_{:splint/disable [style/apply-str]} (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "^" "$" "." "|" "?" "*" "+" "(" ")" "[" "]" "{" "}"} c) (str "\\" c) c))) (str s))))
+(defn Matcher-quoteReplacement [s] #_{:splint/disable [style/apply-str]} (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "$"} c) (str "\\" c) c))) (str s))))
 (def UUID-randomUUID (host-fn 'random-uuid (unsupported "random-uuid")))
 (def UUID-fromString (host-fn 'parse-uuid (unsupported "parse-uuid")))
 (def Class-forName symbol)
@@ -3662,21 +3504,19 @@
        [s]
        (reduce (fn [a c] (+ (* a 10) (- (int c) (int \0)))) 0 s))
 
-(def TimeZone-getTimeZone
-     (fn [id]
-         (let [id (str id)]
-              (if (and (> (count id) 4) (= "GMT" (subs id 0 3))
-                       (contains? #{\+ \-} (nth id 3)))
-                  (let [sign (if (= \- (nth id 3)) -1 1)
-                        body (subs id 4)
-                        ci (loop [i 0] (cond (>= i (count body)) -1
-                                             (= (nth body i) \:) i
-                                             :else (recur (inc i))))
-                        [hh mm] (if (neg? ci) [body nil] [(subs body 0 ci) (subs body (inc ci))])]
-                       (->TZVal (* sign (+ (* 60 (cal-parse-int hh)) (if mm (cal-parse-int mm) 0))) id))
+(defn TimeZone-getTimeZone [id] (let [id (str id)]
+                                     (if (and (> (count id) 4) (= "GMT" (subs id 0 3))
+                                              (contains? #{\+ \-} (nth id 3)))
+                                         (let [sign (if (= \- (nth id 3)) -1 1)
+                                               body (subs id 4)
+                                               ci (loop [i 0] (cond (>= i (count body)) -1
+                                                                    (= (nth body i) \:) i
+                                                                    :else (recur (inc i))))
+                                               [hh mm] (if (neg? ci) [body nil] [(subs body 0 ci) (subs body (inc ci))])]
+                                              (->TZVal (* sign (+ (* 60 (cal-parse-int hh)) (if mm (cal-parse-int mm) 0))) id))
         ;; "GMT", "UTC", "UT" -- and, as on the JVM, an unknown id falls
         ;; back to GMT rather than failing
-                  (->TZVal 0 id)))))
+                                         (->TZVal 0 id))))
 
 ;; civil date <-> epoch days (Howard Hinnant's algorithms): pure integer
 ;; math, exact for any year a long can hold
@@ -3738,27 +3578,16 @@
                                        14 (mod rem 1000)}
                               :tz tz}))))
 
-(def new-GregorianCalendar
-     (fn
-      ([] (cal-from-millis (System-currentTimeMillis) utc-tz))
-      ([y mo d] (new-GregorianCalendar y mo d 0 0 0))
-      ([y mo d h mi] (new-GregorianCalendar y mo d h mi 0))
-      ([y mo d h mi s]
-       (->GregCal (atom {:fields {1 y 2 mo 5 d 11 h 12 mi 13 s 14 0}
-                         :tz utc-tz})))))
+(defn new-GregorianCalendar ([] (cal-from-millis (System-currentTimeMillis) utc-tz)) ([y mo d] (new-GregorianCalendar y mo d 0 0 0)) ([y mo d h mi] (new-GregorianCalendar y mo d h mi 0)) ([y mo d h mi s]
+                                                                                                                                                                                            (->GregCal (atom {:fields {1 y 2 mo 5 d 11 h 12 mi 13 s 14 0}
+                                                                                                                                                                                                              :tz utc-tz}))))
 
-(def new-Date
-     (fn
-      ([] (->DateVal (System-currentTimeMillis)))
-      ([ms] (->DateVal ms))))
+(defn new-Date ([] (->DateVal (System-currentTimeMillis))) ([ms] (->DateVal ms)))
 
-(def new-Timestamp
-     (fn [ms]
-         (let [frac (- ms (* (cal-fdiv ms 1000) 1000))]
-              (->TimestampVal (atom {:millis ms :nanos (* frac 1000000)})))))
+(defn new-Timestamp [ms] (let [frac (- ms (* (cal-fdiv ms 1000) 1000))]
+                              (->TimestampVal (atom {:millis ms :nanos (* frac 1000000)}))))
 
-(def new-SimpleDateFormat
-     (fn [pattern] (->SDFVal (atom {:pattern (str pattern) :tz utc-tz}))))
+(defn new-SimpleDateFormat [pattern] (->SDFVal (atom {:pattern (str pattern) :tz utc-tz})))
 
 ;; Calendar's field constants, as the JVM numbers them
 (def Calendar-ERA 0)
@@ -3780,40 +3609,30 @@
 (def Calendar-ZONE_OFFSET 15)
 (def Calendar-DST_OFFSET 16)
 
-(def -getTime
-     (fn [x]
-         (cond (gregcal? x) (->DateVal (cal-millis x))
-               (timestampval? x) (:millis @(:state x))
-               (dateval? x) (:millis x)
-               :else (miss! [:method 'getTime]))))
+(defn -getTime [x] (cond (gregcal? x) (->DateVal (cal-millis x))
+                         (timestampval? x) (:millis @(:state x))
+                         (dateval? x) (:millis x)
+                         :else (miss! [:method 'getTime])))
 
-(def -getTimeInMillis
-     (fn [x]
-         (cond (gregcal? x) (cal-millis x)
-               (timestampval? x) (:millis @(:state x))
-               (dateval? x) (:millis x)
-               :else (miss! [:method 'getTimeInMillis]))))
+(defn -getTimeInMillis [x] (cond (gregcal? x) (cal-millis x)
+                                 (timestampval? x) (:millis @(:state x))
+                                 (dateval? x) (:millis x)
+                                 :else (miss! [:method 'getTimeInMillis])))
 
-(def -setTimeZone
-     (fn [x tz]
-         (cond (or (gregcal? x) (sdfval? x)) (do (swap! (:state x) assoc :tz tz) nil) :else (miss! [:method 'setTimeZone]))))
+(defn -setTimeZone [x tz] (cond (or (gregcal? x) (sdfval? x)) (do (swap! (:state x) assoc :tz tz) nil) :else (miss! [:method 'setTimeZone])))
 
-(def -setNanos
-     (fn [x n]
-         (if (timestampval? x)
-             (do (swap! (:state x)
-                        (fn [s]
-                            (let [frac (- (:millis s) (* (cal-fdiv (:millis s) 1000) 1000))]
-                                 (assoc s :nanos n
-                                        :millis (+ (- (:millis s) frac) (quot n 1000000))))))
-                 nil)
-             (miss! [:method 'setNanos]))))
+(defn -setNanos [x n] (if (timestampval? x)
+                          (do (swap! (:state x)
+                                     (fn [s]
+                                         (let [frac (- (:millis s) (* (cal-fdiv (:millis s) 1000) 1000))]
+                                              (assoc s :nanos n
+                                                     :millis (+ (- (:millis s) frac) (quot n 1000000))))))
+                              nil)
+                          (miss! [:method 'setNanos])))
 
-(def -getNanos
-     (fn [x]
-         (if (timestampval? x)
-             (:nanos @(:state x))
-             (miss! [:method 'getNanos]))))
+(defn -getNanos [x] (if (timestampval? x)
+                        (:nanos @(:state x))
+                        (miss! [:method 'getNanos])))
 
 (defn- cal-pad [n w]
        (let [s (str n) missing (- w (count s))]
@@ -3867,69 +3686,66 @@
                                  (recur j sb))
                             :else (do (h-sb-append! sb c) (recur (inc i) sb))))))))
 
-(def -format
-     (fn [x v]
-         (cond (not (sdfval? x)) (miss! [:method 'format])
-               (dateval? v) (sdf-format x (:millis v))
-               (timestampval? v) (sdf-format x (:millis @(:state v)))
-               (gregcal? v) (sdf-format x (cal-millis v))
-               :else (miss! [:method 'format]))))
+(defn -format [x v] (cond (not (sdfval? x)) (miss! [:method 'format])
+                          (dateval? v) (sdf-format x (:millis v))
+                          (timestampval? v) (sdf-format x (:millis @(:state v)))
+                          (gregcal? v) (sdf-format x (cal-millis v))
+                          :else (miss! [:method 'format])))
 
 ;; ---------------------------------------------------------------------------
 ;; instance methods: `(.m target args)` -> `(-m target args)`
 
 (def -first first)
-(def -next (fn [x] (if (host/iter? x) (host/iter-next! x) (next x))))
+(defn -next [x] (if (host/iter? x) (host/iter-next! x) (next x)))
 (def -hasNext host/iter-has-next?)
 (def -more rest)
 ;; (.seq coll) and Sorted.seq(ascending): subseq/rsubseq walk either way
-(def -seq (fn ([x] (if (transient-value? x)
-                       (throw (host/ex* 'java.lang.ClassCastException
-                                        (str "class " (memory/transient-class-token x)
-                                             " cannot be cast to class clojure.lang.Seqable")))
-                       (seq x)))
-              ([x ascending?] (cond (transient-value? x)
-                                    (throw (host/ex* 'java.lang.ClassCastException
-                                                     (str "class " (memory/transient-class-token x)
-                                                          " cannot be cast to class clojure.lang.Seqable")))
-                                    ascending? (seq x)
+(defn -seq ([x] (if (transient-value? x)
+                    (throw (host/ex* 'java.lang.ClassCastException
+                                     (str "class " (memory/transient-class-token x)
+                                          " cannot be cast to class clojure.lang.Seqable")))
+                    (seq x))) ([x ascending?] (cond (transient-value? x)
+                                                    (throw (host/ex* 'java.lang.ClassCastException
+                                                                     (str "class " (memory/transient-class-token x)
+                                                                          " cannot be cast to class clojure.lang.Seqable")))
+                                                    ascending? (seq x)
                                   ;; a bare Eve vector has no rseq of
                                   ;; its own (Eve-side NOT-YET the seam
                                   ;; answers): the reversed seq
-                                    (memory/eve-backed? x) (reverse (seq x))
-                                    :else (rseq x)))))
+                                                    (memory/eve-backed? x) (reverse (seq x))
+                                                    :else (rseq x))))
 (def -cons layer-conj)
-(def -count (fn [x] (cond (transient-value? x) (memory/t-count x)
-                          (host/mlist? x) (count @(:state x))
-                          :else (count x))))
+(defn -count [x] (cond (transient-value? x) (memory/t-count x)
+                       (host/mlist? x) (count @(:state x))
+                       :else (count x)))
 ;; a String method on nil is the JVM's NullPointerException
 (defn- nn [x] (if (nil? x) (throw (host/ex* 'java.lang.NullPointerException "")) x))
-(def -length (fn [x] (cond (io/is? :cohost.io/file x)
-                           (host/try-all (fn [] (count (io/utf8-encode (io/file-text x))))
-                                         (fn [_] 0))
-                           (h-sb? x) (count (h-sb-str x))
-                           :else (count (nn x)))))
-(def -getBytes (fn ([s] (String-getBytes s)) ([s cs] (String-getBytes s cs))))
-(def -reverse (fn [x] (if (h-sb? x)
-                          (h-sb-append! (h-string-builder) ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-                                        #_{:splint/disable [style/apply-str-reverse]}
-                                        (apply str (reverse (h-sb-str x))))
-                          (reverse x))))
-(def -toUpperCase (fn [s] (h-upper-case (nn s))))
-(def -toLowerCase (fn [s] (h-lower-case (nn s))))
+(defn -length [x] (cond (io/is? :cohost.io/file x)
+                        (host/try-all (fn [] (count (io/utf8-encode (io/file-text x))))
+                                      (fn [_] 0))
+                        (h-sb? x) (count (h-sb-str x))
+                        :else (count (nn x))))
+(defn -getBytes ([s] (String-getBytes s)) ([s cs] (String-getBytes s cs)))
+(defn -reverse [x] (if (h-sb? x)
+                       (h-sb-append! (h-string-builder) ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
+                                     #_{:splint/disable [style/apply-str-reverse]}
+                                     (apply str (reverse (h-sb-str x))))
+                       (reverse x)))
+(defn -toUpperCase [s] (h-upper-case (nn s)))
+(defn -toLowerCase [s] (h-lower-case (nn s)))
 (def -charValue identity)
-(def -matcher (fn [re s] (cond (nil? s) (nn s)
-                               (h-sb? s) (new-matcher re (h-sb-str s))
-                               (string? s) (new-matcher re s)
-                               :else (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.CharSequence s))))))
-(def -pattern (fn [x] (if (matcher? x) (:re x) (host/re-source x))))
-(def -find (fn ([mt] (m-find mt)) ([mt from] (m-find mt from))))
-(def -group (fn ([mt] (m-group mt)) ([mt i] (m-group mt i))))
+(defn -matcher [re s] (cond (nil? s) (nn s)
+                            (h-sb? s) (new-matcher re (h-sb-str s))
+                            (string? s) (new-matcher re s)
+                            :else (throw (host/ex* 'java.lang.ClassCastException (cast-message 'java.lang.CharSequence s)))))
+(defn -pattern [x] (if (matcher? x) (:re x) (host/re-source x)))
+(defn -find ([mt] (m-find mt)) ([mt from] (m-find mt from)))
+(defn -group ([mt] (m-group mt)) ([mt i] (m-group mt i)))
 ;; the pattern of a Matcher never changes: its group count is asked once
 ;; (re-groups asks at every match of re-seq)
-(def -groupCount (fn [mt] (let [st (:state mt)]
-                               (or (:gc @st)
-                                   (let [n (host/re-group-count (:re mt))] (swap! st assoc :gc n) n)))))
+(defn -groupCount [mt] (let [st (:state mt)]
+                            (or (:gc @st)
+                                (let [n (host/re-group-count (:re mt))] (swap! st assoc :gc n) n))))
 ;; Matcher.start(g) / end(g): the host's group spans (-1 for a group that
 ;; did not participate)
 (defn- m-span [mt g k]
@@ -3939,48 +3755,41 @@
                   :else (if-let [sps (force (nth r 3 nil))]
                                 (if-let [sp (nth sps i)] (nth sp (dec k)) -1)
                                 ((unsupported "Matcher.start(group)"))))))
-(def -start (fn ([x] (if (thread/thread-value? x) (thread/start-thread! x) (nth (m-match x) 0)))
-                ([x i] (m-span x i 1))))
-(def -end (fn ([mt] (nth (m-match mt) 1)) ([mt i] (m-span mt i 2))))
-(def -lookingAt (fn [mt] (let [{:keys [s]} @(:state mt) r (h-re-find-at (:re mt) s 0)
-                               r (when (and r (zero? (first r))) r)]
-                              (swap! (:state mt) assoc :m r) (boolean r))))
-(def -matches (fn ([mt] (let [r (h-re-match-full (:re mt) (:s @(:state mt)))]
-                             (swap! (:state mt) assoc :m r) (boolean r)))
-                ;; String.matches(regex)
-                  ([s regex] (boolean (h-re-match-full (Pattern-compile regex) s)))))
-(def -appendReplacement (fn [mt sb repl] (m-append-replacement mt sb repl)))
-(def -appendTail (fn [mt sb] (m-append-tail mt sb)))
+(defn -start ([x] (if (thread/thread-value? x) (thread/start-thread! x) (nth (m-match x) 0))) ([x i] (m-span x i 1)))
+(defn -end ([mt] (nth (m-match mt) 1)) ([mt i] (m-span mt i 2)))
+(defn -lookingAt [mt] (let [{:keys [s]} @(:state mt) r (h-re-find-at (:re mt) s 0)
+                            r (when (and r (zero? (first r))) r)]
+                           (swap! (:state mt) assoc :m r) (boolean r)))
+(defn -matches ([mt] (let [r (h-re-match-full (:re mt) (:s @(:state mt)))]
+                          (swap! (:state mt) assoc :m r) (boolean r))) ([s regex] (boolean (h-re-match-full (Pattern-compile regex) s))))
+(defn -appendReplacement [mt sb repl] (m-append-replacement mt sb repl))
+(defn -appendTail [mt sb] (m-append-tail mt sb))
 ;; Matcher.replaceAll(repl) / String.replaceAll(regex, repl), and First
-(def -replaceAll (fn ([mt repl] (m-replace mt repl true))
-                     ([s regex repl] (m-replace (new-matcher (Pattern-compile regex) s) repl true))))
-(def -replaceFirst (fn ([mt repl] (m-replace mt repl false))
-                       ([s regex repl] (m-replace (new-matcher (Pattern-compile regex) s) repl false))))
+(defn -replaceAll ([mt repl] (m-replace mt repl true)) ([s regex repl] (m-replace (new-matcher (Pattern-compile regex) s) repl true)))
+(defn -replaceFirst ([mt repl] (m-replace mt repl false)) ([s regex repl] (m-replace (new-matcher (Pattern-compile regex) s) repl false)))
 ;; Pattern.split(input[, limit]) / String.split(regex[, limit])
-(def -split (fn ([x y] (-split x y 0))
-                ([x y limit] (to-array* (if (h-regex? x) (regex-split x y limit) (regex-split (Pattern-compile y) x limit))))))
+(defn -split ([x y] (-split x y 0)) ([x y limit] (to-array* (if (h-regex? x) (regex-split x y limit) (regex-split (Pattern-compile y) x limit)))))
 ;; String.replace(CharSequence|char target, CharSequence|char replacement): every occurrence, literally
-(def -replace (fn [s target repl]
-                  (let [s (str (nn s)) t (str (nn target)) r (str (nn repl))]
-                       (if (= "" t)
-                           (apply str r (mapcat (fn [c] [c r]) s))
-                           (loop [from 0 out []]
-                                 (let [i (h-index-of s t from)]
-                                      (if (neg? i)
+(defn -replace [s target repl] (let [s (str (nn s)) t (str (nn target)) r (str (nn repl))]
+                                    (if (= "" t)
+                                        (apply str r (mapcat (fn [c] [c r]) s))
+                                        (loop [from 0 out []]
+                                              (let [i (h-index-of s t from)]
+                                                   (if (neg? i)
                                           ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-                                          #_{:splint/disable [style/apply-str]}
-                                          (apply str (conj out (subs s from)))
-                                          (recur (+ i (count t)) (conj out (subs s from i) r)))))))))
+                                                       #_{:splint/disable [style/apply-str]}
+                                                       (apply str (conj out (subs s from)))
+                                                       (recur (+ i (count t)) (conj out (subs s from i) r))))))))
 (def -size -count)
-(def -clear (fn [x] (reset! (:state x) []) nil))
-(def -toArray (fn [x] (to-array* (if (host/mlist? x) @(:state x) x))))
+(defn -clear [x] (reset! (:state x) []) nil)
+(defn -toArray [x] (to-array* (if (host/mlist? x) @(:state x) x)))
 (def -compare #?(:jank (fn [cmp a b] (if (identical? cmp (stock-compare)) (compare a b) (compare-with cmp a b)))
                  :default (if h-sort-host-compare?
                               (fn [cmp a b] (if (identical? cmp (stock-compare)) (compare a b) (compare-with cmp a b)))
                               compare-with)))
 (def -comparator host/sorted-comparator)
 ;; Sorted.entryKey: a tree map's entry key, a tree set's element itself
-(def -entryKey (fn [coll e] (if (map? coll) (key e) e)))
+(defn -entryKey [coll e] (if (map? coll) (key e) e))
 ;; Sorted.seqFrom(key, ascending): the entries from key on, in that direction
 (def -seqFrom (let [ss (host-fn 'subseq nil) rs (host-fn 'rsubseq nil)]
                    (fn [sc k ascending?]
@@ -3991,57 +3800,53 @@
                                         (if ascending?
                                             (seq (drop-while #(neg? (cmp (ek %) k)) (seq sc)))
                                             (seq (drop-while #(pos? (cmp (ek %) k)) (rseq sc)))))))))
-(def -concat (fn [a b] (cond (nil? b) (throw (host/ex* 'java.lang.NullPointerException
-                                                       "Cannot invoke \"String.length()\" because \"str\" is null"))
-                             (not (string? b)) (throw (host/ex* 'java.lang.ClassCastException
-                                                                (str "class " (class-of b) " cannot be cast to class java.lang.String")))
-                             :else (str (nn a) b))))
-(def -nth (fn ([x i] (if (memory/eve-backed? x) (memory/nth-of x i) (nth x i)))
-              ([x i nf] (if (memory/eve-backed? x) (memory/nth-of x i nf) (nth x i nf)))))
-(def -get (fn [x & args] (cond (h-var? x) (host/var-root x)
-                               (h-atom? x) (if (atom-layer/atom-value? x) (atom-layer/deref-atom x) (deref x))
-                               (host/mlist? x) (nth @(:state x) (first args))
+(defn -concat [a b] (cond (nil? b) (throw (host/ex* 'java.lang.NullPointerException
+                                                    "Cannot invoke \"String.length()\" because \"str\" is null"))
+                          (not (string? b)) (throw (host/ex* 'java.lang.ClassCastException
+                                                             (str "class " (class-of b) " cannot be cast to class java.lang.String")))
+                          :else (str (nn a) b)))
+(defn -nth ([x i] (if (memory/eve-backed? x) (memory/nth-of x i) (nth x i))) ([x i nf] (if (memory/eve-backed? x) (memory/nth-of x i nf) (nth x i nf))))
+(defn -get [x & args] (cond (h-var? x) (host/var-root x)
+                            (h-atom? x) (if (atom-layer/atom-value? x) (atom-layer/deref-atom x) (deref x))
+                            (host/mlist? x) (nth @(:state x) (first args))
                                ;; a layer future or promise: Future.get (this
                                ;; is also how stock deref reaches them, through
                                ;; core's deref-future); with arguments the
                                ;; first is read as a millisecond timeout
                                ;; (the TimeUnit argument is not modeled)
-                               (or (thread/future-value? x) (thread/promise-value? x))
-                               (apply thread/get-future x args)
+                            (or (thread/future-value? x) (thread/promise-value? x))
+                            (apply thread/get-future x args)
                                ;; cohost.http's Optional (HttpHeaders.firstValue)
-                               (http/is? :cohost.http/optional x) (http/optional-get x)
-                               (transient-value? x) (apply memory/t-get x args)
-                               (memory/eve-backed? x) (if (= 1 (count args))
-                                                          (memory/lookup x (first args) nil)
-                                                          (apply memory/lookup x args))
-                               (seq args) (apply get x args)
-                               (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"java.util.concurrent.Future.get()\" because the target is null"))
-                               (h-deref? x) (deref x)
-                               :else (throw (host/ex* 'java.lang.ClassCastException
-                                                      (str "class " (class-of x) " cannot be cast to class java.util.concurrent.Future"))))))
+                            (http/is? :cohost.http/optional x) (http/optional-get x)
+                            (transient-value? x) (apply memory/t-get x args)
+                            (memory/eve-backed? x) (if (= 1 (count args))
+                                                       (memory/lookup x (first args) nil)
+                                                       (apply memory/lookup x args))
+                            (seq args) (apply get x args)
+                            (nil? x) (throw (host/ex* 'java.lang.NullPointerException "Cannot invoke \"java.util.concurrent.Future.get()\" because the target is null"))
+                            (h-deref? x) (deref x)
+                            :else (throw (host/ex* 'java.lang.ClassCastException
+                                                   (str "class " (class-of x) " cannot be cast to class java.util.concurrent.Future")))))
 (def ^:private h-var-set #?(:jank nil :default (host-fn 'var-set nil)))
 ;; Var.set: the thread binding; a host without var-set (ClojureScript) keeps
 ;; a binding frame's value in the var's slot
-(def -set (fn ([x v] (cond (h-atom? x) (tx-write! x #(reset! x v))
-                           h-var-set (h-var-set x v)
-                           (host/var-thread-bound? x) (host/var-set! x v)
-                           :else (throw (host/ex* 'java.lang.IllegalStateException
-                                                  (str "Can't change/establish root binding of: " (host/var-sym x) " with set")))))
-              ;; Calendar.set(field, value): the 3-argument set is the
-              ;; calendar's, answered by the date block above
-              ([x f v] (if (gregcal? x)
-                           (do (cal-set! x f v) nil)
-                           (throw (host/ex* 'java.lang.NoSuchMethodError
-                                            (str "set(int, int) on class " (class-of x))))))))
+(defn -set ([x v] (cond (h-atom? x) (tx-write! x #(reset! x v))
+                        h-var-set (h-var-set x v)
+                        (host/var-thread-bound? x) (host/var-set! x v)
+                        :else (throw (host/ex* 'java.lang.IllegalStateException
+                                               (str "Can't change/establish root binding of: " (host/var-sym x) " with set"))))) ([x f v] (if (gregcal? x)
+                                                                                                                                              (do (cal-set! x f v) nil)
+                                                                                                                                              (throw (host/ex* 'java.lang.NoSuchMethodError
+                                                                                                                                                               (str "set(int, int) on class " (class-of x)))))))
 ;; Ref.alter / commute / touch / history over the atom a Ref is here
-(def -alter (fn [r f args] (tx-write! r #(apply swap! r f args))))
-(def -commute (fn [r f args] (tx-write! r #(apply swap! r f args))))
-(def -touch (fn [_] (in-tx!) nil))
-(def -setMaxHistory (fn [r _] r))
-(def -setMinHistory (fn [r _] r))
-(def -getHistoryCount (fn [_] 0))
-(def -getMinHistory (fn [_] 0))
-(def -getMaxHistory (fn [_] 10))
+(defn -alter [r f args] (tx-write! r #(apply swap! r f args)))
+(defn -commute [r f args] (tx-write! r #(apply swap! r f args)))
+(defn -touch [_] (in-tx!) nil)
+(defn -setMaxHistory [r _] r)
+(defn -setMinHistory [r _] r)
+(defn -getHistoryCount [_] 0)
+(defn -getMinHistory [_] 0)
+(defn -getMaxHistory [_] 10)
 (def ^:private host-alter-meta!
      #?(;; phel.core's alter-meta! of a var installs an override its compiler
      ;; never reads and no later def replaces: a var's goes to the adapter
@@ -4052,41 +3857,40 @@
 (def ^:private h-dissoc! (host-fn 'dissoc! nil))
 (def ^:private h-disj! (host-fn 'disj! nil))
 (def ^:private h-pop! (host-fn 'pop! nil))
-(def -assoc (fn [x k v] (cond (transient-value? x) (memory/t-assoc x k v)
-                              (h-transient? x) (h-assoc! x k v)
-                              :else (assoc* x k v))))
+(defn -assoc [x k v] (cond (transient-value? x) (memory/t-assoc x k v)
+                           (h-transient? x) (h-assoc! x k v)
+                           :else (assoc* x k v)))
 (def -assocN -assoc)
-(def -without (fn [x k] (cond (transient-value? x) (memory/t-dissoc x k)
-                              (h-transient? x) (h-dissoc! x k)
-                              :else (dissoc x k))))
-(def -disjoin (fn [x k] (cond (transient-value? x) (memory/t-disj x k)
-                              (h-transient? x) (h-disj! x k)
-                              :else (disj x k))))
-(def -valAt (fn ([x k] (cond (transient-value? x) (memory/t-get x k)
-                             (memory/eve-backed? x) (memory/lookup x k nil)
-                             :else (get x k)))
-                ([x k d] (cond (transient-value? x) (memory/t-get x k d)
-                               (memory/eve-backed? x) (memory/lookup x k d)
-                               :else (get x k d)))))
-(def -entryAt (fn [x k] (cond (transient-value? x) (memory/t-find x k)
-                              (memory/eve-backed? x) (memory/lookup-find x k)
-                              :else (find x k))))
-(def -containsKey (fn [x k] (cond (transient-value? x) (memory/t-contains? x k)
-                                  (memory/eve-backed? x) (memory/lookup-contains? x k)
-                                  :else (contains? x k))))
+(defn -without [x k] (cond (transient-value? x) (memory/t-dissoc x k)
+                           (h-transient? x) (h-dissoc! x k)
+                           :else (dissoc x k)))
+(defn -disjoin [x k] (cond (transient-value? x) (memory/t-disj x k)
+                           (h-transient? x) (h-disj! x k)
+                           :else (disj x k)))
+(defn -valAt ([x k] (cond (transient-value? x) (memory/t-get x k)
+                          (memory/eve-backed? x) (memory/lookup x k nil)
+                          :else (get x k))) ([x k d] (cond (transient-value? x) (memory/t-get x k d)
+                                                           (memory/eve-backed? x) (memory/lookup x k d)
+                                                           :else (get x k d))))
+(defn -entryAt [x k] (cond (transient-value? x) (memory/t-find x k)
+                           (memory/eve-backed? x) (memory/lookup-find x k)
+                           :else (find x k)))
+(defn -containsKey [x k] (cond (transient-value? x) (memory/t-contains? x k)
+                               (memory/eve-backed? x) (memory/lookup-contains? x k)
+                               :else (contains? x k)))
 (def -peek #?(:jank (fn [x] (if (cohost-inst? x)
                                 (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
                                 (peek x)))
               :default (fn [x] (if (transient-value? x) (memory/t-peek x) (peek x)))))
-(def -pop (fn [x] (cond (transient-value? x) (memory/t-pop x)
-                        (h-transient? x) (h-pop! x)
-                        :else #?(:jank (if (cohost-inst? x)
-                                           (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
-                                           (pop x))
-                                 :default (pop x)))))
-(def -meta (fn [x] (cond (atom-layer/atom-value? x) (atom-layer/meta-of x)
-                         (transient-value? x) (memory/t-meta x)
-                         :else (host/meta* x))))
+(defn -pop [x] (cond (transient-value? x) (memory/t-pop x)
+                     (h-transient? x) (h-pop! x)
+                     :else #?(:jank (if (cohost-inst? x)
+                                        (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentStack x)))
+                                        (pop x))
+                              :default (pop x))))
+(defn -meta [x] (cond (atom-layer/atom-value? x) (atom-layer/meta-of x)
+                      (transient-value? x) (memory/t-meta x)
+                      :else (host/meta* x)))
 ;; let-go: a symbol given no metadata is the bare symbol (with-meta makes a
 ;; wrapper no symbol equals, even of none)
 (def -withMeta #?(:lg (fn [x m] (if (atom-layer/atom-value? x) (atom-layer/with-meta-atom x m) (if (and (symbol? x) (empty? m)) (host/plain-symbol x) (with-meta x m))))
@@ -4104,9 +3908,9 @@
 (defn- host-meta [m] (if (host/strip-inline?) (dissoc m :inline :inline-arities) m))
 (defn- meta-map [m]
        (if (or (nil? m) (map? m)) m (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IPersistentMap m)))))
-(def -alterMeta (fn [x f args] (if (atom-layer/atom-value? x)
-                                   (atom-layer/alter-meta-atom x f args)
-                                   (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args))))
+(defn -alterMeta [x f args] (if (atom-layer/atom-value? x)
+                                (atom-layer/alter-meta-atom x f args)
+                                (apply host-alter-meta! x (fn [m & more] (host-meta (meta-map (apply f m more)))) args)))
 (def -resetMeta (let [rm (host-fn 'reset-meta! (fn [x m] (host-alter-meta! x (constantly m))))]
                      (fn [x m] (let [m (host-meta (meta-map m))]
                                     (if (atom-layer/atom-value? x)
@@ -4114,56 +3918,48 @@
                                         (rm x m))))))
 (def -setMeta -resetMeta)
 ;; ClojureScript has no blocking deref: the timed form reads the value now
-(def -deref (fn ([x] (cond (proxy-value? x) (proxy-deref x)
-                           (or (thread/future-value? x) (thread/promise-value? x))
-                           (thread/deref-blocking x)
-                           (thread/agent-value? x) (thread/agent-state x)
-                           (atom-layer/atom-value? x) (atom-layer/deref-atom x)
-                           :else (deref x)))
-                ([x ms timeout-val] (cond (or (thread/future-value? x) (thread/promise-value? x))
-                                          (thread/deref-blocking x ms timeout-val)
-                                          (atom-layer/atom-value? x) (atom-layer/deref-atom x)
-                                          :else #?(:cljs (deref x) :default (deref x ms timeout-val))))))
+(defn -deref ([x] (cond (proxy-value? x) (proxy-deref x)
+                        (or (thread/future-value? x) (thread/promise-value? x))
+                        (thread/deref-blocking x)
+                        (thread/agent-value? x) (thread/agent-state x)
+                        (atom-layer/atom-value? x) (atom-layer/deref-atom x)
+                        :else (deref x))) ([x ms timeout-val] (cond (or (thread/future-value? x) (thread/promise-value? x))
+                                                                    (thread/deref-blocking x ms timeout-val)
+                                                                    (atom-layer/atom-value? x) (atom-layer/deref-atom x)
+                                                                    :else #?(:cljs (deref x) :default (deref x ms timeout-val)))))
 ;; the thread layer's members: Thread, Future, ExecutorService,
 ;; CountDownLatch over cohost.thread's values
-(def -join (fn ([x] (cond
-                     (thread/thread-value? x) (thread/join-thread x)
+(defn -join ([x] (cond
+                  (thread/thread-value? x) (thread/join-thread x)
                       ;; CompletableFuture.join (a sendAsync future): the value, or
                       ;; the cause rethrown in a CompletionException
-                     (http/async? x)
-                     (host/try-all (fn [] (thread/deref-future x))
-                                   (fn [e] (throw (if (instance-of? 'java.util.concurrent.ExecutionException e)
-                                                      (host/ex* 'java.util.concurrent.CompletionException
-                                                                (host/error-message e) (host/exception-cause e))
-                                                      e))))
-                     :else
-                     (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread")))))
-               ([x ms] (if (thread/thread-value? x)
-                           (thread/join-thread x ms)
-                           (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread")))))))
-(def -isAlive (fn [x] (if (thread/thread-value? x)
-                          (thread/thread-alive? x)
-                          (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))))
+                  (http/async? x)
+                  (host/try-all (fn [] (thread/deref-future x))
+                                (fn [e] (throw (if (instance-of? 'java.util.concurrent.ExecutionException e)
+                                                   (host/ex* 'java.util.concurrent.CompletionException
+                                                             (host/error-message e) (host/exception-cause e))
+                                                   e))))
+                  :else
+                  (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))) ([x ms] (if (thread/thread-value? x)
+                                                                                                                                                         (thread/join-thread x ms)
+                                                                                                                                                         (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))))
+(defn -isAlive [x] (if (thread/thread-value? x)
+                       (thread/thread-alive? x)
+                       (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread")))))
 ;; the layer has no interrupt leaf: interrupt is accepted and ignored
-(def -interrupt (fn [x] (when-not (thread/thread-value? x)
-                                  (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))
-                    nil))
+(defn -interrupt [x] (when-not (thread/thread-value? x)
+                               (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread")))) nil)
 ;; Thread.setDaemon records the flag on the thread value (no host leaf
 ;; consumes it yet); clojure.core.server's thread macro calls it on
 ;; every server and client thread it starts
-(def -setDaemon (fn [x b] (when-not (thread/thread-value? x)
-                                    (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread"))))
-                    (thread/set-daemon! x b)
-
-                    nil))
+(defn -setDaemon [x b] (when-not (thread/thread-value? x)
+                                 (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.lang.Thread")))) (thread/set-daemon! x b) nil)
 
 ;; java.util.concurrent.locks.ReentrantLock: a standin over an atom --
 ;; CAS-acquire with a brief-wait spin, reentrant for the holding
 ;; thread (Thread/currentThread is the owner identity). Fairness is
 ;; not honored. clojure.core.server's with-lock is the consumer.
-(def new-ReentrantLock
-     (fn ([] {:cohost/kind :cohost.shim/reentrant-lock :state (atom {:owner nil :count 0})})
-         ([_fair?] {:cohost/kind :cohost.shim/reentrant-lock :state (atom {:owner nil :count 0})})))
+(defn new-ReentrantLock ([] {:cohost/kind :cohost.shim/reentrant-lock :state (atom {:owner nil :count 0})}) ([_fair?] {:cohost/kind :cohost.shim/reentrant-lock :state (atom {:owner nil :count 0})}))
 
 (defn- shim-wait-brief! []
        (when-let [db (host/doorbell)] (host/doorbell-wait db 10)))
@@ -4196,9 +3992,7 @@
 ;; wraps the thread's context classloader in one on entry, so the
 ;; value and the Thread accessors exist. The per-thread CCL lives in
 ;; a shim atom keyed by the thread value (its :id makes it unique).
-(def new-DynamicClassLoader
-     (fn ([] {:cohost/kind :cohost.shim/classloader :parent nil})
-         ([parent] {:cohost/kind :cohost.shim/classloader :parent parent})))
+(defn new-DynamicClassLoader ([] {:cohost/kind :cohost.shim/classloader :parent nil}) ([parent] {:cohost/kind :cohost.shim/classloader :parent parent}))
 (def ^:private context-classloaders (atom {}))
 (def -getContextClassLoader (http-member "getContextClassLoader" {:cohost.thread/thread (fn [x] (get @context-classloaders x)) :cohost.io/class-loader (fn [_] io/class-loader)}))
 (def -setContextClassLoader
@@ -4210,32 +4004,31 @@
 (def -tryLock (http-member "tryLock" {:cohost.shim/reentrant-lock (fn [x & _args] (lock-try! x))}))
 (def -isLocked (http-member "isLocked" {:cohost.shim/reentrant-lock (fn [x] (some? (:owner @(:state x))))}))
 (def -isHeldByCurrentThread (http-member "isHeldByCurrentThread" {:cohost.shim/reentrant-lock (fn [x] (identical? (Thread-currentThread) (:owner @(:state x))))}))
-(def -cancel (fn [x & _args] (if (thread/future-value? x)
-                                 (thread/future-cancel x)
-                                 (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.Future"))))))
-(def -countDown (fn [x] (if (thread/latch-value? x)
-                            (thread/count-down x)
-                            (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch"))))))
-(def -await (fn ([x] (if (thread/latch-value? x)
-                         (thread/await-latch x)
+(defn -cancel [x & _args] (if (thread/future-value? x)
+                              (thread/future-cancel x)
+                              (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.Future")))))
+(defn -countDown [x] (if (thread/latch-value? x)
+                         (thread/count-down x)
                          (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch")))))
-                ([x timeout & _rest] (if (thread/latch-value? x)
-                                         (thread/await-latch x timeout)
-                                         (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch")))))))
-(def -getCount (fn [x] (if (thread/latch-value? x)
-                           (thread/latch-count x)
-                           (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch"))))))
-(def -submit (fn [x f] (if (thread/executor-value? x)
-                           (thread/submit-future x f)
-                           (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.ExecutorService"))))))
-(def -execute (fn [x f] (if (thread/executor-value? x)
-                            (do (thread/submit! x (fn [] (f))) nil)
-                            (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.ExecutorService"))))))
-(def -shutdown (fn [x] (if (thread/executor-value? x)
-                           (do (thread/shutdown-executor! x) nil)
-                           (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.ExecutorService"))))))
-(def -invoke (fn [f & args] (apply f args)))
-(def -applyTo (fn [f args] (apply f args)))
+(defn -await ([x] (if (thread/latch-value? x)
+                      (thread/await-latch x)
+                      (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch"))))) ([x timeout & _rest] (if (thread/latch-value? x)
+                                                                                                                                                                                             (thread/await-latch x timeout)
+                                                                                                                                                                                             (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch"))))))
+(defn -getCount [x] (if (thread/latch-value? x)
+                        (thread/latch-count x)
+                        (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.CountDownLatch")))))
+(defn -submit [x f] (if (thread/executor-value? x)
+                        (thread/submit-future x f)
+                        (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.ExecutorService")))))
+(defn -execute [x f] (if (thread/executor-value? x)
+                         (do (thread/submit! x (fn [] (f))) nil)
+                         (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.ExecutorService")))))
+(defn -shutdown [x] (if (thread/executor-value? x)
+                        (do (thread/shutdown-executor! x) nil)
+                        (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of x) " cannot be cast to class java.util.concurrent.ExecutorService")))))
+(defn -invoke [f & args] (apply f args))
+(defn -applyTo [f args] (apply f args))
 (def -reduce (if-let [chunk? (:chunk? hc)]
               ;; reduce1's (.reduce (chunk-first s) f val) over a host chunk
                      (let [chunk-reduce (:chunk-reduce hc)]
@@ -4266,23 +4059,23 @@
 (def -hasheq Util-hasheq)
 ;; a host exception as the JVM prints it, where the host's str does not
 (def ^:private h-exception-string (host/capability :exception-string))
-(def -toString (fn [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x)
+(defn -toString [x] (cond (h-sb? x) (h-sb-str x) (h-regex? x) (host/re-source x)
                              ;; a URI / URL of Eve's HTTP layer is its text
-                             (or (http/is? :cohost.http/uri x) (http/is? :cohost.http/url x)) (:raw x)
+                          (or (http/is? :cohost.http/uri x) (http/is? :cohost.http/url x)) (:raw x)
                              ;; the io layer: a File is its path, a StringWriter
                              ;; its text, a ByteArrayOutputStream its bytes as text
-                             (io/is? :cohost.io/file x) (io/file-path x)
-                             (io/is? :cohost.io/string-writer x) (io/written-text x)
-                             (io/is? :cohost.io/byte-output-stream x) (io/utf8-decode (io/output-bytes x))
-                             (and h-exception-string (h-exception? x)) (h-exception-string x)
+                          (io/is? :cohost.io/file x) (io/file-path x)
+                          (io/is? :cohost.io/string-writer x) (io/written-text x)
+                          (io/is? :cohost.io/byte-output-stream x) (io/utf8-decode (io/output-bytes x))
+                          (and h-exception-string (h-exception? x)) (h-exception-string x)
                              ;; a namespace is its name (let-go's str says <ns name>)
-                             (h-namespace? x) (str (host/ns-name* x))
-                             (and h-double-str (float? x)) (h-double-str x)
-                             :else (str (nn x)))))
+                          (h-namespace? x) (str (host/ns-name* x))
+                          (and h-double-str (float? x)) (h-double-str x)
+                          :else (str (nn x))))
 (def -compareTo compare)
-(def -isEmpty (fn [x] (if (host/mlist? x) (empty? @(:state x))
-                          #?(:jank (if (cohost-inst? x) (not (seq x)) (empty? x))
-                             :default (empty? x)))))
+(defn -isEmpty [x] (if (host/mlist? x) (empty? @(:state x))
+                       #?(:jank (if (cohost-inst? x) (not (seq x)) (empty? x))
+                          :default (empty? x))))
 (defn- type-name
        "A user type's name as the host prints it, without Python's <class '...'>."
        [t]
@@ -4315,8 +4108,8 @@
                                              (memory/eve-backed? coll) (reverse (seq coll))
                                              h (h coll)
                                              :else (seq (reverse coll)))))))
-(def -iterator (fn [x] (RT-iter (if (host/mlist? x) @(:state x) x))))
-(def -drop (fn [coll n] (drop n coll)))
+(defn -iterator [x] (RT-iter (if (host/mlist? x) @(:state x) x)))
+(defn -drop [coll n] (drop n coll))
 ;; the transient seam (unit 4): persistent!/transient/conj! of a
 ;; layer value are the layer's guarded transients; every other
 ;; value keeps the host's own
@@ -4341,11 +4134,8 @@
                        (fn [s] (cond (hc-chunked? s) (f s) (chunked-cons? s) (seq (::more (meta s))) :else (next s)))))
 ;; Named.getName; a non-Named value is the JVM's ClassCastException (nil: NPE);
 ;; a host class object (from `class` of a record) prints its name
-(def -getName (fn [x] ;; splint: the symbol and keyword arms differ inside a reader
-                            ;; conditional (the :lg arm rewrites the symbol first)
-                  #_{:splint/disable [lint/identical-branches]}
-                  (cond (io/is? :cohost.io/file x) (file-name-of (io/file-path x))
-                        (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: getName for class clojure.lang.Var"))
+(defn -getName [x] #_{:splint/disable [lint/identical-branches]} (cond (io/is? :cohost.io/file x) (file-name-of (io/file-path x))
+                                                                       (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: getName for class clojure.lang.Var"))
                             ;; a qualified class token in class position
                             ;; (Var.getTag's answer): its name is the full
                             ;; string. An unqualified symbol -- core's sigs
@@ -4356,31 +4146,31 @@
                             ;; the load (its compiler resolves the tag
                             ;; from the name), so there the arm never
                             ;; fires and symbols keep the name part.
-                        #?(:lg false :default (and (class-token? x) (namespace x))) (str x)
-                        (h-namespace? x) (host/ns-name* x)
-                        (symbol? x) (name #?(:lg (host/plain-symbol x) :default x))
-                        (keyword? x) (name x)
-                        (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
-                        (or (string? x) (number? x) (boolean? x) (coll?* x))
-                        (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Named x)))
+                                                                       #?(:lg false :default (and (class-token? x) (namespace x))) (str x)
+                                                                       (h-namespace? x) (host/ns-name* x)
+                                                                       (symbol? x) (name #?(:lg (host/plain-symbol x) :default x))
+                                                                       (keyword? x) (name x)
+                                                                       (nil? x) (throw (host/ex* 'java.lang.NullPointerException ""))
+                                                                       (or (string? x) (number? x) (boolean? x) (coll?* x))
+                                                                       (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.Named x)))
                             ;; a host Class object (Var.getTag's answer):
                             ;; its name is its print minus the class prefix.
                             ;; (No class-of call here: -getName is on the
                             ;; loader's own path and class-of can throw for
                             ;; values this arm used to pass to (str x).)
-                        (let [n (str x)] (and (>= (count n) 7) (= "class " (subs n 0 6)) (not (neg? (h-index-of (subs n 6) "." 0)))))
-                        (subs (str x) 6)
-                        :else (str x))))
+                                                                       (let [n (str x)] (and (>= (count n) 7) (= "class " (subs n 0 6)) (not (neg? (h-index-of (subs n 6) "." 0)))))
+                                                                       (subs (str x) 6)
+                                                                       :else (str x)))
 (def -getNamespace #?(:lg (fn [x] (namespace (host/plain-symbol x))) :default namespace))
-(def -getSimpleName (fn [x] (let [n (if (symbol? x) (name (canon x)) (pr-str x))
-                                  i (max (host/last-index-of* n ".") (host/last-index-of* n "$") (host/last-index-of* n "/"))]
-                                 (subs n (inc i)))))
+(defn -getSimpleName [x] (let [n (if (symbol? x) (name (canon x)) (pr-str x))
+                               i (max (host/last-index-of* n ".") (host/last-index-of* n "$") (host/last-index-of* n "/"))]
+                              (subs n (inc i))))
 ;; Var.sym and Keyword.sym (core.clj's `symbol` of a keyword)
-(def -sym (fn [x] (if (keyword? x) (symbol (namespace x) (name x)) (host/var-sym x))))
+(defn -sym [x] (if (keyword? x) (symbol (namespace x) (name x)) (host/var-sym x)))
 (def -ns host/var-ns)
-(def -name (fn [x] (cond (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: name for class clojure.lang.Var"))
-                         (h-namespace? x) (host/ns-name* x)
-                         :else (name x))))
+(defn -name [x] (cond (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: name for class clojure.lang.Var"))
+                      (h-namespace? x) (host/ns-name* x)
+                      :else (name x)))
 (def -getMappings (host-fn 'ns-map (unsupported "ns-map")))
 (def -getAliases (host-fn 'ns-aliases (fn [_] {})))
 ;; on the cljs pass the body is the unsupported throw, so the let's
@@ -4392,109 +4182,98 @@
                                                                    :default (if al (binding [*ns* (host/the-ns* ns)] (al a (if (h-namespace? target) (host/ns-name* target) target)))
                                                                                 ((unsupported "alias")))))))
 (def -removeAlias (host-fn 'ns-unalias (unsupported "ns-unalias")))
-(def -intern (fn [ns sym] (host/intern! ns sym nil)))
+(defn -intern [ns sym] (host/intern! ns sym nil))
 (def -unmap (host-fn 'ns-unmap (unsupported "ns-unmap")))
-(def -refer (fn [ns sym v] (host/intern! ns sym (host/var-root v))))
-(def -importClass (fn [& _] nil))
-(def -findInternedVar (fn [ns sym] (get (host/ns-interns-map ns) sym)))
-(def -getMapping (fn [ns sym] (get (-getMappings ns) sym)))
+(defn -refer [ns sym v] (host/intern! ns sym (host/var-root v)))
+(defn -importClass [& _] nil)
+(defn -findInternedVar [ns sym] (get (host/ns-interns-map ns) sym))
+(defn -getMapping [ns sym] (get (-getMappings ns) sym))
 (def -isMacro host/macro-var?)
-(def -isPublic (fn [v] (not (:private (host/var-meta v)))))
-(def -getTag (fn [v] (when-let [t (:tag (host/var-meta v))] (canon (cond (string? t) (symbol t)
-                                                                         (seq? t) (second t)
-                                                                         :else t)))))
-(def -fn (fn [v] (let [x (host/var-root v)]
-                      (if (ifn? x) x (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IFn x)))))))
+(defn -isPublic [v] (not (:private (host/var-meta v))))
+(defn -getTag [v] (when-let [t (:tag (host/var-meta v))] (canon (cond (string? t) (symbol t)
+                                                                      (seq? t) (second t)
+                                                                      :else t))))
+(defn -fn [v] (let [x (host/var-root v)]
+                   (if (ifn? x) x (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IFn x))))))
 (def -setMacro host/mark-macro!)
 (def -isDynamic host/dynamic-var?)
-(def -setDynamic (fn ([v] (host/set-dynamic! v)) ([v _b] (host/set-dynamic! v))))
+(defn -setDynamic ([v] (host/set-dynamic! v)) ([v _b] (host/set-dynamic! v)))
 (def -isBound host/var-bound?)
 (declare -endsWith)
-(def -hasRoot (fn [v] (let [rr (host/var-raw-root v)
-                            n (str (class-of rr))]
-                           (and (some? rr)
-                                (not (or ;; the unbound marker's name, in
+(defn -hasRoot [v] (let [rr (host/var-raw-root v)
+                         n (str (class-of rr))]
+                        (and (some? rr)
+                             (not (or ;; the unbound marker's name, in
                                       ;; whatever dress the host's class
                                       ;; print gives it: the bare symbol
                                       ;; on the JVM, the quoted class
                                       ;; print on basilisp
-                                      (-endsWith n "Unbound")
-                                      (-endsWith n "Unbound'>")
+                                   (-endsWith n "Unbound")
+                                   (-endsWith n "Unbound'>")
                                       ;; jank's unbound marker class
-                                      (-endsWith n "var_unbound_root")
+                                   (-endsWith n "var_unbound_root")
                                       ;; phel's marker is a bare stdClass
                                       ;; singleton (phel.phel's `unbound`);
                                       ;; no name on it but its class's
-                                      #?(:phel (= n "stdClass") :default false)))))))
+                                   #?(:phel (= n "stdClass") :default false))))))
 (def -getRawRoot host/var-raw-root)
 ;; Var.getThreadBinding: a box (non-nil even when the binding is nil), or nil
-(def -getThreadBinding (fn [v] (when (host/var-thread-bound? v) [(host/var-root v)])))
-(def -bindRoot (fn [v x] (host/set-var-root! v (constantly x))
-                 ;; unit 5: publish the root to the registry
-                   (atom-layer/publish-var-root! (var-ns-sym v) (host/var-sym v) x)
-                   v))
+(defn -getThreadBinding [v] (when (host/var-thread-bound? v) [(host/var-root v)]))
+(defn -bindRoot [v x] (host/set-var-root! v (constantly x)) (atom-layer/publish-var-root! (var-ns-sym v) (host/var-sym v) x) v)
 ;; Var.alterRoot returns the new root, bindings or not
-(def -alterRoot (fn [v f args] (host/set-var-root! v (fn [old] (apply f old args)))
-                    (let [new (host/var-raw-root v)]
+(defn -alterRoot [v f args] (host/set-var-root! v (fn [old] (apply f old args))) (let [new (host/var-raw-root v)]
                     ;; unit 5: publish the new root to the registry
-                         (atom-layer/publish-var-root! (var-ns-sym v) (host/var-sym v) new)
-                         new)))
-(def -toSymbol (fn [v] (let [n (host/var-ns v) n (if (h-namespace? n) (host/ns-name* n) n)]
-                            (if n (symbol (str n) (str (host/var-sym v))) (host/var-sym v)))))
+                                                                                      (atom-layer/publish-var-root! (var-ns-sym v) (host/var-sym v) new)
+                                                                                      new))
+(defn -toSymbol [v] (let [n (host/var-ns v) n (if (h-namespace? n) (host/ns-name* n) n)]
+                         (if n (symbol (str n) (str (host/var-sym v))) (host/var-sym v))))
 ;; IAtom.swap overloads: (f) (f x) (f x y) (f x y args) -- the last takes the
 ;; remaining arguments as one seq, which core.clj's swap! passes through as-is.
-(def -swap (fn ([a f] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f) (swap! a f)))
-               ([a f x] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f x) (swap! a f x)))
-               ([a f x y] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f x y) (swap! a f x y)))
-               ([a f x y args] (if (atom-layer/atom-value? a) (apply atom-layer/swap-atom! a f x y args) (apply swap! a f x y args)))))
+(defn -swap ([a f] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f) (swap! a f))) ([a f x] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f x) (swap! a f x))) ([a f x y] (if (atom-layer/atom-value? a) (atom-layer/swap-atom! a f x y) (swap! a f x y))) ([a f x y args] (if (atom-layer/atom-value? a) (apply atom-layer/swap-atom! a f x y args) (apply swap! a f x y args))))
 (def ^:private h-vreset! (host-fn 'vreset! nil))
-(def -reset (fn ([mf] (if (matcher? mf) (m-reset mf) (do (swap! (mf-state mf) assoc :methods {} :prefers {}) mf)))
-                ([a x] (cond (atom-layer/atom-value? a) (atom-layer/reset-atom! a x)
-                             (matcher? a) (m-reset a x)
-                             (h-volatile? a) (h-vreset! a x)
-                             :else (reset! a x)))))
+(defn -reset ([mf] (if (matcher? mf) (m-reset mf) (do (swap! (mf-state mf) assoc :methods {} :prefers {}) mf))) ([a x] (cond (atom-layer/atom-value? a) (atom-layer/reset-atom! a x)
+                                                                                                                             (matcher? a) (m-reset a x)
+                                                                                                                             (h-volatile? a) (h-vreset! a x)
+                                                                                                                             :else (reset! a x))))
 ;; IAtom2.swapVals / resetVals as the JVM does them, a compare-and-set loop
 ;; returning [old new] (a host's own swap-vals! may order the pair the other way)
 (defn- swap-vals* [a f args]
        (loop []
              (let [old @a new (apply f old args)]
                   (if (compare-and-set! a old new) [old new] (recur)))))
-(def -swapVals (fn ([a f] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f) (swap-vals* a f nil)))
-                   ([a f x] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f x) (swap-vals* a f [x])))
-                   ([a f x y] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f x y) (swap-vals* a f [x y])))
-                   ([a f x y args] (if (atom-layer/atom-value? a) (apply atom-layer/swap-vals-atom! a f x y args) (swap-vals* a f (cons x (cons y args)))))))
-(def -resetVals (fn [a x] (if (atom-layer/atom-value? a)
-                              (atom-layer/reset-vals-atom! a x)
-                              (loop [] (let [old @a] (if (compare-and-set! a old x) [old x] (recur)))))))
+(defn -swapVals ([a f] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f) (swap-vals* a f nil))) ([a f x] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f x) (swap-vals* a f [x]))) ([a f x y] (if (atom-layer/atom-value? a) (atom-layer/swap-vals-atom! a f x y) (swap-vals* a f [x y]))) ([a f x y args] (if (atom-layer/atom-value? a) (apply atom-layer/swap-vals-atom! a f x y args) (swap-vals* a f (cons x (cons y args))))))
+(defn -resetVals [a x] (if (atom-layer/atom-value? a)
+                           (atom-layer/reset-vals-atom! a x)
+                           (loop [] (let [old @a] (if (compare-and-set! a old x) [old x] (recur))))))
 (def ^:private host-compare-and-set (host-fn 'compare-and-set! (unsupported "compare-and-set!")))
-(def -compareAndSet (fn [a old new] (if (atom-layer/atom-value? a)
-                                        (atom-layer/compare-and-set-atom! a old new)
-                                        (host-compare-and-set a old new))))
+(defn -compareAndSet [a old new] (if (atom-layer/atom-value? a)
+                                     (atom-layer/compare-and-set-atom! a old new)
+                                     (host-compare-and-set a old new)))
 (def ^:private host-add-watch (host-fn 'add-watch (unsupported "add-watch")))
 ;; a watch fn and a validator are invoked BY the host's atom
 ;; machinery: a resident reference stored in an Eve-backed opts
 ;; map (as (atom 0 :validator f) builds under the fill) resolves
 ;; to the registered fn at this crossing, or the host would
 ;; invoke the reference itself (unit 4)
-(def -addWatch (fn [a k f] (if (atom-layer/atom-value? a)
-                               (atom-layer/add-watch-atom! a k f)
-                               (host-add-watch a k (memory/resolve-resident f)))))
+(defn -addWatch [a k f] (if (atom-layer/atom-value? a)
+                            (atom-layer/add-watch-atom! a k f)
+                            (host-add-watch a k (memory/resolve-resident f))))
 (def ^:private host-remove-watch (host-fn 'remove-watch (unsupported "remove-watch")))
-(def -removeWatch (fn [a k] (if (atom-layer/atom-value? a)
-                                (atom-layer/remove-watch-atom! a k)
-                                (host-remove-watch a k))))
+(defn -removeWatch [a k] (if (atom-layer/atom-value? a)
+                             (atom-layer/remove-watch-atom! a k)
+                             (host-remove-watch a k)))
 (def ^:private host-get-watches (host-fn 'get-watches (fn [_] {})))
-(def -getWatches (fn [a] (if (atom-layer/atom-value? a)
-                             (atom-layer/get-watches-atom a)
-                             (host-get-watches a))))
+(defn -getWatches [a] (if (atom-layer/atom-value? a)
+                          (atom-layer/get-watches-atom a)
+                          (host-get-watches a)))
 (def ^:private host-set-validator (host-fn 'set-validator! (unsupported "set-validator!")))
-(def -setValidator (fn [a f] (if (atom-layer/atom-value? a)
-                                 (atom-layer/set-validator-atom! a f)
-                                 (host-set-validator a (memory/resolve-resident f)))))
+(defn -setValidator [a f] (if (atom-layer/atom-value? a)
+                              (atom-layer/set-validator-atom! a f)
+                              (host-set-validator a (memory/resolve-resident f))))
 (def ^:private host-get-validator (host-fn 'get-validator (fn [_] nil)))
-(def -getValidator (fn [a] (if (atom-layer/atom-value? a)
-                               (atom-layer/get-validator-atom a)
-                               (host-get-validator a))))
+(defn -getValidator [a] (if (atom-layer/atom-value? a)
+                            (atom-layer/get-validator-atom a)
+                            (host-get-validator a)))
 (def -isRealized (let [host-realized (host-fn 'realized? nil)]
                       (fn [x] (cond (or (thread/future-value? x) (thread/promise-value? x)) (thread/future-done? x)
                                     host-realized (host-realized x)
@@ -4504,12 +4283,12 @@
 (def -getCause host/exception-cause)
 (def -getData ex-data)
 (def -getStackTrace host/ex-trace)
-(def -setStackTrace (fn [e _trace] e))
+(defn -setStackTrace [e _trace] e)
 ;; a frame is the adapter's [class method file line] vector; the accessors
 ;; read its slots, as java.lang.StackTraceElement's do
-(def -getClassName (fn [frame] (str (display-class-name (nth frame 0)))))
-(def -getMethodName (fn [frame] (str (nth frame 1))))
-(def -getFileName (fn [frame] (nth frame 2)))
+(defn -getClassName [frame] (str (display-class-name (nth frame 0))))
+(defn -getMethodName [frame] (str (nth frame 1)))
+(defn -getFileName [frame] (nth frame 2))
 ;; getLineNumber is two members: StackTraceElement's (a frame vector's
 ;; slot) and LineNumberingPushbackReader's -- the io layer's reader's
 ;; line, else the target's own (a host LNPR: the JVM seat's *in*, which
@@ -4520,18 +4299,18 @@
 (def -setLineNumber (http-member "setLineNumber" {:cohost.io/pushback-reader io/set-line-number!}))
 (def -captureString (http-member "captureString" {:cohost.io/pushback-reader io/capture-string!}))
 (def -getString (http-member "getString" {:cohost.io/pushback-reader io/captured-string}))
-(def -fillInStackTrace (fn [e] e))
-(def -printStackTrace (fn [e] (println (str e))))
+(defn -fillInStackTrace [e] e)
+(defn -printStackTrace [e] (println (str e)))
 (def -getClass class-of)
-(def -isInstance (fn [c x] (instance-of? c x)))
+(defn -isInstance [c x] (instance-of? c x))
 ;; Class.cast: x itself, nil included, when it is an instance of c
-(def -cast (fn [c x] (if (or (nil? x) (instance-of? c x))
-                         x
-                         (throw (host/ex* 'java.lang.ClassCastException (str "Cannot cast " (class-of x) " to " (canon c)))))))
-(def -isAssignableFrom (fn [parent child] (token-isa? child parent)))
-(def -isArray (fn [_] false))
-(def -isInterface (fn [c] (contains? interface-preds (canon c))))
-(def -getComponentType (fn [_] nil))
+(defn -cast [c x] (if (or (nil? x) (instance-of? c x))
+                      x
+                      (throw (host/ex* 'java.lang.ClassCastException (str "Cannot cast " (class-of x) " to " (canon c))))))
+(defn -isAssignableFrom [parent child] (token-isa? child parent))
+(defn -isArray [_] false)
+(defn -isInterface [c] (contains? interface-preds (canon c)))
+(defn -getComponentType [_] nil)
 ;; the superclass: the most specific ancestor that is a class, not an interface
 (def ^:private interface-class-tokens
      (set '[clojure.lang.Seqable clojure.lang.Sequential clojure.lang.Associative clojure.lang.Counted
@@ -4546,13 +4325,12 @@
             (or (and (zero? (h-index-of n "clojure.lang.I" 0)) (> (count n) 14)
                      (let [c (subs n 14 15)] (= c (h-upper-case c))))
                 (contains? interface-class-tokens t))))
-(def -getSuperclass
-     (fn [c] (let [c (canon c)
-                   classes (remove #(or (= % c) (interface-token? %)) (get token-ancestors c))]
+(defn -getSuperclass [c] (let [c (canon c)
+                               classes (remove #(or (= % c) (interface-token? %)) (get token-ancestors c))]
             ;; java.lang.Object is every class's ancestor
-                  (first (filter (fn [p] (every? #(or (= % p) (= % 'java.lang.Object) (contains? (get token-ancestors p #{}) %)) classes))
-                                 classes)))))
-(def -getInterfaces (fn [c] (filterv #(contains? interface-preds %) (get token-ancestors (canon c)))))
+                              (first (filter (fn [p] (every? #(or (= % p) (= % 'java.lang.Object) (contains? (get token-ancestors p #{}) %)) classes))
+                                             classes))))
+(defn -getInterfaces [c] (filterv #(contains? interface-preds %) (get token-ancestors (canon c))))
 (def -getKey key)
 (def -getValue val)
 (defn- sioobe [msg] (host/ex* 'java.lang.StringIndexOutOfBoundsException msg))
@@ -4560,78 +4338,72 @@
        (cond (string? (nn s)) s
              (h-sb? s) (h-sb-str s)
              :else (throw (host/ex* 'java.lang.ClassCastException (str "class " (class-of s) " cannot be cast to class java.lang.String")))))
-(def -substring (fn ([s a] (let [s (as-string s) n (count s)]
-                                (if (and (<= 0 a) (<= a n)) (subs s a) (throw (sioobe (str "begin " a ", end " n ", length " n))))))
-                    ([s a b] (let [s (as-string s) n (count s)]
-                                  (if (and (<= 0 a) (<= a b) (<= b n))
-                                      (subs s a b)
-                                      (throw (sioobe (str "begin " a ", end " b ", length " n))))))))
-(def -subSequence (fn [s a b] (subs (str s) a b)))
-(def -charAt (fn [s i] (let [s (nn s) n (count s)]
-                            (if (and (<= 0 i) (< i n)) (nth s i) (throw (sioobe (str "Index " i " out of bounds for length " n)))))))
+(defn -substring ([s a] (let [s (as-string s) n (count s)]
+                             (if (and (<= 0 a) (<= a n)) (subs s a) (throw (sioobe (str "begin " a ", end " n ", length " n)))))) ([s a b] (let [s (as-string s) n (count s)]
+                                                                                                                                                (if (and (<= 0 a) (<= a b) (<= b n))
+                                                                                                                                                    (subs s a b)
+                                                                                                                                                    (throw (sioobe (str "begin " a ", end " b ", length " n)))))))
+(defn -subSequence [s a b] (subs (str s) a b))
+(defn -charAt [s i] (let [s (nn s) n (count s)]
+                         (if (and (<= 0 i) (< i n)) (nth s i) (throw (sioobe (str "Index " i " out of bounds for length " n))))))
 ;; String.indexOf(str|char|char-code[, from]); List.indexOf(x) for anything else
 (def ^:private h-char (host-fn 'char identity))
 (defn- needle [x] (if (number? x) (str (h-char x)) (str x)))
-(def -indexOf (fn ([s x] (-indexOf s x 0))
-                  ([s x from]
-                   (if (string? s)
-                       (let [x (needle (nn x)) from (max 0 from)]
-                            (if (> from (count s)) (if (= "" x) (count s) -1) (h-index-of s x from)))
-                       (or (first (keep-indexed (fn [i y] (when (= y x) i)) s)) -1)))))
+(defn -indexOf ([s x] (-indexOf s x 0)) ([s x from]
+                                         (if (string? s)
+                                             (let [x (needle (nn x)) from (max 0 from)]
+                                                  (if (> from (count s)) (if (= "" x) (count s) -1) (h-index-of s x from)))
+                                             (or (first (keep-indexed (fn [i y] (when (= y x) i)) s)) -1))))
 ;; String.lastIndexOf(str|char[, from]): the last start at or before from
-(def -lastIndexOf (fn ([s x] (-lastIndexOf s x (count s)))
-                      ([s x from]
-                       (let [x (needle (nn x)) n (count x) m (count s)]
-                            (loop [i (min from (- m n))]
-                                  (cond (neg? i) -1 (= (subs s i (+ i n)) x) i :else (recur (dec i))))))))
-(def -startsWith (fn [s p] (let [s (nn s) p (nn p)] (and (>= (count s) (count p)) (= (subs s 0 (count p)) p)))))
-(def -endsWith (fn [s p] (let [s (nn s) p (nn p)] (and (>= (count s) (count p)) (= (subs s (- (count s) (count p))) p)))))
-(def -contains (fn [s x] (not (neg? (-indexOf s x)))))
+(defn -lastIndexOf ([s x] (-lastIndexOf s x (count s))) ([s x from]
+                                                         (let [x (needle (nn x)) n (count x) m (count s)]
+                                                              (loop [i (min from (- m n))]
+                                                                    (cond (neg? i) -1 (= (subs s i (+ i n)) x) i :else (recur (dec i)))))))
+(defn -startsWith [s p] (let [s (nn s) p (nn p)] (and (>= (count s) (count p)) (= (subs s 0 (count p)) p))))
+(defn -endsWith [s p] (let [s (nn s) p (nn p)] (and (>= (count s) (count p)) (= (subs s (- (count s) (count p))) p))))
+(defn -contains [s x] (not (neg? (-indexOf s x))))
 ;; String.trim (chars <= U+0020), strip / stripLeading / stripTrailing / isBlank
 ;; (Character.isWhitespace), equalsIgnoreCase, compareToIgnoreCase, repeat,
 ;; codePointAt, toCharArray: as java.lang.String has them
-(def -trim (fn [s] (let [s (nn s) n (count s)
-                         sp? (fn [i] (<= (h-char-code (nth s i)) 32))
-                         b (loop [i 0] (if (and (< i n) (sp? i)) (recur (inc i)) i))
-                         e (loop [j n] (if (and (> j b) (sp? (dec j))) (recur (dec j)) j))]
-                        (subs s b e))))
+(defn -trim [s] (let [s (nn s) n (count s)
+                      sp? (fn [i] (<= (h-char-code (nth s i)) 32))
+                      b (loop [i 0] (if (and (< i n) (sp? i)) (recur (inc i)) i))
+                      e (loop [j n] (if (and (> j b) (sp? (dec j))) (recur (dec j)) j))]
+                     (subs s b e)))
 (defn- strip* [s lead? trail?]
        (let [s (nn s) n (count s)
              w? (fn [i] (Character-isWhitespace (nth s i)))
              b (if lead? (loop [i 0] (if (and (< i n) (w? i)) (recur (inc i)) i)) 0)
              e (if trail? (loop [j n] (if (and (> j b) (w? (dec j))) (recur (dec j)) j)) n)]
             (subs s b e)))
-(def -strip (fn [s] (strip* s true true)))
-(def -stripLeading (fn [s] (strip* s true false)))
-(def -stripTrailing (fn [s] (strip* s false true)))
-(def -isBlank (fn [s] (= "" (strip* s true true))))
+(defn -strip [s] (strip* s true true))
+(defn -stripLeading [s] (strip* s true false))
+(defn -stripTrailing [s] (strip* s false true))
+(defn -isBlank [s] (= "" (strip* s true true)))
 (defn- char-fold [c] (h-char-code (first (h-lower-case (h-upper-case (str c))))))
-(def -equalsIgnoreCase (fn [s t] (let [s (nn s)]
-                                      (and (string? t) (= (count s) (count t)) (every? true? (map (fn [a b] (or (= a b) (= (char-fold a) (char-fold b)))) s t))))))
-(def -compareToIgnoreCase (fn [s t] (let [s (nn s) t (nn t) n (min (count s) (count t))]
-                                         (loop [i 0]
-                                               (if (< i n)
-                                                   (let [a (char-fold (nth s i)) b (char-fold (nth t i))]
-                                                        (if (= a b) (recur (inc i)) (- a b)))
-                                                   (- (count s) (count t)))))))
-(def -repeat (fn [s n] (let [s (nn s)]
-                            (when (neg? n) (throw (host/ex* 'java.lang.IllegalArgumentException (str "count is negative: " n))))
+(defn -equalsIgnoreCase [s t] (let [s (nn s)]
+                                   (and (string? t) (= (count s) (count t)) (every? true? (map (fn [a b] (or (= a b) (= (char-fold a) (char-fold b)))) s t)))))
+(defn -compareToIgnoreCase [s t] (let [s (nn s) t (nn t) n (min (count s) (count t))]
+                                      (loop [i 0]
+                                            (if (< i n)
+                                                (let [a (char-fold (nth s i)) b (char-fold (nth t i))]
+                                                     (if (= a b) (recur (inc i)) (- a b)))
+                                                (- (count s) (count t))))))
+(defn -repeat [s n] (let [s (nn s)]
+                         (when (neg? n) (throw (host/ex* 'java.lang.IllegalArgumentException (str "count is negative: " n))))
                             ;; splint: shim is the substrate the stock string lib itself calls into; it cannot depend on clojure.string
-                            #_{:splint/disable [style/apply-str]}
-                            (apply str (repeat n s)))))
-(def -codePointAt (fn [s i] (let [s (nn s) n (count s)]
-                                 (when-not (< -1 i n)
-                                           (throw (host/ex* 'java.lang.StringIndexOutOfBoundsException (str "Index " i " out of bounds for length " n))))
-                                 (let [hi (h-char-code (nth s i))]
-                                      (if (and (<= 55296 hi 56319) (< (inc i) n))
-                                          (let [lo (h-char-code (nth s (inc i)))]
-                                               (if (<= 56320 lo 57343) (+ 65536 (* (- hi 55296) 1024) (- lo 56320)) hi))
-                                          hi)))))
-(def -toCharArray (fn [s] (to-array* (vec (nn s)))))
-(def -append (fn
-                ;; Writer.append (a char, a CharSequence, or nil as "null"),
-                ;; returning the writer: core.clj's pr, newline write *out* so
-              ([sb x] (cond (io/writer-value? sb)
+                         #_{:splint/disable [style/apply-str]}
+                         (apply str (repeat n s))))
+(defn -codePointAt [s i] (let [s (nn s) n (count s)]
+                              (when-not (< -1 i n)
+                                        (throw (host/ex* 'java.lang.StringIndexOutOfBoundsException (str "Index " i " out of bounds for length " n))))
+                              (let [hi (h-char-code (nth s i))]
+                                   (if (and (<= 55296 hi 56319) (< (inc i) n))
+                                       (let [lo (h-char-code (nth s (inc i)))]
+                                            (if (<= 56320 lo 57343) (+ 65536 (* (- hi 55296) 1024) (- lo 56320)) hi))
+                                       hi))))
+(defn -toCharArray [s] (to-array* (vec (nn s))))
+(defn -append ([sb x] (cond (io/writer-value? sb)
                             (do (io/append-text! sb (if (nil? x) "null" (str x))) sb)
                             (h-sb? sb) (h-sb-append! sb (if (nil? x) "null" x))
                               ;; a layer proxy Writer (pprint's pretty-writer
@@ -4644,22 +4416,21 @@
                               ;; a host Writer / Appendable (the JVM seat's
                               ;; proxy pretty-writer): its own append
                             :else (let [r (if (nil? sb) absent (host/invoke-member sb "append" [(if (nil? x) "null" x)] absent))]
-                                       (if (identical? r absent) (h-sb-append! sb (if (nil? x) "null" x)) r))))
-              ([w x start end] (let [t (if (nil? x) "null" (str x))]
-                                    (io/append-text! w (subs t start end))
-                                    w))))
+                                       (if (identical? r absent) (h-sb-append! sb (if (nil? x) "null" x)) r)))) ([w x start end] (let [t (if (nil? x) "null" (str x))]
+                                                                                                                                      (io/append-text! w (subs t start end))
+                                                                                                                                      w)))
 ;; a value of Eve's HTTP layer has nothing to release
-(def -close (fn [x] (cond (io/server-socket-value? x) (io/server-close! x)
-                          (io/socket-value? x) (io/socket-close! x)
-                          (http/value? x) nil
-                          (io/reader-value? x) (io/close-reader! x)
-                          (io/writer-value? x) (io/close-writer! x)
-                          (io/output-stream-value? x) (io/close-output! x)
-                          (io/input-stream-value? x) (io/close-input! x)
-                          :else (host/close! x))))
-(def -flush (fn [x] (cond (io/writer-value? x) (io/flush-writer! x)
-                          (io/output-stream-value? x) (io/flush-output! x)
-                          :else nil)))
+(defn -close [x] (cond (io/server-socket-value? x) (io/server-close! x)
+                       (io/socket-value? x) (io/socket-close! x)
+                       (http/value? x) nil
+                       (io/reader-value? x) (io/close-reader! x)
+                       (io/writer-value? x) (io/close-writer! x)
+                       (io/output-stream-value? x) (io/close-output! x)
+                       (io/input-stream-value? x) (io/close-input! x)
+                       :else (host/close! x)))
+(defn -flush [x] (cond (io/writer-value? x) (io/flush-writer! x)
+                       (io/output-stream-value? x) (io/flush-output! x)
+                       :else nil))
 (def -numerator (let [h (host-fn 'numerator identity)]
                   ;; (jank, A5-2: Ratio's numerator and denominator are BigIntegers, which
                   ;; print with no N on the JVM; jank's are its BigInt, which prints 3N: a
@@ -4679,24 +4450,23 @@
 ;; shim's state atom is not: its members delegate to the host's
 ;; :multifn-op where the adapter provides one (jolt)
 (defn- host-mf? [mf] (and h-multifn-op (h-multifn? mf)))
-(def -getMethodTable (fn [mf] (if (host-mf? mf) (host/multifn-op mf :table []) (:methods @(mf-state mf)))))
-(def -getPreferTable (fn [mf] (if (host-mf? mf) (host/multifn-op mf :prefers []) (:prefers @(mf-state mf)))))
-(def -addMethod (fn [mf dv f] (if (host-mf? mf) (host/multifn-op mf :add [dv f]) (do (swap! (mf-state mf) assoc-in [:methods dv] f) mf))))
-(def -removeMethod (fn [mf dv] (if (host-mf? mf) (host/multifn-op mf :remove [dv]) (do (swap! (mf-state mf) update :methods dissoc dv) mf))))
-(def -preferMethod (fn [mf x y]
-                       (if (host-mf? mf)
-                           (host/multifn-op mf :prefer [x y])
-                           (let [{:keys [name prefers hierarchy]} @(mf-state mf)]
-                                (when (mf-prefers? prefers (deref hierarchy) y x)
-                                      (throw (host/ex* 'IllegalStateException (str "Preference conflict in multimethod '" name "': " y " is already preferred to " x))))
-                                (swap! (mf-state mf) update-in [:prefers x] (fnil conj #{}) y)
-                                mf))))
-(def -getMethod (fn [mf dv] (if (host-mf? mf) (host/multifn-op mf :get [dv]) (mf-find-method @(mf-state mf) dv))))
-(def -isDone (fn [x] (if (thread/future-value? x) (thread/future-done? x) true)))
-(def -isCancelled (fn [x] (if (thread/future-value? x) (thread/future-cancelled? x) false)))
+(defn -getMethodTable [mf] (if (host-mf? mf) (host/multifn-op mf :table []) (:methods @(mf-state mf))))
+(defn -getPreferTable [mf] (if (host-mf? mf) (host/multifn-op mf :prefers []) (:prefers @(mf-state mf))))
+(defn -addMethod [mf dv f] (if (host-mf? mf) (host/multifn-op mf :add [dv f]) (do (swap! (mf-state mf) assoc-in [:methods dv] f) mf)))
+(defn -removeMethod [mf dv] (if (host-mf? mf) (host/multifn-op mf :remove [dv]) (do (swap! (mf-state mf) update :methods dissoc dv) mf)))
+(defn -preferMethod [mf x y] (if (host-mf? mf)
+                                 (host/multifn-op mf :prefer [x y])
+                                 (let [{:keys [name prefers hierarchy]} @(mf-state mf)]
+                                      (when (mf-prefers? prefers (deref hierarchy) y x)
+                                            (throw (host/ex* 'IllegalStateException (str "Preference conflict in multimethod '" name "': " y " is already preferred to " x))))
+                                      (swap! (mf-state mf) update-in [:prefers x] (fnil conj #{}) y)
+                                      mf)))
+(defn -getMethod [mf dv] (if (host-mf? mf) (host/multifn-op mf :get [dv]) (mf-find-method @(mf-state mf) dv)))
+(defn -isDone [x] (if (thread/future-value? x) (thread/future-done? x) true))
+(defn -isCancelled [x] (if (thread/future-value? x) (thread/future-cancelled? x) false))
 
-(def monitor-enter (fn [_] nil))
-(def monitor-exit (fn [_] nil))
+(defn monitor-enter [_] nil)
+(defn monitor-exit [_] nil)
 
 ;; ---------------------------------------------------------------------------
 ;; what is here (the rewriter's `known?` set)

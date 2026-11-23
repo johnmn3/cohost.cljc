@@ -632,11 +632,9 @@
 
 (def shim-ns "cohost.shim")
 
-(def ^:dynamic *shim-ref*
-     "How a rewritten form names a shim var: by default the qualified symbol
+(defn ^:dynamic *shim-ref* "How a rewritten form names a shim var: by default the qualified symbol
    cohost.shim/<name>; a host whose evaluator cannot see the compiled
-   shim namespace (self-hosted ClojureScript) supplies a js/ property path."
-     (fn [nm] (symbol shim-ns nm)))
+   shim namespace (self-hosted ClojureScript) supplies a js/ property path." [nm] (symbol shim-ns nm))
 
 (defn static-sym [c m] (*shim-ref* (str (simple-class-name c) "-" (name (*plain* m)))))
 (defn ctor-sym   [c]   (*shim-ref* (str "new-" (simple-class-name c))))
