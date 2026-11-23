@@ -146,3 +146,18 @@ never load the files).
 
 Kondo after this batch: 186 total (79E/101W/6I) — redefined-var
 shim sites zero, unused-value 14 -> 8, loop-without-recur 2 -> 1.
+
+## K3 + a second REAL DEFECT (Nov 23, ~1:35 AM ET)
+- defwrapper analyze-call hook landed (.clj-kondo/hooks/cohost/
+  memory_eve.clj, registered as repo teaching in config.edn):
+  memory_eve.clj 56 findings -> 0. Total kondo 128.
+- REAL DEFECT #2: cohost.build DID NOT COMPILE at this pin —
+  (require 'cohost.build) threw "Too many arguments to def"
+  (build.clj:86): the run-js JS string held BARE double quotes
+  around -m, ending the Clojure string early. Kondo's
+  invalid-arity + unresolved-symbol were the only signal; the
+  boot gate never loads cohost.build. Escaped the two quotes
+  (emitted JS byte-identical); the file now loads and lints
+  clean. Provenance: same tree/tools as defect #1; repro was the
+  require itself, before (throws) and after (loads).
+- K3 boot gate GREEN (BOOT-K3-EXIT=0, baseline signature).
