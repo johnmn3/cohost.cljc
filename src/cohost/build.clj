@@ -43,7 +43,7 @@
 (defn- project-target [opts]
        (let [f (io/file "deps.edn")
              t (or (:target opts)
-                   (when (.exists f) (:cohost/target (edn/read-string {:default tagged-literal} (slurp f))))
+                   (when (java.io.File/.exists f) (:cohost/target (edn/read-string {:default tagged-literal} (slurp f))))
                    :jank)]
             (keyword (str/replace (name t) #"^:" ""))))
 
@@ -75,10 +75,10 @@
    bytecode cache (basilisp's .lpyc) is checked against its source's mtime."
        [from to]
        (doseq [f (file-seq (io/file from)) :when (.isFile f)]
-              (let [rel (subs (.getPath f) (inc (count (.getPath (io/file from)))))
+              (let [rel (subs (.getPath f) (inc (count (java.io.File/.getPath (io/file from)))))
                     out (io/file to rel)]
                    (io/make-parents out)
-                   (java.nio.file.Files/copy (.toPath f) (.toPath out)
+                   (java.nio.file.Files/copy (.toPath f) (java.io.File/.toPath out)
                                              (into-array java.nio.file.CopyOption
                                                          [java.nio.file.StandardCopyOption/REPLACE_EXISTING
                                                           java.nio.file.StandardCopyOption/COPY_ATTRIBUTES])))))
@@ -119,8 +119,8 @@ process.exit(r.status === null ? 1 : r.status);
     ;; requires); if it is absent, the bootstrap's shape changed and
     ;; the bundle would break silently, so refuse.
             (let [main-js (io/file out "target/cljs-cli/main.js")
-                  recorded (str (.relativize (.toPath (.getCanonicalFile (io/file home)))
-                                             (.toPath (.getCanonicalFile (io/file built)))))
+                  recorded (str (.relativize (.toPath (java.io.File/.getCanonicalFile (io/file home)))
+                                             (.toPath (java.io.File/.getCanonicalFile (io/file built)))))
                   s (slurp main-js)]
                  (when-not (str/includes? s recorded)
                            (throw (ex-info (str "build: the cljs bootstrap does not record " recorded
@@ -128,7 +128,7 @@ process.exit(r.status === null ? 1 : r.status);
                                            {:built built})))
                  (spit main-js (str/replace s recorded "target/cljs-cli")))
             (copy-tree! (str home "/resources/cohost/clojure-1.12.0") (io/file out "stock"))
-            (let [names (map-indexed (fn [i r] (str "roots/" i "-" (.getName (io/file r)))) roots)]
+            (let [names (map-indexed (fn [i r] (str "roots/" i "-" (java.io.File/.getName (io/file r)))) roots)]
                  (doseq [[r n] (map vector roots names)] (copy-tree! r (io/file out n)))
                  (spit (io/file out "bundle.json")
                        (str "{\"main\": " (pr-str (str main)) ", \"roots\": [" (str/join ", " (map pr-str names)) "]}")))
@@ -141,7 +141,7 @@ process.exit(r.status === null ? 1 : r.status);
    relative to out."
        [home t out]
        (let [roots (str/split (str/trim (sh! "." (str home "/bin/cohost") (str ":" (name t)) "-Spath")) #":")
-             names (map-indexed (fn [i r] (str "roots/" i "-" (.getName (io/file r)))) roots)]
+             names (map-indexed (fn [i r] (str "roots/" i "-" (java.io.File/.getName (io/file r)))) roots)]
             (copy-tree! (str home "/resources/cohost/clojure-1.12.0") (io/file out "stock"))
             (doseq [[r n] (map vector roots names)] (copy-tree! r (io/file out n)))
             names))
@@ -166,7 +166,7 @@ process.exit(r.status === null ? 1 : r.status);
 (defn- write-run! [out text]
        (let [f (io/file out "run")]
             (spit f text)
-            (.setExecutable f true false)
+            (java.io.File/.setExecutable f true false)
             (str f)))
 
 (def ^:private script-launch
@@ -231,7 +231,7 @@ process.exit(r.status === null ? 1 : r.status);
        [{:keys [main name]}]
        (let [home (cohost-home)
              out (io/file "target" name)
-             work (.getCanonicalFile (io/file "target" "cohost-cljw-build"))]
+             work (java.io.File/.getCanonicalFile (io/file "target" "cohost-cljw-build"))]
             (sh! "." "rm" "-rf" (str out) (str work))
             (.mkdirs work)
             (let [src (record-and-emit! home :cljw main work (fn [script] ["cljw" script "-cp" "src"]))]
@@ -253,7 +253,7 @@ process.exit(r.status === null ? 1 : r.status);
        [{:keys [main name]}]
        (let [home (cohost-home)
              out (io/file "target" name)
-             work (.getCanonicalFile (io/file "target" "cohost-jolt-build"))
+             work (java.io.File/.getCanonicalFile (io/file "target" "cohost-jolt-build"))
              events (str (io/file work "events.edn"))
         ;; the source roots, resolved as `cohost :jolt` resolves them (jars extracted)
              roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jolt" "-Spath")) #":")]
@@ -266,9 +266,9 @@ process.exit(r.status === null ? 1 : r.status);
     ;; jolt build reads deps.edn :paths (its -Scp is not honored by build)
             (spit (io/file work "deps.edn") (pr-str {:paths [(str (io/file work "src")) (str home "/src")]}))
             (sh! (str work) "jolt" "build" "-m" "cohost.app-main" "-o" "run")
-            (.mkdirs out)
+            (java.io.File/.mkdirs out)
             (io/copy (io/file work "run") (io/file out "run"))
-            (.setExecutable (io/file out "run") true false)
+            (java.io.File/.setExecutable (io/file out "run") true false)
             (sh! "." "rm" "-rf" (str work))
             (str out "/run")))
 
@@ -324,7 +324,7 @@ require_once __DIR__ . '/out/cohost/app_main.php';
        [{:keys [main name]}]
        (let [home (cohost-home)
              out (io/file "target" name)
-             work (.getCanonicalFile (io/file "target" "cohost-phel-build"))
+             work (java.io.File/.getCanonicalFile (io/file "target" "cohost-phel-build"))
              events (str (io/file work "events.edn"))
              modules (str (io/file work "modules"))
              [php phar] (phel-runtime)
@@ -345,7 +345,7 @@ require_once __DIR__ . '/out/cohost/app_main.php';
             (io/copy (io/file home "src/cohost/hosts/phel_host.php") (io/file work "closure/cohost/hosts/phel_host.php"))
             (spit (io/file work "phel-config.php") phel-config)
             (big-stack php phar "build" "--no-cache" "-O" "0")
-            (.mkdirs out)
+            (java.io.File/.mkdirs out)
             (copy-tree! (io/file work "out") (io/file out "out"))
             (doseq [f (file-seq (io/file out "out")) :when (.isFile f)]
                    (cond (str/ends-with? (.getName f) ".phel") (.delete f)
@@ -371,7 +371,7 @@ require_once __DIR__ . '/out/cohost/app_main.php';
         ;; the source roots, resolved as `cohost :jank` resolves them (jars extracted)
              roots (str/split (str/trim (sh! "." (str home "/bin/cohost") ":jank" "-Spath")) #":")
              build! (requiring-resolve 'cohost.build-jank/build!)]
-            (build! {:repo home :project (.getCanonicalPath (io/file ".")) :roots roots
+            (build! {:repo home :project (java.io.File/.getCanonicalPath (io/file ".")) :roots roots
                      :main main :name "run" :target (str "target/" name)})
             (str "target/" name "/run")))
 
@@ -380,7 +380,7 @@ require_once __DIR__ . '/out/cohost/app_main.php';
    symbol), :name (default: the directory's name), :target (default:
    :cohost/target in deps.edn, else :jvm)."
       [opts]
-      (let [opts (merge {:name (.getName (.getCanonicalFile (io/file ".")))} opts)
+      (let [opts (merge {:name (.getName (java.io.File/.getCanonicalFile (io/file ".")))} opts)
             t (project-target opts)]
            (when-not (:main opts) (throw (ex-info "build: :main (the -main namespace) is required" {})))
            (let [run (case t

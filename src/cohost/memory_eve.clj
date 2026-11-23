@@ -83,7 +83,7 @@
 (defn- resident-id
        "The registry id of host object o, or nil when o is not one."
        [o]
-       (.get ^java.util.IdentityHashMap (:by-obj @residents) o))
+       (java.util.IdentityHashMap/.get (:by-obj @residents) o))
 
 (defn- register-resident!
        "Register host object o as a domain resident; returns its id.
@@ -91,9 +91,9 @@
        [o]
        (locking residents
                 (let [st @residents]
-                     (or (.get ^java.util.IdentityHashMap (:by-obj st) o)
+                     (or (java.util.IdentityHashMap/.get (:by-obj st) o)
                          (let [id (count (:by-id st))]
-                              (.put ^java.util.IdentityHashMap (:by-obj st) o id)
+                              (java.util.IdentityHashMap/.put (:by-obj st) o id)
                               (reset! residents (update st :by-id conj o))
                               id)))))
 

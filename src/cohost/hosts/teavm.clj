@@ -74,23 +74,23 @@
                                      (refer 'clojure.core :only [sym])))
    ;; one lookup each, not the namespace's whole map
       :resolve-core (fn [sym]
-                        (let [v (.findInternedVar ^clojure.lang.Namespace (the-ns 'clojure.core) ^clojure.lang.Symbol sym)]
+                        (let [v (clojure.lang.Namespace/.findInternedVar (the-ns 'clojure.core) ^clojure.lang.Symbol sym)]
                              (when (and v (.isPublic v)) v)))
       :interned-var (fn [ns-sym sym]
-                        (when-let [n (find-ns ns-sym)] (.findInternedVar ^clojure.lang.Namespace n ^clojure.lang.Symbol sym)))
+                        (when-let [n (find-ns ns-sym)] (clojure.lang.Namespace/.findInternedVar n ^clojure.lang.Symbol sym)))
       :current-ns (fn [] (ns-name *ns*))
-      :macro-var? (fn [v] (.isMacro ^clojure.lang.Var v))
-      :mark-macro! (fn [v] (.setMacro ^clojure.lang.Var v) v)
-      :var-raw-root (fn [v] (.getRawRoot ^clojure.lang.Var v))
-      :set-dynamic! (fn [v] (.setDynamic ^clojure.lang.Var v) v)
+      :macro-var? (fn [v] (clojure.lang.Var/.isMacro v))
+      :mark-macro! (fn [v] (clojure.lang.Var/.setMacro v) v)
+      :var-raw-root (fn [v] (clojure.lang.Var/.getRawRoot v))
+      :set-dynamic! (fn [v] (clojure.lang.Var/.setDynamic v) v)
    ;; the runtime's own vars (*ns*, *out*, *print-length* ...) are dynamic by
    ;; flag only; their metadata carries no :dynamic
-      :dynamic-var? (fn [v] (.isDynamic ^clojure.lang.Var v))
+      :dynamic-var? (fn [v] (clojure.lang.Var/.isDynamic v))
       :empty-queue (fn [] clojure.lang.PersistentQueue/EMPTY)
       :namespace? (fn [x] (instance? clojure.lang.Namespace x))
       :var-bound? bound?
       :var-thread-bound? thread-bound?
-      :var-set! (fn [v val] (.set ^clojure.lang.Var v val))
+      :var-set! (fn [v val] (clojure.lang.Var/.set v val))
    ;; the natives are the host runtime's own fns, the stock ones compiled:
    ;; the shared set and what jolt answers otherwise (as hosts/jvm.clj)
       :natives (merge java/natives
@@ -102,7 +102,7 @@
       :chunks (fn [] {:chunked-seq? chunked-seq? :chunk-first chunk-first :chunk-rest chunk-rest :chunk-next chunk-next
                       :chunk-buffer chunk-buffer :chunk-append chunk-append :chunk chunk :chunk-cons chunk-cons
                       :chunk? (fn [x] (instance? clojure.lang.IChunk x))
-                      :chunk-reduce (fn [c f init] (.reduce ^clojure.lang.IChunk c f init))})
+                      :chunk-reduce (fn [c f init] (clojure.lang.IChunk/.reduce c f init))})
       :delay #_{:splint/disable [lint/fn-wrapper]} (fn [f] (clojure.lang.Delay. f))
       :exception? (fn [x] (instance? Throwable x))
    ;; the trace as data; the head frames of a shim-constructed exception
@@ -115,7 +115,7 @@
                     (if-not (instance? Throwable e)
                             []
                             (let [ctor-frame? (fn [^StackTraceElement el]
-                                                  (let [c (.getClassName el)]
+                                                  (let [c (StackTraceElement/.getClassName el)]
                                                        (or (clojure.string/starts-with? c "cohost.shim$")
                                                            (clojure.string/starts-with? c "cohost.adapter$")
                                                            (clojure.string/starts-with? c "cohost.core$ex_info")
@@ -128,9 +128,9 @@
                                                            (= c "clojure.lang.Var")
                                                            (clojure.string/starts-with? c "clojure.core$apply"))))]
                                  (mapv (fn [^StackTraceElement el]
-                                           [(symbol (.getClassName el)) (symbol (.getMethodName el))
-                                            (.getFileName el) (.getLineNumber el)])
-                                       (drop-while ctor-frame? (.getStackTrace ^Throwable e))))))
+                                           [(symbol (StackTraceElement/.getClassName el)) (symbol (StackTraceElement/.getMethodName el))
+                                            (StackTraceElement/.getFileName el) (StackTraceElement/.getLineNumber el)])
+                                       (drop-while ctor-frame? (Throwable/.getStackTrace e))))))
       :nano-time (fn [] (System/nanoTime))
       :current-time-millis (fn [] (System/currentTimeMillis))
       :math-ceil clojure.math/ceil
@@ -155,11 +155,11 @@
                             #_{:splint/disable [lint/fn-wrapper]}
                             (fn [^bytes bs] (java.io.ByteArrayInputStream. bs))
                             :output (fn [] (java.io.ByteArrayOutputStream.))
-                            :output-bytes (fn [^java.io.ByteArrayOutputStream o] (.toByteArray o))
+                            :output-bytes (fn [^java.io.ByteArrayOutputStream o] (java.io.ByteArrayOutputStream/.toByteArray o))
                             :bytes? bytes?
                          ;; Ring's bodies (cohost.ring): text and base64 to bytes and back,
                          ;; and the whole of an InputStream or a File
-                            :text-bytes (fn [^String s] (.getBytes s "UTF-8"))
+                            :text-bytes (fn [^String s] (String/.getBytes s "UTF-8"))
                             :b64-bytes (fn [^String s] (.decode (java.util.Base64/getDecoder) s))
                             :bytes-b64 (fn [^bytes bs] (.encodeToString (java.util.Base64/getEncoder) bs))
                             :read-all (fn [x] (cond (instance? java.io.File x) (with-open [in (java.io.FileInputStream. ^java.io.File x)] (.readAllBytes in))
@@ -171,7 +171,7 @@
                                      (fn [& args] (clojure.lang.Reflector/invokeConstructor k (to-array args)))))
       :native-static (fn [c m] (when-let [k (try (Class/forName (str c)) (catch Exception _ nil))]
                                          (fn [& args] (clojure.lang.Reflector/invokeStaticMethod k (str m) (to-array args)))))
-      :index-of (fn [s sub from] (.indexOf ^String s ^String sub (int from)))
+      :index-of (fn [s sub from] (String/.indexOf s ^String sub (int from)))
       :transient? (fn [x] (instance? clojure.lang.ITransientCollection x))
       :lazy-seq? (fn [x] (instance? clojure.lang.LazySeq x))
       :atom? (fn [x] (instance? clojure.lang.Atom x))
@@ -191,8 +191,8 @@
       :reversible? reversible?
       :sorted? sorted?
    ;; RT$DefaultComparator is a Comparator but not an IFn
-      :sorted-comparator (fn [x] (let [c (.comparator ^clojure.lang.Sorted x)]
-                                      (if (ifn? c) c (fn [a b] (.compare ^java.util.Comparator c a b)))))
+      :sorted-comparator (fn [x] (let [c (clojure.lang.Sorted/.comparator x)]
+                                      (if (ifn? c) c (fn [a b] (java.util.Comparator/.compare c a b)))))
       :multifn? (fn [x] (instance? clojure.lang.MultiFn x))})
 
 ;; a member by name: the host's own `.` form (a field or a method),

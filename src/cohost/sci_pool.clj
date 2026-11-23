@@ -28,8 +28,8 @@
                      (let [base (str root "/" (ns->path libname))]
                           (some (fn [ext]
                                     (let [f (io/file (str base ext))]
-                                         (when (.isFile f)
-                                               {:file (.getPath f) :source (slurp f)})))
+                                         (when (java.io.File/.isFile f)
+                                               {:file (java.io.File/.getPath f) :source (slurp f)})))
                                 [".clj" ".cljc"])))
                  roots)))
 

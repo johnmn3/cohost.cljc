@@ -59,7 +59,7 @@
        [realm ns-sym form]
        (let [raw (bc/eval-form realm ns-sym (list 'cljs.core/pr-str form))
              text (if (instance? org.graalvm.polyglot.Value raw)
-                      (when raw (.asString ^org.graalvm.polyglot.Value raw))
+                      (when raw (org.graalvm.polyglot.Value/.asString raw))
                       raw)]
             (if (string? text)
                 (try (edn/read-string {:default (fn [_tag v] v)} text)
@@ -86,7 +86,7 @@
                       #_{:splint/disable [lint/locking-object]}
                       #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:lock state)
                                                                                 (form->data (:realm state) ns-sym form)))
-       :close! (fn [state] (.close ^Context (:realm state)))})
+       :close! (fn [state] (Context/.close (:realm state)))})
 
 ;; ---------------------------------------------------------------------------
 ;; the node seat (the host's own JS engine, in a child process)
@@ -100,27 +100,27 @@
 
 (defn- write-frame!
        [^OutputStream out lock ^String payload]
-       (let [bytes (.getBytes payload "UTF-8")
-             header (.getBytes (str (alength bytes) "\n") "US-ASCII")]
+       (let [bytes (String/.getBytes payload "UTF-8")
+             header (java.lang.String/.getBytes (str (alength bytes) "\n") "US-ASCII")]
             (locking lock
-                     (.write out header)
-                     (.write out bytes)
-                     (.flush out))))
+                     (OutputStream/.write out header)
+                     (OutputStream/.write out bytes)
+                     (OutputStream/.flush out))))
 
 (defn- read-frame!
        "One frame from the realm process, or nil at EOF."
        [^DataInputStream din]
        (let [hdr (StringBuilder.)]
             (loop []
-                  (let [b (.read din)]
+                  (let [b (DataInputStream/.read din)]
                        (cond
                         (== b -1) nil
                         (== b (int \newline))
                         (let [n (Long/parseLong (str hdr))
                               buf (byte-array n)]
-                             (.readFully din buf)
+                             (DataInputStream/.readFully din buf)
                              (String. buf "UTF-8"))
-                        :else (do (.append hdr (char b)) (recur)))))))
+                        :else (do (StringBuilder/.append hdr (char b)) (recur)))))))
 
 (defn- node-reader-loop
        "The realm process's stdout: file requests are served in place;
@@ -183,9 +183,9 @@
                                                [node-bin (.getAbsolutePath tmp) (str require-root)]
                                                [node-bin (.getAbsolutePath tmp)]))]
                       (when require-root
-                            (.directory pb (File. (str require-root))))
-                      (.redirectError pb errlog)
-                      (let [proc (.start pb)
+                            (ProcessBuilder/.directory pb (File. (str require-root))))
+                      (ProcessBuilder/.redirectError pb errlog)
+                      (let [proc (ProcessBuilder/.start pb)
                             state {:proc proc
                                    :out (.getOutputStream proc)
                                    :din (DataInputStream. (.getInputStream proc))
@@ -240,7 +240,7 @@
                    (try (.close (:out (:realm state))) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
                         #_{:splint/disable [lint/catch-throwable]}
                         (catch Throwable _ nil))
-                   (try (.destroy ^Process (:proc (:realm state)))
+                   (try (Process/.destroy (:proc (:realm state)))
                         ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
                         #_{:splint/disable [lint/catch-throwable]}
                         (catch Throwable _ nil)))})
@@ -370,14 +370,14 @@
 
         (string? bootstream)
         (let [f (io/file bootstream)]
-             (cond (.isDirectory f)
+             (cond (java.io.File/.isDirectory f)
                    (let [index (io/file f "index.html")]
-                        (if (.isFile index)
+                        (if (java.io.File/.isFile index)
                             {:html (slurp index) :root f :name "index.html"}
                             (throw (ex-info (str "bootstream directory has no index.html: " bootstream)
                                             {:bootstream bootstream}))))
-                   (.isFile f)
-                   {:html (slurp f) :root (.getParentFile f) :name (.getName f)}
+                   (java.io.File/.isFile f)
+                   {:html (slurp f) :root (java.io.File/.getParentFile f) :name (java.io.File/.getName f)}
                    :else
                    (throw (ex-info (str "bootstream not found: " bootstream)
                                    {:bootstream bootstream}))))
@@ -416,7 +416,7 @@
        (when in
              (let [out (ByteArrayOutputStream.)]
                   (io/copy in out)
-                  (.toByteArray out))))
+                  (ByteArrayOutputStream/.toByteArray out))))
 
 (defn- query-params [^String q]
        (if (str/blank? q)
@@ -429,25 +429,25 @@
 
 (defn- respond-bytes!
        [^HttpExchange ex status headers ^bytes bytes]
-       (let [resp-headers (.getResponseHeaders ex)]
+       (let [resp-headers (HttpExchange/.getResponseHeaders ex)]
             (doseq [[k v] headers] (.set resp-headers k v))
             (if bytes
       ;; A HEAD answer carries the GET answer's headers, Content-Length
       ;; included, and no body. The JDK logs a warning when
       ;; sendResponseHeaders is given a length for a HEAD request, so the
       ;; length rides as an explicit header and the call itself gets -1.
-                (if (= "HEAD" (.getRequestMethod ex))
+                (if (= "HEAD" (HttpExchange/.getRequestMethod ex))
                     (do (when (nil? (.getFirst resp-headers "Content-Length"))
                               (.set resp-headers "Content-Length" (str (alength bytes))))
-                        (.sendResponseHeaders ex status -1))
-                    (do (.sendResponseHeaders ex status (alength bytes))
-                        (with-open [os (.getResponseBody ex)] (.write os bytes))))
-                (.sendResponseHeaders ex status -1))))
+                        (HttpExchange/.sendResponseHeaders ex status -1))
+                    (do (HttpExchange/.sendResponseHeaders ex status (alength bytes))
+                        (with-open [os (HttpExchange/.getResponseBody ex)] (.write os bytes))))
+                (HttpExchange/.sendResponseHeaders ex status -1))))
 
 (defn- respond-text!
        [ex status headers ^String body]
        (respond-bytes! ex status headers
-                       (when body (.getBytes body "UTF-8"))))
+                       (when body (String/.getBytes body "UTF-8"))))
 
 (defn- exchange-request
        "The request as a map: {:method :uri :query :headers :body :body-b64},
@@ -455,12 +455,12 @@
    :body-b64 is the same bytes base64-encoded (eve.http-server's
    convention), for handlers whose traffic is binary."
        [^HttpExchange ex]
-       (let [uri (.getRequestURI ex)
-             bs (read-body-bytes (.getRequestBody ex))]
-            {:method (keyword (str/lower-case (.getRequestMethod ex)))
+       (let [uri (HttpExchange/.getRequestURI ex)
+             bs (read-body-bytes (HttpExchange/.getRequestBody ex))]
+            {:method (keyword (str/lower-case (HttpExchange/.getRequestMethod ex)))
              :uri (.getPath uri)
              :query (query-params (.getRawQuery uri))
-             :headers (into {} (for [[k vs] (.getRequestHeaders ex)]
+             :headers (into {} (for [[k vs] (HttpExchange/.getRequestHeaders ex)]
                                     [(str/lower-case k) (first vs)]))
              :body (when bs (String. bs "UTF-8"))
              :body-b64 (when bs (.encodeToString (Base64/getEncoder) bs))}))
@@ -493,9 +493,9 @@
        [^File root ^String uri-path]
        (when root
              (let [f (io/file root (subs (URLDecoder/decode uri-path "UTF-8") 1))
-                   canon-root (.getCanonicalPath root)
-                   canon (.getCanonicalPath f)]
-                  (when (and (str/starts-with? canon canon-root) (.isFile f)) f))))
+                   canon-root (File/.getCanonicalPath root)
+                   canon (java.io.File/.getCanonicalPath f)]
+                  (when (and (str/starts-with? canon canon-root) (java.io.File/.isFile f)) f))))
 
 (defn- interop-handler
        "The /__cohost endpoints: the realm host script, the goog file
@@ -524,7 +524,7 @@
                              (and (= "/__cohost/poll" uri) (= :get (:method req)))
                              (do (when-let [ready (:page-ready channel)]
                                            (when-not (realized? ready) (deliver ready true)))
-                                 (if-let [item (.poll ^LinkedBlockingQueue (:queue channel) 30 TimeUnit/SECONDS)]
+                                 (if-let [item (LinkedBlockingQueue/.poll (:queue channel) 30 TimeUnit/SECONDS)]
                                          (respond-text! ex 200 {"Content-Type" "application/json"
                                                                 "Cache-Control" "no-store"}
                                                         (json/write-str {"id" (:id item) "js" (:js item)}))
@@ -550,7 +550,7 @@
                                    #_{:splint/disable [lint/catch-throwable]}
                                    (catch Throwable _ nil)))
                        (finally
-                        (try (.close ^HttpExchange ex) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                        (try (HttpExchange/.close ex) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
                              #_{:splint/disable [lint/catch-throwable]}
                              (catch Throwable _ nil)))))))
 
@@ -600,7 +600,7 @@
                                    #_{:splint/disable [lint/catch-throwable]}
                                    (catch Throwable _ nil)))
                        (finally
-                        (try (.close ^HttpExchange ex) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                        (try (HttpExchange/.close ex) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
                              #_{:splint/disable [lint/catch-throwable]}
                              (catch Throwable _ nil)))))))
 
@@ -648,7 +648,7 @@
              :port (.getPort (.getAddress server))
              :url (str "http://" (:host cfg) ":" (.getPort (.getAddress server)))
              :stop! (fn []
-                        (try (.stop ^HttpServer server 0) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
+                        (try (HttpServer/.stop server 0) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
                              #_{:splint/disable [lint/catch-throwable]}
                              (catch Throwable _ nil))
                         (try (.shutdownNow exec) ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
@@ -662,7 +662,7 @@
        "The first executable named n on PATH, or nil."
        [n]
        (some (fn [dir] (let [f (io/file dir n)]
-                            (when (.canExecute f) (.getPath f))))
+                            (when (java.io.File/.canExecute f) (java.io.File/.getPath f))))
              (str/split (or (System/getenv "PATH") "") #":")))
 
 (defn- find-chrome
@@ -672,17 +672,17 @@
    the user's home, then PATH."
        []
        (or (System/getenv "EVE_CHROME")
-           (some (fn [c] (let [f (io/file c)] (when (.canExecute f) c)))
+           (some (fn [c] (let [f (io/file c)] (when (java.io.File/.canExecute f) c)))
                  ["/opt/pw-browsers/chromium"
                   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
                   "/Applications/Chromium.app/Contents/MacOS/Chromium"])
            (let [cache (io/file (System/getProperty "user.home") ".cache/ms-playwright")]
-                (when (.isDirectory cache)
+                (when (java.io.File/.isDirectory cache)
                       (some (fn [^File d]
                                 (let [c (io/file d "chrome-linux64/chrome")]
-                                     (when (.canExecute c) (.getPath c))))
+                                     (when (java.io.File/.canExecute c) (java.io.File/.getPath c))))
                             (sort-by #(.getName ^File %)
-                                     (filter #(.isDirectory ^File %) (.listFiles cache))))))
+                                     (filter #(.isDirectory ^File %) (java.io.File/.listFiles cache))))))
            (some which ["chromium" "chromium-browser" "google-chrome" "google-chrome-stable"])
            "chromium"))
 
@@ -721,9 +721,9 @@
                                (:args chrome-cfg)
                                [url]))
              pb (ProcessBuilder. ^java.util.List args)]
-            (.redirectErrorStream pb true)
-            (.redirectOutput pb errlog)
-            {:proc (.start pb) :profile profile :errlog errlog :bin bin}))
+            (ProcessBuilder/.redirectErrorStream pb true)
+            (ProcessBuilder/.redirectOutput pb errlog)
+            {:proc (ProcessBuilder/.start pb) :profile profile :errlog errlog :bin bin}))
 
 (defn- wait-for-page!
        "The page's first poll, or a throw: the browser dying first is a
@@ -733,7 +733,7 @@
             (loop []
                   (let [v (deref (:page-ready channel) 250 ::waiting)]
                        (cond (true? v) true
-                             (not (.isAlive proc))
+                             (not (Process/.isAlive proc))
                              (throw (ex-info "browser exited before its page connected"
                                              {:browser-stderr (log-tail errlog)}))
                              (> (System/currentTimeMillis) deadline)
@@ -748,7 +748,7 @@
              id (swap! (:counter state) inc)
              p (promise)]
             (swap! (:pending channel) assoc id p)
-            (.put ^LinkedBlockingQueue (:queue channel) {:id id :js js})
+            (LinkedBlockingQueue/.put (:queue channel) {:id id :js js})
             (let [resp (deref p 180000 ::timeout)]
                  (swap! (:pending channel) dissoc id)
                  (cond (= ::timeout resp)
@@ -784,9 +784,9 @@
                   (catch Throwable _ nil)))
        (when browser
              (let [^Process proc (:proc browser)]
-                  (try (.destroy proc)
-                       (when-not (.waitFor proc 5 TimeUnit/SECONDS)
-                                 (.destroyForcibly proc))
+                  (try (Process/.destroy proc)
+                       (when-not (Process/.waitFor proc 5 TimeUnit/SECONDS)
+                                 (Process/.destroyForcibly proc))
                        ;; splint: catching Throwable is the isolation contract: host/seat failures must not escape this boundary
                        #_{:splint/disable [lint/catch-throwable]}
                        (catch Throwable _ nil)))

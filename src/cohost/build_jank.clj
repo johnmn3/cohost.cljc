@@ -58,18 +58,18 @@
 
 (defn- files-under [dir]
        (let [f (io/file dir)]
-            (if (.exists f)
+            (if (java.io.File/.exists f)
                 (sort (remove host-cache-file? (map #(.getPath %) (filter #(.isFile %) (file-seq f)))))
                 [])))
 
 (defn- sha256 [^String s]
        (let [d (java.security.MessageDigest/getInstance "SHA-256")]
-            (.update d (.getBytes s "UTF-8"))
+            (.update d (String/.getBytes s "UTF-8"))
             (str/join (map #(format "%02x" (bit-and % 0xff)) (.digest d)))))
 
 (defn- file-sha [path]
        (let [d (java.security.MessageDigest/getInstance "SHA-256")
-             b (java.nio.file.Files/readAllBytes (.toPath (io/file path)))]
+             b (java.nio.file.Files/readAllBytes (java.io.File/.toPath (io/file path)))]
             (.update d b)
             (str/join (map #(format "%02x" (bit-and % 0xff)) (.digest d)))))
 
@@ -91,7 +91,7 @@
    :cpp key."
        [project]
        (let [f (io/file project "deps.edn")]
-            (when (.exists f)
+            (when (java.io.File/.exists f)
                   (when-let [cpp (:cpp (edn/read-string {:default tagged-literal} (slurp f)))]
                             {:dirs (mapv #(abs-path project %) (:include-dirs cpp))
                              :sources (mapv #(abs-path project %) (:sources cpp))
@@ -127,7 +127,7 @@
             k (input-key (assoc opts :name name))
             stamp (io/file work "stamp")
             gc {"GC_INITIAL_HEAP_SIZE" "512M"}]
-           (if (and (.exists (io/file exe)) (.exists stamp) (= k (str/trim (slurp stamp))))
+           (if (and (java.io.File/.exists (io/file exe)) (java.io.File/.exists stamp) (= k (str/trim (slurp stamp))))
                (do (log "JANK-EXE-FRESH" exe) exe)
                (let [t0 (System/nanoTime)
                      events (abs-path work "events.edn")
@@ -141,8 +141,8 @@
                                            (str/join ":" (concat (:dirs cpp)
                                                                  (when-let [e (System/getenv "CPLUS_INCLUDE_PATH")] [e]))))
                                     gc)]
-                    (log "JANK-EXE-BUILD" exe (if (.exists stamp) "(stale)" "(new)"))
-                    (.mkdirs (io/file work))
+                    (log "JANK-EXE-BUILD" exe (if (java.io.File/.exists stamp) "(stale)" "(new)"))
+                    (java.io.File/.mkdirs (io/file work))
                     (io/delete-file stamp true)
         ;; 0.5 the project's :cpp sources, compiled once (-fPIC) BEFORE the
         ;; record step: the static archive serves the final link (step 4);
@@ -166,7 +166,7 @@
                                                     o))
                                            (range) (:sources cpp))
                                 libdir (abs-path work "record-lib")]
-                               (.mkdirs (io/file libdir))
+                               (java.io.File/.mkdirs (io/file libdir))
                                (apply sh! work {} "ar" "rcs" (abs-path work "libcpp.a") objs)
                                (apply sh! work {} (or (System/getenv "CXX") "c++") "-shared" "-o" (abs-path libdir "libcpp.so") objs)
                                (log "JANK-EXE-CPP" (count objs) "objects (archive + record shared lib)")))
@@ -201,7 +201,7 @@
                          (apply sh! repo gc (jank-bin) "-O3" "--module-path" (str src ":" (abs-path repo "src")) "compile" "cohost.app-main"
                                 "--runtime" "static" "--name" name "--target-dir" target
                                 (or cpp-flags [])))
-                    (when-not (.exists (io/file exe))
+                    (when-not (java.io.File/.exists (io/file exe))
                               (throw (ex-info (str "cohost.build-jank: jank compile wrote no " exe) {})))
                     (spit stamp (str k "\n"))
                     (log "JANK-EXE-BUILT" exe "in" (quot (- (System/nanoTime) t0) 1000000) "ms")

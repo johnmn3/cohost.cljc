@@ -8,11 +8,11 @@
      [cohost.memory :as memory]))
 
 (defn- groups [^java.util.regex.Matcher m]
-       (mapv (fn [i] (.group m (int i))) (range (inc (.groupCount m)))))
+       (mapv (fn [i] (java.util.regex.Matcher/.group m (int i))) (range (inc (java.util.regex.Matcher/.groupCount m)))))
 (defn- spans [^java.util.regex.Matcher m]
   ;; a group that did not participate has no text (jolt's start(g) is then
   ;; false, the JVM's -1)
-       (mapv (fn [i] (when (some? (.group m (int i))) [(.start m (int i)) (.end m (int i))])) (range (inc (.groupCount m)))))
+       (mapv (fn [i] (when (some? (java.util.regex.Matcher/.group m (int i))) [(java.util.regex.Matcher/.start m (int i)) (java.util.regex.Matcher/.end m (int i))])) (range (inc (java.util.regex.Matcher/.groupCount m)))))
 (defn- ch [c] (if (number? c) (int c) (int (char c))))
 
 ;; The exceptions the shim raises, as the host's own classes:
@@ -153,10 +153,10 @@
       :exception-class exception-class
       :ex-info? (fn [x] (and (instance? clojure.lang.ExceptionInfo x) (not (contains? (ex-data x) :cohost/class))))
    ;; java.util.Iterator: the host's own over its data and over user types
-      :iterator (fn [x] (when (instance? java.lang.Iterable x) (.iterator ^java.lang.Iterable x)))
+      :iterator (fn [x] (when (instance? java.lang.Iterable x) (java.lang.Iterable/.iterator x)))
       :iterator? (fn [x] (instance? java.util.Iterator x))
-      :iterator-has-next? (fn [it] (.hasNext ^java.util.Iterator it))
-      :iterator-next! (fn [it] (.next ^java.util.Iterator it))
+      :iterator-has-next? (fn [it] (java.util.Iterator/.hasNext it))
+      :iterator-next! (fn [it] (java.util.Iterator/.next it))
    ;; a match's groups and spans when asked (re-seq of a group-free pattern
    ;; asks only for group 0): the matcher is this call's own
       :re-find-at (fn [re s from]
@@ -181,8 +181,8 @@
                   ;; map's own hashCode is the wrong value's answer
                      'Object/hashCode (fn [x] (if (memory/eve-value? x)
                                                   (let [f (memory/canonical-form x)]
-                                                       (if (nil? f) 0 (.hashCode ^Object f)))
-                                                  (.hashCode ^Object x)))
+                                                       (if (nil? f) 0 (Object/.hashCode f)))
+                                                  (Object/.hashCode x)))
                      'Collections/reverseOrder (fn ([] (java.util.Collections/reverseOrder))
                                                    ([c] (java.util.Collections/reverseOrder c)))
                   ;; (getNumericValue and forDigit: jolt has neither; the shim's serve)
@@ -191,7 +191,7 @@
       :upper-case (fn [s] (str/upper-case (str s)))
       :lower-case (fn [s] (str/lower-case (str s)))
       :string-builder (fn [] (StringBuilder.))
-      :sb-append! (fn [^StringBuilder sb x] (.append sb (str x)) sb)
+      :sb-append! (fn [^StringBuilder sb x] (StringBuilder/.append sb (str x)) sb)
       :sb-string str
       :sb? (fn [x] (instance? StringBuilder x))
       :edn-read-string (fn [opts s] (edn/read-string opts s))

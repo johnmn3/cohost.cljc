@@ -66,11 +66,11 @@
        [^Context ctx]
        (reify ProxyExecutable
               (execute [_ args]
-                       (let [contents (when (and (> (alength args) 1) (not (.isNull ^Value (aget args 1))))
-                                            (.asString ^Value (aget args 1)))
+                       (let [contents (when (and (> (alength args) 1) (not (Value/.isNull (aget args 1))))
+                                            (Value/.asString (aget args 1)))
                              text (or contents (goog-text (str (aget args 0))))]
                             (if text
-                                (do (.eval ctx "js" text) true)
+                                (do (Context/.eval ctx "js" text) true)
                                 false)))))
 
 (defn- read-file-hook
@@ -103,7 +103,7 @@
                     (execute [_ args]
                              (let [kind (str (aget args 0))
                                    f ^Value (aget args 1)
-                                   ms (max 0 (.asLong ^Value (aget args 2)))
+                                   ms (max 0 (Value/.asLong (aget args 2)))
                                    id (swap! counter inc)
                                    task (reify Runnable
                                                (run [_] (try (.execute f (object-array 0))
@@ -111,14 +111,14 @@
                                                              #_{:splint/disable [lint/catch-throwable]}
                                                              (catch Throwable _ nil))))
                                    fut (if (= kind "interval")
-                                           (.scheduleAtFixedRate ^ScheduledExecutorService exec task ms ms TimeUnit/MILLISECONDS)
-                                           (.schedule ^ScheduledExecutorService exec task ms TimeUnit/MILLISECONDS))]
+                                           (ScheduledExecutorService/.scheduleAtFixedRate exec task ms ms TimeUnit/MILLISECONDS)
+                                           (ScheduledExecutorService/.schedule exec task ms TimeUnit/MILLISECONDS))]
                                   (swap! timers assoc id fut)
                                   id)))
              :cancel
              (reify ProxyExecutable
                     (execute [_ args]
-                             (let [id (.asLong ^Value (aget args 0))]
+                             (let [id (Value/.asLong (aget args 0))]
                                   (when-let [fut (get @timers id)]
                                             (.cancel fut false)
                                             (swap! timers dissoc id))
@@ -161,7 +161,7 @@
 (defn eval-js!
       "Eval a JavaScript string in the realm; answer the completion value."
       [^Context ctx ^String js]
-      (.eval ctx "js" js))
+      (Context/.eval ctx "js" js))
 
 (defn eval-in
       "Eval a JavaScript string in a realm, whatever hosts it: a GraalJS
@@ -172,7 +172,7 @@
    string, number, boolean, nil -- for a transport map)."
       [realm ^String js]
       (cond
-       (instance? Context realm) (.eval ^Context realm "js" js)
+       (instance? Context realm) (Context/.eval realm "js" js)
        (map? realm) ((:eval! realm) js)
        :else (throw (ex-info "not a cljs realm" {:realm realm}))))
 
@@ -225,7 +225,7 @@
 
 (defn- wrap-macro-var!
        [^clojure.lang.Var v]
-       (when (and (.isMacro v) (not (contains? @wrapped-macros v)))
+       (when (and (clojure.lang.Var/.isMacro v) (not (contains? @wrapped-macros v)))
              (let [orig @v]
                   (when (ifn? orig)
         ;; expansions are rewritten with jrw/rewrite-expansion, not

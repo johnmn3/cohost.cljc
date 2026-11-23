@@ -49,8 +49,8 @@
    ;; own *out*/*err*/*in* (as this host fn sees them, so a host-side binding
    ;; of clojure.core/*out* around a boot call is followed).
       :io-handles {:out (fn [] *out*) :err (fn [] *err*) :in (fn [] *in*)
-                   :write! (fn [^java.io.Writer h ^String s] (.write h s))
-                   :flush! (fn [^java.io.Writer h] (.flush h))
+                   :write! (fn [^java.io.Writer h ^String s] (java.io.Writer/.write h s))
+                   :flush! (fn [^java.io.Writer h] (java.io.Writer/.flush h))
                    :read-line (fn [h] ;; splint: the two branches differ by type hint, which selects the readLine overload
                                   #_{:splint/disable [lint/identical-branches]}
                                   (if (instance? clojure.lang.LineNumberingPushbackReader h)
