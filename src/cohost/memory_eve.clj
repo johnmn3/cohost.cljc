@@ -491,7 +491,7 @@
    opts: :ifn {:one form :two form} -- also emit IFn over the
    two lookup forms; :seq form -- the Seqable seq body (default:
    the root's seq)."
-          [tname kind {:keys [ifn seq]} & extra]
+          [tname _kind {:keys [ifn seq]} & extra]
           (let [unq (fn [f] (if (and (seq? f) (= 'quote (first f))) (second f) f))
                 ctor-form (list (symbol (str tname ".")) 'root 'meta)]
                `(deftype ~tname [~'root ~'meta]
@@ -559,16 +559,16 @@
             (^objects toArray [_ ^objects a] (.toArray ^java.util.List root a))
             (listIterator [_] (.listIterator ^java.util.List root))
             (listIterator [_ i] (.listIterator ^java.util.List root i))
-            (add [_ o] (throw (UnsupportedOperationException.)))
-            (add [_ i o] (throw (UnsupportedOperationException.)))
-            (addAll [_ c] (throw (UnsupportedOperationException.)))
-            (addAll [_ i c] (throw (UnsupportedOperationException.)))
-            (^boolean remove [_ ^Object o] (throw (UnsupportedOperationException.)))
-            (remove [_ ^int i] (throw (UnsupportedOperationException.)))
-            (removeAll [_ c] (throw (UnsupportedOperationException.)))
-            (retainAll [_ c] (throw (UnsupportedOperationException.)))
+            (add [_ _o] (throw (UnsupportedOperationException.)))
+            (add [_ _i _o] (throw (UnsupportedOperationException.)))
+            (addAll [_ _c] (throw (UnsupportedOperationException.)))
+            (addAll [_ _i _c] (throw (UnsupportedOperationException.)))
+            (^boolean remove [_ ^Object _o] (throw (UnsupportedOperationException.)))
+            (remove [_ ^int _i] (throw (UnsupportedOperationException.)))
+            (removeAll [_ _c] (throw (UnsupportedOperationException.)))
+            (retainAll [_ _c] (throw (UnsupportedOperationException.)))
             (clear [_] (throw (UnsupportedOperationException.)))
-            (set [_ i o] (throw (UnsupportedOperationException.))))
+            (set [_ _i _o] (throw (UnsupportedOperationException.))))
 
 (defwrapper EveBackedMap :map
             {:ifn {:one '(.valAt ^clojure.lang.ILookup root k)

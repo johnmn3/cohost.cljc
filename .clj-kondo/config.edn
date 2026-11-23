@@ -5,4 +5,10 @@
 ; default gate. Linter levels are never demoted to make a repo pass;
 ; off-by-default idiom linters are enabled in deliberate fleet-wide
 ; batches, recorded here.
-{:min-clj-kondo-version "2026.10.26"}
+{:min-clj-kondo-version "2026.10.26"
+
+ ;; ---- repo teaching (cohost.cljc, syntax/formalization-1) ----
+ ;; Everything above this line is the fleet template, byte-identical.
+ ;; The entries below teach kondo this repo's own macro shapes; each
+ ;; names the shape it covers. No linter level is demoted here.
+ :hooks {:analyze-call {cohost.memory-eve/defwrapper hooks.cohost.memory-eve/defwrapper}}}
