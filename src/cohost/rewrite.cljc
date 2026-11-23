@@ -1342,7 +1342,7 @@
        [tag]
        (let [n (cond
                 (symbol? tag) tag
-                (and (seq? tag) (= 'quote (first tag)) (symbol? (second tag)) (nil? (next (next tag))))
+                (and (seq? tag) (= 'quote (first tag)) (symbol? (second tag)) (nil? (nnext tag)))
                 (second tag)
                 :else nil)]
             (when (and (symbol? n) (nil? (namespace n)) (contains? primitive-hints n)) n)))

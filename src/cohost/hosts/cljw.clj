@@ -360,9 +360,9 @@
       :ex-info? (fn [x] (and (instance? clojure.lang.ExceptionInfo x) (not (contains? (ex-data x) :cohost/class))))
       :nano-time (fn [] (System/nanoTime))
       :current-time-millis (fn [] (System/currentTimeMillis))
-      :math-ceil (fn [x] (clojure.math/ceil x))
-      :math-floor (fn [x] (clojure.math/floor x))
-      :math-sqrt (fn [x] (clojure.math/sqrt x))
+      :math-ceil clojure.math/ceil
+      :math-floor clojure.math/floor
+      :math-sqrt clojure.math/sqrt
       :parse-long (fn [s] (adapter/try-all (fn [] (Long/parseLong s))))
       :parse-double (fn [s] (Double/parseDouble s))
       :format (fn [fmt & args] (apply format fmt args))

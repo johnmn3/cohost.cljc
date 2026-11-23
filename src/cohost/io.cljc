@@ -402,7 +402,7 @@
 
 (defn- lb-append! [sb c] #?(:jank (do (swap! sb conj c) sb) :default (.append sb c)))
 (defn- lb-length [sb] #?(:jank (count @sb) :default (.length sb)))
-(defn- lb-str [sb] #?(:jank (apply str @sb) :default (.toString sb)))
+(defn- lb-str [sb] #?(:jank (apply str @sb) :default (str sb)))
 
 (defn socket-read-line!
       "BufferedReader.readLine over a socket reader."
@@ -1030,7 +1030,7 @@
        (cond (nil? buf) ""
              (string? buf) buf
              #?(:clj (instance? StringBuilder buf) :default false)
-             #?(:clj (.toString ^StringBuilder buf) :default "")
+             #?(:clj (str buf) :default "")
              (sequential? buf) (str/join buf)
              :else (str buf)))
 
@@ -1147,7 +1147,7 @@
       ;; string-builder-under is nil off the JVM seat by design (its
       ;; :default arm is nil): the else branch is the live one there.
       (if-let [sb #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w)]
-              #?(:clj (.toString ^StringBuilder sb) :default (text-buf-str sb))
+              #?(:clj (str sb) :default (text-buf-str sb))
               (let [st @(writer-state-atom w)]
                    (if (:out st)
                        (utf8-decode (output-bytes (:out st)))
@@ -1162,7 +1162,7 @@
    class's name and an identity hash, as the JVM's."
       [w]
       (if-let [sb #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w)]
-              #?(:clj (.toString ^StringBuilder sb) :default (text-buf-str sb))
+              #?(:clj (str sb) :default (text-buf-str sb))
               (if (is? ::string-writer w)
                   (written-text w)
                   (str (class-token w) "@" #?(:jolt (hash w) :cljw (hash w) :clj (Integer/toHexString (System/identityHashCode w)) :default (hash w))))))
@@ -1788,6 +1788,9 @@
       (let [w (current-out)]
            (pr-on-any! x w)
            (doseq [y more]
+                  ;; not if-else-nil: the else is a reader conditional
+                 ;; whose :clj arm appends; only :default is nil.
+                  #_{:splint/disable [lint/if-else-nil]}
                   (if (writer-value? w)
                       (append-text! w " ")
                       #?(:clj (.append ^java.lang.Appendable w " ") :default nil))

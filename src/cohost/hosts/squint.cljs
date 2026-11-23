@@ -1051,7 +1051,7 @@
       :refer! (fn [into-ns from-ns {:keys [only exclude rename]}]
                   (ensure-ns! into-ns)
                   (let [ren (or rename {})
-                        syms (if only only (keys (get-in @reg [from-ns :vars])))]
+                        syms (or only (keys (get-in @reg [from-ns :vars])))]
                        (doseq [sym syms]
                               (when-not (contains? (set exclude) sym)
                                         (swap! reg assoc-in [into-ns :refers (get ren sym sym)] from-ns)))))

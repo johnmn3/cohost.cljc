@@ -1057,7 +1057,7 @@
                                                           (host/ex* 'java.lang.ArithmeticException "integer overflow")
                                                           (host/ex* 'java.lang.IllegalArgumentException (str "Value out of range for int: " (if (and h-double-str (float? x)) (h-double-str x) x)))))
                                                r))))
-                   :default (char-aware (host-fn 'int (fn [x] (int x))))))
+                   :default (char-aware (host-fn 'int int))))
 (def RT-longCast (char-aware (host-fn 'long (host-fn 'int identity))))
 (def RT-doubleCast (host-fn 'double (host-fn 'float identity)))
 (def RT-floatCast (host-fn 'float identity))
@@ -1076,7 +1076,7 @@
 ;; Long/MIN_VALUE. A jank object turns the literal -9223372036854775808 into a
 ;; garbage double (doc/upstream/jank-10-aot-long-min-literal.md). Subtracting
 ;; one from the next long is the same value, and the object keeps it.
-(def ^:private long-min-value (- -9223372036854775807 1))
+(def ^:private long-min-value (dec -9223372036854775807))
 (def RT-uncheckedLongCast (fn [x] (cond (h-char? x) (throw (char-cce))
                                         (integer? x) x
                                         :else (d2l (RT-doubleCast x) long-min-value 9223372036854775807))))
@@ -1183,7 +1183,7 @@
 (def Numbers-and (fn [x y] (bit-and x y)))
 (def Numbers-or (fn [x y] (bit-or x y)))
 (def Numbers-xor (fn [x y] (bit-xor x y)))
-(def Numbers-not (fn [x] (bit-not x)))
+(def Numbers-not bit-not)
 (def Numbers-andNot (host-fn 'bit-and-not (fn [x y] (bit-and x (bit-not y)))))
 (def Numbers-shiftLeft (fn [x y] (bit-shift-left x y)))
 (def Numbers-shiftRight (fn [x y] (bit-shift-right x y)))
@@ -1473,8 +1473,8 @@
 
 (def eval-hook
      "Set by cohost.boot: eval through the codemod, in cohost.core."
-     (atom (fn [form] (host/eval-form form))))
-(def Compiler-eval (fn [form] (@eval-hook form)))
+     (atom host/eval-form))
+(def Compiler-eval @eval-hook)
 ;; (fn [ns-sym form] -> [value ns-after]): the boot's top-level eval, for the
 ;; loaders above that carry the namespace from form to form
 (def eval-top-hook (atom nil))
@@ -2268,14 +2268,11 @@
              h (deref (:hierarchy st))
              c (:cache st)]
             (if (and c (identical? (:methods c) (:methods st)) (identical? (:prefers c) (:prefers st)) (identical? (:h c) h))
-                (let [e (find (:table c) dv)]
-                     (if e
-                         (val e)
-                         (let [m (mf-find-method st dv)]
+                (if-let [e (find (:table c) dv)] (val e) (let [m (mf-find-method st dv)]
             ;; a miss is not cached, as the JVM's findAndCacheBestMethod: an
             ;; equal dispatch value may still isa? its way to a method
-                              (when m (swap! state update :cache (fn [c'] (if (identical? c' c) (assoc-in c [:table dv] m) c'))))
-                              m)))
+                                                              (when m (swap! state update :cache (fn [c'] (if (identical? c' c) (assoc-in c [:table dv] m) c'))))
+                                                              m))
                 (let [m (mf-find-method st dv)]
                      (swap! state assoc :cache {:methods (:methods st) :prefers (:prefers st) :h h :table (if m {dv m} {})})
                      m))))
@@ -2712,8 +2709,8 @@
      (fn [f] {:cohost.http/uri f :cohost.http/url f}))
 
 ;; URI / URL
-(def -getScheme (http-member "getScheme" {:cohost.http/uri (fn [u] (:scheme u))}))
-(def -getProtocol (http-member "getProtocol" {:cohost.http/url (fn [u] (:scheme u))}))
+(def -getScheme (http-member "getScheme" {:cohost.http/uri :scheme}))
+(def -getProtocol (http-member "getProtocol" {:cohost.http/url :scheme}))
 (def -getHost (http-member "getHost" (http-locator (fn [u] (if (= :cohost.http/url (:cohost/kind u)) (or (:host u) "") (:host u))))))
 
 ;; a lookup, not a case: jank 0.1 cannot compile a case on string constants
@@ -2723,16 +2720,16 @@
 ;; the jank AOT build ended without cohost/shim.o (measured 2026-11-05)
 (def ^:private default-ports {"http" 80 "https" 443 "ftp" 21})
 (def -getDefaultPort (http-member "getDefaultPort" {:cohost.http/url (fn [u] (get default-ports (:scheme u) -1))}))
-(def -getPath (http-member "getPath" (merge (http-locator (fn [u] (:path u)))
+(def -getPath (http-member "getPath" (merge (http-locator :path)
                                             {:cohost.io/file io/file-path})))
-(def -getRawPath (http-member "getRawPath" {:cohost.http/uri (fn [u] (:path u))}))
+(def -getRawPath (http-member "getRawPath" {:cohost.http/uri :path}))
 (def -getQuery (http-member "getQuery" (http-locator (fn [u] (if (= :cohost.http/uri (:cohost/kind u)) (some-> (:query u) (URLDecoder-decode "UTF-8")) (:query u))))))
-(def -getRawQuery (http-member "getRawQuery" {:cohost.http/uri (fn [u] (:query u))}))
-(def -getFragment (http-member "getFragment" {:cohost.http/uri (fn [u] (:fragment u))}))
-(def -getRef (http-member "getRef" {:cohost.http/url (fn [u] (:fragment u))}))
+(def -getRawQuery (http-member "getRawQuery" {:cohost.http/uri :query}))
+(def -getFragment (http-member "getFragment" {:cohost.http/uri :fragment}))
+(def -getRef (http-member "getRef" {:cohost.http/url :fragment}))
 (def -getFile (http-member "getFile" {:cohost.http/url http/url-file}))
 (def -getAuthority (http-member "getAuthority" (http-locator http/authority)))
-(def -getUserInfo (http-member "getUserInfo" (http-locator (fn [u] (:user-info u)))))
+(def -getUserInfo (http-member "getUserInfo" (http-locator :user-info)))
 (def -isAbsolute (http-member "isAbsolute" {:cohost.http/uri (fn [u] (some? (:scheme u)))
                                             ::io/file (fn [f] (io/file-absolute? (io/file-path f)))}))
 (def -toURL (http-member "toURL" {:cohost.http/uri http/uri->url
@@ -2764,24 +2761,24 @@
 
 ;; HttpRequest and its builder
 (def -uri (http-member "uri" {:cohost.http/request-builder http/rb-uri
-                              :cohost.http/request (fn [r] (:uri r))
-                              :cohost.http/response (fn [r] (:uri r))}))
+                              :cohost.http/request :uri
+                              :cohost.http/response :uri}))
 (def -GET (http-member "GET" {:cohost.http/request-builder (fn [b] (http/rb-method b "GET" nil))}))
 (def -DELETE (http-member "DELETE" {:cohost.http/request-builder (fn [b] (http/rb-method b "DELETE" nil))}))
 (def -POST (http-member "POST" {:cohost.http/request-builder (fn [b p] (http/rb-method b "POST" p))}))
 (def -PUT (http-member "PUT" {:cohost.http/request-builder (fn [b p] (http/rb-method b "PUT" p))}))
 (def -method (http-member "method" {:cohost.http/request-builder (fn [b m p] (http/rb-method b m p))
-                                    :cohost.http/request (fn [r] (:method r))}))
+                                    :cohost.http/request :method}))
 (def -header (http-member "header" {:cohost.http/request-builder http/rb-header}))
 (def -setHeader (http-member "setHeader" {:cohost.http/request-builder http/rb-set-header}))
 (def -timeout (http-member "timeout" {:cohost.http/request-builder (fn [b d] (http/rb-opt b :timeout d))}))
 
 ;; HttpResponse, HttpHeaders, Optional
-(def -statusCode (http-member "statusCode" {:cohost.http/response (fn [r] (:status r))}))
-(def -body (http-member "body" {:cohost.http/response (fn [r] (:body r))}))
-(def -request (http-member "request" {:cohost.http/response (fn [r] (:request r))}))
-(def -headers (http-member "headers" {:cohost.http/response (fn [r] (:headers r))
-                                      :cohost.http/request (fn [r] (:headers r))
+(def -statusCode (http-member "statusCode" {:cohost.http/response :status}))
+(def -body (http-member "body" {:cohost.http/response :body}))
+(def -request (http-member "request" {:cohost.http/response :request}))
+(def -headers (http-member "headers" {:cohost.http/response :headers
+                                      :cohost.http/request :headers
                                       :cohost.http/request-builder (fn [b & kvs] (http/rb-headers b kvs))}))
 (def -firstValue (http-member "firstValue" {:cohost.http/headers http/first-value}))
 (def -allValues (http-member "allValues" {:cohost.http/headers http/all-values}))
@@ -2894,7 +2891,7 @@
          ([f append?] (io/file-output-stream (as-file-value f) (boolean append?)))))
 (def new-ByteArrayInputStream (fn [bs] (io/byte-input-stream (host-bytes->ints bs))))
 (def new-ByteArrayOutputStream (fn [] (io/byte-output-stream)))
-(def new-StringReader (fn [s] (io/string-reader s)))
+(def new-StringReader io/string-reader)
 (def new-StringWriter (fn ([] (io/string-writer)) ([_n] (io/string-writer))))
 (def new-CharArrayReader (fn [cs] (io/char-array-reader (seq cs))))
 (def new-InputStreamReader
@@ -3054,20 +3051,20 @@
 (def -getResponseCode (http-member "getResponseCode" {:cohost.http/connection (fn [c] (:status (http/conn-response c)))}))
 (def -getResponseMessage (http-member "getResponseMessage" {:cohost.http/connection (fn [c] (get http/reason-phrases (:status (http/conn-response c))))}))
 (def -getInputStream (http-member "getInputStream" {:cohost.http/connection http/conn-input-stream
-                                                    :cohost.io/socket (fn [s] (io/socket-input s))}))
-(def -getOutputStream (http-member "getOutputStream" {:cohost.http/connection http/conn-output-stream :cohost.io/socket (fn [s] (io/socket-output s))}))
-(def -accept (http-member "accept" {:cohost.io/server-socket (fn [s] (io/accept! s))}))
-(def -getLocalPort (http-member "getLocalPort" {:cohost.io/server-socket (fn [s] (io/server-port s))
-                                                :cohost.io/socket (fn [s] (io/socket-local-port s))}))
-(def -getPort (http-member "getPort" (assoc (http-locator (fn [u] (:port u))) :cohost.io/socket (fn [s] (io/socket-port s)))))
-(def -isClosed (http-member "isClosed" {:cohost.io/server-socket (fn [s] (io/server-closed? s))
-                                        :cohost.io/socket (fn [s] (io/socket-closed? s))}))
+                                                    :cohost.io/socket io/socket-input}))
+(def -getOutputStream (http-member "getOutputStream" {:cohost.http/connection http/conn-output-stream :cohost.io/socket io/socket-output}))
+(def -accept (http-member "accept" {:cohost.io/server-socket io/accept!}))
+(def -getLocalPort (http-member "getLocalPort" {:cohost.io/server-socket io/server-port
+                                                :cohost.io/socket io/socket-local-port}))
+(def -getPort (http-member "getPort" (assoc (http-locator :port) :cohost.io/socket io/socket-port)))
+(def -isClosed (http-member "isClosed" {:cohost.io/server-socket io/server-closed?
+                                        :cohost.io/socket io/socket-closed?}))
 (def -getErrorStream (http-member "getErrorStream" {:cohost.http/connection http/conn-error-stream}))
 (def -getHeaderField (http-member "getHeaderField" {:cohost.http/connection http/conn-header-field}))
 (def -getHeaderFields (http-member "getHeaderFields" {:cohost.http/connection (fn [c] (:headers (http/conn-response c)))}))
 (def -getContentType (http-member "getContentType" {:cohost.http/connection (fn [c] (http/conn-header-field c "content-type"))}))
 (def -getContentLength (http-member "getContentLength" {:cohost.http/connection (fn [c] (if-let [v (http/conn-header-field c "content-length")] (host/parse-long* v) -1))}))
-(def -getURL (http-member "getURL" {:cohost.http/connection (fn [c] (:url c))}))
+(def -getURL (http-member "getURL" {:cohost.http/connection :url}))
 
 ;; StringBuilder() / (int capacity) / (CharSequence s); StringBuffer is the same here
 (def new-StringBuilder (fn ([] (h-string-builder))
@@ -3324,8 +3321,8 @@
 (def Math-addExact (math-fn 'addExact (fn [a b] (exact (+ a b)))))
 (def Math-subtractExact (math-fn 'subtractExact (fn [a b] (exact (- a b)))))
 (def Math-multiplyExact (math-fn 'multiplyExact (fn [a b] (exact (* a b)))))
-(def Math-incrementExact (math-fn 'incrementExact (fn [a] (exact (+ a 1)))))
-(def Math-decrementExact (math-fn 'decrementExact (fn [a] (exact (- a 1)))))
+(def Math-incrementExact (math-fn 'incrementExact (fn [a] (exact (inc a)))))
+(def Math-decrementExact (math-fn 'decrementExact (fn [a] (exact (dec a)))))
 (def Math-negateExact (math-fn 'negateExact (fn [a] (exact (- a)))))
 (def System-nanoTime (host/capability :nano-time))
 (def System-currentTimeMillis host/current-time-millis)
@@ -3435,7 +3432,7 @@
 (def Collections-reverseOrder (jstatic 'Collections/reverseOrder
                                        (fn ([] (fn [a b] (compare b a)))
                                            ([c] (let [c (as-comparator c)] (fn [a b] (c b a)))))))
-(def Pattern-compile (fn [s] (host/re-pattern* s)))
+(def Pattern-compile host/re-pattern*)
 
 ;; java.util.regex.Matcher over the adapter's :re-find-at / :re-match-full: the
 ;; JVM's find (resuming after the last match, one past an empty one), group,
@@ -3599,7 +3596,7 @@
      (fn [s] (apply str (map (fn [c] (let [c (str c)] (if (contains? #{"\\" "$"} c) (str "\\" c) c))) (str s)))))
 (def UUID-randomUUID (host-fn 'random-uuid (unsupported "random-uuid")))
 (def UUID-fromString (host-fn 'parse-uuid (unsupported "parse-uuid")))
-(def Class-forName (fn [s] (symbol s)))
+(def Class-forName symbol)
 
 ;; ---------------------------------------------------------------------------
 ;; java.util.Calendar / GregorianCalendar / Date / TimeZone, java.sql.Timestamp
@@ -3953,7 +3950,7 @@
                  :default (if h-sort-host-compare?
                               (fn [cmp a b] (if (identical? cmp (stock-compare)) (compare a b) (compare-with cmp a b)))
                               compare-with)))
-(def -comparator (fn [coll] (host/sorted-comparator coll)))
+(def -comparator host/sorted-comparator)
 ;; Sorted.entryKey: a tree map's entry key, a tree set's element itself
 (def -entryKey (fn [coll e] (if (map? coll) (key e) e)))
 ;; Sorted.seqFrom(key, ascending): the entries from key on, in that direction
@@ -4180,8 +4177,8 @@
      (http-member "setContextClassLoader" {:cohost.thread/thread (fn [x ccl] (swap! context-classloaders assoc x ccl) nil)}))
 (def -atLineStart (http-member "atLineStart" {:cohost.io/pushback-reader (fn [_] true)}))
 
-(def -lock (http-member "lock" {:cohost.shim/reentrant-lock (fn [x] (lock-acquire! x))}))
-(def -unlock (http-member "unlock" {:cohost.shim/reentrant-lock (fn [x] (lock-release! x))}))
+(def -lock (http-member "lock" {:cohost.shim/reentrant-lock lock-acquire!}))
+(def -unlock (http-member "unlock" {:cohost.shim/reentrant-lock lock-release!}))
 (def -tryLock (http-member "tryLock" {:cohost.shim/reentrant-lock (fn [x & _args] (lock-try! x))}))
 (def -isLocked (http-member "isLocked" {:cohost.shim/reentrant-lock (fn [x] (some? (:owner @(:state x))))}))
 (def -isHeldByCurrentThread (http-member "isHeldByCurrentThread" {:cohost.shim/reentrant-lock (fn [x] (identical? (Thread-currentThread) (:owner @(:state x))))}))
@@ -4349,7 +4346,7 @@
                                  (subs n (inc i)))))
 ;; Var.sym and Keyword.sym (core.clj's `symbol` of a keyword)
 (def -sym (fn [x] (if (keyword? x) (symbol (namespace x) (name x)) (host/var-sym x))))
-(def -ns (fn [v] (host/var-ns v)))
+(def -ns host/var-ns)
 (def -name (fn [x] (cond (h-var? x) (throw (host/ex* 'java.lang.IllegalArgumentException "No matching field found: name for class clojure.lang.Var"))
                          (h-namespace? x) (host/ns-name* x)
                          :else (name x))))
@@ -4372,10 +4369,9 @@
 (def -getMapping (fn [ns sym] (get (-getMappings ns) sym)))
 (def -isMacro host/macro-var?)
 (def -isPublic (fn [v] (not (:private (host/var-meta v)))))
-(def -getTag (fn [v] (let [t (:tag (host/var-meta v))]
-                          (when t (canon (cond (string? t) (symbol t)
-                                               (seq? t) (second t)
-                                               :else t))))))
+(def -getTag (fn [v] (when-let [t (:tag (host/var-meta v))] (canon (cond (string? t) (symbol t)
+                                                                         (seq? t) (second t)
+                                                                         :else t)))))
 (def -fn (fn [v] (let [x (host/var-root v)]
                       (if (ifn? x) x (throw (host/ex* 'java.lang.ClassCastException (cast-message 'clojure.lang.IFn x)))))))
 (def -setMacro host/mark-macro!)
@@ -4399,7 +4395,7 @@
                                       ;; singleton (phel.phel's `unbound`);
                                       ;; no name on it but its class's
                                       #?(:phel (= n "stdClass") :default false)))))))
-(def -getRawRoot (fn [v] (host/var-raw-root v)))
+(def -getRawRoot host/var-raw-root)
 ;; Var.getThreadBinding: a box (non-nil even when the binding is nil), or nil
 (def -getThreadBinding (fn [v] (when (host/var-thread-bound? v) [(host/var-root v)])))
 (def -bindRoot (fn [v x] (host/set-var-root! v (constantly x))
@@ -4473,10 +4469,10 @@
                                     host-realized (host-realized x)
                                     (h-pending? x) false
                                     :else true))))
-(def -getMessage (fn [e] (host/exception-message e)))
-(def -getCause (fn [e] (host/exception-cause e)))
+(def -getMessage host/exception-message)
+(def -getCause host/exception-cause)
 (def -getData ex-data)
-(def -getStackTrace (fn [e] (host/ex-trace e)))
+(def -getStackTrace host/ex-trace)
 (def -setStackTrace (fn [e _trace] e))
 ;; a frame is the adapter's [class method file line] vector; the accessors
 ;; read its slots, as java.lang.StackTraceElement's do
@@ -4525,7 +4521,7 @@
             ;; java.lang.Object is every class's ancestor
                   (first (filter (fn [p] (every? #(or (= % p) (= % 'java.lang.Object) (contains? (get token-ancestors p #{}) %)) classes))
                                  classes)))))
-(def -getInterfaces (fn [c] (vec (filter #(contains? interface-preds %) (get token-ancestors (canon c))))))
+(def -getInterfaces (fn [c] (filterv #(contains? interface-preds %) (get token-ancestors (canon c)))))
 (def -getKey key)
 (def -getValue val)
 (defn- sioobe [msg] (host/ex* 'java.lang.StringIndexOutOfBoundsException msg))
@@ -4942,7 +4938,7 @@
        [x]
        (cond (string? x) (reduce (fn [h c] (wrap32 (+ (* 31 h) (h-char-code c)))) 0 x)
              (and (integer? x) (<= 0 x 4294967295)) (wrap32 x)
-             (and (integer? x) (<= -2147483648 x -1)) (- (- x) 1)
+             (and (integer? x) (<= -2147483648 x -1)) (dec (- x))
              :else (hash x)))
 
 (defn- jformat [fmt args]

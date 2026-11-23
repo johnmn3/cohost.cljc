@@ -1006,7 +1006,7 @@
                                     (when (fn? f) (fn [t & args] (.apply f t (into-array args)))))))
       :string-builder (fn [] (goog.string/StringBuffer.))
       :sb-append! (fn [sb x] (.append sb (str x)) sb)
-      :sb-string (fn [sb] (str sb))
+      :sb-string str
       :sb? (fn [x] (instance? goog.string/StringBuffer x))
    ;; edn/read-string returns nil for "" whatever :eof says; read takes :eof as the JVM's does
       :edn-read-string (fn [opts s]

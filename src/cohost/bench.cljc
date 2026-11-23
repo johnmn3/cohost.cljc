@@ -125,7 +125,7 @@
        (let [t0 (now-ms)
              v (f)
              first-ms (- (now-ms) t0)]
-            (loop [] (when (< (- (now-ms) t0) warm-ms) (f) (recur)))
+            (while (< (- (now-ms) t0) warm-ms) (f))
             (loop [samples [] spent 0.0]
                   (if (or (>= (count samples) max-runs)
                           (and (>= (count samples) min-runs) (>= spent budget-ms)))

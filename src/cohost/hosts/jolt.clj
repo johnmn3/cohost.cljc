@@ -51,9 +51,9 @@
       :exception? (fn [x] (instance? Throwable x))
       :nano-time (fn [] (System/nanoTime))
       :current-time-millis (fn [] (System/currentTimeMillis))
-      :math-ceil (fn [x] (clojure.math/ceil x))
-      :math-floor (fn [x] (clojure.math/floor x))
-      :math-sqrt (fn [x] (clojure.math/sqrt x))
+      :math-ceil clojure.math/ceil
+      :math-floor clojure.math/floor
+      :math-sqrt clojure.math/sqrt
       :parse-long (fn [s] (try (Long/parseLong s) (catch NumberFormatException _ nil)))
       :parse-double (fn [s] (Double/parseDouble s))
       :nan? (fn [x] (and (number? x) (Double/isNaN (double x))))
