@@ -45,7 +45,7 @@
        []
        (let [b (System/getenv "JANK_BIN")] (if (str/blank? b) "jank" b)))
 
-(defn- abs [& parts] (.getCanonicalPath (apply io/file parts)))
+(defn- abs-path [& parts] (.getCanonicalPath (apply io/file parts)))
 
 (defn- host-cache-file?
        "A file a host writes beside its sources (Basilisp's __pycache__/, *.pyc,
@@ -93,17 +93,17 @@
        (let [f (io/file project "deps.edn")]
             (when (.exists f)
                   (when-let [cpp (:cpp (edn/read-string {:default tagged-literal} (slurp f)))]
-                            {:dirs (mapv #(abs project %) (:include-dirs cpp))
-                             :sources (mapv #(abs project %) (:sources cpp))
+                            {:dirs (mapv #(abs-path project %) (:include-dirs cpp))
+                             :sources (mapv #(abs-path project %) (:sources cpp))
                              :defines (vec (:defines cpp))
                              :libs (vec (:libs cpp))}))))
 
 (defn input-key
       "One sha256 over every input of the executable."
       [{:keys [repo roots main name project]}]
-      (let [repo-files (concat (files-under (abs repo "resources/cohost/clojure-1.12.0"))
-                               (files-under (abs repo "src/cohost"))
-                               (map #(abs repo %) snapshot-scripts))
+      (let [repo-files (concat (files-under (abs-path repo "resources/cohost/clojure-1.12.0"))
+                               (files-under (abs-path repo "src/cohost"))
+                               (map #(abs-path repo %) snapshot-scripts))
             root-files (mapcat files-under roots)
             cpp (when project (project-cpp project))
             cpp-files (when cpp (concat (:sources cpp) (mapcat files-under (:dirs cpp))))
@@ -121,17 +121,17 @@
    :target (default <project>/target/jank). -> the executable's path."
       [{:keys [repo project roots main name target] :as opts}]
       (let [name (or name (last (str/split (str main) #"\.")))
-            target (abs (or target (str project "/target/jank")))
-            work (abs target "cohost-build")
-            exe (abs target name)
+            target (abs-path (or target (str project "/target/jank")))
+            work (abs-path target "cohost-build")
+            exe (abs-path target name)
             k (input-key (assoc opts :name name))
             stamp (io/file work "stamp")
             gc {"GC_INITIAL_HEAP_SIZE" "512M"}]
            (if (and (.exists (io/file exe)) (.exists stamp) (= k (str/trim (slurp stamp))))
                (do (log "JANK-EXE-FRESH" exe) exe)
                (let [t0 (System/nanoTime)
-                     events (abs work "events.edn")
-                     src (abs work "src")
+                     events (abs-path work "events.edn")
+                     src (abs-path work "src")
                      cpp (project-cpp project)
             ;; the record step is a JIT session: the app's cpp/raw blocks
             ;; compile there, so their headers must be findable -- clang
@@ -154,7 +154,7 @@
         ;; -L work -l cpp still picks the archive, never the shared lib.
                     (when cpp
                           (let [objs (mapv (fn [i s]
-                                               (let [o (abs work (str "cpp" i ".o"))
+                                               (let [o (abs-path work (str "cpp" i ".o"))
                                                      cc (if (str/ends-with? s ".c")
                                                             (or (System/getenv "CC") "cc")
                                                             (or (System/getenv "CXX") "c++"))]
@@ -165,24 +165,24 @@
                                                                    ["-c" s "-o" o]))
                                                     o))
                                            (range) (:sources cpp))
-                                libdir (abs work "record-lib")]
+                                libdir (abs-path work "record-lib")]
                                (.mkdirs (io/file libdir))
-                               (apply sh! work {} "ar" "rcs" (abs work "libcpp.a") objs)
-                               (apply sh! work {} (or (System/getenv "CXX") "c++") "-shared" "-o" (abs libdir "libcpp.so") objs)
+                               (apply sh! work {} "ar" "rcs" (abs-path work "libcpp.a") objs)
+                               (apply sh! work {} (or (System/getenv "CXX") "c++") "-shared" "-o" (abs-path libdir "libcpp.so") objs)
                                (log "JANK-EXE-CPP" (count objs) "objects (archive + record shared lib)")))
         ;; 1. cohost's namespaces, -O3 AOT objects (recompiled when stale)
                     (let [aot-out (sh! repo {} "bb" "-e" "(println (str \"AOT \" (load-file \"dev/perf/jank_aot_ensure.clj\")))")
-                          aot (abs repo (second (re-find #"(?m)^AOT (.*)$" aot-out))) out (apply sh! repo record-env (jank-bin)
-                                                                                                 (concat (when cpp ["-L" (abs work "record-lib") "-l" "cpp"])
-                                                                                                         ["--module-path" (str aot ":" (abs repo "src")) "run"
-                                                                                                          (abs repo "dev/perf/jank_snapshot_record.jank") "--" "--out" events "--lib" (str main)]
-                                                                                                         (mapcat (fn [r] ["--root" r]) roots)))]
+                          aot (abs-path repo (second (re-find #"(?m)^AOT (.*)$" aot-out))) out (apply sh! repo record-env (jank-bin)
+                                                                                                      (concat (when cpp ["-L" (abs-path work "record-lib") "-l" "cpp"])
+                                                                                                              ["--module-path" (str aot ":" (abs-path repo "src")) "run"
+                                                                                                               (abs-path repo "dev/perf/jank_snapshot_record.jank") "--" "--out" events "--lib" (str main)]
+                                                                                                              (mapcat (fn [r] ["--root" r]) roots)))]
           ;; 2. record the boot, the libraries and the app
 
                          (log (last (filter #(str/starts-with? % "SNAPSHOT-EVENTS") (str/split-lines out))))
                          (doseq [l (filter #(str/starts-with? % "RECORD-LIB-ERROR") (str/split-lines out))] (log l)))
         ;; 3. the modules and the entry
-                    (log (last (str/split-lines (sh! repo {} "bb" (abs repo "dev/perf/jank_snapshot_emit.clj")
+                    (log (last (str/split-lines (sh! repo {} "bb" (abs-path repo "dev/perf/jank_snapshot_emit.clj")
                                                      "--events" events "--out" src "--main" (str main)))))
         ;; 3.5 the project's :cpp link flags (the sources were compiled at
         ;; step 0.5, before the record step that needs their symbols)
@@ -195,10 +195,10 @@
                                   ;; materialize the cpp/raw symbols in its
                                   ;; own process, where only a shared lib
                                   ;; can be loaded
-                                                  ["-L" work "-L" (abs work "record-lib") "-l" "cpp"]
+                                                  ["-L" work "-L" (abs-path work "record-lib") "-l" "cpp"]
                                                   (mapcat (fn [l] ["-l" l]) (:libs cpp))))]
           ;; 4. one executable
-                         (apply sh! repo gc (jank-bin) "-O3" "--module-path" (str src ":" (abs repo "src")) "compile" "cohost.app-main"
+                         (apply sh! repo gc (jank-bin) "-O3" "--module-path" (str src ":" (abs-path repo "src")) "compile" "cohost.app-main"
                                 "--runtime" "static" "--name" name "--target-dir" target
                                 (or cpp-flags [])))
                     (when-not (.exists (io/file exe))

@@ -11,4 +11,10 @@
  ;; Everything above this line is the fleet template, byte-identical.
  ;; The entries below teach kondo this repo's own macro shapes; each
  ;; names the shape it covers. No linter level is demoted here.
- :hooks {:analyze-call {cohost.memory-eve/defwrapper hooks.cohost.memory-eve/defwrapper}}}
+ :hooks {:analyze-call {cohost.memory-eve/defwrapper hooks.cohost.memory-eve/defwrapper}}
+ ;; (One scoping was tried and removed: :config-in does not govern
+ ;; redefined-var — kondo 2026.10.26 emits it during ns analysis,
+ ;; before config-in applies. cohost.cljd-completion, whose defs
+ ;; ARE a core completion, carries per-def ignores with the reason
+ ;; in its header comment instead.)}
+}

@@ -29,6 +29,9 @@
               [cohost.hosts.auto]
               #?(:cljs [goog.object :as gobj]))
     #?(:cljs (:require-macros [cohost.shim-names]))
+  ;; -write below is the shim member var for the print protocol,
+  ;; not the cljs.core protocol fn of the same name
+    #?(:cljs (:refer-clojure :exclude [-write]))
   ;; the shim's -first, -seq ... are JVM method names, not cljs.core's protocol methods
     #?(:cljs (:refer-clojure :exclude [-assoc -comparator -compare -conj -count -deref -disjoin -drop -empty
                                        -equiv -find -first -flush -invoke -iterator -meta -name -next -nth -peek

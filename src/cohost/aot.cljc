@@ -106,7 +106,7 @@
       [entry]
       (str (-> (str entry) (str/replace "-" "_") (str/replace "." "/")) "__init.class"))
 
-(defn- exists? [f]
+(defn- path-exists? [f]
        #?(:clj (.exists (io/file f)) :bb (fs/exists? f)))
 
 (defn- mkdirs [f]
@@ -114,7 +114,7 @@
 
 (defn- try-mkdir!
        "One lock-acquisition attempt: true when this process made the
-   directory. A defn of its own, like exists? and mkdirs above, so
+   directory. A defn of its own, like path-exists? and mkdirs above, so
    the ensure! cond test is one form on every platform."
        [f]
        #?(:clj (.mkdir (io/file f)) :bb (.mkdir (java.io.File. f))))
@@ -144,7 +144,7 @@
       [{:keys [sister stamp entries marker build! lock-timeout-ms]
         :or {marker entry-marker lock-timeout-ms 1800000}}]
       (let [dir (artifact-dir sister stamp)
-            missing (fn [] (vec (remove (fn [e] (exists? (str dir "/" (marker e)))) entries)))]
+            missing (fn [] (vec (remove (fn [e] (path-exists? (str dir "/" (marker e)))) entries)))]
            (mkdirs dir)
            (if (empty? (missing))
                dir
@@ -156,7 +156,7 @@
                            (do (try (build! dir (missing))
                                     (finally (delete-tree lock)))
                                dir)
-                           (and (exists? lock)
+                           (and (path-exists? lock)
                                 (> (- (System/currentTimeMillis)
                                       #?(:clj (.lastModified (io/file lock)) :bb (.lastModified (java.io.File. lock))))
                                    lock-timeout-ms))

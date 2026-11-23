@@ -32,9 +32,10 @@
 ;; hiccup-class panel of the census), carried so those libraries run out
 ;; of the box.
 (ns cohost.js-shim
-  ;; require is this shim's own var below (the realm's node require),
-  ;; not cljs.core's
-    (:refer-clojure :exclude [require]))
+  ;; require, Symbol and eval are this shim's own vars below (the
+  ;; realm's node require, the JS Symbol constructor, the realm's
+  ;; eval), not cljs.core's
+    (:refer-clojure :exclude [require Symbol eval]))
 
 ;; ---------------------------------------------------------------------------
 ;; errors: core.cljs's throw sites construct these (Error 122x in the

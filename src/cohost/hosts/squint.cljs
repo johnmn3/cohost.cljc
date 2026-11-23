@@ -547,7 +547,7 @@
                                            (qualify p ns-sym locals)))
                                    (rest form))]
                        (apply list 'try parts))
-                  :else (apply list (map #(qualify % ns-sym locals form) form)))))
+                  :else (apply list (map #(qualify % ns-sym locals) form)))))
         (vector? form) (mapv #(qualify % ns-sym locals) form)
         (map? form) (into {} (map (fn [[k v]] [(qualify k ns-sym locals) (qualify v ns-sym locals)]) form))
         (set? form) (into #{} (map #(qualify % ns-sym locals) form))
