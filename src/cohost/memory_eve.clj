@@ -15,17 +15,18 @@
    Eve and wraps that -- the snapshot is an Eve-backed value equal
    to the root the atom held at deref time, per Eve's per-atom
    snapshot model."
-    (:require [cohost.memory :as memory]
-              [eve.deftype-proto.alloc :as alloc]
+    (:require
+     [clojure.string :as str] [cohost.memory :as memory]
+     [eve.deftype-proto.alloc :as alloc]
               ;; loaded for effect: eve.mem/value+sio->eve-bytes is
               ;; reached by requiring-resolve below, which needs the
               ;; namespace loaded; no var is referred through an alias
-              [eve.mem]
-              [eve.vec :as eve-vec]
-              [eve.map :as eve-map]
-              [eve.set :as eve-set]
-              [eve.list :as eve-list]
-              [eve.atom :as eve-atom]))
+     [eve.mem]
+     [eve.vec :as eve-vec]
+     [eve.map :as eve-map]
+     [eve.set :as eve-set]
+     [eve.list :as eve-list]
+     [eve.atom :as eve-atom]))
 
 ;; requiring-resolve, nil when the namespace or var is absent
 (defn- requiring-resolve-quiet [sym]
@@ -93,7 +94,7 @@
                      (or (.get ^java.util.IdentityHashMap (:by-obj st) o)
                          (let [id (count (:by-id st))]
                               (.put ^java.util.IdentityHashMap (:by-obj st) o id)
-                              (reset! residents (assoc st :by-id (conj (:by-id st) o)))
+                              (reset! residents (update st :by-id conj o))
                               id)))))
 
 (defn- resident
@@ -305,7 +306,7 @@
             (loop [i 0]
                   (cond (>= i n) false
                         (and (= "clojure.lang.Compiler" (.getClassName (aget frames i)))
-                             (.startsWith (.getMethodName (aget frames i)) "macroexpand")) true
+                             (str/starts-with? (.getMethodName (aget frames i)) "macroexpand")) true
                         :else (recur (inc i))))))
 
 (defn- write-list-raw
@@ -548,7 +549,7 @@
             java.util.List
             (size [_] (.count ^clojure.lang.Counted root))
             (isEmpty [_] (zero? (.count ^clojure.lang.Counted root)))
-            (contains [_ o] (.contains ^java.util.List root o))
+            (contains [_ o] (str/includes? ^java.util.List root o))
             (containsAll [_ c] (.containsAll ^java.util.List root c))
             (get [_ i] (.nth ^clojure.lang.Indexed root i))
             (indexOf [_ o] (.indexOf ^java.util.List root o))
@@ -598,7 +599,7 @@
                    :two '(let [v (.get ^clojure.lang.IPersistentSet root k)] (if (some? v) v nf))}}
             clojure.lang.IPersistentSet
             (disjoin [_ k] (EveBackedSet. (.disjoin ^clojure.lang.IPersistentSet root k) meta))
-            (contains [_ k] (.contains ^clojure.lang.IPersistentSet root k))
+            (contains [_ k] (str/includes? ^clojure.lang.IPersistentSet root k))
             (get [_ k] (.get ^clojure.lang.IPersistentSet root k))
             clojure.lang.ILookup
             (valAt [_ k] (.get ^clojure.lang.IPersistentSet root k))
@@ -736,10 +737,10 @@
         :assoc (fn [c k v] (assoc c (->eve k) (->eve v)))
         :dissoc (fn [c k] (let [ek (->eve-probe k)] (if (= absent-key ek) c (dissoc c ek))))
         :disj (fn [c k] (let [ek (->eve-probe k)] (if (= absent-key ek) c (disj c ek))))
-        :pop (fn [c] (pop c))
+        :pop pop
         :peek (fn [c] (resolve-value (peek c)))
         :nth (fn [c i nf] (resolve-value (nth c i nf)))
-        :count (fn [c] (count c))
+        :count count
         :get (fn [c k nf] (let [ek (->eve-probe k)]
                                (if (= absent-key ek) nf (resolve-value (get c ek nf)))))
         :contains (fn [c k] (let [ek (->eve-probe k)]

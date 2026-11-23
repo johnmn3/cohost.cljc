@@ -5,7 +5,8 @@
 ;; extent here; adapter/read-forms resolves #? here before a host's reader
 ;; sees the text. cs is a vector of the text's characters (nth of a string
 ;; walks it from the start on some hosts).
-(ns cohost.scan)
+(ns cohost.scan
+    (:require [clojure.string :as str]))
 
 (def ^:private delims #{\( \) \[ \] \{ \} \" \;})
 (defn- ws? [c] (or (= c \space) (= c \,) (= c \newline) (= c \tab) (= c \return) (= c \formfeed)))
@@ -160,7 +161,7 @@
        "s with every character but a line break a space: dropped text keeps its
    room, so every form after it keeps its line and column."
        [s]
-       (apply str (map (fn [c] (if (or (= c \newline) (= c \return)) c \space)) s)))
+       (str/join (map (fn [c] (if (or (= c \newline) (= c \return)) c \space)) s)))
 
 ;; Slices of the source are cut from its CHARACTER vector, never with subs:
 ;; positions are found on (vec src), and jank's subs is byte-indexed (its
@@ -169,7 +170,7 @@
 ;; drifts -- measured: eve/host.cljc (a "§" and "—" before its top-level
 ;; #?(:cljs ...)) read on jank as an endless run of empty forms. Same text on
 ;; every other host.
-(defn- cut [cs a b] (apply str (subvec cs a b)))
+(defn- cut [cs a b] (str/join (subvec cs a b)))
 
 (defn- rank-of [ranking k]
        (loop [r (seq ranking) n 0]
@@ -216,7 +217,7 @@
        (let [cs (vec src) n (count cs)]
             (loop [i 0 start 0 out [] spans []]
                   (if (>= i n)
-                      [(if (empty? out) src (apply str (conj out (cut cs start n)))) spans]
+                      [(if (empty? out) src (str/join (conj out (cut cs start n)))) spans]
                       (let [c (nth cs i)]
                            (cond
                             (or (ws? c) (contains? #{\( \) \[ \] \{ \} \' \` \~ \@ \^} c)) (recur (inc i) start out spans)

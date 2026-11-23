@@ -6,8 +6,9 @@
 ;; differing rather than timed. On JVM Clojure the host's own core is JVM
 ;; Clojure itself, the baseline the other hosts are read against.
 (ns cohost.bench
-    (:require [cohost.adapter :as host]
-              [cohost.boot :as boot]))
+    (:require
+     [clojure.string :as str] [cohost.adapter :as host]
+     [cohost.boot :as boot]))
 
 (def cases
      "[id label n setup body]: setup (a string, or nil) is evaluated once per
@@ -168,7 +169,7 @@
    sources; -> the milliseconds it took."
       []
       (let [t0 (now-ms)]
-           (eval-stock (str "(require " (apply str (interpose " " (map #(str "'" %) libs))) ")"))
+           (eval-stock (str "(require " (str/join " " (map #(str "'" %) libs)) ")"))
            (- (now-ms) t0)))
 
 (def default-opts {:warm-ms 500 :budget-ms 1000 :min-runs 3 :max-runs 2000 :settle-ms 250})
@@ -207,7 +208,7 @@
       (let [opts (merge default-opts opts)
             label (or label (name (host/host-name)))]
            (ensure-host-ns!)
-           (eval-stock (str "(require " (apply str (interpose " " (map #(str "'" (pr-str %)) requires))) ")"))
+           (eval-stock (str "(require " (str/join " " (map #(str "'" (pr-str %)) requires)) ")"))
            (settle! cases scale opts)
            (println (str "bench on " label (when (not= 1 scale) (str " at scale " scale))
                          ": median ms per call, the host's own core vs the stock core"))

@@ -12,9 +12,11 @@
    - class names print without their package (\"Long\", \"IllegalStateException\");
    - an unknown member is a catchable error, but cljw's \"not implemented\"
      is not: interop the shim lacks stays the shim's (no passthrough)."
-    (:require [cohost.adapter :as adapter]
-              [cohost.scan :as scan]
-              [clojure.edn :as edn]))
+    (:require
+     [clojure.math]
+     [clojure.string :as str] [cohost.adapter :as adapter]
+     [cohost.scan :as scan]
+     [clojure.edn :as edn]))
 
 ;; ---------------------------------------------------------------------------
 ;; reading: each top-level form's extent by a scan (cohost.scan), then
@@ -56,11 +58,10 @@
 ;; host_interface.zig), so they must resolve in the namespace the type is in;
 ;; none is a clojure.core name.
 (def ^:private emitted-bare
-     (vec (filter #(var? (ns-resolve 'clojure.core %))
-                  '[Associative CharSequence Comparable IBlockingDeref IDeref IEditableCollection IFn IKVReduce
-                    ILookup IMapEntry IObj IPending IPersistentCollection IPersistentMap IPersistentSet
-                    IPersistentStack IPersistentVector IReduce ISeq ITransientAssociative ITransientCollection
-                    ITransientMap ITransientSet ITransientVector Indexed Reversible Seqable Sorted])))
+     (filterv #(var? (ns-resolve 'clojure.core %)) '[Associative CharSequence Comparable IBlockingDeref IDeref IEditableCollection IFn IKVReduce
+                                                     ILookup IMapEntry IObj IPending IPersistentCollection IPersistentMap IPersistentSet
+                                                     IPersistentStack IPersistentVector IReduce ISeq ITransientAssociative ITransientCollection
+                                                     ITransientMap ITransientSet ITransientVector Indexed Reversible Seqable Sorted]))
 
 (defn- mark-macro!
        "cljw sets a var's macro bit only for defmacro, and sets it when it analyzes
@@ -209,7 +210,7 @@
    name (\"IllegalStateException: s\")."
        [e]
        (let [s (str e) n (str (class e))]
-            (if (and (.startsWith s n) (not (.contains n ".")))
+            (if (and (str/starts-with? s n) (not (str/includes? n ".")))
                 (str (get class-packages n "java.lang") "." s)
                 s)))
 
@@ -233,7 +234,7 @@
                         f))]
             (adapter/try-all (fn [] (apply f x args))
                              (fn [e]
-                                 (if (let [m (ex-message e)] (and m (.startsWith m "No implementation of method")))
+                                 (if (let [m (ex-message e)] (and m (str/starts-with? m "No implementation of method")))
                                      absent
                                      (throw e))))))
 
@@ -346,8 +347,8 @@
       :dynamic-var? (fn [v] (true? (:dynamic (meta v))))
       :empty-queue (fn [] clojure.lang.PersistentQueue/EMPTY)
       :namespace? (fn [x] (= "Namespace" (str (class x))))
-      :var-bound? (fn [v] (bound? v))
-      :var-thread-bound? (fn [v] (thread-bound? v))
+      :var-bound? bound?
+      :var-thread-bound? thread-bound?
       :lazy-seq (fn [f] (lazy-seq (f)))
       :delay (fn [f] (delay (f)))
       :exception? (fn [x] (instance? Throwable x))
@@ -359,9 +360,9 @@
       :ex-info? (fn [x] (and (instance? clojure.lang.ExceptionInfo x) (not (contains? (ex-data x) :cohost/class))))
       :nano-time (fn [] (System/nanoTime))
       :current-time-millis (fn [] (System/currentTimeMillis))
-      :math-ceil (fn [x] (Math/ceil x))
-      :math-floor (fn [x] (Math/floor x))
-      :math-sqrt (fn [x] (Math/sqrt x))
+      :math-ceil (fn [x] (clojure.math/ceil x))
+      :math-floor (fn [x] (clojure.math/floor x))
+      :math-sqrt (fn [x] (clojure.math/sqrt x))
       :parse-long (fn [s] (adapter/try-all (fn [] (Long/parseLong s))))
       :parse-double (fn [s] (Double/parseDouble s))
       :format (fn [fmt & args] (apply format fmt args))
@@ -384,11 +385,11 @@
       :re-find-at re-find-at
       :re-match-full re-match-full
       :re-group-count (fn [re] (.groupCount (re-matcher re "")))
-      :upper-case (fn [s] (.toUpperCase (str s)))
-      :lower-case (fn [s] (.toLowerCase (str s)))
+      :upper-case (fn [s] (str/upper-case (str s)))
+      :lower-case (fn [s] (str/lower-case (str s)))
       :string-builder (fn [] (StringBuilder.))
       :sb-append! (fn [sb x] (.append sb (str x)) sb)
-      :sb-string (fn [sb] (str sb))
+      :sb-string str
       :sb? (fn [x] (instance? StringBuilder x))
       :edn-read-string (fn [opts s] (edn/read-string opts s))
       :math math
@@ -396,21 +397,21 @@
       :transient? (fn [x] (instance? clojure.lang.ITransientCollection x))
       :lazy-seq? (fn [x] (instance? clojure.lang.LazySeq x))
       :atom? (fn [x] (= "Atom" (str (class x))))
-      :volatile? (fn [x] (volatile? x))
-      :delay? (fn [x] (delay? x))
-      :reduced? (fn [x] (reduced? x))
+      :volatile? volatile?
+      :delay? delay?
+      :reduced? reduced?
       :deref? (fn [x] (instance? clojure.lang.IDeref x))
       :pending? (fn [x] (instance? clojure.lang.IPending x))
-      :char? (fn [x] (char? x))
+      :char? char?
       :regex? (fn [x] (instance? java.util.regex.Pattern x))
-      :uuid? (fn [x] (uuid? x))
+      :uuid? uuid?
       :bigint? (fn [x] (instance? clojure.lang.BigInt x))
-      :ratio? (fn [x] (ratio? x))
-      :decimal? (fn [x] (decimal? x))
-      :indexed? (fn [x] (indexed? x))
-      :counted? (fn [x] (counted? x))
-      :reversible? (fn [x] (reversible? x))
-      :sorted? (fn [x] (sorted? x))
+      :ratio? ratio?
+      :decimal? decimal?
+      :indexed? indexed?
+      :counted? counted?
+      :reversible? reversible?
+      :sorted? sorted?
       :sorted-comparator (fn [x] (let [c (.comparator x)] (if (ifn? c) c (fn [a b] (.compare c a b)))))
       :multifn? (fn [x] (instance? clojure.lang.MultiFn x))})
 

@@ -20,9 +20,10 @@
    byte streams of its own) holds it in an atom, never in a field.
    Equality is the map's: a named distance from the Java classes, as unit 1
    named it for the thread layer's values."
-    (:require [cohost.adapter :as host]
-              [cohost.io :as cio]
-              [cohost.thread :as thread]))
+    (:require
+     [clojure.string :as str] [cohost.adapter :as host]
+     [cohost.io :as cio]
+     [cohost.thread :as thread]))
 
 ;; ---------------------------------------------------------------------------
 ;; string helpers (the layer runs on every host: no clojure.string here)
@@ -36,7 +37,7 @@
        [s sep]
        (if-let [i (idx s sep)] [(subs s 0 i) (subs s (+ i (count sep)))] [s nil]))
 (defn- last-slash [s] (loop [i (dec (count s))] (cond (neg? i) -1 (= "/" (subs s i (inc i))) i :else (recur (dec i)))))
-(defn- join-comma [vs] (apply str (interpose "," vs)))
+(defn- join-comma [vs] (str/join "," vs))
 
 ;; ---------------------------------------------------------------------------
 ;; leaves

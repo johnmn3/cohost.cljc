@@ -73,7 +73,7 @@
 
 (defn- q-conj [q item]
        (if (queue-value? q)
-           (q-norm (assoc q :back (conj (:back q) item)))
+           (q-norm (update q :back conj item))
            (conj q item)))
 
 (defn- q-peek [q]
@@ -83,7 +83,7 @@
 
 (defn- q-pop [q]
        (if (queue-value? q)
-           (let [q (q-norm q)] (assoc q :front (rest (:front q))))
+           (let [q (q-norm q)] (update q :front rest))
            (pop q)))
 
 (defn- q-empty? [q]

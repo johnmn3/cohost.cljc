@@ -3,8 +3,10 @@
    own and clojure.lang.* classes with their JVM names, so this is nearly the
    JVM adapter; what differs is macro status, which jolt keeps on the Var
    (`.isMacro` / `.setMacro`) rather than in metadata."
-    (:require [cohost.adapter :as adapter]
-              [cohost.hosts.java :as java]))
+    (:require
+     [clojure.math]
+     [clojure.string :as str] [cohost.adapter :as adapter]
+     [cohost.hosts.java :as java]))
 
 (defn- read-forms [src cb]
        (let [r (java.io.PushbackReader. (java.io.StringReader. src))]
@@ -38,20 +40,20 @@
       :dynamic-var? (fn [v] (boolean (or (.isDynamic v) (:dynamic (meta v)))))
       :empty-queue (fn [] clojure.lang.PersistentQueue/EMPTY)
       :namespace? (fn [x] (instance? clojure.lang.Namespace x))
-      :var-bound? (fn [v] (bound? v))
-      :var-thread-bound? (fn [v] (thread-bound? v))
+      :var-bound? bound?
+      :var-thread-bound? thread-bound?
    ;; what jolt's own lazy-seq expands to, not (clojure.lang.LazySeq. f): no
    ;; host-new lookup and apply per lazy seq. The wrapper is no ^:once fn: a
    ;; force after a failure calls the stock thunk again (itself ^:once, so it
    ;; sees its own cleared captures, as on the JVM)
       :lazy-seq #_{:clj-kondo/ignore [:unresolved-symbol]} (fn [f] (make-lazy-seq (fn* [] (coll->cells (f)))))
-      :delay (fn [f] (clojure.lang.Delay. f))
+      :delay #_{:splint/disable [lint/fn-wrapper]} (fn [f] (clojure.lang.Delay. f))
       :exception? (fn [x] (instance? Throwable x))
       :nano-time (fn [] (System/nanoTime))
       :current-time-millis (fn [] (System/currentTimeMillis))
-      :math-ceil (fn [x] (Math/ceil x))
-      :math-floor (fn [x] (Math/floor x))
-      :math-sqrt (fn [x] (Math/sqrt x))
+      :math-ceil (fn [x] (clojure.math/ceil x))
+      :math-floor (fn [x] (clojure.math/floor x))
+      :math-sqrt (fn [x] (clojure.math/sqrt x))
       :parse-long (fn [s] (try (Long/parseLong s) (catch NumberFormatException _ nil)))
       :parse-double (fn [s] (Double/parseDouble s))
       :nan? (fn [x] (and (number? x) (Double/isNaN (double x))))
@@ -73,21 +75,21 @@
                                                                          (keyword? x) (symbol? x) (boolean? x)))
       :lazy-seq? (fn [x] (instance? clojure.lang.LazySeq x))
       :atom? (fn [x] (instance? clojure.lang.Atom x))
-      :volatile? (fn [x] (volatile? x))
-      :delay? (fn [x] (delay? x))
-      :reduced? (fn [x] (reduced? x))
+      :volatile? volatile?
+      :delay? delay?
+      :reduced? reduced?
       :deref? (fn [x] (instance? clojure.lang.IDeref x))
       :pending? (fn [x] (instance? clojure.lang.IPending x))
-      :char? (fn [x] (char? x))
+      :char? char?
       :regex? (fn [x] (instance? java.util.regex.Pattern x))
-      :uuid? (fn [x] (uuid? x))
+      :uuid? uuid?
       :bigint? (fn [x] (or (instance? clojure.lang.BigInt x) (instance? java.math.BigInteger x)))
-      :ratio? (fn [x] (ratio? x))
-      :decimal? (fn [x] (decimal? x))
-      :indexed? (fn [x] (indexed? x))
-      :counted? (fn [x] (counted? x))
-      :reversible? (fn [x] (reversible? x))
-      :sorted? (fn [x] (sorted? x))
+      :ratio? ratio?
+      :decimal? decimal?
+      :indexed? indexed?
+      :counted? counted?
+      :reversible? reversible?
+      :sorted? sorted?
    ;; jolt's .comparator is a comparator object, not an IFn
       :sorted-comparator (fn [x] (let [c (.comparator x)] (if (ifn? c) c (fn [a b] (.compare c a b)))))
       :multifn? (fn [x] (instance? clojure.lang.MultiFn x))})
@@ -95,8 +97,8 @@
 ;; java.lang.Math.log10 promises log10(10^n) = n exactly; jolt's returns
 ;; 2.9999999999999996 for 1000.0, so an exact power of ten is answered exactly
 (defn- log10 [x]
-       (let [x (double x) r (Math/log10 x) n (Math/rint r)]
-            (if (and (< (Math/abs (- r n)) 1e-9) (== x (Math/pow 10.0 n))) n r)))
+       (let [x (double x) r (clojure.math/log10 x) n (clojure.math/rint r)]
+            (if (and (< (Math/abs (- r n)) 1e-9) (== x (clojure.math/pow 10.0 n))) n r)))
 
 ;; a member by name: jolt's own `.` form (a field or a method), compiled once
 ;; per [name arity]; jolt reports a missing member as an
@@ -116,7 +118,7 @@
                         f))]
             (try (apply f x args)
                  (catch IllegalArgumentException e
-                        (if (let [m (ex-message e)] (and m (.startsWith ^String m "No matching")))
+                        (if (let [m (ex-message e)] (and m (str/starts-with? ^String m "No matching")))
                             absent
                             (throw e))))))
 

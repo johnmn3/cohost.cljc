@@ -14,8 +14,9 @@
 ;; like `lazy-seq`, `..`, `with-open` or `definline` emit interop into their
 ;; callers' code.
 (ns cohost.rewrite
-    (:require [cohost.adapter :as host]
-              [cohost.policy :as policy])
+    (:require
+     [clojure.string :as str] [cohost.adapter :as host]
+     [cohost.policy :as policy])
   ;; names defined here that let-go's core also has (it warns of each)
     #?@(:lg [(:refer-clojure :exclude [starts-with? ends-with?])]))
 
@@ -253,7 +254,7 @@
                                        (let [nm (defn-name f)]
                                             (when (contains? unit nm)
                                                   (let [more (drop-while #(or (string? %) (map? %)) (drop 2 f))]
-                                                       [nm (vec (keep #(when (and (vector? %) (every? symbol? %) (not (some #{'&} %))) %)
+                                                       [nm (vec (keep #(when (and (vector? %) (every? symbol? %) (not-any? #{'&} %)) %)
                                                                       (if (vector? (first more)) [(first more)] (map first (filter seq? more)))))]))))
                                    forms))]
            (if (or (empty? unit) (not (unit-kinds?)))
@@ -321,7 +322,7 @@
                (let [s (name sym)
                      i (last-dot s)
                      s (if (neg? i) s (subs s (inc i)))
-                     r (apply str (map (fn [c] (if (= "$" (str c)) "_" (str c))) s))]
+                     r (str/join (map (fn [c] (if (= "$" (str c)) "_" (str c))) s))]
                     (swap! simple-class-names assoc sym r)
                     r))))
 
@@ -374,7 +375,7 @@
              (and (seq? x) (seq x)) (let [y (apply list (map unrename-data x))] (if (meta x) (with-meta y (meta x)) y))
              (vector? x) (let [y (mapv unrename-data x)] (if (meta x) (with-meta y (meta x)) y))
              (map? x) (let [y (into {} (map (fn [[k v]] [(unrename-data k) (unrename-data v)]) x))] (if (meta x) (with-meta y (meta x)) y))
-             (set? x) (let [y (into #{} (map unrename-data x))] (if (meta x) (with-meta y (meta x)) y))
+             (set? x) (let [y (set (map unrename-data x))] (if (meta x) (with-meta y (meta x)) y))
              :else x))
 (def ^:dynamic *per-arity-impls*
      "true on a host whose extend-protocol / extend-type take one clause per
@@ -437,7 +438,7 @@
       "The shim's prebuilt checkcast for class token c (shim/install-casts!):
    java.util.regex.Pattern -> cast$java_util_regex_Pattern."
       [c]
-      (str "cast$" (apply str (map (fn [ch] (let [ch (str ch)] (if (= "." ch) "_" ch))) (str c)))))
+      (str "cast$" (str/join (map (fn [ch] (let [ch (str ch)] (if (= "." ch) "_" ch))) (str c)))))
 
 (def ^:private object-methods
      "java.lang.Object's methods: a call of one on a hinted local is no checkcast"
@@ -519,8 +520,7 @@
        (when (seq s)
              (loop [k 0 acc 0]
                    (if (>= k (count s)) acc
-                       (let [v (get {"0" 0 "1" 1 "2" 2 "3" 3 "4" 4 "5" 5 "6" 6 "7" 7 "8" 8 "9" 9} (subs s k (inc k)))]
-                            (when v (recur (inc k) (+ (* 10 acc) v))))))))
+                       (when-let [v (get {"0" 0 "1" 1 "2" 2 "3" 3 "4" 4 "5" 5 "6" 6 "7" 7 "8" 8 "9" 9} (subs s k (inc k)))] (recur (inc k) (+ (* 10 acc) v)))))))
 
 (defn- marker-info
        "[local token-or-nil depth] of a marker symbol, else nil."
@@ -817,7 +817,7 @@
        "An :arglists value with its type hints gone, as the params' are: the JVM
    compiler reads a ^long there as a primitive interface the fn lacks."
        [x]
-       (cond (symbol? x) (if (meta x) (with-meta x (strip-meta (meta x))) x)
+       (cond (symbol? x) (if (meta x) (vary-meta x strip-meta) x)
              (vector? x) (with-meta (mapv strip-arglists x) (strip-meta (meta x)))
              (seq? x) (let [y (apply list (map strip-arglists x))] (if (meta x) (with-meta y (meta x)) y))
              :else x))
@@ -1295,9 +1295,7 @@
                           (apply list 'catch c b (binding [*locals* (conj *locals* b)] (doall (rw-all ctx cb)))))
                       catches)
                  (if-not (some cpp-catch? catches)
-                         (let [f (fold catches)]
-                              (when f
-                                    (into [(first f)] (door-clauses (second f) (nth f 2) #{}))))
+                         (when-let [f (fold catches)] (into [(first f)] (door-clauses (second f) (nth f 2) #{})))
             ;; source order kept: runs of JVM catches fold together,
             ;; cpp catches stand as siblings between them; the doors go
             ;; ONCE, after every user clause, skipping any type the user
@@ -1308,7 +1306,7 @@
             ;; duplicate the same way on a try with two folded runs.
             ;; The doors' chain folds ALL the JVM clauses together, so a
             ;; clause in a later run still matches a translated native.
-                         (let [parts (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (let [f (fold g)] (if f [(first f)] []))))
+                         (let [parts (mapcat (fn [g] (if (cpp-catch? (first g)) (mapcat cpp-clause g) (if-let [f (fold g)] [(first f)] [])))
                                              (partition-by cpp-catch? catches))
                                skip (into #{} (comp (filter cpp-catch?) (map second)) catches)
                                f-all (fold (remove cpp-catch? catches))
@@ -1583,10 +1581,10 @@
    and the name with every other character an underscore, and a counter (a
    gensym's name can carry a $ that cpp/ symbol resolution does not take)."
        [nm]
-       (let [alnum (fn [x] (apply str (map (fn [c] (if (or (<= (int \a) (int c) (int \z)) (<= (int \A) (int c) (int \Z))
-                                                           (<= (int \0) (int c) (int \9)))
-                                                       c \_))
-                                           (str x))))]
+       (let [alnum (fn [x] (str/join (map (fn [c] (if (or (<= (int \a) (int c) (int \z)) (<= (int \A) (int c) (int \Z))
+                                                          (<= (int \0) (int c) (int \9)))
+                                                      c \_))
+                                          (str x))))]
             (str "cohost_twin_" (alnum *current-ns*) "_" (alnum (name (*plain* (bare-sym nm)))) "_" (swap! twin-count inc))))
 
 (defn- twin-cpp
@@ -1612,7 +1610,7 @@
                               op (when-not self? (core-op h))]
                              (cond
                               self? (when (= (count args) (count pnames))
-                                          (let [as (map L args)] (when (every? some? as) (str f "(" (apply str (interpose ", " as)) ")"))))
+                                          (let [as (map L args)] (when (every? some? as) (str f "(" (str/join ", " as) ")"))))
                               (= "if" (name (*plain* h)))
                               (when (= 3 (count args))
                                     (let [[c a b] (map-indexed (fn [i y] (if (zero? i) (B y) (L y))) args)]
@@ -1649,8 +1647,8 @@
                         :else nil))]
                    (when (and (= 1 (count body)) (seq pnames))
                          (when-let [e (L (first body))]
-                                   (let [ps (apply str (interpose ", " (map #(str "std::int64_t " (cs %)) pnames)))
-                                         as (apply str (interpose ", " (map cs pnames)))]
+                                   (let [ps (str/join ", " (map #(str "std::int64_t " (cs %)) pnames))
+                                         as (str/join ", " (map cs pnames))]
                                         (str "namespace " f "_ns { struct ovf {};\n"
                                              "inline std::int64_t tw_add(std::int64_t a, std::int64_t b) { std::int64_t r; if(__builtin_add_overflow(a, b, &r)) { throw ovf{}; } return r; }\n"
                                              "inline std::int64_t tw_sub(std::int64_t a, std::int64_t b) { std::int64_t r; if(__builtin_sub_overflow(a, b, &r)) { throw ovf{}; } return r; }\n"
@@ -1698,9 +1696,9 @@
                                                 (if (next body') (apply list 'do body') (first body')))]))
                              (apply list (rw-params params) body'))
                      (let [body' (or (seq body') '(nil))
-                           binds (into [] (mapcat (fn [p h]
-                                                      (when h (let [s (bare-sym p)] [s (coerce-form h s)])))
-                                                  params hints))
+                           binds (vec (mapcat (fn [p h]
+                                                  (when h (let [s (bare-sym p)] [s (coerce-form h s)])))
+                                              params hints))
                            spells (host/native-hints)
                            names (into [] (comp (filter symbol?) (map bare-sym) (remove #(= '& %))) params)
              ;; H0 (apt 0.1-noble, U6-5): a hinted leaf called from elsewhere
@@ -1807,7 +1805,7 @@
                                        ;; (:static-types :unit), no hint of its own
                                                      casts (host/native-local-casts)
                                                      ukp (when-let [ks (and ua casts (get casts 'long) (get casts 'double)
-                                                                            (every? symbol? params) (not (some #(= '& (*plain* %)) params))
+                                                                            (every? symbol? params) (not-any? #(= '& (*plain* %)) params)
                                                                             (get ua (count params)))]
                                                                    (seq (keep (fn [[p k]] (when (and k (nil? (primitive-hint (:tag (meta p))))) [(*plain* (bare-sym p)) k]))
                                                                               (map vector params ks))))
@@ -1841,10 +1839,9 @@
                                        ;; redefinition mid-recursion is missed (battery:
                                        ;; "redefining a fn during its own recursion")
                                                      ptypes (when (and (not ukp) (infer-here?) (host/native-hints) casts
-                                                                       (not (some #(and % (mentions-sym? % body))
-                                                                                  [(when nm (*plain* (bare-sym nm))) *def-name*]))
-                                                                       (not (some #(= '& (*plain* %)) ps0))
-                                                                       (not (some #(primitive-hint (:tag (meta %))) ps0)))
+                                                                       (not-any? #(and % (mentions-sym? % body)) [(when nm (*plain* (bare-sym nm))) *def-name*])
+                                                                       (not-any? #(= '& (*plain* %)) ps0)
+                                                                       (not-any? #(primitive-hint (:tag (meta %))) ps0))
                                                                   (not-empty (into {} (filter (fn [[_ t]] (get casts t)))
                                                                                    (numeric-params params body))))
                                                      tbody (when ptypes
@@ -1863,7 +1860,7 @@
                                        ;; series the inner fn* was still allocated per call, codegen
                                        ;; of md-inside-h: _jank_fn(2) and call_fast per call)
                                                      htypes (when (and casts (get casts 'long) (get casts 'double)
-                                                                       (not (some #(= '& (*plain* %)) ps0)))
+                                                                       (not-any? #(= '& (*plain* %)) ps0))
                                                                   (not-empty (into {} (keep (fn [p] (let [h (primitive-hint (:tag (meta p)))]
                                                                                                          (when (#{'long 'double} h) [(*plain* (bare-sym p)) h]))))
                                                                                    ps0)))
@@ -2416,12 +2413,12 @@
              ;; pseudo-name jank's codegen rejects on a fn*, and a self-named
              ;; fn* holding closures breaks jank's compile-module codegen
              ;; (see fn*-inside?)
-                     (not (some #{\.} (str nm)))
+                     (not-any? #{\.} (str nm))
              ;; on the source: a closure written fn, fn*, clojure.core/fn or
              ;; a macro that makes one (letfn, reify ...) -- any seq whose
              ;; head names fn or fn*, as the rewritten form's fn*-inside?
              ;; would see after expansion
-                     (not (some source-fn-inside? (rest init)))
+                     (not-any? source-fn-inside? (rest init))
                      (not (self-call-block-arg? nm (rest init))))
                 (concat (butlast more)
                         [(with-meta (apply list (first init) (bare-sym nm) (rest init)) (meta init))])
@@ -2486,7 +2483,7 @@
                        ;; a dotted name is a class or a constructor
                        ;; pseudo-name (deftype's Box.), not a fn name:
                        ;; jank's codegen rejects it on a fn*
-                            (not (some #{\.} (str nm)))
+                            (not-any? #{\.} (str nm))
                             (seq more')
                             (seq? (last more'))
                             (= 'fn* (first (last more')))
@@ -2494,7 +2491,7 @@
                        ;; and no closure inside: a self-named fn*
                        ;; holding closures breaks jank's compile-module
                        ;; codegen (see fn*-inside?)
-                            (not (some fn*-inside? (rest (last more'))))
+                            (not-any? fn*-inside? (rest (last more')))
                             (not (self-call-block-arg? nm (rest (last more')))))
                        (concat (butlast more')
                                [(apply list 'fn* (vary-meta nm (constantly nil)) (rest (last more')))])
@@ -3194,7 +3191,7 @@
                               (cons f (rw-all ctx form))
                               (carry-meta (vec (rw-all ctx form)) form))
        (map? form) (rw-map ctx form)
-       (set? form) (carry-meta (into #{} (rw-all ctx form)) form)
+       (set? form) (carry-meta (set (rw-all ctx form)) form)
        (symbol? form) (rw-symbol ctx form)
        (keyword? form) (unrename-kw form)
        (or (nil? form) (number? form) (string? form) (boolean? form)) form
@@ -3241,7 +3238,7 @@
                                             (with-meta (apply list (map walk (cons (get sf h h) tail))) (meta x)))))
                       (vector? x) (with-meta (mapv walk x) (meta x))
                       (map? x) (with-meta (into {} (map (fn [[k v]] [(walk k) (walk v)]) (seq x))) (meta x))
-                      (set? x) (with-meta (into #{} (map walk x)) (meta x))
+                      (set? x) (with-meta (set (map walk x)) (meta x))
                       :else x))]
               (walk form)))
 
@@ -3290,7 +3287,7 @@
                                (with-meta (apply list out) (meta x))))
                       (vector? x) (with-meta (mapv walk x) (meta x))
                       (map? x) (with-meta (into {} (map (fn [[k v]] [(walk k) (walk v)]) (seq x))) (meta x))
-                      (set? x) (with-meta (into #{} (map walk x)) (meta x))
+                      (set? x) (with-meta (set (map walk x)) (meta x))
                       :else x))]
               (walk form)))
 
@@ -3303,7 +3300,7 @@
        (let [cur (when-let [f (:current-ns ctx)] (str (f)))
              types (env-types locals)]
             (binding [*plain* (:plain-symbol ctx identity)
-                      *locals* (into #{} locals)
+                      *locals* (set locals)
                       *local-tags* (:tags types)
                       *local-classes* (:classes types)
                       *marker-depth* (:depth types)

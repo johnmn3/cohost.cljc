@@ -21,8 +21,9 @@
    - :protocol is \"HTTP/1.1\", the leaf's server's protocol; the request's
      own version is not carried.
    - :scheme is :http: the leaf serves plain HTTP."
-    (:require [cohost.adapter :as host]
-              [cohost.http :as http]))
+    (:require
+     [clojure.string :as str] [cohost.adapter :as host]
+     [cohost.http :as http]))
 
 (defn- idx [s sub] (let [i (host/index-of s sub 0)] (when (and i (>= i 0)) i)))
 
@@ -90,7 +91,7 @@
             :body (request-body req)}))
 
 (defn- header-value [v]
-       (if (and (sequential? v) (not (string? v))) (apply str (interpose "," (map str v))) (str v)))
+       (if (and (sequential? v) (not (string? v))) (str/join "," (map str v)) (str v)))
 
 (defn ->response
       "Eve's server response for a Ring response map: a String body as text,
@@ -107,7 +108,7 @@
                         (string? b) {:body b}
                         bytes {:body ((:bytes-b64 bs) bytes) :body-as :b64}
                         (http/is? :cohost.http/input-stream b) {:body (http/stream-drain! b)}
-                        (or (seq? b) (sequential? b)) {:body (apply str (map str b))}
+                        (or (seq? b) (sequential? b)) {:body (str/join (map str b))}
                         :else (throw (host/ex* 'java.lang.IllegalArgumentException
                                                (str "cohost.ring: unsupported response body: " (pr-str b))))))))
 

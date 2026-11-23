@@ -65,13 +65,13 @@
 (defn- sha256 [^String s]
        (let [d (java.security.MessageDigest/getInstance "SHA-256")]
             (.update d (.getBytes s "UTF-8"))
-            (apply str (map #(format "%02x" (bit-and % 0xff)) (.digest d)))))
+            (str/join (map #(format "%02x" (bit-and % 0xff)) (.digest d)))))
 
 (defn- file-sha [path]
        (let [d (java.security.MessageDigest/getInstance "SHA-256")
              b (java.nio.file.Files/readAllBytes (.toPath (io/file path)))]
             (.update d b)
-            (apply str (map #(format "%02x" (bit-and % 0xff)) (.digest d)))))
+            (str/join (map #(format "%02x" (bit-and % 0xff)) (.digest d)))))
 
 (def ^:private snapshot-scripts
      ["dev/perf/jank_snapshot_record.jank" "dev/perf/jank_snapshot_emit.clj"

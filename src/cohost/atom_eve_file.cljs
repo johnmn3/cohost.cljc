@@ -21,16 +21,17 @@
    An atom's name is the minting body's own mint ordinal
    (cohost.atom/<shard>-<slot>), so the nth atom of a program is
    the same shared atom on every body."
-    (:require [cohost.atom :as atom-layer]
-              [eve.atom :as eve-atom]
-              [eve.host :as eve-host]
-              [eve.host-init :as eve-init]
-              [eve.codec :as codec]
-              [eve.crypto :as crypto]
-              [eve.int32 :as i32]
-              [eve.thread-host :as eve-thread-host]
-              [eve.deftype-proto.serialize :as ser]
-              [eve.deftype-proto.data :as eve-data]))
+    (:require
+     [clojure.string :as str] [cohost.atom :as atom-layer]
+     [eve.atom :as eve-atom]
+     [eve.host :as eve-host]
+     [eve.host-init :as eve-init]
+     [eve.codec :as codec]
+     [eve.crypto :as crypto]
+     [eve.int32 :as i32]
+     [eve.thread-host :as eve-thread-host]
+     [eve.deftype-proto.serialize :as ser]
+     [eve.deftype-proto.data :as eve-data]))
 
 (defonce ^:private hosting
          (atom {:dir nil :registry nil :registry-domain nil
@@ -40,7 +41,7 @@
 
 (defn- pad4 [n]
        (let [s (str n)]
-            (str (apply str (repeat (- 4 (count s)) "0")) s)))
+            (str (str/join (repeat (- 4 (count s)) "0")) s)))
 
 (defn- shard-path [dir index]
        (str dir "/prog-" (pad4 index)))
@@ -142,7 +143,7 @@
                        (mapv (fn [i]
                                  (let [o (* 4 i)]
                                       (i32/i32 (bit-or (nth ubs o)
-                                                       (bit-shift-left (nth ubs (+ o 1)) 8)
+                                                       (bit-shift-left (nth ubs (inc o)) 8)
                                                        (bit-shift-left (nth ubs (+ o 2)) 16)
                                                        (bit-shift-left (nth ubs (+ o 3)) 24)))))
                              (range 8)))))]

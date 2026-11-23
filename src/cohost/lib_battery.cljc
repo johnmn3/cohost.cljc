@@ -109,8 +109,7 @@
             (doall
              (map (fn [{:keys [lib alias cases]}]
                       (let [req-error (host/try-all (fn [] (eval-str (str "(require '[" lib " :as " alias "])")) nil)
-                                                    (fn [e]
-                                                        (host/error-message e)))
+                                                    host/error-message)
                             rs (doall
                                 (map (fn [[label src expected]]
                                          (let [_ (when @boot/verbose? (println (str "  [lib case] " lib " / " label)))

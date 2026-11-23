@@ -26,7 +26,8 @@
    at close/flush (through :spit, UTF-8) -- the adapter's file caps
    are whole-file, so the layer is too. Charsets other than UTF-8 are
    refused by name at the wrapper constructors, in the shim."
-    (:require [cohost.adapter :as host]))
+    (:require
+     [clojure.string :as str] [cohost.adapter :as host]))
 
 ;; ---------------------------------------------------------------------------
 ;; kinds and class tokens
@@ -104,7 +105,7 @@
                                                    (toString [this]
                                                              (let [u (.under ^WriterValue this)]
                                                                   (if (instance? StringBuilder u)
-                                                                      (.toString ^StringBuilder u)
+                                                                      (str ^StringBuilder u)
                                                                       (writer-string this))))])))
 #?(:jank (defn ->BufferedWriterValue [k s u] (stream-standin 'BufferedWriterValue k s u))
    :default (defrecord BufferedWriterValue [kind state under]))
@@ -537,7 +538,7 @@
       (let [n (count bs)]
            (loop [i 0 out []]
                  (if (>= i n)
-                     (apply str (map char out))
+                     (str/join (map char out))
                      (let [b (nth bs i)]
                           (cond
                            (< b 0x80)
@@ -756,7 +757,7 @@
 (defn string-reader [s] (reader-over-text ::string-reader s))
 
 (defn char-array-reader [chars]
-      (reader-over-text ::char-array-reader (apply str chars)))
+      (reader-over-text ::char-array-reader (str/join chars)))
 
 (defn input-stream-reader
       "A Reader over a byte stream's remaining content, decoded whole
@@ -1030,7 +1031,7 @@
              (string? buf) buf
              #?(:clj (instance? StringBuilder buf) :default false)
              #?(:clj (.toString ^StringBuilder buf) :default "")
-             (sequential? buf) (apply str buf)
+             (sequential? buf) (str/join buf)
              :else (str buf)))
 
 (defn writer-over
@@ -1085,7 +1086,7 @@
 #?(:clj (defn- string-builder-under
                "A StringWriter's buffer, when it lives on the record (JVM string-writer)."
                [w]
-               (let [u (if (instance? WriterValue w) (.under ^WriterValue w) nil)]
+               (let [u (when (instance? WriterValue w) (.under ^WriterValue w))]
                     (when (instance? StringBuilder u) u)))
    :default (defn- string-builder-under [_w] nil))
 
@@ -1152,7 +1153,7 @@
                        (utf8-decode (output-bytes (:out st)))
                        (let [buf (:text st)]
                             #?(:clj (if (instance? StringBuilder buf)
-                                        (.toString ^StringBuilder buf)
+                                        (str ^StringBuilder buf)
                                         (text-buf-str buf))
                                :default (text-buf-str buf)))))))
 
@@ -1212,7 +1213,7 @@
                                                            (.append b c)))
                                                 (recur (inc i))))
                                     (.append b \")
-                                    (.toString b))))))
+                                    (str b))))))
          :default (append-text! w (if readably? (str "\"" s "\"") (str s))))
       nil)
 
@@ -1227,7 +1228,7 @@
           (letfn [(pr* [x]
                        (cond
                         (instance? clojure.lang.Keyword x)
-                        (.append sb (.toString ^clojure.lang.Keyword x))
+                        (.append sb (str ^clojure.lang.Keyword x))
                         (instance? Long x)
                         (.append sb ^long (.longValue ^Long x))
                         (nil? x) (.append sb "nil")
@@ -1244,7 +1245,7 @@
                                           (let [k (key e)]
                                                (not (and (or (keyword? k) (symbol? k))
                                                          (namespace k)))))))
-                             (not (and (meta x) (and print-meta print-readably))))
+                             (not (and (meta x) print-meta print-readably)))
                         (do (.append sb "{")
                             (when-let [xs (seq x)]
                                       (loop [e (first xs) n (next xs)]
@@ -1258,7 +1259,7 @@
                         (and (instance? clojure.lang.IPersistentVector x)
                              (not print-level)
                              (not print-length)
-                             (not (and (meta x) (and print-meta print-readably))))
+                             (not (and (meta x) print-meta print-readably)))
                         (do (.append sb "[")
                             (let [n (count x)]
                                  (loop [i 0]
@@ -1312,7 +1313,7 @@
                                                          (let [k (key e)]
                                                               (not (and (or (keyword? k) (symbol? k))
                                                                         (namespace k)))))))
-                                            (not (and (meta x) (and print-meta print-readably))))
+                                            (not (and (meta x) print-meta print-readably)))
                                        (do (append-text! w "{")
                                            (when-let [xs (seq x)]
                                                      (loop [e (first xs) n (next xs)]
@@ -1326,7 +1327,7 @@
                                        (and (instance? clojure.lang.IPersistentVector x)
                                             (not print-level)
                                             (not print-length)
-                                            (not (and (meta x) (and print-meta print-readably))))
+                                            (not (and (meta x) print-meta print-readably)))
                                        (do (append-text! w "[")
                                            (let [n (count x)]
                                                 (loop [i 0]
@@ -1399,8 +1400,7 @@
 ;; :clj arm only.
 #_{:clj-kondo/ignore [:unresolved-symbol :unused-private-var]}
 (defn- fallback-print-method [x w]
-       (let [f (aget ^objects print-vs 8)]
-            (if f (f x w) (print-method x w))))
+       (if-let [f (aget ^objects print-vs 8)] (f x w) (print-method x w)))
 
 #?(:clj
    (do
@@ -1698,18 +1698,16 @@
 
 (defn flush-writer! [w]
   ;; A JVM StringWriter with its buffer on `under` has no state atom.
-      (if #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w)
-          nil
-          (let [st @(state-of w)]
-               (cond (= ::sink (:cohost/kind w))
-                     (let [b (text-buf-str (:buf st))]
-                          (when (pos? (count b))
-                                (swap! (state-of w) assoc :buf (new-text-buf))
-                                ((:sink st) b)))
-                     (:file st) (write-file-text! (:file st) (text-buf-str (:text st)))
-                     (:out st) (flush-output! (:out st))
-                     (:handle st) (host/io-flush! ((:handle st))))
-               nil)))
+      (when-not #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w) (let [st @(state-of w)]
+                                                                                          (cond (= ::sink (:cohost/kind w))
+                                                                                                (let [b (text-buf-str (:buf st))]
+                                                                                                     (when (pos? (count b))
+                                                                                                           (swap! (state-of w) assoc :buf (new-text-buf))
+                                                                                                           ((:sink st) b)))
+                                                                                                (:file st) (write-file-text! (:file st) (text-buf-str (:text st)))
+                                                                                                (:out st) (flush-output! (:out st))
+                                                                                                (:handle st) (host/io-flush! ((:handle st))))
+                                                                                          nil)))
 
 #?(:clj (defn flush-any!
               "Flush w without re-reading *out*. Layer writers use flush-writer!;
@@ -1800,15 +1798,13 @@
            nil))
 
 (defn close-writer! [w]
-      (if #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w)
-          nil
-          (when-not (:closed? @(state-of w))
-                    (flush-writer! w)
-                    (swap! (state-of w) assoc :closed? true)
-                    (when-let [out (:out @(state-of w))]
-                              (close-output! out))
-                    (when-let [cf (:close @(state-of w))]
-                              (cf))))
+      (when-not #_{:clj-kondo/ignore [:constant-condition]} (string-builder-under w) (when-not (:closed? @(state-of w))
+                                                                                               (flush-writer! w)
+                                                                                               (swap! (state-of w) assoc :closed? true)
+                                                                                               (when-let [out (:out @(state-of w))]
+                                                                                                         (close-output! out))
+                                                                                               (when-let [cf (:close @(state-of w))]
+                                                                                                         (cf))))
       nil)
 
 ;; ---------------------------------------------------------------------------

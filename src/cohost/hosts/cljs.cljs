@@ -708,9 +708,8 @@
 
 ;; JVM class tokens in extend positions: ClojureScript's own types
 (def ^:private host-types
-     (let [exists (fn [syms] (vec (filter (fn [s] (or (nil? (namespace s)) (= "js" (namespace s))
-                                                      (some? (js-path 'cljs.core (symbol (name s))))))
-                                          syms)))
+     (let [exists (fn [syms] (filterv (fn [s] (or (nil? (namespace s)) (= "js" (namespace s))
+                                                  (some? (js-path 'cljs.core (symbol (name s)))))) syms))
            seqs '[cljs.core/List cljs.core/EmptyList cljs.core/LazySeq cljs.core/Cons cljs.core/IndexedSeq cljs.core/RSeq
                   cljs.core/ChunkedSeq cljs.core/ChunkedCons cljs.core/Range cljs.core/IntegerRange cljs.core/Repeat
                   cljs.core/Cycle cljs.core/Iterate cljs.core/ArrayNodeSeq cljs.core/NodeSeq cljs.core/KeySeq
@@ -820,8 +819,12 @@
                             (if (= lo 0xffffffff) (from-bits (inc hi) 0) (from-bits hi (inc lo)))
                             (if (zero? lo) (from-bits (dec hi) 0xffffffff) (from-bits hi (dec lo)))))))
 (defn- next-down [x] (- (next-up (- x))))
-(defn- copy-sign [a b] (let [neg (or (neg? b) (and (zero? b) (neg? (/ 1 b))) (and (js/isNaN b) false))]
-                            (if neg (- (js/Math.abs a)) (js/Math.abs a))))
+(defn- copy-sign [a b]
+       ;; test-only binding: if-let would bind neg for branches that
+       ;; never use it (kondo unused-binding); the let+if is the shape.
+       #_{:splint/disable [lint/let-if]}
+       (let [neg (or (neg? b) (and (zero? b) (neg? (/ 1 b))) (and (js/isNaN b) false))]
+            (if neg (- (js/Math.abs a)) (js/Math.abs a))))
 
 (def ^:private math-fns
      {'sin js/Math.sin 'cos js/Math.cos 'tan js/Math.tan 'asin js/Math.asin 'acos js/Math.acos
@@ -975,8 +978,8 @@
       :host-type (fn [token] (get host-types token))
       :host-instance? host-instance?
       :math math-fns
-      :upper-case (fn [s] (.toUpperCase (str s)))
-      :lower-case (fn [s] (.toLowerCase (str s)))
+      :upper-case (fn [s] (string/upper-case (str s)))
+      :lower-case (fn [s] (string/lower-case (str s)))
       :re-find-at re-find-at
       :re-match-full re-match-full
       :re-group-count re-group-count
@@ -1003,7 +1006,7 @@
                                     (when (fn? f) (fn [t & args] (.apply f t (into-array args)))))))
       :string-builder (fn [] (goog.string/StringBuffer.))
       :sb-append! (fn [sb x] (.append sb (str x)) sb)
-      :sb-string (fn [sb] (.toString sb))
+      :sb-string (fn [sb] (str sb))
       :sb? (fn [x] (instance? goog.string/StringBuffer x))
    ;; edn/read-string returns nil for "" whatever :eof says; read takes :eof as the JVM's does
       :edn-read-string (fn [opts s]
@@ -1056,11 +1059,11 @@
                              (let [d (ex-data x)] (not (or (contains? d :cohost/class) (= :reader-exception (:type d)))))))
       :nano-time (fn [] (long (* 1000000 (.now js/performance))))
       :current-time-millis (fn [] (.now js/Date))
-      :math-ceil (fn [x] (js/Math.ceil x))
-      :math-floor (fn [x] (js/Math.floor x))
-      :math-sqrt (fn [x] (js/Math.sqrt x))
+      :math-ceil js/Math.ceil
+      :math-floor js/Math.floor
+      :math-sqrt js/Math.sqrt
       :parse-long (fn [s] (let [n (js/parseInt s 10)] (when-not (js/isNaN n) n)))
-      :parse-double (fn [s] (js/parseFloat s))
+      :parse-double js/parseFloat
       :nan? (fn [x] (and (number? x) (js/isNaN x)))
       :infinite? (fn [x] (and (number? x) (not (js/isFinite x)) (not (js/isNaN x))))
       :sort-array! (fn [arr cmp] (.sort arr cmp) arr)
@@ -1070,18 +1073,18 @@
                               (instance? TransientArrayMap x) (instance? TransientHashSet x)))
       :lazy-seq? (fn [x] (instance? LazySeq x))
       :atom? (fn [x] (instance? Atom x))
-      :volatile? (fn [x] (volatile? x))
-      :delay? (fn [x] (delay? x))
-      :reduced? (fn [x] (reduced? x))
+      :volatile? volatile?
+      :delay? delay?
+      :reduced? reduced?
       :deref? (fn [x] (satisfies? IDeref x))
       :pending? (fn [x] (satisfies? IPending x))
       :char? (fn [x] (and (string? x) (= 1 (count x))))
-      :regex? (fn [x] (regexp? x))
-      :uuid? (fn [x] (uuid? x))
-      :indexed? (fn [x] (indexed? x))
-      :counted? (fn [x] (counted? x))
-      :reversible? (fn [x] (reversible? x))
-      :sorted? (fn [x] (sorted? x))
+      :regex? regexp?
+      :uuid? uuid?
+      :indexed? indexed?
+      :counted? counted?
+      :reversible? reversible?
+      :sorted? sorted?
       :multifn? (fn [x] (instance? MultiFn x))})
 
 (adapter/install! adapter)

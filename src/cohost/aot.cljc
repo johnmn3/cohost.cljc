@@ -52,9 +52,10 @@
    (2026-11-14): basis-stamp instead of mtime, artifacts here instead of the checkout's
    target/. The lpy/jank ensures predate this namespace and register by being named here,
    their internals unchanged."
-    (:require [clojure.string :as str]
-              #?(:clj  [clojure.java.io :as io]
-                 :bb   [babashka.fs :as fs])))
+    (:require
+     [clojure.string :as str]
+     #?(:clj  [clojure.java.io :as io]
+        :bb   [babashka.fs :as fs])))
 
 (defn cache-root
       "$HOME/.cache/cohost (HOME wins over user.home, as in bin/cohost_clj_body.clj's cohost-cache-root)."
@@ -75,7 +76,7 @@
       [^bytes bs]
       (let [md (java.security.MessageDigest/getInstance "SHA-256")]
            (.update md bs)
-           (apply str (map (fn [b] (format "%02x" b)) (.digest md)))))
+           (str/join (map (fn [b] (format "%02x" b)) (.digest md)))))
 
 ;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
 ;; it); it has no cljs arm, so in kondo's cljs pass this def's
@@ -99,7 +100,7 @@
            (doseq [f (sort (map str files))]
                   (eat (str "\n" f "\n"))
                   (.update md (file-bytes f)))
-           (apply str (map (fn [b] (format "%02x" b)) (.digest md)))))
+           (str/join (map (fn [b] (format "%02x" b)) (.digest md)))))
 
 ;; aot is loaded by the clj/bb drivers only (bin/cohost load-files
 ;; it); it has no cljs arm, so in kondo's cljs pass this def's

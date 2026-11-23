@@ -50,9 +50,9 @@
    this same resolution."
       [path]
       (let [rel (cond-> path
-                        (.startsWith path "../") (subs 3)
-                        (.startsWith path "./") (subs 2)
-                        (.startsWith path "/") (subs 1))]
+                        (str/starts-with? path "../") (subs 3)
+                        (str/starts-with? path "./") (subs 2)
+                        (str/starts-with? path "/") (subs 1))]
            (or (classpath-text (str "goog/" rel))
                (classpath-text rel)
                (classpath-text path))))

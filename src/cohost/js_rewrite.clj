@@ -48,7 +48,8 @@
    reference (measured: a wrapping boot died on core.cljs's
    (defonce PROTOCOL_SENTINEL #object[...]) with exactly those
    symbols rewritten). Source forms keep the descending rule: their
-   js* arguments are source expressions, written by a programmer.")
+   js* arguments are source expressions, written by a programmer."
+    (:require [clojure.string :as str]))
 
 (def shim-ns 'cohost.js-shim)
 
@@ -59,12 +60,12 @@
        (let [nm (name sym)]
             (cond
       ;; constructor: js/Error. -> cohost.js-shim/Error.
-             (.endsWith nm ".")
+             (str/ends-with? nm ".")
              (symbol (str shim-ns) nm)
 
       ;; dotted: js/Number.POSITIVE_INFINITY -> (.-POSITIVE_INFINITY
       ;; cohost.js-shim/Number); deeper chains nest.
-             (.contains nm ".")
+             (str/includes? nm ".")
              (let [parts (.split nm "\\.")]
                   (reduce (fn [acc part] (list (symbol (str ".-" part)) acc))
                           (symbol (str shim-ns) (aget parts 0))
@@ -82,7 +83,7 @@
        [head]
        (when (and (symbol? head) (= "js" (namespace head)))
              (let [nm (name head)]
-                  (when (and (.contains nm ".") (not (.endsWith nm ".")))
+                  (when (and (str/includes? nm ".") (not (str/ends-with? nm ".")))
                         (.split nm "\\.")))))
 
 (defn- rewrite-list [mode form]

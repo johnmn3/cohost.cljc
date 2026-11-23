@@ -17,7 +17,8 @@
 ;; reports the required ones that are missing. Var handles are opaque: the
 ;; library only passes back to the adapter what the adapter handed out.
 (ns cohost.adapter
-    (:require [cohost.scan :as scan])
+    (:require
+     [clojure.string :as str] [cohost.scan :as scan])
   ;; names defined here that the host's core also has (let-go warns of each)
     #?(:cljs (:refer-clojure :exclude [iter])
        :lg (:refer-clojure :exclude [upper-case lower-case lazy-seq* delay* close! index-of lazy-seq?])))
@@ -265,7 +266,7 @@
 ;; class is asked, cohost\adapter\SB for SB)
 (defn- generic-sb? [x] #?(:phel (php/is_a x "cohost\\adapter\\SB") :jank (standin? 'SB x) :default (instance? SB x)))
 (defn- generic-sb-append! [sb x] (swap! (:state sb) conj (str x)) sb)
-(defn- generic-sb-str [sb] (apply str @(:state sb)))
+(defn- generic-sb-str [sb] (str/join @(:state sb)))
 
 #?(:jank (defn ->MList [state] (standin 'MList {:state state})) :default (defrecord MList [state]))
 (defn mutable-list "A java.util.ArrayList stand-in." [] (->MList (atom [])))
@@ -362,7 +363,7 @@ namespace cohost_err {
          :refer-all! #?(:cljs (unsupported :refer-all!) :phel (unsupported :refer-all!) :cljd (unsupported :refer-all!) :default (fn [into-ns from-ns] (binding [*ns* (the-ns into-ns)] (refer from-ns))))
          :var-get #?(:cljs (fn [h] (deref h)) :cljd (fn [h] (deref h)) :default (fn [h] (var-get h)))
          :var-raw-root #?(:cljs (fn [h] (deref h)) :cljd (fn [h] (deref h)) :default (fn [h] (var-get h)))
-         :var-meta (fn [h] (meta h))
+         :var-meta meta
          :alter-var-meta! #?(:cljs (unsupported :alter-var-meta!) :cljd (unsupported :alter-var-meta!) :default (fn [h f & args] (apply alter-meta! h f args)))
          :alter-var-root! #?(:cljs (unsupported :alter-var-root!) :default (fn [h f] (alter-var-root h f)))
          :macro-var? (fn [h] (true? (:macro (meta h))))
@@ -461,8 +462,8 @@ namespace cohost_err {
          :protocol-impl-style :clj
          :type-method-style :jvm
          :host-method (fn [_ _] nil)
-         :char-code (fn [c] (int c))
-         :meta (fn [x] (meta x))
+         :char-code int
+         :meta meta
          :java-statics {}
          :host-class (fn [_] nil)
          :host-instance? nil
@@ -521,8 +522,8 @@ namespace cohost_err {
          :nan? (fn [x] (and (number? x) (not= x x)))
          :infinite? (fn [x] (and (number? x) (or (= x +inf) (= x (- +inf)))))
          :format nil
-         :re-source (fn [re] (str re))
-         :re-pattern (fn [s] (re-pattern s))
+         :re-source str
+         :re-pattern re-pattern
          :iterator (fn [_] nil)
          :iterator? (fn [_] false)
     ;; an object of a type user code defined as a java.util.Iterator: its own members
@@ -534,8 +535,8 @@ namespace cohost_err {
                                 (let [d (ex-data x)] (and (some? d) (not (contains? d :cohost/class))))))
          :exception-string nil
          :double-str nil
-         :exception-message (fn [e] (ex-message e))
-         :exception-cause (fn [e] (ex-cause e))
+         :exception-message ex-message
+         :exception-cause ex-cause
          :ex-trace (fn [_e] [])
          :to-array (fn [coll] #?(:clje (throw (ex-info "cohost: this host provides no :to-array" {:capability :to-array}))
                                  :default (to-array coll)))
@@ -549,7 +550,7 @@ namespace cohost_err {
     ;; mis-type every value of the host's own kind)
          :volatile? (fn [_] false)
          :delay? (fn [_] false)
-         :reduced? (fn [x] (reduced? x))
+         :reduced? reduced?
          :deref? (fn [_] false)
          :pending? (fn [_] false)
          :char? (fn [_] false)
@@ -558,9 +559,9 @@ namespace cohost_err {
          :bigint? (fn [_] false)
          :ratio? (fn [_] false)
          :decimal? (fn [_] false)
-         :indexed? (fn [x] (vector? x))
-         :counted? (fn [x] (coll? x))
-         :reversible? (fn [x] (vector? x))
+         :indexed? vector?
+         :counted? coll?
+         :reversible? vector?
          :sorted? (fn [_] false)
          :sorted-comparator (fn [_] compare)
          :multifn? (fn [_] false)

@@ -11,16 +11,17 @@
 ;; The result is a report: how many forms booted, which were taken from the
 ;; host, which were skipped, and every form that failed with its error.
 (ns cohost.boot
-    (:require [cohost.adapter :as host]
-              [cohost.rewrite :as rw]
-              [cohost.shim :as shim]
-              [cohost.policy :as policy]
-              [cohost.memory :as memory]
-              [cohost.thread :as thread]
-              [cohost.atom :as atom-layer]
-              [cohost.http :as http]
-              [cohost.io :as io]
-              [cohost.scan :as scan]))
+    (:require
+     [clojure.string :as str] [cohost.adapter :as host]
+     [cohost.rewrite :as rw]
+     [cohost.shim :as shim]
+     [cohost.policy :as policy]
+     [cohost.memory :as memory]
+     [cohost.thread :as thread]
+     [cohost.atom :as atom-layer]
+     [cohost.http :as http]
+     [cohost.io :as io]
+     [cohost.scan :as scan]))
 
 (def core-ns "The namespace the stock core.clj boots into." 'cohost.core)
 ;; the session's user namespace is `user`, as a REPL's is -- except on
@@ -345,14 +346,12 @@
    is an unresolved C++ symbol there), so :cohost/wrapped must not depend
    on which load path interned the var."
        []
-       (let [resolve* (or (get (host/core-extras) 'ns-resolve)
-                          (some-> (host/resolve-core 'ns-resolve) host/var-root))]
-            (when resolve*
-                  (fn [sym]
-                      (host/try-all (fn [] (let [v (resolve* (host/current-ns) sym)]
-                                                (when (host/var?* v)
-                                                      (ensure-macro-wrapped! v)
-                                                      v))))))))
+       (when-let [resolve* (or (get (host/core-extras) 'ns-resolve)
+                               (some-> (host/resolve-core 'ns-resolve) host/var-root))] (fn [sym]
+                                                                                            (host/try-all (fn [] (let [v (resolve* (host/current-ns) sym)]
+                                                                                                                      (when (host/var?* v)
+                                                                                                                            (ensure-macro-wrapped! v)
+                                                                                                                            v)))))))
 
 (defn- var-meta*
        "A resolved var's metadata (a ClojureScript Var object carries its own)."
@@ -881,7 +880,7 @@
            (loop [i 0 start 0 out []]
       ;; past the last ^" nothing more is cut (most sources have none)
                  (if (or (>= i n) (> i last-tag))
-                     (if (empty? out) src (apply str (conj out (subs src start n))))
+                     (if (empty? out) src (str/join (conj out (subs src start n))))
                      (let [c (nth cs i)]
                           (if (= c \\)
                               (recur (+ i 2) start out)
@@ -902,10 +901,10 @@
        [cs n i]
        (loop [j i prev nil in-class? false out [] changed? false]
              (if (>= j n)
-                 [(apply str out) changed? j]
+                 [(str/join out) changed? j]
                  (let [c (nth cs j)]
                       (cond (= c \\) (recur (+ j 2) nil in-class? (conj out c (nth cs (min (dec n) (inc j)))) changed?)
-                            (and (= c \") (not in-class?)) [(apply str out) changed? (inc j)]
+                            (and (= c \") (not in-class?)) [(str/join out) changed? (inc j)]
                             (= c \[) (recur (inc j) c true (conj out c) changed?)
                             (= c \]) (recur (inc j) c false (conj out c) changed?)
                             (and (= c \+) (not in-class?) (contains? #{\+ \* \? \}} prev))
@@ -937,7 +936,7 @@
                  cs (host/string-chars src)]
                 (loop [i 0 start 0 out nil]
                       (if (>= i n)
-                          (if (nil? out) src (apply str (conj out (subs src start n))))
+                          (if (nil? out) src (str/join (conj out (subs src start n))))
                           (let [c (nth cs i)]
                                (cond (= c \;) (recur (scan-line-end cs n (inc i)) start out)
                                      (= c \") (recur (scan-string-end cs n (inc i)) start out)
@@ -1119,10 +1118,7 @@
                         ([coll f]
                          (if (instance? clojure.lang.IReduce coll)
                              (.reduce ^clojure.lang.IReduce coll f)
-                             (let [s (seq coll)]
-                                  (if s
-                                      (clojure.core.protocols/internal-reduce (next s) f (first s))
-                                      (f)))))
+                             (if-let [s (seq coll)] (clojure.core.protocols/internal-reduce (next s) f (first s)) (f))))
                         ([coll f val]
                          (.reduce ^clojure.lang.IReduceInit coll f val))))
           :default nil))
@@ -1220,7 +1216,7 @@
             (atom-layer/registry-atom)
             (atom-layer/set-fill! true)
             (let [nses (into #{core-ns user-ns}
-                             (map (fn [n] (symbol n)))
+                             (map symbol)
                              @(:loader-nses ctx))]
                  (doseq [ns-sym nses]
                         (atom-layer/publish-namespace! ns-sym)))
@@ -1301,7 +1297,7 @@
       (let [filled (into (set (keys shim/core-fills)) (keys shim/core-fill-macros))]
            (when (seq filled)
                  (doseq [ns-sym (into [(symbol (str user-ns))]
-                                      (map (fn [n] (symbol n)))
+                                      (map symbol)
                                       @(:loader-nses (ctx)))]
                         (host/try-all (fn [] (host/refer! ns-sym core-ns {:only (vec filled)}))))))
       report)
@@ -1559,7 +1555,7 @@
 (defn- lib-path
        "clojure.core.reducers -> clojure/core/reducers; my-lib.core -> my_lib/core"
        [lib]
-       (apply str (map (fn [c] (let [c (str c)] (cond (= c ".") "/" (= c "-") "_" :else c))) (str lib))))
+       (str/join (map (fn [c] (let [c (str c)] (cond (= c ".") "/" (= c "-") "_" :else c))) (str lib))))
 
 (defn- try-slurp [path]
        (host/try-all (fn [] (host/slurp-file path))))
@@ -1810,10 +1806,10 @@
              base (loop [i (dec (count stock))]
                         (cond (neg? i) ""
                               (= \. (nth stock i))
-                              (str (apply str (map (fn [c] (if (= c \.) \/ c)) (subs stock 0 i))) "/")
+                              (str (str/join (map (fn [c] (if (= c \.) \/ c)) (subs stock 0 i))) "/")
                               :else (recur (dec i))))
              res (if (and (pos? (count p)) (= "/" (subs p 0 1))) (subs p 1) (str base p))
-             lib (symbol (apply str (map (fn [c] (if (= c \/) \. c)) res)))
+             lib (symbol (str/join (map (fn [c] (if (= c \/) \. c)) res)))
              exts (scan/source-exts (scan/ranking (:name (host/current))))]
             (boolean
              (some (fn [root]
@@ -1919,16 +1915,9 @@
                                          (swap! state assoc-in [:libs lib] {:ns target :status :loading :path path :ok 0 :error 0 :skipped 0})
                                          (swap! (:renames (ctx)) assoc (str lib) (str target))
                                          (swap! state assoc :loading lib)
-                                         (let [first-err (try (host/try-all (fn [] (load-source! lib src from-ns path))
-                                                                            (fn [e] (forget!) (snap! {:op :lib-fail :lib lib}) (throw e)))
-                                                              (finally (swap! state assoc :loading outer)))]
-             ;; a non-stock library whose load recorded a failure (see
-             ;; load-source!) fails the load with that failure, as the
-             ;; JVM's loader would; the lib is forgotten, as on a throw
-                                              (when first-err
-                                                    (forget!)
-                                                    (snap! {:op :lib-fail :lib lib})
-                                                    (throw first-err)))
+                                         (when-let [first-err (try (host/try-all (fn [] (load-source! lib src from-ns path))
+                                                                                 (fn [e] (forget!) (snap! {:op :lib-fail :lib lib}) (throw e)))
+                                                                   (finally (swap! state assoc :loading outer)))] (forget!) (snap! {:op :lib-fail :lib lib}) (throw first-err))
                                          (when-not (contains? @(:loader-nses (ctx)) (str target))
                                                    (forget!)
                                                    (snap! {:op :lib-fail :lib lib})

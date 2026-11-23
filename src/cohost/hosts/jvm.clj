@@ -2,9 +2,10 @@
     "JVM Clojure as a host: the reference adapter. Booting the stock core.clj on
    the JVM through cohost maps clojure.lang onto clojure.lang, which
    exercises the codemod, the policy and the boot with no host unknowns."
-    (:require [clojure.string]
-              [cohost.adapter :as adapter]
-              [cohost.hosts.java :as java]))
+    (:require
+     [clojure.math] [clojure.string]
+     [cohost.adapter :as adapter]
+     [cohost.hosts.java :as java]))
 
 (defn- read-forms [src cb]
        (let [r (java.io.PushbackReader. (java.io.StringReader. src))]
@@ -80,8 +81,8 @@
       :dynamic-var? (fn [v] (.isDynamic ^clojure.lang.Var v))
       :empty-queue (fn [] clojure.lang.PersistentQueue/EMPTY)
       :namespace? (fn [x] (instance? clojure.lang.Namespace x))
-      :var-bound? (fn [v] (bound? v))
-      :var-thread-bound? (fn [v] (thread-bound? v))
+      :var-bound? bound?
+      :var-thread-bound? thread-bound?
       :var-set! (fn [v val] (.set ^clojure.lang.Var v val))
    ;; the JVM's natives are JVM Clojure's own fns, the stock ones compiled:
    ;; the shared set and what jolt answers otherwise
@@ -89,13 +90,13 @@
                       {'clojure.core/into into 'clojure.core/reverse reverse 'clojure.core/replace replace
                        'clojure.string/replace clojure.string/replace 'clojure.string/reverse clojure.string/reverse
                        'clojure.string/split clojure.string/split})
-      :lazy-seq (fn [f] (clojure.lang.LazySeq. f))
+      :lazy-seq #_{:splint/disable [lint/fn-wrapper]} (fn [f] (clojure.lang.LazySeq. f))
    ;; an ArrayChunk is no coll reduce walks: IChunk.reduce does
       :chunks (fn [] {:chunked-seq? chunked-seq? :chunk-first chunk-first :chunk-rest chunk-rest :chunk-next chunk-next
                       :chunk-buffer chunk-buffer :chunk-append chunk-append :chunk chunk :chunk-cons chunk-cons
                       :chunk? (fn [x] (instance? clojure.lang.IChunk x))
                       :chunk-reduce (fn [c f init] (.reduce ^clojure.lang.IChunk c f init))})
-      :delay (fn [f] (clojure.lang.Delay. f))
+      :delay #_{:splint/disable [lint/fn-wrapper]} (fn [f] (clojure.lang.Delay. f))
       :exception? (fn [x] (instance? Throwable x))
    ;; the trace as data; the head frames of a shim-constructed exception
    ;; are the construction machinery itself (the adapter's ex-info, the
@@ -108,9 +109,9 @@
                             []
                             (let [ctor-frame? (fn [^StackTraceElement el]
                                                   (let [c (.getClassName el)]
-                                                       (or (.startsWith c "cohost.shim$")
-                                                           (.startsWith c "cohost.adapter$")
-                                                           (.startsWith c "cohost.core$ex_info")
+                                                       (or (clojure.string/starts-with? c "cohost.shim$")
+                                                           (clojure.string/starts-with? c "cohost.adapter$")
+                                                           (clojure.string/starts-with? c "cohost.core$ex_info")
                                          ;; the apply machinery the construction
                                          ;; was reached through (a directly
                                          ;; constructed exception's trace starts
@@ -118,7 +119,7 @@
                                                            (= c "clojure.lang.AFn")
                                                            (= c "clojure.lang.RestFn")
                                                            (= c "clojure.lang.Var")
-                                                           (.startsWith c "clojure.core$apply"))))]
+                                                           (clojure.string/starts-with? c "clojure.core$apply"))))]
                                  (mapv (fn [^StackTraceElement el]
                                            [(symbol (.getClassName el)) (symbol (.getMethodName el))
                                             (.getFileName el) (.getLineNumber el)])
@@ -153,9 +154,9 @@
       :thread-bindings (fn [] (into {} (clojure.lang.Var/getThreadBindings)))
       :nano-time (fn [] (System/nanoTime))
       :current-time-millis (fn [] (System/currentTimeMillis))
-      :math-ceil (fn [x] (Math/ceil x))
-      :math-floor (fn [x] (Math/floor x))
-      :math-sqrt (fn [x] (Math/sqrt x))
+      :math-ceil (fn [x] (clojure.math/ceil x))
+      :math-floor (fn [x] (clojure.math/floor x))
+      :math-sqrt (fn [x] (clojure.math/sqrt x))
       :parse-long (fn [s] (try (Long/parseLong s) (catch NumberFormatException _ nil)))
       :parse-double (fn [s] (Double/parseDouble s))
       :nan? (fn [x] (and (number? x) (Double/isNaN (double x))))
@@ -192,21 +193,21 @@
       :transient? (fn [x] (instance? clojure.lang.ITransientCollection x))
       :lazy-seq? (fn [x] (instance? clojure.lang.LazySeq x))
       :atom? (fn [x] (instance? clojure.lang.Atom x))
-      :volatile? (fn [x] (volatile? x))
-      :delay? (fn [x] (delay? x))
-      :reduced? (fn [x] (reduced? x))
+      :volatile? volatile?
+      :delay? delay?
+      :reduced? reduced?
       :deref? (fn [x] (instance? clojure.lang.IDeref x))
       :pending? (fn [x] (instance? clojure.lang.IPending x))
-      :char? (fn [x] (char? x))
+      :char? char?
       :regex? (fn [x] (instance? java.util.regex.Pattern x))
-      :uuid? (fn [x] (uuid? x))
+      :uuid? uuid?
       :bigint? (fn [x] (or (instance? clojure.lang.BigInt x) (instance? java.math.BigInteger x)))
-      :ratio? (fn [x] (ratio? x))
-      :decimal? (fn [x] (decimal? x))
-      :indexed? (fn [x] (indexed? x))
-      :counted? (fn [x] (counted? x))
-      :reversible? (fn [x] (reversible? x))
-      :sorted? (fn [x] (sorted? x))
+      :ratio? ratio?
+      :decimal? decimal?
+      :indexed? indexed?
+      :counted? counted?
+      :reversible? reversible?
+      :sorted? sorted?
    ;; RT$DefaultComparator is a Comparator but not an IFn
       :sorted-comparator (fn [x] (let [c (.comparator ^clojure.lang.Sorted x)]
                                       (if (ifn? c) c (fn [a b] (.compare ^java.util.Comparator c a b)))))

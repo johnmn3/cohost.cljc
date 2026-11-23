@@ -338,10 +338,7 @@
              lower (str/lower-case html)
              i (or (str/index-of lower "<head") (str/index-of lower "<html"))]
             (if i
-                (let [j (str/index-of html ">" i)]
-                     (if j
-                         (str (subs html 0 (inc j)) tag (subs html (inc j)))
-                         (str tag html)))
+                (if-let [j (str/index-of html ">" i)] (str (subs html 0 (inc j)) tag (subs html (inc j))) (str tag html))
                 (str tag html))))
 
 (defn- bootstream-source
@@ -356,11 +353,8 @@
         {:html default-bootstream-page :root nil :name nil}
 
         (map? bootstream)
-        (let [text (some-> (io/resource (:resource bootstream)) slurp)]
-             (if text
-                 {:html text :root nil :name nil}
-                 (throw (ex-info (str "bootstream resource not found: " (:resource bootstream))
-                                 {:bootstream bootstream}))))
+        (if-let [text (some-> (io/resource (:resource bootstream)) slurp)] {:html text :root nil :name nil} (throw (ex-info (str "bootstream resource not found: " (:resource bootstream))
+                                                                                                                            {:bootstream bootstream})))
 
         (string? bootstream)
         (let [f (io/file bootstream)]
@@ -489,7 +483,7 @@
              (let [f (io/file root (subs (URLDecoder/decode uri-path "UTF-8") 1))
                    canon-root (.getCanonicalPath root)
                    canon (.getCanonicalPath f)]
-                  (when (and (.startsWith canon canon-root) (.isFile f)) f))))
+                  (when (and (str/starts-with? canon canon-root) (.isFile f)) f))))
 
 (defn- interop-handler
        "The /__cohost endpoints: the realm host script, the goog file
@@ -569,19 +563,16 @@
                              (if-let [f (static-file root uri)]
                                      (respond-bytes! ex 200 (assoc headers "Content-Type" (mime-for (.getName f)))
                                                      (Files/readAllBytes (.toPath f)))
-                                     (let [resp (when handler (handler req))]
-                                          (if resp
-                                              (if (= :b64 (:body-as resp))
+                                     (if-let [resp (when handler (handler req))] (if (= :b64 (:body-as resp))
                     ;; a handler answers binary traffic as base64 text
                     ;; (eve.http-server's convention: :body-as :b64)
-                                                  (respond-bytes! ex (or (:status resp) 200)
-                                                                  (merge headers (:headers resp))
-                                                                  (when (:body resp)
-                                                                        (.decode (Base64/getDecoder) ^String (:body resp))))
-                                                  (respond-text! ex (or (:status resp) 200)
-                                                                 (merge headers (:headers resp))
-                                                                 (:body resp)))
-                                              (respond-text! ex 404 headers "not found"))))))
+                                                                                     (respond-bytes! ex (or (:status resp) 200)
+                                                                                                     (merge headers (:headers resp))
+                                                                                                     (when (:body resp)
+                                                                                                           (.decode (Base64/getDecoder) ^String (:body resp))))
+                                                                                     (respond-text! ex (or (:status resp) 200)
+                                                                                                    (merge headers (:headers resp))
+                                                                                                    (:body resp))) (respond-text! ex 404 headers "not found")))))
                        (catch Throwable t
                               (try (respond-text! ex 500 {"Content-Type" "text/plain"}
                                                   (str "cohost: " (ex-message t)))
@@ -696,7 +687,7 @@
                                ["--disable-dev-shm-usage"
                                 "--no-proxy-server" "--no-first-run"
                                 "--no-default-browser-check"
-                                (str "--user-data-dir=" (.toString profile))]
+                                (str "--user-data-dir=" profile)]
                                (:args chrome-cfg)
                                [url]))
              pb (ProcessBuilder. ^java.util.List args)]
@@ -804,7 +795,7 @@
                       ;; above and shared by every call on this seat.
                       #_{:clj-kondo/ignore [:locking-suspicious-lock]} (locking (:lock state)
                                                                                 (form->data (:realm state) ns-sym form)))
-       :close! (fn [state] (close-browser-state! state))})
+       :close! close-browser-state!})
 
 ;; ---------------------------------------------------------------------------
 

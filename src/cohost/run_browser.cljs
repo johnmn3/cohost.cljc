@@ -2,11 +2,12 @@
     "The browser entry: boot the stock core.clj in the page (self-hosted
    ClojureScript), print the report and the battery to the console and to
    the page. core.clj is fetched from resources/ relative to the page."
-    (:require [cohost.hosts.cljs]
-              [cohost.boot :as boot]
-              [cohost.battery :as battery]
-              [cohost.lib-battery :as lib-battery]
-              [cohost.bench :as bench]))
+    (:require
+     [clojure.string :as str] [cohost.hosts.cljs]
+     [cohost.boot :as boot]
+     [cohost.battery :as battery]
+     [cohost.lib-battery :as lib-battery]
+     [cohost.bench :as bench]))
 
 (enable-console-print!)
 
@@ -29,7 +30,7 @@
                     (do (battery/run-battery! boot/eval-str)
                         (lib-battery/run-lib-battery! boot/eval-str)))
                 (println (str "elapsed: " (js/Math.round (- (.now js/performance) t0)) " ms"))
-                (append! (apply str (interpose "\n" @lines)))
+                (append! (str/join "\n" @lines))
                 (set! (.-clojureHostDone js/window) true))))
 
 (set! (.-onload js/window) run)

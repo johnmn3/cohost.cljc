@@ -57,7 +57,7 @@
       "~" "_TILDE_" "^" "_CARET_" ":" "_COLON_"})
 
 (defn- munge-name [s]
-       (apply str (map (fn [ch] (get munge-table ch ch)) (str s))))
+       (string/join (map (fn [ch] (get munge-table ch ch)) (str s))))
 
 ;; ---------------------------------------------------------------------
 ;; the registry
@@ -181,7 +181,7 @@
        (loop [j (inc i) sb []]
              (let [c (nth cs j)]
                   (cond
-                   (= c "\"") [(apply str sb) (inc j)]
+                   (= c "\"") [(string/join sb) (inc j)]
                    (= c "\\")
                    (let [e (nth cs (inc j))]
                         (case e
@@ -192,7 +192,7 @@
                               "f" (recur (+ j 2) (conj sb "\f"))
                               "\\" (recur (+ j 2) (conj sb "\\"))
                               "\"" (recur (+ j 2) (conj sb "\""))
-                              "u" (recur (+ j 6) (conj sb (js/String.fromCharCode (js/parseInt (apply str (subvec cs (+ j 2) (+ j 6))) 16))))
+                              "u" (recur (+ j 6) (conj sb (js/String.fromCharCode (js/parseInt (string/join (subvec cs (+ j 2) (+ j 6))) 16))))
                               (recur (+ j 2) (conj sb e))))
                    :else (recur (inc j) (conj sb c))))))
 
@@ -347,7 +347,7 @@
                   [(into {} (map (fn [[k v]] [(if (and (keyword? k) (not (namespace k))) (keyword prefix (name k)) k) v]) m)) j2])
              (= c "#")
              (let [j (token-end cs (+ i 2))
-                   tok (apply str (subvec cs (+ i 2) j))]
+                   tok (string/join (subvec cs (+ i 2) j))]
                   [(symbol "cohost.squint-consts" (case tok
                                                         "Inf" "POSITIVE_INFINITY"
                                                         "-Inf" "NEGATIVE_INFINITY"
@@ -399,7 +399,7 @@
                        [(with-meta* f mm) j2])
                   (= c "\\")
                   (let [j (token-end cs (inc i))
-                        tok (apply str (subvec cs (inc i) j))]
+                        tok (string/join (subvec cs (inc i) j))]
                        [(js/String. (or (get char-names tok)
                                         (cond
                                          (string/starts-with? tok "u") (js/String.fromCharCode (js/parseInt (subs tok 1) 16))
@@ -409,7 +409,7 @@
                   (= c "#") (read-dispatch cs i @cur-ns)
                   :else
                   (let [j (token-end cs i)
-                        tok (apply str (subvec cs i j))]
+                        tok (string/join (subvec cs i j))]
                        [(read-token tok @cur-ns) j])))))
 
 (defn- read-forms-impl [src cb]
@@ -440,11 +440,10 @@
        [bf]
        (cond
         (symbol? bf) (if (or (= bf '_) (namespace bf)) #{} #{bf})
-        (vector? bf) (into #{} (mapcat binding-names bf))
-        (map? bf) (into #{}
-                        (concat (mapcat binding-names (keys bf))
-                                (when (symbol? (:as bf)) [(:as bf)])
-                                (mapcat (fn [k] (filter symbol? (get bf k))) [:keys :syms])))
+        (vector? bf) (set (mapcat binding-names bf))
+        (map? bf) (set (concat (mapcat binding-names (keys bf))
+                               (when (symbol? (:as bf)) [(:as bf)])
+                               (mapcat (fn [k] (filter symbol? (get bf k))) [:keys :syms])))
         :else #{}))
 
 (defn- qualify-sym [ns-sym locals s]
@@ -530,7 +529,7 @@
                                    arities)))
                   (or (= head 'letfn*) (= head 'letfn))
                   (let [specs (second form)
-                        names (into locals (map (comp first) specs))
+                        names (into locals (map first specs))
                         new-specs (mapv (fn [spec]
                                             (let [params (second spec)
                                                   locals' (into names (binding-names params))]
@@ -553,7 +552,7 @@
                   :else (apply list (map #(qualify % ns-sym locals) form)))))
         (vector? form) (mapv #(qualify % ns-sym locals) form)
         (map? form) (into {} (map (fn [[k v]] [(qualify k ns-sym locals) (qualify v ns-sym locals)]) form))
-        (set? form) (into #{} (map #(qualify % ns-sym locals) form))
+        (set? form) (set (map #(qualify % ns-sym locals) form))
         :else form))
 
 ;; ---------------------------------------------------------------------
@@ -689,7 +688,7 @@
                             ")"))
                   (or (= hname "letfn*") (= hname "letfn"))
                   (let [specs (second form)
-                        names (into locals (map (comp first) specs))]
+                        names (into locals (map first specs))]
                        (str "(letfn* ["
                             (string/join " "
                                          (map (fn [spec]
@@ -942,7 +941,7 @@
                 (let [frames @binding-frames]
                      (loop [i (dec (count frames))]
                            (cond
-                            (< i 0) (var-value ns-sym sym)
+                            (neg? i) (var-value ns-sym sym)
                             (contains? (nth frames i) h) (get (nth frames i) h)
                             :else (recur (dec i)))))
                 (var-value ns-sym sym))))
@@ -991,14 +990,14 @@
       :lazy-seq? (fn [x] (instance? (aget sqcore "LazySeq") x))
       :atom? (fn [x] (instance? (aget sqcore "Atom") x))
       :parse-long (fn [s] (let [n (js/parseInt s 10)] (when-not (js/isNaN n) n)))
-      :parse-double (fn [s] (js/parseFloat s))
+      :parse-double js/parseFloat
       :nano-time (fn [] (long (* 1000000 (.now js/performance))))
       :current-time-millis (fn [] (.now js/Date))
-      :math-ceil (fn [x] (js/Math.ceil x))
-      :math-floor (fn [x] (js/Math.floor x))
-      :math-sqrt (fn [x] (js/Math.sqrt x))
-      :upper-case (fn [s] (.toUpperCase (str s)))
-      :lower-case (fn [s] (.toLowerCase (str s)))
+      :math-ceil js/Math.ceil
+      :math-floor js/Math.floor
+      :math-sqrt js/Math.sqrt
+      :upper-case (fn [s] (string/upper-case (str s)))
+      :lower-case (fn [s] (string/lower-case (str s)))
       :re-find-at re-find-at
       :re-match-full re-match-full
       :re-group-count re-group-count
@@ -1031,7 +1030,7 @@
                    (let [old @cur-ns]
                         (reset! cur-ns ns-sym)
                         (try (thunk) (finally (reset! cur-ns old)))))
-      :ensure-bare-ns! (fn [ns-sym] (ensure-ns! ns-sym))
+      :ensure-bare-ns! ensure-ns!
       :eval (fn [form] (eval-form-impl (expand-all-top form)))
       :ns-interns (fn [ns-sym]
                       (into {} (map (fn [[sym _]] [sym (handle ns-sym sym)])
@@ -1083,8 +1082,8 @@
       :mark-macro! (fn [h]
                        (swap! reg assoc-in [(:ns h) :vars (:name h) :macro?] true)
                        h)
-      :var-ns (fn [h] (:ns h))
-      :var-sym (fn [h] (:name h))
+      :var-ns :ns
+      :var-sym :name
       :var? (fn [x] (true? (:cohost/var (meta x))))
       :namespace? (fn [x] (and (symbol? x) (contains? @reg x)))
       :dynamic-var? (fn [h] (true? (:dynamic? (var-entry (:ns h) (:name h)))))
@@ -1100,7 +1099,7 @@
                     (let [frames @binding-frames]
                          (loop [i (dec (count frames))]
                                (cond
-                                (< i 0) (set-var-value! (:ns h) (:name h) v)
+                                (neg? i) (set-var-value! (:ns h) (:name h) v)
                                 (contains? (nth frames i) h)
                                 (swap! binding-frames assoc i (assoc (nth frames i) h v))
                                 :else (recur (dec i)))))
@@ -1164,7 +1163,7 @@
                        (aset core-obj k (aget wrapped k)))))
   ;; squint core has no munge; the AOT shim's :cljs arms call the
   ;; bare global (squint emits it unqualified), so supply it here
-      (aset js/globalThis "munge" (fn [x] (munge-name x)))
+      (aset js/globalThis "munge" munge-name)
       (ensure-ns! 'cohost.squint-consts)
       (doseq [[sym v] squint-consts] (intern-in! 'cohost.squint-consts sym v))
       (adapter/install! adapter))
