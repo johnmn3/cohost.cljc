@@ -12,11 +12,11 @@ the real classpath first (src + resources + ../eve/src + clojure
 
 ## Buckets
 
-| Bucket | Paths | Files | Role |
-|---|---|---|---|
-| own | `src/` | 52 clj-family (kondo reads 55 incl. .cljd/.clje) | the campaign: full no-cheats fix to zero |
-| vendored | `resources/cohost/clojure-1.12.0/` | 53 | stock Clojure 1.12.0, byte-comparable to upstream — proposal below |
-| dev (info) | `dev/` | 165–170 | bb load-file tooling; counted, proposal below, NOT in this gate |
+| Bucket     | Paths                              | Files                                            | Role                                                               |
+| ---------- | ---------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------ |
+| own        | `src/`                             | 52 clj-family (kondo reads 55 incl. .cljd/.clje) | the campaign: full no-cheats fix to zero                           |
+| vendored   | `resources/cohost/clojure-1.12.0/` | 53                                               | stock Clojure 1.12.0, byte-comparable to upstream — proposal below |
+| dev (info) | `dev/`                             | 165–170                                          | bb load-file tooling; counted, proposal below, NOT in this gate    |
 
 src/ also carries host files in languages no checker reads
 (.cljd/.clje are read by kondo 2026; .jank/.lpy/.lg/.phel/.php/
@@ -26,31 +26,31 @@ src/ also carries host files in languages no checker reads
 
 ### clj-kondo: 214 findings — 80 errors · 123 warnings · 11 info
 
-| rule | level | n |
-|---|---|---|
-| unresolved-symbol | error | 61 |
-| invalid-arity | error | 15 |
-| syntax | error | 2 |
-| private-call | error | 1 |
-| type-mismatch | error | 1 |
-| unused-binding | warning | 48 |
-| redefined-var | warning | 21 |
-| unused-value | warning | 14 |
-| unused-private-var | warning | 11 |
-| unresolved-namespace | warning | 8 |
-| constant-condition | warning | 5 |
-| redundant-let | warning | 4 |
-| locking-suspicious-lock | warning | 4 |
-| redundant-declare | warning | 2 |
-| redundant-do | warning | 2 |
-| loop-without-recur | warning | 2 |
-| unresolved-var | warning | 1 |
-| unused-namespace | warning | 1 |
-| unresolved-excluded-var | info | 3 |
-| redundant-primitive-coercion | info | 3 |
-| unused-excluded-var | info | 2 |
-| redundant-nested-call | info | 2 |
-| redundant-str-call | info | 1 |
+| rule                         | level   | n  |
+| ---------------------------- | ------- | -- |
+| unresolved-symbol            | error   | 61 |
+| invalid-arity                | error   | 15 |
+| syntax                       | error   | 2  |
+| private-call                 | error   | 1  |
+| type-mismatch                | error   | 1  |
+| unused-binding               | warning | 48 |
+| redefined-var                | warning | 21 |
+| unused-value                 | warning | 14 |
+| unused-private-var           | warning | 11 |
+| unresolved-namespace         | warning | 8  |
+| constant-condition           | warning | 5  |
+| redundant-let                | warning | 4  |
+| locking-suspicious-lock      | warning | 4  |
+| redundant-declare            | warning | 2  |
+| redundant-do                 | warning | 2  |
+| loop-without-recur           | warning | 2  |
+| unresolved-var               | warning | 1  |
+| unused-namespace             | warning | 1  |
+| unresolved-excluded-var      | info    | 3  |
+| redundant-primitive-coercion | info    | 3  |
+| unused-excluded-var          | info    | 2  |
+| redundant-nested-call        | info    | 2  |
+| redundant-str-call           | info    | 1  |
 
 Worst files: memory_eve.clj 57 · shim.cljc 39 · io.cljc 31 ·
 aot.cljc 15 · hosts/clojuredart.cljd 10 · hosts/squint.cljs 9.
@@ -72,21 +72,21 @@ decided per class during the campaign and named in the config header.
 
 ### Splint: 1,546 warnings over 52 files
 
-| rule | n | rule | n |
-|---|---|---|---|
-| style/def-fn | 391 | lint/let-if | 8 |
-| lint/prefer-method-values | 329 | style/redundant-nested-call | 5 |
-| naming/lisp-case | 326 | lint/redundant-call | 5 |
-| lint/fn-wrapper | 154 | lint/let-when | 5 |
-| style/prefer-clj-math | 57 | style/redundant-let | 4 |
-| lint/identical-branches | 57 | style/prefer-condp | 4 |
-| style/apply-str | 55 | naming/conventional-aliases | 4 |
-| style/prefer-clj-string | 43 | lint/locking-object | 4 |
-| lint/catch-throwable | 29 | style/minus-one | 3 |
-| style/tostring | 10 | style/filter-vec-filterv | 3 |
-| style/not-some-pred | 10 | lint/assoc-fn | 3 |
-| style/apply-str-interpose | 9 | plus 13 rules at 1–2 each | 21 |
-| lint/into-literal | 9 | | |
+| rule                      | n   | rule                        | n  |
+| ------------------------- | --- | --------------------------- | -- |
+| style/def-fn              | 391 | lint/let-if                 | 8  |
+| lint/prefer-method-values | 329 | style/redundant-nested-call | 5  |
+| naming/lisp-case          | 326 | lint/redundant-call         | 5  |
+| lint/fn-wrapper           | 154 | lint/let-when               | 5  |
+| style/prefer-clj-math     | 57  | style/redundant-let         | 4  |
+| lint/identical-branches   | 57  | style/prefer-condp          | 4  |
+| style/apply-str           | 55  | naming/conventional-aliases | 4  |
+| style/prefer-clj-string   | 43  | lint/locking-object         | 4  |
+| lint/catch-throwable      | 29  | style/minus-one             | 3  |
+| style/tostring            | 10  | style/filter-vec-filterv    | 3  |
+| style/not-some-pred       | 10  | lint/assoc-fn               | 3  |
+| style/apply-str-interpose | 9   | plus 13 rules at 1–2 each   | 21 |
+| lint/into-literal         | 9   |                             |    |
 
 The three biggest classes are interop-shaped, and each gets a
 verdict before any batch runs: naming/lisp-case (the java shim

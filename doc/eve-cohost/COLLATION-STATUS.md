@@ -83,7 +83,7 @@ release branch of cohost."
   - `booted as stock: 465   from host: 202   natives: 66   skipped: 58   errors: 0`
   - `battery: 221/221 stock behaviors pass`
   - `libraries: 62/62 cases pass across 12 clojure.* libraries`
-  The release gate bar (221/221 + 62/62) is met on the merged tree.
+    The release gate bar (221/221 + 62/62) is met on the merged tree.
 - **Jank battery — OWED, with reason (not a quiet skip).** Box load
   average 24.41 / 17.32 / 16.41 on 4 cores / 8 GB at gate time, with
   the flagship, STM and shootout lanes live; a full jank AOT battery
@@ -126,19 +126,20 @@ documentation landing. Nothing moved to cohost main.
 
 Operator's order (~3:45 AM ET): the two owed rows were put on a lane
 with the build box. Outcomes (full record: RELEASE-MANIFEST.md Gates
-+ PENDING-REBIND, RELEASE-CLEAR-STATUS.md; logs in
-`logs-release-clear/`):
 
-- **Jank battery re-run on this merged tree — DONE** (j.slaa.us,
+- PENDING-REBIND, RELEASE-CLEAR-STATUS.md; logs in
+  `logs-release-clear/`):
+
+* **Jank battery re-run on this merged tree — DONE** (j.slaa.us,
   Eve sibling at the 0.9.3 pin `76fd94c3dc`): errors 0, battery
   219/221, libraries 62/62, `shim.o` produced; verdict lines
   byte-identical to `logs-093/jank-battery.log`.
-- **Unit 9's seam-8 verdict — IN**: the load fault does not recur on
+* **Unit 9's seam-8 verdict — IN**: the load fault does not recur on
   the released bindings; both seat processes reach program
   evaluation and stop at one named program-side form
   (`dev/eve_http_programs.cljc:187`, `(.trim ^String s)`), 0/36 as
   printed. The remaining fix is the harness owner's (Agent 3).
-- **Documentation chapters — LANDED** (guide 12–15 + README index;
+* **Documentation chapters — LANDED** (guide 12–15 + README index;
   commit `5c79e7c`), spot-checked against the collated tree; unit 8's
   coverage row reads LANDED in the landed chapter — the named flip
   is discharged.

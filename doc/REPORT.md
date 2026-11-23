@@ -15,16 +15,16 @@ across the twelve libraries (expected values computed on the JVM). Numbers
 are from this box (4 vCPU, Linux), one run each, measured while other work
 shared the machine (the wall times are upper bounds).
 
-| host | version | core.clj: stock / from host / skipped / errors | core battery | library battery | wall |
-|---|---|---|---:|---:|---:|
-| jolt (Chez Scheme) | v0.8.23 prebuilt | 537 / 191 / 63 / **0** | **133/133** | **61/61** | 17 s |
-| JVM Clojure (reference adapter) | 1.12.0 | 539 / 194 / 58 / **0** | **133/133** | **61/61** | 18 s |
-| basilisp (Python 3.13) | 0.5.1 | 565 / 130 / 96 / **0** | **131/133** | **61/61** | 8 min 3 s |
-| ClojureScript, self-hosted, Node 24 | 1.12.42 | 572 / 79 / 140 / **0** | **131/133** | **61/61** | 33 s with the compile |
-| ClojureScript, self-hosted, Chromium | 1.12.42 | 572 / 79 / 140 / **0** | **131/133** | **61/61** | 19 s in the page |
-| ClojureWasm (Zig), measured 2026-10-31 on the 139-case battery | v1.15.4 prebuilt | 555 / 145 / 91 / **0** | **137/139** | **61/61** | 86 s boot |
-| Phel (PHP 8.5), measured 2026-10-31 on the 139-case battery | v0.54.0 phar | 591 / 73 / 127 / **0** | **139/139** | **61/61** | 41 s boot |
-| let-go (Go), measured 2026-10-31 on the 139-case battery | v1.13.0 prebuilt | 569 / 105 / 117 / **0** | **137/139** | **61/61** | 12 s boot |
+| host                                                           | version          | core.clj: stock / from host / skipped / errors | core battery | library battery |                  wall |
+| -------------------------------------------------------------- | ---------------- | ---------------------------------------------- | -----------: | --------------: | --------------------: |
+| jolt (Chez Scheme)                                             | v0.8.23 prebuilt | 537 / 191 / 63 / **0**                         |  **133/133** |       **61/61** |                  17 s |
+| JVM Clojure (reference adapter)                                | 1.12.0           | 539 / 194 / 58 / **0**                         |  **133/133** |       **61/61** |                  18 s |
+| basilisp (Python 3.13)                                         | 0.5.1            | 565 / 130 / 96 / **0**                         |  **131/133** |       **61/61** |             8 min 3 s |
+| ClojureScript, self-hosted, Node 24                            | 1.12.42          | 572 / 79 / 140 / **0**                         |  **131/133** |       **61/61** | 33 s with the compile |
+| ClojureScript, self-hosted, Chromium                           | 1.12.42          | 572 / 79 / 140 / **0**                         |  **131/133** |       **61/61** |      19 s in the page |
+| ClojureWasm (Zig), measured 2026-10-31 on the 139-case battery | v1.15.4 prebuilt | 555 / 145 / 91 / **0**                         |  **137/139** |       **61/61** |             86 s boot |
+| Phel (PHP 8.5), measured 2026-10-31 on the 139-case battery    | v0.54.0 phar     | 591 / 73 / 127 / **0**                         |  **139/139** |       **61/61** |             41 s boot |
+| let-go (Go), measured 2026-10-31 on the 139-case battery       | v1.13.0 prebuilt | 569 / 105 / 117 / **0**                        |  **137/139** |       **61/61** |             12 s boot |
 
 Every top-level count is out of 791: core.clj's 719 forms, the 37-var prelude
 (the dynamic vars the JVM runtime creates before core.clj loads) and the 35
@@ -46,20 +46,20 @@ source, `clojure.X` booting into `cohost.X`, and its cases are compared with
 require (`src/cohost/lib_battery.cljc`; regenerate, never edit, its expected
 values).
 
-| library | cases | jolt | JVM | basilisp | ClojureScript | ClojureWasm | Phel | let-go |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| clojure.walk | 7 | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
-| clojure.set | 5 | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
-| clojure.string | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 10 |
-| clojure.zip | 7 | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
-| clojure.data | 5 | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
-| clojure.edn | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
-| clojure.template | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
-| clojure.test | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
-| clojure.math | 7 | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
-| clojure.stacktrace | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
-| clojure.repl | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
-| clojure.spec.alpha 0.5.238 | 6 | 6 | 6 | 6 | 6 | 6 | 6 | 6 |
+| library                    | cases | jolt | JVM | basilisp | ClojureScript | ClojureWasm | Phel | let-go |
+| -------------------------- | ----: | ---: | --: | -------: | ------------: | ----------: | ---: | -----: |
+| clojure.walk               |     7 |    7 |   7 |        7 |             7 |           7 |    7 |      7 |
+| clojure.set                |     5 |    5 |   5 |        5 |             5 |           5 |    5 |      5 |
+| clojure.string             |    10 |   10 |  10 |       10 |            10 |          10 |   10 |     10 |
+| clojure.zip                |     7 |    7 |   7 |        7 |             7 |           7 |    7 |      7 |
+| clojure.data               |     5 |    5 |   5 |        5 |             5 |           5 |    5 |      5 |
+| clojure.edn                |     4 |    4 |   4 |        4 |             4 |           4 |    4 |      4 |
+| clojure.template           |     2 |    2 |   2 |        2 |             2 |           2 |    2 |      2 |
+| clojure.test               |     3 |    3 |   3 |        3 |             3 |           3 |    3 |      3 |
+| clojure.math               |     7 |    7 |   7 |        7 |             7 |           7 |    7 |      7 |
+| clojure.stacktrace         |     2 |    2 |   2 |        2 |             2 |           2 |    2 |      2 |
+| clojure.repl               |     3 |    3 |   3 |        3 |             3 |           3 |    3 |      3 |
+| clojure.spec.alpha 0.5.238 |     6 |    6 |   6 |        6 |             6 |           6 |    6 |      6 |
 
 Every host loads all twelve. clojure.repl's `source` and
 `set-break-handler!` are JVM facilities (class-loader resources,
@@ -147,10 +147,10 @@ core, **each side in its own process**. The corpus is jolt's
 side has its own process because both share the host's namespace registry,
 and a row that makes a namespace on one side used to meet it on the other.
 
-| | pass | fail | error |
-|---|---:|---:|---:|
-| the stock core, booted on jolt | **4,401** | 418 | 123 |
-| jolt's own hand-written core | 4,468 | 417 | 57 |
+|                                |      pass | fail | error |
+| ------------------------------ | --------: | ---: | ----: |
+| the stock core, booted on jolt | **4,401** |  418 |   123 |
+| jolt's own hand-written core   |     4,468 |  417 |    57 |
 
 The stock core's count across the corpus campaign (M-11): 4,304 at the
 baseline, then 4,355 after the seq classes, the charset layer and the Var
@@ -232,7 +232,7 @@ grouped by cause:
   the shim's sorted collections.
 - **`with-open` (4).** Close order and visibility for a real Closeable
   through the member machinery (its sibling row, a map's `:close` fn
-  *not* being called, the stock core answers as the JVM does).
+  _not_ being called, the stock core answers as the JVM does).
 - **Syntax-quote inside deftype method bodies (3).** An unquote in a
   method template is left as `(unquote x)` where the JVM splices it: the
   codemod walks method templates on a different path than fn bodies.
@@ -260,6 +260,7 @@ grouped by cause:
 The other 433 rows the stock core does not pass, jolt's own core does not
 pass either; they are the corpus's reach exceeding both cores, not a
 cohost gap.
+
 ## The review, and what it changed
 
 An independent review read the codemod, the shim, the loader and the
@@ -763,8 +764,7 @@ arose (measured 2026-10-31 ET):
   distinction (a CJK ideograph has none); glibc's wide classification under
   C.UTF-8 agrees with Java on letters but is likewise ASCII-only for
   digits, so no host static closes the row.
-- jank's own `clojure.core/format` is a stub: `(format "%5.2f|%,d" 3.14159
-  1234567)` returns the format string itself, unformatted. It does not
+- jank's own `clojure.core/format` is a stub: `(format "%5.2f|%,d" 3.14159 1234567)` returns the format string itself, unformatted. It does not
   implement java.util.Formatter, so it is not opted in as a Step 4 native
   (the shim's format carries the battery row "format is
   java.util.Formatter's"); a native that diverges is a host fact, not a
@@ -872,6 +872,7 @@ bb corpus:jolt path/to/corpus.edn
 bb corpus:jvm
 bb eval:jolt "(require '[clojure.data :as d])" '(d/diff {:a 1} {:a 2})'
 ```
+
 from the repository root, with the host on PATH (`jolt` v0.8.23 prebuilt,
 `uv tool install basilisp==0.5.1`, the `clojure` CLI for the JVM and
 ClojureScript legs, Node 24, Playwright for Python with a Chromium for the

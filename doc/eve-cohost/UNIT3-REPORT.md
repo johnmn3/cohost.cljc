@@ -55,12 +55,12 @@ not in the values.
 
 ## Numbers, as printed
 
-| Gate | Result |
-|---|---|
-| Seam probe (`probe_memory.clj`, through the shim's own dispatch vars) | **111/111 PASS** |
-| JVM battery (`bb boot:jvm`) | **221/221**, libraries **62/62**, boot errors **0** |
-| Thread-layer probe (`probe_thread.clj`) | 29/29 PASS (unregressed) |
-| Booted-context check (`eve_cohost_check.clj`) | 21/21 PASS (unregressed) |
+| Gate                                                                                        | Result                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Seam probe (`probe_memory.clj`, through the shim's own dispatch vars)                       | **111/111 PASS**                                                                                                                                                                                                        |
+| JVM battery (`bb boot:jvm`)                                                                 | **221/221**, libraries **62/62**, boot errors **0**                                                                                                                                                                     |
+| Thread-layer probe (`probe_thread.clj`)                                                     | 29/29 PASS (unregressed)                                                                                                                                                                                                |
+| Booted-context check (`eve_cohost_check.clj`)                                               | 21/21 PASS (unregressed)                                                                                                                                                                                                |
 | Jank gate on J (`bb boot:jank-snapshot` + `bb boot:jank`, AOT compile of the new shim code) | snapshot built (placement 857/872); battery **219/221**, libraries **62/62**, boot errors **0** — the 2 FAIL rows are the standing named pair verbatim (`subs count nth first last butlast`, `Character outside ASCII`) |
 
 Probe coverage: vector, map, set, list, and atom-deref values

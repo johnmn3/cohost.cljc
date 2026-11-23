@@ -6,6 +6,7 @@ j.slaa.us) and the documentation chapters landing. NOT the move to
 main: that stays the operator's word, not given.
 
 ## Plan
+
 - ITEM 1: `bb boot:jank` on j.slaa.us against this branch's tip
   (cf9d874), Eve sibling at the released 0.9.3 pin 76fd94c3dc
   (tag v0.9.3). Then unit 9's jank harness leg
@@ -18,13 +19,15 @@ main: that stays the operator's word, not given.
   GATE-GREEN -> landed.
 
 ## State
+
 - 03:47 ET: lane opened. Build box checked firsthand: load 0.22,
   4 cores, 15 GB — idle. J has bb 1.13.226 (~/bin), jank
   (/usr/local/bin), and the 0.9.3 pin commit present in its ~/eve.
   Run layout: ~/cohost-release-clear/{cohost,eve} on J.
-NEXT: set up J run dirs, launch boot:jank detached with log.
+  NEXT: set up J run dirs, launch boot:jank detached with log.
 
 ## Progress
+
 - 03:52 ET: J run layout verified — cohost @ e1ec18e (release tip),
   Eve sibling @ 76fd94c (0.9.3 pin). `bb boot:jank` launched detached
   on J (log ~/cohost-release-clear/logs/boot-jank.log); AOT-RECOMPILE
@@ -41,7 +44,7 @@ NEXT: set up J run dirs, launch boot:jank detached with log.
   the landed text and recorded here. Ch.15's standing jank battery
   pair sentence is checked against ITEM 1's printed rows when the
   re-run lands, before the manifest update.
-NEXT: commit + push docs; read boot:jank verdict on J.
+  NEXT: commit + push docs; read boot:jank verdict on J.
 - 04:05 ET: ITEM 1 gate verdict IN (build box): bb boot:jank on the
   merged tree @ e1ec18e code, Eve sibling @ 76fd94c pin — booted as
   stock 544, errors: 0; battery 219/221; libraries 62/62; verdict
@@ -53,7 +56,7 @@ NEXT: commit + push docs; read boot:jank verdict on J.
   logs-release-clear/boot-jank.log. Unit-9 jank leg RUNNING on J
   (Agent 3's harness files overlaid on a scratch copy of the tree,
   verdict run only — nothing of Agent 3's branch merges here).
-NEXT: unit-9 seam-8 verdict as printed; final manifest + declaration.
+  NEXT: unit-9 seam-8 verdict as printed; final manifest + declaration.
 
 ## FINAL — both rows discharged (2026-11-07 ~4:20 AM ET)
 

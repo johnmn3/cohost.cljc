@@ -1,6 +1,6 @@
 # deps.edn and libraries
 
-*2026-11-02.*
+_2026-11-02._
 
 `deps.edn` is resolved by tools.deps itself, through the Clojure CLI, so the
 root/user/project configuration chain, aliases, `-Sdeps`, Maven coordinates, git deps and

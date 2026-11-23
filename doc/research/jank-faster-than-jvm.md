@@ -37,23 +37,23 @@ and timings overlap otherwise).
 
 ## 1. Measured facts this plan starts from (cited, not re-derived)
 
-| fact | value | where |
-|---|---|---|
-| jank's own core, AOT `-O3`, against the JVM over the 10 programs that ran | geomean 0.705 (fib 0.80, tak 0.24, binary-trees 1.75, k-nucleotide 0.44, pipeline 1.34, json 0.23, first-output 1.00) | doc/perf/HISTORY.md "Programs against JVM Clojure" (first pass; runs too short for the JVM JIT, lane C re-measures) |
-| jank's own core, JIT, against the JVM | geomean 2.43 (the JIT's first-use compilation is inside the five timed calls) | same |
-| cohost's stock core on jank against the JVM | geomean 10.34 (fib 23.9, tak 7.4, spectral-norm 47.6, binary-trees 4.1, k-nucleotide 2.2, pipeline 2.3, dispatch 11.2, json 1.8, first-output 26.0) | same |
-| six programs ABSENT on raw jank | nbody, spectral-norm (`Math/sqrt`, `Math/round`), mandelbrot, fannkuch, nsieve (`use of undeclared identifier 'sNN'`), dispatch (`defprotocol`) | same |
-| a `^long`/`^double` parameter carried by a loop inside the fn | hinted/plain 0.105 (double), 0.125 (long) | doc/perf/jank.md "Type hints (H0)" |
-| a hinted leaf fn called from a loop | hinted/plain 1.24 (`inc`) to 1.52 (`+` on `jtl.i64`): the result is boxed on the way out | same |
-| return hints and `let`/`loop` local hints | unused by the compiler (`ret_only` has no convert; `locals_hinted` and `locals_plain` emit the same C++) | same, "What `+`, `<`, and `inc` compile to" |
-| one cross-module fn call on jank | ~100 ns per entry (274 ms over fib 30's 2.7M entries) | atom.broker reports/muse.md, M-6 (2026-11-02 08:04 ET) |
-| stock core against jank's own core, 30 bench cases | geomean x4.09; regex x320, format x49.6, into-vector x30.3, sort-by x27.5, transduce x21.7, transient-vector x18.7, sort x15.2, str-build x15.5, set-build x11.1, group-by x10.5 | doc/perf/HISTORY.md "jank baseline" |
-| where the stock core's time goes in those cases | 63-83% inside the compiled stock and shim fns; 12-34% first-use JIT compilation (13-31 `jit eval_string` per case); the evaluator under 1% | doc/perf/jank.md "Runtime profile" |
-| a protocol call on a record | jank's own core 163.10 ms, the stock core 166.05 ms; JVM Clojure 0.81 ms (about 200x) | doc/perf/HISTORY.md "jank baseline" and the all-host table (line "protocol call on a record") |
-| boot on jank | AOT default: boot-ms 11,848, libs-ms 7,758; JIT 44,163 / 36,215 | atom.broker BOARD.md scoreboard |
-| boot profile | codemod 41%, library phase 44%, eval 4.7%, reading 4.3%; jank's profiler: `jit eval_string` 71% exclusive | doc/perf/jank.md "Boot profile" |
-| AOT stage 2 (a snapshot of the booted core) | `compile-module` of the rewritten forms produces no module: vars interned at boot (`cohost.shim/is$clojure_lang_IMapEntry`, `PersistentList-creator`) do not resolve; 550 `cohost.core` forms, not 2,000 | doc/perf/jank.md "AOT stage 2 probe" |
-| `-Odirect-call` | listed by `jank --help` as "Elides the dereferencing of vars for improved performance. (not yet implemented)" | `jank --help` on this box |
+| fact                                                                      | value                                                                                                                                                                                                    | where                                                                                                               |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| jank's own core, AOT `-O3`, against the JVM over the 10 programs that ran | geomean 0.705 (fib 0.80, tak 0.24, binary-trees 1.75, k-nucleotide 0.44, pipeline 1.34, json 0.23, first-output 1.00)                                                                                    | doc/perf/HISTORY.md "Programs against JVM Clojure" (first pass; runs too short for the JVM JIT, lane C re-measures) |
+| jank's own core, JIT, against the JVM                                     | geomean 2.43 (the JIT's first-use compilation is inside the five timed calls)                                                                                                                            | same                                                                                                                |
+| cohost's stock core on jank against the JVM                               | geomean 10.34 (fib 23.9, tak 7.4, spectral-norm 47.6, binary-trees 4.1, k-nucleotide 2.2, pipeline 2.3, dispatch 11.2, json 1.8, first-output 26.0)                                                      | same                                                                                                                |
+| six programs ABSENT on raw jank                                           | nbody, spectral-norm (`Math/sqrt`, `Math/round`), mandelbrot, fannkuch, nsieve (`use of undeclared identifier 'sNN'`), dispatch (`defprotocol`)                                                          | same                                                                                                                |
+| a `^long`/`^double` parameter carried by a loop inside the fn             | hinted/plain 0.105 (double), 0.125 (long)                                                                                                                                                                | doc/perf/jank.md "Type hints (H0)"                                                                                  |
+| a hinted leaf fn called from a loop                                       | hinted/plain 1.24 (`inc`) to 1.52 (`+` on `jtl.i64`): the result is boxed on the way out                                                                                                                 | same                                                                                                                |
+| return hints and `let`/`loop` local hints                                 | unused by the compiler (`ret_only` has no convert; `locals_hinted` and `locals_plain` emit the same C++)                                                                                                 | same, "What `+`, `<`, and `inc` compile to"                                                                         |
+| one cross-module fn call on jank                                          | ~100 ns per entry (274 ms over fib 30's 2.7M entries)                                                                                                                                                    | atom.broker reports/muse.md, M-6 (2026-11-02 08:04 ET)                                                              |
+| stock core against jank's own core, 30 bench cases                        | geomean x4.09; regex x320, format x49.6, into-vector x30.3, sort-by x27.5, transduce x21.7, transient-vector x18.7, sort x15.2, str-build x15.5, set-build x11.1, group-by x10.5                         | doc/perf/HISTORY.md "jank baseline"                                                                                 |
+| where the stock core's time goes in those cases                           | 63-83% inside the compiled stock and shim fns; 12-34% first-use JIT compilation (13-31 `jit eval_string` per case); the evaluator under 1%                                                               | doc/perf/jank.md "Runtime profile"                                                                                  |
+| a protocol call on a record                                               | jank's own core 163.10 ms, the stock core 166.05 ms; JVM Clojure 0.81 ms (about 200x)                                                                                                                    | doc/perf/HISTORY.md "jank baseline" and the all-host table (line "protocol call on a record")                       |
+| boot on jank                                                              | AOT default: boot-ms 11,848, libs-ms 7,758; JIT 44,163 / 36,215                                                                                                                                          | atom.broker BOARD.md scoreboard                                                                                     |
+| boot profile                                                              | codemod 41%, library phase 44%, eval 4.7%, reading 4.3%; jank's profiler: `jit eval_string` 71% exclusive                                                                                                | doc/perf/jank.md "Boot profile"                                                                                     |
+| AOT stage 2 (a snapshot of the booted core)                               | `compile-module` of the rewritten forms produces no module: vars interned at boot (`cohost.shim/is$clojure_lang_IMapEntry`, `PersistentList-creator`) do not resolve; 550 `cohost.core` forms, not 2,000 | doc/perf/jank.md "AOT stage 2 probe"                                                                                |
+| `-Odirect-call`                                                           | listed by `jank --help` as "Elides the dereferencing of vars for improved performance. (not yet implemented)"                                                                                            | `jank --help` on this box                                                                                           |
 
 ## 2. Session 1: the compiler and code generation
 
@@ -125,27 +125,27 @@ one run are the signal, and §8 re-measures the decisive cases alone):
 
 `bash dev/research/run-jank.sh dev/research/p1_fib_floor.jank` (queued run):
 
-| case | JIT median ns | AOT median ns | JVM median ns (`run-jvm.clj p1_fib_floor.clj`) |
-|---|---:|---:|---:|
-| fib-var (plain defn, fib 30) | 13479580 | 6101027 | 9069268 |
-| fib-hinted-leaf (`^long n`, the recursion still boxes its return) | 22959818 | 17595281 | 7056832 (`^long` param and return: unboxed on the JVM) |
-| fib-cpp-native (the same recursion in C++ through `cpp/raw`) | 4056029 | 3663884 | n/a |
-| fib-local-volatile (the fn read from a volatile on every call) | 47574122 | 35482559 | 9473318 |
+| case                                                              | JIT median ns | AOT median ns |         JVM median ns (`run-jvm.clj p1_fib_floor.clj`) |
+| ----------------------------------------------------------------- | ------------: | ------------: | -----------------------------------------------------: |
+| fib-var (plain defn, fib 30)                                      |      13479580 |       6101027 |                                                9069268 |
+| fib-hinted-leaf (`^long n`, the recursion still boxes its return) |      22959818 |      17595281 | 7056832 (`^long` param and return: unboxed on the JVM) |
+| fib-cpp-native (the same recursion in C++ through `cpp/raw`)      |       4056029 |       3663884 |                                                    n/a |
+| fib-local-volatile (the fn read from a volatile on every call)    |      47574122 |      35482559 |                                                9473318 |
 
 `bash dev/research/run-jank.sh dev/research/p2_call_path.jank` (5e6 calls of `(defn id1 [x] x)`
 in a boxed loop; per-call cost is (case - loop-only) / 5e6):
 
-| case | JIT median ns | per call, JIT | AOT median ns | JVM median ns |
-|---|---:|---:|---:|---:|
-| loop-only | 19843686 | | 22796641 | 27894623 |
-| call-var-same-ns | 66478603 | 9.3 ns | 80456245 | 26698072 |
-| call-var-other-ns | 76598975 | 11.4 ns | 71362755 | 24086899 |
-| call-local (fn object in a local) | 56214429 | 7.3 ns | 55469488 | 24748202 |
-| call-2 (two parameters) | 71433741 | 10.3 ns | 74444004 | 32771734 |
-| call-variadic (`[x & ys]`) | 560280030 | 108 ns | 585666975 | 27761945 |
-| call-cpp-objref (`cpp/raw` fn taking and returning `object_ref`) | 28029924 | 1.6 ns | 38220466 | n/a |
-| call-multi (one-method defmulti) | 324417633 | 61 ns | 363483677 | 84258705 |
-| call-volatile-fn | 142646782 | 24.6 ns | 147122664 | 29243081 |
+| case                                                             | JIT median ns | per call, JIT | AOT median ns | JVM median ns |
+| ---------------------------------------------------------------- | ------------: | ------------: | ------------: | ------------: |
+| loop-only                                                        |      19843686 |               |      22796641 |      27894623 |
+| call-var-same-ns                                                 |      66478603 |        9.3 ns |      80456245 |      26698072 |
+| call-var-other-ns                                                |      76598975 |       11.4 ns |      71362755 |      24086899 |
+| call-local (fn object in a local)                                |      56214429 |        7.3 ns |      55469488 |      24748202 |
+| call-2 (two parameters)                                          |      71433741 |       10.3 ns |      74444004 |      32771734 |
+| call-variadic (`[x & ys]`)                                       |     560280030 |        108 ns |     585666975 |      27761945 |
+| call-cpp-objref (`cpp/raw` fn taking and returning `object_ref`) |      28029924 |        1.6 ns |      38220466 |           n/a |
+| call-multi (one-method defmulti)                                 |     324417633 |         61 ns |     363483677 |      84258705 |
+| call-volatile-fn                                                 |     142646782 |       24.6 ns |     147122664 |      29243081 |
 
 Reading: the JVM inlines every plain call (same-ns, other-ns, local, variadic all land on its
 loop's own cost, which is slower than jank's because it allocates `Long`s past the cache); jank
@@ -264,67 +264,67 @@ The probes (same harness; jank JIT / jank AOT / JVM medians, ns; ratio is AOT ov
 
 `run-jank.sh p3_gc_alloc.jank` and `run-jvm.clj p3_gc_alloc.clj`:
 
-| case | JIT | AOT | JVM | AOT/JVM |
-|---|---:|---:|---:|---:|
-| bt-14 (binary-trees, depth 14) | 149724234 | 218850983 | 8727705 | 25.1 |
-| pair-alloc-2e6 (2e6 two-element vectors) | 398224591 | 498902205 | 20087465 | 24.8 |
-| box-double-5e6 (5e6 `+` on doubles) | 3652738 | 3824439 | 3596209 | 1.06 |
-| box-long-5e6 (5e6 `+` on longs) | 70 | 40 | 1771388 | folded to a constant on jank |
+| case                                     |       JIT |       AOT |      JVM |                      AOT/JVM |
+| ---------------------------------------- | --------: | --------: | -------: | ---------------------------: |
+| bt-14 (binary-trees, depth 14)           | 149724234 | 218850983 |  8727705 |                         25.1 |
+| pair-alloc-2e6 (2e6 two-element vectors) | 398224591 | 498902205 | 20087465 |                         24.8 |
+| box-double-5e6 (5e6 `+` on doubles)      |   3652738 |   3824439 |  3596209 |                         1.06 |
+| box-long-5e6 (5e6 `+` on longs)          |        70 |        40 |  1771388 | folded to a constant on jank |
 
 `bash dev/research/p3_gc_env.sh` (the AOT module under bdwgc's environment knobs, one run each;
 `GC_PRINT_STATS=1` counted 408 collections during the default run):
 
-| env | bt-14 | pair-alloc-2e6 |
-|---|---:|---:|
-| default | 174828601 | 382642173 |
-| `GC_INITIAL_HEAP_SIZE=1G` | 133928351 | 438212510 |
-| `GC_FREE_SPACE_DIVISOR=1` | 163042725 | 393155134 |
-| both | 122085049 (first run 2088171009) | 430749986 |
-| `GC_MARKERS=1` | 251888852 | 416430715 |
-| `GC_ENABLE_INCREMENTAL=1` | 728515125 | 2454341234 |
+| env                       |                            bt-14 | pair-alloc-2e6 |
+| ------------------------- | -------------------------------: | -------------: |
+| default                   |                        174828601 |      382642173 |
+| `GC_INITIAL_HEAP_SIZE=1G` |                        133928351 |      438212510 |
+| `GC_FREE_SPACE_DIVISOR=1` |                        163042725 |      393155134 |
+| both                      | 122085049 (first run 2088171009) |      430749986 |
+| `GC_MARKERS=1`            |                        251888852 |      416430715 |
+| `GC_ENABLE_INCREMENTAL=1` |                        728515125 |     2454341234 |
 
 `run-jank.sh p4_maps.jank` and `run-jvm.clj p4_maps.clj` (1e6 operations unless the name says):
 
-| case | JIT | AOT | JVM | AOT/JVM |
-|---|---:|---:|---:|---:|
-| assoc-small-1e6 (one keyword into a 3-key map) | 176129605 | 148957299 | 36658901 | 4.1 |
-| assoc-in-1e6 | 919143050 | 909495497 | 124226260 | 7.3 |
-| update-in-1e6 (`(fnil + 0)`) | 1178152203 | 995656084 | 197107660 | 5.1 |
-| get-in-1e6 | 182920727 | 154833446 | 52559637 | 2.9 |
-| kw-lookup-5e6 (`(:a m)`) | 61266314 | 71969664 | 44774448 | 1.6 |
-| map-lookup-5e6 (`(m :a)`) | 60353072 | 73912634 | 24408948 | 3.0 |
-| get-1000-1e6 (a 1,000-key map) | 81204560 | 108789272 | 28271240 | 3.8 |
-| hash-map-grow-1e5 | 80959397 | 86823419 | 25056966 | 3.5 |
-| pipeline-2000 (the yardstick program at its size) | 3020708 | 2861345 | 958740 | 3.0 |
-| pipeline-20000 | 42217727 | 39690346 | 7027738 | 5.6 |
+| case                                              |        JIT |       AOT |       JVM | AOT/JVM |
+| ------------------------------------------------- | ---------: | --------: | --------: | ------: |
+| assoc-small-1e6 (one keyword into a 3-key map)    |  176129605 | 148957299 |  36658901 |     4.1 |
+| assoc-in-1e6                                      |  919143050 | 909495497 | 124226260 |     7.3 |
+| update-in-1e6 (`(fnil + 0)`)                      | 1178152203 | 995656084 | 197107660 |     5.1 |
+| get-in-1e6                                        |  182920727 | 154833446 |  52559637 |     2.9 |
+| kw-lookup-5e6 (`(:a m)`)                          |   61266314 |  71969664 |  44774448 |     1.6 |
+| map-lookup-5e6 (`(m :a)`)                         |   60353072 |  73912634 |  24408948 |     3.0 |
+| get-1000-1e6 (a 1,000-key map)                    |   81204560 | 108789272 |  28271240 |     3.8 |
+| hash-map-grow-1e5                                 |   80959397 |  86823419 |  25056966 |     3.5 |
+| pipeline-2000 (the yardstick program at its size) |    3020708 |   2861345 |    958740 |     3.0 |
+| pipeline-20000                                    |   42217727 |  39690346 |   7027738 |     5.6 |
 
 `run-jank.sh p5_seqs.jank` and `run-jvm.clj p5_seqs.clj`:
 
-| case | JIT | AOT | JVM | AOT/JVM |
-|---|---:|---:|---:|---:|
-| reduce-range-1e6 | 68754503 | 51607376 | 13819252 | 3.7 |
-| reduce-vec-1e6 | 66340786 | 55472886 | 5307562 | 10.5 |
-| first-next-range-1e6 | 74654181 | 78106936 | 17601306 | 4.4 |
-| lazy-count-1e6 (`count (filter odd? (map inc (range n)))`) | 1288721967 | 1277837517 | 25912086 | 49.3 |
-| transduce-1e6 | 96124179 | 71842192 | 11725907 | 6.1 |
-| into-map-1e6 | 82541698 | 85770438 | 22690137 | 3.8 |
-| frequencies-1e5 | 12521267 | 8560908 | 5194439 | 1.6 |
-| string-nth-1e6 | 71859400 | 92870199 | 8406315 | 11.0 |
-| apply-str-1e4 | 5902609 | 8214179 | 425450 | 19.3 |
-| conj-vec-1e6 | 175263551 | 181328909 | 35229732 | 5.1 |
-| transient-vec-1e6 | 22127667 | 13753744 | 16547525 | 0.83 |
-| sort-1e5 | 9594502700 | 9399588860 | 8103593 | 1160 |
-| sort-by-1e5 | 10241528066 | 10549239337 | 23915541 | 441 |
+| case                                                       |         JIT |         AOT |      JVM | AOT/JVM |
+| ---------------------------------------------------------- | ----------: | ----------: | -------: | ------: |
+| reduce-range-1e6                                           |    68754503 |    51607376 | 13819252 |     3.7 |
+| reduce-vec-1e6                                             |    66340786 |    55472886 |  5307562 |    10.5 |
+| first-next-range-1e6                                       |    74654181 |    78106936 | 17601306 |     4.4 |
+| lazy-count-1e6 (`count (filter odd? (map inc (range n)))`) |  1288721967 |  1277837517 | 25912086 |    49.3 |
+| transduce-1e6                                              |    96124179 |    71842192 | 11725907 |     6.1 |
+| into-map-1e6                                               |    82541698 |    85770438 | 22690137 |     3.8 |
+| frequencies-1e5                                            |    12521267 |     8560908 |  5194439 |     1.6 |
+| string-nth-1e6                                             |    71859400 |    92870199 |  8406315 |    11.0 |
+| apply-str-1e4                                              |     5902609 |     8214179 |   425450 |    19.3 |
+| conj-vec-1e6                                               |   175263551 |   181328909 | 35229732 |     5.1 |
+| transient-vec-1e6                                          |    22127667 |    13753744 | 16547525 |    0.83 |
+| sort-1e5                                                   |  9594502700 |  9399588860 |  8103593 |    1160 |
+| sort-by-1e5                                                | 10241528066 | 10549239337 | 23915541 |     441 |
 
 `run-jank.sh p5b_sort.jank` (sort's scaling; `compare` alone):
 
-| case | JIT | AOT |
-|---|---:|---:|
-| compare-1e6 (`(compare i 500000)`) | 14227416 | 13891221 |
-| sort-1e3 | 896123 | 764014 |
-| sort-1e4 | 201193223 | 183016889 |
-| sort-list-1e4 | 201561129 | 196992952 |
-| sort-1e5 | 16247594966 | 14639408712 |
+| case                               |         JIT |         AOT |
+| ---------------------------------- | ----------: | ----------: |
+| compare-1e6 (`(compare i 500000)`) |    14227416 |    13891221 |
+| sort-1e3                           |      896123 |      764014 |
+| sort-1e4                           |   201193223 |   183016889 |
+| sort-list-1e4                      |   201561129 |   196992952 |
+| sort-1e5                           | 16247594966 | 14639408712 |
 
 Two correctness facts fell out: jank's `(reduce + (range 1000000))` printed `1783293664`, the JVM
 `499999500000`; `first-next-range` and `transduce` wrapped the same way (the sum modulo 2^32:
@@ -371,17 +371,17 @@ result is right; the loop has no store), so small-integer `+` in jank is not a h
 - **Probe.** P3 and the env matrix (done); P3b (done): the allocation kinds side by side.
   `run-jank.sh p3b_alloc_kinds.jank`, 2e6 of each, per-item cost = median / 2e6:
 
-  | case | JIT median ns | AOT median ns | per item (AOT) |
-  |---|---:|---:|---:|
-  | `[i i]` | 505846300 | 564562897 | 282 ns |
-  | `(vector i i)` | 498298136 | 538864347 | 269 ns |
-  | `{:a i}` | 243553708 | 243568011 | 122 ns |
-  | `(cons i nil)` | 171815720 | 169006305 | 85 ns |
-  | `(list i i)` (variadic) | 674527904 | 685245335 | 343 ns |
-  | `(fn [] i)` (a closure object) | 277245812 | 266557725 | 133 ns |
-  | `cpp/raw` `GC_MALLOC(16)` | 56104631 | 55561602 | 28 ns |
-  | `cpp/raw` `GC_MALLOC(48)` | 86362897 | 77249979 | 39 ns |
-  | `cpp/raw` `GC_MALLOC_ATOMIC(16)` | 48744722 | 50647882 | 25 ns |
+  | case                             | JIT median ns | AOT median ns | per item (AOT) |
+  | -------------------------------- | ------------: | ------------: | -------------: |
+  | `[i i]`                          |     505846300 |     564562897 |         282 ns |
+  | `(vector i i)`                   |     498298136 |     538864347 |         269 ns |
+  | `{:a i}`                         |     243553708 |     243568011 |         122 ns |
+  | `(cons i nil)`                   |     171815720 |     169006305 |          85 ns |
+  | `(list i i)` (variadic)          |     674527904 |     685245335 |         343 ns |
+  | `(fn [] i)` (a closure object)   |     277245812 |     266557725 |         133 ns |
+  | `cpp/raw` `GC_MALLOC(16)`        |      56104631 |      55561602 |          28 ns |
+  | `cpp/raw` `GC_MALLOC(48)`        |      86362897 |      77249979 |          39 ns |
+  | `cpp/raw` `GC_MALLOC_ATOMIC(16)` |      48744722 |      50647882 |          25 ns |
 
   Reading: one bdwgc allocation is 25-40 ns on this box (the JVM's whole two-element vector,
   allocation included, is 10 ns: pair-alloc 20087465 ns / 2e6); a `[a b]` is about 280 ns, i.e.
@@ -538,14 +538,14 @@ The probe. `bash dev/research/run-cohost-jank.sh dev/research/p6_cohost_fib.clj`
 core booted on jank, program through `--eval`; no `-O` as the bb tasks do, then `JANK_O=3`),
 the JVM twin, and raw jank from P1 for the same source:
 
-| case | cohost on jank, no `-O` (ns) | cohost on jank, `-O3` (ns) | JVM (ns) | raw jank JIT `-O3` / AOT (P1) |
-|---|---:|---:|---:|---:|
-| fib-stock (the suite's fib: stock `<` `+` `dec` `-`, stock `defn`) | 245827372 | 38481897 | 13354515 | 13479580 / 6101027 |
-| fib-host-ops (jank's own `clojure.core/<` `+` `dec` `-`) | 268095089 | 29816492 | 13536284 | |
-| fib-fn-def (`(def f (fn f [n] ...))`, stock ops) | 156045648 | 20871741 | 8525867 | |
-| fib-host-ops-fn-def (both) | 175224337 | 20571980 | 11927258 | |
-| loop-stock-5e6 (5e6 `inc` + `<`, no call) | 53033170 | 82 (folded) | 220 (folded) | 19843686 (P2 loop-only) |
-| loop-host-ops-5e6 | 60345513 | 112 (folded) | 161 (folded) | |
+| case                                                               | cohost on jank, no `-O` (ns) | cohost on jank, `-O3` (ns) |     JVM (ns) | raw jank JIT `-O3` / AOT (P1) |
+| ------------------------------------------------------------------ | ---------------------------: | -------------------------: | -----------: | ----------------------------: |
+| fib-stock (the suite's fib: stock `<` `+` `dec` `-`, stock `defn`) |                    245827372 |                   38481897 |     13354515 |            13479580 / 6101027 |
+| fib-host-ops (jank's own `clojure.core/<` `+` `dec` `-`)           |                    268095089 |                   29816492 |     13536284 |                               |
+| fib-fn-def (`(def f (fn f [n] ...))`, stock ops)                   |                    156045648 |                   20871741 |      8525867 |                               |
+| fib-host-ops-fn-def (both)                                         |                    175224337 |                   20571980 |     11927258 |                               |
+| loop-stock-5e6 (5e6 `inc` + `<`, no call)                          |                     53033170 |                82 (folded) | 220 (folded) |       19843686 (P2 loop-only) |
+| loop-host-ops-5e6                                                  |                     60345513 |               112 (folded) | 161 (folded) |                               |
 
 Reading: `-O3` on the JIT is 6.4x on cohost's fib (245827372 -> 38481897 ns), 7.5x with
 `def`+`fn`; at `-O3` the stock `inc`/`<` loop folds to a constant exactly as raw jank's does
@@ -651,12 +651,12 @@ jank, `defn` names the fn (core.jank line 778), so raw jank already has the dire
 - **Probe.** P11 (`dev/research/p11_protocol.clj` under `run-cohost-jank.sh`, 1e6 calls;
   medians, ns):
 
-  | case | cohost on jank, no `-O` | cohost on jank, `-O3` | JVM |
-  |---|---:|---:|---:|
-  | proto-call (a protocol method on a record) | 1296386721 | 1161732915 | 9291131 |
-  | fn-call (a plain defn doing the same arithmetic) | 249982815 | 181314418 | 13222948 |
-  | multi-call (a defmulti) | 1269133764 | 732051377 | 32221410 |
-  | kw-on-record (`(:w sq)`) | 213870004 | 131930185 | 8864685 |
+  | case                                             | cohost on jank, no `-O` | cohost on jank, `-O3` |      JVM |
+  | ------------------------------------------------ | ----------------------: | --------------------: | -------: |
+  | proto-call (a protocol method on a record)       |              1296386721 |            1161732915 |  9291131 |
+  | fn-call (a plain defn doing the same arithmetic) |               249982815 |             181314418 | 13222948 |
+  | multi-call (a defmulti)                          |              1269133764 |             732051377 | 32221410 |
+  | kw-on-record (`(:w sq)`)                         |               213870004 |             131930185 |  8864685 |
 
   A protocol call is 1.16 us at `-O3` against the JVM's 9 ns (125x); `-O3` barely moves it,
   which says the time is in the dispatch shape (the variadic entry, `apply`, the lookups), not
@@ -678,17 +678,17 @@ The nine, ranked by expected gain on the Step 8 programs against the JVM, breadt
 them, cost, and semantic risk. "Measured" means a probe above; "bounded" means the probe gives
 the ceiling; "unknown" means only the named probe can say.
 
-| rank | idea | gain on the yardstick | breadth | cost | semantic risk |
-|---:|---|---|---|---|---|
-| 1 | S3-1 `-O3` for what cohost evaluates (then the snapshot) | measured 6.4x on cohost's fib (P6); the whole cohost column was measured at `-O0` | every program on cohost; the `jank-jit` column too | one line per bb task; the snapshot is lane D's running order | none |
-| 2 | S2-3 the pathological leaves (sorted-walk O(n^2), `=` not inlined, uncached keyword hash, array-map `assoc` demotion, `apply str`, string `nth`, `truthy`; the i32 `add` arm as a correctness blocker) | measured per leaf: sort walk 1000x, `apply str` 19x, string `nth` 11x, `=` a var call per test | json, k-nucleotide, pipeline, dispatch, every `(= i n)` loop; the stock core's worst bench cases | each a small upstream change | none (same results) |
-| 3 | S2-2 allocation-free seq walks, internal reduce, chunked ranges and vector seqs | measured gaps: lazy map/filter 49x, reduce over a vector 10.5x, transduce 6x, into 3.8x (P5); reachable share unknown until P10 | pipeline, json, nbody, k-nucleotide's `gen`, every `reduce`/`map`/`filter` | upstream, medium (the in-place branch exists; `reduce-kv` is the model) | chunk granularity, as Clojure |
-| 4 | S2-1 small vectors and the collector's settings | measured 25x on binary-trees at depth 14 and 25x on two-element vectors (P3); the env alone 1.43x | binary-trees, pipeline, json, nbody; every allocating program | upstream: settings small, the vector representation medium | none |
-| 5 | S3-2 cohost's emission gaps: the fn's name, aliasable statics, the inline guard | measured 1.84x on fib (`def`+`fn` vs `defn`, P6); the guard's share unknown until P12 | every cohost program with recursion or collection ops | cohost, lane M, small | redefinition during recursion (pin it) |
-| 6 | S1-1 native numeric locals and returns by type propagation | bounded 1.67x on fib (C++ floor, P1) and 8-10x on carried loops (H0); the hinted variants of 8 programs | the numeric half of the suite | upstream, large (analyzer + codegen) | overflow and the 32-bit `int` typing: fix first |
-| 7 | S3-3 dispatch: fixed-arity protocol methods with an inline cache, record fields by index, a multimethod cache | dispatch 11.2x today; the entry alone 108 ns + `apply` + lookups (P2, P11) | one yardstick program (and the protocol/multimethod bench cases) | cohost, lane M, medium | `extend` after caching (a generation counter) |
-| 8 | S1-2 direct var calls and fixed-arity variadic entries | bounded: (9.3 - 1.6) ns per cross-var call, ~100 ns per variadic call (P2); self-recursion is already direct | json's helper calls, pipeline's `assoc`/`update-in` | upstream, medium | redefinition reaching call sites (a guard flag) |
-| 9 | S1-3 LTO across modules and into the runtime, then PGO | unknown: `-O3` already gives 7-20x per TU (P9); the cross-object part is unmeasured | AOT-only | needs a source build of jank (no bitcode shipped; LTO is disabled upstream for the JIT's symbol lookup, `CMakeLists.txt:18`) | none |
+| rank | idea                                                                                                                                                                                                   | gain on the yardstick                                                                                                           | breadth                                                                                          | cost                                                                                                                         | semantic risk                                   |
+| ---: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+|    1 | S3-1 `-O3` for what cohost evaluates (then the snapshot)                                                                                                                                               | measured 6.4x on cohost's fib (P6); the whole cohost column was measured at `-O0`                                               | every program on cohost; the `jank-jit` column too                                               | one line per bb task; the snapshot is lane D's running order                                                                 | none                                            |
+|    2 | S2-3 the pathological leaves (sorted-walk O(n^2), `=` not inlined, uncached keyword hash, array-map `assoc` demotion, `apply str`, string `nth`, `truthy`; the i32 `add` arm as a correctness blocker) | measured per leaf: sort walk 1000x, `apply str` 19x, string `nth` 11x, `=` a var call per test                                  | json, k-nucleotide, pipeline, dispatch, every `(= i n)` loop; the stock core's worst bench cases | each a small upstream change                                                                                                 | none (same results)                             |
+|    3 | S2-2 allocation-free seq walks, internal reduce, chunked ranges and vector seqs                                                                                                                        | measured gaps: lazy map/filter 49x, reduce over a vector 10.5x, transduce 6x, into 3.8x (P5); reachable share unknown until P10 | pipeline, json, nbody, k-nucleotide's `gen`, every `reduce`/`map`/`filter`                       | upstream, medium (the in-place branch exists; `reduce-kv` is the model)                                                      | chunk granularity, as Clojure                   |
+|    4 | S2-1 small vectors and the collector's settings                                                                                                                                                        | measured 25x on binary-trees at depth 14 and 25x on two-element vectors (P3); the env alone 1.43x                               | binary-trees, pipeline, json, nbody; every allocating program                                    | upstream: settings small, the vector representation medium                                                                   | none                                            |
+|    5 | S3-2 cohost's emission gaps: the fn's name, aliasable statics, the inline guard                                                                                                                        | measured 1.84x on fib (`def`+`fn` vs `defn`, P6); the guard's share unknown until P12                                           | every cohost program with recursion or collection ops                                            | cohost, lane M, small                                                                                                        | redefinition during recursion (pin it)          |
+|    6 | S1-1 native numeric locals and returns by type propagation                                                                                                                                             | bounded 1.67x on fib (C++ floor, P1) and 8-10x on carried loops (H0); the hinted variants of 8 programs                         | the numeric half of the suite                                                                    | upstream, large (analyzer + codegen)                                                                                         | overflow and the 32-bit `int` typing: fix first |
+|    7 | S3-3 dispatch: fixed-arity protocol methods with an inline cache, record fields by index, a multimethod cache                                                                                          | dispatch 11.2x today; the entry alone 108 ns + `apply` + lookups (P2, P11)                                                      | one yardstick program (and the protocol/multimethod bench cases)                                 | cohost, lane M, medium                                                                                                       | `extend` after caching (a generation counter)   |
+|    8 | S1-2 direct var calls and fixed-arity variadic entries                                                                                                                                                 | bounded: (9.3 - 1.6) ns per cross-var call, ~100 ns per variadic call (P2); self-recursion is already direct                    | json's helper calls, pipeline's `assoc`/`update-in`                                              | upstream, medium                                                                                                             | redefinition reaching call sites (a guard flag) |
+|    9 | S1-3 LTO across modules and into the runtime, then PGO                                                                                                                                                 | unknown: `-O3` already gives 7-20x per TU (P9); the cross-object part is unmeasured                                             | AOT-only                                                                                         | needs a source build of jank (no bitcode shipped; LTO is disabled upstream for the JIT's symbol lookup, `CMakeLists.txt:18`) | none                                            |
 
 Why this order. 1 is measured, broad and nearly free, and it is the condition under which every
 other number in the cohost column should be re-read. 2 is a list of small, certain fixes with
@@ -995,27 +995,26 @@ wrapper. `<`, `dec`, `+` reached jank's inlined runtime ops in both shapes.
 The §2 tables were taken while eight source readers shared the box. The same commands, with
 nothing else running (medians, ns):
 
-| P1 case | JIT | AOT | JVM |
-|---|---:|---:|---:|
-| fib-var | 13555675 | 5964553 | 8402808 |
-| fib-hinted-leaf | 15616388 | 11126215 | 5383795 |
-| fib-cpp-native | 3223672 | 3908531 | |
+| P1 case            |      JIT |      AOT |     JVM |
+| ------------------ | -------: | -------: | ------: |
+| fib-var            | 13555675 |  5964553 | 8402808 |
+| fib-hinted-leaf    | 15616388 | 11126215 | 5383795 |
+| fib-cpp-native     |  3223672 |  3908531 |         |
 | fib-local-volatile | 43971548 | 42047499 | 9496759 |
 
-| P2 case | JIT | AOT | JVM |
-|---|---:|---:|---:|
-| loop-only | 18659124 | 18998115 | 25232341 |
-| call-var-same-ns | 69405812 | 66836151 | 21789221 |
-| call-var-other-ns | 88370175 | 74983183 | 20532049 |
-| call-local | 58525225 | 43588455 | 26033022 |
-| call-2 | 76602160 | 62312233 | 20614509 |
-| call-variadic | 548263125 | 508990221 | 31483526 |
-| call-cpp-objref | 36687578 | 27669569 | |
-| call-multi | 329160673 | 288826275 | 126483978 |
-| call-volatile-fn | 119082368 | 111095780 | 29712328 |
+| P2 case           |       JIT |       AOT |       JVM |
+| ----------------- | --------: | --------: | --------: |
+| loop-only         |  18659124 |  18998115 |  25232341 |
+| call-var-same-ns  |  69405812 |  66836151 |  21789221 |
+| call-var-other-ns |  88370175 |  74983183 |  20532049 |
+| call-local        |  58525225 |  43588455 |  26033022 |
+| call-2            |  76602160 |  62312233 |  20614509 |
+| call-variadic     | 548263125 | 508990221 |  31483526 |
+| call-cpp-objref   |  36687578 |  27669569 |           |
+| call-multi        | 329160673 | 288826275 | 126483978 |
+| call-volatile-fn  | 119082368 | 111095780 |  29712328 |
 
 The ratios the sessions use hold: the C++ fib floor is 1.5x below the AOT fn (5964553 /
 3908531) and 4.2x below the JIT fn; a var call is about 10 ns over the loop, a variadic call
 about 100 ns, a multimethod call about 55 ns, a `cpp/raw` call about 2-4 ns; the JVM's
 fib-var (8402808) sits between jank's AOT (5964553) and JIT (13555675) fn.
-

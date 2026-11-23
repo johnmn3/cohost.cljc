@@ -28,9 +28,9 @@ the JIT session for the linker to find.
 
 ## Notes
 
-* Removing the `(cpp/delete v)` makes the same file run and print 0 on
+- Removing the `(cpp/delete v)` makes the same file run and print 0 on
   both `jank run` and `compile-module`.
-* The constructor and member calls on the same object work; only the
+- The constructor and member calls on the same object work; only the
   delete's allocator instantiation is missing.
-* Through cohost's JIT eval the same shape fails as
+- Through cohost's JIT eval the same shape fails as
   "Failed to find symbol: 'bt_w1$let_3_0'".

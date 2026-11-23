@@ -1,6 +1,7 @@
 # httpbench capstone — lane status
 
 ## 2026-11-05 02:31 ET — PICKUP (revival lane)
+
 - Branch muse/httpbench verified: origin == local tip c9ad1d6.
 - Uncommitted instrumentation in src/cohost/build_jank.clj (one-line spit of
   record output to record-out.txt, from build 6) REMOVED; worktree clean.
@@ -21,6 +22,7 @@
   build launches where a slot frees, detached, log in this worktree.
 
 ## 2026-11-05 02:47 ET — DIAGNOSIS: the raw block is fine; the failure is in the record session
+
 - Extracted the exact cpp/raw text (6,905 bytes) from native.cljc and
   compiled it as a standalone TU (ns (:include) headers + raw text) with
   g++ -fsyntax-only -std=c++17 -I<the three :cpp dirs>: exit 0, zero
@@ -50,6 +52,7 @@
   when a slot frees.
 
 ## 2026-11-05 03:02 ET — DIAGNOSIS CLOSED: named cause + proven cure (repro scale)
+
 - sh! (build_jank.clj:34) merges the full parent env with record-env —
   the CPLUS_INCLUDE_PATH delivery is CORRECT; suspect (i) dead.
 - The cohost JIT-boot probe (record_probe.jank) died silently under box
@@ -57,13 +60,13 @@
   OOM pattern) — no output; not retried in that form.
 - Discriminating repros (plain jank, no cohost boot), all with
   CPLUS_INCLUDE_PATH set to the three :cpp dirs:
-  * t1 (trivial raw): passes. Also passes with two of the three
+  - t1 (trivial raw): passes. Also passes with two of the three
     ~/.cache/jank AOT dirs on --module-path — AOT-baked paths are NOT
     the wall.
-  * t2 (the FULL 6,905-byte raw from native.cljc + a call): compiles,
+  - t2 (the FULL 6,905-byte raw from native.cljc + a call): compiles,
     then fails at materialization: "JIT session error: Symbols not
     found: [us_socket_context, us_create_loop, ..., simdjson...]".
-  * t3 (the full raw, NO calls): fails identically AT THE cpp/raw
+  - t3 (the full raw, NO calls): fails identically AT THE cpp/raw
     EVAL. ==> jank's JIT materializes a raw block's translation unit
     when the form evaluates; external symbols the block references
     must be resolvable inside the JIT process itself.
@@ -91,6 +94,7 @@
   run-from-another-directory gate).
 
 ## 2026-11-05 03:10 ET — FIX COMMITTED (9a0e41e); BUILD 7 LAUNCHED on this box
+
 - build_jank.clj (the one permitted src/cohost file): the :cpp sources
   now compile ONCE with -fPIC at step 0.5, before the record step;
   the archive still serves step 4's static link from work/, and a
@@ -108,6 +112,7 @@
   of this same path).
 
 ## 2026-11-05 03:10 ET — FIX COMMITTED (9a0e41e); BUILD 7 LAUNCHED on this box
+
 - build_jank.clj (the one permitted src/cohost file): the :cpp sources
   now compile ONCE with -fPIC at step 0.5, before the record step;
   the archive still serves step 4's static link from work/, and a
@@ -125,6 +130,7 @@
   of this same path).
 
 ## 2026-11-05 03:11 ET — BUILD 7: RUNNING, step 1 of 4 (AOT ensure), ~19 min in
+
 - State: RUNNING on this box (launched 02:52 ET, detached, log
   bench/apps/httpbench/build7.log). Not finished, not failed.
 - Done: step 0.5 (the fix's new step) — JANK-EXE-CPP 7 objects
@@ -150,6 +156,7 @@
   08:07 UTC; gate's JVM check reported 10/14 PASS 0 FAIL).
 
 ## 2026-11-05 03:26 ET — BUILD 7: still step 1, on the shim module (~34 min in)
+
 - 7 AOT objects banked. The in-flight module is cohost/shim — the
   giant java-facade file and the graph's known monster at -O3. Its
   clang has ~1:20 CPU after ~10 min wall (it is getting a fraction
@@ -160,6 +167,7 @@
   build neither finished nor failed. Steps 2-4 still ahead.
 
 ## 2026-11-05 03:33 ET — BUILD 7 DEAD (box cycle); build 8 goes to J
+
 - At ~03:29 ET this box cycled again (uptime 2 min on first check
   after; /root/.ssh wiped and restored per the recovery notes).
   Build 7 died with it at step 1, ~37 min in: 7 AOT objects
@@ -180,6 +188,7 @@
   moment the gate banks.
 
 ## 2026-11-05 03:52 ET — BUILD 8 (on J): record step PASSED with the fix; step 4 moved the wall; fixes banked
+
 - Build 8 ran on J (~/cohost-httpbench, synced @ 9272e0a) in
   ~7 min: step 0.5 OK, step 1 AOT ensure OK, **step 2 RECORD
   PASSED — SNAPSHOT-EVENTS written, MODULE emitted. Builds 5/6
@@ -198,15 +207,16 @@
   empty without -DLIBUS_USE_OPENSSL and needs crypto/sni_tree.cpp
   beside it; uWebSockets' PerMessageDeflate needs -lz.
 - Fixes banked @ f2fa324 (build 9 runs with them):
-  * src/cohost/build_jank.clj: :cpp learns :defines (passed as
+  - src/cohost/build_jank.clj: :cpp learns :defines (passed as
     -D to the step-0.5 compiles); step 4's compile line now also
     carries -L record-lib after -L work (archive still wins the
     static link; the .so serves step 4's JIT, as it serves step 2's).
-  * bench/apps/httpbench/deps.edn (the app's own config): :sources
+  - bench/apps/httpbench/deps.edn (the app's own config): :sources
     += crypto/openssl.c, crypto/sni_tree.cpp; :defines
     [LIBUS_USE_OPENSSL]; :libs [ssl crypto z] (all present on J).
 
 ## 2026-11-05 04:00 ET — BUILD 9 GREEN on J; loopback smoke PASS
+
 - JANK-EXE-BUILT in 285,992 ms: target/httpbench/run, 48,209,472
   bytes. Steps: 0.5 = 9 cpp objects; record SNAPSHOT-EVENTS;
   emit MODULE; step-4 compile + static link clean.
@@ -226,6 +236,7 @@
   README; CAPSTONE report.
 
 ## 2026-11-05 04:12 ET — gates on J: tests PASS both hosts; from-another-dir PASS
+
 - cohost -X:test on J: JVM 4 tests / 17 assertions, 0 failures,
   exit 0; JANK same counts, exit 0 (fresh snapshot built in this
   tree, 364 s).
@@ -241,6 +252,7 @@
   CAPSTONE report.
 
 ## 2026-11-05 04:24 ET — measurement prep on J: wrk building
+
 - wrk was absent on J; its source (kept at
   ~/workspace/cohost-install/wrk-src on the hatch box) was
   transferred and is building on J (Makefile's unzip step done
@@ -254,6 +266,7 @@
   then docs:check jank, README, CAPSTONE report.
 
 ## 2026-11-05 04:38 ET — measurements: server proven by wrk; bench client segfaults 15/15
+
 - measure.sh ran on J (quiet box, load 0.57). The SERVER half is
   proven by the external reference: wrk -t4 -c1000 -d10s against
   httpbench serve: 700,665 requests in 10.05 s = 69,715 req/s,
@@ -265,6 +278,7 @@
   the fix lands in the app, rebuild on J, re-measure.
 
 ## 2026-11-05 04:47 ET — bench fixed; config corrected to no-SSL; final gates running on J
+
 - BENCH SEGFAULT ROOT-CAUSED AND FIXED: gdb backtrace (core from
   J, analyzed on this box) = hb_bench -> us_loop_run -> call to
   address 0. The vendored loop.c calls the loop's pre/post
@@ -296,6 +310,7 @@
   on J / in git, nothing lost.
 
 ## 2026-11-05 05:02 ET — CAPSTONE COMPLETE: build 11 (no-SSL) green, all gates pass, numbers in README
+
 - BUILD 11 on J @ b3da4ac (no-SSL config): JANK-EXE-BUILT in
   114,898 ms; binary 48,158,120 bytes; ldd shows libz only (no
   ssl/crypto, no libcpp). Smoke: HTTP 200, exactly 1024 bytes.

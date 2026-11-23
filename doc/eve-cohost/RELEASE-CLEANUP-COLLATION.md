@@ -15,7 +15,7 @@ into `release/eve-in-cohost`.
 - **Conflict-marker sweep on the committed tree:** `git grep -l '<<<<<<<'`
   and `>>>>>>>` over the whole tree, no extension filters. The sweep matches
   10 files — all pre-existing `doc/eve-cohost/*.md` release-record documents
-  whose prose *quotes* the marker strings while describing the sweep
+  whose prose _quotes_ the marker strings while describing the sweep
   procedure itself (e.g. RELEASE-MANIFEST.md:172, COLLATE-STATUS.md:41). The
   matching file set is byte-identical before and after this landing
   (verified against 60353a0): **this landing introduced zero marker files,

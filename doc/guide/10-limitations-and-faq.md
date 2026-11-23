@@ -1,6 +1,6 @@
 # Limitations and FAQ
 
-*2026-11-02. The details and the measurements behind each are in `doc/REPORT.md`.*
+_2026-11-02. The details and the measurements behind each are in `doc/REPORT.md`._
 
 ## What cohost does not do
 

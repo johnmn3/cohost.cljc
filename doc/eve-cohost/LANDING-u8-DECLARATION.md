@@ -19,6 +19,7 @@ set in two formulations; the mainline formulation was kept, identical behavior
 — the same resolution as LANDING-u7-u9's landing 1.
 
 Everything else auto-merged and was verified as a union, nothing dropped:
+
 - boot.cljc carries `install-thread-layer!` WITH unit 8's realm-submit block
   (cohost.realm `future-form-call` interned when the seat has `:realm-submit`),
   plus `install-atom-layer!` and `install-http-layer!`, all three wired in

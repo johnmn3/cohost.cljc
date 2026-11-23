@@ -4,7 +4,7 @@
 Nov 7 2026: "Go ahead and merge to main").
 
 - From: 5f58f3a5160e942bda71914a98aae24416042abe (main, 2026-11-05)
-- To:   6d596d9439b90d7d71e9408e5a82cde2eb571695 (release/eve-in-cohost tip)
+- To: 6d596d9439b90d7d71e9408e5a82cde2eb571695 (release/eve-in-cohost tip)
 - Shape: pure fast-forward, no merge commit. Main was an ancestor of the
   release tip at move time (0 behind / 166 ahead); the fast-forward was
   verified on the remote ref after the push (main == release tip ==

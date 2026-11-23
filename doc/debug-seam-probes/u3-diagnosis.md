@@ -1,4 +1,5 @@
 # U3 diagnosis — why an unresolved symbol loads silently through the seam
+
 # (rows #4, #12; checks #3, #13) — banked 2026-11-04, lane muse/debug-seam-analysis
 
 ## Verdict

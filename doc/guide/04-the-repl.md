@@ -1,6 +1,6 @@
 # The REPL
 
-*2026-11-02.*
+_2026-11-02._
 
 `cohost` with no main option (or `-r`) is the REPL, as `clj` is. It reads a line at a time,
 on a terminal or a pipe: a prompt, lines until they hold whole forms, then each form's value.

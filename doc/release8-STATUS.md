@@ -30,11 +30,13 @@ Expected numbers are the final gate's, banked on
 tree @ 2563eee. Any deviation is a finding, named with evidence.
 
 Local (this box, serial):
+
 - JVM battery: 221/221, libraries 62/62.
 - cli:check jvm rows: 7/7 SAME.
 - debug-seam check jvm: 10/14 PASS, 0 FAIL (4 SKIP are jank-only).
 
 On J (j.slaa.us, serial — the jank seat):
+
 - Snapshot build + boot ms.
 - Jank battery: 219/221, libraries 62/62 (the 2 FAIL rows are
   the standing named pair: `subs count nth first last butlast`,
@@ -77,8 +79,8 @@ locally).
     ~/workspace/release8-logs/debug-seam-jvm.log (runner exit
     code 1 as printed; the PASS/FAIL rows are the verdict and
     match the banked gate's JVM read exactly).
-  Release notes drafted: doc/release8-notes.md (0.9).
-  J legs next, on the tip that carries the notes.
+    Release notes drafted: doc/release8-notes.md (0.9).
+    J legs next, on the tip that carries the notes.
 - 2026-11-05 ~09:0x ET: J verification COMPLETE on the
   release tree @ 52606d1 (bundle clone ~/cohost-release8 on
   J; logs ~/release8-gate/ on J), serial, ALL matching the

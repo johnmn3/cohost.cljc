@@ -16,7 +16,7 @@ Status detail: doc/eve-cohost/CLJS-DEP-STATUS.md. All numbers below were run on 
    `dev/eve-cljs/eve_paths.clj` (reads the pin from deps.edn, locates the gitlibs checkout, reads ITS
    hosts.edn, emits the `-Sdeps` `:paths`). This is Eve's own consumption contract (hosts.edn header;
    doc/adopter-tiers.md §0: a host is Eve's `src` plus one hosts.edn row of adapter roots; Eve's bb.edn
-   composes classpaths the same way). It is *necessary*, not decorative: a dep contributes only its root
+   composes classpaths the same way). It is _necessary_, not decorative: a dep contributes only its root
    `:paths`, and Eve's root paths are its JVM row — with the git dep alone the compile dies at
    `Invalid :refer, var eve.host/aget does not exist` (the cljs runtime side of `eve.host` lives only in
    the cljs row's `adapters/core/cljs-compiler`).
@@ -41,6 +41,7 @@ A SharedArrayBuffer-backed Eve atom, constructed under Node in a build whose cla
 plus the Eve dep, with swap!/reset!/deref round-tripping a value. Node exit 0.
 
 Two Eve-side findings, named (not worked around):
+
 - **Eve's current SharedAtom root is `eve.atom`** (atom.cljc: atom :1398, atom-domain :1446); the legacy
   `eve.shared-atom` namespace's own allocator path fails on a virgin domain even after process-slab/init!:
   `atom constructor: Failed to alloc state block: :out-of-memory` (its telescope dump in the same log shows
@@ -56,6 +57,7 @@ STATUS for the row (run after this report's step-2 work; the standing baseline i
 ## Step 2 — the spawn cap: WRITTEN; probe row ok=15 → ok=18
 
 **What the machinery actually is** (read, cited):
+
 - cljs-thread (github.com/johnmn3/cljs-thread @ 8eaad5d): `cljs-thread.core/init!` stands up worker pools
   (:core/:future/:injest); `spawn`/`future` are macros (src/cljs_thread/spawn.cljs, future.cljs) — the
   FORM crosses to a worker booted from the same image; bindings and shared atoms ride along.
@@ -91,11 +93,13 @@ evidence for the leaf as it stands: the probe row below ran through the CLI (`bi
 ```
 SUMMARY|cljs|ok=18 unsupported-shim=0 fail-other=5 wall-ms=20822
 ```
+
 Baseline (unit 2, same runner): ok=15, fail-other=8. **Flipped: promise (OK 7), agent (OK 1),
 pmap (OK (2 3 4))** — the executor family the caps exist for; ok=18 now equals the jank seat's row.
 Also verified directly: `(deref (future-call (fn [] 42)))` → 42 through the layer.
 
 **Still failing, each with its mechanism**:
+
 - future-basic / future-capture-local / future-capture-atom / future-binding — FAIL
   `java.lang.NullPointerException :: Cannot read properties of undefined (reading 'call')`, at cljs.js
   ANALYSIS time, identical to baseline. Cause: the `future` macro itself never reaches user code on this
@@ -111,15 +115,16 @@ Also verified directly: `(deref (future-call (fn [] 42)))` → 42 through the la
 ## Correction of unit 2's NOT-YET framing (explicit, as ordered)
 
 Unit 2 banked the cljs half as NOT-YET on three claims. All three are wrong:
-1. *"Nothing in Eve's cljs sources spawns a worker."* False twice over: cljs-thread spawns workers by
+
+1. _"Nothing in Eve's cljs sources spawns a worker."_ False twice over: cljs-thread spawns workers by
    design (its repo above; Eve's unified runner boots it), and Eve's own `eve.thread-host` node adapter
    spawns fat-kernel workers today.
-2. *"The layer hands an opaque closure that cannot cross realms; no such contract exists — design work,
-   not a leaf."* Misframed: the conveyance contract exists and is old (forms/tasks, above). The true
+2. _"The layer hands an opaque closure that cannot cross realms; no such contract exists — design work,
+   not a leaf."_ Misframed: the conveyance contract exists and is old (forms/tasks, above). The true
    blocker is narrower and lives in cohost.thread, not in any missing contract: its work items are
    closures, and cross-heap machinery refuses plain closures. An adapter leaf (this lane's) still moves
    the seat from no thread layer at all to a working one for the executor family.
-3. *"Eve is not in the cljs build."* Was true; removed by step 1 (git dep + hosts.edn row + bridges).
+3. _"Eve is not in the cljs build."_ Was true; removed by step 1 (git dep + hosts.edn row + bridges).
 
 ## What unit 8 now still owns
 

@@ -1,6 +1,6 @@
 # Adding a host
 
-*2026-11-02.*
+_2026-11-02._
 
 Write one namespace that builds the capability map and calls
 `cohost.adapter/install!`. `cohost.adapter/contract` lists every capability

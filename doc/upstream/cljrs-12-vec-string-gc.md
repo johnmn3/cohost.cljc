@@ -42,11 +42,11 @@ The process wall time was 364816 ms. The GC file says `GC collections: 3` and `T
 
 Shorter strings under the same 32 MB limit, one process each (`(vec (apply str (repeat n "a")))`):
 
-| n | printed ms | wall s | GC collections | Total GC pause time | GC allocations bytes |
-|---:|---:|---:|---:|---|---:|
-| 10000 | 7 | 1.809 | 28 | 714.258ms | 424930319 |
-| 20000 | 15 | 3.815 | 58 | 1.586s | 847176703 |
-| 40000 | 33 | 8.927 | 128 | 4.078s | 1691669471 |
+|     n | printed ms | wall s | GC collections | Total GC pause time | GC allocations bytes |
+| ----: | ---------: | -----: | -------------: | ------------------- | -------------------: |
+| 10000 |          7 |  1.809 |             28 | 714.258ms           |            424930319 |
+| 20000 |         15 |  3.815 |             58 | 1.586s              |            847176703 |
+| 40000 |         33 |  8.927 |            128 | 4.078s              |           1691669471 |
 
 ## Expected
 

@@ -1,9 +1,9 @@
 # Tiered atoms: memory, disk, and network
 
-*2026-11-05. The implementation record is `doc/eve-cohost/unit7/REPORT.md`
+_2026-11-05. The implementation record is `doc/eve-cohost/unit7/REPORT.md`
 (gate `GATE-U7: 9 rows, 0 failures`; layer probe 56/0; booted check 17/0) and
 `MEMORY-PLAN.md` §4 unit 7 with the §7 Q5 ruling. Status per seat:
-[Eve coverage and status](15-eve-coverage-and-status.md).*
+[Eve coverage and status](15-eve-coverage-and-status.md)._
 
 An Eve-backed atom has a **kind**: where its root lives. The kind is chosen
 by the program, expressed as metadata on the atom value — no new function
@@ -43,7 +43,7 @@ owns the root pointer:
 - **`:disk`** — a file-backed (memory-mapped) Eve domain at `:eve/path`;
   the atom is registered there as `:eve/name`.
 - **`:net`** — Eve's network atom, joined through a gateway/broker. Its
-  disk level is the gateway member's own disk domain (see *Network atoms*,
+  disk level is the gateway member's own disk domain (see _Network atoms_,
   below, for exactly what that means today).
 
 A kind key arriving on an atom that has never been published is
@@ -81,7 +81,7 @@ atom, interleaved swaps from both sides):
   process rejoined and saw both.
 
 A killed process leaves its last published root. A rejoining process sees
-that root — per-atom, always: a disk atom promises *its own* last published
+that root — per-atom, always: a disk atom promises _its own_ last published
 state, never a cross-atom instant spanning several atoms.
 
 Watches are per-process: a watch fires for the publishing process's own
@@ -108,14 +108,14 @@ exactness, not an interleaving.) A network atom's value must be a map.
 
 Two things about the tier model are stated here exactly as they stand:
 
-- The model says a network atom *contains* its disk level — the tiers are
+- The model says a network atom _contains_ its disk level — the tiers are
   each a cache for the level below, and the bottom level owns the root.
   In Eve as cohost consumes it today, that disk level is **the gateway
   member's disk domain**; the network client's own block cache is kept in
   memory, not on the client's disk. Programs should not rely on a
   client-side disk cache existing.
 - On the jank seat a network atom is **not yet** available (Eve's jank row
-  has no HTTP root); a jank process can take part as a *disk member* of a
+  has no HTTP root); a jank process can take part as a _disk member_ of a
   gateway's domain, which is how the exercised run above was built.
 
 ## Bindings across processes
@@ -148,14 +148,14 @@ Kinds are chosen, never drifted into. The layer enforces, and unit 7's
 probe exercised, each of these (the error key is the `:cohost.atom/error`
 of the thrown `ex-info`):
 
-| Rule | Behavior | Error key |
-|---|---|---|
-| No automatic upgrade or fallback | a kind whose seat hosting is absent throws; nothing silently becomes `:mem` | `:kind-unavailable` |
-| Unrepresentable root | fails loudly at creation, at every publish, and at promotion, naming the value; it is never silently kept on the host | `:unrepresentable` |
-| Downgrade | refused — including network → disk, which is **not supported** | `:downgrade` |
-| Re-pointing a tiered atom at another place | refused; make a new atom | `:re-point` |
-| Promotion into an occupied target | refused (a published atom cannot promote over an existing root) | `:promotion-target-occupied` |
-| Missing place keys, unknown kind | refused | `:missing-place` / `:unknown-kind` |
+| Rule                                       | Behavior                                                                                                              | Error key                          |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| No automatic upgrade or fallback           | a kind whose seat hosting is absent throws; nothing silently becomes `:mem`                                           | `:kind-unavailable`                |
+| Unrepresentable root                       | fails loudly at creation, at every publish, and at promotion, naming the value; it is never silently kept on the host | `:unrepresentable`                 |
+| Downgrade                                  | refused — including network → disk, which is **not supported**                                                        | `:downgrade`                       |
+| Re-pointing a tiered atom at another place | refused; make a new atom                                                                                              | `:re-point`                        |
+| Promotion into an occupied target          | refused (a published atom cannot promote over an existing root)                                                       | `:promotion-target-occupied`       |
+| Missing place keys, unknown kind           | refused                                                                                                               | `:missing-place` / `:unknown-kind` |
 
 Metadata on a tiered atom is per-process wrapper state, except the kind
 and place keys themselves — those are the agreement all processes sharing

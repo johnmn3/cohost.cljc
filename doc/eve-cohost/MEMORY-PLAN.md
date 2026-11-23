@@ -5,6 +5,7 @@
 > commit sits directly on top of it; verify with
 > `git log origin/muse/eve-cohost-impl`). Planning only — no
 > implementation code. One-line unit summaries:
+>
 > - Unit 3 — Seam identity: equality + hasheq for Eve-backed values.
 > - Unit 4 — Eve-backed persistent collections behind the shim.
 > - Unit 5 — Atom behind the seam onto Eve atoms; Ref/Var distances.
@@ -84,7 +85,7 @@ claimed built.
   (John, Oct 24 2026 + Nov 4 2026). Eve's identity is a 256-bit
   SHA-256 Merkle digest (in the block's ExtCID); Clojure's
   `hasheq` is Murmur-based and Eve does not owe it numeric
-  agreement. What the seam owes is the *contract*: two values
+  agreement. What the seam owes is the _contract_: two values
   that are `=` must have equal `hasheq`, on every host, whichever
   side of the seam they were built on. Unit 3 is that contract.
 - **The two projects converged on one value shape** (transfer
@@ -130,7 +131,7 @@ jank) holds a **wrapper** — Eve's reference-type shape, a CAS
 word pointing at an immutable root — and every operation the
 class contract names dispatches through the value layer to
 Eve's implementation behind it. From above the seam the value
-is indistinguishable in *surface*: it prints, seqs, counts,
+is indistinguishable in _surface_: it prints, seqs, counts,
 compares and hashes by the class contract. From below, its root
 is an Eve value: persistent, Merkle-identified once resident
 (unit 6), shareable across instances once tiered (unit 7).
@@ -141,13 +142,13 @@ shim creator while the Eve-backed fill is in force (unit 4),
 `reset!`/`swap!` publishing a value into an Eve-backed atom
 (unit 5), and `deref` returning the current root (which may
 itself be a Zone-H value an atom was reset to — an Eve atom
-holding a host value *by reference in the wrapper's host seat*
+holding a host value _by reference in the wrapper's host seat_
 is legal in the mem tier; it is precisely what cannot be
 promoted to disk/net residence, §5 unit 7). There is **no
 implicit marshalling**: nothing walks an arbitrary host object
 graph converting it. A Zone-H value that cannot be represented
 in Eve (a closure, a live host object) stored into a Zone-E
-*collection* is the hard case — it is open question Q3, because
+_collection_ is the hard case — it is open question Q3, because
 each answer costs something different.
 
 **What makes the two zones one world for library code is unit
@@ -191,7 +192,7 @@ host**: `PersistentHashMap-create` is `(apply hash-map …)`,
 `PersistentArrayMap-create` is `(into {} m)`,
 `LazilyPersistentVector-create` is `(vec coll)` — i.e. today's
 collections are Zone-H by construction, and the shim's class
-answers are *predicates over host values* (`vector?`, `set?`,
+answers are _predicates over host values_ (`vector?`, `set?`,
 `h-atom?` in the instance-predicate table). `new-Atom` is
 `host/atom*`; `new-Ref`, on hosts without refs (basilisp, cljs),
 already falls back to `host/atom*` — a standing, quiet
@@ -233,24 +234,24 @@ exists; the surface stays unfilled, and the distance is named.
 2026-11-05 ~10:05 ET): there are no substitute realizations
 anywhere; a row is Eve, not-yet-Eve, or absent.
 
-| Shim surface (clojure.lang) | Eve realization | Label | Unit |
-|---|---|---|---|
-| `Atom` (IAtom/IAtom2, deref/swap!/reset!/CAS, watches, validators) | Eve atom: wrapper with its own CAS word over an immutable root; per-atom snapshots; kinds mem/disk/net | **EVE AS-IS** (mem tier first; kinds in unit 7) | 5, 7 |
-| `Ref` (IRef, dosync/STM) | None — Eve has no STM, and its model law (per-atom snapshots, no cross-atom instant) is STM's contrary | **ABSENT** — today the shim quietly falls back to an atom on ref-less hosts; disposition is Q2 | 5 (plot), Q2 |
-| `Var` (roots, thread bindings) | No Var in Eve; conveyance half already exists (unit 1's `:thread-bindings` leaves + core's binding-conveyor, probe-proven = 3 on JVM and jank) | **EVE AS-IS** — Var root as a slot in the runtime atom domain's registry atom (a real Eve atom, §8); bindings already ride unit 1 | 5 |
-| `Agent` | Eve thread layer (unit 1) | **EVE AS-IS** — done | 1 |
-| `PersistentVector` | Eve vec (persistent vector over Eve's HAMT/block substrate) | **EVE AS-IS** candidate — gated by unit 4's battery-with-fill run | 4 |
-| `PersistentHashMap` | Eve map (HAMT; slab-internal key hash is Eve's own — the seam's `hasheq` is unit 3's separate contract) | **EVE AS-IS** candidate | 4 |
-| `PersistentArrayMap` | No separate small-map representation in Eve; Eve map covers the semantics | **EVE AS-IS** — Eve map answers the class; the ≤16-pair array-map perf shape is a labeled distance | 4 |
-| `PersistentHashSet` | Eve set | **EVE AS-IS** candidate | 4 |
-| `PersistentTreeMap` / `PersistentTreeSet` (sorted) | No landed Eve sorted collection (the tonsky persistent-sorted-set spike was evaluated Oct 2026, not landed) | **NOT-YET** — blocking work is Eve-side: rb-tree sorted collections landing in Eve's line (§7's Q4 correction; depends on unit 3) | —, Eve line |
-| `PersistentList` | Eve list | **EVE AS-IS** candidate | 4 |
-| `PersistentQueue` | No distinct Eve queue type; Eve list/vec cover the semantics | **NOT-YET** (low priority — blocking work is unit 4's tail answering the class from Eve list/vec; until then unfilled behind the fill, not host-backed) | 4 (tail) |
-| Transients (`IEditableCollection`, `TransientVector/Map/Set`, `persistent!`) | Eve's rule: local mutation is **guarded transients** — mutation confined to the scope's local atom, sealed at the boundary | **EVE AS-IS** — the discipline is Eve's model law; the implementation sits on unit 4's Eve collections + a scope-local guard | 4 |
-| `Delay` / `Promise` / `Future` (IDeref/IPending) | Eve thread layer (unit 1) | **EVE AS-IS** — done | 1 |
-| Meta (`IObj`/`IMeta`, `with-meta`) | Eve value blocks carry substrate bookkeeping only (model census: the descriptor holds no program meta); cohost's C++ object carries an explicit meta slot | **EVE AS-IS** — meta rides the value's wrapper in the runtime atom domain, never the block | 4, 5 |
-| Numbers, strings, keywords, symbols, chars | Eve has its own encodings in its own world; at *this* seam they are Zone H by design | **ABSENT** (by design — never Eve-backed; §1 Zone H) | — |
-| Records / deftype instances | cohost's `cohost_object` {descriptor, methods, fields, extmap, meta} ↔ Eve's `eve_obj` {tag, fields}: the same shape, two type systems (transfer analysis §1) | **EVE AS-IS** — by unit 6's convergence (one object kind, told apart by descriptor/tag); NOT-YET on a seat until its unit-6 convergence lands; records' *field values* may be Eve values from unit 4 on | 6 |
+| Shim surface (clojure.lang)                                                  | Eve realization                                                                                                                                               | Label                                                                                                                                                                                                   | Unit         |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `Atom` (IAtom/IAtom2, deref/swap!/reset!/CAS, watches, validators)           | Eve atom: wrapper with its own CAS word over an immutable root; per-atom snapshots; kinds mem/disk/net                                                        | **EVE AS-IS** (mem tier first; kinds in unit 7)                                                                                                                                                         | 5, 7         |
+| `Ref` (IRef, dosync/STM)                                                     | None — Eve has no STM, and its model law (per-atom snapshots, no cross-atom instant) is STM's contrary                                                        | **ABSENT** — today the shim quietly falls back to an atom on ref-less hosts; disposition is Q2                                                                                                          | 5 (plot), Q2 |
+| `Var` (roots, thread bindings)                                               | No Var in Eve; conveyance half already exists (unit 1's `:thread-bindings` leaves + core's binding-conveyor, probe-proven = 3 on JVM and jank)                | **EVE AS-IS** — Var root as a slot in the runtime atom domain's registry atom (a real Eve atom, §8); bindings already ride unit 1                                                                       | 5            |
+| `Agent`                                                                      | Eve thread layer (unit 1)                                                                                                                                     | **EVE AS-IS** — done                                                                                                                                                                                    | 1            |
+| `PersistentVector`                                                           | Eve vec (persistent vector over Eve's HAMT/block substrate)                                                                                                   | **EVE AS-IS** candidate — gated by unit 4's battery-with-fill run                                                                                                                                       | 4            |
+| `PersistentHashMap`                                                          | Eve map (HAMT; slab-internal key hash is Eve's own — the seam's `hasheq` is unit 3's separate contract)                                                       | **EVE AS-IS** candidate                                                                                                                                                                                 | 4            |
+| `PersistentArrayMap`                                                         | No separate small-map representation in Eve; Eve map covers the semantics                                                                                     | **EVE AS-IS** — Eve map answers the class; the ≤16-pair array-map perf shape is a labeled distance                                                                                                      | 4            |
+| `PersistentHashSet`                                                          | Eve set                                                                                                                                                       | **EVE AS-IS** candidate                                                                                                                                                                                 | 4            |
+| `PersistentTreeMap` / `PersistentTreeSet` (sorted)                           | No landed Eve sorted collection (the tonsky persistent-sorted-set spike was evaluated Oct 2026, not landed)                                                   | **NOT-YET** — blocking work is Eve-side: rb-tree sorted collections landing in Eve's line (§7's Q4 correction; depends on unit 3)                                                                       | —, Eve line  |
+| `PersistentList`                                                             | Eve list                                                                                                                                                      | **EVE AS-IS** candidate                                                                                                                                                                                 | 4            |
+| `PersistentQueue`                                                            | No distinct Eve queue type; Eve list/vec cover the semantics                                                                                                  | **NOT-YET** (low priority — blocking work is unit 4's tail answering the class from Eve list/vec; until then unfilled behind the fill, not host-backed)                                                 | 4 (tail)     |
+| Transients (`IEditableCollection`, `TransientVector/Map/Set`, `persistent!`) | Eve's rule: local mutation is **guarded transients** — mutation confined to the scope's local atom, sealed at the boundary                                    | **EVE AS-IS** — the discipline is Eve's model law; the implementation sits on unit 4's Eve collections + a scope-local guard                                                                            | 4            |
+| `Delay` / `Promise` / `Future` (IDeref/IPending)                             | Eve thread layer (unit 1)                                                                                                                                     | **EVE AS-IS** — done                                                                                                                                                                                    | 1            |
+| Meta (`IObj`/`IMeta`, `with-meta`)                                           | Eve value blocks carry substrate bookkeeping only (model census: the descriptor holds no program meta); cohost's C++ object carries an explicit meta slot     | **EVE AS-IS** — meta rides the value's wrapper in the runtime atom domain, never the block                                                                                                              | 4, 5         |
+| Numbers, strings, keywords, symbols, chars                                   | Eve has its own encodings in its own world; at _this_ seam they are Zone H by design                                                                          | **ABSENT** (by design — never Eve-backed; §1 Zone H)                                                                                                                                                    | —            |
+| Records / deftype instances                                                  | cohost's `cohost_object` {descriptor, methods, fields, extmap, meta} ↔ Eve's `eve_obj` {tag, fields}: the same shape, two type systems (transfer analysis §1) | **EVE AS-IS** — by unit 6's convergence (one object kind, told apart by descriptor/tag); NOT-YET on a seat until its unit-6 convergence lands; records' _field values_ may be Eve values from unit 4 on | 6            |
 
 Reading rule for the table: "EVE AS-IS candidate" means the
 unit's gate is what promotes it to EVE AS-IS — Eve's collections
@@ -292,7 +293,7 @@ host before it ever becomes a seat's default.
 - **Seam surface it sits behind.** The shim's equality/hash
   dispatch itself (`equiv`, `hasheq`, `hashCode` answers and
   the `IHashEq` ancestry in the class table) — no class moves
-  yet; the unit ships the *rules* plus a minimal Eve-backed
+  yet; the unit ships the _rules_ plus a minimal Eve-backed
   value (an Eve atom's root snapshot and one Eve collection
   hosted in-memory on the JVM seat) to prove them against.
 - **Gate.** A seam probe in the probe program's shape: mixed-
@@ -310,7 +311,7 @@ host before it ever becomes a seat's default.
 ### Unit 4 — Eve-backed persistent collections behind the shim
 
 - **Scope.** The class move, one collection end-to-end first
-  (vector *or* hash map — the lane picks by which the libraries
+  (vector _or_ hash map — the lane picks by which the libraries
   exercise more, measured, not guessed), then the rest of the
   §3 rows: `PersistentVector`, `PersistentHashMap`,
   `PersistentHashSet`, `PersistentList`, `PersistentArrayMap`
@@ -323,7 +324,7 @@ host before it ever becomes a seat's default.
   boot opt (the `:host-lacks` pattern) before any seat takes
   it as default — whether it ever becomes a default is Q1,
   and the unit does not presume the answer: it ships the fill
-  and the gate that *could* justify a default.
+  and the gate that _could_ justify a default.
 - **Seam surface.** The creators + instance predicates +
   method vars of the five classes and the transient
   interfaces — the exact delegation points §2 inventories.
@@ -340,7 +341,7 @@ host before it ever becomes a seat's default.
 - **Dependencies.** Unit 3 (identity rules must exist before a
   second representation of the same values does). No slab
   dependency on the JVM seat (in-memory Eve structures);
-  the jank *residence* of these values is unit 6, not here —
+  the jank _residence_ of these values is unit 6, not here —
   on jank this unit's gate is compile + battery with the
   values hosted as they are on the JVM seat.
 
@@ -372,7 +373,7 @@ host before it ever becomes a seat's default.
   an Eve-backed atom holding a Zone-E collection (unit 4)
   whose root's Merkle identity is stable across swaps that
   don't change it — the first place the seam touches Eve
-  identity, as a *measurement*. Batteries green; probe
+  identity, as a _measurement_. Batteries green; probe
   program re-run: its future-capture-atom case (answers 1
   today) must still answer 1 through the Eve-backed atom.
 - **Dependencies.** Unit 3 (CAS comparison is seam equality),
@@ -389,7 +390,7 @@ host before it ever becomes a seat's default.
   Eve's completion object **converge**: one tagged C++ object
   whose descriptor dispatch serves both type systems (the
   transfer analysis's convergence, §0), so a cohost record
-  and an Eve value are the same *kind* of object on jank,
+  and an Eve value are the same _kind_ of object on jank,
   told apart by descriptor/tag as DJ-2 ruled. Includes the
   known require fix in the slab-io adapter
   (`slab_io.jank:153`) the flagship lane carries.
@@ -404,7 +405,7 @@ host before it ever becomes a seat's default.
   slab + typed-view measured against node's C++ extension
   numbers on the same bench shape (Eve-on-jank lane's gate —
   this unit does not re-measure what that gate measures, it
-  *consumes* it). Cohost-side gate: `bb boot:jank` with the
+  _consumes_ it). Cohost-side gate: `bb boot:jank` with the
   fill forced — battery 219/221, libraries 62/62, root
   identity stable across a snapshot rebuild (same program,
   same root digest, printed), and a deref of a disk-resident
@@ -566,7 +567,7 @@ unit 2 ───────┴── (cljs leaves)      │                    
 - **Hard-gated on the flagship:** unit 6 only. Units 7–8
   inherit the gate transitively (7's jank disk half, 8 via
   7) — their JVM/cljs halves are plotted so work need not
-  idle behind it, but no unit after 5 *declares* complete on
+  idle behind it, but no unit after 5 _declares_ complete on
   a seat whose residence is unmeasured.
 - **What the flagship owes this plan** (its own gate, stated
   here so the dependency is exact): region + slab +
@@ -603,15 +604,15 @@ and any Eve-representation surprise on every existing user,
 in a 0.9.x line. Opt-in keeps two value worlds alive
 indefinitely, and every "library code unchanged" claim then
 holds only inside programs that opted in. The atom-kind
-ruling (chosen, never automatic) was made about *atoms*;
-whether it extends to *collections* is not in the record.
+ruling (chosen, never automatic) was made about _atoms_;
+whether it extends to _collections_ is not in the record.
 Fork: default-on (per seat, as each seat's gate passes) vs
 opt-in until a major version vs opt-in permanently.
 
 **Q2. Ref/STM: build it, disposition it, or keep the quiet
 fallback? — RULED: no STM for now (see §7).**
 Facts: Eve has no STM and its snapshot law argues against
-one; the shim *already* falls back `Ref` → atom on hosts
+one; the shim _already_ falls back `Ref` → atom on hosts
 without refs, quietly — a `dosync` program there gets atom
 semantics with no signal, which is the worst-shaped answer
 regardless of the fork chosen. Unit 5 measures how much of
@@ -633,7 +634,7 @@ collection, so rejecting is a real behavior change for
 programs that mix host objects into collections they also
 want shared or durable. The model law bans side tables
 that outlive their scope, which kills the persistent
-side-table answer; a *scope-local* handle table is legal
+side-table answer; a _scope-local_ handle table is legal
 under the law but the handles die with the process, so a
 "shared" collection containing one is shared with a hole.
 Fork: (a) reject at the seam with a named error (clean
@@ -665,7 +666,7 @@ RULED: metadata (see §7).**
 Facts: kinds must be developer-chosen (settled), and the
 seam rule forbids a new cohost-facing API (settled) — but
 `(atom x)` has no kind argument in stock Clojure, so the
-choice needs *some* expression that is neither. The
+choice needs _some_ expression that is neither. The
 candidates differ in who can see the choice: an option map
 on the shim's Atom constructor path (visible to the
 program, behind the seam — but every host's `atom` must
@@ -676,7 +677,7 @@ the shape John's tmpfs ruling already used: "configuration
 only"); or metadata on the atom value itself. Fork:
 constructor opt vs boot/policy default vs metadata —
 noting the broker/disk join semantics (§0) treat kind as
-a property of the *atom*, which pulls toward the first
+a property of the _atom_, which pulls toward the first
 and third.
 
 ## 7. Rulings (John, 2026-11-05 ~09:40 ET)
@@ -806,7 +807,7 @@ that carry this section):
 
 ---
 
-*Plan banked 2026-11-05. Sources: UNIT1-REPORT.md +
+_Plan banked 2026-11-05. Sources: UNIT1-REPORT.md +
 STATUS.md (this branch), the load probe REPORT.md
 (`muse/eve-cohost-probe` @ 1829658), the transfer analysis
 (`~/workspace/cohost-install/eve-jank-cohost-transfer.md`),
@@ -814,7 +815,7 @@ STATUS.md (this branch), the load probe REPORT.md
 memory-model docs (`vs/docs/memory-model.md`), and John's
 rulings as cited inline. Claims about Eve-side state are
 labeled with their seat and date; the flagship gate's
-numbers do not exist yet and are nowhere estimated here.*
+numbers do not exist yet and are nowhere estimated here._
 
 ## 10. Further ruling (John, 2026-11-05 ~10:23 ET) — Q-A: containers are inside the heap ruling
 

@@ -19,6 +19,7 @@ follows file ownership, so the lanes do not edit the same code.
 
 Owns `src/cohost/hosts/jank_host.jank` and the `:jank` branches of `src/cohost/shim.cljc` and
 `src/cohost/adapter.cljc`.
+
 1. **Push Step 1 now**, as it stands (`jj git push` of the change to its own branch, e.g.
    `muse/jank-step1`, if it is not ready for the main branch). Then finish it: exception class
    names, reduce over an eduction, the reader for `read-string`/edn, a clean libraries run, the
@@ -34,6 +35,7 @@ Owns `src/cohost/hosts/jank_host.jank` and the `:jank` branches of `src/cohost/s
 
 Owns new files and the shared-layer pieces named below. Touches `jank.jank` only by adding a
 key to the adapter map; announce it in the commit message so lane M can rebase.
+
 1. **Step 5 H0 now** (raw jank, no cohost code, no dependency on lane M): the hint microbench
    and spellings. Result: a section in doc/perf/jank.md (create it if lane M has not). If no
    case gains, stop Step 5 there.

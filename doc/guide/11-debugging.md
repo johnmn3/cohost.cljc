@@ -1,6 +1,6 @@
 # Debugging
 
-*2026-11-05. States below are measured, not aspirational: both
+_2026-11-05. States below are measured, not aspirational: both
 columns are the final gate run of 2026-11-05 on the collated
 `muse/debug-seam` tree (tip be95bb2) — the JVM column is
 `bb debug-seam:check jvm` locally (10/14 PASS, 0 FAIL; the 4
@@ -9,7 +9,7 @@ SKIPs are jank-only checks by design), the jank column is
 0 FAIL, with checks #9 and #12 PASS by their dedicated probes —
 14 of 14 accounted). The one remaining boundary is written as a
 boundary: arithmetic written directly in `cpp/` interop (see
-Divide by zero).*
+Divide by zero)._
 
 Debugging a cohosted program is debugging Clojure: cohost boots the
 stock `core.clj` and libraries, so the facilities are the stock
@@ -102,7 +102,7 @@ form, `*3` `*2` `*1` shift and `*1` is the form's value; after a
 throw, `*e` is bound to the exception and the history does not
 shift. Verified on the JVM and on jank (check #5).
 
-## *err* separation
+## _err_ separation
 
 Reports go to stderr, always. A program's `*out*` writes land on
 stdout, its `*err*` writes on stderr, and `binding [*out* *err*]`
@@ -187,11 +187,11 @@ contract. Probe: `doc/debug-seam-probes/probe-div0-cpp.sh`.
 
 Verified on the JVM and on the jank launcher (check #14):
 
-| Case | Exit |
-|---|---|
-| Uncaught throw (`-e`, `-m`, script, `-main`) | 1 |
-| `-X` naming a missing function | message (`function not found: …`) + nonzero |
-| A script calling `(System/exit 3)` | 3 |
+| Case                                         | Exit                                        |
+| -------------------------------------------- | ------------------------------------------- |
+| Uncaught throw (`-e`, `-m`, script, `-main`) | 1                                           |
+| `-X` naming a missing function               | message (`function not found: …`) + nonzero |
+| A script calling `(System/exit 3)`           | 3                                           |
 
 A statically built AOT binary behaves the same — it routes
 through the report machinery and exits 1 on an uncaught throw.
@@ -289,19 +289,19 @@ frames are named below it. The probe scripts are committed at
 (`dev/debug_seam_check.clj`). State at the final gate,
 2026-11-05, on the collated tree:
 
-| # | Check | JVM | Jank |
-|---|---|---|---|
-| 1 | Uncaught-throw report | PASS | PASS |
-| 2 | Source meta at read | SKIP (jank-only probe) | PASS (file + line exact) |
-| 3 | Unresolved symbol; native catch | PASS | PASS (native catch included — the hole is closed) |
-| 4 | Reader error | PASS | PASS |
-| 5 | REPL `*1`/`*e` | PASS | PASS |
-| 6 | In-program trace access | PASS | PASS |
-| 7 | `pst` | PASS | PASS (frame lines carry jank's own `-N-N` suffix; see pst, above) |
-| 8 | `*err*` separation | PASS | PASS |
-| 9 | AOT uncaught throw | SKIP in the runner; probed separately | PASS by probe — exit 1, headline, report EDN |
-| 10 | Divide by zero | PASS | PASS (cpp/ passthrough division is the stated boundary; see Divide by zero) |
-| 11 | Transform introspection | SKIP (jank-only) | PASS |
-| 12 | gdb break-on-throw | SKIP in the runner; probed separately | PASS (probed 2026-11-05, twice) |
-| 13 | Macro-expansion errors | PASS | PASS |
-| 14 | Exit codes | PASS | PASS (launcher and AOT alike) |
+| #  | Check                           | JVM                                   | Jank                                                                        |
+| -- | ------------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
+| 1  | Uncaught-throw report           | PASS                                  | PASS                                                                        |
+| 2  | Source meta at read             | SKIP (jank-only probe)                | PASS (file + line exact)                                                    |
+| 3  | Unresolved symbol; native catch | PASS                                  | PASS (native catch included — the hole is closed)                           |
+| 4  | Reader error                    | PASS                                  | PASS                                                                        |
+| 5  | REPL `*1`/`*e`                  | PASS                                  | PASS                                                                        |
+| 6  | In-program trace access         | PASS                                  | PASS                                                                        |
+| 7  | `pst`                           | PASS                                  | PASS (frame lines carry jank's own `-N-N` suffix; see pst, above)           |
+| 8  | `*err*` separation              | PASS                                  | PASS                                                                        |
+| 9  | AOT uncaught throw              | SKIP in the runner; probed separately | PASS by probe — exit 1, headline, report EDN                                |
+| 10 | Divide by zero                  | PASS                                  | PASS (cpp/ passthrough division is the stated boundary; see Divide by zero) |
+| 11 | Transform introspection         | SKIP (jank-only)                      | PASS                                                                        |
+| 12 | gdb break-on-throw              | SKIP in the runner; probed separately | PASS (probed 2026-11-05, twice)                                             |
+| 13 | Macro-expansion errors          | PASS                                  | PASS                                                                        |
+| 14 | Exit codes                      | PASS                                  | PASS (launcher and AOT alike)                                               |

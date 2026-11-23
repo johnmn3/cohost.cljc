@@ -28,4 +28,3 @@ source roots boots it stock — `clojure.X` into `cohost.X`, any other library
 under its own name — and falls back to the host's own `require` otherwise.
 `boot/add-source-root!` adds a directory to search; `boot/lib-report` says
 what each library's load did.
-

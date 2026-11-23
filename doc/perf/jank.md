@@ -54,18 +54,18 @@ sum-double hinted-median-ns 10112546 plain-median-ns 10133333 ratio-hinted-over-
 jank-h0-bench-done
 ```
 
-| case | hinted median ns | plain median ns | ratio hinted/plain |
-|---|---:|---:|---:|
-| `(defn f [^double a ^double b] (+ a b))`, 2e6 calls | 23241968 | 15964568 | 1.4558469731219785 |
-| `(defn f [^long a ^long b] (+ a b))`, 2e6 calls | 19753583 | 13489929 | 1.4643207536525953 |
-| `(defn f [^jtl.i64 a ^jtl.i64 b] (+ a b))`, 2e6 calls | 20553653 | 13489929 | 1.5236294423788295 |
-| `(defn f [^double a ^double b] (< a b))`, 2e6 calls | 20650557 | 14580225 | 1.416340077056424 |
-| `(defn f [^long a] (inc a))`, 2e6 calls | 14294771 | 11491214 | 1.2439739613238427 |
-| loop carries a `^double` parameter, 2e6 steps | 1006832 | 9631431 | 0.104536075688026 |
-| loop carries a `^long` parameter, 2e6 steps | 767624 | 6136461 | 0.12509229668370744 |
-| loop carries a `^jtl.i64` parameter, 2e6 steps | 763497 | 6136461 | 0.12441975920648726 |
-| `^long` on the loop locals; the parameter is `^long` on both sides; 2e8 steps | 12613629 | 12625139 | 0.9990883268691141 |
-| `^double` on the limit only; locals start at literal `0.0`; 2e7 steps | 10112546 | 10133333 | 0.9979486512483109 |
+| case                                                                          | hinted median ns | plain median ns |  ratio hinted/plain |
+| ----------------------------------------------------------------------------- | ---------------: | --------------: | ------------------: |
+| `(defn f [^double a ^double b] (+ a b))`, 2e6 calls                           |         23241968 |        15964568 |  1.4558469731219785 |
+| `(defn f [^long a ^long b] (+ a b))`, 2e6 calls                               |         19753583 |        13489929 |  1.4643207536525953 |
+| `(defn f [^jtl.i64 a ^jtl.i64 b] (+ a b))`, 2e6 calls                         |         20553653 |        13489929 |  1.5236294423788295 |
+| `(defn f [^double a ^double b] (< a b))`, 2e6 calls                           |         20650557 |        14580225 |   1.416340077056424 |
+| `(defn f [^long a] (inc a))`, 2e6 calls                                       |         14294771 |        11491214 |  1.2439739613238427 |
+| loop carries a `^double` parameter, 2e6 steps                                 |          1006832 |         9631431 |   0.104536075688026 |
+| loop carries a `^long` parameter, 2e6 steps                                   |           767624 |         6136461 | 0.12509229668370744 |
+| loop carries a `^jtl.i64` parameter, 2e6 steps                                |           763497 |         6136461 | 0.12441975920648726 |
+| `^long` on the loop locals; the parameter is `^long` on both sides; 2e8 steps |         12613629 |        12625139 |  0.9990883268691141 |
+| `^double` on the limit only; locals start at literal `0.0`; 2e7 steps         |         10112546 |        10133333 |  0.9979486512483109 |
 
 Both sides of each pair returned the same value (`2500000.0`, `6000000`, `2e+06`, `2000000`, `2.000001e+12`, `-1453759936`, `-645128448`, `1.9999999e+14`).
 
@@ -96,7 +96,6 @@ The wrapped results are the int32 sum. `static_cast<int>` is applied to an accum
 - `down_long_plain`: the carried index stays `object_ref`, and each step does `convert<int>::from_object` on the `add` result.
 
 ```
-
 == h0_codegen$f_dbl_102_2
 auto &&a{ jank::runtime::convert<double>::from_object(a_160) };auto &&b{ jank::runtime::convert<double>::from_object(b_161) };
 auto &&v1(jank::runtime::add(a, b));
@@ -299,24 +298,24 @@ loop-long (quote long)
 
 From that log:
 
-| spelling | result |
-|---|---|
-| `^long`, `^cpp/long` | accepted. `(f 3000000000)` prints `3000000000`. A real argument throws: expected `integer`, got `small_real` |
-| `^jtl.i64`, `^jank.i64` | accepted. `(f 3000000000)` prints `3000000000`. Codegen type is `jtl::i64` |
-| `^int`, `^cpp/int`, `^jtl.i32` | accepted. `(f 3000000000)` prints `-1294967296` |
-| `^double`, `^cpp/double` | accepted for a real: `(f 1.25)` prints `1.25 small_real`. `(f 1)` throws: expected `real`, got `small_integer` |
-| `^float` | accepted for a real: `(f 1.25)` prints `1.25 small_real`. Codegen type is `float` |
-| `^bool`, `^cpp/bool` | accepted for a boolean. `(f 1)` throws: expected `boolean`, got `small_integer` |
-| `^"long"` `^"double"` `^"bool"` `^"int"` | read error: `Meta hint must be a keyword, symbol, list, or map.` |
-| `^jank::i64` | `Unable to find jank::i64 within the global namespace.` The tag symbol's name is the characters `jank::i64` |
-| `^boolean`, `^integer`, `^i64` | unresolved in the global namespace |
-| `^(cpp/double)` | `Unable to use double as a template.` |
-| `^:double` | no `:tag`. The meta is `{:double true}`. `(f 1)` and `(f 1.25)` both return |
-| `^{:tag double}` | rejected: the tag evals to `clojure.core/double`, a `jit_function` |
-| `^{:tag "double"}` | rejected: the tag is a `persistent_string` |
-| `^{:tag (quote double)}` | accepted, same value as `^double` |
-| `^double` on the fn name | `(defn ^double f [] 3000000000)` prints `3000000000` |
-| `^int` / `^double` on a `let` local, `^long` on a `loop` local | `(let [^int a 1.5] a)` prints `1.5`. `(let [^double a 1] a)` prints `1`. `(loop [^long i 0] ...)` prints `3` |
+| spelling                                                       | result                                                                                                         |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `^long`, `^cpp/long`                                           | accepted. `(f 3000000000)` prints `3000000000`. A real argument throws: expected `integer`, got `small_real`   |
+| `^jtl.i64`, `^jank.i64`                                        | accepted. `(f 3000000000)` prints `3000000000`. Codegen type is `jtl::i64`                                     |
+| `^int`, `^cpp/int`, `^jtl.i32`                                 | accepted. `(f 3000000000)` prints `-1294967296`                                                                |
+| `^double`, `^cpp/double`                                       | accepted for a real: `(f 1.25)` prints `1.25 small_real`. `(f 1)` throws: expected `real`, got `small_integer` |
+| `^float`                                                       | accepted for a real: `(f 1.25)` prints `1.25 small_real`. Codegen type is `float`                              |
+| `^bool`, `^cpp/bool`                                           | accepted for a boolean. `(f 1)` throws: expected `boolean`, got `small_integer`                                |
+| `^"long"` `^"double"` `^"bool"` `^"int"`                       | read error: `Meta hint must be a keyword, symbol, list, or map.`                                               |
+| `^jank::i64`                                                   | `Unable to find jank::i64 within the global namespace.` The tag symbol's name is the characters `jank::i64`    |
+| `^boolean`, `^integer`, `^i64`                                 | unresolved in the global namespace                                                                             |
+| `^(cpp/double)`                                                | `Unable to use double as a template.`                                                                          |
+| `^:double`                                                     | no `:tag`. The meta is `{:double true}`. `(f 1)` and `(f 1.25)` both return                                    |
+| `^{:tag double}`                                               | rejected: the tag evals to `clojure.core/double`, a `jit_function`                                             |
+| `^{:tag "double"}`                                             | rejected: the tag is a `persistent_string`                                                                     |
+| `^{:tag (quote double)}`                                       | accepted, same value as `^double`                                                                              |
+| `^double` on the fn name                                       | `(defn ^double f [] 3000000000)` prints `3000000000`                                                           |
+| `^int` / `^double` on a `let` local, `^long` on a `loop` local | `(let [^int a 1.5] a)` prints `1.5`. `(let [^double a 1] a)` prints `1`. `(loop [^long i 0] ...)` prints `3`   |
 
 `(let [a 3000000000] a)` and `(let [^int a 3000000000] a)` both print `Parsing failed.` A separate `jank run` of each form exits 1 with the same clang diagnostic: `no viable overloaded '='` assigning a `long` to `oref<integer>`, then `error: Unable to compile C++ source.` The failure is the binding of an integer that does not fit in a small integer. It happens with the hint and without it.
 
@@ -330,13 +329,13 @@ The carried `^double` loop is ratio `0.104536075688026` (hinted median `1006832`
 
 H1 loses, on jank 0.1-noble as shipped, when the hinted function is the thing the loop calls, and the body returns `(+ a b)`, `(< a b)`, or `(inc a)`. (An unpatched-jank fact, not a jank fact: on the full patch series the same probe ties or wins; "Hints at every position", below.)
 
-| body | ratio hinted/plain |
-|---|---:|
-| `(+ a b)` on `^double` | 1.4558469731219785 |
-| `(+ a b)` on `^long` | 1.4643207536525953 |
+| body                    | ratio hinted/plain |
+| ----------------------- | -----------------: |
+| `(+ a b)` on `^double`  | 1.4558469731219785 |
+| `(+ a b)` on `^long`    | 1.4643207536525953 |
 | `(+ a b)` on `^jtl.i64` | 1.5236294423788295 |
-| `(< a b)` on `^double` | 1.416340077056424 |
-| `(inc a)` on `^long` | 1.2439739613238427 |
+| `(< a b)` on `^double`  |  1.416340077056424 |
+| `(inc a)` on `^long`    | 1.2439739613238427 |
 
 Those bodies do unbox. They then box the result with `into_object` before the caller sees it, and that round trip is slower than the unhinted call.
 
@@ -405,10 +404,10 @@ aot run 5 load-ns 1511217965
 median-ns 1499645531
 ```
 
-| module path | median of 5 `load-ns` |
-|---|---:|
-| `src` (source) | 5150953051 |
-| `<aot-dir>:src` (objects ahead of source) | 1499645531 |
+| module path                               | median of 5 `load-ns` |
+| ----------------------------------------- | --------------------: |
+| `src` (source)                            |            5150953051 |
+| `<aot-dir>:src` (objects ahead of source) |            1499645531 |
 
 ### Boot
 
@@ -434,9 +433,9 @@ libraries: 30/61 cases pass across 12 clojure.* libraries
 The boot line and the library line match. The battery does not. The AOT run has one failure the source run does not:
 
 ```
-   FAIL radix parsing and printing
-        got      "ERR For input string: \"-zz\" under radix 36"
-        expected [255 -1295 "ff" "ffffffff" "101"]
+FAIL radix parsing and printing
+     got      "ERR For input string: \"-zz\" under radix 36"
+     expected [255 -1295 "ff" "ffffffff" "101"]
 ```
 
 That row is `(Long/parseLong "-zz" 36)` through `cohost.shim/parse-radix`, and `shim.o` is one of the objects loaded ahead of `shim.cljc`. The source boot does not print this FAIL. No `src/` file was edited.
@@ -447,13 +446,13 @@ Measured 2026-11-01 ET on the same jank, base `dcf9afc` (the adapter namespace i
 
 `(Long/parseLong "-zz" 36)` is still wrong in an AOT `shim.o`, and it is not only `-O3`. Each level was compiled with `jank --module-path src compile-module cohost.shim -<level> --target-dir target/jank-aot`, which writes a different `_cache` directory than the `-O3` `cohost.run` build. The parse was run with that directory ahead of `src`:
 
-| shim object | `(Long/parseLong "-zz" 36)` |
-|---|---|
-| source (`shim.o` absent) | `-1295` |
-| `-O3` | `NumberFormatException`, `For input string: "-zz" under radix 36` |
-| `-O2` | same exception |
-| `-O1` | same exception |
-| `-O0` | same exception |
+| shim object              | `(Long/parseLong "-zz" 36)`                                       |
+| ------------------------ | ----------------------------------------------------------------- |
+| source (`shim.o` absent) | `-1295`                                                           |
+| `-O3`                    | `NumberFormatException`, `For input string: "-zz" under radix 36` |
+| `-O2`                    | same exception                                                    |
+| `-O1`                    | same exception                                                    |
+| `-O0`                    | same exception                                                    |
 
 No opt level keeps the source result. `bb boot:jank-aot` deletes `shim.o` after the `-O3` compile so `cohost.shim` loads from source. It does not compile `cohost.shim` on its own (that would add another `_cache` directory).
 
@@ -474,10 +473,10 @@ aot run 5 load-ns 3804885655
 median-ns 3952562118
 ```
 
-| module path | median of 5 `load-ns` |
-|---|---:|
-| `src` | 6497792680 |
-| `<aot-dir>:src` (`jank_host.o` ahead of source, no `shim.o`) | 3952562118 |
+| module path                                                  | median of 5 `load-ns` |
+| ------------------------------------------------------------ | --------------------: |
+| `src`                                                        |            6497792680 |
+| `<aot-dir>:src` (`jank_host.o` ahead of source, no `shim.o`) |            3952562118 |
 
 `bb boot:jank` and `bb boot:jank-aot` printed the same boot line, the same battery, and the same libraries:
 
@@ -520,20 +519,20 @@ Appending `;; g12-stamp-touch` to `src/cohost/run.cljc` made the next `bb boot:j
 
 `bb bench:jank --quick` sets `warm-ms` 0, `budget-ms` 0, `min-runs` 1, `settle-ms` 0. Before is the source module path (`jank --module-path src run-main cohost.run -- --bench --quick`). After is `bb bench:jank --quick` (the object directory ahead of `src`, `shim.o` included). `boot-ms` and `libs-ms` are the values in `target/bench-jank.edn`. The median is the middle of the three sorted runs.
 
-| | run 1 | run 2 | run 3 | median |
-|---|---:|---:|---:|---:|
-| JIT `boot-ms` | 28614.529163 | 30967.885298 | 29644.042124 | 29644.042124 |
-| JIT `libs-ms` | 23322.846218999475 | 29486.88468999788 | 23494.7270280011 | 23494.7270280011 |
-| AOT `boot-ms` | 8612.379721 | 8714.469301 | 8568.13362 | 8612.379721 |
-| AOT `libs-ms` | 5696.899114001542 | 6101.376775000244 | 5855.873693000525 | 5855.873693000525 |
+|               |              run 1 |             run 2 |             run 3 |            median |
+| ------------- | -----------------: | ----------------: | ----------------: | ----------------: |
+| JIT `boot-ms` |       28614.529163 |      30967.885298 |      29644.042124 |      29644.042124 |
+| JIT `libs-ms` | 23322.846218999475 | 29486.88468999788 |  23494.7270280011 |  23494.7270280011 |
+| AOT `boot-ms` |        8612.379721 |       8714.469301 |        8568.13362 |       8612.379721 |
+| AOT `libs-ms` |  5696.899114001542 | 6101.376775000244 | 5855.873693000525 | 5855.873693000525 |
 
 The AOT `shim.o` on that recompile was 10659648 bytes. `boot-ms` is the time inside the jank process, after `ensure!` returns, so the recompile on the first AOT bench is not part of `boot-ms`.
 
 The same objects with `shim.o` moved aside (so `cohost.shim` loaded from source; `ensure!` was not used, because a missing `shim.o` is stale) and then three `jank --module-path <aot-dir>:src run-main cohost.run -- --bench --quick` runs:
 
-| | run 1 | run 2 | run 3 | median |
-|---|---:|---:|---:|---:|
-| AOT, shim from source, `boot-ms` | 10807.08871 | 11021.98627 | 11640.262625 | 11021.98627 |
+|                                  |            run 1 |             run 2 |            run 3 |            median |
+| -------------------------------- | ---------------: | ----------------: | ---------------: | ----------------: |
+| AOT, shim from source, `boot-ms` |      10807.08871 |       11021.98627 |     11640.262625 |       11021.98627 |
 | AOT, shim from source, `libs-ms` | 8103.36599900201 | 9084.837037999183 | 9241.82250900194 | 9084.837037999183 |
 
 `shim.o` was moved back after those runs (10659648 bytes). Loading it is the faster of the two AOT medians: `boot-ms` 8612.379721 against 11021.98627, `libs-ms` 5855.873693000525 against 9084.837037999183.
@@ -600,18 +599,18 @@ CHECK cpp-cohost false
 CHECK record ERR
 ```
 
-| check | normal boot | compiled module |
-|---|---|---|
-| `cohost.walk/walk` is a var | yes, `true` | no, no object loaded |
-| `:doc` | yes, the walk docstring | no |
-| `:arglists` | yes, `([inner outer form])` | no |
-| `:macro` on `macroexpand-all` | yes, the value is `nil` (it is a function) | no |
-| `:macro` on `cohost.core/when` | yes, `true` | no |
-| `keywordize-keys` of `{"a" 1}` | yes, `{:a 1}` | no |
-| `print-method` var | yes, meta keys `[:jank/source :cohost/wrapped :cohost/host]` | no |
-| `type` of an atom | yes, `"atom"` | no |
-| `cpp/cohost_obj.is_cohost` of an atom | yes, the call returned `false` | no |
-| `defrecord` | no, the check printed `ERR` | no |
+| check                                 | normal boot                                                  | compiled module      |
+| ------------------------------------- | ------------------------------------------------------------ | -------------------- |
+| `cohost.walk/walk` is a var           | yes, `true`                                                  | no, no object loaded |
+| `:doc`                                | yes, the walk docstring                                      | no                   |
+| `:arglists`                           | yes, `([inner outer form])`                                  | no                   |
+| `:macro` on `macroexpand-all`         | yes, the value is `nil` (it is a function)                   | no                   |
+| `:macro` on `cohost.core/when`        | yes, `true`                                                  | no                   |
+| `keywordize-keys` of `{"a" 1}`        | yes, `{:a 1}`                                                | no                   |
+| `print-method` var                    | yes, meta keys `[:jank/source :cohost/wrapped :cohost/host]` | no                   |
+| `type` of an atom                     | yes, `"atom"`                                                | no                   |
+| `cpp/cohost_obj.is_cohost` of an atom | yes, the call returned `false`                               | no                   |
+| `defrecord`                           | no, the check printed `ERR`                                  | no                   |
 
 ### Verdict
 
@@ -645,6 +644,7 @@ The probe's verdict named three gaps: shim vars interned only at boot, a namespa
 - **Key**: sha256 over the stock sources (`resources/cohost/clojure-1.12.0`), `src/cohost`, `dev/perf/jank_snapshot_*`, and `jank print-binary-version`, in `target/jank-snapshot/stamp` (`dev/perf/jank_snapshot_ensure.clj`). No stamp, another key, or a missing object is stale: the snapshot is deleted and built again before anything loads it.
 
 jank facts found on the way (0.1-noble):
+
 - `compile-module` evaluates each top-level form before it analyzes the next, so a var a call interns resolves in the forms after it; its codegen pass analyzes the module's `ns` form inside the new namespace, so a bare namespace's header must be written `clojure.core/ns`.
 - A required file's `ns` form is analyzed in the requiring namespace: the core module requires `cohost.run` before its own bare `ns` form.
 - An object is not loaded without its source on the module path (`runtime/module-binary-without-source`): the emitted sources stay beside the objects.
@@ -704,10 +704,10 @@ MEDIAN aot boot-ms 9590.933535 libs-ms 9225.588032000232 sum 18816.521567000233
 MEDIAN snap boot-ms 597.172844 libs-ms 696.111727999989 sum 1293.284571999989
 ```
 
-| median of 3 | boot-ms | libs-ms | sum |
-|---|---:|---:|---:|
-| `bb bench:jank --quick` (no snapshot) | 9,590.9 | 9,225.6 | 18,816.5 |
-| `bb boot:jank-snapshot --bench --quick` | 597.2 | 696.1 | 1,293.3 |
+| median of 3                             | boot-ms | libs-ms |      sum |
+| --------------------------------------- | ------: | ------: | -------: |
+| `bb bench:jank --quick` (no snapshot)   | 9,590.9 | 9,225.6 | 18,816.5 |
+| `bb boot:jank-snapshot --bench --quick` |   597.2 |   696.1 |  1,293.3 |
 
 The sum is 14.5 times smaller. For scale (jank-FAST): JVM Clojure 1.3 s, jolt 2.5 s boot. All 30 bench cases ran on both sides of the snapshot run with the same values.
 
@@ -769,10 +769,10 @@ MEDIAN aot boot-ms 10364.375912 libs-ms 9098.975416000001 sum 19743.086554000194
 MEDIAN snap boot-ms 580.445917 libs-ms 609.4266209998168 sum 1189.8725379998168
 ```
 
-| `bb bench:jank --quick`, median of 3 | boot-ms | libs-ms | sum |
-|---|---:|---:|---:|
-| before (AOT boot of core.clj) | 10,364.4 | 9,099.0 | 19,743.1 |
-| after (fresh snapshot, the default) | 580.4 | 609.4 | 1,189.9 |
+| `bb bench:jank --quick`, median of 3 |  boot-ms | libs-ms |      sum |
+| ------------------------------------ | -------: | ------: | -------: |
+| before (AOT boot of core.clj)        | 10,364.4 | 9,099.0 | 19,743.1 |
+| after (fresh snapshot, the default)  |    580.4 |   609.4 |  1,189.9 |
 
 The cost moved to the build: about 6 minutes (371,088 ms here) after any change to an input, `src/cohost` included, paid by `bb boot:jank-snapshot`; until then `bb boot:jank` boots as before.
 
@@ -792,46 +792,46 @@ dev/perf/jank_snapshot_o3_probe.jank         # format and sort-by, 20 timed call
 
 ### boot-ms and libs-ms (median of 3)
 
-| | boot-ms | libs-ms | sum |
-|---|---:|---:|---:|
-| snapshot, no -O (`--quick`) | 586.5 | 668.5 | 1,288.5 |
-| snapshot, -O3 (`--quick`) | 652.3 | 710.9 | 1,363.2 |
-| snapshot, no -O (full bench) | 650.8 | 675.6 | 1,338.9 |
-| snapshot, -O3 (full bench) | 584.8 | 625.5 | 1,210.6 |
+|                                         |  boot-ms |  libs-ms |      sum |
+| --------------------------------------- | -------: | -------: | -------: |
+| snapshot, no -O (`--quick`)             |    586.5 |    668.5 |  1,288.5 |
+| snapshot, -O3 (`--quick`)               |    652.3 |    710.9 |  1,363.2 |
+| snapshot, no -O (full bench)            |    650.8 |    675.6 |  1,338.9 |
+| snapshot, -O3 (full bench)              |    584.8 |    625.5 |  1,210.6 |
 | AOT boot of core.clj, no -O (`--quick`) | 18,728.9 | 11,856.7 | 30,535.3 |
-| AOT boot of core.clj, -O3 (`--quick`) | 33,658.0 | 16,884.3 | 51,695.6 |
+| AOT boot of core.clj, -O3 (`--quick`)   | 33,658.0 | 16,884.3 | 51,695.6 |
 
 From the snapshot the flag does not move startup beyond the run-to-run spread (two sets of three runs disagree in direction). Without a snapshot (the fallback when it is stale) the boot JIT-compiles `core.clj` and the libraries at `-O3`: 21.2 s more, as R's P6b found for the whole process.
 
 ### Bench cases (bb bench:jank, the full bench, from the snapshot, stock side, median of 3, ms)
 
-| case | no -O | -O3 | ratio |
-|---|---:|---:|---:|
-| fn-call | 3.4 | 0.9 | 0.26 |
-| loop-arith | 2.1 | 0.0 | 0.00 |
-| hinted-loop | 1.7 | 0.0 | 0.01 |
-| lazy-iterate | 8.9 | 6.0 | 0.67 |
-| destructure | 33.0 | 19.1 | 0.58 |
-| keyword-lookup | 19.6 | 13.4 | 0.69 |
-| protocol | 80.4 | 62.7 | 0.78 |
-| str-build | 77.0 | 63.6 | 0.83 |
-| partition | 254.2 | 218.2 | 0.86 |
-| atom-swap | 23.2 | 20.5 | 0.88 |
-| lazy-pipeline | 221.3 | 196.9 | 0.89 |
-| distinct | 478.2 | 426.6 | 0.89 |
-| multimethod | 40.0 | 36.9 | 0.92 |
-| conj-vector | 36.8 | 35.0 | 0.95 |
-| set-build | 45.1 | 43.8 | 0.97 |
-| regex | 344.7 | 342.2 | 0.99 |
-| equality, pr-str, frequencies, sort, map-lookup, string-join | | | 1.00-1.02 |
-| reduce-range | 19.2 | 20.5 | 1.07 |
-| assoc-map | 56.5 | 60.3 | 1.07 |
-| group-by | 71.8 | 77.8 | 1.08 |
-| format | 159.0 | 176.6 | 1.11 |
-| sort-by | 73.6 | 81.9 | 1.11 |
-| transient-vector | 30.7 | 34.8 | 1.13 |
-| into-vector | 30.5 | 34.8 | 1.14 |
-| transduce | 17.7 | 22.1 | 1.25 |
+| case                                                         | no -O |   -O3 |     ratio |
+| ------------------------------------------------------------ | ----: | ----: | --------: |
+| fn-call                                                      |   3.4 |   0.9 |      0.26 |
+| loop-arith                                                   |   2.1 |   0.0 |      0.00 |
+| hinted-loop                                                  |   1.7 |   0.0 |      0.01 |
+| lazy-iterate                                                 |   8.9 |   6.0 |      0.67 |
+| destructure                                                  |  33.0 |  19.1 |      0.58 |
+| keyword-lookup                                               |  19.6 |  13.4 |      0.69 |
+| protocol                                                     |  80.4 |  62.7 |      0.78 |
+| str-build                                                    |  77.0 |  63.6 |      0.83 |
+| partition                                                    | 254.2 | 218.2 |      0.86 |
+| atom-swap                                                    |  23.2 |  20.5 |      0.88 |
+| lazy-pipeline                                                | 221.3 | 196.9 |      0.89 |
+| distinct                                                     | 478.2 | 426.6 |      0.89 |
+| multimethod                                                  |  40.0 |  36.9 |      0.92 |
+| conj-vector                                                  |  36.8 |  35.0 |      0.95 |
+| set-build                                                    |  45.1 |  43.8 |      0.97 |
+| regex                                                        | 344.7 | 342.2 |      0.99 |
+| equality, pr-str, frequencies, sort, map-lookup, string-join |       |       | 1.00-1.02 |
+| reduce-range                                                 |  19.2 |  20.5 |      1.07 |
+| assoc-map                                                    |  56.5 |  60.3 |      1.07 |
+| group-by                                                     |  71.8 |  77.8 |      1.08 |
+| format                                                       | 159.0 | 176.6 |      1.11 |
+| sort-by                                                      |  73.6 |  81.9 |      1.11 |
+| transient-vector                                             |  30.7 |  34.8 |      1.13 |
+| into-vector                                                  |  30.5 |  34.8 |      1.14 |
+| transduce                                                    |  17.7 |  22.1 |      1.25 |
 
 The cases above 1.05 were checked against the spread of their three runs. `transduce`, `into-vector`, `transient-vector`: each run's value moves by up to 2x on both sides (stock `transduce` 17.7 / 26.7 / 13.9 without, 16.1 / 26.2 / 22.1 with; its host side 8.2 / 15.6 / 6.6 and 7.8 / 15.9 / 15.2): noise. `assoc-map`, `group-by`, `reduce-range`: the ranges overlap. `sort-by` and `format` went to the probe (median of 20 calls per process, three processes per level, ns):
 
@@ -905,15 +905,15 @@ libraries: 30/61 cases pass across 12 clojure.* libraries
 before:
 
 ```
-  loop-arith  host 1.45  stock 1.57  x1.08
-  reduce-range  host 7.54  stock 11.14  x1.47
+loop-arith  host 1.45  stock 1.57  x1.08
+reduce-range  host 7.54  stock 11.14  x1.47
 ```
 
 after:
 
 ```
-  loop-arith  host 1.36  stock 1.38  x1.01
-  reduce-range  host 5.39  stock 8.34  x1.54
+loop-arith  host 1.36  stock 1.38  x1.01
+reduce-range  host 5.39  stock 8.34  x1.54
 ```
 
 `bb boot:cljrs` (cljrs 0.2.32), this session, after the change. No before line was recorded. The four new rows are not in the failure list. Boot errors stayed 0 and libraries stayed 0/61. cljrs's `fn` is a special form, so the codemod coerces a primitive parameter on the `fn` form itself; `:native-hints` is nil, so the form gets no native tag.
@@ -970,11 +970,11 @@ babashka v1.13.229
 shipped:
 
 ```
-  hinted-loop  host 1.26  stock 1.26  x0.99
-  hinted-loop  host 1.38  stock 1.44  x1.03
-  hinted-loop  host 1.26  stock 1.27  x1.0
-  hinted-loop  host 1.24  stock 1.25  x1.0
-  hinted-loop  host 1.21  stock 1.24  x1.02
+hinted-loop  host 1.26  stock 1.26  x0.99
+hinted-loop  host 1.38  stock 1.44  x1.03
+hinted-loop  host 1.26  stock 1.27  x1.0
+hinted-loop  host 1.24  stock 1.25  x1.0
+hinted-loop  host 1.21  stock 1.24  x1.02
 ```
 
 median of the five: host `1.26`, stock `1.26`.
@@ -982,11 +982,11 @@ median of the five: host `1.26`, stock `1.26`.
 `:native-hints` nil:
 
 ```
-  hinted-loop  host 1.26  stock 2.36  x1.87
-  hinted-loop  host 1.27  stock 2.25  x1.77
-  hinted-loop  host 1.26  stock 2.35  x1.86
-  hinted-loop  host 1.27  stock 2.45  x1.93
-  hinted-loop  host 1.26  stock 2.46  x1.95
+hinted-loop  host 1.26  stock 2.36  x1.87
+hinted-loop  host 1.27  stock 2.25  x1.77
+hinted-loop  host 1.26  stock 2.35  x1.86
+hinted-loop  host 1.27  stock 2.45  x1.93
+hinted-loop  host 1.26  stock 2.46  x1.95
 ```
 
 median of the five: host `1.26`, stock `2.36`. The host side is raw jank either way. The stock side is the rewritten `^long` parameter: with the native tag its median matches the host (`1.26`); without it the median is `2.36`.
@@ -1003,17 +1003,17 @@ bash dev/perf/jank_boot_profile.sh
 
 That script runs `bb boot:jank-profile` three times. Each run is `jank --module-path src run dev/perf/jank_boot_profile.jank`: `boot!` of `clojure/core.clj`, then `load-lib!` of the twelve `clojure.*` libraries. The total is the boot wall plus the library wall. Each run's eight phases sum to that run's total (`PROFILE-SUM`).
 
-| phase | run 1 ns | run 2 ns | run 3 ns | median ns | share of median total |
-|---|---:|---:|---:|---:|---:|
-| reading | 2114299405 | 2341475412 | 2286907050 | 2286907050 | 4.2760% |
-| codemod | 20834060807 | 21958852298 | 21993146691 | 21958852298 | 41.0585% |
-| eval | 2314885223 | 2435137201 | 2515380825 | 2435137201 | 4.5532% |
-| scan-macros | 228692736 | 268769340 | 271545356 | 268769340 | 0.5025% |
-| setup | 1138629455 | 1178320078 | 1166652684 | 1166652684 | 2.1814% |
-| companion | 146891167 | 150927407 | 148592623 | 148592623 | 0.2778% |
-| library | 23139633836 | 22747687050 | 22989756563 | 22989756563 | 42.9861% |
-| other | 2290665881 | 2400709659 | 2639081126 | 2400709659 | 4.4888% |
-| total | 52207758510 | 53481878445 | 54011062918 | 53481878445 | |
+| phase       |    run 1 ns |    run 2 ns |    run 3 ns |   median ns | share of median total |
+| ----------- | ----------: | ----------: | ----------: | ----------: | --------------------: |
+| reading     |  2114299405 |  2341475412 |  2286907050 |  2286907050 |               4.2760% |
+| codemod     | 20834060807 | 21958852298 | 21993146691 | 21958852298 |              41.0585% |
+| eval        |  2314885223 |  2435137201 |  2515380825 |  2435137201 |               4.5532% |
+| scan-macros |   228692736 |   268769340 |   271545356 |   268769340 |               0.5025% |
+| setup       |  1138629455 |  1178320078 |  1166652684 |  1166652684 |               2.1814% |
+| companion   |   146891167 |   150927407 |   148592623 |   148592623 |               0.2778% |
+| library     | 23139633836 | 22747687050 | 22989756563 | 22989756563 |              42.9861% |
+| other       |  2290665881 |  2400709659 |  2639081126 |  2400709659 |               4.4888% |
+| total       | 52207758510 | 53481878445 | 54011062918 | 53481878445 |                       |
 
 `reading` is slurping and the reader, core only. `codemod` is `prepare` plus `rewrite`. `eval` is `eval-form` of each core form, including `after-eval` and inline capture. `scan-macros` is `scan-macros!` during the core boot. `setup` is `make-ctx`. `companion` and `library` are wall times of those sections (their own read, rewrite, eval, and scan stay inside the wall, not in the core rows). `other` is the boot wall plus the library wall minus the seven rows above. The sum of the eight median phase values is `53655377418`, which is `1.003244` times the median total `53481878445` (0.324% apart). Each run's own phases sum to its own total.
 
@@ -1052,18 +1052,18 @@ jank --profile --profile-output target/jank-boot.profile --module-path src run d
 
 The file is enter/exit events. Exclusive time (a region's time not inside a nested region) sums to the span `62201025119` ns. Share is exclusive time over that span. Top costs:
 
-| region | exclusive ns | share |
-|---|---:|---:|
-| jit eval_string | 44181125287 | 71.030% |
-| eval ast node call | 12537306824 | 20.156% |
-| rt eval_string | 1527764492 | 2.456% |
-| eval ast node let | 887342863 | 1.427% |
-| rt intern_keyword | 736827844 | 1.185% |
-| rt read_string | 529038219 | 0.851% |
-| rt macroexpand1 | 324251957 | 0.521% |
-| eval ast node def | 203251919 | 0.327% |
-| main | 143594071 | 0.231% |
-| jit ctor | 129005823 | 0.207% |
+| region             | exclusive ns |   share |
+| ------------------ | -----------: | ------: |
+| jit eval_string    |  44181125287 | 71.030% |
+| eval ast node call |  12537306824 | 20.156% |
+| rt eval_string     |   1527764492 |  2.456% |
+| eval ast node let  |    887342863 |  1.427% |
+| rt intern_keyword  |    736827844 |  1.185% |
+| rt read_string     |    529038219 |  0.851% |
+| rt macroexpand1    |    324251957 |  0.521% |
+| eval ast node def  |    203251919 |  0.327% |
+| main               |    143594071 |  0.231% |
+| jit ctor           |    129005823 |  0.207% |
 
 That profiled run's own phase total was `54037433152` ns. The profiler span is larger because it includes process startup around `boot!`.
 
@@ -1097,13 +1097,13 @@ execution is a single unattributed block, reported here as the root scope
 (`eval user code`) self time. What the profile can and cannot split is itself the
 finding (lane G's boot profile above hit the same wall from the other side).
 
-| case | reps | loop under profiler | execution inside the compiled stock fns | first-use JIT compilation (`jit eval_string`) | everything else |
-|---|---:|---:|---:|---:|---:|
-| regex | 12 | 26,674 ms | 81.8% | 17.3% (30 strings) | 0.9% |
-| format | 60 | 16,962 ms | 71.4% | 27.3% (13 strings) | 1.3% |
-| into-vector | 60 | 13,272 ms | 63.2% | 34.2% (19 strings) | 2.6% |
-| sort-by | 30 | 13,739 ms | 82.8% | 12.5% (31 strings) | 4.7% |
-| transduce | 80 | 15,529 ms | 79.8% | 17.8% (16 strings) | 2.4% |
+| case        | reps | loop under profiler | execution inside the compiled stock fns | first-use JIT compilation (`jit eval_string`) | everything else |
+| ----------- | ---: | ------------------: | --------------------------------------: | --------------------------------------------: | --------------: |
+| regex       |   12 |           26,674 ms |                                   81.8% |                            17.3% (30 strings) |            0.9% |
+| format      |   60 |           16,962 ms |                                   71.4% |                            27.3% (13 strings) |            1.3% |
+| into-vector |   60 |           13,272 ms |                                   63.2% |                            34.2% (19 strings) |            2.6% |
+| sort-by     |   30 |           13,739 ms |                                   82.8% |                            12.5% (31 strings) |            4.7% |
+| transduce   |   80 |           15,529 ms |                                   79.8% |                            17.8% (16 strings) |            2.4% |
 
 Reading:
 
@@ -1134,17 +1134,17 @@ Measured 2026-11-01 ET on jank `0.1-noble`, branch `grok/jank-codemod`, after re
 
 Median of three runs. Share is the median phase over the median total. JIT totals were `52932129886`, `55342174973`, `64859700633`. AOT totals were `20507734657`, `20842052679`, `20866967972`.
 
-| phase | JIT median ns | JIT share | AOT median ns | AOT share |
-|---|---:|---:|---:|---:|
-| reading | 2591613764 | 4.6829% | 528120085 | 2.5339% |
-| codemod | 21578079728 | 38.9903% | 9051148855 | 43.4273% |
-| eval | 2501915405 | 4.5208% | 1643867968 | 7.8873% |
-| scan-macros | 254410073 | 0.4597% | 125291138 | 0.6011% |
-| setup | 1295181762 | 2.3403% | 32870035 | 0.1577% |
-| companion | 172866733 | 0.3124% | 92603210 | 0.4443% |
-| library | 24899918816 | 44.9927% | 8908766388 | 42.7442% |
-| other | 2219298611 | 4.0101% | 225563883 | 1.0823% |
-| total | 55342174973 | | 20842052679 | |
+| phase       | JIT median ns | JIT share | AOT median ns | AOT share |
+| ----------- | ------------: | --------: | ------------: | --------: |
+| reading     |    2591613764 |   4.6829% |     528120085 |   2.5339% |
+| codemod     |   21578079728 |  38.9903% |    9051148855 |  43.4273% |
+| eval        |    2501915405 |   4.5208% |    1643867968 |   7.8873% |
+| scan-macros |     254410073 |   0.4597% |     125291138 |   0.6011% |
+| setup       |    1295181762 |   2.3403% |      32870035 |   0.1577% |
+| companion   |     172866733 |   0.3124% |      92603210 |   0.4443% |
+| library     |   24899918816 |  44.9927% |    8908766388 |  42.7442% |
+| other       |    2219298611 |   4.0101% |     225563883 |   1.0823% |
+| total       |   55342174973 |           |   20842052679 |           |
 
 The sum of the eight JIT median phases is `55513284892` (`1.003092` times the JIT median total). The sum of the eight AOT median phases is `20608231562` (`0.988781` times the AOT median total).
 
@@ -1264,13 +1264,13 @@ The early core defs (`*print-namespace-maps*`, `to-array`) are small forms. Thei
 
 Dispatch-branch timers in `rewrite.cljc` (`timed`, off unless `profile-branches` is set) give exclusive shares of one AOT profiled boot. Branch sum `11875764379` ns:
 
-| branch | exclusive ns | share |
-|---|---:|---:|
-| macro | 8553172114 | 72.022% |
-| call | 2211312726 | 18.620% |
-| seq | 382407816 | 3.220% |
-| symbol | 192632306 | 1.622% |
-| head-var | 131909481 | 1.111% |
+| branch   | exclusive ns |   share |
+| -------- | -----------: | ------: |
+| macro    |   8553172114 | 72.022% |
+| call     |   2211312726 | 18.620% |
+| seq      |    382407816 |  3.220% |
+| symbol   |    192632306 |  1.622% |
+| head-var |    131909481 |  1.111% |
 
 `macro` is the expand call, not the walk of the expansion (that walk is in the nested branches). One AOT run's expand times, same boot as the shape split: `let/plain` `767743194` ns / 334 calls, `let/vector` `337165901` / 31, `loop/plain` `108051164` / 44, `loop/vector` `365858076` / 9, `for` `852945285` / 2, `defn` `786553947` / 585, `clojure.spec.alpha/def` `931466155` / 1, `definline` `671322169` / 8.
 
@@ -1549,7 +1549,7 @@ last element into a cons in front of an unrealized rest (chunk-first one short).
 - `map` (the adapter's native) seqs its source's chunk-rest when it builds a chunk; map keeps
   emptiness, so its tail is nil or a map over a non-empty source and the chunk stays whole
   (`cohost_rt::chunk_cons_whole`): chunk-first counts 32 and `(first (map f ...))` calls `f` 32
-  times, as on the JVM. The cost: the map's *source* is realized one chunk ahead of the JVM (a
+  times, as on the JVM. The cost: the map's _source_ is realized one chunk ahead of the JVM (a
   range or a vector seq runs no user code; a chunked `map` source runs its own `f` a chunk early).
 - `filter` keeps the whole chunk only when its source is exhausted. Otherwise its rest can
   realize empty while the source continues (`(filter #(< % 10) (range 64))`), and knowing it
@@ -1594,19 +1594,19 @@ What the hinted defn becomes (dump, apt). These are the forms that differ from t
 
 `(+ (f …) (f …))` is `cohost.shim/Numbers-add` in both twins, so it is not a difference.
 
-| probe variant | cohost apt | cohost patched | plain jank apt | plain jank patched |
-|---|---:|---:|---:|---:|
-| fib-dec (fib.clj) | 5.13 (5.08-6.43) | 0.86 | 1.00 | 0.68 |
-| fib-minus: `(- n 1)` for `dec` | 6.27 (6.26-14.62) | 0.86 | 1.62 | 0.76 |
-| fib-param: `^long n` only | 9.01 (8.79-9.13) | 0.86 | 1.83 | 0.74 |
-| fib-ret: `^long` return only | 7.74 (7.53-7.76) | 6.68 (3.06-7.06) | 1.27 | 0.74 |
-| fib-both (fib_hinted.clj) | 16.81 (8.97-17.22), bimodal: 17.2, 9.0, 16.8 | 0.87 | 1.79 | 0.75 |
-| fib-both-dec: hinted, with `dec` | 4.50 (3.94-8.45) | 0.86 | 1.93 | 0.76 |
-| tak-dec (tak.clj) | 0.30 | 0.07 | 0.32 | 0.06 |
-| tak-minus | 0.48 | 0.07 | 0.26 | 0.07 |
-| tak-param | 0.89 (0.88-0.92) | 0.07 | 0.58 | 0.06 |
-| tak-both (tak_hinted.clj) | 0.90 (0.89-1.28) | 0.07 | 0.49 | 0.07 |
-| tak-both-dec | 0.53 (0.53-0.54) | 0.07 | 0.51 | 0.06 |
+| probe variant                    |                                   cohost apt |   cohost patched | plain jank apt | plain jank patched |
+| -------------------------------- | -------------------------------------------: | ---------------: | -------------: | -----------------: |
+| fib-dec (fib.clj)                |                             5.13 (5.08-6.43) |             0.86 |           1.00 |               0.68 |
+| fib-minus: `(- n 1)` for `dec`   |                            6.27 (6.26-14.62) |             0.86 |           1.62 |               0.76 |
+| fib-param: `^long n` only        |                             9.01 (8.79-9.13) |             0.86 |           1.83 |               0.74 |
+| fib-ret: `^long` return only     |                             7.74 (7.53-7.76) | 6.68 (3.06-7.06) |           1.27 |               0.74 |
+| fib-both (fib_hinted.clj)        | 16.81 (8.97-17.22), bimodal: 17.2, 9.0, 16.8 |             0.87 |           1.79 |               0.75 |
+| fib-both-dec: hinted, with `dec` |                             4.50 (3.94-8.45) |             0.86 |           1.93 |               0.76 |
+| tak-dec (tak.clj)                |                                         0.30 |             0.07 |           0.32 |               0.06 |
+| tak-minus                        |                                         0.48 |             0.07 |           0.26 |               0.07 |
+| tak-param                        |                             0.89 (0.88-0.92) |             0.07 |           0.58 |               0.06 |
+| tak-both (tak_hinted.clj)        |                             0.90 (0.89-1.28) |             0.07 |           0.49 |               0.07 |
+| tak-both-dec                     |                             0.53 (0.53-0.54) |             0.07 |           0.51 |               0.06 |
 
 The causes, each with its probe rows and an owner:
 
@@ -1647,27 +1647,27 @@ apt then patched per round, every leg under the load gate (load 5.5-7.5, free me
 the median of the three rounds' medians, with their min-max, in ms. Plain jank on apt cannot compile the probe module
 (`use of undeclared identifier 's33'`, the inner-loop rebinding), so that column is ABSENT.
 
-| probe variant (the form it isolates) | cohost apt | cohost patched | plain jank patched |
-|---|---:|---:|---:|
-| md-plain: mandelbrot's inside?, untyped params, 120x120 grid | 3.96 (3.81-5.05) | 1.59 | 3.77 |
-| md-param: the same with `^double cr ci` | 12.56 (4.64-16.65) | 6.34 (2.72-6.94) | 1.43 |
-| ea-plain: spectral-norm's eval-a, untyped, 300x300 | 2.96 (2.93-2.99) | 2.41 | 0.77 |
-| ea-param: the same with `^long i j` | 5.54 (4.72-5.62) | 3.08 | 0.73 |
-| sv-plain: `(* 0.5 (nth v j))` over 1e5 | 2.60 (2.56-3.71) | 1.18 | 1.02 |
-| sv-double: the read bound through `(double (nth v j))` | 3.14 (3.03-4.21) | 1.39 | 1.29 |
-| nb-plain: `(* dx dx)`, dx a difference of two reads | 5.48 (5.36-5.52) | 2.25 | 1.75 |
-| nb-double: dx bound through `(double (- ..))` | 8.44 (5.80-9.91) | 2.45 | 1.93 |
-| bt-dec: binary-trees' build, `dec`, depth 14 + count | 5.42 (5.02-5.44) | 1.19 | 0.94 |
-| bt-minus: `(- d 1)` | 4.55 (4.33-5.16) | 1.12 | 0.95 |
-| bt-param: `^long d`, `(- d 1)` (the twin) | 5.53 (5.42-13.25) | 1.09 | 1.01 |
-| bt-param-dec: `^long d`, `dec` | 5.48 (4.56-16.14) | 1.11 | 0.96 |
+| probe variant (the form it isolates)                         |         cohost apt |   cohost patched | plain jank patched |
+| ------------------------------------------------------------ | -----------------: | ---------------: | -----------------: |
+| md-plain: mandelbrot's inside?, untyped params, 120x120 grid |   3.96 (3.81-5.05) |             1.59 |               3.77 |
+| md-param: the same with `^double cr ci`                      | 12.56 (4.64-16.65) | 6.34 (2.72-6.94) |               1.43 |
+| ea-plain: spectral-norm's eval-a, untyped, 300x300           |   2.96 (2.93-2.99) |             2.41 |               0.77 |
+| ea-param: the same with `^long i j`                          |   5.54 (4.72-5.62) |             3.08 |               0.73 |
+| sv-plain: `(* 0.5 (nth v j))` over 1e5                       |   2.60 (2.56-3.71) |             1.18 |               1.02 |
+| sv-double: the read bound through `(double (nth v j))`       |   3.14 (3.03-4.21) |             1.39 |               1.29 |
+| nb-plain: `(* dx dx)`, dx a difference of two reads          |   5.48 (5.36-5.52) |             2.25 |               1.75 |
+| nb-double: dx bound through `(double (- ..))`                |   8.44 (5.80-9.91) |             2.45 |               1.93 |
+| bt-dec: binary-trees' build, `dec`, depth 14 + count         |   5.42 (5.02-5.44) |             1.19 |               0.94 |
+| bt-minus: `(- d 1)`                                          |   4.55 (4.33-5.16) |             1.12 |               0.95 |
+| bt-param: `^long d`, `(- d 1)` (the twin)                    |  5.53 (5.42-13.25) |             1.09 |               1.01 |
+| bt-param-dec: `^long d`, `dec`                               |  5.48 (4.56-16.14) |             1.11 |               0.96 |
 
 nbody re-measured after A6-1 on `e357cec`: `bb bench:programs jank`, apt then patched, 3 gated rounds, the JVM once.
 Cohost, median ms (min-max):
 
-| | apt | patched | JVM |
-|---|---:|---:|---:|
-| nbody | 1034.3 (932.9-1207.8) | 952.7 (925.8-1071.0) | 152.4 |
+|              |                    apt |              patched |   JVM |
+| ------------ | ---------------------: | -------------------: | ----: |
+| nbody        |  1034.3 (932.9-1207.8) | 952.7 (925.8-1071.0) | 152.4 |
 | nbody-hinted | 1483.2 (1116.2-1524.5) | 958.7 (908.2-1191.3) | 187.4 |
 
 A6-1 moved nbody from 5089 ms to about 1000. The hinted twin is now x1.43 the plain one on apt, and level with it on

@@ -7,6 +7,7 @@ Host: jank built from source at jank-lang/jank `f3d82d65` with cohost's series t
 ## Repro
 
 Repro: `dev/research/upstream/34-callsite.jank` in johnmn3/cohost.cljc (branch `max/u1`), run as `bash dev/research/upstream/run.sh 34-callsite` (3-run median timer, `jank -O3 run`). It has 29's shapes at 1e7 calls, then four correctness lines:
+
 - escaping rest params;
 - a mid-loop `defmethod`, `prefer-method` and `derive`;
 - a variadic var redefined mid-loop, `with-redefs` to a variadic fn and to a fixed one, and calls around a variadic fn's arities;
@@ -46,6 +47,7 @@ A `[x & ys]` call whose rest does not escape costs a 2-arity call plus a few sto
 ## What would fix it
 
 The patch:
+
 - The analyzer records each var's variadic shape at its def. A call to such a var, with at least its required args and no fixed arity of its count, emits `call_variadic_direct<P>`. That checks the fn object's arity flags at the call and calls the variadic arity's entry directly, with the rest on the stack when 29's bit allows. A redefinition, `with-redefs` or binding to anything else takes `call_fast`.
 - A call to a var holding a multimethod emits `call_multi_direct`. It computes a key or constant dispatch inline (`defmulti` reads `(fn [x] lit)`, `(fn [x] (:k x))` and `(fn [x] (get x :k))` from the dispatch form, as well as a keyword), reads the method cache under the hierarchy compare, and calls the method through `call_fast`.
 - The cache has two entries, so two alternating values both hit.

@@ -79,18 +79,18 @@ buckets, so percentile values are bucket boundaries).
 
 httpbench bench → httpbench serve:
 
-| concurrency | req/s | p50 (ns) | p99 (ns) | p99.9 (ns) | max (ns) | errors |
-|---|---|---|---|---|---|---|
-| 100 | 84,879.3 | 1,179,648 | 2,359,296 | 3,932,160 | 5,728,639 | 0 |
-| 1,000 | 84,481.9 | 10,485,760 | 23,068,672 | 25,165,824 | 28,732,165 | 0 |
-| 10,000 | 61,238.9 | 134,217,728 | 184,549,376 | 184,549,376 | 187,755,956 | 0 |
+| concurrency | req/s    | p50 (ns)    | p99 (ns)    | p99.9 (ns)  | max (ns)    | errors |
+| ----------- | -------- | ----------- | ----------- | ----------- | ----------- | ------ |
+| 100         | 84,879.3 | 1,179,648   | 2,359,296   | 3,932,160   | 5,728,639   | 0      |
+| 1,000       | 84,481.9 | 10,485,760  | 23,068,672  | 25,165,824  | 28,732,165  | 0      |
+| 10,000      | 61,238.9 | 134,217,728 | 184,549,376 | 184,549,376 | 187,755,956 | 0      |
 
 Reference rows (same box, same protocol):
 
-| load generator → server | req/s | notes |
-|---|---|---|
-| wrk (wg/wrk master source, built on the box; -t4 -c1000 -d10s) → httpbench serve | 80,501.97 | 812,411 requests in 10.09 s; wrk's own avg latency 11.64 ms |
-| httpbench bench (c=1000) → nginx 1.26.3 | 71,441.0 | median of 3 × 100,000, 0 errors; p50 11,534,336 ns, p99 31,457,280 ns; nginx returns the identical 1024-byte body |
+| load generator → server                                                          | req/s     | notes                                                                                                             |
+| -------------------------------------------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| wrk (wg/wrk master source, built on the box; -t4 -c1000 -d10s) → httpbench serve | 80,501.97 | 812,411 requests in 10.09 s; wrk's own avg latency 11.64 ms                                                       |
+| httpbench bench (c=1000) → nginx 1.26.3                                          | 71,441.0  | median of 3 × 100,000, 0 errors; p50 11,534,336 ns, p99 31,457,280 ns; nginx returns the identical 1024-byte body |
 
 The concurrency cap: the box's ephemeral port range is
 32768–60999 (28,232 ports) and the bench is a single loopback

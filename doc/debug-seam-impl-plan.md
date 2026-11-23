@@ -6,7 +6,7 @@ UNKNOWN #5 #8 #9 #14. Goal (John, 2026-11-04): address all 14; preserve
 as much jank capability as possible. Validation for every unit is the
 research report's checklist (checks #1-#14), run on the fix branch;
 the 8-host batteries + libraries must stay at standing except where a
-row's expected output *is* the behavior being fixed (error-report text),
+row's expected output _is_ the behavior being fixed (error-report text),
 and doc/CLI.md's "class and message only" decision is superseded by
 this plan wherever they conflict.
 
@@ -48,6 +48,7 @@ the same defn, seam eval of the same form, seam file load — with
 JANK_PRINT_CODEGEN on, to find which layer defers the analysis
 (boot's eval route, the adapter's :eval, or jank's JIT defn
 compilation itself). Then:
+
 - (a) restore load-time analysis for user code at the layer the
   diagnosis names, so the error fires at load with jank's positioned
   diagnostic (caret box intact — it must reach the user via U1's
@@ -58,10 +59,10 @@ compilation itself). Then:
   std::exception translation (wrap into the shim's exception type,
   message preserved), so no error class escapes the language's own
   error handling.
-Gate: check #3 both halves (load refuses with the diagnostic; the
-call-time remainder, if any, is caught by `catch Throwable` and
-reports its real message), check #13 (macro-expansion errors carry
-the call site).
+  Gate: check #3 both halves (load refuses with the diagnostic; the
+  call-time remainder, if any, is caught by `catch Throwable` and
+  reports its real message), check #13 (macro-expansion errors carry
+  the call site).
 
 ## U4 — positions, both ends (rows #3-AOT, #12, #5, #13-maps)
 
@@ -117,7 +118,7 @@ still signals is named in the doc.
 ## U8 — names in reports (row #16)
 
 The `cohost.core` homes are the codemod's design and stay. At the
-*display* layer — U1's report and U5's printers — core frames are
+_display_ layer — U1's report and U5's printers — core frames are
 shown under their Clojure names (`cohost.core/map` →
 `clojure.core/map`), the way jank's demunger already presents
 `clojure_core$…` frames as `clojure.core/…`. User names are already
@@ -131,7 +132,7 @@ folded into U1/U5. Each unit: probes first where the research says
 UNKNOWN, regression rows in the battery for the behavior it changes,
 a coordinator report per unit. The 14 checklist items run in full at
 the end (they are also the capstone's close-out validations — the
-capstone validates the *current* seam and records the same numbers
+capstone validates the _current_ seam and records the same numbers
 this plan then improves).
 
 ## Status
@@ -160,8 +161,8 @@ This section keeps only the sha and the gate line per unit.
 - F9 @ 5cfc1fa -- NO CODE: diagnosis banked (doc/debug-seam-probes/f9-diagnosis.md). No shim print-method for errors exists in the *e path on any measured host: jvm *e prints through the host's own printer (true class names, un-elided head proves it never touches :ex-trace); cljw *e prints the host's native ex-info form (print-dispatch gap, not display names); where the booted core_print prints over shim statics, -getClassName has display-mapped frame names since U8 and the trace is :ex-trace's (F2). Coordinator to re-scope if the cljw dispatch gap or a cli.cljc repl!-layer interception is wanted.
 - F4-F7 @ 6d881da -- runner hardening: #1 judges streams separately (stdout empty; the boom program is one do form so -e value printing stays silent), #5 probes *1 by a value only *1 can produce (:star1 3), #7 judges pst's own output shapes (header + tab-indented demunged frames), #14 runs all three exit cases (-e throw 1; -X missing fn in new fixture seam.ok: message + nonzero; script (System/exit 3): 3); every PASS line quotes its matched text and evidence claims only matches made. jvm 8/14 (1 FAIL = #13, pre-#13-unit), cli:check jvm 7/7 SAME; #14 flipped FAIL->PASS, no PASS regressed.
 - #13 @ 170a1ef -- expansion-wrapper attribution LANDED (wrap-macro rethrows an ex-info with :clojure.error/phase :macroexpansion + symbol/source/line, cause chained; measured in the report's :via) and the runner's #13 gained the body-throw probe with per-probe needles (message-searched, not file-searched). JVM GATE NOT REACHED: jvm 8/14, #13 FAIL with honest evidence -- the headline phase comes from the host CompilerException's ex-data, which the seam cannot read (java.clj exception-class lacks a CompilerException arm; shim token-ancestors for it omits IExceptionInfo). Residual diagnosed to two one-line table fixes in doc/debug-seam-probes/n13-diagnosis.md, NOT made (outside the unit's named layer) -- coordinator to route. cli:check jvm 7/7 SAME, no other check moved.
-- U5 @ 8c4a3a9 -- check #8 (*err* separation) is a real probe now and PASSES on jvm (in-program *err* write on stderr, *out* write on stdout, report on stderr, exit 1): runner 9/14, 1 FAIL (#13 residual), cli:check jvm 7/7 SAME. The pst half is NO CODE with a banked diagnosis (doc/debug-seam-probes/u5-pst-diagnosis.md): R's "pst could not be resolved" was measured only on the CLI's pre-existing broken fallback path; the rename/refer machinery is complete on both load paths and works in the JVM REPL session; the launcher-path measurement that would pin a real gap is named (runner #7 shapes + lib-report) and awaits a launching jank / the j gate.
-- (analysis lane, post-collation -- NOT in the f1d87db tree; needs the second collation pass) Step 0 amended @ 82ad5d3 -- cli:check jvm 7/7 SAME; lg 6 command cases SAME (the -Spath case aborts in dev/cli-demo/check.clj's own path handling in this worktree); phel 6 command cases SAME with the home PHP's bundled extensions enabled via PHP_INI_SCAN_DIR (stock local env loads none -- Phar/iconv/tokenizer missing is environmental); before, on 4574e7f: lg all-DIFF ('Can't resolve *print-namespace-maps*').
+- U5 @ 8c4a3a9 -- check #8 (_err_ separation) is a real probe now and PASSES on jvm (in-program _err_ write on stderr, _out_ write on stdout, report on stderr, exit 1): runner 9/14, 1 FAIL (#13 residual), cli:check jvm 7/7 SAME. The pst half is NO CODE with a banked diagnosis (doc/debug-seam-probes/u5-pst-diagnosis.md): R's "pst could not be resolved" was measured only on the CLI's pre-existing broken fallback path; the rename/refer machinery is complete on both load paths and works in the JVM REPL session; the launcher-path measurement that would pin a real gap is named (runner #7 shapes + lib-report) and awaits a launching jank / the j gate.
+- (analysis lane, post-collation -- NOT in the f1d87db tree; needs the second collation pass) Step 0 amended @ 82ad5d3 -- cli:check jvm 7/7 SAME; lg 6 command cases SAME (the -Spath case aborts in dev/cli-demo/check.clj's own path handling in this worktree); phel 6 command cases SAME with the home PHP's bundled extensions enabled via PHP_INI_SCAN_DIR (stock local env loads none -- Phar/iconv/tokenizer missing is environmental); before, on 4574e7f: lg all-DIFF ('Can't resolve _print-namespace-maps_').
 - U3(b) fix @ 7cb29ec + recording gate @ f03e517 -- jvm battery 221/221, libraries 62/62, check 7/14 PASS 1 FAIL (#13) at both; jank AOT compile of the shim confirmed by the fallback-path CLI run below.
 - Step 0 jank arm + CLI load @ f03e517 tree -- bin/cohost :jank -e '(+ 1 2)' prints 3, exit 0, on the fallback path (another lane's snapshot build held the lock); the snapshot LAUNCHER path on this box still builds.
 - #13 attribution @ 7b3e7e3 -- jvm 8/14 PASS, 0 FAIL (#13 PASS), battery 221/221, libraries 62/62 SAME.

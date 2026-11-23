@@ -21,7 +21,7 @@ state lives in atoms (one registry atom; per-value state, queue and
 control atoms); values cross a thread only by deref or swap. No
 journals, no liveness scans, no counters outside atoms, no arenas.
 
-- Executors: work queue atom + control atom + a *generation doorbell*
+- Executors: work queue atom + control atom + a _generation doorbell_
   (swapped fresh at every signal, so a worker never misses work
   enqueued between its claim check and its wait). `send` pool: 8
   workers; `send-off`: 1 worker (serial, as stock's solo executor).
@@ -95,8 +95,8 @@ answers by predicate).
   821 forms, booted as stock 495, from host 172, natives 66,
   skipped 88, errors 0.
 - Standing battery, normal JVM boot (`bb boot:jvm`):
-  **battery: 221/221 stock behaviors pass; libraries: 62/62 cases
-  pass across 12 clojure.* libraries; boot errors 0** — no
+  *_battery: 221/221 stock behaviors pass; libraries: 62/62 cases
+  pass across 12 clojure._ libraries; boot errors 0** — no
   regression; on this boot the concurrency names come from the host
   and the fill does not fire.
 - Jank AOT gate (`bb boot:jank` on J, j.slaa.us; the local box

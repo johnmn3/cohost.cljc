@@ -45,11 +45,12 @@ First re-run (before item 3's read-forms fix): client process ran all
 23 client programs, exit 0; serve process died reading the handler
 source ("Unterminated map") — that was item 3's J1 defect, below.
 Final re-run on the final tree, as printed:
-  unit 9 gate (jank seat): 13/36 PASS; JVM-only client programs not
-  run on this seat: 0
+unit 9 gate (jank seat): 13/36 PASS; JVM-only client programs not
+run on this seat: 0
 Both client processes exit 0, serve process exit 0; the GET routes
 pass including /utf8 ("héllo ☃"). The 23 remaining FAILs are the next
 layer down, NOT this item, named here with owners:
+
 - Eve-on-jank server answers [500 nil nil "native error"] on every
   route that reads the request body or echoes the request map
   (/req x3, /echo POST/PUT/DELETE): owner, the Eve http-server jank
@@ -73,6 +74,7 @@ multibyte char answers 0), while its seq walks CHARACTERS
 ((vec "héllo") counts 5, seq/first/mapv char-correct). Cohost's own
 layers assumed character indexing in four places; all fixed in
 cohost's layers:
+
 - J1 read-forms (src/cohost/hosts/jank_host.jank): each form's text
   was sliced with (subs src i j) using the scan's CHARACTER indices,
   so any source with a multibyte character before a form boundary was
@@ -100,9 +102,9 @@ cohost's layers:
 - Same-family sibling fixed with them: nth on a string (nth-with and
   the shim RT-nth :jank arm, whose bounds check now measures the
   character count) goes by the seq, never the byte-indexed host nth.
-Re-run on the final tree (build box): battery 221/221, libraries
-62/62, boot counts unchanged (544 stock / 141 host / 28 natives /
-108 skipped / 0 errors). Both standing rows pass; nothing else moved.
+  Re-run on the final tree (build box): battery 221/221, libraries
+  62/62, boot counts unchanged (544 stock / 141 host / 28 natives /
+  108 skipped / 0 errors). Both standing rows pass; nothing else moved.
 
 ### cljs pair: seat platform facts, proven on the bare seat
 
@@ -125,14 +127,14 @@ Re-run on the final tree (build box): battery 221/221, libraries
   (:column :context :fn-scope :js-globals :line :locals :ns) — the
   same analyzer env (cohost's boot adds :def-emits-var). The JVM's
   &env contract (a locals map) is one stock cljs does not share.
-Disposition for both rows: the seat's own compiler semantics, exactly
-as the manifest records them standing; no cohost change is possible
-that would not falsify the seat's stock behavior. Final-tree cljs
-gate, as printed: battery 219/221 (this pair), libraries 62/62.
-(One earlier run on this tree printed libraries 60/62 — both FAILs
-the same Eve realm fault, "a reference written by another process
-names nothing in this one", under heavy box load; the re-run on the
-identical tree printed 62/62.)
+  Disposition for both rows: the seat's own compiler semantics, exactly
+  as the manifest records them standing; no cohost change is possible
+  that would not falsify the seat's stock behavior. Final-tree cljs
+  gate, as printed: battery 219/221 (this pair), libraries 62/62.
+  (One earlier run on this tree printed libraries 60/62 — both FAILs
+  the same Eve realm fault, "a reference written by another process
+  names nothing in this one", under heavy box load; the re-run on the
+  identical tree printed 62/62.)
 
 ## Item 4 — the JVM eduction canary: mechanism verified; lever baked
 

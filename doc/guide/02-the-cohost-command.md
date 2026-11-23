@@ -1,6 +1,6 @@
 # The cohost command
 
-*2026-11-02. Blocks marked otherwise run in `bb docs:check`.*
+_2026-11-02. Blocks marked otherwise run in `bb docs:check`._
 
 ```text
 cohost [:<target>] <clojure CLI arguments...>
@@ -15,22 +15,22 @@ Clojure CLI unchanged: the reference cohost is checked against (`cohost :jvm ...
 
 ## Arguments, as the Clojure CLI reads them
 
-| argument | what it does |
-|---|---|
-| `-e expr`, `--eval` | evaluate; print the value unless it is nil |
-| `-i file`, `--init` | load a file (init options run in the order given) |
-| `-m ns args...` | call `ns/-main` with the arguments |
-| `path args...` | run a script (nothing printed); `-` reads it from standard input |
-| `-r`, or no main option | the REPL ([page](04-the-repl.md)) |
-| `-M:alias` | the alias's `:main-opts` first, then the command line |
-| `-X[:alias] [fn] [k v ...] [map]` | call a function with a map: `:exec-fn`, `:exec-args`, `:ns-default`, `:ns-aliases`, then `key value` pairs (a vector key is a path) |
-| `-T...` | a tool: the real Clojure CLI runs it, on every target (deps-new, tools.build) |
-| `-A:alias` | aliases for resolution (`:extra-paths`, `:extra-deps`) |
-| `-Sdeps edn`, `-Srepro`, `-Sforce`, `-Sthreads n` | passed to tools.deps |
-| `-Spath` | the source roots, in classpath order |
-| `-P` | resolve and extract dependencies only |
-| `-Sdescribe` | the real CLI's |
-| `-J...` | dropped off the JVM |
+| argument                                          | what it does                                                                                                                        |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `-e expr`, `--eval`                               | evaluate; print the value unless it is nil                                                                                          |
+| `-i file`, `--init`                               | load a file (init options run in the order given)                                                                                   |
+| `-m ns args...`                                   | call `ns/-main` with the arguments                                                                                                  |
+| `path args...`                                    | run a script (nothing printed); `-` reads it from standard input                                                                    |
+| `-r`, or no main option                           | the REPL ([page](04-the-repl.md))                                                                                                   |
+| `-M:alias`                                        | the alias's `:main-opts` first, then the command line                                                                               |
+| `-X[:alias] [fn] [k v ...] [map]`                 | call a function with a map: `:exec-fn`, `:exec-args`, `:ns-default`, `:ns-aliases`, then `key value` pairs (a vector key is a path) |
+| `-T...`                                           | a tool: the real Clojure CLI runs it, on every target (deps-new, tools.build)                                                       |
+| `-A:alias`                                        | aliases for resolution (`:extra-paths`, `:extra-deps`)                                                                              |
+| `-Sdeps edn`, `-Srepro`, `-Sforce`, `-Sthreads n` | passed to tools.deps                                                                                                                |
+| `-Spath`                                          | the source roots, in classpath order                                                                                                |
+| `-P`                                              | resolve and extract dependencies only                                                                                               |
+| `-Sdescribe`                                      | the real CLI's                                                                                                                      |
+| `-J...`                                           | dropped off the JVM                                                                                                                 |
 
 `*command-line-args*` is the arguments after the main option, set before the init options run.
 

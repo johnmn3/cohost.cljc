@@ -124,13 +124,13 @@ EXIT 0
 Interleaved plain (the fifteen-patch series) / after (+ 31), 6 rounds of `run.sh 18-small-vectors` and
 `run.sh 31-bt-alloc` each (12 samples a side; load 5-10, the box shared with two lanes):
 
-| row | plain median | after median | |
-|---|---|---|---|
-| `[i i] 2e6` / that run's `GC_MALLOC(16) 2e6` | 4.96x | 3.44x (3.19-3.88) | bar 3x: not met |
-| `[i i] 2e6` | 83.8 ms | 58.7 ms | |
-| binary-trees 16 x depth 14 | 20.23 ms | 15.09 ms | bar 26.1 ms (3x the JVM's 8.7): met |
-| binary-trees 1 x depth 18 | 22.21 ms | 15.64 ms | |
-| `(pair 1) 2e6` | 13.01 ms | 7.93 ms | |
+| row                                          | plain median | after median      |                                     |
+| -------------------------------------------- | ------------ | ----------------- | ----------------------------------- |
+| `[i i] 2e6` / that run's `GC_MALLOC(16) 2e6` | 4.96x        | 3.44x (3.19-3.88) | bar 3x: not met                     |
+| `[i i] 2e6`                                  | 83.8 ms      | 58.7 ms           |                                     |
+| binary-trees 16 x depth 14                   | 20.23 ms     | 15.09 ms          | bar 26.1 ms (3x the JVM's 8.7): met |
+| binary-trees 1 x depth 18                    | 22.21 ms     | 15.64 ms          |                                     |
+| `(pair 1) 2e6`                               | 13.01 ms     | 7.93 ms           |                                     |
 
 callgrind, per `[i i]`: 488 -> 349 instructions with the first three changes (`_jank_vec`, `_jank_vec_impl`,
 `rbtree()` gone; `make_small` 77 -> 62), 318 with the overlap (the 80-byte block: memset 101 -> 83, `GC_allochblk*`

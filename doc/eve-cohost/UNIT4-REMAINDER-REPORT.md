@@ -50,7 +50,7 @@ fragility named below.
    matches is a tie-break with no specificity order to
    decide it; it rides on the protocol impl map's hash
    iteration order over Class keys — JVM allocation-history
-   state. That is why the failure *presented* as
+   state. That is why the failure _presented_ as
    launch-shape-deterministic on unit 4's box (3/3 fail
    under `-M:eve`, 3/3 pass without; the collation gate hit
    it on both the unit tip and the merged tree) and why the

@@ -29,24 +29,24 @@ cannot run Splint) · CLJ_CONFIG=/home/hatch/workspace/eve-env/cljconfig.
 
 ## Steps
 
-- [x] 0. Fresh clone, origin main verified, branch created.
-- [x] 1. Fleet templates installed byte-identical (.cljfmt.edn,
-      .clj-kondo/config.edn, .splint.edn, AGENTS.md verbatim); fleet bb
-      tasks merged into bb.edn adapted to src/ paths; kondo cache
-      generated over the real classpath (clojure -Spath -M:eve).
-- [x] 2. Census (kondo / Splint / Carve / cljfmt) — own vs vendored
-      counted separately → CENSUS.md (own: kondo 214, Splint 1,546,
-      Carve 962, cljfmt 52/52; vendored: kondo 540, Splint 2,502,
-      Carve 383, cljfmt 53/53, exclude-with-reason proposal written).
-- [x] 3. Baseline gate before formatting: bb boot:jvm GREEN at the
-      untouched tree — boot line "595 stock / 181 host / 66 natives /
-      69 skipped / 0 errors", battery 221/221, libraries 62/62 across
-      12 clojure.* libraries, exit 0 (boot-baseline.log).
-- [ ] 4. Format pass over own sources, own commit; gate again.
-- [ ] 5. Fix campaign by rule class, pipeline edits, gate per batch.
-- [ ] 6. Gates on: bb lint exit 0 (5 legs incl. dprint), pre-commit
-      hook, fmt twice no-op.
-- [ ] 7. RETRO.md, push, final report.
+- [x]0. Fresh clone, origin main verified, branch created.
+- [x]1. Fleet templates installed byte-identical (.cljfmt.edn,
+  .clj-kondo/config.edn, .splint.edn, AGENTS.md verbatim); fleet bb
+  tasks merged into bb.edn adapted to src/ paths; kondo cache
+  generated over the real classpath (clojure -Spath -M:eve).
+- [x]2. Census (kondo / Splint / Carve / cljfmt) — own vs vendored
+  counted separately → CENSUS.md (own: kondo 214, Splint 1,546,
+  Carve 962, cljfmt 52/52; vendored: kondo 540, Splint 2,502,
+  Carve 383, cljfmt 53/53, exclude-with-reason proposal written).
+- [x]3. Baseline gate before formatting: bb boot:jvm GREEN at the
+  untouched tree — boot line "595 stock / 181 host / 66 natives /
+  69 skipped / 0 errors", battery 221/221, libraries 62/62 across
+  12 clojure.* libraries, exit 0 (boot-baseline.log).
+- [ ]4. Format pass over own sources, own commit; gate again.
+- [ ]5. Fix campaign by rule class, pipeline edits, gate per batch.
+- [ ]6. Gates on: bb lint exit 0 (5 legs incl. dprint), pre-commit
+  hook, fmt twice no-op.
+- [ ]7. RETRO.md, push, final report.
 
 ## Log
 
@@ -102,6 +102,7 @@ cannot run Splint) · CLJ_CONFIG=/home/hatch/workspace/eve-env/cljconfig.
   in the exceptions batch (info level; does not block exit 0).
 
 ## REAL DEFECT FOUND + FIXED — shim http-member duplicate defs (Nov 23, ~12:55 AM ET)
+
 Provenance: tree = this branch at the formatted tree (base origin main
 1db42b2); tools = clj-kondo 2026.10.26, JVM boot (clojure 1.12.0,
 bb 1.13.230); repro = fabricated layer values driven through the
@@ -111,6 +112,7 @@ booted cohost.shim (probe-members.sh/.log in this clone).
 second `def` of the same name REPLACES the var — three member vars
 were defined twice with DISJOINT kind tables, so the first table's
 kinds silently lost the member:
+
 - `-getPort`: URI/URL table (http-locator) shadowed by the socket
   table. PROVEN BROKEN pre-fix: -getPort on {:cohost/kind
   :cohost.http/uri :port 8080} and on a :cohost.http/url value both
@@ -120,13 +122,13 @@ kinds silently lost the member:
   (same shape, found by reading; fixed identically).
 - `-getContextClassLoader`: the classloader standin's def shadowed
   by the thread table (same shape; fixed identically).
-Fix (this batch): each pair merged into ONE def whose table carries
-both sections' kinds — the shape -getInputStream/-getLocalPort
-already used in the same file. Post-fix probe: :uri-port 8080,
-:url-port 9090, control "https". Boot gate on the batch tree: GREEN — boot-k2.log carries the
-baseline-identical signature (595 stock / 181 host / 66 natives /
-69 skipped / 0 errors), battery 221/221, libraries 62/62,
-BOOT-K2-EXIT=0.
+  Fix (this batch): each pair merged into ONE def whose table carries
+  both sections' kinds — the shape -getInputStream/-getLocalPort
+  already used in the same file. Post-fix probe: :uri-port 8080,
+  :url-port 9090, control "https". Boot gate on the batch tree: GREEN — boot-k2.log carries the
+  baseline-identical signature (595 stock / 181 host / 66 natives /
+  69 skipped / 0 errors), battery 221/221, libraries 62/62,
+  BOOT-K2-EXIT=0.
 
 Also in this batch: the dead first URLEncoder/URLDecoder
 implementations (shadowed by the live delegating defs) deleted with
@@ -148,6 +150,7 @@ Kondo after this batch: 186 total (79E/101W/6I) — redefined-var
 shim sites zero, unused-value 14 -> 8, loop-without-recur 2 -> 1.
 
 ## K3 + a second REAL DEFECT (Nov 23, ~1:35 AM ET)
+
 - defwrapper analyze-call hook landed (.clj-kondo/hooks/cohost/
   memory_eve.clj, registered as repo teaching in config.edn):
   memory_eve.clj 56 findings -> 0. Total kondo 128.
@@ -163,6 +166,7 @@ shim sites zero, unused-value 14 -> 8, loop-without-recur 2 -> 1.
 - K3 boot gate GREEN (BOOT-K3-EXIT=0, baseline signature).
 
 ## KONDO CAMPAIGN COMPLETE (Nov 23, ~3:05 AM ET)
+
 clj-kondo over src: 0 errors / 0 warnings / 0 infos (census was
 214: 80E/123W/11I). Batches K1-K8, every batch boot-gated green at
 the baseline signature (595/181/66/69/0, battery 221/221,

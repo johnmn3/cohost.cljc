@@ -1,11 +1,12 @@
 # U5 diagnosis: the pst residue -- measured only on the broken
+
 # fallback path; the fix's measurement does not exist yet
 
 Unit U5: on jank, (require 'clojure.repl) returns nil and
 cohost.repl/pst is unresolved (lane R's direct run); the
 coordinator's read is a loader/refer problem under the cohost.<lib>
-rename. Plus: own check #8 (*err* separation) -- done, the runner
-now probes it (an in-program *err* write, an *out* write, and an
+rename. Plus: own check #8 (_err_ separation) -- done, the runner
+now probes it (an in-program _err_ write, an _out_ write, and an
 uncaught throw, judged stream by stream).
 
 ## What the record actually shows about pst
@@ -32,7 +33,7 @@ The rename machinery is complete on both load paths:
   :renames on the source path (boot.cljc, load-lib!), and
   snap-lib-end! registers the same on the snapshot path, so the
   rewrite renames clojure.repl -> cohost.repl in user code either
-  way (rewrite.cljc's *ns-renames* lookup).
+  way (rewrite.cljc's _ns-renames_ lookup).
 - require! loads via load-lib! and refers/aliases the target ns
   through the host's refer machinery; refer-lib! special-cases only
   the core.

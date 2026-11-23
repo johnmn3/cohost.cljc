@@ -10,14 +10,14 @@ same load, so ratios compare; milliseconds are probably a little high. Runtime v
 `bb bench:programs <runtime>-built`, full sizes, each column against this box's `jvm` column (11:36 AM). Table:
 `c0431c6/table.txt`.
 
-| column | geomean xJVM | programs that ran |
-|---|---:|---:|
-| jank-built | **x3.40** (unhinted x3.29, hinted x3.61) | 28 |
-| jolt-built | **x7.13** (unhinted x4.53, hinted x16.15) | 28 |
-| cljs-built | **x10.33** (unhinted x7.21, hinted x19.74) | 28 |
-| cljw-built | **x111.9** (unhinted x75.1, hinted x229.7) | 28 |
-| lg-built | x167.7 (unhinted x94.2, hinted x354.8) | 23 of 28 (stopped partway: not run on k-nucleotide, pipeline, dispatch, json, first-output) |
-| phel-built | none | 0: the build fails on macOS (below) |
+| column     |                               geomean xJVM |                                                                           programs that ran |
+| ---------- | -----------------------------------------: | ------------------------------------------------------------------------------------------: |
+| jank-built |   **x3.40** (unhinted x3.29, hinted x3.61) |                                                                                          28 |
+| jolt-built |  **x7.13** (unhinted x4.53, hinted x16.15) |                                                                                          28 |
+| cljs-built | **x10.33** (unhinted x7.21, hinted x19.74) |                                                                                          28 |
+| cljw-built | **x111.9** (unhinted x75.1, hinted x229.7) |                                                                                          28 |
+| lg-built   |     x167.7 (unhinted x94.2, hinted x354.8) | 23 of 28 (stopped partway: not run on k-nucleotide, pipeline, dispatch, json, first-output) |
+| phel-built |                                       none |                                                         0: the build fails on macOS (below) |
 
 Every row that ran gives the JVM's answer (no DIFFER).
 
@@ -50,11 +50,11 @@ both built-app `run you` (the `ulimit` above). Output: `c0431c6/docs-check.txt`.
 the same jank binary) with that run's own `jvm.edn`. jank's own core doesn't depend on cohost's code. Over the 13
 programs jank's own core runs and every column answers as the JVM does:
 
-| column | geomean xJVM (13 programs) |
-|---|---:|
-| jank-jit (jank's own core, JIT) | x6.66 |
-| jank-aot (jank's own core, AOT -O3) | x6.47 |
-| jank-built (cohost on jank, one native executable, c0431c6) | **x2.37** |
+| column                                                      | geomean xJVM (13 programs) |
+| ----------------------------------------------------------- | -------------------------: |
+| jank-jit (jank's own core, JIT)                             |                      x6.66 |
+| jank-aot (jank's own core, AOT -O3)                         |                      x6.47 |
+| jank-built (cohost on jank, one native executable, c0431c6) |                  **x2.37** |
 
 ## Not in these records
 

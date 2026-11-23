@@ -92,10 +92,11 @@
 
 Snapshot built on J in 531,474 ms. Gate shape reproduced on this base:
 throwmacro exit 1, headline "a native C++ exception" (report via =
-  the {:cohost/native true} sentinel only; the macro's "bad" ex-info
-  nowhere in the chain). badmacro fine (CompilerException headline).
+the {:cohost/native true} sentinel only; the macro's "bad" ex-info
+nowhere in the chain). badmacro fine (CompilerException headline).
 
 Bisection (all REPL-scale, through the built launcher):
+
 - P2: host/try-all catches a directly thrown ex-info on jank. OK.
 - P4: fixture-style macro var IS :cohost/wrapped on jank. OK.
 - P13: wrapped call of a non-throwing macro works. P16: the macro
@@ -196,7 +197,7 @@ JVM runner re-check after (must stay 10/14, #13 PASS).
   JVM re-check on J, then bb build:jank detached (log
   ~/jgate-logs/n13-u2-aot-build.log), then the binary from a
   scratch dir: owed verdict = exit 1 + "Execution error" headline
-  + "Full report at:" + report EDN present.
+  - "Full report at:" + report EDN present.
 - JVM re-check on J: 10/14 PASS, 0 FAIL (banked, ~/jgate-logs/
   n13-u2-jvmcheck.log) -- second green confirmation of the cli.cljc
   change on the synced tree d9deefd.
@@ -212,14 +213,14 @@ JVM runner re-check after (must stay 10/14, #13 PASS).
   bytes (gate probes' pre-fix: 44,572,208). Record events 1,457
   (the fixture's 4 over the local run's 1,453).
 - The throwing binary, run from a scratch dir (verbatim):
-    AOT_EXIT=1
-    -- stdout: (empty)
-    -- stderr:
-    Execution error (ExceptionInfo) at object-ref::call/ (oref.hpp:566).
-    kaboom from seam.throwmain
+  AOT_EXIT=1
+  -- stdout: (empty)
+  -- stderr:
+  Execution error (ExceptionInfo) at object-ref::call/ (oref.hpp:566).
+  kaboom from seam.throwmain
 
-    Full report at:
-    /tmp/cohost-1793862429787-1.edn
+  Full report at:
+  /tmp/cohost-1793862429787-1.edn
   The report EDN (1,953 bytes) opens {:clojure.main/message
   "Execution error ... kaboom from seam.throwmain ..." ...} and its
   :message \"kaboom from seam.throwmain\" + :trace are present.

@@ -1,6 +1,6 @@
 # Getting started
 
-*2026-11-02. The commands on this page run, as written, in `bb docs:check`.*
+_2026-11-02. The commands on this page run, as written, in `bb docs:check`._
 
 cohost runs Clojure 1.12: `clojure.core`, `clojure.string`, `clojure.test` and the other
 `clojure.*` libraries are Clojure's own source files, read and evaluated on the runtime your

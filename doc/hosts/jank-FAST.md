@@ -16,20 +16,20 @@ doc/HANDOFF.md (jank section), doc/hosts/jank-J0.md, doc/perf/HISTORY.md, doc/pe
 
 Today's quick run (one warm call + one timed call per side: noisy, shape only):
 
-| case | host ms | stock ms | xN |
-|---|---:|---:|---:|
-| transient-vector | 4.76 | 55.09 | x11.55 |
-| into-vector | 6.27 | 61.94 | x9.87 |
-| set-build | 13.59 | 117.29 | x8.62 |
-| group-by | 25.88 | 214.34 | x8.28 |
-| atom-swap | 9.64 | 66.03 | x6.84 |
-| frequencies | 43.4 | 279.8 | x6.44 |
-| destructure | 19.44 | 118.66 | x6.1 |
-| format | 5.3 | 208.29 | x39.25 (jank's own format is C-style: not comparable) |
-| assoc-map, map-lookup, partition, transduce, lazy-pipeline, multimethod | | | x1.9-x2.6 |
-| fn-call, loop-arith, equality, pr-str, conj-vector, distinct | | | x0.99-x1.3 |
-| sort, sort-by, regex | | — | stock side errors: no `:sort-array!` / `:re-find-at` (step 1) |
-| string-join | 1170.85 | 30.79 | the stock side's answer was wrong (58; the right count is 108,889, which jank's own gives): a cohost bug on jank, from the string-builder stand-in (corrected 2026-11-01) |
+| case                                                                    | host ms | stock ms |                                                                                                                                                                        xN |
+| ----------------------------------------------------------------------- | ------: | -------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| transient-vector                                                        |    4.76 |    55.09 |                                                                                                                                                                    x11.55 |
+| into-vector                                                             |    6.27 |    61.94 |                                                                                                                                                                     x9.87 |
+| set-build                                                               |   13.59 |   117.29 |                                                                                                                                                                     x8.62 |
+| group-by                                                                |   25.88 |   214.34 |                                                                                                                                                                     x8.28 |
+| atom-swap                                                               |    9.64 |    66.03 |                                                                                                                                                                     x6.84 |
+| frequencies                                                             |    43.4 |    279.8 |                                                                                                                                                                     x6.44 |
+| destructure                                                             |   19.44 |   118.66 |                                                                                                                                                                      x6.1 |
+| format                                                                  |     5.3 |   208.29 |                                                                                                                     x39.25 (jank's own format is C-style: not comparable) |
+| assoc-map, map-lookup, partition, transduce, lazy-pipeline, multimethod |         |          |                                                                                                                                                                 x1.9-x2.6 |
+| fn-call, loop-arith, equality, pr-str, conj-vector, distinct            |         |          |                                                                                                                                                                x0.99-x1.3 |
+| sort, sort-by, regex                                                    |         |        — |                                                                                                             stock side errors: no `:sort-array!` / `:re-find-at` (step 1) |
+| string-join                                                             | 1170.85 |    30.79 | the stock side's answer was wrong (58; the right count is 108,889, which jank's own gives): a cohost bug on jank, from the string-builder stand-in (corrected 2026-11-01) |
 
 ## Rules for every step
 
@@ -70,6 +70,7 @@ Every later step names which of these measured costs it attacks.
 ## Step 3. Cheap, broad wins in the adapter and shim
 
 Each item is one commit with its before/after bench cases.
+
 - **Type tests by tag, not by name string.** The adapter's predicates call `(type x)` (a string)
   and compare strings (`:transient?` does `starts-with?` on every call). Add one `cpp/raw`
   helper returning `x.get_type()` as an integer, and test against constants of
@@ -125,13 +126,14 @@ Today cohost strips every hint on jank (`strip-meta`), because JVM class hints a
    conversion differs, the codemod keeps the shim's check in front of the native parameter.
 4. **H2 (only if H1 pays):** the stock core's own hints (`^long`/`^double` in core.clj's
    numeric fns, `^ints` etc. stay stripped), measured on loop-arith and reduce-range.
-**Done-bar**: the H0 ratios recorded; with H1, loop-arith and reduce-range faster than without,
-both batteries unchanged.
+   **Done-bar**: the H0 ratios recorded; with H1, loop-arith and reduce-range faster than without,
+   both batteries unchanged.
 
 ## Step 6. Startup: compile ahead of time
 
 jank compiles modules ahead of time (`jank compile-module <ns>`, `-O 0-3`, `--runtime static`,
 `--output-target object`). Two stages:
+
 1. **cohost's own namespaces AOT.** cohost.adapter, scan, shim, rewrite, boot, policy, battery,
    the jank adapter: static sources, JIT-compiled at every start today. Probe `jank
    compile-module cohost.run` (with `-O3`) and run `bb boot:jank` against the compiled modules;
@@ -145,8 +147,8 @@ jank compiles modules ahead of time (`jank compile-module <ns>`, `-O 0-3`, `--ru
    with a fresh snapshot requires the compiled modules instead of booting. Probe first: compile
    time and load time of one large generated module; that jank's AOT keeps vars, metadata,
    macro flags and the `cpp/raw` type layer working when loaded.
-**Done-bar**: `boot-ms` + `libs-ms` within jolt's range with a fresh snapshot; both batteries
-unchanged when booted from it; a stale snapshot is detected and rebuilt, never loaded.
+   **Done-bar**: `boot-ms` + `libs-ms` within jolt's range with a fresh snapshot; both batteries
+   unchanged when booted from it; a stale snapshot is detected and rebuilt, never loaded.
 
 ## Step 7. Upstream (in parallel, no code here)
 
@@ -165,6 +167,7 @@ goal: applications on cohost as fast as on the JVM. A suite under `bench/program
 program portable Clojure, run on every supported target -- JVM Clojure 1.12 (the baseline), jolt,
 basilisp, ClojureScript on Node and in Chromium, ClojureWasm, Phel, let-go, clojurust, jank -- each
 on the host's own core and on cohost's stock core booted there, all on one box:
+
 - calls and recursion: fib 30, tak; floats: nbody, spectral-norm, mandelbrot; allocation and GC:
   binary-trees; arrays and mutation: fannkuch-redux, nsieve; maps and strings: k-nucleotide
   (frequencies over a generated string); persistent collections: a reduce/assoc/update-in data
@@ -173,8 +176,8 @@ on the host's own core and on cohost's stock core booted there, all on one box:
 - each numeric program twice: unhinted, and with the `^long`/`^double` hints a JVM programmer
   would write (H1 passes them to jank).
 - each run reports the median of 5 after a warm-up, plus a cold single run (JIT hosts differ).
-**Done-bar**: `bb bench:programs <host>` on every host; a table of each program's time against
-JVM Clojure, the geometric mean per host, hinted and unhinted, in doc/perf/HISTORY.md.
+  **Done-bar**: `bb bench:programs <host>` on every host; a table of each program's time against
+  JVM Clojure, the geometric mean per host, hinted and unhinted, in doc/perf/HISTORY.md.
 
 ## Order and what each step is checked by
 

@@ -160,7 +160,7 @@ are string literals, each read and walked as code.
   dosync 3, alter 1. ref-set 0, ensure 0, sync 0.
 - The only dosyncs: core.clj:5967 (contains one commute),
   core.clj:5979 (creates a ref, one commute) -- the
-  *loaded-libs* bookkeeping in the load machinery -- and
+  _loaded-libs_ bookkeeping in the load machinery -- and
   test.clj:320 (one commute, the report counters).
 - ref sites: core.clj:2313, 5895, 5979; test.clj:762, 811.
 - Battery: 512 program strings walked; 6 transactional

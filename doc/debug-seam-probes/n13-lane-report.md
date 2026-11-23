@@ -168,10 +168,11 @@ Full report at:
 /tmp/cohost-1793862429787-1.edn
 ```
 
-  The EDN (1,953 bytes) carries :clojure.main/message with the
-  headline, :message "kaboom from seam.throwmain" and the :trace.
-  The headline's first frame matches the launcher's own #1 headline
-  at the J gate — parity, not a new format.
+The EDN (1,953 bytes) carries :clojure.main/message with the
+headline, :message "kaboom from seam.throwmain" and the :trace.
+The headline's first frame matches the launcher's own #1 headline
+at the J gate — parity, not a new format.
+
 - Clean control (demo.main AOT, same route, 81,127 ms warm):
   `CLEAN_EXIT=0`, stdout `hello, JVM-USER!`, stderr empty — a
   non-throwing app is unchanged by the new entry.
@@ -268,7 +269,7 @@ block, or do the division in Clojure.
 Probe methodology note: in plain jank the supported raw shape is
 namespace-scope (a top-level cpp/raw defining C++ functions,
 called via cpp/ns.fn — the shape cli.cljc's cohost_io uses). A
-cpp/raw as a defn *body* segfaulted jank's JIT in probing (exit
+cpp/raw as a defn _body_ segfaulted jank's JIT in probing (exit
 139, divisor-independent); that wart is jank's, is not the shape
 cohost emits for user code, and is recorded here only so the next
 prober does not repeat it.

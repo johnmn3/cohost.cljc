@@ -9,6 +9,7 @@ hosts it holds the assessment and an adversarial re-check. Every claim cites a s
 host's own source file, docs, or commit and release pages. Nothing was installed or run.
 
 **`dev/host-workflows/`** holds the two Workflow scripts:
+
 - `clojure-host-survey.js` is the survey.
 - `five-hosts-plan.js` was started, then stopped before it reported. It designs each
   adapter capability by capability from the host's source, plus jank's type layer and the
@@ -33,13 +34,13 @@ basilisp today. A host is done when all of these hold:
 
 ## The five hosts at a glance
 
-| host | language | reader key | pinned | status (2026-10) | biggest gaps for cohost |
-|---|---|---|---|---|---|
-| ClojureWasm (`cljw`) | Zig | `:cljw` | v1.15.4 (2026-10-23) | active; maintainer handed to BuddhiLW in 2026-10 | the reader also matches `:clj` (first branch in written order wins); 57/247 suite namespaces failing at v1.13.4 |
-| Phel | PHP 8.5 | `:phel` | v0.54.0 (2026-10-04), 1.0 RCs | very active | no `refer`/`alias`/`push-thread-bindings` fns; PCRE pattern strings; no char type; no StringBuilder |
-| let-go | Go | `:lg` | v1.13.0 (2026-09-20) | very active | `&env` is nil; binding is per var (`push-binding!`); RE2 regexes, no `re-matcher` |
-| clojurust (`cljrs`) | Rust | `:cljrs` (legacy `:rust`) | v0.2.32 (2026-10-29) | very active, about 6½ months old | no `macroexpand-1`, `push/pop-thread-bindings`, `refer` or `load-string` fns; `read-string` takes no opts; no `.` interop; macros only via `defmacro` |
-| jank | C++/LLVM | `:jank` | main (no versioned releases) | active, funded, alpha | no `deftype`/`defrecord`/`defprotocol`/`reify` yet; `&env` not passed; `load-string`/`read`/`var-set` are TODO stubs; `eval` only in the dynamic runtime |
+| host                 | language | reader key                | pinned                        | status (2026-10)                                 | biggest gaps for cohost                                                                                                                                  |
+| -------------------- | -------- | ------------------------- | ----------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ClojureWasm (`cljw`) | Zig      | `:cljw`                   | v1.15.4 (2026-10-23)          | active; maintainer handed to BuddhiLW in 2026-10 | the reader also matches `:clj` (first branch in written order wins); 57/247 suite namespaces failing at v1.13.4                                          |
+| Phel                 | PHP 8.5  | `:phel`                   | v0.54.0 (2026-10-04), 1.0 RCs | very active                                      | no `refer`/`alias`/`push-thread-bindings` fns; PCRE pattern strings; no char type; no StringBuilder                                                      |
+| let-go               | Go       | `:lg`                     | v1.13.0 (2026-09-20)          | very active                                      | `&env` is nil; binding is per var (`push-binding!`); RE2 regexes, no `re-matcher`                                                                        |
+| clojurust (`cljrs`)  | Rust     | `:cljrs` (legacy `:rust`) | v0.2.32 (2026-10-29)          | very active, about 6½ months old                 | no `macroexpand-1`, `push/pop-thread-bindings`, `refer` or `load-string` fns; `read-string` takes no opts; no `.` interop; macros only via `defmacro`    |
+| jank                 | C++/LLVM | `:jank`                   | main (no versioned releases)  | active, funded, alpha                            | no `deftype`/`defrecord`/`defprotocol`/`reify` yet; `&env` not passed; `load-string`/`read`/`var-set` are TODO stubs; `eval` only in the dynamic runtime |
 
 Every host has these: its own reader key with `#?@`, runtime `eval`, namespaces and vars
 with metadata and `alter-var-root`, `ex-info`, and persistent collections.
@@ -84,12 +85,14 @@ equivalent) prints the pinned version.
 
 `3e59a25`'s single walk leaves a rewritten macro's arguments raw and rewrites them once, in
 the expansion. It learns the locals from the macro's `&env`:
+
 - `rewrite.cljc`: `env-types`, the marker locals `cohost__hint_<class>_<depth>__<name>`;
 - `boot.cljc`: `wrap-macro`;
 - adapter `:env-locals`.
 
 jolt's `&env` carries names only, and that is enough. With a nil `&env`, the expansion's
 rewrite sees no locals, which breaks three things:
+
 - a local or parameter named like a core fn is rewritten as the core fn;
 - the hint markers are lost, and with them the checkcasts;
 - inlining and the `instance?` shortcut apply to shadowed names.
@@ -100,6 +103,7 @@ before expansion with `*inline?*` false, and the expansion is walked again. That
 `5506876` path; recover it from git (`git show 5506876:src/cohost/rewrite.cljc`).
 
 These battery rows guard it:
+
 - "an inline fn applies after macroexpansion";
 - "assert sees the source form";
 - the local-named-like-a-core-fn rows;
@@ -175,6 +179,7 @@ Today `:type-method-style` is `:jvm`, `:protocols` (ClojureScript) or `:python`
 ## Part B: per host
 
 The milestones are the same for every host:
+
 - **M0** — install (step 0). Then probe the open questions below and record the answers in
   `doc/REPORT.md`.
 - **M1** — `src/cohost/hosts/<host>.<ext>` exists; cohost's namespaces load on the host,
@@ -188,6 +193,7 @@ The milestones are the same for every host:
   come README, REPORT and the HANDOFF entry.
 
 Size each adapter against its analogs:
+
 - `hosts/basilisp.lpy` is 379 lines;
 - `hosts/jolt.clj` is 121, plus the shared 223 of `hosts/java.clj`.
 

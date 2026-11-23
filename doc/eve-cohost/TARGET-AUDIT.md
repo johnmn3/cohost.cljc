@@ -9,16 +9,16 @@
 
 ## 0. The rule under audit
 
-John (2026-11-05 ~10:19 ET): the byte form was *"meant to
-be true across all platforms"* — one canonical serialized
+John (2026-11-05 ~10:19 ET): the byte form was _"meant to
+be true across all platforms"_ — one canonical serialized
 byte representation in the slab on every target, read **in
 place** (typed-view / lazy navigation of the stored form,
 materializing only at domain crossings), so an in-memory
 atom on any target behaves like an in-memory atom — **not**
 like a disk atom (full deserialize-on-access /
 materializing deref as the ordinary read path). His order:
-*"do an audit across all of our 11 or 12 targets and check
-to make sure that all of them do the correct thing."*
+_"do an audit across all of our 11 or 12 targets and check
+to make sure that all of them do the correct thing."_
 
 Two distinctions govern every verdict, per the brief:
 
@@ -36,19 +36,19 @@ Two distinctions govern every verdict, per the brief:
 The sources do not agree on one list; reconciling them is
 the first finding.
 
-| Source | What it lists | Count |
-|---|---|---|
-| `eve/doc/platform-support.md` (standalone Eve, `~/src/eve` @ main `c7dc390`) | Node.js Linux/macOS/Windows, JVM Linux/macOS, Browser — 3 runtime families × OS rows. **Babashka is never mentioned**, though it exists in code (below) | 6 rows / 3 families |
-| Standalone Eve CLJC reader conditionals (census over `src/**/*.cljc`: `#?(:cljs` ×220, `#?(:clj` ×55, `#?(:bb` ×74, `#?(:default` ×1) | code targets: **:cljs, :clj, :bb** | 3 |
-| Standalone Eve `IMemRegion` backends (`src/eve/mem.cljc`) | `JsSabRegion` (:cljs, L173), `NodeMmapRegion` (:cljs, L307), `LustreMmapRegion` (:cljs, L401), `JvmByteBufferRegion` (:clj, L879), `LustreJvmMmapRegion` (:clj, L1077), `BbMmapRegion` (:bb, L491), `BbHeapRegion` (:bb, L605) | 7 backends |
-| Vendored Eve (`~/src/atom.broker` @ `claude/eve-jank`, `eve/hosts.edn`) | host keys: `:jvm :cljs :browser :bb :bb-minimal :nbb :scittle :cherry :cljr :lpy :jolt :clje :vs :glj :jank :lg :cljd` | 17 keys (16 distinct hosts + the bb-minimal variant) |
-| Vendored Eve hosts README (`eve/doc/hosts/README.md`, same branch) | battery table: JVM, CLJS-Node, browser, bb, nbb, ClojureCLR, basilisp, jolt, clojerl, glojure, ValueScript = **11**; perf table: the same minus ValueScript, plus bb-minimal = **11 columns**; union = **12** | **11–12 — this is John's number** |
-| Cohost seats (probe + redo §5.1) | JVM, cljs, jank, cljw, jolt, lg, basilisp, cljrs, phel | 9 |
+| Source                                                                                                                                | What it lists                                                                                                                                                                                                                  | Count                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `eve/doc/platform-support.md` (standalone Eve, `~/src/eve` @ main `c7dc390`)                                                          | Node.js Linux/macOS/Windows, JVM Linux/macOS, Browser — 3 runtime families × OS rows. **Babashka is never mentioned**, though it exists in code (below)                                                                        | 6 rows / 3 families                                  |
+| Standalone Eve CLJC reader conditionals (census over `src/**/*.cljc`: `#?(:cljs` ×220, `#?(:clj` ×55, `#?(:bb` ×74, `#?(:default` ×1) | code targets: **:cljs, :clj, :bb**                                                                                                                                                                                             | 3                                                    |
+| Standalone Eve `IMemRegion` backends (`src/eve/mem.cljc`)                                                                             | `JsSabRegion` (:cljs, L173), `NodeMmapRegion` (:cljs, L307), `LustreMmapRegion` (:cljs, L401), `JvmByteBufferRegion` (:clj, L879), `LustreJvmMmapRegion` (:clj, L1077), `BbMmapRegion` (:bb, L491), `BbHeapRegion` (:bb, L605) | 7 backends                                           |
+| Vendored Eve (`~/src/atom.broker` @ `claude/eve-jank`, `eve/hosts.edn`)                                                               | host keys: `:jvm :cljs :browser :bb :bb-minimal :nbb :scittle :cherry :cljr :lpy :jolt :clje :vs :glj :jank :lg :cljd`                                                                                                         | 17 keys (16 distinct hosts + the bb-minimal variant) |
+| Vendored Eve hosts README (`eve/doc/hosts/README.md`, same branch)                                                                    | battery table: JVM, CLJS-Node, browser, bb, nbb, ClojureCLR, basilisp, jolt, clojerl, glojure, ValueScript = **11**; perf table: the same minus ValueScript, plus bb-minimal = **11 columns**; union = **12**                  | **11–12 — this is John's number**                    |
+| Cohost seats (probe + redo §5.1)                                                                                                      | JVM, cljs, jank, cljw, jolt, lg, basilisp, cljrs, phel                                                                                                                                                                         | 9                                                    |
 
 **Reconciliation.** John's "11 or 12" is the vendored
 hosts README's set: 11 battery hosts, 12 in the union of
 its battery and perf tables. The full reconciled audit
-list across *all* sources is **19 targets**: the 16
+list across _all_ sources is **19 targets**: the 16
 distinct vendored host keys, plus 3 cohost seats that
 appear in no Eve source (cljw, cljrs, phel). The
 standalone Eve repo's 3 code targets (:cljs/:clj/:bb) are
@@ -56,9 +56,9 @@ the same targets as the vendored :cljs/:jvm/:bb hosts,
 audited on both lines where both lines carry code.
 
 **There are two Eve lines, and the audit covers both.**
-(1) *Standalone Eve* — `~/src/eve` @ `c7dc390`
+(1) _Standalone Eve_ — `~/src/eve` @ `c7dc390`
 (SeniorCareMarket/eve), CLJC with :cljs/:clj/:bb branches
-and the `mem.cljc` regions. (2) *Vendored Eve* — the
+and the `mem.cljc` regions. (2) _Vendored Eve_ — the
 adapter-architecture Eve inside atom.broker
 (`claude/eve-jank`), one `eve.atom` "for every host"
 behind per-host adapter roots (`eve/hosts.edn`). Where
@@ -74,7 +74,7 @@ read paths walk the stored form by offset:
 
 - **Map `get`** — `hamt-get` (`~/src/eve/src/eve/map.cljc:439`):
   walks HAMT nodes via `-sio-read-i32` offsets, compares the
-  *stored key bytes* against the serialized probe key bytes
+  _stored key bytes_ against the serialized probe key bytes
   (`bytes-equal?` on the bytes read at the node), and only
   at the leaf calls `deserialize-value-bytes` (map.cljc:74)
   on the one value's bytes — element decode, by design. A
@@ -92,7 +92,7 @@ read paths walk the stored form by offset:
 - **List** — `read-node-value` (list.cljc:87) decodes the
   single node's element bytes; traversal is offset-chasing.
 
-So the *form* of collection reads is correct on every
+So the _form_ of collection reads is correct on every
 target that runs this code: no target's `get`/`nth`
 materializes its collection. What varies is the **price**
 of the shared path per target (§2.3) and whether the
@@ -107,16 +107,16 @@ Eve's own platform doc.
 
 - Standalone, :cljs — `cljs-mmap-deref`
   (atom.cljc:364): constructs the lazy root wrapper, then
-  *"Materialize while pinned — Eve wrappers must not
-  escape"*: `(d/eve->clj v)`. Its docstring: *"plain deref
-  must not return slab-backed Eve wrappers."*
+  _"Materialize while pinned — Eve wrappers must not
+  escape"_: `(d/eve->clj v)`. Its docstring: _"plain deref
+  must not return slab-backed Eve wrappers."_
 - Standalone, :clj — `jvm-mmap-deref` (atom.cljc:850):
-  *"Read the current atom value. Returns PLAIN Clojure
+  _"Read the current atom value. Returns PLAIN Clojure
   data (d/eve->clj). Eve values must not escape into the
   heap: the epoch is unpinned on return, so any
   slab-backed wrapper would dangle once epoch GC reclaims
   the old root. Bounded Eve-backed access will come via
-  the $ operator."* The inner `jvm-read-root-value`
+  the $ operator."_ The inner `jvm-read-root-value`
   (atom.cljc:805) does return slab-backed types on :clj —
   and deref then materializes them anyway.
 - Standalone, :bb — same `jvm-mmap-deref`; additionally
@@ -125,23 +125,23 @@ Eve's own platform doc.
   ("no bb deftype yet") — only maps get a slab-backed
   `BbEveHashMap`, and deref materializes that too.
 - Standalone, legacy cljs system — `eve.shared-atom`'s
-  `AtomDomain` deref (shared_atom.cljs:2919): *"Materialize
+  `AtomDomain` deref (shared_atom.cljs:2919): _"Materialize
   SAB types to CLJS on deref — SAB types never escape to
-  user code outside a swap! transaction"* — deserialize +
+  user code outside a swap! transaction"_ — deserialize +
   `eve->cljs`, with a cache keyed by root descriptor so a
   repeated deref of an unchanged root returns the cached
   materialization.
 - Vendored line, all hosts — `plain-deref`
-  (atom.broker `eve/src/eve/atom.cljc:813`): *"The atom's
+  (atom.broker `eve/src/eve/atom.cljc:813`): _"The atom's
   value as plain data (d/eve->clj)… Slab-backed wrappers
-  must not escape: the epoch is unpinned on return."*
+  must not escape: the epoch is unpinned on return."_
   Plain `deref` dispatches to it on every host
   (`mmap-deref`, L828); the lazy slab-backed value is
   available **only** inside a `$` region (`region-deref`,
   L799) or `read-pinned` (L964). The vendored perf suite
   states the same fact as a workload definition:
-  `atom-deref-map-1k` is *"deref of the 1,000-key map
-  (materializing it as host collections)"* (hosts
+  `atom-deref-map-1k` is _"deref of the 1,000-key map
+  (materializing it as host collections)"_ (hosts
   README), against `atom-$-get-map-1k`, the zero-copy
   pinned get.
 
@@ -156,8 +156,8 @@ slab-backed root as the ordinary read, materialization
 only at domain crossings — **plain deref is the
 violation shape on every target that has Eve atoms at
 all.** It is a uniform design decision, not a JVM
-defect. Its *cost* varies by orders of magnitude per
-target (§3), which is why it was only ever *felt* on
+defect. Its _cost_ varies by orders of magnitude per
+target (§3), which is why it was only ever _felt_ on
 the JVM.
 
 ### 2.3 The JVM's collection reads are disk-priced; cljs's are not
@@ -165,13 +165,13 @@ the JVM.
 The shared HAMT/trie code prices completely differently
 per branch, measured:
 
-| op | cljs/SAB (redo §5.2, Eve `c7dc390`, release build) | JVM :clj (spike P3, standing) |
-|---|---|---|
-| map get | **1,970–2,335 ns** | **~119–134 µs** |
-| map assoc (1k build, per op) | 9,340–9,607 ns | ~0.5 ms |
-| atom deref, scalar root | 708–737 ns | ~104 µs |
-| atom swap! inc | 4,347–4,511 ns | ~178 µs |
-| deref, 100-entry map root | 96.6–105.0 µs (materializes) | ~1.78 ms (materializes) |
+| op                           | cljs/SAB (redo §5.2, Eve `c7dc390`, release build) | JVM :clj (spike P3, standing) |
+| ---------------------------- | -------------------------------------------------- | ----------------------------- |
+| map get                      | **1,970–2,335 ns**                                 | **~119–134 µs**               |
+| map assoc (1k build, per op) | 9,340–9,607 ns                                     | ~0.5 ms                       |
+| atom deref, scalar root      | 708–737 ns                                         | ~104 µs                       |
+| atom swap! inc               | 4,347–4,511 ns                                     | ~178 µs                       |
+| deref, 100-entry map root    | 96.6–105.0 µs (materializes)                       | ~1.78 ms (materializes)       |
 
 Why, from the code: the algorithm is one, the slab-IO
 layer under it is not. On :cljs, `CljsSlabIO`
@@ -196,9 +196,9 @@ as measured, the growth does not save those builds.
 ### 2.4 Doc-vs-code contradictions (reported, not smoothed)
 
 1. **platform-support.md "Deref Behavior"** claims SAB
-   and persistent atom deref *"return lazy slab-backed
-   Eve types"* / *"lazy EveHashMap"*, materialization
-   *"on access (transparent)"*. The code (§2.2)
+   and persistent atom deref _"return lazy slab-backed
+   Eve types"_ / _"lazy EveHashMap"_, materialization
+   _"on access (transparent)"_. The code (§2.2)
    materializes the whole root at deref on both seats.
    **The doc is wrong; the code is the fact.**
 2. **platform-support.md + architecture.md +
@@ -223,7 +223,7 @@ Verdict vocabulary (per the brief): **CORRECT** /
 **VIOLATION** (mechanism named) / **NO EVE PORT** /
 **UNMEASURED** (blocker named). Because §2.1 and §2.2
 separate cleanly, each target gets two sub-verdicts —
-*collection reads* and *atom deref* — and one headline.
+_collection reads_ and _atom deref_ — and one headline.
 
 ### 3.1 ClojureScript / Node — standalone :cljs + vendored :cljs
 
@@ -237,7 +237,7 @@ separate cleanly, each target gets two sub-verdicts —
 - **Deref.** Materializes (§2.2, both cljs atom systems).
   Scalar roots are cheap because there is almost nothing
   to materialize; a 100-entry map root costs ~100 µs
-  *because* it materializes.
+  _because_ it materializes.
 - **Cost.** Redo §5.2 (standalone, this audit's standing
   numbers): deref 708–737 ns, swap 4.3–4.5 µs, get
   2.0–2.3 µs, assoc 9.3–9.6 µs; capacity builds pass.
@@ -292,7 +292,7 @@ separate cleanly, each target gets two sub-verdicts —
 - **Cost.** Spike P3 table (§2.3). Vendored perf
   column: deref-small 17.1 µs, deref-map-1k 377.7 µs,
   $-get-map-1k **2.1 µs** — the pinned lazy get on the
-  JVM is the *fastest in the table*, which isolates the
+  JVM is the _fastest in the table_, which isolates the
   JVM problem precisely: it is the materializing deref
   and the decode-heavy convenience paths, not the slab
   or the region.
@@ -362,9 +362,9 @@ separate cleanly, each target gets two sub-verdicts —
 ### 3.6 Scittle — vendored :scittle
 
 - **Backing.** region/js + slab/module adapters are
-  listed, but hosts.edn's own comment states: *"the
+  listed, but hosts.edn's own comment states: _"the
   slab collections (types, regions, slabs) have not
-  been run on it"* — the seat has run an aegis chat
+  been run on it"_ — the seat has run an aegis chat
   program's 43 namespaces in a page worker, not Eve's
   slab layer.
 - **Verdict.** **UNMEASURED** — no battery, no perf
@@ -390,7 +390,7 @@ separate cleanly, each target gets two sub-verdicts —
   green.
 - **Verdict.** Reads **CORRECT** in form; deref
   **VIOLATION** (uniform). (Not to be confused with
-  cohost's *cljrs* seat — §3.18.)
+  cohost's _cljrs_ seat — §3.18.)
 
 ### 3.9 Basilisp — vendored :lpy (cohost seat: basilisp)
 
@@ -412,7 +412,7 @@ separate cleanly, each target gets two sub-verdicts —
 - **Backing.** `adapters/region/jolt-ffi` (Chez FFI) +
   `slab/heap`. **Reads/deref:** vendored shared impl;
   note the redo (§5.1) established jolt has no Eve
-  branch in the *standalone* line — the port exists
+  branch in the _standalone_ line — the port exists
   only on the vendored line.
 - **Cost.** Perf column: deref-small 17.2 µs,
   deref-map-1k 4.7 ms, $-get 25.0 µs. Battery 199
@@ -467,9 +467,9 @@ separate cleanly, each target gets two sub-verdicts —
   green (4 tests / 51 assertions, 2026-11-05). The
   full suite (§5 step 4) and the in-memory example
   (step 5) were still in work at last signal.
-- **Cost.** No collection/atom op costs: *"scripts/perf-all.clj
+- **Cost.** No collection/atom op costs: _"scripts/perf-all.clj
   has no :jank host entry and the jank runner has no
-  perf mode"* (jank.md). Seam benches exist only for
+  perf mode"_ (jank.md). Seam benches exist only for
   int32 (230 ns/call native) and crypto.
 - **Verdict.** **UNMEASURED** — port in flight; read
   path is the shared in-place code by construction,
@@ -507,7 +507,7 @@ separate cleanly, each target gets two sub-verdicts —
   not a target.
 - **Verdict.** **NO EVE PORT** — missing: a Wasm
   platform port (branch + linear-memory region backend
-  + atomics story).
+  - atomics story).
 
 ### 3.18 ClojureRust — cohost seat cljrs
 
@@ -529,27 +529,27 @@ separate cleanly, each target gets two sub-verdicts —
 
 ## 4. The target table
 
-| # | Target | Line(s) | Backing (in-mem domain) | Collection reads | Atom deref | Headline verdict |
-|---|---|---|---|---|---|---|
-| 1 | ClojureScript / Node | standalone :cljs + vendored :cljs | SAB (`JsSabRegion`); vendored region/js | CORRECT — in place, get 2.0–2.3 µs | VIOLATION — materializes (96–105 µs @100-map) | **MIXED** |
-| 2 | Browser | both | SAB only | CORRECT (by code) | VIOLATION (by code) | **MIXED; standalone costs UNMEASURED** |
-| 3 | JVM | standalone :clj + vendored :jvm | heap `byte[]` via `JvmByteBufferRegion`; vendored jvm-varhandle | VIOLATION — in-place in form, disk-priced (~119–134 µs get; capacity wall) | VIOLATION — materializes (~104 µs scalar; 1.78 ms @100-map) | **VIOLATION** |
-| 4 | Babashka | standalone :bb + vendored :bb | `BbHeapRegion` / `BbMmapRegion`; vendored jvm-nio-lock | standalone: does not load (defect below); vendored: CORRECT in form | VIOLATION (uniform; bb also materializes set/vec/list at root read) | **Standalone BROKEN/UNMEASURED; vendored MIXED** |
-| 5 | nbb | vendored | region/js + slab/module | CORRECT in form | VIOLATION (5.8 ms @1k-map) | **MIXED** |
-| 6 | Scittle | vendored | region/js listed, slab layer unrun | — | — | **UNMEASURED** |
-| 7 | Cherry | vendored | region/js + slab/module | — | — | **UNMEASURED** |
-| 8 | ClojureCLR (:cljr) | vendored | region/clr + slab/heap | CORRECT in form | VIOLATION (4.2 ms @1k) | **MIXED** |
-| 9 | Basilisp (:lpy) | vendored | region/ctypes + slab/heap | CORRECT in form, interpreter-priced | VIOLATION — worst cost (636 ms @1k) | **MIXED, worst deref** |
-| 10 | Jolt | vendored | region/jolt-ffi + slab/heap | CORRECT in form | VIOLATION (4.7 ms @1k) | **MIXED** |
-| 11 | Clojerl (:clje) | vendored | region/beam + slab/heap | CORRECT in form | VIOLATION (7.2 ms @1k) | **MIXED** |
-| 12 | Glojure (:glj) | vendored | region/glojure + slab/heap | CORRECT in form | VIOLATION (72.6 ms @1k) | **MIXED** |
-| 13 | ValueScript (:vs) | vendored | region/vs + slab/heap | CORRECT in form (by code) | VIOLATION (by code) | **MIXED; costs UNMEASURED** |
-| 14 | Jank | vendored, in flight | calloc / MAP_SHARED via region/jank | in-place by construction; unmeasured | materializing by construction; unmeasured | **UNMEASURED** |
-| 15 | Let-go (:lg) | vendored row, no substrate | **none — no slab/region adapter** | — | — | **NO EVE PORT** (slab/atom layer) |
-| 16 | ClojureDart (:cljd) | vendored row, no substrate | **none — no slab/region adapter** | — | — | **NO EVE PORT** (slab/atom layer) |
-| 17 | ClojureWasm (cljw) | cohost seat only | none | — | — | **NO EVE PORT** (Wasm port missing) |
-| 18 | ClojureRust (cljrs) | cohost seat only | none | — | — | **NO EVE PORT** (Rust port missing) |
-| 19 | Phel (PHP) | cohost seat only | none | — | — | **NO EVE PORT** (PHP port missing) |
+| #  | Target               | Line(s)                           | Backing (in-mem domain)                                         | Collection reads                                                           | Atom deref                                                          | Headline verdict                                 |
+| -- | -------------------- | --------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------ |
+| 1  | ClojureScript / Node | standalone :cljs + vendored :cljs | SAB (`JsSabRegion`); vendored region/js                         | CORRECT — in place, get 2.0–2.3 µs                                         | VIOLATION — materializes (96–105 µs @100-map)                       | **MIXED**                                        |
+| 2  | Browser              | both                              | SAB only                                                        | CORRECT (by code)                                                          | VIOLATION (by code)                                                 | **MIXED; standalone costs UNMEASURED**           |
+| 3  | JVM                  | standalone :clj + vendored :jvm   | heap `byte[]` via `JvmByteBufferRegion`; vendored jvm-varhandle | VIOLATION — in-place in form, disk-priced (~119–134 µs get; capacity wall) | VIOLATION — materializes (~104 µs scalar; 1.78 ms @100-map)         | **VIOLATION**                                    |
+| 4  | Babashka             | standalone :bb + vendored :bb     | `BbHeapRegion` / `BbMmapRegion`; vendored jvm-nio-lock          | standalone: does not load (defect below); vendored: CORRECT in form        | VIOLATION (uniform; bb also materializes set/vec/list at root read) | **Standalone BROKEN/UNMEASURED; vendored MIXED** |
+| 5  | nbb                  | vendored                          | region/js + slab/module                                         | CORRECT in form                                                            | VIOLATION (5.8 ms @1k-map)                                          | **MIXED**                                        |
+| 6  | Scittle              | vendored                          | region/js listed, slab layer unrun                              | —                                                                          | —                                                                   | **UNMEASURED**                                   |
+| 7  | Cherry               | vendored                          | region/js + slab/module                                         | —                                                                          | —                                                                   | **UNMEASURED**                                   |
+| 8  | ClojureCLR (:cljr)   | vendored                          | region/clr + slab/heap                                          | CORRECT in form                                                            | VIOLATION (4.2 ms @1k)                                              | **MIXED**                                        |
+| 9  | Basilisp (:lpy)      | vendored                          | region/ctypes + slab/heap                                       | CORRECT in form, interpreter-priced                                        | VIOLATION — worst cost (636 ms @1k)                                 | **MIXED, worst deref**                           |
+| 10 | Jolt                 | vendored                          | region/jolt-ffi + slab/heap                                     | CORRECT in form                                                            | VIOLATION (4.7 ms @1k)                                              | **MIXED**                                        |
+| 11 | Clojerl (:clje)      | vendored                          | region/beam + slab/heap                                         | CORRECT in form                                                            | VIOLATION (7.2 ms @1k)                                              | **MIXED**                                        |
+| 12 | Glojure (:glj)       | vendored                          | region/glojure + slab/heap                                      | CORRECT in form                                                            | VIOLATION (72.6 ms @1k)                                             | **MIXED**                                        |
+| 13 | ValueScript (:vs)    | vendored                          | region/vs + slab/heap                                           | CORRECT in form (by code)                                                  | VIOLATION (by code)                                                 | **MIXED; costs UNMEASURED**                      |
+| 14 | Jank                 | vendored, in flight               | calloc / MAP_SHARED via region/jank                             | in-place by construction; unmeasured                                       | materializing by construction; unmeasured                           | **UNMEASURED**                                   |
+| 15 | Let-go (:lg)         | vendored row, no substrate        | **none — no slab/region adapter**                               | —                                                                          | —                                                                   | **NO EVE PORT** (slab/atom layer)                |
+| 16 | ClojureDart (:cljd)  | vendored row, no substrate        | **none — no slab/region adapter**                               | —                                                                          | —                                                                   | **NO EVE PORT** (slab/atom layer)                |
+| 17 | ClojureWasm (cljw)   | cohost seat only                  | none                                                            | —                                                                          | —                                                                   | **NO EVE PORT** (Wasm port missing)              |
+| 18 | ClojureRust (cljrs)  | cohost seat only                  | none                                                            | —                                                                          | —                                                                   | **NO EVE PORT** (Rust port missing)              |
+| 19 | Phel (PHP)           | cohost seat only                  | none                                                            | —                                                                          | —                                                                   | **NO EVE PORT** (PHP port missing)               |
 
 ## 5. The violations, named
 
@@ -566,7 +566,7 @@ separate cleanly, each target gets two sub-verdicts —
    `read-pinned`). Per John's rule — lazy root as the
    ordinary read, materialization only at crossings —
    this is disk-atom behavior as the mem path's ordinary
-   read, uniformly. It is *priced* per target from
+   read, uniformly. It is _priced_ per target from
    ~100 µs (cljs, 100-entry root) to 636 ms (basilisp,
    1k-entry root).
 2. **JVM collection reads disk-priced (row 3).**

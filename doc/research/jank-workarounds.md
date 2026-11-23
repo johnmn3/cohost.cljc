@@ -93,19 +93,19 @@ the probes run at -O0 (`dev/research/run-cohost-jank.sh`, no `JANK_O`).
 
 `bb bench:jank` (stock core / jank's own, -O3), median of 3 interleaved rounds, base -> x4:
 
-| case | stock ms base | stock ms x4 | ratio base | ratio x4 |
-|---|---:|---:|---:|---:|
-| sort | 63.52 [56.08-76.30] | 54.38 [45.34-57.47] | x4.19 | x3.21 |
-| sort-by | 44.17 [43.54-45.68] | 43.19 [40.35-55.21] | x5.06 | x4.87 |
-| transduce | 9.92 [9.82-10.01] | 6.63 [6.56-6.78] | x2.21 | x1.54 |
-| into-vector | 15.64 [15.47-15.74] | 12.35 [12.33-12.37] | x3.62 | x2.98 |
-| lazy-pipeline | 184.63 [139.94-210.12] | 118.92 [108.18-132.45] | x1.59 | x1.57 |
-| str-build | 49.31 [25.11-66.82] | 58.16 [45.22-58.89] | x6.21 | x8.72 |
-| reduce-range | 6.83 [6.50-8.38] | 0.82 [0.82-0.82] | x0.99 | x0.13 |
-| conj-vector | 13.26 [13.19-34.23] | 9.35 [9.24-14.11] | x1.03 | x0.29 |
-| group-by | 62.10 [55.23-65.19] | 60.81 [32.23-64.76] | x2.83 | x1.10 |
-| set-build | 21.82 | 18.27 | x2.49 | x2.09 |
-| transient-vector | 14.38 | 10.97 | x3.81 | x3.02 |
+| case             |          stock ms base |            stock ms x4 | ratio base | ratio x4 |
+| ---------------- | ---------------------: | ---------------------: | ---------: | -------: |
+| sort             |    63.52 [56.08-76.30] |    54.38 [45.34-57.47] |      x4.19 |    x3.21 |
+| sort-by          |    44.17 [43.54-45.68] |    43.19 [40.35-55.21] |      x5.06 |    x4.87 |
+| transduce        |      9.92 [9.82-10.01] |       6.63 [6.56-6.78] |      x2.21 |    x1.54 |
+| into-vector      |    15.64 [15.47-15.74] |    12.35 [12.33-12.37] |      x3.62 |    x2.98 |
+| lazy-pipeline    | 184.63 [139.94-210.12] | 118.92 [108.18-132.45] |      x1.59 |    x1.57 |
+| str-build        |    49.31 [25.11-66.82] |    58.16 [45.22-58.89] |      x6.21 |    x8.72 |
+| reduce-range     |       6.83 [6.50-8.38] |       0.82 [0.82-0.82] |      x0.99 |    x0.13 |
+| conj-vector      |    13.26 [13.19-34.23] |      9.35 [9.24-14.11] |      x1.03 |    x0.29 |
+| group-by         |    62.10 [55.23-65.19] |    60.81 [32.23-64.76] |      x2.83 |    x1.10 |
+| set-build        |                  21.82 |                  18.27 |      x2.49 |    x2.09 |
+| transient-vector |                  14.38 |                  10.97 |      x3.81 |    x3.02 |
 
 (The lazy-pipeline ratio did not move: its host side moved too. str-build's x8.72 is noise: equal alone, see (c).)
 Every other case is inside its spread.
@@ -114,11 +114,11 @@ without X4 (a separate A/B of the case alone, -O0: 372 vs 339 ms medians), not t
 
 `bb bench:programs jank` (median ms, 3 interleaved rounds; RESULT equal on both sides):
 
-| program | base | x4 |
-|---|---:|---:|
-| sort (1e5) | 79.88 [78.30-84.53] | 46.21 [41.19-49.25] |
-| pipeline (5e5) | 1110.47 [970.56-1364.40] | 952.18 [943.73-1100.79] |
-| json (3e4) | 4851.99 [4357.01-5032.40] | 4244.64 [4207.83-4910.68] |
+| program        |                      base |                        x4 |
+| -------------- | ------------------------: | ------------------------: |
+| sort (1e5)     |       79.88 [78.30-84.53] |       46.21 [41.19-49.25] |
+| pipeline (5e5) |  1110.47 [970.56-1364.40] |   952.18 [943.73-1100.79] |
+| json (3e4)     | 4851.99 [4357.01-5032.40] | 4244.64 [4207.83-4910.68] |
 
 `bb boot:jank` on x4: 542/171/78/0, battery 143/145, libraries 61/61.
 After merging `max/main` @ faa50c4 (X2-1 adds four battery cases): x4 @ ae60daa and faa50c4 both

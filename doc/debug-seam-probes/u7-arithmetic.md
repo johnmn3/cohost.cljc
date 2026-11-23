@@ -32,10 +32,11 @@ report path), or reach native integer division (SIGFPE, exit 136)?
 
 `mod` by zero goes to the stock mod (the adapter's mod-expansion
 excludes a zero divisor from its fast path), whose remainder is layer
+
 1. `unchecked-divide-int` / `unchecked-remainder-int` in the shim call
-core `quot` / `rem`, so they inherit layer 1 (on the JVM the
-unchecked ops throw on a zero divisor too -- "unchecked" waives
-overflow checks, not the zero check).
+   core `quot` / `rem`, so they inherit layer 1 (on the JVM the
+   unchecked ops throw on a zero divisor too -- "unchecked" waives
+   overflow checks, not the zero check).
 
 ## Routes that remain UB (jank's, out of scope)
 

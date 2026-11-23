@@ -43,7 +43,7 @@
   named.
 - `doc/perf/**` *.edn — historical run outputs, not bindings; untouched.
 - Older docs (`CLJS-DEP-STATUS.md`, `CLJS-DEP-REPORT.md`, unit STATUSes)
-  name d241de3 as the state *at their writing*; they are records, left
+  name d241de3 as the state _at their writing_; they are records, left
   as-is. The live pin is deps.edn.
 
 ## Toolchain on this box (for the gates)
@@ -72,8 +72,8 @@
 - First bank of this branch: commit `de9dca1f5e08bb7f391a96e102d9c27ec1c33b6d`,
   pushed and verified on the fetched remote ref.
 - **JVM battery** (`bb boot:jvm`, i.e. `clojure -M:eve -m cohost.run`,
-  sibling @ 0.9.3): **boot errors 0; battery: 221/221 stock behaviors
-  pass; libraries: 62/62 cases pass across 12 clojure.* libraries**
+  sibling @ 0.9.3): *_boot errors 0; battery: 221/221 stock behaviors
+  pass; libraries: 62/62 cases pass across 12 clojure._ libraries**
   (`boot-jvm.log`).
 - **cljs pin fetch**: `clojure -Spath -X:cljs` materialized the pinned
   checkout at `~/.gitlibs/libs/eve/eve/76fd94c3dc541a1e915d6759652114c9f6b392a8`

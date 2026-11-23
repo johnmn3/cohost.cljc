@@ -48,10 +48,10 @@ as units 7, 8, 9.
      reference in an Eve-backed opts map resolves to the registered
      fn before the host's atom machinery invokes it), with unit 4's
      explanatory comment retained.
-   No defn, install step, or require dropped from either side
-   (both files already required cohost.memory and cohost.atom).
-   Paren checks OK: boot.cljc 145 forms, shim.cljc 973 forms,
-   memory_eve.clj 56 forms.
+     No defn, install step, or require dropped from either side
+     (both files already required cohost.memory and cohost.atom).
+     Paren checks OK: boot.cljc 145 forms, shim.cljc 973 forms,
+     memory_eve.clj 56 forms.
 
 ## Gates on the merged tree (as printed)
 

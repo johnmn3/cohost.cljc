@@ -1,24 +1,24 @@
 # Choosing a runtime
 
-*2026-11-02. Core and library batteries: the coordinator's check of cohost coord/b13 @ f9ee475,
+_2026-11-02. Core and library batteries: the coordinator's check of cohost coord/b13 @ f9ee475,
 whose code this release carries (max/integrate @ 6eec4e2, with the battery's rows reordered) plus the
 jank sort fix (max/release-sort-fix @ bddd2d1: on apt jank, battery and libraries unchanged).
-Startup and speed: doc/PERF.md (main @ ff30ce1, 2026-11-03).*
+Startup and speed: doc/PERF.md (main @ ff30ce1, 2026-11-03)._
 
 `:cohost/target` in `deps.edn` names the runtime; `cohost :<target> ...` overrides it for one
 command. The same source runs on each; what differs is the host underneath.
 
-| target | runtime | core battery | library battery | install |
-|---|---|---:|---:|---|
-| `:jvm` | JVM Clojure (the real CLI) | 216/216 | 62/62 | the Clojure CLI |
-| `:jolt` | jolt 0.8.23 (Chez Scheme) | 213/216 | 62/62 | `dev/install/jolt.sh` |
-| `:jank` | jank 0.1 (C++/LLVM) | 214/216 | 62/62 | `dev/install/jank.sh` |
-| `:cljs` | ClojureScript 1.12.42, self-hosted, on Node | 214/216 | 62/62 | Node |
-| `:lpy` | basilisp 0.5.1 (Python) | 205/216 | 62/62 | `dev/install/basilisp.sh` |
-| `:cljw` | ClojureWasm 1.15.4 | 209/216 | 62/62 | `dev/install/cljw.sh` |
-| `:phel` | Phel 0.54.0 (PHP 8.5) | 204/216 | 62/62 | `dev/install/phel.sh` |
-| `:lg` | let-go 1.13.0 (Go) | 209/216 | 62/62 | `dev/install/lg.sh` |
-| `:cljrs` | clojurust 0.2.32 (Rust) | not wired into `cohost` | | `dev/install/cljrs.sh` |
+| target   | runtime                                     |            core battery | library battery | install                   |
+| -------- | ------------------------------------------- | ----------------------: | --------------: | ------------------------- |
+| `:jvm`   | JVM Clojure (the real CLI)                  |                 216/216 |           62/62 | the Clojure CLI           |
+| `:jolt`  | jolt 0.8.23 (Chez Scheme)                   |                 213/216 |           62/62 | `dev/install/jolt.sh`     |
+| `:jank`  | jank 0.1 (C++/LLVM)                         |                 214/216 |           62/62 | `dev/install/jank.sh`     |
+| `:cljs`  | ClojureScript 1.12.42, self-hosted, on Node |                 214/216 |           62/62 | Node                      |
+| `:lpy`   | basilisp 0.5.1 (Python)                     |                 205/216 |           62/62 | `dev/install/basilisp.sh` |
+| `:cljw`  | ClojureWasm 1.15.4                          |                 209/216 |           62/62 | `dev/install/cljw.sh`     |
+| `:phel`  | Phel 0.54.0 (PHP 8.5)                       |                 204/216 |           62/62 | `dev/install/phel.sh`     |
+| `:lg`    | let-go 1.13.0 (Go)                          |                 209/216 |           62/62 | `dev/install/lg.sh`       |
+| `:cljrs` | clojurust 0.2.32 (Rust)                     | not wired into `cohost` |                 | `dev/install/cljrs.sh`    |
 
 The core battery checks behaviors of `clojure.core` against JVM Clojure 1.12's answers; the
 library battery runs twelve `clojure.*` libraries the same way: clojure.walk, set, string, zip,
@@ -61,17 +61,17 @@ From [doc/PERF.md](../PERF.md), where the per-program tables and the method are.
 mean, over a suite of 28 programs (fib, nbody, mandelbrot, binary-trees, ...), of each program's warmed-up time
 against stock Clojure on the JVM; x10 means ten times as long.
 
-| target | startup | programs vs stock Clojure on the JVM |
-|---|---:|---:|
-| stock Clojure, `clojure -M -m` | 1.5 s | 1 |
-| `:jvm` (the real Clojure CLI) | 1.4 s | 1 |
-| `:jank` (from its snapshot) | 2.6 s | x8.9 |
-| `:jolt` | 4.5 s | x9.6 |
-| `:cljs` | 8.9 s | x9.1 |
-| `:lg` | 15.4 s | not yet measured |
-| `:phel` | 47.0 s | not yet measured |
-| `:lpy` | 88.6 s | not yet measured |
-| `:cljw` | 94.0 s | not yet measured |
+| target                         | startup | programs vs stock Clojure on the JVM |
+| ------------------------------ | ------: | -----------------------------------: |
+| stock Clojure, `clojure -M -m` |   1.5 s |                                    1 |
+| `:jvm` (the real Clojure CLI)  |   1.4 s |                                    1 |
+| `:jank` (from its snapshot)    |   2.6 s |                                 x8.9 |
+| `:jolt`                        |   4.5 s |                                 x9.6 |
+| `:cljs`                        |   8.9 s |                                 x9.1 |
+| `:lg`                          |  15.4 s |                     not yet measured |
+| `:phel`                        |  47.0 s |                     not yet measured |
+| `:lpy`                         |  88.6 s |                     not yet measured |
+| `:cljw`                        |  94.0 s |                     not yet measured |
 
 Every target but `:jvm` and `:jank` boots `clojure.core` from Clojure's source at every start; jank loads a
 compiled snapshot of the booted core ([How it works](08-how-it-works.md)). Primitive type hints, which speed up the

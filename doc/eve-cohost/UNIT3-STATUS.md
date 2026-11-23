@@ -25,7 +25,7 @@ Gate: the mixed-representation probe + standing batteries unregressed
   behind the shim class compares as a map — `(= standin twin)` is
   false and `(hash standin)` is the map's hash today.
 - An Eve heap atom's `deref` materializes host values on this seat;
-  the atom case in the gate is therefore the root *snapshot* stand-in.
+  the atom case in the gate is therefore the root _snapshot_ stand-in.
 - Shim dispatch points stock core actually calls: `Util-equiv`,
   `Util-hasheq`, `-equiv`, `-hasheq`, `-hashCode` (via Util-hasheq) in
   `src/cohost/shim.cljc` — all currently delegate to host `=` / `hash`
@@ -58,17 +58,17 @@ Gate: the mixed-representation probe + standing batteries unregressed
 - [x] Layer (`cohost.memory`) built — @ e93971d.
 - [x] JVM Eve hosting (`cohost.memory-eve`) built — @ e93971d.
 - [x] Shim dispatch branches wired (`Util-equiv` / `Util-hasheq` /
-  `-equiv`; `Object/hashCode` answers from the canonical form in
-  `cohost.hosts.java`) — @ e93971d.
+      `-equiv`; `Object/hashCode` answers from the canonical form in
+      `cohost.hosts.java`) — @ e93971d.
 - [x] Gate probe `probe_memory.clj`: **111/111 PASS** (vector, map,
-  set, list, atom-root snapshots incl. scalar; H vs E, E vs H, E vs E;
-  nested; empties; dispatch-layer lookup keyed either way).
+      set, list, atom-root snapshots incl. scalar; H vs E, E vs H, E vs E;
+      nested; empties; dispatch-layer lookup keyed either way).
 - [x] JVM battery unregressed: **221/221, libraries 62/62, boot
-  errors 0** (`bb boot:jvm`); thread probe 29/29; booted-context
-  check 21/21.
+      errors 0** (`bb boot:jvm`); thread probe 29/29; booted-context
+      check 21/21.
 - [x] Jank AOT gate on J (`bb boot:jank-snapshot` + `bb boot:jank`,
-  ~/cohost-eve-u3 on J): snapshot built; battery **219/221**
-  (standing pair only), libraries 62/62, boot errors 0.
+      ~/cohost-eve-u3 on J): snapshot built; battery **219/221**
+      (standing pair only), libraries 62/62, boot errors 0.
 - [x] Report filed (UNIT3-REPORT.md) + declaration.
 
 ## Final
@@ -89,6 +89,7 @@ by construction. **This unit's identity contract is the foundation
 of that single value world, not a mixed-representation bridge.**
 
 What does not change:
+
 - The contract itself: `hasheq` from the canonical Clojure-level
   form; Eve's Merkle digest never crosses the seam as a hash
   answer; `equiv` = canonical forms equal.
@@ -99,6 +100,7 @@ What does not change:
   219/221, libraries 62/62).
 
 What is re-read:
+
 - The design language premised on two coexisting representations
   (this file's earlier sections, the `cohost.memory` docstring,
   the probe's header, the plan's zone terms) now reads as

@@ -157,8 +157,8 @@ Nothing in this lane writes to cohost main.
 Filled as the runs land; numbers exactly as printed. Host legs run
 serially on this box (8 GB).
 
-- JVM battery + libraries (`bb boot:jvm`): **battery: 221/221 stock
-  behaviors pass; libraries: 62/62 cases pass across 12 clojure.*
+- JVM battery + libraries (`bb boot:jvm`): *_battery: 221/221 stock
+  behaviors pass; libraries: 62/62 cases pass across 12 clojure._
   libraries; booted as stock 465, errors: 0** — the impl mainline's own
   rows, reproduced on the merged tree (log:
   `eve-cohost-release-logs/boot-jvm.log` in the coordinator's
@@ -186,9 +186,9 @@ serially on this box (8 GB).
 - **Collation re-runs on the released bindings (2026-11-07, merge
   `e4773ea` — the REBASE-093 collation).** JVM battery + libraries
   (`bb boot:jvm`, Babashka 1.13.226, Eve sibling `../eve/src` at
-  `c7dc390a`, Eve main's shipped 0.9.3 line): **battery: 221/221
+  `c7dc390a`, Eve main's shipped 0.9.3 line): *_battery: 221/221
   stock behaviors pass; libraries: 62/62 cases pass across 12
-  clojure.* libraries; booted as stock 465, errors: 0** — the
+  clojure._ libraries; booted as stock 465, errors: 0** — the
   released-bindings verdict for the JVM rows (log:
   `logs-collation/boot-jvm.log`). Conflict-marker sweep on the
   merge's committed tree: zero new markers (the 9 raw-substring hits
@@ -205,9 +205,9 @@ serially on this box (8 GB).
   start).** `bb boot:jank` (Babashka 1.13.226) against this branch's
   tip (code tree of `e1ec18e`; the docs commit `5c79e7c` on top
   changes no code), Eve sibling `../eve/src` at the released 0.9.3
-  pin `76fd94c3dc`: **booted as stock 544, from host 141, natives
+  pin `76fd94c3dc`: *_booted as stock 544, from host 141, natives
   28, skipped 108, errors: 0; battery: 219/221 stock behaviors
-  pass; libraries: 62/62 cases pass across 12 clojure.* libraries**
+  pass; libraries: 62/62 cases pass across 12 clojure._ libraries**
   — verdict lines byte-identical to the rebase line's
   `logs-093/jank-battery.log`. The two red rows are the standing
   released-bindings pair: "FAIL subs count nth first last butlast"

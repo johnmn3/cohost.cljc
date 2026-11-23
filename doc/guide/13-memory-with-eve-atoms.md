@@ -1,15 +1,15 @@
 # Memory with Eve atoms
 
-*2026-11-05. The implementation record is `doc/eve-cohost/` — `UNIT5-REPORT.md`
+_2026-11-05. The implementation record is `doc/eve-cohost/` — `UNIT5-REPORT.md`
 for the atom layer, `unit8/REPORT.md` for the ClojureScript shared heap,
 `MEMORY-PLAN.md` §§7–8 for the rulings this chapter explains. Status per seat:
-[Eve coverage and status](15-eve-coverage-and-status.md).*
+[Eve coverage and status](15-eve-coverage-and-status.md)._
 
 With the Eve atom layer in force, `clojure.lang.Atom` — the class behind
 `atom`, `swap!`, `reset!` and the rest — is answered by an **Eve atom**: the
 atom's root is an immutable Eve value, and every change is a
 compare-and-swap of that root inside Eve. Nothing in the API changes. What
-changes is what an atom *is*: state that lives in Eve's heap, under Eve's
+changes is what an atom _is_: state that lives in Eve's heap, under Eve's
 rules, where threads — and, on the seats that support it, worker realms and
 other processes — can share it.
 
@@ -71,8 +71,8 @@ a host atom. They are decisions and substrate facts, not bugs:
 ## Domains: the heap is an atom
 
 Eve's unit of shared state is a **domain**: a heap of Eve atoms that a set
-of threads shares. The ruling the memory work is built on is that *the heap
-a Clojure program sees on cohost is itself an Eve atom* — the default
+of threads shares. The ruling the memory work is built on is that _the heap
+a Clojure program sees on cohost is itself an Eve atom_ — the default
 runtime atom domain. A program's atoms are minted across that domain's Eve
 heap domains (Eve caps a domain's slots, and the layer shards at the cap);
 namespace and var containers are residents of the same world: on the JVM
@@ -85,8 +85,8 @@ In plain terms, for a program:
   shared; there is no second, hidden heap beside it.
 - A value crosses a domain wall only by `deref` or `swap!` — a thread never
   reaches into another domain's storage directly.
-- Contention is per atom and per domain: two threads swapping *different*
-  atoms in a domain do not contend; two threads swapping the *same* atom
+- Contention is per atom and per domain: two threads swapping _different_
+  atoms in a domain do not contend; two threads swapping the _same_ atom
   serialize on its CAS, as with stock atoms.
 
 Atoms that must outlive the process, or be shared with another process,
@@ -106,7 +106,7 @@ That is what makes the threading chapter's worker realms honest:
 - A value created in a worker realm's heap, published into an atom the core
   created, is read back by the core — and extended by a second future in
   the worker. (The crossing program's `made-elsewhere` case.)
-- An atom *created* in a worker realm is returned to the core by its Eve
+- An atom _created_ in a worker realm is returned to the core by its Eve
   handle and swapped there. (`atom-born-elsewhere`.)
 - Core and worker each swapping one atom 500 times through Eve's CAS land
   on the exact final value. (`contended-swaps`: `[:done 1000]`.)

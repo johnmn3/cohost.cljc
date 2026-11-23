@@ -16,37 +16,37 @@ from the template at `c6b8eaa`.
 
 ## Summary
 
-| # | paper cut | status |
-|---|---|---|
-| 1 | 6 of 8 `dev/install/*.sh` are Linux-only | fixed |
-| 2 | `phel.sh` exits 127 with no message | fixed |
-| 3 | `cohost :<host>` with the host missing: a babashka stack trace | fixed |
-| 4 | `xargs -d` (GNU only) in the jank/lpy cache keys | fixed |
-| 5 | `cohost -e` on `:jvm` prints the CLI's deprecation warning | fixed |
-| 6 | first cljs build warns `undeclared Var cohost.boot/+'` | fixed |
-| 7 | `:phel` prints 763 PHP warnings per command | fixed |
-| 8 | `cohost :jank -m/-X` with a fresh snapshot: FileNotFoundException trace | fixed |
-| 9 | `export PATH` lasts one shell; README doesn't say so | fixed (docs) |
-| 10 | README's `-Spath` wording vs what `:jvm` prints | fixed (docs) |
-| 11 | README's runtime table: no platform info | fixed (docs) |
-| 12 | classpath split/join on `:` (breaks on Windows) | fixed (untested on Windows) |
-| 13 | no Windows entry point for `bin/cohost` | fixed (untested on Windows) |
-| 14 | Homebrew 5 refuses jank's tap until trusted | handled: script stops with the command |
-| 15 | default target is `:jvm`; nothing reaches cohost-on-a-host by default | fixed: new projects and the CLI default to `:jank`; `:jvm` is the reference (README, guide 02/06/07, CLI.md) |
-| 16 | jank's core snapshot is never built automatically, and goes stale on any update | fixed: built on first use and by `jank.sh` after the install (one line, a lock, a log) |
-| 17 | first `:jank` run: 58 s, one cryptic line | fixed: the first run says what it builds and how long it takes (Linux: 665 s on a loaded box, then 2.2 s) |
-| 18 | `:lpy` is ~20 s per command (34 s first, silent); the CLI never uses the lpy snapshot | fixed: the CLI boots from the cached boot, built on first use |
-| 19 | `:cljw` ~17 s, `:phel` ~22 s per command; no user-facing numbers | fixed (docs): guide 07 and doc/PERF.md give startup for every runtime |
-| 20 | Phel leaves compiled files in `$TMPDIR/phel/tmp` and never cleans them | fixed: each run gets its own TMPDIR, removed after |
-| 21 | Homebrew PHP's ini shows each PHP warning twice | fixed: the phel wrapper passes `-d log_errors=0` (reinstall phel to get it) |
-| 22 | rustup `--no-modify-path`: `cljrs` isn't on PATH afterwards | fixed (docs): the README says to add `$HOME/.cargo/bin` to PATH |
-| 23 | `rlwrap` suggested, no install hint | fixed (docs): install hints in the README and guide 04 |
-| 24 | deps-new on JDK 26 prints 3 `Final field ... mutated reflectively` warnings | upstream |
-| 25 | `bb boot:jank-snapshot` prints `load error: set! ...` lines while passing | fixed: the lines read "not loaded on this host (expected; its cases do not need it)" |
-| 26 | `jank-src.sh` is Debian/root-only | partly: the bash 3.2 empty-array abort is fixed; the build is still Debian-only |
-| 27 | the template pins `c6b8eaa`; fixes reach new projects only at the next release | fixed: the README names 7b3d58e, the release commit |
-| 28 | Windows: the Clojure CLI is a PowerShell module, and `bin/cohost` runs `clojure` | open, untested |
-| 29 | `brew install php` prints php-fpm service caveats during `phel.sh` | cosmetic |
+| #  | paper cut                                                                             | status                                                                                                       |
+| -- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1  | 6 of 8 `dev/install/*.sh` are Linux-only                                              | fixed                                                                                                        |
+| 2  | `phel.sh` exits 127 with no message                                                   | fixed                                                                                                        |
+| 3  | `cohost :<host>` with the host missing: a babashka stack trace                        | fixed                                                                                                        |
+| 4  | `xargs -d` (GNU only) in the jank/lpy cache keys                                      | fixed                                                                                                        |
+| 5  | `cohost -e` on `:jvm` prints the CLI's deprecation warning                            | fixed                                                                                                        |
+| 6  | first cljs build warns `undeclared Var cohost.boot/+'`                                | fixed                                                                                                        |
+| 7  | `:phel` prints 763 PHP warnings per command                                           | fixed                                                                                                        |
+| 8  | `cohost :jank -m/-X` with a fresh snapshot: FileNotFoundException trace               | fixed                                                                                                        |
+| 9  | `export PATH` lasts one shell; README doesn't say so                                  | fixed (docs)                                                                                                 |
+| 10 | README's `-Spath` wording vs what `:jvm` prints                                       | fixed (docs)                                                                                                 |
+| 11 | README's runtime table: no platform info                                              | fixed (docs)                                                                                                 |
+| 12 | classpath split/join on `:` (breaks on Windows)                                       | fixed (untested on Windows)                                                                                  |
+| 13 | no Windows entry point for `bin/cohost`                                               | fixed (untested on Windows)                                                                                  |
+| 14 | Homebrew 5 refuses jank's tap until trusted                                           | handled: script stops with the command                                                                       |
+| 15 | default target is `:jvm`; nothing reaches cohost-on-a-host by default                 | fixed: new projects and the CLI default to `:jank`; `:jvm` is the reference (README, guide 02/06/07, CLI.md) |
+| 16 | jank's core snapshot is never built automatically, and goes stale on any update       | fixed: built on first use and by `jank.sh` after the install (one line, a lock, a log)                       |
+| 17 | first `:jank` run: 58 s, one cryptic line                                             | fixed: the first run says what it builds and how long it takes (Linux: 665 s on a loaded box, then 2.2 s)    |
+| 18 | `:lpy` is ~20 s per command (34 s first, silent); the CLI never uses the lpy snapshot | fixed: the CLI boots from the cached boot, built on first use                                                |
+| 19 | `:cljw` ~17 s, `:phel` ~22 s per command; no user-facing numbers                      | fixed (docs): guide 07 and doc/PERF.md give startup for every runtime                                        |
+| 20 | Phel leaves compiled files in `$TMPDIR/phel/tmp` and never cleans them                | fixed: each run gets its own TMPDIR, removed after                                                           |
+| 21 | Homebrew PHP's ini shows each PHP warning twice                                       | fixed: the phel wrapper passes `-d log_errors=0` (reinstall phel to get it)                                  |
+| 22 | rustup `--no-modify-path`: `cljrs` isn't on PATH afterwards                           | fixed (docs): the README says to add `$HOME/.cargo/bin` to PATH                                              |
+| 23 | `rlwrap` suggested, no install hint                                                   | fixed (docs): install hints in the README and guide 04                                                       |
+| 24 | deps-new on JDK 26 prints 3 `Final field ... mutated reflectively` warnings           | upstream                                                                                                     |
+| 25 | `bb boot:jank-snapshot` prints `load error: set! ...` lines while passing             | fixed: the lines read "not loaded on this host (expected; its cases do not need it)"                         |
+| 26 | `jank-src.sh` is Debian/root-only                                                     | partly: the bash 3.2 empty-array abort is fixed; the build is still Debian-only                              |
+| 27 | the template pins `c6b8eaa`; fixes reach new projects only at the next release        | fixed: the README names 7b3d58e, the release commit                                                          |
+| 28 | Windows: the Clojure CLI is a PowerShell module, and `bin/cohost` runs `clojure`      | open, untested                                                                                               |
+| 29 | `brew install php` prints php-fpm service caveats during `phel.sh`                    | cosmetic                                                                                                     |
 
 ## Details
 
@@ -55,19 +55,20 @@ from the template at `c6b8eaa`.
 **1. Six of eight installers were Linux-only.** (fixed)
 The README's runtime table gives `dev/install/<host>.sh` as the install. On this Mac:
 
-| script | what happened |
-|---|---|
-| `jolt.sh` | downloaded `jolt-v0.8.23-x86_64-linux.tar.gz`, checksum OK, then `install: /usr/local/bin/...: Permission denied` (rc 71) |
-| `cljw.sh` | `cljw-linux-x86_64.tar.gz`, same failure (rc 71) |
-| `lg.sh` | `let-go_1.13.0_linux_amd64.tar.gz`, same failure (rc 71) |
-| `jank.sh` | `/etc/apt/trusted.gpg.d/jank.gpg: No such file or directory` (rc 1) |
-| `phel.sh` | no output, rc 127 (see 2) |
-| `cljrs.sh` | `cargo: command not found` (rc 127); Rust is not listed as a prerequisite |
-| `basilisp.sh` | worked (uv) |
+| script        | what happened                                                                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `jolt.sh`     | downloaded `jolt-v0.8.23-x86_64-linux.tar.gz`, checksum OK, then `install: /usr/local/bin/...: Permission denied` (rc 71) |
+| `cljw.sh`     | `cljw-linux-x86_64.tar.gz`, same failure (rc 71)                                                                          |
+| `lg.sh`       | `let-go_1.13.0_linux_amd64.tar.gz`, same failure (rc 71)                                                                  |
+| `jank.sh`     | `/etc/apt/trusted.gpg.d/jank.gpg: No such file or directory` (rc 1)                                                       |
+| `phel.sh`     | no output, rc 127 (see 2)                                                                                                 |
+| `cljrs.sh`    | `cargo: command not found` (rc 127); Rust is not listed as a prerequisite                                                 |
+| `basilisp.sh` | worked (uv)                                                                                                               |
 
 Even with root, the scripts would have put Linux ELF binaries on a Mac's PATH.
 
 Fix: `dev/install/_lib.sh`, sourced by every script, does the following:
+
 - detects the OS (linux, macos, windows under Git Bash/MSYS2) and the CPU;
 - picks that platform's release asset;
 - checks sha256 with whichever of `sha256sum`, `shasum` or `certutil` exists;
@@ -82,6 +83,7 @@ macOS arm64. `dev/install/all.sh` installs every host and lists any it couldn't.
 scripts were verified under `/bin/bash` 3.2.
 
 Per-platform coverage, from each project's release assets:
+
 - **jolt:** linux-x86_64, macos-aarch64, macos-x86_64, windows-x86_64.
 - **cljw:** linux-x86_64, macos-aarch64.
 - **let-go:** linux and darwin, amd64 and arm64; Windows via `go install`.
@@ -212,6 +214,7 @@ line: `cohost: jank: SNAPSHOT-STALE ... (bb boot:jank-snapshot builds it)`.
 
 Building it takes about 2m16s, with jank and clang peaking around 3 GB. Not building it
 automatically looks deliberate in `jank_snapshot_cli.clj` ("never builds"). Options:
+
 - `jank.sh` / `all.sh` build it after installing jank;
 - the CLI builds it on first use with a progress line;
 - the README says to run `bb boot:jank-snapshot` once after installing jank, and after
@@ -233,16 +236,16 @@ a line while booting.
 **19. Startup per runtime isn't published.** (open, docs)
 Measured here, per README command:
 
-| runtime | per command |
-|---|---|
-| `:jvm` | ~1 s |
+| runtime | per command                                         |
+| ------- | --------------------------------------------------- |
+| `:jvm`  | ~1 s                                                |
 | `:jank` | 0.5 s, with snapshot + project build (10 s without) |
-| `:jolt` | 1–2 s |
-| `:cljs` | ~2 s (5 s first build) |
-| `:lg` | 4–6 s (10 s first) |
-| `:cljw` | ~17 s |
-| `:lpy` | 19–25 s |
-| `:phel` | ~22 s |
+| `:jolt` | 1–2 s                                               |
+| `:cljs` | ~2 s (5 s first build)                              |
+| `:lg`   | 4–6 s (10 s first)                                  |
+| `:cljw` | ~17 s                                               |
+| `:lpy`  | 19–25 s                                             |
+| `:phel` | ~22 s                                               |
 
 Guide 07's table covers only jvm, cljs and jank, and says the others "are being
 re-measured". A user picking `:lpy`, `:phel` or `:cljw` can't tell that 20 s is expected.

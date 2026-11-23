@@ -1,6 +1,6 @@
 # How cohost works
 
-*2026-11-02.*
+_2026-11-02._
 
 Every non-JVM Clojure (jolt, basilisp, ClojureScript, ...) re-implements
 `clojure.core` by hand against a conformance corpus: broad, never total, and
@@ -17,8 +17,8 @@ own namespace:
    `(catch IllegalArgumentException e ...)`, a namespace's
    `(:import (java.util.regex Pattern Matcher))` — into calls on
 2. a **shim** (`cohost.shim`) that maps the `clojure.lang` / `java.*`
-   surface onto the host's own data structures: the host's vector *is* the
-   `PersistentVector`, its seq *is* the `ISeq`, `RT/first` is the host's
+   surface onto the host's own data structures: the host's vector _is_ the
+   `PersistentVector`, its seq _is_ the `ISeq`, `RT/first` is the host's
    `first`. What the host lacks (iterators, a `java.util.regex.Matcher`,
    `StringBuilder`, `java.lang.Math`, class tokens, the JVM exception
    hierarchy, multimethods, refs) the shim builds from what it has;
@@ -29,7 +29,7 @@ own namespace:
    `binding`, `re-find` — straight from Rich's file; then boots each library
    a `require` names into its own namespace (`clojure.walk` into
    `cohost.walk`), honoring its `ns` form. Macros are wrapped so what they
-   *emit* is rewritten too;
+   _emit_ is rewritten too;
 4. a **policy** (`cohost.policy`) that says which forms of core.clj are the
    JVM itself (proxies, gen-class, agents, the class loader, `java.io`) and
    are skipped, and which names are the host's facade over its runtime

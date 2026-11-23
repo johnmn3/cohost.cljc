@@ -46,17 +46,17 @@ Every artifact is a directory `target/<name>/` whose `run args...` calls the mai
 directory; the task prints `build: target/<name>/run`. Measured 2026-11-02 on `cohost/app` projects
 (`run you` from `/tmp` -> `Hello, you!`):
 
-| target | `target/<name>/` holds | needs at run time | measured (`run you` from `/tmp`; bb readme:check, 2026-11-02 2:06-2:27 PM ET, unless the row says) |
-|---|---|---|---|
-| `:jvm` | `<name>.jar` (tools.build uberjar, `clojure.main` as its main; no `:gen-class` in code every target reads), `run` (`java -jar ... -m <main>`) | java | yes |
-| `:cljs` | cohost's ClojureScript host build (`target/cljs-cli`), the stock sources, the source roots, `run.js`, `run` | node | yes |
-| `:jolt` | `run` itself: one native binary (`jolt build`, release mode: direct-linked, whole-program inference) holding the booted core, the libraries and the app's namespaces, recorded on jolt and compiled ahead of time (54 MB) | nothing: no jolt, no sources | yes: `run you` 0.37 s; batteries 167/167 and 62/62 from the modules (macOS arm64 M5, 2026-11-03, aot/native-builds) |
-| `:cljw` | the recorded boot as ClojureWasm modules (`snapshot/`: the core, the libraries, the app's namespaces, `cohost.app-main`), cohost's sources, `run` (`cljw -cp snapshot:cohost/src -m cohost.app-main`) | cljw | yes: boot 0.83 s against about 17 s from source, `run` 0.9 s; batteries 165/167 and 62/62, as from source (macOS arm64 M5, 2026-11-03, aot/native-builds) |
-| `:lg` | a script bundle, `run` (`lg -source-paths ... lg_cli.lg`) | lg | yes (the same argument) |
-| `:lpy` | a script bundle plus basilisp's compiled boot (the booted core as `.lpy` modules with their `.lpyc` bytecode, mtimes kept), `run` (`basilisp run -p snapshot -p cohost/src ...`) | basilisp | yes: `run` 1.9 s against 19-25 s from source (macOS arm64 M5, 2026-11-03, aot/native-builds) |
-| `:phel` | the app compiled to PHP by `phel build` from its recorded boot (the core, the libraries, the app's namespaces; no `.phel` sources), `phel.phar`, `run.php`, `run` (PHP with a 64 MB stack, OPcache file cache and the tracing JIT) | php | yes: from another directory, 1.7-2.0 s, 1.3-1.4 s with OPcache warm; build 150-170 s; batteries 195/205 and 60/62 from the compiled build (Box 1, Linux, 2026-11-03, c/aot-phel @ 43ad1ee) |
-| `:jank` | `run` itself: one native executable (`cohost.build-jank`): the booted core's snapshot and the project's namespaces compiled `-O3`, jank's static runtime; rebuilt when stale (state in `cohost-build/`) | nothing: it links only libc, libstdc++, libgcc_s, libm | yes (`Hello, you!` in 0.926 s, median of 3, from another directory) |
-| `:cljrs` | not yet: cohost's clojurust boot is parked and the CLI does not run it (`bin/cohost`: not wired) | | |
+| target   | `target/<name>/` holds                                                                                                                                                                                                             | needs at run time                                      | measured (`run you` from `/tmp`; bb readme:check, 2026-11-02 2:06-2:27 PM ET, unless the row says)                                                                                         |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `:jvm`   | `<name>.jar` (tools.build uberjar, `clojure.main` as its main; no `:gen-class` in code every target reads), `run` (`java -jar ... -m <main>`)                                                                                      | java                                                   | yes                                                                                                                                                                                        |
+| `:cljs`  | cohost's ClojureScript host build (`target/cljs-cli`), the stock sources, the source roots, `run.js`, `run`                                                                                                                        | node                                                   | yes                                                                                                                                                                                        |
+| `:jolt`  | `run` itself: one native binary (`jolt build`, release mode: direct-linked, whole-program inference) holding the booted core, the libraries and the app's namespaces, recorded on jolt and compiled ahead of time (54 MB)          | nothing: no jolt, no sources                           | yes: `run you` 0.37 s; batteries 167/167 and 62/62 from the modules (macOS arm64 M5, 2026-11-03, aot/native-builds)                                                                        |
+| `:cljw`  | the recorded boot as ClojureWasm modules (`snapshot/`: the core, the libraries, the app's namespaces, `cohost.app-main`), cohost's sources, `run` (`cljw -cp snapshot:cohost/src -m cohost.app-main`)                              | cljw                                                   | yes: boot 0.83 s against about 17 s from source, `run` 0.9 s; batteries 165/167 and 62/62, as from source (macOS arm64 M5, 2026-11-03, aot/native-builds)                                  |
+| `:lg`    | a script bundle, `run` (`lg -source-paths ... lg_cli.lg`)                                                                                                                                                                          | lg                                                     | yes (the same argument)                                                                                                                                                                    |
+| `:lpy`   | a script bundle plus basilisp's compiled boot (the booted core as `.lpy` modules with their `.lpyc` bytecode, mtimes kept), `run` (`basilisp run -p snapshot -p cohost/src ...`)                                                   | basilisp                                               | yes: `run` 1.9 s against 19-25 s from source (macOS arm64 M5, 2026-11-03, aot/native-builds)                                                                                               |
+| `:phel`  | the app compiled to PHP by `phel build` from its recorded boot (the core, the libraries, the app's namespaces; no `.phel` sources), `phel.phar`, `run.php`, `run` (PHP with a 64 MB stack, OPcache file cache and the tracing JIT) | php                                                    | yes: from another directory, 1.7-2.0 s, 1.3-1.4 s with OPcache warm; build 150-170 s; batteries 195/205 and 60/62 from the compiled build (Box 1, Linux, 2026-11-03, c/aot-phel @ 43ad1ee) |
+| `:jank`  | `run` itself: one native executable (`cohost.build-jank`): the booted core's snapshot and the project's namespaces compiled `-O3`, jank's static runtime; rebuilt when stale (state in `cohost-build/`)                            | nothing: it links only libc, libstdc++, libgcc_s, libm | yes (`Hello, you!` in 0.926 s, median of 3, from another directory)                                                                                                                        |
+| `:cljrs` | not yet: cohost's clojurust boot is parked and the CLI does not run it (`bin/cohost`: not wired)                                                                                                                                   |                                                        |                                                                                                                                                                                            |
 
 What is not native yet ([doc/AOT-PLAN.md](AOT-PLAN.md)): `cljw build` of the emitted modules stops with `build failed:
 UnsupportedValueTag`, so `:cljw` ships the modules for cljw to run; `lg -source-paths src -b out entry.lg`
@@ -84,7 +84,7 @@ Two halves, one contract between them (an EDN file):
 
 The launcher runs `clojure -Sverbose -Spath` with the user's `-Sdeps`,
 `-Srepro`, `-Sforce`, `-Sthreads` and alias tokens (`-A`, `-M`, `-X`) in the
-project directory. The Clojure CLI *is* tools.deps' front end, so the
+project directory. The Clojure CLI _is_ tools.deps' front end, so the
 root/user/project config chain, alias merging, `:local/root`, git deps and
 Maven coordinates behave as they do for `clj`. The classpath is its last line;
 `-Sverbose` names the cache file it came from, and beside it the CLI writes the
@@ -212,11 +212,11 @@ and a return value back. That protocol is not here.
 process. `:clj` later in the string (`:jolt:clj`) still names the official CLI
 as the `:clj` leg, and the first host stays the process.
 
-A jolt host with no `clojure` on PATH resolves the classpath with
-`jolt -Srepro -Spath` and the same alias flags. With `clojure` on PATH it
+A jolt host with no ``clojure`` on PATH resolves the classpath with
+``jolt -Srepro -Spath`` and the same alias flags. With ``clojure`` on PATH it
 keeps the Clojure CLI's basis, which is the argmap this adapter has used.
-Every other host still resolves with `clojure`. A missing binary is
-`cohost: \`clojure\` failed to start`, not an uncaught `IOException`.
+Every other host still resolves with ``clojure``. A missing binary is
+``cohost: \``clojure\` failed to start``, not an uncaught ``IOException`.
 
 The bundle is `COHOST_CLJ_BUNDLE`, or `$HOME/.cache/cohost/cohost-clj`. It is built
 with JDK 25 and jolt 0.8.26, and run with neither:
@@ -328,19 +328,19 @@ flag, so a profile request takes the JIT `run-main` path for that run.
 
 Measured 2026-11-02 ET in `dev/cli-demo` with a fresh snapshot, `bash dev/perf/jank_snapshot_cli_parts.sh`: each part is its own command, three runs, seconds (the jank parts run the launch's own `jank -O3 ... run-main cohost.cli` with a config that stops at that point).
 
-| part | before (s) | after (s) |
-|---|---|---|
-| `bb` start | 0.032 / 0.027 / 0.023 | 0.024 / 0.025 / 0.023 |
-| `bin/cohost :jank -Spath` (bb, `clojure -Spath`, the roots) | 0.049 / 0.051 / 0.050 | 0.055 / 0.052 / 0.052 |
-| `clojure -Spath`, `.cpcache` hit / miss | 0.017 / 0.015 / 0.015; 1.301 / 1.266 / 1.305 | 0.014 / 0.014 / 0.013; 1.264 / 1.205 / 1.045 |
-| the launch helper (snapshot key, a second bb) | 0.099 / 0.107 / 0.102 | 0.097 / 0.116 / 0.107 |
-| a jank process, nothing loaded | 0.714 / 0.680 / 0.616 | 0.641 / 0.624 / 0.614 |
-| + cohost's AOT objects | 1.085 / 1.047 / 1.134 | 1.113 / 1.110 / 1.069 |
-| + cohost.cli, snapshot boot, user ns, exit | 3.277 / 3.289 / 3.301 | 1.685 / 1.750 / 1.807 |
-| + loading demo.main (tools.cli, greeter) | 3.612 / 3.090 / 3.420 | 1.858 / 2.086 / 1.834 (project snapshot) |
-| + `-main` | 6.006 / 5.690 / 5.783 | 1.906 / 1.967 / 2.096 (project snapshot) |
-| **`cohost :jank -M -m demo.main jank-user`** | 5.481 / 5.986 / 5.851 (median 5.851) | **2.075 / 2.070 / 1.976 (median 2.070)** |
-| `clojure -M -m demo.main jank-user` (JVM, same box) | | 1.485 / 1.486 / 1.236 (median 1.485) |
+| part                                                        | before (s)                                   | after (s)                                    |
+| ----------------------------------------------------------- | -------------------------------------------- | -------------------------------------------- |
+| `bb` start                                                  | 0.032 / 0.027 / 0.023                        | 0.024 / 0.025 / 0.023                        |
+| `bin/cohost :jank -Spath` (bb, `clojure -Spath`, the roots) | 0.049 / 0.051 / 0.050                        | 0.055 / 0.052 / 0.052                        |
+| `clojure -Spath`, `.cpcache` hit / miss                     | 0.017 / 0.015 / 0.015; 1.301 / 1.266 / 1.305 | 0.014 / 0.014 / 0.013; 1.264 / 1.205 / 1.045 |
+| the launch helper (snapshot key, a second bb)               | 0.099 / 0.107 / 0.102                        | 0.097 / 0.116 / 0.107                        |
+| a jank process, nothing loaded                              | 0.714 / 0.680 / 0.616                        | 0.641 / 0.624 / 0.614                        |
+| + cohost's AOT objects                                      | 1.085 / 1.047 / 1.134                        | 1.113 / 1.110 / 1.069                        |
+| + cohost.cli, snapshot boot, user ns, exit                  | 3.277 / 3.289 / 3.301                        | 1.685 / 1.750 / 1.807                        |
+| + loading demo.main (tools.cli, greeter)                    | 3.612 / 3.090 / 3.420                        | 1.858 / 2.086 / 1.834 (project snapshot)     |
+| + `-main`                                                   | 6.006 / 5.690 / 5.783                        | 1.906 / 1.967 / 2.096 (project snapshot)     |
+| **`cohost :jank -M -m demo.main jank-user`**                | 5.481 / 5.986 / 5.851 (median 5.851)         | **2.075 / 2.070 / 1.976 (median 2.070)**     |
+| `clojure -M -m demo.main jank-user` (JVM, same box)         |                                              | 1.485 / 1.486 / 1.236 (median 1.485)         |
 
 What moved:
 
@@ -378,11 +378,11 @@ The executable is 38,921,656 bytes and links only the system's libc, libstdc++, 
 
 Startup, wall seconds to the greeting, three runs each, interleaved, in `dev/cli-demo`:
 
-| | runs | median |
-|---|---|---:|
-| `target/jank/demo jank-user` | 0.930 / 0.876 / 0.911 | 0.911 |
-| `cohost :jank -M -m demo.main jank-user` (fresh snapshot) | 6.797 / 5.925 / 5.870 | 5.925 |
-| `clojure -M -m demo.main jank-user` (JVM) | 1.400 / 1.259 / 1.363 | 1.363 |
+|                                                           | runs                  | median |
+| --------------------------------------------------------- | --------------------- | -----: |
+| `target/jank/demo jank-user`                              | 0.930 / 0.876 / 0.911 |  0.911 |
+| `cohost :jank -M -m demo.main jank-user` (fresh snapshot) | 6.797 / 5.925 / 5.870 |  5.925 |
+| `clojure -M -m demo.main jank-user` (JVM)                 | 1.400 / 1.259 / 1.363 |  1.363 |
 
 ## Verified (2026-11-02 ET)
 
@@ -403,15 +403,15 @@ cohost :jank -Spath                           # the source roots
 
 `bb cli:check`, 2026-11-02 12:07-12:18 PM ET, cohost `c/cli-every-target`:
 
-| target | -M -m | -M:main | -X:run | -e | script | -Spath |
-|---|---|---|---|---|---|---|
-| jvm | SAME | SAME | SAME | SAME | SAME | SAME |
-| jolt | SAME | SAME | SAME | SAME | SAME | SAME |
-| cljs | SAME | SAME | SAME | SAME | SAME | SAME |
-| cljw | SAME | SAME | SAME | SAME | SAME | SAME |
-| lg | SAME | SAME | SAME | SAME | SAME | SAME |
-| jank | SAME | SAME | SAME | SAME | SAME | SAME |
-| lpy, phel, cljrs | not on the box that ran this | | | | | |
+| target           | -M -m                        | -M:main | -X:run | -e   | script | -Spath |
+| ---------------- | ---------------------------- | ------- | ------ | ---- | ------ | ------ |
+| jvm              | SAME                         | SAME    | SAME   | SAME | SAME   | SAME   |
+| jolt             | SAME                         | SAME    | SAME   | SAME | SAME   | SAME   |
+| cljs             | SAME                         | SAME    | SAME   | SAME | SAME   | SAME   |
+| cljw             | SAME                         | SAME    | SAME   | SAME | SAME   | SAME   |
+| lg               | SAME                         | SAME    | SAME   | SAME | SAME   | SAME   |
+| jank             | SAME                         | SAME    | SAME   | SAME | SAME   | SAME   |
+| lpy, phel, cljrs | not on the box that ran this |         |        |      |        |        |
 
 jank before this change: `cohost: :jank is not wired into the CLI yet` on every case. Wiring it took the launch
 above and one host arm in `cohost.cli/exit!`: jank 0.1's `flush` throws `TODO: port flesh`, so jank exits through
@@ -423,10 +423,10 @@ Demo project: `deps.edn` with `org.clojure/tools.cli 1.2.245` (Maven jar), a
 `:local/root` library `greeter`, aliases `:run` (`:exec-fn`/`:exec-args`) and
 `:main` (`:main-opts`); every output compared line by line with `clojure` itself.
 
-| host | cases | differs from `clojure` only in |
-|---|---|---|
-| jolt | 16 (`-e` multi-form/errors/printing, `-i` order, script args, `-m`, `-M:alias`, `-X`, `-X:alias`, missing fn, `-J`, missing ns, `-`, REPL) | error location; `#'cohost.core/map`; missing-ns message; REPL prompt per form |
-| cljs, cljw, lg, lpy, phel | 5 (multi-form `-e` + error, `-m` with jar + local deps and `*command-line-args*`, `-X:alias`, `-M:alias`, `-`) | error location |
+| host                      | cases                                                                                                                                      | differs from `clojure` only in                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| jolt                      | 16 (`-e` multi-form/errors/printing, `-i` order, script args, `-m`, `-M:alias`, `-X`, `-X:alias`, missing fn, `-J`, missing ns, `-`, REPL) | error location; `#'cohost.core/map`; missing-ns message; REPL prompt per form |
+| cljs, cljw, lg, lpy, phel | 5 (multi-form `-e` + error, `-m` with jar + local deps and `*command-line-args*`, `-X:alias`, `-M:alias`, `-`)                             | error location                                                                |
 
 Phel's five were re-run after the fixes (2026-10-31): its `(/ 1 0)` said PHP's "Division by
 zero", now the JVM's "Divide by zero" (the shim's `Numbers/divide` throws it for an exact zero

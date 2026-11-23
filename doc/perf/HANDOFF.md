@@ -171,7 +171,7 @@ jolt corpus in one round.
      rewritten once, in the expansion, as the JVM compiler sees them after macroexpansion.
      The expansion's rewrite reads the macro's `&env` for locals.
    - A local hinted with a checked class or StringBuilder reaches that rewrite through a
-     *marker* local (`cohost__hint_<class>_<depth>__<name>`), since jolt's `&env` carries
+     _marker_ local (`cohost__hint_<class>_<depth>__<name>`), since jolt's `&env` carries
      names only. A rebinding without a hint leaves a deeper, untyped marker, and the
      deepest one wins.
    - `:arglists` lose their type hints, as the params do: the JVM read `^long` there as a
@@ -204,6 +204,7 @@ jolt corpus in one round.
    on one returns, call the shim's method with no user-type dispatch.
 
 **Also fixed in this round:**
+
 - **Correctness review, adapters area:**
   - the chunk-reduce contract: `(.reduce (chunk-first s) ...)` goes to
     `shim/chunk-reduce`, which returns a `reduced` unopened; jolt's chunks are vectors,
@@ -213,13 +214,14 @@ jolt corpus in one round.
   `&env` first). Its `&env` battery row now passes.
 
 **Still open:**
+
 - **The largest gaps left,** measured on `3e59a25` (stock core against the host's own):
   - transient vectors on ClojureScript, ×16.9 on Node;
   - multimethod calls, ×3.7 to ×5.0 on every host;
   - `transduce`, ×3.0 to ×4.0 on jolt and ClojureScript;
   - jolt's lazy `count`/`filter`/`map`, ×3.9;
   - basilisp's `re-seq`, `format` and `sort-by`, which are not natives there.
-  `doc/perf/HISTORY.md` has them all.
+    `doc/perf/HISTORY.md` has them all.
 - **The perf finders that hit the usage limit** (adapters, shim-core, shim-rest) were not
   re-run: they are discovery, not planned work.
 - **The correctness review's later rounds** (its boot/policy finder and its "find more"

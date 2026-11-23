@@ -14,8 +14,8 @@ Compile the same form two ways:
   n)
 ```
 
-* As a **file/module** (`jank run file.jank`, `jank compile-module`): works.
-* Through the **JIT eval entry** (form-at-a-time evaluation in a live
+- As a **file/module** (`jank run file.jank`, `jank compile-module`): works.
+- Through the **JIT eval entry** (form-at-a-time evaluation in a live
   process, e.g. cohost's `eval-str`, which is how a REPL drives jank):
   fails with
 
@@ -46,14 +46,14 @@ prints a member typedef's enclosing template without its arguments.
 
 ## Notes
 
-* Analysis is not the problem: the constructor form
+- Analysis is not the problem: the constructor form
   `(cpp/new (cpp/std.vector cpp/int64_t))` resolves and runs on the eval
   path after the include (it errors only on returning a raw pointer).
   Only locals whose type is a member typedef of a template specialization
   hit the fragment.
-* Workaround in user code: cast the value so the local's type is a plain
+- Workaround in user code: cast the value so the local's type is a plain
   type — `(cpp/cast cpp/long (cpp/.size v))` evaluates fine on the eval
   path. A `^cpp/long` hint on the binding does not change the fragment.
-* The fragment is parsed as its own interpreter input
+- The fragment is parsed as its own interpreter input
   ("In file included from <<< inputs >>>:1" precedes the error in the
   full output), not as part of the form's generated TU.

@@ -1,6 +1,6 @@
 # Testing
 
-*2026-11-02.*
+_2026-11-02._
 
 Tests are `clojure.test`, the library's own source, on every runtime. The `cohost/app`
 template's `:test` alias runs the test namespace's `run`, which calls `run-tests` and ends the

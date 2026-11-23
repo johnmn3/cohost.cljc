@@ -37,38 +37,38 @@ identity contract is unit 4's dependency).
 ## Milestones
 
 - [x] M1 — branch + unit 3 merged; unit 3 probe re-run on the
-  merged tree: **111/111 PASS** (2026-11-05).
+      merged tree: **111/111 PASS** (2026-11-05).
 - [x] M2 — layer: fill state, constructor registry, Eve
-  constructors (vector/map/set/list + empties), guarded
-  transients in `cohost.memory` / `cohost.memory-eve`.
-  Banked @ `0cfaead`.
+      constructors (vector/map/set/list + empties), guarded
+      transients in `cohost.memory` / `cohost.memory-eve`.
+      Banked @ `0cfaead`.
 - [x] M3 — shim: creator dispatch under fill; EMPTY statics
-  rebound at fill install; transient method-var branches;
-  class-of answers for Eve values. Banked @ `bd6490b`.
+      rebound at fill install; transient method-var branches;
+      class-of answers for Eve values. Banked @ `bd6490b`.
 - [x] M4 — boot: `:eve-collections` opt + fill install;
-  JVM default-on. Banked @ `bd7b1aa`. Post-M4 seam fixes
-  (RT-vector is the analyzer's vector-literal construction and
-  is the fill's surface; the analyzer-boundary rule below;
-  `memory/install-fill!` portable wrapper) banked with the
-  probe-series update — see the dated section below.
+      JVM default-on. Banked @ `bd7b1aa`. Post-M4 seam fixes
+      (RT-vector is the analyzer's vector-literal construction and
+      is the fill's surface; the analyzer-boundary rule below;
+      `memory/install-fill!` portable wrapper) banked with the
+      probe-series update — see the dated section below.
 - [x] M5 — layer probe (probe_collections.clj): **76 checks,
-  0 FAIL** with the fill forced on; 4/4 in off mode
-  (2026-11-05 ~2:55 PM ET). Creators, seam contract, ops,
-  meta through the seam vars, guarded transients (seal +
-  CCE shapes), residents round-trips. Fixes banked with it:
-  the ITransient* cast predicates answer layer transients by
-  kind; RT-nth / -nth route Eve-backed values through the
-  layer's nth-of (resident elements resolve). Unit 3 probe
-  re-run after the equiv/hasheq change: **111/111**.
+      0 FAIL** with the fill forced on; 4/4 in off mode
+      (2026-11-05 ~2:55 PM ET). Creators, seam contract, ops,
+      meta through the seam vars, guarded transients (seal +
+      CCE shapes), residents round-trips. Fixes banked with it:
+      the ITransient* cast predicates answer layer transients by
+      kind; RT-nth / -nth route Eve-backed values through the
+      layer's nth-of (resident elements resolve). Unit 3 probe
+      re-run after the equiv/hasheq change: **111/111**.
 - [~] M6 — JVM gate, fill forced: **battery 221/221,
   libraries 62/62, boot errors 0** (dev/u4_gate.clj on,
   2026-11-05 ~2:10 PM ET; launch shape: -Sdeps paths, no
   -M:eve — see the eduction diagnostic). Remains in M6: the
   corpus comparison + same-run H vs E timings.
 - [ ] M7 — jank gate on J: `bb boot:jank` AOT-compiles the new
-  shim/layer code; battery 219/221 (standing pair only).
+      shim/layer code; battery 219/221 (standing pair only).
 - [ ] M8 — standing checks (cli:check 7/7 SAME, debug-seam JVM
-  where touched) + UNIT4-REPORT.md.
+      where touched) + UNIT4-REPORT.md.
 
 ## Status update — 2026-11-05 ~1:30 PM ET (probe series + first gate numbers)
 
@@ -83,13 +83,13 @@ checks fail only under the fill, and why one more (eduction)
 fails under one launch shape.
 
 **Established so far, numbers as printed.**
+
 - Deep conversion is required and is now the seam's rule: the
   hosting's `->eve` deep-converts on entry (Eve-backed → root;
   host vector/map/set rebuilt in Eve form; any seq → Eve list).
   Boot errors went **425 → 49 → 0**. Fill-on boot (default boot
   via cohost.run): **791 top-level forms, booted as stock 465,
-  from host 202, natives 66, skipped 58, ERRORS 0**; `(vector 1 2
-  3)`, `(defn hm ([] {}))`, `(hm)` → `{}` all correct.
+  from host 202, natives 66, skipped 58, ERRORS 0**; `(vector 1 2 3)`, `(defn hm ([] {}))`, `(hm)` → `{}` all correct.
 - The analyzer boundary (the 49 → 0 step): source literals are
   host-reader constants on every seat, and macroexpansion
   assemblies are FORMS — the analyzer's territory, like the
@@ -207,6 +207,7 @@ to resolving a resident reference argument before the host
 call — no atom semantics, no var surfaces touched.
 
 **What is running / remains.**
+
 - Running at this bank: nothing — the last legs (battery
   controls + the eduction reruns) have completed and are
   reported above. Next: the residents fix (landed, above),
@@ -359,7 +360,7 @@ attempt 2 runs on f0b12cb.
 cli:check on the fixed tree: jvm 7/7 SAME, jolt 7/7
 SAME, cljs 7/7 SAME. lpy rows DIFF on the basilisp
 cached-boot build failing in this worktree (importer
-FileNotFoundError on its own __pycache__ .lpyc files,
+FileNotFoundError on its own **pycache** .lpyc files,
 run/boot/shim) — reproduced IDENTICALLY on the base
 branch (89ad378) in a clean worktree on this box:
 pre-existing worktree environment artifact, not a unit
@@ -367,13 +368,14 @@ change; lpy is unverifiable from this worktree.
 
 Jank gate on J, tree f0b12cb, PRE-RELEASE Eve bindings:
 bb boot:jank-snapshot RC 0 (AOT compiles the new shim
-+ layer; boot on jank 791 forms, errors 0); bb
-boot:jank RC 0 — battery 219/221 with ONLY the
-standing named pair (subs count nth first last
-butlast; Character outside ASCII), libraries pass.
-Logs: ~/u4-gate-logs/{snapshot2,boot-jank2}.log on J.
-The gate re-runs against the released bindings when
-they land (sequencing note).
+
+- layer; boot on jank 791 forms, errors 0); bb
+  boot:jank RC 0 — battery 219/221 with ONLY the
+  standing named pair (subs count nth first last
+  butlast; Character outside ASCII), libraries pass.
+  Logs: ~/u4-gate-logs/{snapshot2,boot-jank2}.log on J.
+  The gate re-runs against the released bindings when
+  they land (sequencing note).
 
 ## Close-out
 

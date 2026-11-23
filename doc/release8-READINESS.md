@@ -27,22 +27,22 @@ tree @ 2563eee). Release-tree re-verification:
 
 Local, this box (release tree; logs ~/workspace/release8-logs/):
 
-| Leg | Result |
-|---|---|
-| JVM battery (`bb boot:jvm`) | "battery: 221/221 stock behaviors pass"; "libraries: 62/62 cases pass across 12 clojure.* libraries" |
-| cli:check jvm | 7/7 SAME, exit 0 |
-| debug-seam:check jvm | 10 PASS, 0 FAIL, 4 SKIP (#2/#9/#11/#12 jank-only or probe-owned); runner exit code 1 as printed — the rows match the banked gate's JVM read exactly |
+| Leg                         | Result                                                                                                                                              |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JVM battery (`bb boot:jvm`) | "battery: 221/221 stock behaviors pass"; "libraries: 62/62 cases pass across 12 clojure.* libraries"                                                |
+| cli:check jvm               | 7/7 SAME, exit 0                                                                                                                                    |
+| debug-seam:check jvm        | 10 PASS, 0 FAIL, 4 SKIP (#2/#9/#11/#12 jank-only or probe-owned); runner exit code 1 as printed — the rows match the banked gate's JVM read exactly |
 
 J, j.slaa.us (release tree @ 52606d1, fresh clone from bundle;
 serial; logs ~/release8-gate/ on J):
 
-| Leg | Result |
-|---|---|
-| Snapshot (`bb boot:jank-snapshot`) | "SNAPSHOT-BUILT cf70ff19fc745ed51072e8b3144c63322e7c25c046750fddf0f3853b5c46da7a in 528169 ms"; "PLACEMENT 858 of 873 targeted forms at their original lines, 15 unplaceable"; SNAPSHOT-BOOT-MS 437.85962; exit 0 |
-| Battery (snapshot leg + `bb boot:jank`) | both reads: "battery: 219/221 stock behaviors pass", "libraries: 62/62"; boot:jank SNAPSHOT-BOOT-MS 456.115686; exit 0 |
-| cli:check jank | 7/7 SAME, exit 0 |
-| debug-seam:check jank | "12/14 PASS, 0 FAIL", exit 0 |
-| docs:check jank | 22 PASS blocks; "docs:check: 0 failing command(s) over 1 target(s)"; exit 0 |
+| Leg                                     | Result                                                                                                                                                                                                            |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot (`bb boot:jank-snapshot`)      | "SNAPSHOT-BUILT cf70ff19fc745ed51072e8b3144c63322e7c25c046750fddf0f3853b5c46da7a in 528169 ms"; "PLACEMENT 858 of 873 targeted forms at their original lines, 15 unplaceable"; SNAPSHOT-BOOT-MS 437.85962; exit 0 |
+| Battery (snapshot leg + `bb boot:jank`) | both reads: "battery: 219/221 stock behaviors pass", "libraries: 62/62"; boot:jank SNAPSHOT-BOOT-MS 456.115686; exit 0                                                                                            |
+| cli:check jank                          | 7/7 SAME, exit 0                                                                                                                                                                                                  |
+| debug-seam:check jank                   | "12/14 PASS, 0 FAIL", exit 0                                                                                                                                                                                      |
+| docs:check jank                         | 22 PASS blocks; "docs:check: 0 failing command(s) over 1 target(s)"; exit 0                                                                                                                                       |
 
 Notes on the reads:
 

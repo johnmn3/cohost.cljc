@@ -60,7 +60,7 @@ So the atom the heap sits on is not singular: one Eve atom
 per contention domain, with startup-phase state and
 runtime-phase state in separate atoms where their
 contention profiles differ. The problem axes below test
-the heap ruling *with* the split as the expected shape —
+the heap ruling _with_ the split as the expected shape —
 §P1 for what the split does to bootstrap, §P5 for which
 runtime residents (locals, analyzer/compiler state, the
 var registry) naturally fall into which domain.
@@ -100,14 +100,14 @@ Cohost's boot (`src/cohost/boot.cljc`) runs:
    core, before the libraries.
 
 "The heap Clojure sees" is the **booted world's** heap.
-Cohost's own machinery is that world's *host*, exactly as the
+Cohost's own machinery is that world's _host_, exactly as the
 JVM is cohost's host. So there is no chicken-and-egg for the
 domain itself: it is created host-side, in `boot-setup!`'s
 slot — one step before the existing thread-layer fill — and
 core.clj's first form already evaluates with the domain in
 existence. VS's precedent is even cheaper: its runtime atom
 is **minted by CAS on first touch** at a fixed root offset
-and *adopted* on warm start (`pm_runtime_atom`,
+and _adopted_ on warm start (`pm_runtime_atom`,
 `vs/src/vs/kernel/wasm/program_runtime.vs` — the block at
 RUNTIME_ATOM_OFF 160, persisted at the root region's offset
 0; the next run maps the previous run's pages and reads the
@@ -134,7 +134,7 @@ heap, not the program's, and the ruling governs the program's.
   adopt rather than rebuild (VS's warm start does exactly
   this). Priced, with the shape named.
 - **The snapshot contract.** Cohost's AOT snapshot is a
-  *recording* of boot (`snap-begin!`/`snap-end!`,
+  _recording_ of boot (`snap-begin!`/`snap-end!`,
   boot.cljc:1517/1579: "what boot! does before/after
   core.clj"). Today it replays host-side steps. If boot's
   product is a value inside the domain, the snapshot must
@@ -155,12 +155,12 @@ axis).** Terminology first, because two different things
 are called "domain": a **contention domain** is one atom —
 one CAS root, one writer-side story (contention-domains
 §1) — while Eve's `atom-domain` is a slab container that
-already holds *many* atoms by slot (`eve/src/eve/atom.cljc`
+already holds _many_ atoms by slot (`eve/src/eve/atom.cljc`
 line 78: slot 0 = the registry atom, slot 1 = the default
 atom — separate CAS roots sharing one slab). A split can
 therefore be realized two ways: several atoms in one slab
 domain (shared allocation, independent arbitration), or
-separate slab domains (independent allocation *and*
+separate slab domains (independent allocation _and_
 independent mint/adopt/replay units). Contention only ever
 cares about the CAS root; bootstrap cares about the second
 granularity, because the slab domain is the unit that gets
@@ -180,7 +180,7 @@ not all at once**:
    at the phase transition — and cohost's boot already has
    the marker in code: `install-thread-layer!`
    (boot.cljc:909), whose docstring is "runs after the
-   companions and before the libraries." That fill *is* a
+   companions and before the libraries." That fill _is_ a
    phase boundary: everything it installs is runtime-phase
    machinery. Alternatively the runtime domain is CAS-minted
    on first steady-state touch, `pm_runtime_atom`-style,
@@ -195,7 +195,7 @@ adding to them:
   domain's mint is deferred off the boot path entirely.
 - The snapshot contract stops being one obligation and
   becomes a natural half plus a non-obligation. A cohost
-  snapshot *is* a recording of the startup phase — so its
+  snapshot _is_ a recording of the startup phase — so its
   replay product is exactly the startup domain
   (mint-by-replay, deterministically, as today), and the
   runtime domain is simply **not in the snapshot**: it is
@@ -204,7 +204,7 @@ adding to them:
   network-backed), minted fresh on first touch after load
   or adopted where a seat wants warm state. The sharpest
   sub-problem from the unsplit reading — "how does a
-  replay reproduce *the* heap-atom?" — dissolves into
+  replay reproduce _the_ heap-atom?" — dissolves into
   "replay reproduces the startup domain," which is what
   the snapshot already does for host-side boot state.
 
@@ -237,7 +237,7 @@ collector of the program. The new pressures are two:
   recursively; `$` is the bounded-navigation counterpart.
 - **By-construction retention of foreign payloads.** A
   closure or host object stored as a domain value is held
-  *by reference* in the wrapper's host seat (MEMORY-PLAN §1).
+  _by reference_ in the wrapper's host seat (MEMORY-PLAN §1).
   Eve's retire discipline frees blocks; it knows nothing of
   host reachability, and the model law bans the liveness
   scan that would teach it. So what the domain holds, lives
@@ -252,7 +252,7 @@ collector of the program. The new pressures are two:
 one object: host objects, and domain-resident wrappers
 (stable per root — the assumption unit 3's stand-in design
 already makes). It fails across materialization (every
-`eve.atom` deref returns a *fresh* plain-Clojure tree —
+`eve.atom` deref returns a _fresh_ plain-Clojure tree —
 `d/eve->clj`, atom.cljc:850) and across a swap round-trip
 of a foreign value (serialized in, materialized out: `=`,
 never `identical?`). So identity becomes a **domain-local**
@@ -295,14 +295,14 @@ values must not escape into the heap: the epoch is unpinned
 on return, so any slab-backed wrapper would dangle."
 Measured on this seat (warm passes, in-process controls):
 
-| op | Eve (eve.atom / eve collections) | stock control, same process |
-|---|---|---|
-| atom deref, scalar root | **~104 µs/op** | 45 ns/op (loaded box); 2.72 ns on xbench's cleaner run |
-| atom swap! inc | **~178 µs/op** | 149 ns/op |
-| map lookup (.valAt / get) | **~119–134 µs/op** | ~21 ns/op (stock nth, same run) |
-| deref, 100-entry plain-map root | **~1.78 ms/op** | — (materialization: scales with value size) |
-| swap! on a foreign (plain Clojure) root | **~199 µs/op** | 460 ns/op (stock swap! assoc, 100-map) |
-| map assoc, build phase | **~0.5–5 ms per assoc** | 10k-entry build: ~ms total |
+| op                                      | Eve (eve.atom / eve collections) | stock control, same process                            |
+| --------------------------------------- | -------------------------------- | ------------------------------------------------------ |
+| atom deref, scalar root                 | **~104 µs/op**                   | 45 ns/op (loaded box); 2.72 ns on xbench's cleaner run |
+| atom swap! inc                          | **~178 µs/op**                   | 149 ns/op                                              |
+| map lookup (.valAt / get)               | **~119–134 µs/op**               | ~21 ns/op (stock nth, same run)                        |
+| deref, 100-entry plain-map root         | **~1.78 ms/op**                  | — (materialization: scales with value size)            |
+| swap! on a foreign (plain Clojure) root | **~199 µs/op**                   | 460 ns/op (stock swap! assoc, 100-map)                 |
+| map assoc, build phase                  | **~0.5–5 ms per assoc**          | 10k-entry build: ~ms total                             |
 
 **Eve's JVM collections deserialize on access.** Values in
 the slab are serialized bytes (platform-support.md: JVM
@@ -313,7 +313,7 @@ where the same ops are typed-view reads.
 
 **Capacity is a wall, not a slope.** The in-memory heap
 domain's coalescing region is 64 KB: building a 10k-entry
-map *and* a 1k-element vec in it both die
+map _and_ a 1k-element vec in it both die
 `coalesc-alloc!: out of memory`. The convenience slab ctx
 (`default-sio`) lacks the coalescing class entirely — assoc
 dies `ArrayIndexOutOfBoundsException` at alloc.cljc:400
@@ -326,8 +326,8 @@ collection values — does not fit in, and could not be
 priced into, fixed 64 KB–6 MB regions.
 
 **Consequence, stated plainly:** if "the heap is an Eve
-atom" means *route the existing `eve.atom` / Eve JVM
-collection implementations under every program operation*,
+atom" means _route the existing `eve.atom` / Eve JVM
+collection implementations under every program operation_,
 then on the JVM seat: boot itself becomes minutes-scale
 (measured ~525 ms per 1,000 assocs ⇒ core boot's collection
 traffic is 2–3 orders past feasible), deref is ~10⁵ ns
@@ -338,7 +338,7 @@ dead on measurement, not on taste.**
 **The shape that makes the common case free already exists
 — it is the precedent's.** Contention-domains §5–§6: a
 transaction's own data lives in the runtime domain;
-materialization happens at *crossings* (a deref into another
+materialization happens at _crossings_ (a deref into another
 domain, a store into another atom), never on intra-domain
 reads. Values born in the runtime domain are read in place,
 as Eve values; locals are the domain's frame data, not an
@@ -409,7 +409,7 @@ cost). This is the spike's headline finding.
 - **Contention — evaluated under the split, which is the
   expected shape (refinement ruling, §0).** The governing
   principle is the model's own: contention is a property
-  of *writes*. Reads never contend — a deref pins an epoch
+  of _writes_. Reads never contend — a deref pins an epoch
   and takes no CAS (contention-domains §1) — so each
   resident is placed by its **write profile**, and its
   reads follow for free. Read naively (every local a
@@ -417,13 +417,13 @@ cost). This is the spike's headline finding.
   the hottest CAS point in the system; under the split,
   no resident's write profile contends with another's:
 
-  | resident | write profile | domain |
-  |---|---|---|
-  | locals, temporaries, form env & bindings | one thread, scope lifetime | **per-scope local atoms** — not a shared domain at all (Eve's atom law; in cohost the slots are host frames anyway, §P6 — the *values* are domain values) |
-  | analyzer/compiler-side state — in cohost's terms: the codemod ctx, the macro table `scan-macros!` builds, the shim's eval/load hook state | bursts: continuous through boot, per-`eval` at runtime; effectively one writer at a time | **startup domain** |
-  | var registry — namespace table, interning, var roots | writes concentrated in load episodes (boot, library load, `require`, `def`/`redef`); reads constant, cross-thread, contention-free | **startup domain** (placed by its writes; its hot reads pay nothing) |
-  | thread-layer state — unit 1's executor/future/agent/latch registries | steady-state, multi-threaded, written whenever programs spawn work | **runtime domain** |
-  | runtime services & program-facing steady-state registries | steady-state | **runtime domain** |
+  | resident                                                                                                                                  | write profile                                                                                                                      | domain                                                                                                                                                    |
+  | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | locals, temporaries, form env & bindings                                                                                                  | one thread, scope lifetime                                                                                                         | **per-scope local atoms** — not a shared domain at all (Eve's atom law; in cohost the slots are host frames anyway, §P6 — the _values_ are domain values) |
+  | analyzer/compiler-side state — in cohost's terms: the codemod ctx, the macro table `scan-macros!` builds, the shim's eval/load hook state | bursts: continuous through boot, per-`eval` at runtime; effectively one writer at a time                                           | **startup domain**                                                                                                                                        |
+  | var registry — namespace table, interning, var roots                                                                                      | writes concentrated in load episodes (boot, library load, `require`, `def`/`redef`); reads constant, cross-thread, contention-free | **startup domain** (placed by its writes; its hot reads pay nothing)                                                                                      |
+  | thread-layer state — unit 1's executor/future/agent/latch registries                                                                      | steady-state, multi-threaded, written whenever programs spawn work                                                                 | **runtime domain**                                                                                                                                        |
+  | runtime services & program-facing steady-state registries                                                                                 | steady-state                                                                                                                       | **runtime domain**                                                                                                                                        |
 
   Two consequences worth naming. First, the unsplit
   reading's one residue — a single registry atom
@@ -432,7 +432,7 @@ cost). This is the spike's headline finding.
   startup domain, away from steady-state traffic. (Unit
   1's registry atom works at thread-layer scale today —
   29/29 probe, no contention pathology — and under the
-  split it is a *runtime-domain* resident, which is where
+  split it is a _runtime-domain_ resident, which is where
   its traffic belongs.) Second, the split buys failure
   isolation for free: a bad swap in one domain cannot tear
   the other's tree (per-atom snapshots; §7's "no fourth
@@ -450,7 +450,7 @@ cost). This is the spike's headline finding.
 - **Snapshot semantics.** Per-atom snapshots are the law; a
   var root changing under a running fn is stock Clojure
   behavior, not a new hazard. The genuinely new surface is
-  narrower: the domain's *substrate bookkeeping* must never
+  narrower: the domain's _substrate bookkeeping_ must never
   become program-visible (the model-census rule the plan
   cites — the descriptor holds substrate bookkeeping only;
   program meta rides the wrapper), and the AOT snapshot
@@ -504,20 +504,20 @@ the JVM seat."
 **Where cohost differs from VS, materially:**
 
 1. **Snapshot: replay vs adoption.** VS warm-starts by
-   *adopting* the previous run's slab. Cohost's snapshot is
-   a *replay* of boot events (P1). The domain's boot state
+   _adopting_ the previous run's slab. Cohost's snapshot is
+   a _replay_ of boot events (P1). The domain's boot state
    needs a replay contract — or the jank snapshot grows an
    adopt path for the domain, following VS. Open design
    obligation, named in P1.
 2. **Locals are host frames in cohost.** VS's locals are
    compiler-managed frame data inside the domain. Cohost
-   compiles booted code to *host* code through the codemod;
+   compiles booted code to _host_ code through the codemod;
    a booted program's local slots are host frames (JVM
    locals, jank C++ locals) on every seat, and no ruling
    changes that without changing what cohost is. The Q5
    sentence — "locals … live in the runtime atom domain" —
    is literally true in VS and semantically true in
-   cohost: the *values* locals hold are domain values; the
+   cohost: the _values_ locals hold are domain values; the
    slots are host machinery. Eve-the-library on the JVM
    lives with exactly this split today.
 
@@ -527,14 +527,14 @@ explains why it can. Contention-domains §6 names **one**
 runtime domain — compiler/analyzer state and form working
 data together — and does not split startup from runtime
 inside it. VS doesn't need the phase split because its
-boot *is* warm-start adoption: the previous run's runtime
+boot _is_ warm-start adoption: the previous run's runtime
 atom is read back whole, so there is no long, distinct
 construction phase with a traffic profile of its own.
 Cohost's boot is the opposite shape — a minutes-to-seconds
 construction episode (codemod, core, companions,
 libraries) followed by steady state — and that episode is
 exactly what the startup domain quarantines. What VS
-*does* supply for the split: §1's definition (a contention
+_does_ supply for the split: §1's definition (a contention
 domain is one atom; splitting means more atoms, never
 wider ones), §7's pointer-value form (a registry atom "can
 name a hundred data atoms without holding a single
@@ -558,7 +558,7 @@ cohost's boot shape.
 1. **The ruling as a semantic commitment, per seat.** One
    value world: every value a program can hold is a domain
    value; crossings only at deref/swap; atom kinds as
-   metadata (Q5); runtime state *as values* — var roots,
+   metadata (Q5); runtime state _as values_ — var roots,
    registries, analyzer/compiler state — in the runtime
    atom domains, split per (4). This layer of the ruling
    has no measured problem anywhere in this spike.
@@ -594,7 +594,7 @@ cohost's boot shape.
    phase cut is cohost's, earned by its boot shape (P6).
 5. **`eve.atom` is not the runtime heap's mechanism.** It
    is the durable/cross-process atom — unit 5/7's disk/net
-   *kind* machinery — and its materializing deref is
+   _kind_ machinery — and its materializing deref is
    correct for that job. The runtime domain's atom ops are
    the wrapper-priced ones the xbench measured
    (+3.1/+3.5 ns). Confusing these two atoms is the one
@@ -615,11 +615,11 @@ snapshot-adoption obligation in (3).
 ## 3. Questions that are genuinely John's
 
 **Q-A. The scope of "runtime objects."** In cohost,
-namespaces and vars-as-containers are *host structures* on
+namespaces and vars-as-containers are _host structures_ on
 every seat (`host/ensure-bare-ns!`, `host/intern!` are
 adapter leaves over host namespace machinery) — they are
 how one stock core.clj runs on 8 hosts at all. The bounded
-reading of the ruling — the domain holds *values* (var
+reading of the ruling — the domain holds _values_ (var
 roots, collections, runtime data), containers stay host
 structures whose contents are domain values — is
 buildable under §2 and matches unit 5's plot (Var roots in
@@ -685,7 +685,7 @@ they printed are quoted in §P3 and here).
   1,778,731 ns/op; swap! assoc on it 198,616 ns/op;
   stock swap! assoc control 460.12 ns/op.
 
-*Sources: MEMORY-PLAN.md + §§7–8 addenda (this branch);
+_Sources: MEMORY-PLAN.md + §§7–8 addenda (this branch);
 UNIT1-REPORT.md (this branch); the load probe REPORT.md
 (`muse/eve-cohost-probe` @ 1829658);
 XBENCH-REPORT.md (`muse/eve-cohost-xbench` @ a48293e);
@@ -693,10 +693,10 @@ UNIT3-STATUS.md (`muse/eve-cohost-impl-u3` @ e93971d);
 `src/cohost/boot.cljc`, `src/cohost/shim.cljc`, `deps.edn`
 (this repo); `eve/src/eve/atom.cljc`, `eve/src/eve/map.cljc`,
 `eve/src/eve/deftype_proto/alloc.cljc`,
-`eve/doc/platform-support.md` (~/src/eve);
+`eve/doc/platform-support.md` (~~/src/eve);
 `vs/docs/contention-domains.md`, `vs/docs/memory-model.md`,
 `vs/src/vs/kernel/wasm/program_runtime.vs`,
-`AGENTS.md` (~/src/atom.broker).*
+`AGENTS.md` (~~/src/atom.broker)._
 
 ## 4. Postscript — Q-B and Q-C resolved (John, 2026-11-05 ~10:05 ET)
 
@@ -734,15 +734,15 @@ the counterpart category itself, and the probe-era
 presumption that some seats lack a shared heap. Factual
 record; findings below are the spike's own, re-read.
 
-| Item | Dependence | Disposition under the ruling |
-|---|---|---|
-| P1 Bootstrap | None. Bootstrap order, phase-order minting, and the snapshot scoped to the startup domain rest on cohost's boot shape and the contention-domain split. | **Stands.** |
-| P2 Identity & GC | One clause: "On counterpart seats (P4), interop is whatever the counterpart implements behind the shim's class surface — the same contract cohost already lives by." | **Stands, except that clause — withdrawn.** There are no counterpart seats; interop on a seat is Eve's own or unit 6's convergence. |
-| P3 Hot paths | The measurements: none — deref ~104 µs, lookup ~119–134 µs, assoc ~0.5 ms, and the 64 KB coalescing-region wall were measured on the JVM seat against Eve's JVM implementations, independent of any cljs presumption. The conclusion: yes — "The JVM seat's realization is therefore counterpart, not Eve-as-is" follows only if a substitute realization is permitted. | **Measurements stand; the conclusion is withdrawn.** Under the ruling it reads: Eve-side work on the JVM seat is the path — bring Eve's JVM collections to heap-grade performance; the seat is NOT-YET until then. |
-| P4 Per-host reality | The seat table's cljs row was correct as written (Eve native, SAB atoms) but unmeasured by this spike, and sequenced last via unit 8; the no-shared-heap presumption lived in the framing around the row, not in the row. The JVM row ("counterpart domain"), the jank row ("counterpart until then"), and the cljw/jolt/lg row ("counterpart domain, or the seat waits") each depended on the category. | **cljs row stands, flagged unmeasured; the counterpart rows are withdrawn** — those seats are Eve or wait. |
-| P5 Failure modes | None. Contention is priced by write profile; the resident-to-domain mapping and the domain split make no reference to the category. | **Stands.** |
-| P6 VS precedent | None. The comparison (warm-start adoption vs construction boot; the §1/§6/§7 shapes) is independent of the category. | **Stands.** |
-| §2 supported shape | Item 2's "counterpart domain layer" element — a cohost-side layer on the JVM seat and the no-Eve seats — is the category applied to the heap itself. | **That element is withdrawn** (recorded in §4 above). The remaining items stand. |
+| Item                | Dependence                                                                                                                                                                                                                                                                                                                                                                                               | Disposition under the ruling                                                                                                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| P1 Bootstrap        | None. Bootstrap order, phase-order minting, and the snapshot scoped to the startup domain rest on cohost's boot shape and the contention-domain split.                                                                                                                                                                                                                                                   | **Stands.**                                                                                                                                                                                                        |
+| P2 Identity & GC    | One clause: "On counterpart seats (P4), interop is whatever the counterpart implements behind the shim's class surface — the same contract cohost already lives by."                                                                                                                                                                                                                                     | **Stands, except that clause — withdrawn.** There are no counterpart seats; interop on a seat is Eve's own or unit 6's convergence.                                                                                |
+| P3 Hot paths        | The measurements: none — deref ~104 µs, lookup ~119–134 µs, assoc ~0.5 ms, and the 64 KB coalescing-region wall were measured on the JVM seat against Eve's JVM implementations, independent of any cljs presumption. The conclusion: yes — "The JVM seat's realization is therefore counterpart, not Eve-as-is" follows only if a substitute realization is permitted.                                  | **Measurements stand; the conclusion is withdrawn.** Under the ruling it reads: Eve-side work on the JVM seat is the path — bring Eve's JVM collections to heap-grade performance; the seat is NOT-YET until then. |
+| P4 Per-host reality | The seat table's cljs row was correct as written (Eve native, SAB atoms) but unmeasured by this spike, and sequenced last via unit 8; the no-shared-heap presumption lived in the framing around the row, not in the row. The JVM row ("counterpart domain"), the jank row ("counterpart until then"), and the cljw/jolt/lg row ("counterpart domain, or the seat waits") each depended on the category. | **cljs row stands, flagged unmeasured; the counterpart rows are withdrawn** — those seats are Eve or wait.                                                                                                         |
+| P5 Failure modes    | None. Contention is priced by write profile; the resident-to-domain mapping and the domain split make no reference to the category.                                                                                                                                                                                                                                                                      | **Stands.**                                                                                                                                                                                                        |
+| P6 VS precedent     | None. The comparison (warm-start adoption vs construction boot; the §1/§6/§7 shapes) is independent of the category.                                                                                                                                                                                                                                                                                     | **Stands.**                                                                                                                                                                                                        |
+| §2 supported shape  | Item 2's "counterpart domain layer" element — a cohost-side layer on the JVM seat and the no-Eve seats — is the category applied to the heap itself.                                                                                                                                                                                                                                                     | **That element is withdrawn** (recorded in §4 above). The remaining items stand.                                                                                                                                   |
 
 **Source of the presumption.** It entered this work from
 the load probe's report (`muse/eve-cohost-probe`,
@@ -790,16 +790,16 @@ Eve's docs and not cohost's CLI rows.
 speaks exactly three platform features — `:cljs` (220
 reader-conditional sites), `:clj` (55), `:bb` (74), plus
 one `:default`. A seat has Eve substrate iff it can run
-one of those branches *and* supply the branch's
+one of those branches _and_ supply the branch's
 `IMemRegion` backend (`eve/src/eve/mem.cljc`): the
 protocol is one — fixed-size region, i32/i64 load/store,
 CAS — and the backends are per-feature:
 
-| feature | region backends in mem.cljc | atomics / wait |
-|---|---|---|
+| feature | region backends in mem.cljc                                                                               | atomics / wait                           |
+| ------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `:cljs` | `JsSabRegion` (SharedArrayBuffer); `NodeMmapRegion`, `LustreMmapRegion` (mmap via the N-API native addon) | `js/Atomics` on SAB; addon futex on mmap |
-| `:clj` | `JvmByteBufferRegion`; `LustreJvmMmapRegion` (Panama FFM mmap) | `sun.misc.Unsafe`; `LockSupport` |
-| `:bb` | `BbHeapRegion`, `BbMmapRegion` | ByteBuffer/Unsafe via bb's JVM |
+| `:clj`  | `JvmByteBufferRegion`; `LustreJvmMmapRegion` (Panama FFM mmap)                                            | `sun.misc.Unsafe`; `LockSupport`         |
+| `:bb`   | `BbHeapRegion`, `BbMmapRegion`                                                                            | ByteBuffer/Unsafe via bb's JVM           |
 
 So "Eve on a seat," in Eve's own terms, requires three
 things: **(i)** a platform branch in Eve's CLJC (or the
@@ -814,7 +814,7 @@ against those three requirements — that is what
 **A correction to the original's framing sentence.**
 The original §P4 argued a cohosted Eve below the heap
 is "exactly circular." That described a mechanism no
-working seat uses: Eve is never *cohosted* underneath
+working seat uses: Eve is never _cohosted_ underneath
 cohost. On the JVM and cljs seats Eve arrives as a
 library of the host itself, loaded by the host runtime
 before and beneath cohost's booted world (unit 3's JVM
@@ -823,17 +823,17 @@ a seat with no Eve branch, the work that ends the wait
 is the same kind of arrival — an Eve platform port at
 host level — not cohosting, and not a substitute domain.
 
-| cohost seat | Eve substrate today (probed) | realization |
-|---|---|---|
-| **JVM** | `:clj` branch complete: in-process `JvmByteBufferRegion` + Panama mmap cross-process; domains at CLJS parity per Eve's HEAD commit | **EVE AS-IS** as substrate; **SEAT WAITS** for the heap role on §5.2's named Eve-side perf work |
-| **cljs** (self-hosted, Node) | `:cljs` is Eve's home branch and reference implementation: SAB atom domains (`cljs-open-sab-domain!`, atom.cljc:334), `JsSabRegion`, shared atoms across workers, mmap cross-process via the addon | **EVE AS-IS** — measured in §5.2; nothing Eve-side is missing for the heap role; the open work on this seat is cohost-side (unit 2's leaves, unit 8) |
-| **jank** | No `:jank` branch in Eve's CLJC on main. Eve-on-jank is Eve-side work in flight on its own line: the J3 seams, with region+slab+typed-view as the ungated flagship | **EVE-SIDE WORK NAMED** — the flagship gate (region + slab + typed-view); the seat waits on it, then on unit 6's `cohost_object` ↔ `eve_obj` convergence |
-| **cljw** (ClojureWasm, Zig/Wasm) | No Wasm branch; no `IMemRegion` over Wasm linear memory. cljw's feature set is `{:cljw :clj :default}`, but Eve's `:clj` branch calls Java (Unsafe, Panama, ByteBuffer) and there is no JVM under cljw | **SEAT WAITS** — Eve-side work named: a Wasm platform port (branch + linear-memory region backend + an atomics story) |
-| **jolt** (Chez Scheme) | No Scheme-host branch. jolt presents a `:clj`-like Clojure surface over Chez; none of Eve's `:clj` machinery (Unsafe/Panama/ByteBuffer) exists beneath it, and no shared-memory region is exposed to the Clojure layer | **SEAT WAITS** — Eve-side work named: a Chez-host platform port (branch + region backend) |
-| **lg** (let-go, Go) | No Go-host branch; the same structural gap as jolt — a Clojure surface over a host with no Eve backend and no exposed shared-memory region | **SEAT WAITS** — Eve-side work named: a Go-host platform port (branch + region backend) |
-| **basilisp** (Python) | No Python branch. Additionally this seat's binding constraint today is cohost-side, not Eve's: cohost's own basilisp row does not boot (the load probe's CLI macroexpansion failure) | **SEAT WAITS** — Eve-side work named: a Python platform port; cohost's boot fix lands first regardless |
-| **cljrs** (clojurust, Rust) | No Rust-host branch; cohost has no CLI row on this seat yet either | **SEAT WAITS** — Eve-side work named: a Rust-host platform port (branch + region backend) |
-| **phel** (PHP) | No PHP branch; PHP is absent on this box (the probe's environment gap) | **SEAT WAITS** — Eve-side work named: a PHP platform port (branch + region backend) |
+| cohost seat                      | Eve substrate today (probed)                                                                                                                                                                                           | realization                                                                                                                                              |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **JVM**                          | `:clj` branch complete: in-process `JvmByteBufferRegion` + Panama mmap cross-process; domains at CLJS parity per Eve's HEAD commit                                                                                     | **EVE AS-IS** as substrate; **SEAT WAITS** for the heap role on §5.2's named Eve-side perf work                                                          |
+| **cljs** (self-hosted, Node)     | `:cljs` is Eve's home branch and reference implementation: SAB atom domains (`cljs-open-sab-domain!`, atom.cljc:334), `JsSabRegion`, shared atoms across workers, mmap cross-process via the addon                     | **EVE AS-IS** — measured in §5.2; nothing Eve-side is missing for the heap role; the open work on this seat is cohost-side (unit 2's leaves, unit 8)     |
+| **jank**                         | No `:jank` branch in Eve's CLJC on main. Eve-on-jank is Eve-side work in flight on its own line: the J3 seams, with region+slab+typed-view as the ungated flagship                                                     | **EVE-SIDE WORK NAMED** — the flagship gate (region + slab + typed-view); the seat waits on it, then on unit 6's `cohost_object` ↔ `eve_obj` convergence |
+| **cljw** (ClojureWasm, Zig/Wasm) | No Wasm branch; no `IMemRegion` over Wasm linear memory. cljw's feature set is `{:cljw :clj :default}`, but Eve's `:clj` branch calls Java (Unsafe, Panama, ByteBuffer) and there is no JVM under cljw                 | **SEAT WAITS** — Eve-side work named: a Wasm platform port (branch + linear-memory region backend + an atomics story)                                    |
+| **jolt** (Chez Scheme)           | No Scheme-host branch. jolt presents a `:clj`-like Clojure surface over Chez; none of Eve's `:clj` machinery (Unsafe/Panama/ByteBuffer) exists beneath it, and no shared-memory region is exposed to the Clojure layer | **SEAT WAITS** — Eve-side work named: a Chez-host platform port (branch + region backend)                                                                |
+| **lg** (let-go, Go)              | No Go-host branch; the same structural gap as jolt — a Clojure surface over a host with no Eve backend and no exposed shared-memory region                                                                             | **SEAT WAITS** — Eve-side work named: a Go-host platform port (branch + region backend)                                                                  |
+| **basilisp** (Python)            | No Python branch. Additionally this seat's binding constraint today is cohost-side, not Eve's: cohost's own basilisp row does not boot (the load probe's CLI macroexpansion failure)                                   | **SEAT WAITS** — Eve-side work named: a Python platform port; cohost's boot fix lands first regardless                                                   |
+| **cljrs** (clojurust, Rust)      | No Rust-host branch; cohost has no CLI row on this seat yet either                                                                                                                                                     | **SEAT WAITS** — Eve-side work named: a Rust-host platform port (branch + region backend)                                                                |
+| **phel** (PHP)                   | No PHP branch; PHP is absent on this box (the probe's environment gap)                                                                                                                                                 | **SEAT WAITS** — Eve-side work named: a PHP platform port (branch + region backend)                                                                      |
 
 The pattern under the six waiting seats is uniform,
 and it is worth stating once: each host is an
@@ -869,14 +869,14 @@ a dev-mode (`:none`) build of the same bench ran
 ~1.8× slower across the board — the release numbers
 govern.
 
-| op | Eve on cljs/SAB | stock cljs, same runs | Eve on JVM (P3, standing) |
-|---|---|---|---|
-| atom deref, scalar root | **708–737 ns** | 9.0–9.3 ns | ~104 µs |
-| atom swap! inc | **4,347–4,511 ns** | 29–31 ns | ~178 µs |
-| map lookup (get) | **1,970–2,335 ns** | 48–52 ns | ~119–134 µs |
-| map assoc (per op, 1k build) | **9,340–9,607 ns** | 433–486 ns | ~0.5 ms |
-| deref, 100-entry map root (foreign root — materializes) | **96.6–105.0 µs** | — | ~1.78 ms |
-| capacity: 10k-entry map build / 1k-element vec build | **both OK** | — | **both die** (`coalesc-alloc!: out of memory`) |
+| op                                                      | Eve on cljs/SAB    | stock cljs, same runs | Eve on JVM (P3, standing)                      |
+| ------------------------------------------------------- | ------------------ | --------------------- | ---------------------------------------------- |
+| atom deref, scalar root                                 | **708–737 ns**     | 9.0–9.3 ns            | ~104 µs                                        |
+| atom swap! inc                                          | **4,347–4,511 ns** | 29–31 ns              | ~178 µs                                        |
+| map lookup (get)                                        | **1,970–2,335 ns** | 48–52 ns              | ~119–134 µs                                    |
+| map assoc (per op, 1k build)                            | **9,340–9,607 ns** | 433–486 ns            | ~0.5 ms                                        |
+| deref, 100-entry map root (foreign root — materializes) | **96.6–105.0 µs**  | —                     | ~1.78 ms                                       |
+| capacity: 10k-entry map build / 1k-element vec build    | **both OK**        | —                     | **both die** (`coalesc-alloc!: out of memory`) |
 
 As printed, additionally: `eve-atom after swaps:
 100010` (the swap loop is CAS-correct, value exact);
@@ -952,7 +952,7 @@ its three prices referenced the withdrawn category.
    two work items; six seats on an Eve platform port
    each). There is no fourth label and no cohost-side
    domain layer on any seat. Host-heap-lax internals
-   *inside* Eve's runtime domain remain what they were
+   _inside_ Eve's runtime domain remain what they were
    in §2 — the precedent's cost-only laxity (§P6), a
    property of Eve's own domain implementation, not a
    substitute for it.

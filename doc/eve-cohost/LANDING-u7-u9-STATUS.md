@@ -3,6 +3,7 @@
 Operator-ruled ~14:32 ET: land units 7 and 9 onto the mainline, in sequence.
 
 ## Landing 1 — unit 7 (tiered atoms): MERGED + GATES GREEN
+
 - Base: muse/eve-cohost-impl @ 21e1d9f. Branch agent1/eve-unit7-tiered-atoms @ 2c991ea.
 - Merge commit: 460b7b2 (pushed; verified on the fetched remote ref).
 - Conflicts: ONE — src/cohost/boot.cljc, the :host-lacks expression. Both sides
@@ -21,4 +22,5 @@ Operator-ruled ~14:32 ET: land units 7 and 9 onto the mainline, in sequence.
     "(<<<<<<< / >>>>>>>)" inside the previous landing's docs, identical at base).
 
 ## Landing 2 — unit 9 (HTTP + Ring): NEXT
+
 - Branch agent2/eve-unit9-http @ 2a551e9 onto the post-u7 mainline.

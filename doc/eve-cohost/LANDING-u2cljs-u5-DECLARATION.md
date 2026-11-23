@@ -29,13 +29,13 @@ cli-check-cljs.log, boot-cljs.log).
 
 ## Verification on the merged tree, as printed
 
-- JVM gate (bb boot:jvm): "booted as stock: 465   from host: 202
-  natives: 66   skipped: 58   errors: 0"; **battery: 221/221** stock
+- JVM gate (bb boot:jvm): "booted as stock: 465 from host: 202
+  natives: 66 skipped: 58 errors: 0"; **battery: 221/221** stock
   behaviors pass; **libraries: 62/62** cases pass across 12
   clojure.* libraries.
 - cljs cli:check (bb cli:check cljs): **7/7 SAME**.
 - cljs boot (bb boot:cljs): **rc=0**; "booted as stock: 548
-  from host: 87   natives: 46   skipped: 140   errors: 0"; the FAIL
+  from host: 87 natives: 46 skipped: 140 errors: 0"; the FAIL
   pair is exactly the pristine-base pair — "FAIL numeric tower",
   "FAIL defmacro &form &env" — identical to the cljs-dep branch's
   own banked gate log. Nothing new.

@@ -5,9 +5,11 @@ units 7 and 9, agents on them. This collation landed the two units IN SEQUENCE
 from a fresh worktree; ~/src/cohost's working tree was not touched.
 
 ## Base
+
 - muse/eve-cohost-impl @ 21e1d9f (units 1, 2 all seats, 3, 5 landed).
 
 ## Landing 1 — unit 7, tiered atoms (mem -> disk -> net)
+
 - Branch: agent1/eve-unit7-tiered-atoms @ 2c991ea (its own gate: JVM + jank
   over one disk atom 9/9, kill/rejoin both ways, per doc/eve-cohost/unit7/).
 - Merge commit: 460b7b2.
@@ -30,6 +32,7 @@ from a fresh worktree; ~/src/cohost's working tree was not touched.
     set exists at base 21e1d9f; the merge added none.)
 
 ## Landing 2 — unit 9, Java HTTP APIs over Eve's HTTP layer + portable Ring
+
 - Branch: agent2/eve-unit9-http @ 2a551e9 (its own gate: 36/36 JVM, 36/36
   cljs, Content-Type compared parsed per the operator's raw-text ruling).
 - Merge commit: e53d581, onto the post-unit-7 mainline (460b7b2 + status
@@ -44,8 +47,8 @@ from a fresh worktree; ~/src/cohost's working tree was not touched.
   3. boot! call sites: both installs run, atom layer first, then the HTTP
      layer; the snapshot-replay call to install-http-layer! (unit 9's,
      auto-merged) resolves against the kept defn.
-  shim.cljc and thread.cljc auto-merged; paren checks OK (boot 143 forms,
-  shim 971, thread 90).
+     shim.cljc and thread.cljc auto-merged; paren checks OK (boot 143 forms,
+     shim 971, thread 90).
 - Gates ON THE MERGED TREE (e53d581), as printed:
   - bb boot:jvm — "battery: 221/221 stock behaviors pass";
     "libraries: 62/62 cases pass across 12 clojure.* libraries"; errors: 0; rc=0.
@@ -55,6 +58,7 @@ from a fresh worktree; ~/src/cohost's working tree was not touched.
   - Conflict-marker sweep on the committed tree: 0/0/0 (same note as above).
 
 ## Final state
+
 - Mainline tip after this declaration commit: see the fetched remote ref for
   muse/eve-cohost-impl (every push in this collation was verified on the
   fetched ref, never on push output).

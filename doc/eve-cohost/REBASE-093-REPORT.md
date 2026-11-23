@@ -37,16 +37,16 @@ Historical: `doc/perf/**` outputs and the older unit docs naming the
 
 ## Gate table (logs in `logs-093/`)
 
-| Gate | Result |
-|---|---|
-| JVM battery (`bb boot:jvm`, sibling @ 0.9.3) | **boot errors 0; battery 221/221; libraries 62/62** |
-| Seat probe unit 1 (`eve_cohost_check.clj`, `:eve` sibling) | **21/21 PASS** (the probe's own summary line) |
-| Seat probe unit 5 (`eve_cohost_check_u5.clj`, full `:jvm` hosts.edn row @ 0.9.3) | **31 checks, 0 failures** |
-| Seat probe unit 7 (`eve_cohost_check_u7.clj`, same runner) | **17 checks, 0 failures** |
-| cljs pin fetch @ `76fd94c3dc…` | checkout materialized; classpath carries its src + adapter roots |
-| cljs seat battery (`bb boot:cljs`, Node) | **boot errors 0; battery 219/221; libraries 62/62** |
-| jank refinement pins (release-line mechanism tree, j.slaa.us) | **10 tests / 108 assertions / 0 failures / 0 errors** (identity 5, identity-table 1, host-completion 4) |
-| jank seat battery (`bb boot:jank-aot`, j.slaa.us, release-line sibling) | **boot errors 0; battery 219/221; libraries 62/62** |
+| Gate                                                                             | Result                                                                                                  |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| JVM battery (`bb boot:jvm`, sibling @ 0.9.3)                                     | **boot errors 0; battery 221/221; libraries 62/62**                                                     |
+| Seat probe unit 1 (`eve_cohost_check.clj`, `:eve` sibling)                       | **21/21 PASS** (the probe's own summary line)                                                           |
+| Seat probe unit 5 (`eve_cohost_check_u5.clj`, full `:jvm` hosts.edn row @ 0.9.3) | **31 checks, 0 failures**                                                                               |
+| Seat probe unit 7 (`eve_cohost_check_u7.clj`, same runner)                       | **17 checks, 0 failures**                                                                               |
+| cljs pin fetch @ `76fd94c3dc…`                                                   | checkout materialized; classpath carries its src + adapter roots                                        |
+| cljs seat battery (`bb boot:cljs`, Node)                                         | **boot errors 0; battery 219/221; libraries 62/62**                                                     |
+| jank refinement pins (release-line mechanism tree, j.slaa.us)                    | **10 tests / 108 assertions / 0 failures / 0 errors** (identity 5, identity-table 1, host-completion 4) |
+| jank seat battery (`bb boot:jank-aot`, j.slaa.us, release-line sibling)          | **boot errors 0; battery 219/221; libraries 62/62**                                                     |
 
 ## Standing-pair dispositions
 
@@ -58,9 +58,9 @@ Historical: `doc/perf/**` outputs and the older unit docs naming the
   2. `Character outside ASCII` — got `"ERR Unexpected end of file.
      (outer: Unexpected end of file.)"`, expected
      `[true true true false]`.
-  Both are jank's reader (unit 9's known non-ASCII / reader gap
-  family), identical in shape and text to every prior gate on the
-  pre-release bindings.
+     Both are jank's reader (unit 9's known non-ASCII / reader gap
+     family), identical in shape and text to every prior gate on the
+     pre-release bindings.
 - **cljs seat — also 219/221, but a DIFFERENT pair** (do not conflate):
   `numeric tower` and `defmacro &form &env`, the documented
   pristine-base pair for that seat (CLJS-DEP-REPORT.md; verified

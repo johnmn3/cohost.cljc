@@ -136,17 +136,17 @@ cohost :jvm -M -m acme.myapp      # => Hello, world!
 `cohost -Tnew create :template cohost/app :name acme/myapp :target jank` writes the key
 for you.
 
-| target | runtime | `cohost` command | install |
-|---|---|---|---|
-| `:jvm` | JVM Clojure (the real Clojure CLI) | yes | the Clojure CLI |
-| `:jolt` | jolt (Chez Scheme) | yes | `dev/install/jolt.sh` |
-| `:jank` | jank (C++/LLVM) | yes | `dev/install/jank.sh` |
-| `:cljs` | ClojureScript, self-hosted on Node | yes | node |
-| `:lpy` | basilisp (Python) | yes | `dev/install/basilisp.sh` |
-| `:cljw` | ClojureWasm | yes | `dev/install/cljw.sh` |
-| `:phel` | Phel (PHP) | yes | `dev/install/phel.sh` |
-| `:lg` | let-go (Go) | yes | `dev/install/lg.sh` |
-| `:cljrs` | clojurust (Rust) | not yet | `dev/install/cljrs.sh` |
+| target   | runtime                            | `cohost` command | install                   |
+| -------- | ---------------------------------- | ---------------- | ------------------------- |
+| `:jvm`   | JVM Clojure (the real Clojure CLI) | yes              | the Clojure CLI           |
+| `:jolt`  | jolt (Chez Scheme)                 | yes              | `dev/install/jolt.sh`     |
+| `:jank`  | jank (C++/LLVM)                    | yes              | `dev/install/jank.sh`     |
+| `:cljs`  | ClojureScript, self-hosted on Node | yes              | node                      |
+| `:lpy`   | basilisp (Python)                  | yes              | `dev/install/basilisp.sh` |
+| `:cljw`  | ClojureWasm                        | yes              | `dev/install/cljw.sh`     |
+| `:phel`  | Phel (PHP)                         | yes              | `dev/install/phel.sh`     |
+| `:lg`    | let-go (Go)                        | yes              | `dev/install/lg.sh`       |
+| `:cljrs` | clojurust (Rust)                   | not yet          | `dev/install/cljrs.sh`    |
 
 Every `dev/install/<host>.sh` runs on Linux x86_64 and macOS (arm64; x86_64 where the
 host publishes a build), and under Git Bash on Windows where the host ships for Windows

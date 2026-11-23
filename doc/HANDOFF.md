@@ -44,6 +44,7 @@ found cohost.adapter/push-thread-bindings"). Wall: about 905 s, of which the gar
 is about 730 s (see "GC" below); the boot's own work is about 35 s, the battery about 67 s.
 
 Fixed this session:
+
 - errors 3 -> 0: `fn` and `defn-` are special forms of its evaluator with **no var** in its core,
   so taking them from the host found nothing and the stock defs evaluated. Policy
   `host-overrides` gained `:special` (skipped, reason `:host-special-form`).
@@ -89,6 +90,7 @@ contract (the codemod's `scoped-bindings` pass writes push/try/pop pairs as one
 `the-ns` tree-walked. Regression on these: every number unchanged.
 
 clojurust facts found so far (put them in REPORT's host section when it lands):
+
 - Special forms (by full head text; a qualified one is a call of a stub var): def fn* fn if do
   let* let loop* loop recur quote var set! throw try defn defn- defmacro defonce and or . ns
   require letfn in-ns alias protocol* deftype* load-file binding with-out-str await. Macros
@@ -127,6 +129,7 @@ Run: `bb boot:jank`. Measured 2026-10-31 ET: 791 forms, stock 542 / host 159 / s
 plus both batteries runs in about 35 s.
 
 jank facts found (REPORT's host section when it lands; each verified on the binary):
+
 - Its lexer rejects any non-ASCII character, in a string or a comment: cohost's sources are
   ASCII now (em dashes `--`; the battery's three non-ASCII characters are `\u` escapes, so its
   rows read the same on every host). The stock sources are ASCII.
@@ -156,6 +159,7 @@ abort on an unknown type), `:sort-array!`, `:re-find-at`, `format` (jank's print
 deref of a volatile/delay, native C++ exceptions in a few rows, `with-local-vars`, refs.
 
 ## Rules worth re-reading (doc/hosts/PLAN.md)
+
 Never edit vendored sources under resources/; host facts go in REPORT with a battery row;
 never weaken a test; commit + push after each milestone; long runs in the background;
 `.cljc` edits by script (the editor hook reformats them); `pkill -f` patterns can match your

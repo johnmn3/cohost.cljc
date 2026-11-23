@@ -10,6 +10,7 @@ One line per fix or re-pin brought into this branch: fix, source commit, proof.
 ## Grok RESULT #427 (2026-11-10 20:49:58-21:04:19 ET) — release-pin measurement, box=grok, load1 2.48-3.00 (hot)
 
 Scripts from cohost 921ebaeb; cohost tree 8233562c; **Eve 73a64110** (pre-cae5db96, pre-a11a1820). atom.broker probe tree c287e9f4. rc=0.
+
 - Phase-0 JVM hosting probe: PASS. CALL_EXIT=SERVE_EXIT=READ_EXIT=0; serve, JVM-FINAL and READER seals/SHA-256 equal (ptr 15, blocks 8, digest -1936556600); journals present (`prog-0001.journal`, `bodies.journal`).
 - Two-body gate (JVM + basilisp): PASS. All four exits 0; JVM FINAL, LPY, JVM reader and LPY reader equal (ptr 15, blocks 8, digest -1387529136, same SHA-256); journals present in the gate domain. This RESOLVES the #390 digest line: the 0931-era script compared JVM DIGESTS-BEFORE (ptr 9) against the finals; at the pin the four finals are equal. Wall: phase0 total 2 min 30 s.
 - Battery (`bb boot:jvm`): 221/221, libraries 62/62.

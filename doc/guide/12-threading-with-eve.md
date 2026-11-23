@@ -1,10 +1,10 @@
 # Threading with Eve
 
-*2026-11-05. The implementation record is `doc/eve-cohost/` — `MEMORY-PLAN.md`
+_2026-11-05. The implementation record is `doc/eve-cohost/` — `MEMORY-PLAN.md`
 and the per-unit reports (`UNIT1-REPORT.md`, `UNIT2-REPORT.md`,
 `CLJS-DEP-REPORT.md`, `unit8/REPORT.md`). Every claim below is from those
 reports or from a gate they print; per-seat status is collected in
-[Eve coverage and status](15-eve-coverage-and-status.md).*
+[Eve coverage and status](15-eve-coverage-and-status.md)._
 
 Some of cohost's runtimes have no concurrency family of their own: jank's core
 carries `future`, `agent` and `pmap` only as "TODO: port" stubs, and
@@ -114,7 +114,7 @@ Its threading cases, with the answers every Eve seat gives:
   through the boot option that boots the names as host-lacked (`:host-lacks`
   in `cohost.boot/boot!`). Exercised that way: layer probe 29/29, booted
   programs 21/21 (unit 1's report).
-- **jank.** The fill *is* the seat's threading — the adapter declares the
+- **jank.** The fill _is_ the seat's threading — the adapter declares the
   whole family core-lacked, and the AOT snapshot carries the layer.
   Battery 219/221 with the standing named pair of failures, libraries
   62/62 (unit 2's report).

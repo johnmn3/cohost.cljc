@@ -1,6 +1,6 @@
 # Building and deploying
 
-*2026-11-02. Measured with `bb docs:check` on every runtime in the table but clojurust.*
+_2026-11-02. Measured with `bb docs:check` on every runtime in the table but clojurust._
 
 Builds are [tools.build](https://clojure.org/guides/tools_build): `cohost -T:build build` runs
 the project's `build.clj` as `clojure -T:build build` does. The template's `build.clj` calls
@@ -17,14 +17,14 @@ cohost -T:build build                               # => build: target/myapp/run
 The `:build` alias depends on cohost as a git dependency on this repository at the commit the
 template came from, so `-T:build` needs no cohost checkout.
 
-| runtime | `target/<name>/` holds | the machine running it needs |
-|---|---|---|
-| `:jvm` | `<name>.jar`, an uberjar with `clojure.main` as its main, and `run` (`java -jar <name>.jar -m <main>`) | Java |
-| `:cljs` | cohost's ClojureScript build, Clojure's sources, the project's source roots, `run.js`, `run` | Node |
-| `:jolt` | `bin/cohost-jolt` (cohost compiled by `jolt build` into one native binary, 36 MB), Clojure's sources, the source roots, `run` | nothing else |
-| `:cljw`, `:lg`, `:lpy`, `:phel` | cohost's sources, Clojure's sources, the source roots, `run` (a script bundle) | that runtime installed |
-| `:jank` | `run` itself: one native executable, the booted core's snapshot and the project's namespaces compiled `-O3` with jank's static runtime | nothing else |
-| `:cljrs` | not yet | |
+| runtime                         | `target/<name>/` holds                                                                                                                 | the machine running it needs |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `:jvm`                          | `<name>.jar`, an uberjar with `clojure.main` as its main, and `run` (`java -jar <name>.jar -m <main>`)                                 | Java                         |
+| `:cljs`                         | cohost's ClojureScript build, Clojure's sources, the project's source roots, `run.js`, `run`                                           | Node                         |
+| `:jolt`                         | `bin/cohost-jolt` (cohost compiled by `jolt build` into one native binary, 36 MB), Clojure's sources, the source roots, `run`          | nothing else                 |
+| `:cljw`, `:lg`, `:lpy`, `:phel` | cohost's sources, Clojure's sources, the source roots, `run` (a script bundle)                                                         | that runtime installed       |
+| `:jank`                         | `run` itself: one native executable, the booted core's snapshot and the project's namespaces compiled `-O3` with jank's static runtime | nothing else                 |
+| `:cljrs`                        | not yet                                                                                                                                |                              |
 
 ClojureWasm and let-go have native packagers of their own; on cohost they stop with
 `build failed: UnsupportedValueTag` (`cljw build`) and `unsupported value type for

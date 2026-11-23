@@ -12,14 +12,14 @@ below 1.0 against JVM Clojure 1.12 on the geometric mean, with every row `SAME`.
 pass measured 10.34 (doc/perf/HISTORY.md); jank's own core AOT measured 0.71, which is the floor
 cohost can approach, and the upstream lanes move that floor too.
 
-| measure | command | now | target |
-|---|---|---:|---:|
-| programs, cohost on jank / JVM, geomean | `bb bench:programs jank` and `jvm` (lane C's method: -O3, median of 5, depth-14 binary-trees, the overflow sentinel) | 15.213 over 16 (UNPATCHED apt, X1-5); 6.648 over 20 (PATCHED, 18 patches, X1-4) | < 1.0 |
-| programs, jank's own core / JVM, geomean | `bb bench:programs jank-aot` | 7.095 over 14 (UNPATCHED); 1.719 over 17 (PATCHED) | < 0.5 |
-| stock core / jank's own core, 30 bench cases, geomean | `bb bench:jank` | x1.77 UNPATCHED apt, x2.12 PATCHED (X1-3) | < x1.5, no case above x1.5 |
-| startup | `boot-ms` + `libs-ms` from the snapshot; `first-output` | snapshot boot 456 ms on the coordinator's box | within jolt's range (2.5 s boot) |
-| correctness | `bb boot:jank` battery and libraries; every other host's batteries; the jolt corpus | 157/159, 62/62 (max/collate, 2026-11-02); others unchanged | never lower |
-| the upstream repros | `bash dev/research/upstream/run.sh <NN>` on the patched jank | jank-11..21 REPRODUCED | each draft's "Expected" |
+| measure                                               | command                                                                                                              |                                                                             now |                           target |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------: | -------------------------------: |
+| programs, cohost on jank / JVM, geomean               | `bb bench:programs jank` and `jvm` (lane C's method: -O3, median of 5, depth-14 binary-trees, the overflow sentinel) | 15.213 over 16 (UNPATCHED apt, X1-5); 6.648 over 20 (PATCHED, 18 patches, X1-4) |                            < 1.0 |
+| programs, jank's own core / JVM, geomean              | `bb bench:programs jank-aot`                                                                                         |                              7.095 over 14 (UNPATCHED); 1.719 over 17 (PATCHED) |                            < 0.5 |
+| stock core / jank's own core, 30 bench cases, geomean | `bb bench:jank`                                                                                                      |                                       x1.77 UNPATCHED apt, x2.12 PATCHED (X1-3) |       < x1.5, no case above x1.5 |
+| startup                                               | `boot-ms` + `libs-ms` from the snapshot; `first-output`                                                              |                                   snapshot boot 456 ms on the coordinator's box | within jolt's range (2.5 s boot) |
+| correctness                                           | `bb boot:jank` battery and libraries; every other host's batteries; the jolt corpus                                  |                      157/159, 62/62 (max/collate, 2026-11-02); others unchanged |                      never lower |
+| the upstream repros                                   | `bash dev/research/upstream/run.sh <NN>` on the patched jank                                                         |                                                          jank-11..21 REPRODUCED |          each draft's "Expected" |
 
 RULING 2026-11-02 6:2x PM ET: the headline is the UNPATCHED column; the patched column is shown beside it; no PRs to jank. The first pass's 0.71 was another box with the JVM warm.
 

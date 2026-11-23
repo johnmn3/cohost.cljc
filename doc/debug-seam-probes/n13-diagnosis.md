@@ -1,4 +1,5 @@
 # #13 diagnosis: macro attribution -- the wrapper lands, the JVM
+
 # headline is blocked on the host-type tables
 
 Unit 5 (coordinator addendum 645d12a): catch a throw from the macro
@@ -38,6 +39,7 @@ Body-throw `(defmacro m [x] (throw (ex-info "bad" {}))) (m 1)`:
   compiler's own attribution or the wrapper's.
 
 Stock Clojure 1.12 ground truth (same programs, real clojure):
+
 - body-throw: "Syntax error macroexpanding m at (REPL:1:45)." /
   "bad"; the CompilerException's ex-data is #:clojure.error{:phase
   :macro-syntax-check :line 1 :column 74 :source "NO_SOURCE_PATH"

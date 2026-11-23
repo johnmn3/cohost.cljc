@@ -98,17 +98,17 @@ LC_ALL=POSIX jank run u.jank`.
 
 ### Prices (this box: 4 CPUs, 15 GB, Ubuntu 24.04; ccache cold)
 
-| step | wall | disk |
-|---|---:|---:|
-| jank clone + submodules | (not timed separately) | 213 MB |
-| llvm-project clone at e280c505 | 1m47s | 2.9 GB |
-| LLVM configure only + export install | 12 s | 37 MB build dir |
-| LLVM prefix (copied from apt + exports + stubs) | seconds | 347 MB |
-| jank configure | 9 s | |
-| jank build, 429 steps, `-j4` | 204 s (160 s to the locale failure, 44 s after) | 377 MB build dir |
-| jank install | 2 s | 449 MB (`/usr/local/lib/jank-dev`) |
-| `jank-src.sh --patches`, empty series (no-op) | 8 s | |
-| `jank-src.sh` end to end from nothing (fresh LLVM prefix, fresh clones, new install prefix, LANG/LC_ALL unset, 934e6f2) | 1034 s wall: 108 s LLVM clone, 12 s LLVM configure, 24 s jank clone, 9 s configure, 184 s compile (ccache partly warm), 694 s box.lock wait | |
+| step                                                                                                                    |                                                                                                                                        wall |                               disk |
+| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------: | ---------------------------------: |
+| jank clone + submodules                                                                                                 |                                                                                                                      (not timed separately) |                             213 MB |
+| llvm-project clone at e280c505                                                                                          |                                                                                                                                       1m47s |                             2.9 GB |
+| LLVM configure only + export install                                                                                    |                                                                                                                                        12 s |                    37 MB build dir |
+| LLVM prefix (copied from apt + exports + stubs)                                                                         |                                                                                                                                     seconds |                             347 MB |
+| jank configure                                                                                                          |                                                                                                                                         9 s |                                    |
+| jank build, 429 steps, `-j4`                                                                                            |                                                                                             204 s (160 s to the locale failure, 44 s after) |                   377 MB build dir |
+| jank install                                                                                                            |                                                                                                                                         2 s | 449 MB (`/usr/local/lib/jank-dev`) |
+| `jank-src.sh --patches`, empty series (no-op)                                                                           |                                                                                                                                         8 s |                                    |
+| `jank-src.sh` end to end from nothing (fresh LLVM prefix, fresh clones, new install prefix, LANG/LC_ALL unset, 934e6f2) | 1034 s wall: 108 s LLVM clone, 12 s LLVM configure, 24 s jank clone, 9 s configure, 184 s compile (ccache partly warm), 694 s box.lock wait |                                    |
 
 ### Check (U0-1 done-bar, both binaries, same box)
 
@@ -164,13 +164,13 @@ prefix, and the build stayed LTO. The LTO configure does not pass the ccache lau
 Price of a one-line change to a runtime `.cpp` (`src/cpp/jank/runtime/obj/nil.cpp`, a code line, not
 a comment), from `.ninja_log`, 24 steps: 26.8 s of compile applying it, 26.5 s reverting it, on this box:
 
-| step | s |
-|---|---:|
-| the changed `.cpp` (0.19, with jank's precompiled header) + `libjank.a` + phase-1 runtime archive + link `jank-phase-1` | 1.5 |
-| `incremental.pch` (phase 2's precompiled header) | 4.9-5.0 |
-| `classes/core-libraries`: phase 1 re-compiles clojure.core, clojure.string, clojure.walk and the nrepl server to C++ | 14.9 |
-| the 16 phase-2 objects from that C++ | 0.01 each (ccache hits: the generated C++ is unchanged), except `clojure/string.cpp.o` 3.9-4.0 |
-| link `jank`, the two runtime archives | 1.2 |
+| step                                                                                                                    |                                                                                              s |
+| ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------: |
+| the changed `.cpp` (0.19, with jank's precompiled header) + `libjank.a` + phase-1 runtime archive + link `jank-phase-1` |                                                                                            1.5 |
+| `incremental.pch` (phase 2's precompiled header)                                                                        |                                                                                        4.9-5.0 |
+| `classes/core-libraries`: phase 1 re-compiles clojure.core, clojure.string, clojure.walk and the nrepl server to C++    |                                                                                           14.9 |
+| the 16 phase-2 objects from that C++                                                                                    | 0.01 each (ccache hits: the generated C++ is unchanged), except `clojure/string.cpp.o` 3.9-4.0 |
+| link `jank`, the two runtime archives                                                                                   |                                                                                            1.2 |
 
 Every change to phase 1 (any compiler or runtime `.cpp`) re-runs `classes/core-libraries`: that
 15 s is the floor of an incremental build. A change that also changes the C++ jank generates for

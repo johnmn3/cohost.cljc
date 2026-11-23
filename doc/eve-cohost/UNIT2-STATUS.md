@@ -107,18 +107,18 @@ persistent_queue among its runtime objects either).
      committed run saw an empty queue: the same item was delivered
      to two claimers (traced items claimed x2). Fix: the result atom
      is reset on every swap-fn run.
-  After: layer probe **29/29 x6 runs**; instrumented stress (50
-  agent dispatches + 200 pmap rounds) clean; the standalone
-  restart-agent repro passes.
+     After: layer probe **29/29 x6 runs**; instrumented stress (50
+     agent dispatches + 200 pmap rounds) clean; the standalone
+     restart-agent repro passes.
 - **`:core-lacks` + jank leaves landed** @ bf4dc25: adapter contract
-  + default `#{}`, boot unions it into `:host-lacks`, jank adapter
-  declares `policy/thread-names` and supplies the five caps +
-  `:thread-bindings`. No policy change was needed (the names already
-  decide `:host`; lacked + in thread-names = skipped at boot, then
-  filled by `install-thread-layer!`). Caps JIT-probed standalone
-  (`dev/u2-probe2.jank`): self ids stable/distinct per thread,
-  future deref answers the worker's id, doorbell timeout / sticky
-  signal / cross-thread release all correct.
+  - default `#{}`, boot unions it into `:host-lacks`, jank adapter
+    declares `policy/thread-names` and supplies the five caps +
+    `:thread-bindings`. No policy change was needed (the names already
+    decide `:host`; lacked + in thread-names = skipped at boot, then
+    filled by `install-thread-layer!`). Caps JIT-probed standalone
+    (`dev/u2-probe2.jank`): self ids stable/distinct per thread,
+    future deref answers the worker's id, doorbell timeout / sticky
+    signal / cross-thread release all correct.
 - JVM regression so far: booted check **21/21** with the new code
   (the JVM adapter's `:core-lacks` is the default `#{}`).
 - In flight: the booted check on the jank seat, JIT
@@ -149,9 +149,9 @@ banks the gate state from J's ~/u2-gate-logs directly:
 
 ## Continuation lane pickup, 2026-11-05 ~11:15 AM ET
 
-The previous lane went silent (~24 min, two coordinator steers
+The previous lane went silent (~~24 min, two coordinator steers
 unactioned) and was closed. A fresh continuation lane picks up here
-at tip 768aa52 in a new worktree (~/workspace/wt/eve-cohost-u2-cont).
+at tip 768aa52 in a new worktree (~~/workspace/wt/eve-cohost-u2-cont).
 Verified at pickup: remote tip 768aa52 (ls-remote); AOT gate state as
 banked above stands (the code at this tip is unchanged since the
 10:48 AM gate run on J). Remaining, in order: (1) the probe row on
@@ -245,6 +245,7 @@ wait; the browser main thread may not). The doorbell-grade
 primitives exist inside Eve.
 
 What does not exist, anywhere:
+
 1. A worker spawn facility. Nothing in Eve's cljs sources spawns a
    worker (no worker_threads, no Worker construction); Eve's thread
    work lives on other seats. Cohost's cljs seat likewise has no
