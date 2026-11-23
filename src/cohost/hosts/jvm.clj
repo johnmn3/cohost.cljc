@@ -106,22 +106,22 @@
                (if-not (instance? Throwable e)
                  []
                  (let [ctor-frame? (fn [^StackTraceElement el]
-                                   (let [c (.getClassName el)]
-                                     (or (.startsWith c "cohost.shim$")
-                                         (.startsWith c "cohost.adapter$")
-                                         (.startsWith c "cohost.core$ex_info")
+                                     (let [c (.getClassName el)]
+                                       (or (.startsWith c "cohost.shim$")
+                                           (.startsWith c "cohost.adapter$")
+                                           (.startsWith c "cohost.core$ex_info")
                                          ;; the apply machinery the construction
                                          ;; was reached through (a directly
                                          ;; constructed exception's trace starts
                                          ;; at its caller instead)
-                                         (= c "clojure.lang.AFn")
-                                         (= c "clojure.lang.RestFn")
-                                         (= c "clojure.lang.Var")
-                                         (.startsWith c "clojure.core$apply"))))]
-                 (mapv (fn [^StackTraceElement el]
-                         [(symbol (.getClassName el)) (symbol (.getMethodName el))
-                          (.getFileName el) (.getLineNumber el)])
-                       (drop-while ctor-frame? (.getStackTrace ^Throwable e))))))
+                                           (= c "clojure.lang.AFn")
+                                           (= c "clojure.lang.RestFn")
+                                           (= c "clojure.lang.Var")
+                                           (.startsWith c "clojure.core$apply"))))]
+                   (mapv (fn [^StackTraceElement el]
+                           [(symbol (.getClassName el)) (symbol (.getMethodName el))
+                            (.getFileName el) (.getLineNumber el)])
+                         (drop-while ctor-frame? (.getStackTrace ^Throwable e))))))
    ;; the thread leaves under cohost.thread (Eve's thread layer): a real
    ;; java.lang.Thread runs the thunk; workers are daemons so a process
    ;; whose work is done can exit (stock Clojure holds the process open
@@ -238,7 +238,15 @@
                               method? (clojure.lang.Reflector/invokeNoArgInstanceMember x nm false)
                               :else absent))))})
 
-(adapter/install! (merge java/capabilities adapter))
+;; The default seat's adapter yields to a seat adapter installed before it. cohost.shim requires
+;; cohost.hosts.auto, which on a :clj reader loads this namespace — so a seat running JVM Clojure under
+;; its own adapter (cohost.hosts.teavm in the TeaVM image), whose boot loads the shim AFTER that adapter,
+;; was retaken by this one: install! resets (route2/body.clj's warning). MEASURED (the TeaVM cohost mini,
+;; 2026-11-23): ADAPTER= :clj where hosts/teavm.clj had installed :teavm, so boot! wanted the Eve fill,
+;; required cohost.memory-eve in-image and, once it compiled there, booted core over Eve collections
+;; (battery 166/221). A seat that wants the JVM adapter installs it before anything else, as before.
+(when-not (adapter/installed?)
+  (adapter/install! (merge java/capabilities adapter)))
 
 ;; NOTE (Lane R, family 2): the io layer's record classes stand for the
 ;; java.io classes on this seat too, but a record class does not EXTEND
