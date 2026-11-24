@@ -297,13 +297,14 @@
    frames: a macro's expansion assembly sits within a few
    frames of the macroexpand frame that invoked the macro."
   []
-  (let [frames (.getStackTrace (Thread/currentThread))
-        n (min 64 (alength frames))]
-    (loop [i 0]
-      (cond (>= i n) false
-            (and (= "clojure.lang.Compiler" (.getClassName (aget frames i)))
-                 (.startsWith (.getMethodName (aget frames i)) "macroexpand")) true
-            :else (recur (inc i))))))
+  (or memory/*expanding*
+      (let [frames (.getStackTrace (Thread/currentThread))
+            n (min 64 (alength frames))]
+        (loop [i 0]
+          (cond (>= i n) false
+                (and (= "clojure.lang.Compiler" (.getClassName (aget frames i)))
+                     (.startsWith (.getMethodName (aget frames i)) "macroexpand")) true
+                :else (recur (inc i)))))))
 
 (defn- write-list-raw
   "The Eve list of already-converted items."

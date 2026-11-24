@@ -133,7 +133,8 @@
   ;; error (expand-error), attributed to this call.
   (fn [& args] (let [[a b & more] args
                      [form env] (if (and (map? a) (not (map? b))) [b a] [a b])
-                     out (host/try-all (fn [] (apply f form env more))
+                     out (host/try-all (fn [] #?(:clj (binding [memory/*expanding* true] (apply f form env more))
+                                                 :default (apply f form env more)))
                                        (fn [e] (throw (expand-error macro-sym form e))))]
                  (if host/*raw-macro-output* out (host/code-form (rw/rewrite ctx out {:locals (host/env-locals env)}))))))
 
@@ -1322,7 +1323,9 @@
   [eve-collections]
   (memory/set-fill! false)
   (let [forced (some? eve-collections)
-        want (if forced (boolean eve-collections) (= :clj (host/host-name)))]
+        ;; the sister seats sit in the Eve memory model as the JVM seat does (operator, 2026-11-23: "We want sisters
+        ;; to always be working with the eve memory model in which they sit"): the TeaVM seat wants the fill too
+        want (if forced (boolean eve-collections) (contains? #{:clj :teavm} (host/host-name)))]
     (when want
       (when-not (memory/hosting-registered?)
         (host/try-all (fn [] (host/eval-form '(require (quote cohost.memory-eve))))))

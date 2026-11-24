@@ -187,6 +187,14 @@
                       {:type :cohost.memory/no-hosting :op k})))
     (get h k)))
 
+;; True while a cohost-wrapped macro body runs on this thread (cohost.boot/wrap-macro binds it): the forms a macro
+;; builds are the host analyzer's, so the Eve constructors answer host values then (cohost.memory-eve analyzer-active?).
+;; MEASURED (stream 6, 2026-11-23): that check's only signal was a clojure.lang.Compiler macroexpand frame in
+;; Thread.getStackTrace, which the TeaVM seat (WasmGC) does not report, so in-image expansions were built of Eve
+;; collections — `Can't embed object in code ... [Leve.region.TeavmHeap;` (hash-map, defmulti, index ...) and a list stored
+;; in one read back as a vector (`[quote quote]`: destructure's `Unable to resolve symbol: quote`), 49 boot errors.
+#?(:clj (def ^:dynamic *expanding* false))
+
 (defn eve-backed?
   "True when x is an Eve-backed collection value of this layer
    (unit 4): a bare Eve collection or its meta wrapper. Distinct
